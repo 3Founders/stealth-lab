@@ -292,7 +292,9 @@ own every file in `.stealth/`.
    - "ambiguous": show the candidates, pick with the user, call again with a sharper query.
    - "no_match": say so and do the task without StealthLab.
    - "resolved": you get `procedures` (each with full `steps`, `alternatives`,
-     `repo_fit`) and `unresolved`.
+     `repo_fit`, and `verified_example` when one was recorded) and `unresolved`.
+   - Any outcome may carry `related_examples`: verified solutions of SIMILAR past tasks. They are
+     not verified to apply here -- read them as worked examples and adapt; never run them as-is.
 3. Read past discoveries: `stealth://procedures/<procedure_id>/claims` for each chosen Procedure.
 4. Write `.stealth/procedures.md`: each Procedure under its own header so its steps sit together:
    `PROCEDURE|P-1|<procedure_id>|v<version>|<name>|goal=<goal_name>`

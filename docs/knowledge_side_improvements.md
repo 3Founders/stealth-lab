@@ -8,6 +8,27 @@ Evidence:
 
 All experiments ran on isolated local databases, never on production.
 
+## Status (after round 3)
+
+**Round 3** (preregistered; 30 new families; knowledge base built the production way with changes 1–5 ON):
+- **Primary:** Kel with the changes vs no notes was **+3.3 points [−3.4, +10.2], p = 0.27. Not confirmed.**
+- **Head to head:** it equalled plain nearest-example retrieval (0.0) and today's product (+0.4).
+- **Plain retrieval's own gain** fell to +3.3; round 2's +9.9 was partly that sample.
+- **Frontier model:** Sonnet with the changes, −3.7 (ns).
+- **Oracle ceiling:** handing models the *correct* Procedure and code gave at most +6 across rounds.
+
+Single-shot tasks on well-known public libraries leave little room for knowledge: the models already know the APIs, failures are about exact specifications that a related solution does not settle, and there is no exploration to save.
+
+| Change | Status | Where |
+|---|---|---|
+| 7. Judge batch fixes + `judge-health` | **Shipped** (a production bug) | `main` |
+| 1–2. Store and return verified solutions | Built; **being redone with `source_locator` / `source_artifacts`** instead of a new column | branch `knowledge-examples-experimental` |
+| 3–4. `related_examples` | Built; **off**. No confirmed benefit; costs tokens | same branch |
+| 5. Strict candidate ways | Built; off | same branch |
+| 6, 8 | Not built | — |
+
+**Next test:** where knowledge should matter. Multi-step agent work in repositories, with knowledge the model cannot already have: see the SWE-bench protocol below.
+
 ## Summary of the evidence
 
 Measure: gain in solve rate on tasks related to ones Kel had already seen solved. Three open models (gemma-4-31B-it, gpt-oss-120b, deepseek-v3.2), paired design, family-clustered 95% CIs; ns = not significant.

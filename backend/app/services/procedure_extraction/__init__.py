@@ -259,6 +259,15 @@ async def extract_procedure(
         "capability_statement = $2, extracted_by = $3 WHERE id = $1::uuid",
         result["id"], extracted.capability_statement, extracted_by,
     )
+    from app.config import settings as _cfg
+
+    if extracted_by == CODE_SOLUTION_TAG and _cfg.knowledge_verified_examples:
+        # docs/knowledge_side_improvements.md change 1: keep the verified solution with the Procedure
+        from app.services import verified_examples as _ve
+
+        example = _ve.example_from_evidence(evidence)
+        if example is not None:
+            await _ve.attach(pool, str(result["id"]), example)
 
     return ExtractionResult(
         procedure_id=result["procedure_id"], version_row_id=result["id"],

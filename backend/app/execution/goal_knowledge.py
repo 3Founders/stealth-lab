@@ -89,6 +89,11 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             "alternatives": [_alt(a) for a in node.procedure_alternates],
             "steps": [],
         }
+        from app.services.verified_examples import public_example
+
+        example = public_example(proc.get("verified_example"))
+        if example is not None:     # docs/knowledge_side_improvements.md change 2
+            entry["verified_example"] = example
         procedures.append(entry)
         # _resolve_procedure_children builds exactly one child per step, in
         # the same sorted order -- so they line up one to one.

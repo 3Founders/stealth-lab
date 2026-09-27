@@ -36,10 +36,13 @@ def judged_goal_candidate(hit: Any) -> dict:
 
 async def choose_goal(
     pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int,
+    collect: Optional[list] = None,
 ) -> Optional[tuple[str, Optional[dict], dict]]:
     """Returns (outcome, selected_goal, payload), or None when no semantic judge
     answered. `facts` are request-scoped repo facts ({claim_id, statement});
-    they only enter the judge's context text and are never stored."""
+    they only enter the judge's context text and are never stored.
+    `collect`, when given, receives every judged Goal candidate (flat and hierarchy) -- the input
+    of `retrieval_service.related_examples`; the returned payload is unchanged."""
     from app.services import retrieval_service as rs
 
     cfg = rs.RetrievalConfig()
@@ -52,6 +55,8 @@ async def choose_goal(
         routed = await rs._route_goal_candidates(
             pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
         )
+        if collect is not None:
+            collect.extend(h for h in [*found.candidates, *routed] if getattr(h, "judged", False))
         # Flat and hierarchy candidates compete on the same judged verdicts: a
         # neighbour the judge calls a firm match can be the chosen Goal.
         found = rs.combine_goal_resolution(found, routed, cfg)

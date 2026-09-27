@@ -29,6 +29,9 @@ def add_parsers(sub: Any) -> None:
     p.add_argument("--manifest", help="write the task -> goal/benchmark manifest here (JSON)")
     p.add_argument("--embed", action="store_true", help="embed the Goals (needs an embedding provider)")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--identity", choices=["none", "model"], default="none",
+                   help="model: production semantic identity + goal-abstraction placement (needs a judge)")
+    p.add_argument("--no-domain-edges", action="store_true", help="leave the Goal hierarchy to production placement")
 
 
 async def run(pool: Any, a: Any) -> int:
@@ -45,7 +48,8 @@ async def run(pool: Any, a: Any) -> int:
         from app.services.embeddings import Embedder
 
         embedder = Embedder(rate_limit_pool=pool)
-    report = await import_tasks(pool, tasks, embedder=embedder, limit=a.limit, dry_run=a.dry_run)
+    report = await import_tasks(pool, tasks, embedder=embedder, limit=a.limit, dry_run=a.dry_run,
+                                judge_mode=a.identity, domain_edges=not a.no_domain_edges)
     manifest = report.pop("manifest", None)
     if manifest is not None and a.manifest:
         Path(a.manifest).write_text(json.dumps(manifest, indent=1), encoding="utf-8")

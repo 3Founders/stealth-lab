@@ -21,6 +21,7 @@ Website (prod_frontend)      talks to the API; points installers at the MCP URL
 | `8c57638`, `7df90df` | Per-Goal model recommender; the MCP tools `recommend_models` and `report_model_run` (v1 and v2 surfaces) | Migrations 120 (control) and 121 (project B), then step 19b |
 | `b71a234` | Goal ranking: demand only raises a Goal; lists and the roots view rank globally | Nothing beyond a normal deploy (API + website) |
 | `4c67865` | Step-level routing (per run.md node) | Migrations 122 (control) and 123 (project B); `routing-refit` once; redeploy MCP (step 19b) |
+| (this push) | Semantic judge fixes: JEV identity batches are split into chunks (it returned HTTP 400 above ~170k characters), replies wrapped in prose parse, and the Gemma fallback uses `GENERAL_COMPUTE_JUDGE_MODEL`. New `admin judge-health` command | **No migration.** Redeploy the API, MCP and workers. Run `judge-health` (step 20) |
 | `865d0f8` | (1) Benchmark import (`benchmark-import`); (2) Procedures from verified code solutions; (3) `find_ways` offers judged ways from more specific Goals and lists ways on ambiguous candidates; (4) `recommend_models` constraint `allow_retries` | **No migration, no new variable.** Redeploy the API and MCP (step 12). Benchmark import is optional (step 19c) |
 
 Details of each item are in the steps below. The newest migrations are **122** on the control DB and shards, and **123** on project B.
@@ -504,7 +505,17 @@ Then check by hand:
 5. Call `find_ways` with a broad task that matches several Goals, so the answer is `ambiguous`. The top candidates carry a `ways` list, which may be empty when nothing is judged applicable.
 6. If step 19b is done, call `recommend_models` for a Goal with `constraints: {"allow_retries": false}`. The returned ladder has no model twice.
 
-**Check:** all three commands exit 0, and the manual checks behave as described.
+7. Check the semantic judge (identity resolution, goal placement, retrieval):
+
+   ```bash
+   cd backend && DATABASE_URL="$CONTROL_DATABASE_URL" python -m app.ingestion.admin judge-health
+   ```
+
+   - Every provider (jev, gemini, gemma) must show `identity: ok` and `identity_batch: ok`.
+   - Under `general_compute_keys`, every position must be `ok`. **Remove any key that shows HTTP 401 from `GENERAL_COMPUTE_API_KEYS`.** A local check on 2026-09-27 found 6 of 7 configured keys invalid.
+   - If the Gemma model shows HTTP 404, set `GENERAL_COMPUTE_FALLBACK_MODEL` (or `GENERAL_COMPUTE_JUDGE_MODEL`) to the exact model id your endpoint serves, for example `gemma-4-31B-it`.
+
+**Check:** all three commands exit 0, `judge-health` exits 0, and the manual checks behave as described.
 
 ### 21. First real ingestion: small first
 

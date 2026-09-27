@@ -127,6 +127,20 @@ class Settings(BaseSettings):
     # same OpenAI-compatible client/base URL is used for both models.
     general_compute_fallback_model: str = ""
 
+    # --- Knowledge-side improvements (docs/knowledge_side_improvements.md) ---
+    # All default OFF: they need migration 124 on every database first (control + every shard), and
+    # are validated by the DS-1000 round-3 experiment before being enabled in production.
+    # 1+2: store the verified solution a Procedure was extracted from (procedures.verified_example)
+    #      and return it with the Procedure from find_ways.
+    knowledge_verified_examples: bool = False
+    # 3+4: find_ways returns `related_examples` -- the nearest verified solved examples, on every
+    #      outcome, dropped only when the judge calls their Goal clearly unrelated.
+    knowledge_related_examples: bool = False
+    knowledge_related_examples_limit: int = 3
+    knowledge_related_examples_drop_confidence: float = 0.8
+    # 5: on an ambiguous answer, list a way only if its own source Goal is judged at least partial.
+    knowledge_strict_candidate_ways: bool = False
+
     # --- Vertex AI (OAuth2/ADC, no API key) ---
     # The Cloud Run job's own attached service account already has
     # roles/editor (includes aiplatform.endpoints.predict) on this

@@ -110,3 +110,9 @@ pokemon-agent/roms/
 experiments/bigcodebench/data/
 experiments/bigcodebench/runs/
 experiments/bigcodebench/__pycache__/
+
+# DS-1000 pilot: dataset, pinned eval env, run outputs (regenerable)
+experiments/ds1000/data/
+experiments/ds1000/runs*/
+experiments/ds1000/.evalenv/
+experiments/ds1000/__pycache__/

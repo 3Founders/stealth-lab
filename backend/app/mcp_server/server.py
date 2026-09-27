@@ -3995,11 +3995,24 @@ async def _attach_candidate_ways(pool, candidates: list, query: str, facts: list
         ordered = ([result.selected] if result.selected is not None else []) + [
             item for item in result.ranked if item is not result.selected]
         ways = []
-        for item in ordered[:CANDIDATE_WAYS_PER_CANDIDATE]:
+        for item in ordered:
+            if len(ways) >= CANDIDATE_WAYS_PER_CANDIDATE:
+                break
             row = item["_row"]
             source = str(row.get("achieves_goal_id") or goal_id)
             source_row = await fetch_goal(pool, source) if source != str(goal_id) else None
+            if settings.knowledge_strict_candidate_ways and source_row is not None:
+                # docs/knowledge_side_improvements.md change 5: a way observed on a more specific
+                # Goal is listed only if THAT Goal is judged at least partial for this request.
+                goal_text = f"{source_row.get('canonical_name')}: {source_row.get('description') or ''}"[:2000]
+                verdict = await judge.judge_identity("task_goal", qctx.text, goal_text)
+                if not verdict.ok or (verdict.value or {}).get("relation") not in ("matches", "partial"):
+                    continue
+            from app.services.verified_examples import public_example
+
             ways.append({
+                **({"verified_example": public_example(row.get("verified_example"))}
+                   if public_example(row.get("verified_example")) else {}),
                 "procedure_id": str(row["procedure_id"]), "name": row.get("name"),
                 "verification_state": row.get("verification_state"),
                 "steps": sorted(row.get("steps") or [], key=lambda st: st.get("order", 0) if isinstance(st, dict) else 0),
@@ -4052,15 +4065,36 @@ async def _find_ways_impl(
     # query AND the repo facts -> bounded hierarchy expansion (judged too).
     # The older lexical re-ranker only runs when no semantic judge answered,
     # and the response says so.
+    # docs/knowledge_side_improvements.md change 3: judged Goal candidates feed `related_examples`
+    related_hits: Optional[list] = [] if settings.knowledge_related_examples else None
     goal_choice = await _find_ways_goal_choice(
         pool, query, facts, scope=scope, embedder=embedder, top_k=top_k,
+        **({"collect": related_hits} if related_hits is not None else {}),
     )
+
+    async def _with_related(body: dict, exclude: tuple = ()) -> str:
+        if related_hits is not None:
+            from app.services import retrieval_service as _rs_rel
+
+            try:
+                body["related_examples"] = await _rs_rel.related_examples(
+                    pool, related_hits, scope=scope, limit=settings.knowledge_related_examples_limit,
+                    drop_confidence=settings.knowledge_related_examples_drop_confidence,
+                    exclude_procedure_ids=exclude)
+            except Exception:  # noqa: BLE001 -- examples are an addition; the answer still stands
+                import logging
+
+                logging.getLogger(__name__).warning("related examples unavailable", exc_info=True)
+                body["related_examples"] = []
+        return json.dumps(body, default=str)
+
     if goal_choice is not None:
         outcome, selected_goal, payload = goal_choice
         if outcome != "resolved":
             if outcome == "ambiguous" and payload.get("candidates"):
                 await _attach_candidate_ways(pool, payload["candidates"], query, facts, scope=scope)
-            return json.dumps({"outcome": outcome, "repo_facts": repo_report, **payload}, default=str)
+            listed = tuple(w["procedure_id"] for c in payload.get("candidates") or [] for w in c.get("ways") or [])
+            return await _with_related({"outcome": outcome, "repo_facts": repo_report, **payload}, listed)
         goal_judgment = payload["goal_judgment"]
     else:
         intent = await _resolve_intent(
@@ -4076,7 +4110,7 @@ async def _find_ways_impl(
                 intent.outcome, intent.selected_goal = "resolved", winner.goal
 
         if intent.outcome != "resolved":
-            return json.dumps({
+            return await _with_related({
                 "outcome": intent.outcome,
                 "repo_facts": repo_report,
                 "goal_judgment": goal_judgment,
@@ -4089,7 +4123,7 @@ async def _find_ways_impl(
                 ],
                 "proposed_goal": intent.proposed_goal,
                 "rationale": intent.rationale,
-            }, default=str)
+            })
         selected_goal = intent.selected_goal
 
     goal_id = selected_goal["id"]
@@ -4122,9 +4156,10 @@ async def _find_ways_impl(
     if selector is not None:
         repo_report["procedure_check"] = selector.report()
 
-    return json.dumps({
+    knowledge = goal_tree_to_knowledge(tree)
+    return await _with_related({
         "outcome": "resolved",
-        **goal_tree_to_knowledge(tree),
+        **knowledge,
         "goal_judgment": goal_judgment,
         "repo_facts": repo_report,
         "next": (
@@ -4132,7 +4167,7 @@ async def _find_ways_impl(
             "(prompt: plan_and_run). Read stealth://procedures/{procedure_id}/claims "
             "for past discoveries. Report fixes/better ways with report_discovery."
         ),
-    }, default=str)
+    }, tuple(p["procedure_id"] for p in knowledge.get("procedures") or [] if p.get("procedure_id")))
 
 
 from app.services.goal_choice import (  # noqa: E402 -- shared with the REST API
@@ -4143,9 +4178,10 @@ from app.services.goal_choice import (  # noqa: E402 -- shared with the REST API
 
 
 async def _find_ways_goal_choice(
-    pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int,
+    pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int, collect: Optional[list] = None,
 ) -> Optional[tuple[str, Optional[dict], dict]]:
-    return await _find_ways_goal_choice_impl(pool, query, facts, scope=scope, embedder=embedder, top_k=top_k)
+    return await _find_ways_goal_choice_impl(pool, query, facts, scope=scope, embedder=embedder, top_k=top_k,
+                                             **({"collect": collect} if collect is not None else {}))
 
 
 DISCOVERY_KINDS = frozenset({"fix", "missing_step", "precondition", "better_way", "correction", "filled_gap"})

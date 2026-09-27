@@ -43,12 +43,13 @@ def summarize(tasks: Sequence[BenchmarkTask]) -> dict[str, Any]:
     }
 
 
-async def _goal(pool: Any, name: str, description: Optional[str], metadata: dict, embedder: Any) -> str:
+async def _goal(pool: Any, name: str, description: Optional[str], metadata: dict, embedder: Any,
+                judge_mode: str = "none") -> str:
     from app.services.goals import find_or_create_goal
 
     created = await find_or_create_goal(
         pool, canonical_name=name, description=description, scope_type="global", provenance=GOAL_PROVENANCE,
-        status="active", metadata=metadata, judge_mode="none", embedder=embedder)
+        status="active", metadata=metadata, judge_mode=judge_mode, embedder=embedder)
     return str(created["id"])
 
 
@@ -99,7 +100,13 @@ async def _frozen_benchmark(pool: Any, goal_id: str, task: BenchmarkTask) -> tup
 
 
 async def import_tasks(pool: Any, tasks: Sequence[BenchmarkTask], *, embedder: Any = None,
-                       limit: Optional[int] = None, dry_run: bool = False) -> dict[str, Any]:
+                       limit: Optional[int] = None, dry_run: bool = False, judge_mode: str = "none",
+                       domain_edges: bool = True) -> dict[str, Any]:
+    """`judge_mode="model"` runs the production identity path for each task Goal (semantic
+    same/narrower/broader/related judgment, and the goal-abstraction placement job it
+    enqueues); "none" (default) is exact-name identity only. `domain_edges=False` skips the
+    library-derived domain Goals and their accepted edges, leaving the hierarchy entirely to
+    production placement."""
     from app.services import search_projection as sp
 
     usable = [t for t in tasks if t.excluded_reason is None]
@@ -109,7 +116,7 @@ async def import_tasks(pool: Any, tasks: Sequence[BenchmarkTask], *, embedder: A
     if dry_run or not usable:
         return report
 
-    domains = list(dict.fromkeys(d for t in usable for d in t.domains))
+    domains = list(dict.fromkeys(d for t in usable for d in t.domains)) if domain_edges else []
     from app.benchmarks.bigcodebench import domain_description
 
     domain_ids = {d: await _goal(pool, d, domain_description(d), {"benchmark_domain": True}, embedder)
@@ -119,14 +126,14 @@ async def import_tasks(pool: Any, tasks: Sequence[BenchmarkTask], *, embedder: A
         goal_ids[task.external_id] = await _goal(
             pool, task.goal_name, task.goal_description,
             {"benchmark_source": task.source, "benchmark_version": task.source_version,
-             "external_id": task.external_id, "libs": task.libs}, embedder)
+             "external_id": task.external_id, "libs": task.libs}, embedder, judge_mode)
     await sp.drain_outbox(pool)          # edges and routing read the Goal projection
 
     counts = Counter()
     manifest = []
     for task in usable:
         gid = goal_ids[task.external_id]
-        for domain in task.domains:
+        for domain in (task.domains if domain_edges else []):
             if await _accepted_edge(pool, gid, domain_ids[domain], task.source):
                 counts["edges_created"] += 1
         bench_id, created = await _frozen_benchmark(pool, gid, task)

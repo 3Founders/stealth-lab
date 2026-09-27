@@ -72,6 +72,7 @@ def _parse(argv=None) -> argparse.Namespace:
     _routing_cli.add_parsers(sub)
     from app.benchmarks import admin_cli as _bench_cli   # benchmark ingestion: benchmark-import
     _bench_cli.add_parsers(sub)
+    sub.add_parser("judge-health")   # probe every semantic judge path (single + batch) and each General Compute key
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
     sub.add_parser("verify-refs")
@@ -111,6 +112,9 @@ async def _amain(a: argparse.Namespace) -> int:
         if a.cmd.startswith("benchmark-"):
             from app.benchmarks import admin_cli as _bench_cli
             return await _bench_cli.run(pool, a)
+        if a.cmd == "judge-health":
+            from app.services.semantic import health as _judge_health
+            return await _judge_health.run(pool, a)
         if a.cmd == "status":
             print(json.dumps({"jobs": await q.stats(pool), "projection_lag": await sp.projection_lag(pool)}, default=str, indent=2))
         elif a.cmd == "failures":

@@ -280,6 +280,7 @@ async def resolve_goal_via_procedure(
         procedure={
             "id": str(procedure["id"]), "procedure_id": str(procedure["procedure_id"]),
             "name": procedure.get("name"), "version": procedure.get("version"),
+            **({"verified_example": procedure["verified_example"]} if procedure.get("verified_example") else {}),
         },
         verification_requirement=goal.get("verification_requirement") or {},
         children=children,
@@ -408,6 +409,7 @@ async def resolve_goal(
                 "steps": sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0) if isinstance(s, dict) else 0),
                 **({"repo_fit": proc["_repo_fit"]} if proc.get("_repo_fit") else {}),
                 **({"observed_on_more_specific_goal": observed_on} if observed_on else {}),
+                **({"verified_example": proc["verified_example"]} if proc.get("verified_example") else {}),
             },
             verification_requirement=goal.get("verification_requirement") or {},
             children=children, procedure_alternates=feasible[1:],

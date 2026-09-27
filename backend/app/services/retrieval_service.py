@@ -911,8 +911,11 @@ def pareto_front(items: list[dict], keys: Sequence[str]) -> list[dict]:
 
 
 def _hydrate_cols() -> str:
+    from app.config import settings
     from app.services.applicability import PROCEDURE_COLS_NO_HEAVY
-    return PROCEDURE_COLS_NO_HEAVY + ", achieves_goal_id, source_locator, source_artifacts"
+    cols = PROCEDURE_COLS_NO_HEAVY + ", achieves_goal_id, source_locator, source_artifacts"
+    # migration 124's column is read only when the feature is on, so a database without it still works
+    return cols + (", verified_example" if settings.knowledge_verified_examples else "")
 
 
 async def _fetch_procedures(pool: Any, ids: list[str]):
@@ -1328,3 +1331,80 @@ async def search_goal_candidates_page(
 def replace_cfg(cfg: RetrievalConfig, **kw) -> RetrievalConfig:
     from dataclasses import replace
     return replace(cfg, **kw)
+
+
+# ------------------------------------------------------------ related examples
+
+RELATED_EXAMPLE_LABEL = ("similar solved problem -- NOT verified to apply to this request; "
+                         "use it as a worked example and adapt it")
+_RELATION_ORDER = {"matches": 0, "partial": 1, "unrelated": 2}
+
+
+def related_example_goals(hits: Sequence[Hit], *, drop_confidence: float, limit: int = 8) -> list[Hit]:
+    """Pure (docs/knowledge_side_improvements.md changes 3-4): the Goal candidates that may
+    contribute related examples. Only JUDGED candidates are eligible -- an unjudged Goal was never
+    checked against this request. A candidate is dropped only on a FIRM 'unrelated'
+    (confidence >= `drop_confidence`); a close variant (e.g. row-wise vs column-wise percentages)
+    is routinely 'unrelated' at ~0.5 and stays. Order: matches, partial, then low-confidence
+    unrelated; within each, retrieval order (fused rank)."""
+    best: dict[str, Hit] = {}
+    for h in hits:
+        if not h.judged or h.relation not in _RELATION_ORDER:
+            continue
+        if h.relation == "unrelated" and (h.confidence or 0.0) >= drop_confidence:
+            continue
+        seen = best.get(h.id)
+        if seen is None or _RELATION_ORDER[h.relation] < _RELATION_ORDER[seen.relation]:
+            best[h.id] = h
+    ordered = sorted(best.values(), key=lambda h: (_RELATION_ORDER[h.relation], -h.rrf, h.id))
+    return ordered[:limit]
+
+
+async def related_examples(
+    pool: Any, hits: Sequence[Hit], *, scope: AccessScope, limit: int = 3, drop_confidence: float = 0.8,
+    exclude_procedure_ids: Sequence[str] = (),
+) -> list[dict]:
+    """Up to `limit` verified solved examples from the Goals `related_example_goals` keeps, one per
+    Goal, in that order. Every example passes the same hard constraints (access scope, staleness,
+    exclusions) as a Procedure; it is labelled as NOT verified to apply. No extra judge calls: the
+    Goal verdicts were already made by the Goal tier."""
+    from app.services.applicability import _CANDIDATE_BASE_WHERE, check_hard_constraints
+    from app.services.routed_reads import fetch_goal_procedures
+    from app.services.verified_examples import public_example
+
+    goals = related_example_goals(hits, drop_confidence=drop_confidence)
+    if not goals or limit <= 0:
+        return []
+    cols = _hydrate_cols()
+    if "verified_example" not in cols:
+        cols += ", verified_example"
+    rows = await fetch_goal_procedures(pool, [g.id for g in goals], columns=cols,
+                                       where=_CANDIDATE_BASE_WHERE + " AND verified_example IS NOT NULL")
+    excluded = {str(x) for x in exclude_procedure_ids}
+    by_goal: dict[str, list[dict]] = {}
+    for row in rows:
+        if str(row["procedure_id"]) not in excluded:
+            by_goal.setdefault(str(row.get("achieves_goal_id")), []).append(row)
+    out: list[dict] = []
+    state_cache: dict = {}
+    for goal in goals:
+        candidates = sorted(by_goal.get(goal.id, []), key=lambda r: (
+            r.get("verification_state") != "verified",
+            -(r["t_created"].timestamp() if r.get("t_created") is not None else 0.0)))
+        for row in candidates:
+            example = public_example(row.get("verified_example"))
+            if example is None:
+                continue
+            res = await check_hard_constraints(pool, row, current_scope={}, access_scope=scope,
+                                               require_verified=False, state_cache=state_cache)
+            if not res.applicable:
+                continue
+            out.append({
+                "goal_id": goal.id, "goal_name": goal.name, "procedure_id": str(row["procedure_id"]),
+                "relevance": {"relation": goal.relation, "confidence": goal.confidence},
+                "label": RELATED_EXAMPLE_LABEL, **example,
+            })
+            break
+        if len(out) >= limit:
+            break
+    return out
