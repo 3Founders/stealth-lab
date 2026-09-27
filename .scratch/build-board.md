@@ -2847,6 +2847,7 @@ no spend without explicit confirmation first):
 
 ## Log
 
+- 2026-09-24 INTEGRATOR: claimed whole-repo ingestion speed work. Owned paths: backend/app/services/repo_ingestion.py, repo-ingestion tests, and repo-local screening helpers; no schema, frozen-doc, or non-repo ingestion behavior change without approval. Research: .scratch/repo_ingestion_speed_research.md.
 - Board rewritten for worktree multi-lane mode (4 lanes + integrator).
 - 2026-08-25 research lane: queue items 2 (competitive sweep â†’ `.scratch/research/competitive-sweep-mem0-letta-zep-hipporag-awm.md`) and 3 (Ï„-Knowledge re-check â†’ `.scratch/research/tau-knowledge-ceiling-recheck.md`) also done same session.
 - **Blocking question #1 (non-blocking for current work):** `EXA_API_KEY` is not present in any worktree â€” `backend/.env` is gitignored so it never propagated from the original checkout. Options: (a) founder pastes key into each worktree's `backend/.env` (proposed default), (b) lane falls back to built-in websearch permanently (worked fine today), (c) commit a template only.
