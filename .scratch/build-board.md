@@ -4771,3 +4771,23 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   `packages.jsonl` for skill packages.
 - Not a redesign: the adapters and the storage layer are already solid (21/21 tests,
   reuses every existing table). This is wiring + one new extraction step, bounded scope.
+
+### 2026-09-28 — SHIP (claude, session 640be25f): executor layer — board questions
+
+- **Q-EXEC-1 (non-blocking) — race losers reported as failures.** `stealthlab-exec` cancels a race's losing
+  executor and reports it via `report_model_run(accepted=false)`, because `report_model_run` has no
+  "cancelled / not observed" outcome. That can bias the per-Goal recommender against the slower-but-correct
+  executor. Options: (a) add an `outcome: "cancelled"` field the recommender ignores (CORE lane, backend change);
+  (b) don't report cancelled losers at all. **Proposed default: (b) until (a) lands** — the runtime currently
+  does (a)-less reporting; flip it in `lib/exec/runtime.mjs` if (b) is accepted.
+- **Q-EXEC-2 (non-blocking) — backend redaction misses keys.** `backend/app/services/trace_redaction.py`
+  `KNOWN_TOKEN_PATTERNS` does not redact `sk-test-…`/generic `sk-` keys, `NAME_KEY/TOKEN/SECRET=value` pairs, or a
+  private-key block whose END line is cut off (checked by running the module). `lib/exec/redact.mjs` applies the
+  exact port plus a superset. **Proposed default:** CORE lane adds the same superset to the backend (trace path).
+- **Q-EXEC-3 (non-blocking) — register the local executor server for non-Claude clients.** `install --with-exec`
+  carries `stealthlab-exec` only inline in the Claude delegator agent (so the main thread never loads it).
+  Registering it for Cursor/Codex/Cline needs `clients.mjs` `upsertJsonServer`/`removeJsonServer`/Codex writers
+  to take a server name instead of the fixed `SERVER_NAME`. **Proposed default:** do it in a follow-up SHIP change.
+- **Q-EXEC-4 (non-blocking) — test glob on Windows + Node < 21.** `npm test` is now `node --test test/*.test.mjs`
+  (fixture scripts under `test/fixtures/` were being counted as tests). POSIX shells expand the glob; Node >= 21
+  expands it itself; Windows cmd + Node 18/20 would not. CI runs Node 18 and 22 — confirm CI is POSIX.

@@ -1,0 +1,2 @@
+{"type": "action", "action": "write", "path": "app.py"}
+{"type": "observation", "content": "File created successfully"}

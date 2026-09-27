@@ -1,0 +1,5 @@
+{"type":"agent_event","event":{"type":"iteration_start","iteration":1}}
+{"type":"agent_event","event":{"type":"content_start","contentType":"text","text":"Fixing"}}
+{"type":"agent_event","event":{"type":"content_end","contentType":"text","text":"Fixing add()."}}
+{"type":"agent_event","event":{"type":"usage","inputTokens":300,"outputTokens":40,"totalInputTokens":900,"totalOutputTokens":120,"totalCost":0.002}}
+{"type":"agent_event","event":{"type":"done","reason":"completed","text":"Done: add() fixed, tests pass.","iterations":2,"usage":{"inputTokens":900,"outputTokens":120}}}

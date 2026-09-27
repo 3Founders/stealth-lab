@@ -1,0 +1,4 @@
+opencode 1.18.32
+codex codex-cli 0.153.4
+claude 2.1.283 (Claude Code)
+cline 3.0.61

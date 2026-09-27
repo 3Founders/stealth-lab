@@ -7,7 +7,8 @@ see `final_architecture.md`).
 Nothing from StealthLab runs on your machine: no Postgres, no Python, no
 backend. The installer adds one `stealthlab` entry to each agent's MCP config,
 pointing at the hosted endpoint, and then exits. The only files your agent
-writes locally are its own `.stealth/*.md` plan files.
+writes locally are its own `.stealth/*.md` plan files. (The one exception is
+opt-in: the local executor layer, `install --with-exec`, described below.)
 
 ## Install
 
@@ -63,6 +64,81 @@ copy is written first, and a file that doesn't parse is left untouched.
   `~/.stealthlab/config.json` (mode 0600). For the HTTP clients it is also
   written into that client's config as an `Authorization` header, because
   that's the only place they read one from.
+
+## Opt-in: the local executor layer (`--with-exec`)
+
+Everything above leaves nothing running on your machine. The executor layer is
+the one exception, and it is **off unless you ask for it**:
+
+```bash
+npx -y stealthlab-mcp install --with-exec      # plus the usual --client / --url options
+```
+
+It adds a local MCP server, `stealthlab-mcp exec` (stdio), that hands one
+well-specified step to a coding agent **you already have installed**
+(OpenCode, Codex CLI, Gemini CLI, Claude Code, ...), runs it headlessly in a
+throwaway git worktree, re-runs the step's own checks there, and returns a
+compact result: `verified`, a summary, the diff stat. What the agent says about
+its own success never sets `verified`. Nothing reaches your checkout until you
+call `apply_run`, which refuses unverified runs and files that changed since the
+run started. Each outcome is recorded with `report_model_run` so the recommender
+learns which agent and model to pick next time (queued in
+`~/.stealthlab/outbox/` when you are offline or not logged in).
+
+For Claude Code, `--with-exec` also writes (and `uninstall` removes):
+
+| File | What it is |
+|---|---|
+| `~/.claude/agents/stealth-executor.md` | a subagent that does ONE `.stealth/run.md` node in its own worktree (`isolation: worktree`, tools `Read, Edit, Write, Bash, Grep, Glob`, `maxTurns: 40`) and ends its reply with a `STEALTH_RESULT` line |
+| `~/.claude/agents/stealth-delegator.md` | a subagent that carries the executor MCP server **inline** (`mcpServers`), so your main conversation never loads those tools; it calls `achieve`, polls `run_result`, and returns `summary` + `verified` + `diff.stat`. `apply_run` is outside its tool list: it can never apply a change |
+| `~/.claude/settings.json` → `hooks.SubagentStart`, `hooks.SubagentStop` | `stealthlab-mcp hook subagent-start` / `subagent-stop`: when any subagent that handled a plan node stops, the node's `check=` is re-run and the outcome is reported as `scaffold="claude-code-subagent"` |
+
+The two agent files are user-level on purpose: Claude Code ignores
+`mcpServers` and `hooks` in plugin agents. `$CLAUDE_CONFIG_DIR` replaces
+`~/.claude` when it is set.
+
+The hooks never slow you down: `subagent-stop` hands the check to a detached
+background process and exits 0 at once (the background check has a hard 60 s
+limit). Failures go to `~/.stealthlab/hooks.log`, never to your session. A
+subagent that did not handle a plan node is ignored.
+
+Without Claude Code, point any MCP client at the executor as a stdio command:
+`stealthlab-mcp exec`.
+
+### Your agents, your logins -- never shared
+
+The executor only drives agents that **you** installed on **this** machine, with
+**your own** logins and API keys, exactly as if you ran them in a terminal. It
+never proxies, shares, pools or relays an agent session, login or key across
+users or machines, never sends one to the hosted server, and never reads an
+agent's credential files. Using it this way keeps you inside each agent's terms
+of service; using it any other way is not supported.
+
+### Security notes
+
+- **Opt-in, reversible.** Plain `install` behaves exactly as before. `uninstall`
+  removes the two agent files (only if they carry the `stealthlab-mcp:managed`
+  marker -- an agent file of the same name that you wrote is never touched) and
+  exactly our two hook entries; every other key and hook in `settings.json`,
+  including your own `SubagentStart`/`SubagentStop`/`UserPromptSubmit` hooks,
+  is left as it was. A `.bak` copy is written before each change, and a
+  `settings.json` that doesn't parse is left untouched (install stops before
+  writing anything).
+- **Checks run verbatim.** A node's `check=` (or `achieve`'s `checks`) is a
+  shell command and runs as written, in the run's worktree -- the same trust you
+  give the plan that wrote it. The subagent hook runs it in the subagent's
+  worktree only when that directory is a checkout of the same repository
+  (`git rev-parse --git-common-dir`), otherwise in the session's directory.
+  `STEALTHLAB_*` variables (your token) are removed from the check's
+  environment.
+- **Auto-approve only in a worktree.** Agents run with their auto-approval flags
+  only inside the run's worktree, never in your checkout.
+- **What leaves the machine.** Only `report_model_run` / `recommend_models`
+  fields (model, scaffold, accepted, ids, step order, timings), redacted, to the
+  same endpoint as everything else (no hardcoded host; plain `http://` only for
+  loopback). Never task text, transcripts, diffs, check output or keys. The
+  hooks keep only the node id and the session/agent ids on disk
+  (`~/.stealthlab/hooks/`, mode 0600) -- never the prompt or the reply.
 
 ## Releasing
 

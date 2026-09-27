@@ -6,11 +6,19 @@
 // at the hosted endpoint and exits. The only thing that ever runs locally is
 // the tiny stdio relay (`stealthlab-mcp` with no args), and only for Claude
 // Desktop, whose config file cannot hold a remote URL.
+//
+// Opt-in exception: `install --with-exec` adds the local executor layer
+// (`stealthlab-mcp exec`, an MCP stdio server that runs the user's OWN locally
+// installed coding agents in git worktrees and verifies their work) plus two
+// Claude Code agent files and SubagentStart/SubagentStop hooks. Without
+// --with-exec nothing of it is installed or run.
 import { parseArgs } from "node:util";
 import { clients, launchSpec, SERVER_NAME } from "../lib/clients.mjs";
 import { configPath, readConfig, readPackage, resolveSettings, writeConfig } from "../lib/config.mjs";
 import { runStdioRelay } from "../lib/proxy.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
+import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs";
+import { runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
 
 const pkg = readPackage();
 const UA = `stealthlab-mcp/${pkg.version} node/${process.versions.node}`;
@@ -24,9 +32,17 @@ Usage:
   stealthlab-mcp doctor                      check the hosted server is reachable
   stealthlab-mcp login --token <token>       save a token (only report_discovery needs one)
   stealthlab-mcp logout                      forget the saved token
+  stealthlab-mcp config                      print the saved config (token masked)
   stealthlab-mcp hook-prompt                 Claude Code UserPromptSubmit hook (installed by "install"):
                                              looks each task up with find_ways and adds what Kel knows
-  stealthlab-mcp [--url <url>]               run the stdio relay (what Claude Desktop launches)
+  stealthlab-mcp exec                        run the local executor MCP server (stdio; installed only by
+                                             "install --with-exec"): drives YOUR locally installed agents
+                                             in git worktrees and verifies their work with your checks
+  stealthlab-mcp hook subagent-start         Claude Code SubagentStart / SubagentStop hooks (installed by
+  stealthlab-mcp hook subagent-stop          "install --with-exec"): re-run a plan node's check= after a
+                                             subagent and record the outcome with report_model_run
+  stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
+  stealthlab-mcp help | --help | --version
 
 Install options:
   --client <id>   only these clients (repeatable, or "all"): ${clients().map((c) => c.id).join(", ")}
@@ -35,6 +51,9 @@ Install options:
   --token <tok>   bearer token to send (optional; reads are anonymous)
   --dry-run       show what would change, change nothing
   --no-hooks      Claude Code: register the MCP server only, without the knowledge hook
+  --with-exec     Claude Code, opt-in: also install the local executor layer (agents
+                  stealth-executor + stealth-delegator in ~/.claude/agents, and the
+                  SubagentStart/SubagentStop hooks). Only your own local agents and logins.
 
 Config: ${configPath()}
 `;
@@ -90,6 +109,22 @@ async function cmdInstall(v) {
       out(`  FAIL  ${c.label.padEnd(15)} ${err.message}`);
     }
   }
+  if (v["with-exec"]) {
+    if (!chosen.some((c) => c.id === "claude-code")) {
+      out("\n--with-exec: Claude Code not selected, so no agents or hooks were written.");
+      out("  Other MCP clients can run the executor server as a stdio command: stealthlab-mcp exec");
+    } else if (v["dry-run"]) {
+      for (const f of describeExec()) out(`  would write  ${f}`);
+    } else {
+      try {
+        const r = installExec({ launch: launchSpec() });
+        out(`  ok    ${"Executor layer".padEnd(15)} ${[...r.agents, r.settings].join(", ")}`);
+      } catch (err) {
+        failed++;
+        out(`  FAIL  ${"Executor layer".padEnd(15)} ${err.message}`);
+      }
+    }
+  }
   out("\nRestart your agent (or reload its MCP servers) to pick up StealthLab.");
   if (failed) process.exitCode = 1;
 }
@@ -102,6 +137,13 @@ async function cmdUninstall(v) {
       if (removed) out(`  removed  ${c.label}`);
     } catch (err) {
       out(`  skip     ${c.label}: ${err.message}`);
+    }
+  }
+  if (chosen.some((c) => c.id === "claude-code")) {
+    try {
+      if (uninstallExec().changed) out("  removed  Executor layer (agents + SubagentStart/SubagentStop hooks)");
+    } catch (err) {
+      out(`  skip     Executor layer: ${err.message}`);
     }
   }
 }
@@ -141,6 +183,8 @@ async function cmdDoctor(v) {
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  // `hook <event>` takes one positional; everything else is flags only.
+  const sub = cmd === "hook" && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
   let v;
   try {
     ({ values: v } = parseArgs({
@@ -151,6 +195,7 @@ async function main() {
         token: { type: "string" },
         "dry-run": { type: "boolean" },
         "no-hooks": { type: "boolean" },
+        "with-exec": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -185,6 +230,30 @@ async function main() {
         stdinText: Buffer.concat(chunks).toString("utf8"), settings: resolveSettings(v), userAgent: UA,
         write: (s) => process.stdout.write(s + "\n"), log: out,
       });
+    }
+    case "exec": {
+      // Imported lazily: the executor runtime is opt-in and never loaded by the other commands.
+      let mod;
+      try {
+        mod = await import("../lib/exec/server.mjs");
+      } catch (err) {
+        if (err.code === "ERR_MODULE_NOT_FOUND") die("the executor runtime (lib/exec/server.mjs) is not in this build");
+        throw err;
+      }
+      return mod.runExecServer({});
+    }
+    case "hook": {
+      // Always exit 0: a non-zero exit shows as an error in Claude Code, and 2 would block the subagent.
+      try {
+        if (sub === "subagent-stop" && process.env.STEALTHLAB_HOOK_WORKER_FILE) {
+          await runStopWorker(process.env.STEALTHLAB_HOOK_WORKER_FILE);
+        } else {
+          const chunks = [];
+          for await (const c of process.stdin) chunks.push(c);
+          await runSubagentHook(sub, { stdinText: Buffer.concat(chunks).toString("utf8") });
+        }
+      } catch { /* logged inside; never fail the hook */ }
+      process.exit(0);
     }
     case "config":
       return out(JSON.stringify({ ...readConfig(), token: readConfig().token ? "<set>" : undefined }, null, 2));

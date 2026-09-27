@@ -17,8 +17,8 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "test": "node --test",
-    "prepublishOnly": "node scripts/check-publish.mjs && node --test"
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "node scripts/check-publish.mjs && node --test test/*.test.mjs"
   },
   "stealthlab": {
     "defaultMcpUrl": ""
