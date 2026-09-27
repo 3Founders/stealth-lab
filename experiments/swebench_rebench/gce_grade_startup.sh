@@ -80,11 +80,9 @@ if [ "$(md kel-prepull || echo 0)" = "1" ]; then     # timed pre-pull: separates
 import json, sys
 ids = {l.strip() for l in open("/work/" + sys.argv[1]) if l.strip()}
 rows = json.load(open("/work/grading_dataset.json"))
-print("
-".join(r["image"] for r in rows if r["instance_id"] in ids))
+print("\n".join(r["image"] for r in rows if r["instance_id"] in ids))
 PY
-    pull1() { local s; s=$(date +%s.%N); if docker pull -q "$1" >/dev/null 2>/work/bench/pullerr_$$.txt; then st=ok; else st="fail:$(tr '
-' ' ' < /work/bench/pullerr_$$.txt | cut -c1-120)"; fi
+    pull1() { local s; s=$(date +%s.%N); if docker pull -q "$1" >/dev/null 2>/work/bench/pullerr_$$.txt; then st=ok; else st="fail:$(tr '\n' ' ' < /work/bench/pullerr_$$.txt | cut -c1-120)"; fi
               echo -e "$1	$(awk -v a="$s" -v b="$(date +%s.%N)" 'BEGIN{printf "%.1f", b-a}')	$(docker image inspect -f '{{.Size}}' "$1" 2>/dev/null)	$st"; }
     export -f pull1
     xargs -a /work/bench/images.txt -P "$(md kel-pull-par || echo 4)" -I{} bash -c 'pull1 {}' >> /work/bench/pulls.tsv
