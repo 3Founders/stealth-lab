@@ -7,3 +7,4 @@
 # Same reasoning for the migrate script and the test fakes that re-hash
 # migration text.
 backend/scripts/migrate.py text eol=lf
+*.sh text eol=lf

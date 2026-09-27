@@ -15,13 +15,14 @@ RUN_ID=$(md kel-run-id); WORKERS=$(md kel-workers); MAXH=$(md kel-max-hours)
 shutdown -h +$(( ${MAXH:-3} * 60 ))            # cost guard: power off no matter what
 
 OUT="$BUCKET/$PREFIX/results/$RUN_ID"
+: > /var/log/kel-grade.log                        # one log per boot
 exec > >(tee -a /var/log/kel-grade.log) 2>&1
 
 if ! command -v docker >/dev/null; then apt-get update && apt-get install -y docker.io python3-venv git; fi
 if ! command -v gcloud >/dev/null; then snap install google-cloud-cli --classic || true; fi
 python3 -m venv /opt/swb && /opt/swb/bin/pip install -q "swebench==5.0.2" datasets
 
-mkdir -p /work && cd /work
+rm -rf /work && mkdir -p /work && cd /work        # fresh each boot: resume state comes only from GCS
 gcloud storage cp "$BUCKET/$PREFIX/inputs/*" /work/
 # Resume: bring back any reports a previous run of this run id already uploaded
 gcloud storage rsync -r "$OUT/logs" /work/logs 2>/dev/null || true
