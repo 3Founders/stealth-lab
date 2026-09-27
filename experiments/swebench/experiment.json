@@ -1,0 +1,19 @@
+{
+  "_doc": "Frozen settings for the SWE-bench knowledge-transfer experiment. Protocol: docs/knowledge_side_improvements.md, section 'Next experiment: SWE-bench'. Every script reads this file; `check_env.py` refuses to run when the installed environment differs from `pinned` (after the first run records it). Change NOTHING here after calibration is frozen -- log any change as a deviation.",
+  "dataset": {"name": "princeton-nlp/SWE-bench_Verified", "split": "test", "revision": null},
+  "repos_scored_min_instances": 15,
+  "split": {"rule": "per repo, chronological by created_at; earliest train_fraction -> train pool, rest -> held-out test",
+            "train_fraction": 0.6, "seed": "kel-swebench-v1"},
+  "calibration": {"from": "repos below repos_scored_min_instances", "max_instances": 12},
+  "agent": {"module": "app.execution.coding_agent.Agent", "max_steps": null, "temperature": 0.0,
+            "max_steps_candidates": [40, 60]},
+  "model": {"id": "gpt-oss-120b", "base_url_env": "EXPERIMENT_BASE_URL", "api_key_env": "EXPERIMENT_API_KEY",
+            "openrouter_provider_order": null, "price_per_mtok": {"input": null, "output": null}},
+  "query_writer": {"model": "same as model.id", "max_tokens": 120},
+  "memory": {"max_chars": 3200, "procedure_arm_code_max_chars": 2400},
+  "arms": ["A0", "K", "E", "C1", "C2"],
+  "grading": {"harness": "swebench.harness.run_evaluation", "max_workers": 4, "timeout_s": 1800,
+              "cache_level": "env"},
+  "kel_database": "kel_swebench",
+  "pinned": null
+}

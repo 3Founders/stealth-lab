@@ -116,3 +116,8 @@ experiments/ds1000/data/
 experiments/ds1000/runs*/
 experiments/ds1000/.evalenv/
 experiments/ds1000/__pycache__/
+
+# SWE-bench experiment: repo clones, Docker harness logs, run outputs (regenerable)
+experiments/swebench/cache/
+experiments/swebench/runs/
+experiments/swebench/__pycache__/

@@ -976,9 +976,11 @@ class Agent:
                              messages: list[dict], exc: Exception) -> None:
         """Best-effort: never let diagnostics kill the run they diagnose."""
         try:
-            path = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                f"failed_request_{instance['instance_id'][:40]}_{arm}.json")
+            # AGENT_FAILED_REQUEST_DIR lets an experiment keep dumps with its own outputs instead of
+            # in the source tree; unset keeps the historical location next to this module.
+            out_dir = os.environ.get("AGENT_FAILED_REQUEST_DIR") or os.path.dirname(os.path.abspath(__file__))
+            os.makedirs(out_dir, exist_ok=True)
+            path = os.path.join(out_dir, f"failed_request_{instance['instance_id'][:40]}_{arm}.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({
                     "instance_id": instance["instance_id"], "arm": arm,

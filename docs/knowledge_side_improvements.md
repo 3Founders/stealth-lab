@@ -127,3 +127,205 @@ Caveats:
    - **Primary:** `find_ways` with `related_examples` vs no notes.
    - **Bar to match or beat:** plain nearest-example retrieval.
 4. **Then decide on 6, and on enabling 8 in production.**
+
+---
+
+# Next experiment: SWE-bench (repo-level agent work): protocol and operator instructions
+
+**Why this benchmark.** DS-1000 showed knowledge adds only 2–4 points on single-shot tasks over well-known libraries. The value Kel claims is different: saving exploration on multi-step work in a codebase, using what was learned from earlier work in that same codebase. SWE-bench Verified tasks are real issues in 12 repositories, fixed by an agent that explores the repo over many steps. The question:
+
+> Does Kel's knowledge, learned from earlier issues in a repo, help an agent resolve later issues in the same repo, and at what cost?
+
+**Who runs it.** Grading needs Docker, so **Chaitanya runs the whole experiment** on a Docker machine. Every step is a fixed script in `experiments/swebench/`, and the scripts refuse to run if the setup drifts. Follow the steps in order, do not skip a check, and do not change anything that isn't marked "fill in".
+
+Design follows `.scratch/experience_transfer_research.md` (the AutomationBench protocol): a split that prevents leakage, memory frozen before evaluation, token-matched placebo controls, and a decision rule fixed in advance.
+
+## Protocol (frozen; `experiments/swebench/experiment.json` holds every value)
+
+| Item | Fixed value |
+|---|---|
+| Dataset | `princeton-nlp/SWE-bench_Verified`, split `test`, at the HF revision pinned on the first scored step |
+| Scored repos | repos with at least 15 instances: django, sympy, sphinx, matplotlib, scikit-learn, astropy, xarray, pytest (about 480 instances). The smaller repos are used only for calibration |
+| Split | **per repo, chronological by `created_at`**: earliest 60% form the **train pool**, later 40% are **held out** (about 290 / 190). No held-out issue is older than anything Kel learned from, as in real use. `design.py` computes it deterministically |
+| Agent | `app.execution.coding_agent.Agent`: identical tools (search/read/edit, no code execution), identical budget and temperature 0 for every arm. **The only difference between arms is the memory block** appended to the first user message under one fixed "may not apply" header |
+| Model | `model.id` in `experiment.json` (default `gpt-oss-120b`, OpenAI-compatible endpoint). The same model writes Goal names and `find_ways` queries |
+| Step budget | chosen by **calibration** before any scored run (rule in `calibrate.py`: smallest of {40, 60} at which at least 80% of episodes finish), then frozen |
+| Grading | the **official SWE-bench harness, unmodified** (`swebench.harness.run_evaluation`), FAIL_TO_PASS and PASS_TO_PASS. Harness errors are re-run, never scored |
+| Kel | fresh local Postgres `kel_swebench`, built the production way from the **train pool only**: Goals embedded, `judge_mode="model"` identity, the real ingestion Worker for placement; Procedures from **resolved** train attempts through `extract_procedure` (up to 5 attempts); graded success recorded as evidence. **Gold patches are never read.** Frozen before any held-out run |
+
+**Arms on the held-out set** (each held-out instance gets every arm, so every comparison is paired):
+
+| Arm | Memory block |
+|---|---|
+| **A0** | none |
+| **K** | real `find_ways` on the agent's own short request, with the planner policy used in DS-1000. Renders the selected Procedure (Way, steps, pitfalls) plus the verified patch it came from |
+| **E** | plain retrieval: BM25 top-1 resolved train issue from the **same repo**, with its verified patch |
+| **C1** | a random other train memory item (same repo, hash-chosen), cut to K's exact length. Only where K has notes |
+| **C2** | a generic "how to fix issues" placebo, cut to K's exact length. Only where K has notes |
+
+- **Reuse:** an arm with no notes for an instance reuses that instance's A0 attempt.
+- **Caps:** memory is capped at 3,200 characters, and patches at 2,400.
+
+**Primary:** held-out resolved rate, **K − A0**, paired per instance. Exact McNemar test and a 95% bootstrap CI stratified by repo.
+
+**Decision rule** (fixed; `analyze.py` prints the verdict). "Knowledge helps" only if all four hold:
+1. K − A0 > 0, with the CI excluding 0 and p < 0.05;
+2. K − C2 lower bound > −3 points (not a placebo effect);
+3. no repo shows a significant regression;
+4. tokens per resolved instance under K ≤ 1.2× A0's.
+
+**Secondary:** E − A0, K − E, C1 − A0, C2 − A0, per repo, K − A0 where K had notes, and tokens per resolved instance.
+
+**Rules:**
+- No code, prompt or parameter changes after the step budget is frozen.
+- Anything unexpected is written into `experiments/swebench/DEVIATIONS.md` (create it if needed) with the date and the reason, before continuing.
+- Never re-run a *graded* arm to "improve" it. Only environmental failures (`environmental_failure: true`, or harness `error`) are re-run.
+
+## Operator instructions (Chaitanya)
+
+### 0. Machine
+
+- x86_64 Linux (or macOS with Docker Desktop), 16 GB+ RAM, **200 GB+ free disk** (SWE-bench environment images), Docker 24+.
+- Apple Silicon also works, but image builds are slower. Record the platform in DEVIATIONS.md.
+
+### 1. Code and Python
+
+```bash
+git clone https://github.com/3Founders/stealth-lab && cd stealth-lab
+git checkout main && git pull
+cd backend && python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pip install swebench datasets huggingface_hub
+cd ..
+```
+
+- **Check:** `docker version` works, and `python -c "import swebench"` works.
+
+### 2. Keys and local database
+
+1. Copy the team's `backend/.env` from the password manager. Kel's judge and extraction need `JEV_*`, `GEMINI_API_KEY(S)`, `GENERAL_COMPUTE_API_KEY(S)` and `GENERAL_COMPUTE_JUDGE_MODEL`.
+2. Run `cd backend && python -m app.ingestion.admin judge-health`. Every provider must be `ok`. **Remove any key that shows HTTP 401.**
+3. Local Postgres (any 15+):
+
+   ```bash
+   createdb kel_swebench
+   export KEL_SWEBENCH_DSN=postgresql://postgres@127.0.0.1:5432/kel_swebench   # local only; the scripts refuse anything else
+   cd backend
+   DATABASE_URL=$KEL_SWEBENCH_DSN python scripts/migrate.py
+   python scripts/migrate.py --target search --dsn $KEL_SWEBENCH_DSN
+   ```
+
+4. The agent's model endpoint (OpenAI-compatible):
+
+   ```bash
+   export EXPERIMENT_BASE_URL=https://api.generalcompute.com/v1   # or your OpenRouter URL
+   export EXPERIMENT_API_KEY=<key>                                 # never commit it
+   ```
+
+5. **Fill in** `experiments/swebench/experiment.json` → `model`:
+   - `id`, e.g. `gpt-oss-120b`;
+   - `openrouter_provider_order`, only on OpenRouter; for example `["<provider>"]` pins the backend with no fallbacks;
+   - `price_per_mtok`, for cost reporting.
+
+   Commit this change.
+6. **Check:** `cd experiments/swebench && python check_env.py --check` prints "environment ready".
+
+### 3. Sample and harness sanity check
+
+```bash
+cd experiments/swebench
+python design.py          # prints scored repos, train/test/calibration sizes, design sha256
+python grade.py --gold    # gold patches on the calibration set MUST all resolve
+```
+
+- **Check:**
+  - `grade.py --gold` prints `gold patches resolved: N/N`;
+  - it stops with STOP if not. Fix Docker before going on; do not proceed with a broken harness.
+
+### 4. Calibration: freeze the step budget (unscored)
+
+```bash
+python generate.py --part calibration --arm A0 --max-steps 40
+python generate.py --part calibration --arm A0 --max-steps 60
+python calibrate.py       # prints CHOSEN max_steps
+```
+
+- **Freeze the budget:** write the chosen value into `experiment.json` → `agent.max_steps`, then **commit**.
+- **From here the setup is frozen:** the next scored step writes `runs/pinned.json`, recording the commit, swebench version, Docker version, Python version, dataset revision, model and step budget. Every later step refuses to run if any of these change.
+
+### 5. Train pool (Kel's experience)
+
+```bash
+python generate.py --part train --arm A0
+python grade.py --tag train_A0       # re-run until it reports no errored instances
+```
+
+- **Check:** `runs/grades_train_A0.json` covers every train instance. A resolved rate below about 15% means too few successes for Kel to learn from. Stop and report it (the weak-model floor, research note §7.10).
+
+### 6. Kel learns (train pool only), then freeze
+
+```bash
+python learn.py name
+python learn.py import
+python learn.py worker
+python learn.py extract
+python learn.py evidence
+```
+
+- **Check:** `extract` ends with `procedures N of M resolved train instances`, and N is at least 50% of M.
+
+### 7. Held-out notes, built from frozen knowledge
+
+```bash
+python notes.py queries
+python notes.py K
+python notes.py E
+python notes.py controls
+```
+
+- **Check:** `notes.py K` prints how many held-out issues got notes. Record the number.
+
+### 8. Held-out arms
+
+1. **A0 first**, because the other arms reuse it wherever they have no notes:
+
+   ```bash
+   python generate.py --part test --arm A0
+   ```
+
+2. **Then the other four, started together**, in four terminals or with `&`, so they run at the same time and share provider conditions:
+
+   ```bash
+   python generate.py --part test --arm K
+   python generate.py --part test --arm E
+   python generate.py --part test --arm C1
+   python generate.py --part test --arm C2
+   ```
+
+3. **Grade all five.** Re-run any with errored instances until none remain:
+
+   ```bash
+   for arm in A0 K E C1 C2; do python grade.py --tag test_$arm; done
+   ```
+
+### 9. Analysis and hand-back
+
+```bash
+python analyze.py         # prints the primary result, secondaries, cost and VERDICT
+```
+
+Zip and share `experiments/swebench/runs/`, **excluding `runs/logs/`** (large Docker logs; keep them locally), plus `DEVIATIONS.md`.
+
+**Estimated size:** about 290 train plus about 190 × 5 held-out agent episodes. Episodes where an arm had no notes reuse A0, so there are fewer in practice. At 100–200k tokens per episode on `gpt-oss-120b`, that is roughly 150–250M tokens. Harness grading is about 5–10 minutes per instance per arm, with 4 workers.
+
+**Tested without Docker (2026-09-27)** on a synthetic repo:
+- design;
+- agent generation in git worktrees;
+- reuse of A0 where there are no notes;
+- Kel learning (import, the real placement worker, extraction, evidence);
+- all four note builders;
+- the analysis and decision rule.
+
+**Not testable without Docker**, so the gold check in step 3 is mandatory:
+- the harness call itself;
+- the location of the per-instance `report.json`, which `grade.py` parses from `runs/logs/run_evaluation/<run_id>/**/report.json`.

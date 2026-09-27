@@ -36,7 +36,7 @@ def summarize(tasks: Sequence[BenchmarkTask]) -> dict[str, Any]:
     return {
         "tasks": len(tasks), "usable": len(usable), "excluded": len(tasks) - len(usable),
         "excluded_reasons": dict(Counter(t.excluded_reason.split(":")[0] for t in tasks if t.excluded_reason)),
-        "by_domain": dict(Counter(t.domains[0] for t in usable)),
+        "by_domain": dict(Counter(t.domains[0] if t.domains else "(no domain)" for t in usable)),
         "by_split": dict(Counter(t.split for t in usable)),
         "visible_tests_mean": round(sum(len(t.visible_tests) for t in usable) / max(len(usable), 1), 2),
         "tests_mean": round(sum(len(t.test_names) for t in usable) / max(len(usable), 1), 2),

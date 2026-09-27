@@ -58,3 +58,12 @@ def test_libs_and_names_parse_robustly():
     assert bcb.domains_for([]) == [bcb.FALLBACK_DOMAIN]
     long = "Compute " + "a very long description " * 20 + "."
     assert len(bcb.goal_name_from(long)) <= 141 and bcb.goal_name_from(long).endswith("…")
+
+
+def test_summary_accepts_tasks_without_domains():
+    from app.benchmarks.importer import summarize
+    from app.benchmarks.tasks import BenchmarkTask
+
+    task = BenchmarkTask(source="s", source_version="1", external_id="x", goal_name="g", goal_description="d",
+                         domains=[], test_code="", test_names=[], visible_tests=[], entry_point="")
+    assert summarize([task])["by_domain"] == {"(no domain)": 1}
