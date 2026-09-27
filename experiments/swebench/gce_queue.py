@@ -217,10 +217,20 @@ def write_prepull(parts: str) -> None:
         image = {r["instance_id"]: r["image"] for r in load_dataset(name, split=swe_env.CONFIG["dataset"]["split"])}
     tmp = swe_env.RUNS / "_prepull.txt"
     for k, w in enumerate(workers):
-        tmp.write_text("\n".join(image[i] for i in ids if i in image and shard(i, len(workers)) == k) + "\n",
-                       encoding="utf-8")
+        tmp.write_text("\n".join(tagged(image[i]) for i in ids if i in image and shard(i, len(workers)) == k) + "\n",
+                       encoding="utf-8", newline="\n")
         _gc("storage", "cp", str(tmp), f"{base()}/inputs/prepull_{w}.txt")
+    # keep_images.txt: images every arm grades again (test + calibration); workers never prune these
+    design = json.loads((swe_env.RUNS / "design.json").read_text())
+    keep = sorted({tagged(image[i]) for p in ("test", "calibration") for i in design[p] if i in image})
+    tmp.write_text("\n".join(keep) + "\n", encoding="utf-8", newline="\n")
+    _gc("storage", "cp", str(tmp), f"{base()}/inputs/keep_images.txt")
     tmp.unlink(missing_ok=True)
+
+
+def tagged(image: str) -> str:
+    """repo[:tag] as `docker images` prints it (an untagged reference means :latest)."""
+    return image if ":" in image.rsplit("/", 1)[-1] else f"{image}:latest"
 
 
 def workers(action: str) -> None:
@@ -240,11 +250,15 @@ def workers(action: str) -> None:
             meta = ",".join(f"{k}={v}" for k, v in {
                 "kel-mode": "daemon", "kel-bucket": g["bucket"], "kel-prefix": g["prefix"], "kel-worker": name,
                 "kel-dataset": dataset, "kel-workers": w["harness_workers"], "kel-idle-min": g.get("idle_minutes", 20),
-                "kel-max-hours": g.get("max_hours", 8)}.items())
+                "kel-max-hours": g.get("max_hours", 8), "kel-pull-par": w.get("pull_parallel", 6),
+                "kel-local-ssd": 1 if w.get("local_ssds") else 0}.items())
             if not status:
+                extra = [a for _ in range(int(w.get("local_ssds", 0))) for a in ("--local-ssd", "interface=NVME")]
+                if w.get("spot"):   # interruptible: the queue resumes (unprocessed batches stay in queue/)
+                    extra += ["--provisioning-model=SPOT", "--instance-termination-action=STOP"]
                 _gc("compute", "instances", "create", name, "--zone", zone, "--machine-type", w["machine_type"],
                     "--image-family", "ubuntu-2204-lts", "--image-project", "ubuntu-os-cloud",
-                    "--boot-disk-size", f"{w.get('disk_gb', 300)}GB", "--boot-disk-type", "pd-balanced",
+                    "--boot-disk-size", f"{w.get('disk_gb', 40)}GB", "--boot-disk-type", "pd-balanced", *extra,
                     "--scopes", "cloud-platform", f"--metadata-from-file=startup-script={script}", f"--metadata={meta}")
                 print(name, "created")
             else:

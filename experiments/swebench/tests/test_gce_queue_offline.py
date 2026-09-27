@@ -37,3 +37,9 @@ def test_rows_from_keeps_last_row_per_instance(tmp_path):
     p.write_text('{"instance_id": "a", "model_patch": "old"}\n{"instance_id": "a", "model_patch": "new"}\n',
                  encoding="utf-8")
     assert gce_queue.rows_from(p) == [{"instance_id": "a", "model_patch": "new"}]
+
+
+def test_tagged_matches_docker_images_output():
+    assert gce_queue.tagged("swerebench/sweb.eval.x86_64.a_1776_b-1") == "swerebench/sweb.eval.x86_64.a_1776_b-1:latest"
+    assert gce_queue.tagged("swebench/sweb.eval.x86_64.x:latest") == "swebench/sweb.eval.x86_64.x:latest"
+    assert gce_queue.tagged("registry:5000/img") == "registry:5000/img:latest"

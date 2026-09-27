@@ -69,12 +69,15 @@
         {
           "name": "kel-grade-verified-w1",
           "zone": "us-central1-a",
-          "machine_type": "n2-custom-12-49152",
-          "harness_workers": 8,
-          "disk_gb": 400
+          "machine_type": "n2-custom-12-24576",
+          "harness_workers": 12,
+          "disk_gb": 40,
+          "pull_parallel": 6,
+          "local_ssds": 2,
+          "spot": false
         }
       ],
-      "_doc": "backend 'gce': the official harness on Compute Engine via the GCS queue (gce_queue.py). Global Compute Engine quota is 12 vCPU, so one 12-vCPU worker; raise the quota to add workers (patches are sharded by instance id)."
+      "_doc": "backend 'gce': the official harness on Compute Engine via the GCS queue (gce_queue.py). Sized from the 2026-09-27 A/B benchmark (experiments/OPTIMIZATION_SUMMARY.md): grading is CPU-bound (~1 vCPU, <300 MB per test), so 12 vCPU/24 GB with 12 harness workers; images (~1.8 GB each) live on 2 striped local NVMe SSDs (27% faster pulls than pd-balanced; the 250 GB SSD quota can't hold a benchmark's images). Global quota is 12 vCPU: raise it to add workers."
     }
   },
   "kel_database": "kel_swebench",

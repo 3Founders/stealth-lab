@@ -16,9 +16,15 @@ BASE="$BUCKET/$PREFIX"
 exec > >(tee -a /var/log/kel-grade.log) 2>&1
 
 T0=$(date +%s); echo "PHASE boot_uptime_s=$(cut -d. -f1 /proc/uptime)"
-if [ "$(md kel-local-ssd || echo 0)" = "1" ] && [ -b /dev/nvme0n1 ] && ! mountpoint -q /var/lib/docker; then
-    mkfs.ext4 -q -F /dev/nvme0n1 && mkdir -p /var/lib/docker && mount -o discard,defaults /dev/nvme0n1 /var/lib/docker
-    echo "PHASE docker_storage=local-nvme"
+SSDS=$(ls /dev/disk/by-id/google-local-nvme-ssd-* 2>/dev/null | grep -v part)
+if [ "$(md kel-local-ssd || echo 0)" = "1" ] && [ -n "$SSDS" ] && ! mountpoint -q /mnt/nvme; then
+    # Docker 29 keeps images in containerd's store (/var/lib/containerd), not /var/lib/docker: put BOTH on the SSDs.
+    # Several local SSDs are striped (RAID0): capacity for a whole benchmark's images, and faster extraction.
+    N=$(echo "$SSDS" | wc -l); DEV=$(echo "$SSDS" | head -1)
+    if [ "$N" -gt 1 ]; then mdadm --create /dev/md0 --level=0 --raid-devices="$N" $SSDS --force --run && DEV=/dev/md0; fi
+    mkfs.ext4 -q -F "$DEV" && mkdir -p /mnt/nvme && mount -o discard,defaults "$DEV" /mnt/nvme
+    for d in docker containerd; do mkdir -p /mnt/nvme/$d /var/lib/$d && mount --bind /mnt/nvme/$d /var/lib/$d; done
+    echo "PHASE docker_storage=local-nvme disks=$N"
 fi
 if ! command -v docker >/dev/null; then apt-get update && apt-get install -y docker.io python3-venv git sysstat; fi
 if ! command -v gcloud >/dev/null; then snap install google-cloud-cli --classic || true; fi
@@ -41,7 +47,8 @@ harness() {  # $1 predictions file, $2 run id, $3 dataset; instance ids come fro
 if [ "$MODE" = "daemon" ]; then
     WORKER=$(md kel-worker); DATASET=$(md kel-dataset); IDLE=$(md kel-idle-min)
     # background pre-pull of this worker's shard (images are reused by every arm graded here)
-    [ -f "/work/prepull_$WORKER.txt" ] && ( grep -v '^$' "/work/prepull_$WORKER.txt" | xargs -r -P 3 -n 1 docker pull -q >/dev/null 2>&1 & )
+    PULLPAR=$(md kel-pull-par || echo 4)
+    [ -f "/work/prepull_$WORKER.txt" ] && ( grep -v '^$' "/work/prepull_$WORKER.txt" | xargs -r -P "$PULLPAR" -n 1 docker pull -q >/dev/null 2>&1 & )
     ( while true; do sleep 120; gcloud storage cp /var/log/kel-grade.log "$BASE/results/_workers/$WORKER.log" >/dev/null 2>&1; done ) &
     idle=0
     while true; do
@@ -56,6 +63,11 @@ if [ "$MODE" = "daemon" ]; then
         for b in $mine; do gcloud storage cat "$b" >> /work/batch.jsonl; done
         harness /work/batch.jsonl "$run" "$DATASET"
         for b in $mine; do gcloud storage mv "$b" "${b/\/queue\//\/done\/}" >/dev/null 2>&1; done
+        # Disk: images not listed in keep_images.txt (e.g. train instances, graded once) are removed after use;
+        # test/calibration images stay, because every arm grades them again.
+        if [ -f /work/keep_images.txt ]; then
+            docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'sweb\.eval' | grep -vxFf /work/keep_images.txt                 | xargs -r docker rmi -f >/dev/null 2>&1 || true
+        fi
     done
     echo "idle for ${IDLE} min: powering off"; df -h /; docker system df
     gcloud storage cp /var/log/kel-grade.log "$BASE/results/_workers/$WORKER.log"
@@ -72,7 +84,7 @@ PRED_ARG="$PREDS"; [ "$PREDS" != "gold" ] && PRED_ARG="/work/$PREDS"
 mkdir -p /work/bench
 ( while true; do ts=$(date +%s); read l1 l5 _ < /proc/loadavg
     docker stats --no-stream --format "$ts	{{.Name}}	{{.CPUPerc}}	{{.MemUsage}}" >> /work/bench/stats.tsv 2>/dev/null
-    echo -e "$ts	load1=$l1	mem_used_mb=$(free -m | awk '/Mem:/{print $3}')	disk_used=$(df --output=used -B1G / /var/lib/docker 2>/dev/null | tail -1)" >> /work/bench/host.tsv
+    echo -e "$ts	load1=$l1	mem_used_mb=$(free -m | awk '/Mem:/{print $3}')	root_used_gb=$(df --output=used -B1G / | tail -1 | tr -d ' ')	containerd_used_gb=$(df --output=used -B1G /var/lib/containerd 2>/dev/null | tail -1 | tr -d ' ')" >> /work/bench/host.tsv
     sleep 15; done ) &
 if [ "$(md kel-prepull || echo 0)" = "1" ]; then     # timed pre-pull: separates pull/extract time from test time
     T1=$(date +%s)
