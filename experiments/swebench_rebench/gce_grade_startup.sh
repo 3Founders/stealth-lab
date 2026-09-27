@@ -15,9 +15,15 @@ BASE="$BUCKET/$PREFIX"
 : > /var/log/kel-grade.log                        # one log per boot
 exec > >(tee -a /var/log/kel-grade.log) 2>&1
 
-if ! command -v docker >/dev/null; then apt-get update && apt-get install -y docker.io python3-venv git; fi
+T0=$(date +%s); echo "PHASE boot_uptime_s=$(cut -d. -f1 /proc/uptime)"
+if [ "$(md kel-local-ssd || echo 0)" = "1" ] && [ -b /dev/nvme0n1 ] && ! mountpoint -q /var/lib/docker; then
+    mkfs.ext4 -q -F /dev/nvme0n1 && mkdir -p /var/lib/docker && mount -o discard,defaults /dev/nvme0n1 /var/lib/docker
+    echo "PHASE docker_storage=local-nvme"
+fi
+if ! command -v docker >/dev/null; then apt-get update && apt-get install -y docker.io python3-venv git sysstat; fi
 if ! command -v gcloud >/dev/null; then snap install google-cloud-cli --classic || true; fi
 [ -x /opt/swb/bin/python ] || { python3 -m venv /opt/swb && /opt/swb/bin/pip install -q "swebench==5.0.2" datasets; }
+echo "PHASE setup_s=$(( $(date +%s) - T0 ))"
 rm -rf /work && mkdir -p /work && cd /work        # fresh each boot: resume state comes only from GCS
 gcloud storage cp "$BASE/inputs/*" /work/ 2>/dev/null || true
 
@@ -63,11 +69,33 @@ gcloud storage rsync -r "$OUT/logs" /work/logs 2>/dev/null || true     # resume 
 ( while true; do sleep 120; gcloud storage rsync -r /work/logs "$OUT/logs" >/dev/null 2>&1;
     gcloud storage cp /var/log/kel-grade.log "$OUT/grade.log" >/dev/null 2>&1; done ) &
 PRED_ARG="$PREDS"; [ "$PREDS" != "gold" ] && PRED_ARG="/work/$PREDS"
+mkdir -p /work/bench
+( while true; do ts=$(date +%s); read l1 l5 _ < /proc/loadavg
+    docker stats --no-stream --format "$ts	{{.Name}}	{{.CPUPerc}}	{{.MemUsage}}" >> /work/bench/stats.tsv 2>/dev/null
+    echo -e "$ts	load1=$l1	mem_used_mb=$(free -m | awk '/Mem:/{print $3}')	disk_used=$(df --output=used -B1G / /var/lib/docker 2>/dev/null | tail -1)" >> /work/bench/host.tsv
+    sleep 15; done ) &
+if [ "$(md kel-prepull || echo 0)" = "1" ]; then     # timed pre-pull: separates pull/extract time from test time
+    T1=$(date +%s)
+    /opt/swb/bin/python - "$IDS" <<'PY' > /work/bench/images.txt
+import json, sys
+ids = {l.strip() for l in open("/work/" + sys.argv[1]) if l.strip()}
+rows = json.load(open("/work/grading_dataset.json"))
+print("
+".join(r["image"] for r in rows if r["instance_id"] in ids))
+PY
+    pull1() { local s; s=$(date +%s.%N); if docker pull -q "$1" >/dev/null 2>/work/bench/pullerr_$$.txt; then st=ok; else st="fail:$(tr '
+' ' ' < /work/bench/pullerr_$$.txt | cut -c1-120)"; fi
+              echo -e "$1	$(awk -v a="$s" -v b="$(date +%s.%N)" 'BEGIN{printf "%.1f", b-a}')	$(docker image inspect -f '{{.Size}}' "$1" 2>/dev/null)	$st"; }
+    export -f pull1
+    xargs -a /work/bench/images.txt -P "$(md kel-pull-par || echo 4)" -I{} bash -c 'pull1 {}' >> /work/bench/pulls.tsv
+    echo "PHASE prepull_s=$(( $(date +%s) - T1 )) images=$(wc -l < /work/bench/images.txt)"
+fi
 START=$(date +%s)
 /opt/swb/bin/python -m swebench.harness.run_evaluation \
     --dataset_name /work/grading_dataset.json --split test --predictions_path "$PRED_ARG" \
     --run_id "$RUN_ID" --max_workers "$WORKERS" --timeout 1800 --instance_ids $(tr -d '\r' < "/work/$IDS")   # ids files written on Windows carry CR
-echo "harness exit $? after $(( $(date +%s) - START ))s"
+rc=$?; echo "harness exit $rc after $(( $(date +%s) - START ))s"; echo "PHASE harness_s=$(( $(date +%s) - START ))"
+gcloud storage cp -r /work/bench "$OUT/" >/dev/null 2>&1
 df -h / ; docker system df
 gcloud storage rsync -r /work/logs "$OUT/logs"
 gcloud storage cp "/work/"*".$RUN_ID.json" "$OUT/" 2>/dev/null || true   # run summary only, not the inputs
