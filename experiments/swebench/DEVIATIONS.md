@@ -26,3 +26,10 @@ Each entry: date, what changed, why. Written before continuing (docs/knowledge_s
    PASS_TO_PASS differs, on 2 instances, both in the TRAIN pool: astropy__astropy-7606 (1 test removed),
    django__django-10097 (5 removed) -- the maintainers' removal of broken/flaky tests. The design, the prompts
    and every held-out instance are unaffected.
+7. **swebench pinned to 4.1.0; entries 5 and 6 reverted.** swebench 5.0.2's Modal path is broken upstream
+   (`AttributeError: 'TestSpec' object has no attribute 'setup_env_script'`; its own TODO at
+   `modal_eval/run_evaluation_modal.py:164`), so the gold check errored on 12/12. 4.1.0 grades
+   `princeton-nlp/SWE-bench_Verified` directly and accepts `--cache_level`, so grading is back on the frozen
+   dataset. 4.x imports the POSIX-only `resource` module at import time; on Windows a no-op stand-in
+   (`winshim/resource.py`, only on the path on Windows) replaces it -- it is used only to raise the local
+   open-file limit, which Modal grading never needs. The harness itself is unmodified.

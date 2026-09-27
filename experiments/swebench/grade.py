@@ -26,15 +26,20 @@ from check_env import require_pinned
 def run_harness(predictions: str, run_id: str, instance_ids: list[str]) -> None:
     g = swe_env.CONFIG["grading"]
     cmd = [sys.executable, "-m", "swebench.harness.run_evaluation",
-           "--dataset_name", g.get("dataset", swe_env.CONFIG["dataset"]["name"]), "--split", swe_env.CONFIG["dataset"]["split"],
+           "--dataset_name", swe_env.CONFIG["dataset"]["name"], "--split", swe_env.CONFIG["dataset"]["split"],
            "--predictions_path", predictions, "--run_id", run_id, "--max_workers", str(g["max_workers"]),
-           "--timeout", str(g["timeout_s"])]         # swebench 5.x removed --cache_level
+           "--timeout", str(g["timeout_s"]), "--cache_level", g["cache_level"]]
     if g.get("backend", "docker") == "modal":
         cmd += ["--modal", "true"]
     if instance_ids:
         cmd += ["--instance_ids", *instance_ids]
     print(" ".join(cmd[:12]), "...", flush=True)
-    subprocess.run(cmd, cwd=swe_env.RUNS, check=True)
+    env = None
+    if sys.platform == "win32":     # the harness subprocess needs the `resource` stand-in too
+        import os
+        env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(swe_env.HERE / "winshim"),
+                                                                           os.environ.get("PYTHONPATH")]))}
+    subprocess.run(cmd, cwd=swe_env.RUNS, check=True, env=env)
 
 
 def collect(run_id: str, instance_ids: list[str], predictions: dict) -> dict:

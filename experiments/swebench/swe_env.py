@@ -35,6 +35,8 @@ def _load_experiment_env() -> None:
 
 
 _load_experiment_env()
+if sys.platform == "win32" and str(HERE / "winshim") not in sys.path:
+    sys.path.append(str(HERE / "winshim"))     # POSIX `resource` stand-in so swebench 4.x imports (see winshim/)
 RUNS = HERE / "runs"
 CACHE = HERE / "cache"          # repo clones (git) -- large, gitignored
 DSN = os.environ.get("KEL_SWEBENCH_DSN", "postgresql://postgres@127.0.0.1:5432/" + CONFIG["kel_database"])
