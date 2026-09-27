@@ -4,16 +4,22 @@
     python kel_cli.py read_procedure_claims --ws <workspace> --id <procedure_id>
 
 Same backend as the open models' KP arm: the real `find_ways` / claims resource, in-process, against the
-frozen `kel_ds1000_r4` (KNOWLEDGE_VERIFIED_EXAMPLES on). Output is the tool's reply, cut at the same caps
-(24,000 / 8,000 characters). Every call is logged to runs4/sonnet_kel_calls.jsonl with its workspace.
+frozen `kel_ds1000_r4` (KNOWLEDGE_VERIFIED_EXAMPLES on; with KEL_CLI_ROUND=7, round 5's flags too). Output is the tool's reply, cut at the same caps
+(24,000 / 8,000 characters). Every call is logged to runs4/ (runs7/ in round 7) sonnet_kel_calls.jsonl with its workspace.
 """
 from __future__ import annotations
 
 import os
 
-os.environ["KEL_DS1000_RUNS"] = "runs4"
+# KEL_CLI_ROUND=7 (sonnet_r7.py): round 5's settings -- related examples, suggested candidate and the governor on --
+# logging to runs7/. Unset: round 4 exactly.
+_R7 = os.environ.get("KEL_CLI_ROUND") == "7"
+os.environ["KEL_DS1000_RUNS"] = "runs7" if _R7 else "runs4"
 os.environ["KEL_DS1000_DSN"] = "postgresql://postgres@127.0.0.1:55432/kel_ds1000_r4"
 os.environ["KNOWLEDGE_VERIFIED_EXAMPLES"] = "true"
+if _R7:
+    for _flag in ("KNOWLEDGE_RELATED_EXAMPLES", "KNOWLEDGE_SUGGESTED_CANDIDATE", "FIND_WAYS_GOVERNOR"):
+        os.environ[_flag] = "true"
 
 import demo_env  # noqa: E402
 
@@ -50,12 +56,14 @@ def main() -> None:
             if claims.strip() == kpa.CLAIMS_REF:
                 path = os.path.join(ws, kpa.STEALTH, "claims.md")
                 claims = open(path, encoding="utf-8").read() if os.path.isfile(path) else ""
-            out = bridge.find_ways(a.query, claims[:65536])
+            out = bridge.find_ways(a.query, claims[:65536], session=ws if _R7 else None)
             try:
                 d = json.loads(out)
                 procs = d.get("procedures") or []
                 ways = [w for c in (d.get("candidates") or []) for w in (c.get("ways") or [])]
-                summary = {"outcome": d.get("outcome"), "procedures": [str(p.get("procedure_id")) for p in procs],
+                summary = {"outcome": d.get("outcome"), "related_examples": len(d.get("related_examples") or []),
+                           "suggested": bool(d.get("suggested")),
+                           "procedures": [str(p.get("procedure_id")) for p in procs],
                            "candidate_ways": [str(w.get("procedure_id")) for w in ways],
                            "verified_solution": any(p.get("verified_solution") for p in procs + ways)}
             except (json.JSONDecodeError, AttributeError):
