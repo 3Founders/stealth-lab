@@ -84,6 +84,15 @@ def main() -> None:
     scripts = {r["instance_id"]: r["eval_script"] for r in json.loads(tmp_out.read_text(encoding="utf-8"))}
     tmp_in.unlink()
     tmp_out.unlink()
+    # SWE-rebench images install the repo editable from /<name> but ship it at /testbed, so the package does not
+    # import under the standard harness (Docker or Modal: ModuleNotFoundError on every gold patch). Link each
+    # missing editable root to /testbed at the start of the eval script -- the same fix for every backend, and
+    # no per-image build layer.
+    from modal_compat import REBENCH_LINK_SH
+    link = "\n".join(l for l in REBENCH_LINK_SH.strip().splitlines())
+    for iid, script in scripts.items():
+        head, sep, rest = script.partition("set -uxo pipefail\n")
+        scripts[iid] = (head + sep + link + "\n" + rest) if sep else (link + "\n" + script)
     out = []
     for inst in src:
         f2p, p2p = inst["FAIL_TO_PASS"], inst["PASS_TO_PASS"]

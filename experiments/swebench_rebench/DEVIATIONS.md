@@ -18,3 +18,10 @@ experiments/swebench_rebench/experiment.json. Shared machinery deviations are in
 4. **Every train/test/calibration task is gold-checked** (not only calibration), because SWE-rebench is validated
    automatically rather than by humans. Tasks whose gold patch does not resolve are dropped from every arm and
    listed here.
+5. **Editable-root link moved into each eval script** (render_grading_dataset.py). The same ModuleNotFoundError
+   appears under the official harness with native Docker on a GCE VM (gold smoke: dask/briefcase/pennylane all
+   `missing_module`), so it is a property of the SWE-rebench images, not of Modal. The link script
+   (modal_compat.REBENCH_LINK_SH) now runs at the top of every eval script, identically on every backend, and
+   needs no per-image build layer (which drove the $30.47 Modal spend).
+6. **GCE grading backend** (gce_grade_startup.sh): the official harness 5.0.2, unmodified, with native Docker on a
+   Compute Engine VM; inputs and reports via GCS; hard power-off guard.
