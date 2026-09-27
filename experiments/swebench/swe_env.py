@@ -43,6 +43,7 @@ if sys.platform == "win32" and str(HERE / "winshim") not in sys.path:
 RUNS = CONFIG_PATH.parent / "runs"
 CACHE = CONFIG_PATH.parent / "cache"          # repo clones (git) -- large, gitignored
 DSN = os.environ.get("KEL_SWEBENCH_DSN", "postgresql://postgres@127.0.0.1:5432/" + CONFIG["kel_database"])
+DSN = DSN.rsplit("/", 1)[0] + "/" + CONFIG["kel_database"]   # each experiment config learns into its own database
 
 
 class NotIsolated(RuntimeError):

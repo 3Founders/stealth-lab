@@ -1,0 +1,87 @@
+{
+  "_doc": "Frozen settings for the SWE-rebench variant of the knowledge-transfer experiment (same protocol and scripts as experiments/swebench; select with KEL_SWEBENCH_CONFIG=<this file>). Held-out tasks are all created after the agent model's knowledge cutoff, so the model cannot have seen them; train tasks (what Kel learns from) may be older. Only tasks with a prebuilt SWE-rebench image are used. Change NOTHING after calibration is frozen -- log deviations in DEVIATIONS.md here.",
+  "dataset": {
+    "name": "nebius/SWE-rebench",
+    "split": "test",
+    "revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881"
+  },
+  "split": {
+    "rule": "per repo, imaged tasks only: created_at < model_cutoff -> train pool (the most recent max_train_per_repo), created_at >= model_cutoff -> held-out test (the earliest max_test_per_repo); a repo is scored when it has >= min_test post-cutoff and >= min_train pre-cutoff tasks",
+    "model_cutoff": "2024-07-01",
+    "min_test": 8,
+    "min_train": 10,
+    "max_test_per_repo": 40,
+    "max_train_per_repo": 40,
+    "seed": "kel-swerebench-v1"
+  },
+  "calibration": {
+    "from": "imaged post-cutoff tasks of repos that are not scored",
+    "max_instances": 12
+  },
+  "agent": {
+    "module": "app.execution.coding_agent.Agent",
+    "max_steps": null,
+    "temperature": 0.0,
+    "max_steps_candidates": [
+      40,
+      60
+    ]
+  },
+  "model": {
+    "id": "gpt-oss-120b",
+    "base_url_env": "EXPERIMENT_BASE_URL",
+    "api_key_env": "EXPERIMENT_API_KEY",
+    "openrouter_provider_order": null,
+    "price_per_mtok": {
+      "input": null,
+      "output": null
+    }
+  },
+  "query_writer": {
+    "model": "same as model.id",
+    "max_tokens": 120
+  },
+  "memory": {
+    "max_chars": 3200,
+    "procedure_arm_code_max_chars": 2400
+  },
+  "arms": [
+    "A0",
+    "K",
+    "E",
+    "C1",
+    "C2",
+    "A0r",
+    "KP"
+  ],
+  "grading": {
+    "harness": "swebench.harness.run_evaluation",
+    "backend": "modal",
+    "dataset": "runs/grading_dataset.json",
+    "max_workers": 4,
+    "timeout_s": 1800,
+    "cache_level": "env",
+    "fork": {
+      "url": "https://github.com/SWE-rebench/SWE-bench-fork",
+      "commit": "e4907b7a90eafaa1f0a6428fd04fe31cdd8b4284"
+    },
+    "_doc": "grading.dataset is built by render_grading_dataset.py: each task's eval script is rendered by SWE-rebench's own harness fork (pinned commit) from its install_config, then graded by the pinned swebench 5.0.2 + modal_compat on Modal using the task's prebuilt image."
+  },
+  "kel_database": "kel_swebench_rebench",
+  "pinned": null,
+  "noise_arm": {
+    "arm": "A0r",
+    "what": "a fresh repeat of A0 (no memory, never reused), run concurrently with K/E/C1/C2: measures run-to-run noise and is the time-matched baseline"
+  },
+  "kel_settings": {
+    "_doc": "Set in the environment by swe_env.py for EVERY step, so Kel learns and answers with the same settings. verified_examples: KNOWLEDGE_VERIFIED_EXAMPLES (the verified patch is stored with its Procedure and returned by find_ways as verified_solution; the prompt-note arms K/E/C1/C2 read patches from runs/ and are unaffected).",
+    "verified_examples": true
+  },
+  "kprod": {
+    "_doc": "Arm KP: Kel as the product is used (kprod.py). Tool results are cut at these sizes instead of the agent's usual 2,800 characters, because an MCP host shows the whole find_ways reply.",
+    "tool_max_chars": {
+      "find_ways": 24000,
+      "read_procedure_claims": 8000
+    }
+  }
+}

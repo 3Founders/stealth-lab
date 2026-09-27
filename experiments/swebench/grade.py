@@ -23,10 +23,16 @@ import swe_env
 from check_env import require_pinned
 
 
+def _dataset_name(g: dict) -> str:
+    """HF dataset id, or a local .json/.jsonl grading dataset resolved next to the experiment config."""
+    name = g.get("dataset", swe_env.CONFIG["dataset"]["name"])
+    return str(swe_env.CONFIG_PATH.parent / name) if name.endswith((".json", ".jsonl")) else name
+
+
 def run_harness(predictions: str, run_id: str, instance_ids: list[str]) -> None:
     g = swe_env.CONFIG["grading"]
     cmd = [sys.executable, "-m", "swebench.harness.run_evaluation",
-           "--dataset_name", g.get("dataset", swe_env.CONFIG["dataset"]["name"]), "--split", swe_env.CONFIG["dataset"]["split"],
+           "--dataset_name", _dataset_name(g), "--split", swe_env.CONFIG["dataset"]["split"],
            "--predictions_path", predictions, "--run_id", run_id, "--max_workers", str(g["max_workers"]),
            "--timeout", str(g["timeout_s"])]         # swebench 5.x removed --cache_level
     if g.get("backend", "docker") == "modal":
@@ -62,13 +68,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag")
     ap.add_argument("--gold", action="store_true")
+    ap.add_argument("--gold-set", default="calibration", help="design parts whose gold patches are checked, e.g. "
+                    "calibration or train+test (a benchmark without human validation needs every task checked)")
     ap.add_argument("--run-id", help="harness run id (default: the tag, or gold_check). Reports are cached per "
                     "run id: re-running the same id re-grades only missing/errored instances; a new id grades afresh")
     a = ap.parse_args()
     require_pinned(scored=not (a.gold or (a.tag or "").startswith("calibration")))
     design = json.loads((swe_env.RUNS / "design.json").read_text(encoding="utf-8"))
     if a.gold:
-        ids = design["calibration"]
+        ids = [i for part in a.gold_set.split("+") for i in design[part]]
         run_id = a.run_id or "gold_check"
         run_harness("gold", run_id, ids)
         grades = collect(run_id, ids, {})
