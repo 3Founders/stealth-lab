@@ -1710,7 +1710,7 @@ single synthesized reports into `.scratch/research/`.
    still collects 1526 tests clean post-change. No blocking questions;
    this task had no real ambiguity once `211c81a` landed.)*
 
-8. `[x]` done @2026-09-28 — main `54a2cc4`, `861958b` (claimed 2026-09-27, claude session 640be25f) **Local executor layer (`stealthlab-exec`)**:
+8. `[x]` done @2026-09-28 — main `e954e59`, `46416a0`, CRLF fix in the next commit (claimed 2026-09-27, claude session 640be25f) **Local executor layer (`stealthlab-exec`)**:
    opt-in local MCP runtime in `packaging/npm` that runs external coding agents (OpenCode, Codex, Claude, Gemini,
    OpenHands, Cline) headlessly in git worktrees, verifies with the step's checks, reports `report_model_run`;
    plus Claude Code executor/delegator agent definitions and SubagentStart/Stop hooks. Spec:

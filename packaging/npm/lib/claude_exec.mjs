@@ -58,7 +58,9 @@ export function shellJoin(spec) {
 
 // JSON strings are valid YAML double-quoted scalars (backslashes in Windows paths stay escaped).
 export function renderAgent(name, launch) {
-  const text = fs.readFileSync(path.join(TEMPLATES, `${name}.md`), "utf8");
+  // LF always: a Windows checkout with core.autocrlf turns the shipped templates into CRLF files, and the agent
+  // files we write must not depend on how the package was checked out or published.
+  const text = fs.readFileSync(path.join(TEMPLATES, `${name}.md`), "utf8").replace(/\r\n/g, "\n");
   return text
     .replaceAll("{{MANAGED_MARK}}", MANAGED_MARK)
     .replaceAll("{{EXEC_COMMAND}}", JSON.stringify(String(launch.command)))
