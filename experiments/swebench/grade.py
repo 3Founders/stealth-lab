@@ -64,6 +64,45 @@ def collect(run_id: str, instance_ids: list[str], predictions: dict) -> dict:
     return out
 
 
+def _read_predictions(path: Path) -> dict[str, str]:
+    preds: dict[str, str] = {}
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                preds[r["instance_id"]] = r.get("model_patch") or ""
+    return preds
+
+
+def reused_a0_grades(tag: str, preds: dict[str, str]) -> dict[str, dict]:
+    """Grades copied from A0 for attempts generate.py REUSED from A0 (no notes for that instance, so the arm's
+    prompt -- and its attempt and patch -- is A0's, byte for byte). Grading them again would re-measure the same
+    observation; copying keeps the arms' results identical where their inputs are identical, as designed.
+    Copied only when the patch is verifiably identical to A0's and A0's grade is a real verdict (never `error`)."""
+    part, _, arm = tag.partition("_")
+    if arm in ("A0", "A0r", "KP") or not arm:
+        return {}
+    a0_grades_path = swe_env.RUNS / f"grades_{part}_A0.json"
+    if not a0_grades_path.exists():
+        return {}
+    a0_grades = json.loads(a0_grades_path.read_text(encoding="utf-8"))
+    a0_preds = _read_predictions(swe_env.RUNS / f"predictions_{part}_A0.jsonl")
+    reused: set[str] = set()
+    attempts = swe_env.RUNS / f"attempts_{tag}.jsonl"
+    if attempts.exists():
+        for line in attempts.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                if r.get("reused_from") == "A0" and not r.get("environmental_failure"):
+                    reused.add(r["instance_id"])
+    out: dict[str, dict] = {}
+    for iid in reused:
+        g = a0_grades.get(iid)
+        if g and g.get("status") != "error" and iid in preds and preds[iid] == a0_preds.get(iid):
+            out[iid] = {**g, "copied_from": f"{part}_A0"}
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag")
@@ -89,15 +128,16 @@ def main() -> None:
                              "from every arm, as a logged deviation).")
         return
     preds_path = swe_env.RUNS / f"predictions_{a.tag}.jsonl"
-    preds = {}
-    for line in preds_path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            r = json.loads(line)
-            preds[r["instance_id"]] = r.get("model_patch") or ""
+    preds = _read_predictions(preds_path)
     ids = sorted(preds)
     run_id = a.run_id or a.tag
-    run_harness(str(preds_path), run_id, [i for i in ids if preds[i].strip()])
-    grades = collect(run_id, ids, preds)
+    copied = reused_a0_grades(a.tag, preds)
+    to_grade = [i for i in ids if preds[i].strip() and i not in copied]
+    if copied:
+        print(f"{len(copied)} attempt(s) reused from A0: grades copied, not re-graded")
+    if to_grade:
+        run_harness(str(preds_path), run_id, to_grade)
+    grades = {**collect(run_id, [i for i in ids if i not in copied], preds), **copied}
     (swe_env.RUNS / f"grades_{a.tag}.json").write_text(json.dumps(grades, indent=1), encoding="utf-8")
     from collections import Counter
     print(a.tag, dict(Counter(g["status"] for g in grades.values())))
