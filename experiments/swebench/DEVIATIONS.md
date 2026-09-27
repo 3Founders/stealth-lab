@@ -48,3 +48,16 @@ Each entry: date, what changed, why. Written before continuing (docs/knowledge_s
    was dropped. The remote side returns it as a str; the client saves under its own `get_log_dir` path.
    `grade.py` runs the harness with PYTHONUTF8=1 on Windows (it writes logs in the locale encoding otherwise).
    Smoke test after the fix: report.json saved locally, resolved: true.
+
+## 2026-09-27 -- speed, before calibration (protocol-neutral; nothing scored)
+
+9. **Grading dedup:** an arm's attempt that generate.py REUSED from A0 (byte-identical prompt, attempt and
+   patch) takes A0's grade (`copied_from`) instead of being graded again; copied only when the patch is identical
+   and A0's grade is a real verdict (grade.py `reused_a0_grades`).
+10. **Parallel pre-scoring stages:** learn.py `name` and notes.py `queries` (independent temperature-0 calls),
+    notes.py `K` (find_ways against frozen Kel: each instance depends only on its own query) and kprod.py `survey`
+    (one independent agent run per repo) run concurrently. learn.py `extract` runs repos concurrently but keeps
+    each repo's order exactly as the sequential run did, because the identity/dedup judge may merge Procedures
+    within a repo.
+11. **GCE streaming grading backend** (gce_queue.py): the official harness on Compute Engine, fed per patch
+    through a GCS queue while generation runs; sharded by instance so each image is pulled once per worker.

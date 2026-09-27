@@ -22,6 +22,8 @@ import sys
 from collections import Counter
 
 import swe_env
+
+NOTES_CONCURRENCY = 8          # query-writer calls / find_ways calls in flight (independent per instance)
 from generate import design, instances
 from learn import resolved_train
 
@@ -45,10 +47,13 @@ def queries() -> None:
 
     path = swe_env.RUNS / "agent_queries.json"
     out = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
     c, inst = client(), instances()
-    for iid in design()["test"]:
-        if iid in out:
-            continue
+    lock = threading.Lock()
+
+    def one(iid: str) -> None:        # independent calls at temperature 0: run in parallel, same results
         r = c.chat.completions.create(
             model=swe_env.CONFIG["model"]["id"], temperature=0, max_tokens=swe_env.CONFIG["query_writer"]["max_tokens"],
             messages=[{"role": "system", "content": QUERY_SYSTEM},
@@ -57,8 +62,12 @@ def queries() -> None:
         m = re.fullmatch(r'find_ways\((.*)\)\.?', text, flags=re.S)
         text = (m.group(1) if m else text).strip().strip('"').strip("'")
         if text:
-            out[iid] = text
-            path.write_text(json.dumps(out, indent=1), encoding="utf-8")
+            with lock:
+                out[iid] = text
+                path.write_text(json.dumps(out, indent=1, sort_keys=True), encoding="utf-8")
+
+    with ThreadPoolExecutor(max_workers=NOTES_CONCURRENCY) as ex:
+        list(ex.map(one, [iid for iid in design()["test"] if iid not in out]))
     print(f"queries: {len(out)} of {len(design()['test'])}")
 
 
@@ -104,12 +113,15 @@ async def arm_k() -> None:
 
     out_path = swe_env.RUNS / "notes_K.json"
     out = json.loads(out_path.read_text(encoding="utf-8")) if out_path.exists() else {}
-    pool = await create_pool(swe_env.DSN, min_size=1, max_size=4)
+    pool = await create_pool(swe_env.DSN, min_size=1, max_size=NOTES_CONCURRENCY + 4)
     ctx = Ctx(pool)
-    try:
-        for iid in design()["test"]:
-            if iid in out:
-                continue
+    sem = asyncio.Semaphore(NOTES_CONCURRENCY)
+
+    async def guarded(iid: str) -> None:
+        async with sem:
+            await one(iid)
+
+    async def one(iid: str) -> None:   # Kel is frozen, so each instance's notes depend only on its own query
             d = await ask(ctx, qs[iid])
             path = [d.get("outcome")]
             ref = first_proc(d) if d.get("outcome") == "resolved" else None
@@ -136,8 +148,11 @@ async def arm_k() -> None:
                     text += "\nVerified patch of that past issue:\n" + _cap(wins[src]["patch"], MEM["procedure_arm_code_max_chars"])
                 text = _cap(text, MEM["max_chars"])
             out[iid] = {"text": text, "ref": ref, "source_instance": source_of.get(ref), "path": path}
-            out_path.write_text(json.dumps(out, indent=1), encoding="utf-8")
+            out_path.write_text(json.dumps(out, indent=1, sort_keys=True), encoding="utf-8")
             print(f"{iid:<45} {' -> '.join(map(str, path)):<35} {'NOTES' if text else '-'}", flush=True)
+
+    try:
+        await asyncio.gather(*(guarded(iid) for iid in design()["test"] if iid not in out))
     finally:
         await pool.close()
     print(f"K notes on {sum(1 for v in out.values() if v['text'])} of {len(out)}")

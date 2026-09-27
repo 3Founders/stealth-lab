@@ -101,10 +101,14 @@ def survey() -> None:
     repos = sorted({inst[i]["repo"] for i in design()["test"]})
     max_steps = swe_env.CONFIG["agent"]["max_steps"]
     agent = make_agent(client(), swe_env.CONFIG["model"]["id"], max_steps, swe_env.CONFIG["agent"]["temperature"], None)
-    for repo in repos:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    lock = threading.Lock()
+
+    def survey_one(repo: str) -> None:  # repos are independent; within a repo, attempts stay in order
         out = SURVEY_DIR / (repo.replace("/", "__") + ".md")
         if out.exists():
-            continue
+            return
         commit = survey_commit(repo)
         for attempt in (1, 2):
             wt = checkout(repo, commit, f"kp_survey_{repo.replace('/', '__')}_{attempt}")
@@ -117,14 +121,18 @@ def survey() -> None:
                 text = open(path, encoding="utf-8").read() if os.path.isfile(path) else ""
             finally:
                 release(repo, wt)
-            log.setdefault(repo, []).append({"attempt": attempt, "commit": commit, "usage": asdict(run.usage),
-                                             "stop_reason": run.stop_reason, "claims_chars": len(text),
-                                             "stray_edits": sb.edited_files()})
-            SURVEY_LOG.write_text(json.dumps(log, indent=1), encoding="utf-8")
+            with lock:
+                log.setdefault(repo, []).append({"attempt": attempt, "commit": commit, "usage": asdict(run.usage),
+                                                 "stop_reason": run.stop_reason, "claims_chars": len(text),
+                                                 "stray_edits": sb.edited_files()})
+                SURVEY_LOG.write_text(json.dumps(log, indent=1, sort_keys=True), encoding="utf-8")
             if text.strip():
                 out.write_text(text, encoding="utf-8")
                 break
         print(f"{repo:<30} claims.md: {out.stat().st_size if out.exists() else 0} bytes", flush=True)
+
+    with ThreadPoolExecutor(max_workers=len(repos) or 1) as ex:
+        list(ex.map(survey_one, repos))
     missing = [r for r in repos if not (SURVEY_DIR / (r.replace('/', '__') + '.md')).exists()]
     print(f"surveyed {len(repos) - len(missing)} of {len(repos)} repos" + (f"; NO claims.md for {missing} "
           "(KP runs there without repo facts -- record it in DEVIATIONS.md)" if missing else ""))
