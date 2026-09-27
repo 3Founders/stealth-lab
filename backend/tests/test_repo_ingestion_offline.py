@@ -86,6 +86,23 @@ def test_select_files_caps_each_domain():
     assert ri.select_files(tree, per_domain=3, only=["ci_cd"]) == []
 
 
+def test_select_files_skips_symlink_blobs_without_disturbing_the_cap():
+    tree = [{"type": "blob", "path": "styles/link.css", "size": 10, "mode": "120000"},
+            {"type": "blob", "path": "styles/real.css", "size": 10, "mode": "100644"}]
+    assert [p for p, _ in ri.select_files(tree)] == ["styles/real.css"]
+
+
+def test_changed_paths_only_ever_agrees_that_something_moved():
+    current = [{"type": "blob", "path": "a.css", "sha": "s1"}, {"type": "blob", "path": "b.css", "sha": "s2"}]
+    base = [{"type": "blob", "path": "a.css", "sha": "s1"}, {"type": "blob", "path": "b.css", "sha": "s0"}]
+    assert ri.changed_paths(current, base) == {"b.css"}
+    assert ri.changed_paths(current, []) == {"a.css", "b.css"}
+    assert ri.changed_paths(current, [{"type": "blob", "path": "a.css", "sha": "s1"},
+                                       {"type": "blob", "path": "b.css"}]) == {"b.css"}
+    assert ri.changed_paths(current, [{"type": "tree", "path": "a.css", "sha": "s1"},
+                                      {"type": "blob", "path": "b.css", "sha": "s0"}]) == {"a.css", "b.css"}
+
+
 def test_parse_description_abstain_and_bounds():
     assert ri._parse_description('{"abstain": true}') is None
     assert ri._parse_description('{"goal": "x", "description": "y"}') is None       # too short
