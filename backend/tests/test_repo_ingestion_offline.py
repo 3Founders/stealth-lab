@@ -3,11 +3,16 @@
 
 The license stage is exercised here too, end to end through `ingest_repo`: a repo-level id
 from `/license?ref=`, a per-subfolder license index built off the pinned tree, and the
-ALLOW / QUARANTINE / REJECT split that decides what is ever fetched or described."""
+ALLOW / QUARANTINE / REJECT split that decides what is ever fetched or described.
+
+Descriptions are batched (one call per REPO_DESCRIPTION_BATCH_SIZE files), so `FakeClient.calls`
+counts provider calls and `FakeClient.seen_paths` is the flat list of every file those calls
+asked about -- both shapes of prompt are understood by `requested_paths`."""
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import pytest
 
@@ -87,6 +92,18 @@ def spy_github(*args, **kwargs):
     return get
 
 
+_BATCH_ITEM_RE = re.compile(r"^id=(\d+)\|path=(.*)\|domain=([a-z_]+)$")
+
+
+def requested_paths(messages: list[dict]) -> list[str]:
+    """The files one provider call asked about, whichever prompt shape it used."""
+    user = messages[1]["content"]
+    batched = [m.group(2) for line in user.splitlines() if (m := _BATCH_ITEM_RE.match(line))]
+    if batched:
+        return batched
+    return [user.split("Path: ", 1)[1].split("\n", 1)[0]]
+
+
 class FakeClient:
     def __init__(self):
         self.calls = 0
@@ -102,9 +119,16 @@ class FakeClient:
 
     def create(self, **kw):
         self.calls += 1
-        path = kw["messages"][1]["content"].split("Path: ", 1)[1].split("\n", 1)[0]
-        self.seen_paths.append(path)
-        body = {"goal": f"Reuse the pattern demonstrated in {path}", "description": f"Concrete contents of {path}."}
+        paths = requested_paths(kw["messages"])
+        self.seen_paths.extend(paths)
+        if len(paths) == 1:
+            body = {"goal": f"Reuse the pattern demonstrated in {paths[0]}",
+                    "description": f"Concrete contents of {paths[0]}."}
+        else:
+            body = {"items": [{"id": m.group(1), "goal": f"Reuse the pattern demonstrated in {m.group(2)}",
+                               "description": f"Concrete contents of {m.group(2)}."}
+                              for line in kw["messages"][1]["content"].splitlines()
+                              if (m := _BATCH_ITEM_RE.match(line))]}
         msg = type("M", (), {"content": json.dumps(body)})()
         return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
 
@@ -117,12 +141,16 @@ def captured(monkeypatch):
         calls["procedures"].append(kw)
         return {"id": "row", "procedure_id": f"proc-{len(calls['procedures'])}"}
 
-    async def fake_preserve(pool, artifact, resource, raw_url, **kw):
-        calls["artifacts"].append({"url": raw_url, **kw})
-        return f"art-{len(calls['artifacts'])}"
+    async def fake_preserve(pool, files, **kw):
+        out = {}
+        for resource in files:
+            calls["artifacts"].append({"url": resource.raw_url, "path": resource.path,
+                                       "role": resource.role, "sha": resource.sha256, **kw})
+            out[resource.path] = f"art-{len(calls['artifacts'])}"
+        return out
 
     monkeypatch.setattr("app.services.procedures.capture_procedure", fake_capture)
-    monkeypatch.setattr("app.services.skill_ingestion._preserve_script_artifact", fake_preserve)
+    monkeypatch.setattr("app.services.skill_ingestion.preserve_repo_file_artifacts", fake_preserve)
     return calls
 
 
@@ -170,7 +198,10 @@ def test_ingest_repo_captures_one_step_procedures_pointing_at_pinned_urls(captur
     out = asyncio.run(ri.ingest_repo(None, "acme/ui", client=client, model="m", http_get=fake_github()))
     assert out["status"] == "captured" and out["commit"] == COMMIT
     assert {c["domain"] for c in out["captured"]} == {"ui_design", "ci_cd", "scripts"}
-    assert client.calls == 4                           # README + node_modules never reach the model
+    assert out["description_batch_size"] == ri.DEFAULT_DESCRIPTION_BATCH_SIZE
+    # four selected files, one batched call; README + node_modules never reach the model
+    assert client.calls == 1
+    assert sorted(client.seen_paths) == sorted(SELECTED)
     for kw in captured["procedures"]:
         (step,) = kw["steps"]
         assert step["source_locator"]["uri"].startswith(f"https://raw.githubusercontent.com/acme/ui/{COMMIT}/")
@@ -210,7 +241,7 @@ def test_mit_repo_licenses_every_selected_path_from_the_repository_id(captured):
     out = asyncio.run(ri.ingest_repo(None, "acme/ui", client=client, model="m", http_get=fake_github("MIT")))
     assert out["eligible"] == 4 and out["license_blocked"] == 0
     assert set(out["skipped"]) & {"license_rejected", "license_quarantined"} == set()
-    assert client.calls == 4 and len(captured["procedures"]) == 4
+    assert client.calls == 1 and len(captured["procedures"]) == 4
 
 
 def test_a_repo_with_no_license_anywhere_is_quarantined_before_any_llm_call(captured):
@@ -305,7 +336,7 @@ def test_an_unidentified_root_license_falls_back_to_the_detectors_own_reading_of
     out = asyncio.run(ri.ingest_repo(
         None, "acme/ui", client=client, model="m",
         http_get=fake_github("MIT", license_blobs={"LICENSE": PROPRIETARY_TEXT})))
-    assert out["status"] == "captured" and client.calls == 4
+    assert out["status"] == "captured" and client.calls == 1
     assert out["license_blocked"] == 0
 
 
@@ -313,7 +344,7 @@ def test_license_allow_extension_un_quarantines_a_license_the_default_policy_ref
     client = FakeClient()
     out = asyncio.run(ri.ingest_repo(None, "acme/ui", client=client, model="m",
                                      http_get=fake_github("MPL-2.0"), license_allow={"MPL-2.0"}))
-    assert out["status"] == "captured" and client.calls == 4
+    assert out["status"] == "captured" and client.calls == 1
     assert out["license_blocked"] == 0
 
 

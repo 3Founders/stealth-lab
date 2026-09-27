@@ -1947,6 +1947,146 @@ async def _preserve_script_artifact(
     return str(row["id"])
 
 
+@dataclass(frozen=True)
+class PreservedRepoFile:
+    """One repo blob queued for a batched ``ingested_artifacts`` metadata upsert.
+
+    The fields are exactly the ones ``_preserve_script_artifact`` reads off its
+    ``artifact`` / ``resource`` arguments, flattened so a caller that already
+    holds a whole selection (repo_ingestion) does not have to manufacture
+    SimpleNamespace pairs per file.
+    """
+
+    path: str
+    data: bytes
+    sha256: str
+    role: str
+    raw_url: str
+
+
+ARTIFACT_UPSERT_BATCH = 64
+"""Rows per multi-row INSERT. Metadata for a repo selection is one statement
+per this many files instead of one per file, while the statement stays far
+below any sane parameter ceiling (REPO_ARTIFACT_ROW_PARAMS bound parameters per
+row)."""
+
+REPO_ARTIFACT_ROW_PARAMS = 15
+"""Bound parameters per row of the batched repo-file upsert. Not a tuning knob:
+it is the arity of _ARTIFACT_ROW_EXPRESSIONS, and _artifact_row_tuple refuses to
+build a row whose placeholder count has drifted away from it."""
+
+_ARTIFACT_ROW_EXPRESSIONS = (
+    "gen_random_uuid(), $%(first)d, $%(second)d, $%(third)d, $%(fourth)d, $%(fifth)d, "
+    "$%(sixth)d, $%(seventh)d, $%(eighth)d, $%(ninth)d, $%(tenth)d, $%(eleventh)d::jsonb, "
+    "$%(twelfth)d, false, $%(thirteenth)d::visibility_level, $%(fourteenth)d, $%(fifteenth)d::uuid"
+)
+
+
+def _artifact_row_tuple(first: int) -> str:
+    """One parenthesised VALUES tuple for the batched repo-file upsert,
+    numbering its bound parameters from ``first``.
+
+    The row parens are load-bearing, not decoration: a multi-row VALUES list
+    is several comma-separated parenthesised tuples, and omitting them binds one
+    long flat list the statement cannot parse. The casts and the literal
+    ``false`` are ``_preserve_script_artifact``'s for the same reason -- without
+    the boolean literal the ``execution_allowed`` column would be handed a
+    visibility string, and without the jsonb / enum / uuid casts asyncpg has
+    nothing to infer those parameters from here."""
+    names = re.findall(r"\$%\(([a-z]+)\)d", _ARTIFACT_ROW_EXPRESSIONS)
+    if len(names) != REPO_ARTIFACT_ROW_PARAMS:
+        raise RuntimeError(
+            f"skill_ingestion: artifact row template binds {len(names)} parameters, "
+            f"expected {REPO_ARTIFACT_ROW_PARAMS}"
+        )
+    filled = _ARTIFACT_ROW_EXPRESSIONS % {name: first + offset for offset, name in enumerate(names)}
+    return f"({filled})"
+
+
+async def preserve_repo_file_artifacts(
+    pool: asyncpg.Pool, files: list[PreservedRepoFile], *, repository: str, commit: str,
+    created_by: str, source_type: str = "repo_file", owner_id: Optional[str] = None,
+    visibility: str = "public", ingestion_context_id: Optional[str] = None,
+    gate: Optional[asyncio.Semaphore] = None, batch_size: Optional[int] = None,
+) -> dict[str, str]:
+    """`path -> artifact id` for a whole selection, in one statement per batch.
+
+    The batched sibling of ``_preserve_script_artifact`` and identical to it in
+    every decision it makes: same columns, same values, same partial upsert
+    identity ``(source_type, uri, content_hash) WHERE role IS NOT NULL``, same
+    ``execution_allowed=false`` (found source is not trusted), same
+    metadata-only status for a role that is not copied.
+
+    What it changes is the round trip count, and only the round trip count. The
+    BYTES are still copied one file at a time and still only for a role that
+    may execute, because ``step_binding`` runs a single artifact at a time and a
+    multi-blob PUT would have to invent a container format object storage has no
+    opinion about. `gate` bounds those per-file PUTs to the caller's own file
+    concurrency; the metadata rows then land together.
+
+    `created_by` is accepted for signature parity with
+    ``_preserve_script_artifact`` and is not written: ``ingested_artifacts`` has
+    no such column on this path, and inventing one would be a second identity
+    for the same row.
+
+    A multi-row INSERT ... ON CONFLICT DO UPDATE returns exactly one row per
+    input row, so the path -> id map is complete even when every row was a
+    conflict update; a row the database returned for a path this call did not
+    send is ignored rather than trusted."""
+    import os as _os
+
+    from app.services.object_storage import get_store, store_blob
+
+    if not files:
+        return {}
+    size = ARTIFACT_UPSERT_BATCH if not batch_size else max(1, min(int(batch_size), ARTIFACT_UPSERT_BATCH))
+    store = get_store()
+
+    async def put(resource: PreservedRepoFile) -> Optional[dict]:
+        if gate is None:
+            return await store_blob(pool, store, resource.data, content_type="text/plain")
+        async with gate:
+            return await store_blob(pool, store, resource.data, content_type="text/plain")
+
+    content_refs: dict[str, Optional[dict]] = {}
+    for resource in files:
+        if resource.role == "executable_source" and store is not None and resource.data:
+            content_refs[resource.path] = await put(resource)
+        else:
+            content_refs[resource.path] = None
+
+    out: dict[str, str] = {}
+    for start in range(0, len(files), size):
+        chunk = files[start:start + size]
+        wanted = {resource.path for resource in chunk}
+        params: list[Any] = []
+        for resource in chunk:
+            stored = content_refs[resource.path]
+            params.extend([
+                source_type, resource.raw_url, repository, resource.path, commit, resource.sha256,
+                resource.role,
+                "text/x-script" if resource.role == "executable_source" else "text/plain",
+                _LANGUAGE_BY_EXT.get(_os.path.splitext(resource.path)[1].lower()),
+                len(resource.data), stored, "stored" if stored else "metadata_only",
+                visibility, owner_id, ingestion_context_id,
+            ])
+        tuples = ", ".join(
+            _artifact_row_tuple(offset + 1)
+            for offset in range(0, len(params), REPO_ARTIFACT_ROW_PARAMS)
+        )
+        rows = await pool.fetch(
+            "INSERT INTO ingested_artifacts (id, source_type, uri, repository, path, \"commit\", "
+            "content_hash, role, mime_type, language, byte_size, content_ref, extraction_status, "
+            "execution_allowed, visibility, owner_id, ingestion_context_id) VALUES " + tuples +
+            " ON CONFLICT (source_type, uri, content_hash) WHERE role IS NOT NULL "
+            "DO UPDATE SET last_seen = now() RETURNING id, path", *params)
+        for row in (rows or ()):
+            path = str(row["path"])
+            if path in wanted:
+                out[path] = str(row["id"])
+    return out
+
+
 async def _persist_script_procedures(
     pool: asyncpg.Pool, artifact: Any, *,
     scripts: list[Any], created_by: str, provenance: str = "prior_library",

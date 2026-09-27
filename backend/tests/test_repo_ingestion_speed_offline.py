@@ -4,12 +4,17 @@ order, and BudgetExceeded propagation. Plus one deterministic fake-latency bench
 
 No network, no DB. The fakes here are deliberately not shared with
 test_repo_ingestion_offline.py: this file's pool has to serve the batched described-content
-probe and the artifact->procedure link, and nothing else in the module touches SQL."""
+probe and the artifact->procedure link, and nothing else in the module touches SQL.
+
+`FakeClient.paths` is the flat list of every file the provider calls asked about, so a batched
+call and a single-file call are both legible through the same attribute; `FakeClient.calls`
+counts calls, not files. Tests that need per-file completion order pass batch_size=1."""
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import json
+import re
 import threading
 import time
 from types import SimpleNamespace
@@ -96,6 +101,17 @@ class FakePool:
         return "UPDATE 1"
 
 
+_BATCH_ITEM_RE = re.compile(r"^id=(\d+)\|path=(.*)\|domain=([a-z_]+)$")
+
+
+def prompt_items(user: str) -> list[tuple[str, str]]:
+    """(id, path) per requested file, from either prompt shape."""
+    batched = [(m.group(1), m.group(2)) for line in user.splitlines() if (m := _BATCH_ITEM_RE.match(line))]
+    if batched:
+        return batched
+    return [("1", user.split("Path: ", 1)[1].split("\n", 1)[0])]
+
+
 class FakeClient:
     """Counts and (optionally) delays description calls. The delay happens in whatever thread
     runs create(), so it is a real concurrency probe rather than a timer."""
@@ -105,6 +121,8 @@ class FakeClient:
         self.jitter = jitter
         self.delays = delays or {}
         self.paths: list[str] = []
+        self.finished: list[str] = []
+        self.calls = 0
         self._lock = threading.Lock()
         self.in_flight = 0
         self.max_in_flight = 0
@@ -118,17 +136,26 @@ class FakeClient:
         return self
 
     def create(self, **kw):
-        path = kw["messages"][1]["content"].split("Path: ", 1)[1].split("\n", 1)[0]
+        user = kw["messages"][1]["content"]
+        items = prompt_items(user)
         with self._lock:
-            self.paths.append(path)
+            self.calls += 1
+            self.paths.extend(path for _id, path in items)
             self.in_flight += 1
             self.max_in_flight = max(self.max_in_flight, self.in_flight)
-            nth = len(self.paths)
+            nth = self.calls
+        path = items[0][1]
         time.sleep(self.delays.get(path, self.delay + (self.jitter * (nth % 3))))
         with self._lock:
             self.in_flight -= 1
-        body = {"goal": f"Reuse the concrete pattern demonstrated in {path}",
-                "description": f"{path} concretely contains the reusable values it names."}
+            self.finished.extend(path for _id, path in items)
+        if len(items) == 1:
+            body = {"goal": f"Reuse the concrete pattern demonstrated in {path}",
+                    "description": f"{path} concretely contains the reusable values it names."}
+        else:
+            body = {"items": [{"id": i, "goal": f"Reuse the concrete pattern demonstrated in {p}",
+                               "description": f"{p} concretely contains the reusable values it names."}
+                              for i, p in items]}
         msg = type("M", (), {"content": json.dumps(body)})()
         return type("R", (), {"choices": [type("C", (), {"message": msg})()]})()
 
@@ -144,14 +171,18 @@ def harness(monkeypatch):
         n = len(calls["procedures"])
         return {"id": f"row-{n}", "procedure_id": f"proc-{n}"}
 
-    async def fake_preserve(_pool, _artifact, resource, raw_url, **kw):
-        artifact_id = f"art-{len(calls['artifacts']) + 1}"
-        calls["artifacts"].append({"url": raw_url, "path": resource.path, "sha": resource.sha256, **kw})
-        shas[artifact_id] = resource.sha256
-        return artifact_id
+    async def fake_preserve(_pool, files, **_kw):
+        out = {}
+        for resource in files:
+            artifact_id = f"art-{len(calls['artifacts']) + 1}"
+            calls["artifacts"].append({"url": resource.raw_url, "path": resource.path,
+                                       "sha": resource.sha256, "role": resource.role})
+            shas[artifact_id] = resource.sha256
+            out[resource.path] = artifact_id
+        return out
 
     monkeypatch.setattr("app.services.procedures.capture_procedure", fake_capture)
-    monkeypatch.setattr("app.services.skill_ingestion._preserve_script_artifact", fake_preserve)
+    monkeypatch.setattr("app.services.skill_ingestion.preserve_repo_file_artifacts", fake_preserve)
     pool.sha_by_artifact = shas
     return SimpleNamespace(pool=pool, calls=calls)
 
@@ -294,15 +325,22 @@ def test_file_concurrency_is_bounded_and_actually_parallel(harness):
     payload = {f"styles/s{i}.css": f".s{i}{{color:#0{i}f0f0}}".encode() for i in range(6)}
     gh = FakeGitHub({COMMIT: payload}, {COMMIT: tree_for(payload)})
     client = FakeClient(delay=0.02)
-    out = ingest(harness.pool, client, gh, commit=COMMIT, concurrency=2)
+    out = ingest(harness.pool, client, gh, commit=COMMIT, concurrency=2, batch_size=1)
     assert out["concurrency"] == 2
+    assert client.calls == 6
     assert 1 < client.max_in_flight <= 2
     assert len(out["captured"]) == 6
 
     harness.pool.described.clear()
     wide = FakeClient(delay=0.01)
-    ingest(harness.pool, wide, gh, commit=COMMIT, concurrency=4)
+    ingest(harness.pool, wide, gh, commit=COMMIT, concurrency=4, batch_size=1)
     assert 1 < wide.max_in_flight <= 4
+
+    harness.pool.described.clear()
+    batched = FakeClient(delay=0.01)
+    one_shot = ingest(harness.pool, batched, gh, commit=COMMIT, concurrency=4)
+    assert batched.calls == 1 and batched.max_in_flight == 1
+    assert len(one_shot["captured"]) == 6
 
     assert ri.file_concurrency(99) == ri.MAX_REPO_FILE_CONCURRENCY
     assert ri.file_concurrency(0) == 1
@@ -343,9 +381,8 @@ def test_captured_order_is_the_selection_order_not_the_completion_order(harness)
 
     def run() -> tuple[list[str], list[str]]:
         client = FakeClient(delay=0.005, delays={expected[0]: 0.08})
-        out = ingest(harness.pool, client, gh, commit=COMMIT, concurrency=4)
-        finished = [kw["steps"][0]["source_locator"]["path"] for kw in harness.calls["procedures"]]
-        return [c["path"] for c in out["captured"]], finished
+        out = ingest(harness.pool, client, gh, commit=COMMIT, concurrency=4, batch_size=1)
+        return [c["path"] for c in out["captured"]], list(client.finished)
 
     captured_order, finish_order = run()
     assert captured_order == expected
@@ -361,26 +398,29 @@ def test_screening_precedes_every_description_call(harness, monkeypatch):
 
     order: list[tuple[str, str]] = []
     original_screen = screening.screen_document_text
-    original_describe = ri.describe_file
+    original_describe = ri.describe_files
 
     def spy_screen(text, **kw):
         order.append(("screen", text))
         return original_screen(text, **kw)
 
-    async def spy_describe(client, model, repository, path, domain, text):
-        order.append(("describe", text))
-        return await original_describe(client, model, repository, path, domain, text)
+    async def spy_describe(client, model, repository, items, **kw):
+        for item in items:
+            order.append(("describe", item.text))
+        return await original_describe(client, model, repository, items, **kw)
 
     monkeypatch.setattr(screening, "screen_document_text", spy_screen)
-    monkeypatch.setattr(ri, "describe_file", spy_describe)
+    monkeypatch.setattr(ri, "describe_files", spy_describe)
     out = ingest(harness.pool, FakeClient(delay=0.005), github(), commit=COMMIT, concurrency=3)
     assert len(out["captured"]) == len(SIMPLE)
-    assert sorted(text for kind, text in order if kind == "describe") == sorted(
+    screen_at = {text: n for n, (kind, text) in enumerate(order) if kind == "screen"}
+    described = [n for n, (kind, _t) in enumerate(order) if kind == "describe"]
+    assert described
+    for n in described:
+        assert order[n][1] in screen_at
+        assert screen_at[order[n][1]] < n, "a file was described before its screen ran"
+    assert sorted(text for _k, text in order if _k == "describe") == sorted(
         data.decode() for data in SIMPLE.values())
-    for kind, text in order:
-        if kind == "describe":
-            assert ("screen", text) in order
-            assert order.index(("screen", text)) < order.index(("describe", text))
 
 
 def test_captured_steps_keep_a_commit_pinned_quoted_url_and_the_sha256(harness):
@@ -519,11 +559,13 @@ def test_benchmark_records_throughput_and_calls_per_file(harness):
         "captured": len(cold["captured"]),
         "files_per_minute": round(files / cold_elapsed * 60, 1),
         "describe_calls_per_file": round(len(client.paths) / files, 3),
+        "provider_calls": client.calls,
         "capture_calls_per_file": round(len(harness.calls["procedures"]) / files, 3),
         "concurrency": cold["concurrency"],
     }
     assert cold_metrics["captured"] == files
     assert cold_metrics["files_per_minute"] > 1000
+    assert cold_metrics["provider_calls"] == 2
     assert cold_metrics["describe_calls_per_file"] == 1.0
     assert cold_metrics["capture_calls_per_file"] == 1.0
     assert cold_metrics["concurrency"] == 4
