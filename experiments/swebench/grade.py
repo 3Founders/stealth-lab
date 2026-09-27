@@ -28,7 +28,7 @@ def run_harness(predictions: str, run_id: str, instance_ids: list[str]) -> None:
     cmd = [sys.executable, "-m", "swebench.harness.run_evaluation",
            "--dataset_name", swe_env.CONFIG["dataset"]["name"], "--split", swe_env.CONFIG["dataset"]["split"],
            "--predictions_path", predictions, "--run_id", run_id, "--max_workers", str(g["max_workers"]),
-           "--timeout", str(g["timeout_s"]), "--cache_level", g["cache_level"]]
+           "--timeout", str(g["timeout_s"])]         # swebench 5.x removed --cache_level
     if g.get("backend", "docker") == "modal":
         cmd += ["--modal", "true"]
     if instance_ids:

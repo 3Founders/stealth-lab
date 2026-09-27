@@ -17,3 +17,5 @@ Each entry: date, what changed, why. Written before continuing (docs/knowledge_s
    by a provider failure is infrastructure, not the arm: it is retried and never scored, even if it left a
    partial patch. Otherwise rate limits (General Compute 429s are frequent) would count against whichever arm
    hit them.
+5. **`--cache_level` dropped from the harness call**: swebench 5.0.2 (the pinned version) no longer accepts it
+   (`unrecognized arguments: --cache_level env`). `grading.cache_level` in experiment.json is now unused.
