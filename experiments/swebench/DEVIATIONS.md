@@ -19,3 +19,10 @@ Each entry: date, what changed, why. Written before continuing (docs/knowledge_s
    hit them.
 5. **`--cache_level` dropped from the harness call**: swebench 5.0.2 (the pinned version) no longer accepts it
    (`unrecognized arguments: --cache_level env`). `grading.cache_level` in experiment.json is now unused.
+6. **Grading dataset `SWE-bench/SWE-bench_Verified`** (`grading.dataset`, revision 78f471bf) instead of
+   `princeton-nlp/SWE-bench_Verified`: swebench 5.x builds each test from the dataset's `image` column, which only
+   the maintained copy has (`KeyError: 'image'` otherwise). Checked field by field: same 500 ids; identical
+   base_commit, patch, test_patch, FAIL_TO_PASS, created_at, problem statement, env commit, version. Only
+   PASS_TO_PASS differs, on 2 instances, both in the TRAIN pool: astropy__astropy-7606 (1 test removed),
+   django__django-10097 (5 removed) -- the maintainers' removal of broken/flaky tests. The design, the prompts
+   and every held-out instance are unaffected.

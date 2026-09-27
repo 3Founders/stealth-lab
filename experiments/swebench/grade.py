@@ -26,7 +26,7 @@ from check_env import require_pinned
 def run_harness(predictions: str, run_id: str, instance_ids: list[str]) -> None:
     g = swe_env.CONFIG["grading"]
     cmd = [sys.executable, "-m", "swebench.harness.run_evaluation",
-           "--dataset_name", swe_env.CONFIG["dataset"]["name"], "--split", swe_env.CONFIG["dataset"]["split"],
+           "--dataset_name", g.get("dataset", swe_env.CONFIG["dataset"]["name"]), "--split", swe_env.CONFIG["dataset"]["split"],
            "--predictions_path", predictions, "--run_id", run_id, "--max_workers", str(g["max_workers"]),
            "--timeout", str(g["timeout_s"])]         # swebench 5.x removed --cache_level
     if g.get("backend", "docker") == "modal":
