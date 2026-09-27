@@ -69,3 +69,8 @@ Everything is round-5 KH exactly: tasks (89: 82 transfer + 7 control), models (g
    - `PREREGISTRATION_6.md`, `run_r6.py` and `analyze_r6.py` exactly as committed in `b31f85d` (LF line endings);
    - `../kel_product_arm.py` as committed in `b31f85d`, but with CRLF line endings (its Windows checkout when hashed).
    A later rebase re-checked-out the files with `core.autocrlf=true`, so the working copies no longer hash to the same value. The content is unchanged; checked against the committed blobs.
+
+2. **2026-09-28, paused for API quota (infrastructure only).** At 20:30 UTC every General Compute key had used its daily token quota. The runner was stopped (launcher, then Python; none left) so that rate-limited episodes would not be graded after a truncated run.
+   - State: KH0 89/89 per model; KHnR 24/23/21 (gemma/gpt-oss/deepseek).
+   - No duplicates; no graded episode ended on an API error.
+   - It resumes with the same command when a quota resets. Nothing else changes.
