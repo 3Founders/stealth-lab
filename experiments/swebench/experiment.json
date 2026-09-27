@@ -53,9 +53,11 @@
   ],
   "grading": {
     "harness": "swebench.harness.run_evaluation",
+    "backend": "modal",
     "max_workers": 4,
     "timeout_s": 1800,
-    "cache_level": "env"
+    "cache_level": "env",
+    "_doc": "backend 'modal' runs the official harness with --modal true (no local Docker or image storage); 'docker' runs it locally. max_workers/cache_level apply to docker only."
   },
   "kel_database": "kel_swebench",
   "pinned": null,

@@ -1,4 +1,6 @@
-"""Grade predictions with the OFFICIAL SWE-bench harness (Docker), unmodified.
+"""Grade predictions with the OFFICIAL SWE-bench harness, unmodified -- in local Docker, or on Modal when
+experiment.json grading.backend is "modal" (the harness's own `--modal true`; images build and run remotely,
+reports land in the same runs/logs/run_evaluation/<run_id>/ tree, so collection is identical).
 
     python grade.py --gold                     # sanity check FIRST: gold patches on the calibration set must all resolve
     python grade.py --tag train_A0             # grades runs/predictions_train_A0.jsonl
@@ -27,6 +29,8 @@ def run_harness(predictions: str, run_id: str, instance_ids: list[str]) -> None:
            "--dataset_name", swe_env.CONFIG["dataset"]["name"], "--split", swe_env.CONFIG["dataset"]["split"],
            "--predictions_path", predictions, "--run_id", run_id, "--max_workers", str(g["max_workers"]),
            "--timeout", str(g["timeout_s"]), "--cache_level", g["cache_level"]]
+    if g.get("backend", "docker") == "modal":
+        cmd += ["--modal", "true"]
     if instance_ids:
         cmd += ["--instance_ids", *instance_ids]
     print(" ".join(cmd[:12]), "...", flush=True)
@@ -53,13 +57,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag")
     ap.add_argument("--gold", action="store_true")
+    ap.add_argument("--run-id", help="harness run id (default: the tag, or gold_check). Reports are cached per "
+                    "run id: re-running the same id re-grades only missing/errored instances; a new id grades afresh")
     a = ap.parse_args()
     require_pinned(scored=not (a.gold or (a.tag or "").startswith("calibration")))
     design = json.loads((swe_env.RUNS / "design.json").read_text(encoding="utf-8"))
     if a.gold:
         ids = design["calibration"]
-        run_harness("gold", "gold_check", ids)
-        grades = collect("gold_check", ids, {})
+        run_id = a.run_id or "gold_check"
+        run_harness("gold", run_id, ids)
+        grades = collect(run_id, ids, {})
         bad = [i for i, g in grades.items() if not g["resolved"]]
         (swe_env.RUNS / "grades_gold_check.json").write_text(json.dumps(grades, indent=1), encoding="utf-8")
         print(f"gold patches resolved: {len(ids) - len(bad)}/{len(ids)}")
@@ -75,8 +82,9 @@ def main() -> None:
             r = json.loads(line)
             preds[r["instance_id"]] = r.get("model_patch") or ""
     ids = sorted(preds)
-    run_harness(str(preds_path), a.tag, [i for i in ids if preds[i].strip()])
-    grades = collect(a.tag, ids, preds)
+    run_id = a.run_id or a.tag
+    run_harness(str(preds_path), run_id, [i for i in ids if preds[i].strip()])
+    grades = collect(run_id, ids, preds)
     (swe_env.RUNS / f"grades_{a.tag}.json").write_text(json.dumps(grades, indent=1), encoding="utf-8")
     from collections import Counter
     print(a.tag, dict(Counter(g["status"] for g in grades.values())))

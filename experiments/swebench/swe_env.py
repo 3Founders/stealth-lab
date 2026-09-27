@@ -20,6 +20,21 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BACKEND = ROOT / "backend"
 CONFIG = json.loads((HERE / "experiment.json").read_text(encoding="utf-8"))
+
+
+def _load_experiment_env() -> None:
+    """KEL_SWEBENCH_DSN and the agent endpoint may live in backend/.env (gitignored) instead of the shell.
+    Only these three keys are read, and a value already in the environment wins."""
+    path = BACKEND / ".env"
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.strip().partition("=")
+        if sep and key.strip() in ("KEL_SWEBENCH_DSN", "EXPERIMENT_BASE_URL", "EXPERIMENT_API_KEY"):
+            os.environ.setdefault(key.strip(), value.strip().strip('"'))
+
+
+_load_experiment_env()
 RUNS = HERE / "runs"
 CACHE = HERE / "cache"          # repo clones (git) -- large, gitignored
 DSN = os.environ.get("KEL_SWEBENCH_DSN", "postgresql://postgres@127.0.0.1:5432/" + CONFIG["kel_database"])

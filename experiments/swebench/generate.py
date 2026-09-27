@@ -188,7 +188,10 @@ def main() -> None:
             added = kp_block if a.arm == "KP" else memory
             rec = {**asdict(run), "usage": asdict(run.usage), "part": a.part, "max_steps": max_steps,
                    "memory_sha256": hashlib.sha256(added.encode()).hexdigest(), "memory_chars": len(added),
-                   "environmental_failure": bool(run.error and not run.patch)}
+                   # A provider failure ended the episode early: infrastructure, not the arm -- retried, never
+                   # scored, even when a partial patch exists (rate limits would otherwise count against
+                   # whichever arm ran into them).
+                   "environmental_failure": run.stop_reason == "api_error"}
             if a.arm == "KP":
                 rec["kel_calls"] = sandbox.kel_log
         except Exception as exc:  # noqa: BLE001 -- infrastructure, not the arm: retried next invocation

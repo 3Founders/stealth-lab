@@ -7,7 +7,7 @@ runs/pinned.json; every later scored step, and grading of scored runs, must matc
 
 Pinned: Kel commit (git HEAD of this repo, must be clean in backend/ and experiments/swebench/),
 swebench package version, the dataset revision (HF commit sha), Python version, Docker server
-version, and the agent model id + base URL host. Every other script calls `require_pinned()`.
+version (or the modal grading backend), and the agent model id + base URL host. Every other script calls `require_pinned()`.
 """
 from __future__ import annotations
 
@@ -35,22 +35,43 @@ def current() -> dict:
         swebench_version = version("swebench")
     except Exception:  # noqa: BLE001
         swebench_version = None
-    try:
-        docker = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"], capture_output=True,
-                                text=True, timeout=30).stdout.strip() or None
-    except Exception:  # noqa: BLE001
-        docker = None
+    backend = grading_backend()
+    if backend == "modal":
+        docker = "n/a (graded on modal)"      # generation needs no Docker; grading images run remotely
+    else:
+        try:
+            docker = subprocess.run(["docker", "version", "--format", "{{.Server.Version}}"], capture_output=True,
+                                    text=True, timeout=30).stdout.strip() or None
+        except Exception:  # noqa: BLE001
+            docker = None
     dirty = _git("status", "--porcelain", "--untracked-files=no", "--", "backend", "experiments/swebench/*.py", "experiments/swebench/experiment.json")
     cfg = swe_env.CONFIG
     return {
         "kel_commit": _git("rev-parse", "HEAD"), "kel_tree_clean": not dirty,
-        "swebench_version": swebench_version, "docker_server": docker,
+        "swebench_version": swebench_version, "docker_server": docker, "grading_backend": backend,
+        "modal_ready": modal_ready() if backend == "modal" else None,
         "python": platform.python_version(),
         "dataset": cfg["dataset"]["name"], "dataset_revision": dataset_revision(),
         "model": cfg["model"]["id"],
         "model_host": urlparse(os.environ.get(cfg["model"]["base_url_env"], "")).hostname,
         "max_steps": cfg["agent"]["max_steps"],
     }
+
+
+def grading_backend() -> str:
+    return swe_env.CONFIG["grading"].get("backend", "docker")
+
+
+def modal_ready() -> bool:
+    """Modal credentials present (the token file `modal setup` writes, or MODAL_TOKEN_ID/SECRET)."""
+    import os
+    from pathlib import Path
+
+    try:
+        import modal  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return (Path.home() / ".modal.toml").exists() or bool(os.environ.get("MODAL_TOKEN_ID"))
 
 
 def dataset_revision() -> str | None:
@@ -73,7 +94,10 @@ def require_pinned(*, scored: bool = True) -> dict:
     if env["swebench_version"] is None:
         problems.append("swebench is not installed (pip install swebench)")
     if env["docker_server"] is None:
-        problems.append("docker is not reachable (docker version failed)")
+        problems.append("docker is not reachable (docker version failed) -- or set grading.backend to \"modal\"")
+    if env["grading_backend"] == "modal" and not env["modal_ready"]:
+        problems.append("grading.backend is modal but modal is not installed/authenticated (pip install "
+                        "\"swebench[modal]\" && modal setup)")
     if scored and env["max_steps"] is None:
         problems.append("agent.max_steps is not frozen yet -- run the calibration stage first")
     if problems:
@@ -85,7 +109,7 @@ def require_pinned(*, scored: bool = True) -> dict:
         print(f"pinned environment written to {PINNED}")
         return env
     pinned = json.loads(PINNED.read_text(encoding="utf-8"))
-    keys = ("kel_commit", "swebench_version", "docker_server", "python", "dataset_revision", "model", "model_host",
+    keys = ("kel_commit", "swebench_version", "docker_server", "grading_backend", "python", "dataset_revision", "model", "model_host",
             "max_steps")
     drift = {k: (pinned.get(k), env.get(k)) for k in keys if pinned.get(k) != env.get(k)}
     if drift:
