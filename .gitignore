@@ -121,3 +121,6 @@ experiments/ds1000/__pycache__/
 experiments/swebench/cache/
 experiments/swebench/runs/
 experiments/swebench/__pycache__/
+experiments/swebench_rebench/cache/
+experiments/swebench_rebench/runs/
+experiments/swebench_rebench/__pycache__/

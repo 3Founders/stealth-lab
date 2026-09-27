@@ -44,7 +44,10 @@ def current() -> dict:
                                     text=True, timeout=30).stdout.strip() or None
         except Exception:  # noqa: BLE001
             docker = None
-    dirty = _git("status", "--porcelain", "--untracked-files=no", "--", "backend", "experiments/swebench/*.py", "experiments/swebench/experiment.json")
+    exp_dir = swe_env.CONFIG_PATH.parent.relative_to(swe_env.ROOT).as_posix()
+    dirty = _git("status", "--porcelain", "--untracked-files=no", "--", "backend", "experiments/swebench/*.py",
+                 "experiments/swebench/experiment.json", f"{exp_dir}/*.py",
+                 swe_env.CONFIG_PATH.relative_to(swe_env.ROOT).as_posix())
     cfg = swe_env.CONFIG
     return {
         "kel_commit": _git("rev-parse", "HEAD"), "kel_tree_clean": not dirty,

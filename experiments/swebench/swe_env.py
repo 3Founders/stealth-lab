@@ -19,7 +19,10 @@ from urllib.parse import urlparse
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 BACKEND = ROOT / "backend"
-CONFIG = json.loads((HERE / "experiment.json").read_text(encoding="utf-8"))
+# KEL_SWEBENCH_CONFIG selects another experiment's frozen settings (e.g. ../swebench_rebench/experiment.json);
+# its runs/ and cache/ live next to that file, so two experiments never share state. Default: this folder.
+CONFIG_PATH = Path(os.environ.get("KEL_SWEBENCH_CONFIG") or HERE / "experiment.json").resolve()
+CONFIG = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
 
 def _load_experiment_env() -> None:
@@ -37,8 +40,8 @@ def _load_experiment_env() -> None:
 _load_experiment_env()
 if sys.platform == "win32" and str(HERE / "winshim") not in sys.path:
     sys.path.append(str(HERE / "winshim"))     # POSIX `resource` stand-in so swebench 4.x imports (see winshim/)
-RUNS = HERE / "runs"
-CACHE = HERE / "cache"          # repo clones (git) -- large, gitignored
+RUNS = CONFIG_PATH.parent / "runs"
+CACHE = CONFIG_PATH.parent / "cache"          # repo clones (git) -- large, gitignored
 DSN = os.environ.get("KEL_SWEBENCH_DSN", "postgresql://postgres@127.0.0.1:5432/" + CONFIG["kel_database"])
 
 
