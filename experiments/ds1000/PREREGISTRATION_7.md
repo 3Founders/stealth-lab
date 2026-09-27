@@ -48,4 +48,57 @@ Round 5 ([PREREGISTRATION_5.md](PREREGISTRATION_5.md)) confirmed the Claude Code
 
 ## Deviations
 
-(none yet)
+1. **2026-09-28, KH7's own `find_ways` calls are effectively unavailable (found after wave 1; prompts unchanged).**
+   - This Claude Code session has a StealthLab MCP server configured that is not running (ECONNREFUSED); the subagents inherit it. The KH7 batch 00 agent reported that it looked for StealthLab there, found it disconnected, and solved the tasks without calling Kel. It did not use the `kel_cli.py` command its prompt offers, which works: checked by running the exact command.
+   - No KH7 batch in wave 1 made a Kel command call.
+   - **What it means:** the hook's text reached every KH7 task as designed, so the primary tests the hook. The "`find_ways` stays callable" part is in practice absent. Round 5's hook arms rarely used it anyway (gemma and gpt-oss 0 calls; deepseek 25 in 89 episodes).
+   - The number of Kel command calls is reported.
+   - Batch delivery: each subagent is told to read its batch prompt file and follow it; the file is byte-identical to the prepared prompt.
+   - The configured StealthLab MCP server must stay down during round 7. If it came up, subagents could call it, and a server started with `backend/.env` would point at the hosted database.
+
+## Results (2026-09-28)
+
+`python sonnet_r7.py grade` then `python analyze_r7.py` → `runs7/report.json`. Design hash `6f5b5d51…` (sha256 over the LF-normalized bytes of `runs7/design.json`, `runs7/sonnet/hooks.json`, this file as preregistered, `sonnet_r7.py`, `analyze_r7.py`, `kel_cli.py`, `../kel_product_arm.py`, in that order). All 34 batches finished on the first attempt (no retries); 89/89 answers per arm.
+
+### Primary: Sonnet, KH7 − AG7, transfer (82 pairs) — **NOT CONFIRMED**
+
+- **Rates:** Sonnet alone solved 81.7%; with the hook, 82.9%. That is **+1.2 points**, 95% CI **[−5.0, +7.7]**, 6 gained / 5 lost, exact McNemar **p = 1.0**.
+- **What it rules out:** the CI's upper bound (+7.7) is below the open models' round-5 gain (+8.5). So a gain as large as theirs is unlikely for Sonnet on these tasks. The CI is narrower than the ±12 planned, because only 11 pairs were discordant.
+
+### Secondary
+
+| Comparison | Δ | 95% CI | gained / lost | p |
+|---|---|---|---|---|
+| Controls (7 tasks) | 0.0 | [−42.9, +42.9] | 1 / 1 | 1.0 |
+| Where the hook delivered knowledge (61 transfer tasks, descriptive) | +4.9 | [−3.7, +14.5] | 5 / 2 | 0.45 |
+| Where the hook delivered nothing (21, descriptive) | −9.5 | [−25.0, 0.0] | 1 / 3 | 0.63 |
+
+- **Tasks AG7 solved and KH7 lost** (all 89): 6 (200, 338, 57, 64, 812, 865).
+- **Hook content:** 19 resolved, 33 ambiguous, 37 no_match; 37 carried related examples, 26 a suggested candidate, 12 procedures; 23 added no text; mean 758 characters.
+- **Sonnet's own Kel calls: 0** (deviation 1). KH7 is the hook alone.
+- **Tokens:** subagent totals, split per batch; no estimates were needed.
+  - per solved task: AG7 15.0k, KH7 16.1k (+7%);
+  - in all: 1.06M vs 1.16M.
+
+### Cross-round (descriptive)
+
+- **Sonnet's run-to-run noise:** AG7 vs round-4 Sonnet AG, 81.7% vs 79.3% (7 gained / 5 lost). Twelve of 82 outcomes flipped with nothing changed: Claude through subagents is not deterministic, unlike the open models.
+- **KH7 vs round-4 Sonnet KP** (Kel as a tool with `plan_and_run`): 82.9% vs 82.9%.
+
+### Against the prediction
+
+- **"KH7 − AG7 > 0, smaller than +8.5":** the point estimate is +1.2, within noise.
+- **"Gain concentrates where the hook delivered":** in direction only: +4.9 where knowledge arrived, −9.5 where it did not; neither is significant.
+- **"KH7 beats round-4 KP":** no, equal.
+
+### What it means
+
+- On DS-1000, Sonnet already solves about 82% of these transfer tasks alone. Kel's knowledge, delivered by the hook, adds nothing measurable.
+- The knowledge gain confirmed in round 5 is, on this benchmark, a gain for weaker (open) models.
+- Whether a frontier model benefits on harder, repository-level work is the SWE-bench question and remains open.
+
+### Limits
+
+- One benchmark, near Sonnet's ceiling.
+- Rules were instructions, not enforced.
+- Kel's own tool was effectively unavailable (deviation 1); the hook's text is what was tested.
