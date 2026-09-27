@@ -20,6 +20,7 @@ import sys
 import swe_env
 from generate import design, instances, load_jsonl
 
+LEARN_CONCURRENCY = 8          # naming calls in flight / repos extracted concurrently (see extract())
 NAMES = swe_env.RUNS / "goal_names.json"
 MANIFEST = swe_env.RUNS / "manifest_train.json"
 PROCS = swe_env.RUNS / "procedures_train.json"
@@ -37,20 +38,28 @@ def resolved_train() -> dict[str, dict]:
 def name() -> None:
     from generate import client
 
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
     names = json.loads(NAMES.read_text(encoding="utf-8")) if NAMES.exists() else {}
     c, inst = client(), instances()
-    for iid in design()["train"]:
-        if iid in names:
-            continue
+    lock = threading.Lock()
+
+    def one(iid: str) -> None:        # independent calls at temperature 0: order doesn't matter, so run in parallel
         r = c.chat.completions.create(
             model=swe_env.CONFIG["model"]["id"], temperature=0, max_tokens=swe_env.CONFIG["query_writer"]["max_tokens"],
             messages=[{"role": "system", "content": NAMING_SYSTEM},
                       {"role": "user", "content": f"Repository: {inst[iid]['repo']}\n\n{inst[iid]['problem_statement'][:4000]}"}])
         text = re.sub(r"\s+", " ", (r.choices[0].message.content or "").strip().strip('"')).rstrip(".")
         if text:
-            names[iid] = text
-            NAMES.write_text(json.dumps(names, indent=1), encoding="utf-8")
+            with lock:
+                names[iid] = text
+                NAMES.write_text(json.dumps(names, indent=1, sort_keys=True), encoding="utf-8")
             print(f"{iid:<45} {text}", flush=True)
+
+    todo = [iid for iid in design()["train"] if iid not in names]
+    with ThreadPoolExecutor(max_workers=LEARN_CONCURRENCY) as ex:
+        list(ex.map(one, todo))
     print(f"names: {len(names)} of {len(design()['train'])}")
 
 
@@ -89,6 +98,15 @@ async def worker(pool) -> None:
                                                 "benchmark_transfer"]).run(loop=False))
 
 
+def group_by_repo(ids, inst: dict) -> dict[str, list[str]]:
+    """Instance ids per repo, each list in the sequential run's order (sorted), so per-repo processing
+    reproduces the order a single sequential pass would have used within every repo."""
+    out: dict[str, list[str]] = {}
+    for iid in sorted(ids):
+        out.setdefault(inst[iid]["repo"], []).append(iid)
+    return out
+
+
 async def extract(pool) -> None:
     from openai import OpenAI
 
@@ -100,10 +118,19 @@ async def extract(pool) -> None:
     done = json.loads(PROCS.read_text(encoding="utf-8")) if PROCS.exists() else {}
     gc = OpenAI(api_key=settings.general_compute_api_key, base_url=settings.general_compute_base_url)
     wins = resolved_train()
-    for attempt_no in range(1, 6):                 # the production queue's max_attempts
-        for iid, run in sorted(wins.items()):
-            if iid in done:
-                continue
+    by_repo = group_by_repo(wins, inst)
+    sem = asyncio.Semaphore(LEARN_CONCURRENCY)
+
+    async def repo_pass(attempt_no: int, repo_iids: list[str]) -> None:
+        # Parallel ACROSS repos, sequential WITHIN a repo in the original (sorted) order. The identity/dedup
+        # judge may merge similar Procedures, and those arise within one repo, so each repo sees exactly the
+        # order the sequential run would: the same knowledge, in a fraction of the wall time.
+        async with sem:
+            for iid in repo_iids:
+                if iid not in done:
+                    await one(attempt_no, iid, wins[iid])
+
+    async def one(attempt_no: int, iid: str, run: dict) -> None:
             source = AgentRunEvidenceSource(
                 goal_text=f"{names[iid]} ({inst[iid]['repo']})", outcome="success",
                 tool_sequence=[str(t).split("(")[0] for t in (run.get("tool_calls") or [])][:200],
@@ -117,11 +144,14 @@ async def extract(pool) -> None:
                 result = await extract_procedure(pool, source, client=gc, visibility="public")
             except Exception as exc:  # noqa: BLE001 -- transient: retried in the next pass
                 print(f"{iid}: attempt {attempt_no} failed: {exc!r}"[:200])
-                continue
+                return
             if result.procedure_id:
                 done[iid] = {"procedure_id": str(result.procedure_id), "version_row_id": str(result.version_row_id),
                              "extracted_by": result.extracted_by}
-                PROCS.write_text(json.dumps(done, indent=1), encoding="utf-8")
+                PROCS.write_text(json.dumps(done, indent=1, sort_keys=True), encoding="utf-8")
+
+    for attempt_no in range(1, 6):                 # the production queue's max_attempts
+        await asyncio.gather(*(repo_pass(attempt_no, iids) for iids in by_repo.values()))
         print(f"pass {attempt_no}: procedures {len(done)} of {len(wins)} resolved train instances")
 
 
