@@ -61,3 +61,24 @@ Each entry: date, what changed, why. Written before continuing (docs/knowledge_s
     within a repo.
 11. **GCE streaming grading backend** (gce_queue.py): the official harness on Compute Engine, fed per patch
     through a GCS queue while generation runs; sharded by instance so each image is pulled once per worker.
+
+## 2026-09-28 -- arm KH and DS-1000 round 5's delivery fixes, before calibration (nothing scored yet)
+
+12. **Arm KH (the Claude Code knowledge hook) added; `KNOWLEDGE_RELATED_EXAMPLES` and `KNOWLEDGE_SUGGESTED_CANDIDATE`
+    on for every step.**
+    - Why: DS-1000 round 5 (`experiments/ds1000/PREREGISTRATION_5.md`) confirmed the hook: +8.5 points, CI
+      [+2.7, +14.4], p 0.004. The agent-driven product path was not confirmed (+4.1, p 0.25). SWE-bench is the
+      repo-level test of the same claim.
+    - What KH is: KP's system prompt (MCP instructions), tools, claims.md and budget. The user's message is the
+      issue with the hook's own text appended; no `plan_and_run`. The hook text is `find_ways` on the issue, in
+      its own MCP session, formatted by `packaging/npm/lib/hook.mjs` via `ds1000/hook_format.mjs`. KH always runs
+      fresh and is never graded by copying A0.
+    - Flags: set from `experiment.json` `kel_settings` (`related_examples`, `suggested_candidate`) by `swe_env.py`
+      and checked in `verify_after_import`. They only add fields to `find_ways`'s reply; `notes.py K` reads
+      outcome/procedures/candidates only, so K's notes are unchanged. They reach KP and KH.
+    - KP and KH now run with `find_ways`'s governor (each episode its own MCP session), as in production and in
+      round 5. The governor only refuses or caches repeated requests.
+    - Analysis: `decision_KH` ("HOOK HELPS") under rules 1, 3, 4, 5 with KH in place of K. Survey tokens are charged
+      to KH as to KP. Secondaries add KH − A0r, KH − K, KH − KP.
+    - Requires Node.js 18.17+ on PATH; `generate.py --arm KH` refuses without it.
+    - The SWE-rebench config (`../swebench_rebench/experiment.json`) is unchanged: no KH, flags off.

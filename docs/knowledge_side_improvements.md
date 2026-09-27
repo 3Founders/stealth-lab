@@ -158,7 +158,7 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
 | Model | `model.id` in `experiment.json` (default `gpt-oss-120b`, OpenAI-compatible endpoint). The same model writes Goal names and `find_ways` queries |
 | Step budget | chosen by **calibration** before any scored run (rule in `calibrate.py`: smallest of {40, 60} at which at least 80% of episodes finish), then frozen |
 | Grading | the **official SWE-bench harness, unmodified** (`swebench.harness.run_evaluation`), FAIL_TO_PASS and PASS_TO_PASS. Harness errors are re-run, never scored |
-| Kel | fresh local Postgres `kel_swebench`, built the production way from the **train pool only**: Goals embedded, `judge_mode="model"` identity, the real ingestion Worker for placement; Procedures from **resolved** train attempts through `extract_procedure` (up to 5 attempts); graded success recorded as evidence. **Gold patches are never read.** `KNOWLEDGE_VERIFIED_EXAMPLES` is **on** for every step (`kel_settings` in `experiment.json`), so each Procedure keeps the verified patch it came from and `find_ways` returns it as `verified_solution`. Frozen before any held-out run |
+| Kel | fresh local Postgres `kel_swebench`, built the production way from the **train pool only**: Goals embedded, `judge_mode="model"` identity, the real ingestion Worker for placement; Procedures from **resolved** train attempts through `extract_procedure` (up to 5 attempts); graded success recorded as evidence. **Gold patches are never read.** `KNOWLEDGE_VERIFIED_EXAMPLES` is **on** for every step (`kel_settings` in `experiment.json`), so each Procedure keeps the verified patch it came from and `find_ways` returns it as `verified_solution`. DS-1000 round 5's delivery fixes are **on** too: `KNOWLEDGE_RELATED_EXAMPLES` (up to 3 verified solutions of judged-similar Goals on every answer) and `KNOWLEDGE_SUGGESTED_CANDIDATE` (one named candidate on an ambiguous answer). They only add fields to the reply, so K's notes are unchanged; KP and KH see them. Frozen before any held-out run |
 
 **Arms on the held-out set** (each held-out instance gets every arm, so every comparison is paired):
 
@@ -171,6 +171,7 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
 | **C2** | a generic "how to fix issues" placebo, cut to K's exact length. Only where K has notes |
 | **A0r** | none: a **fresh repeat of A0**, never reused, run **at the same time** as K/E/C1/C2. It measures run-to-run noise (A0r vs A0) and is the time-matched baseline (K vs A0r) |
 | **KP** ("K-prod") | **Kel used the way the product is used** (`kprod.py`), with no pre-inserted note. The agent gets the product's own words verbatim: the v1 MCP instructions and the `plan_and_run` prompt. It also gets the real `find_ways` as a **tool** it may call whenever and as often as it likes, plus `read_procedure_claims` (the `stealth://procedures/<id>/claims` resource). `.stealth/claims.md` is written **once per repo** by the `survey_repo` workflow (at the repo's earliest held-out commit), as a real user would have it. The agent writes `.stealth/procedures.md` and `.stealth/run.md` itself; nothing under `.stealth/` is ever part of the patch. It always runs fresh (never reuses A0), because the agent decides whether to use Kel |
+| **KH** ("K-hook") | **The installed product with the Claude Code knowledge hook** (`kprod.py`; DS-1000 round 5's confirmed arm, +8.5 points, [`PREREGISTRATION_5.md`](../experiments/ds1000/PREREGISTRATION_5.md)). The same system prompt (MCP instructions), tools (`find_ways` stays callable), claims.md and step budget as KP, but **no `plan_and_run`**: the user's message is the issue itself. Before the agent starts, the hook runs one `find_ways` lookup of the issue (its own MCP session) and appends its own text, formatted by the shipped hook's code (`packaging/npm/lib/hook.mjs`, at most 8,000 characters), after the issue, where Claude Code puts a hook's context. Always runs fresh. Needs Node.js on PATH |
 
 - **Reuse:** an arm with no notes for an instance reuses that instance's A0 attempt.
 - **Caps:** memory is capped at 3,200 characters, and patches at 2,400. KP's `find_ways` replies are cut at 24,000 characters and its claims reads at 8,000 (`kprod.tool_max_chars`), because an MCP host shows the whole reply.
@@ -181,6 +182,8 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
   - knowledge is read-only (`report_discovery`, `submit_way`, `recommend_models` and `report_model_run` are not offered);
   - `repo_claims` may be passed as `@.stealth/claims.md`, so the file isn't retyped inside a 2,000-token completion. `find_ways` receives the same text either way.
 - **KP's cost:** the same step budget as every arm, so the workflow's own tool calls count against it. Survey tokens are charged to each repo's held-out instances in equal shares.
+- **KH's fixed adaptations:** the same facts as KP's (no user, no code execution, read-only knowledge, `@.stealth/claims.md`), minus the workflow's `.stealth/` working files. KH's cost is charged the same survey share.
+- **Governor:** KP's and KH's `find_ways` calls go through the production governor (each episode its own MCP session), as in DS-1000 round 5.
 
 **Primary:** held-out resolved rate, **K − A0**, paired per instance. Exact McNemar test and a 95% bootstrap CI stratified by repo.
 
@@ -197,7 +200,9 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
 - how many got a `verified_solution`;
 - the mean number of Kel calls.
 
-**Secondary:** E − A0, K − E, C1 − A0, C2 − A0, K − A0r, KP − A0r, KP − K, KP − E, per repo, K − A0 where K had notes, and tokens per resolved instance.
+**Hook verdict (KH)**, printed separately as `decision_KH`. "The hook helps" only if rules 1, 3, 4 and 5 hold with KH in place of K. Also reported: the hook's outcomes, how many lookups carried related examples, a suggested candidate or procedures, how many added no text, and the mean context size.
+
+**Secondary:** E − A0, K − E, C1 − A0, C2 − A0, K − A0r, KP − A0r, KP − K, KP − E, KH − A0r, KH − K, KH − KP, per repo, K − A0 where K had notes, and tokens per resolved instance.
 
 **Noise:** A0r − A0 and its flip rate (the share of instances whose outcome changed with nothing changed). Read every other difference against it.
 
@@ -211,6 +216,7 @@ Design follows `.scratch/experience_transfer_research.md` (the AutomationBench p
 ### 0. Machine
 
 - x86_64 Linux (or macOS with Docker Desktop), 16 GB+ RAM, **200 GB+ free disk** (SWE-bench environment images), Docker 24+.
+- Node.js 18.17+ on PATH (arm KH runs the shipped hook's formatter, `packaging/npm/lib/hook.mjs`).
 - Apple Silicon also works, but image builds are slower. Record the platform in DEVIATIONS.md.
 
 ### 1. Code and Python
@@ -310,7 +316,7 @@ python notes.py controls
 
 - **Check:** `notes.py K` prints how many held-out issues got notes. Record the number.
 
-Then the KP arm's one-time repo survey (`survey_repo`, once per scored repo, about 8 agent episodes):
+Then the one-time repo survey for KP and KH (`survey_repo`, once per scored repo, about 8 agent episodes):
 
 ```bash
 python kprod.py survey
@@ -326,7 +332,7 @@ python kprod.py survey
    python generate.py --part test --arm A0
    ```
 
-2. **Then the other six, started together**, in six terminals or with `&`, so they run at the same time and share provider conditions. A0r is the fresh repeat of A0 and must run alongside the others, not later:
+2. **Then the other seven, started together**, in seven terminals or with `&`, so they run at the same time and share provider conditions. A0r is the fresh repeat of A0 and must run alongside the others, not later:
 
    ```bash
    python generate.py --part test --arm K
@@ -335,25 +341,26 @@ python kprod.py survey
    python generate.py --part test --arm C2
    python generate.py --part test --arm A0r
    python generate.py --part test --arm KP
+   python generate.py --part test --arm KH
    ```
 
-   These refuse to start until A0 is complete for every held-out instance and Kel is frozen (step 7). KP also refuses until `kprod.py survey` has run.
+   These refuse to start until A0 is complete for every held-out instance and Kel is frozen (step 7). KP and KH also refuse until `kprod.py survey` has run, and KH until `node` is on PATH.
 
-3. **Grade all seven.** Re-run any with errored instances until none remain:
+3. **Grade all eight.** Re-run any with errored instances until none remain:
 
    ```bash
-   for arm in A0 K E C1 C2 A0r KP; do python grade.py --tag test_$arm; done
+   for arm in A0 K E C1 C2 A0r KP KH; do python grade.py --tag test_$arm; done
    ```
 
 ### 9. Analysis and hand-back
 
 ```bash
-python analyze.py         # prints the primary result, run-to-run noise (A0r), secondaries, cost, VERDICT and the product verdict (KP)
+python analyze.py         # prints the primary result, run-to-run noise (A0r), secondaries, cost, VERDICT and the product verdicts (KP, KH)
 ```
 
 Zip and share `experiments/swebench/runs/`, **excluding `runs/logs/`** (large Docker logs; keep them locally), plus `DEVIATIONS.md`.
 
-**Estimated size:** about 290 train plus about 190 × 7 held-out agent episodes (A0r and KP add about 190 each, since neither reuses A0), plus about 8 survey episodes. KP episodes are longer, because the `find_ways` replies stay in the conversation. Episodes where an arm had no notes reuse A0, so there are fewer in practice. At 100–200k tokens per episode on `gpt-oss-120b`, that is roughly 190–320M tokens. Harness grading is about 5–10 minutes per instance per arm, with 4 workers.
+**Estimated size:** about 290 train plus about 190 × 8 held-out agent episodes (A0r, KP and KH add about 190 each, since none reuses A0), plus about 8 survey episodes. KP episodes are longer, because the `find_ways` replies stay in the conversation. KH adds at most 8,000 characters once. Episodes where an arm had no notes reuse A0, so there are fewer in practice. At 100–200k tokens per episode on `gpt-oss-120b`, that is roughly 210–360M tokens. Harness grading is about 5–10 minutes per instance per arm, with 4 workers.
 
 **Tested without Docker (2026-09-27)** on a synthetic repo:
 - design;

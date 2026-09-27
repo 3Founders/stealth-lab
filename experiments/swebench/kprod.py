@@ -1,4 +1,4 @@
-"""Arm KP ("K-prod"): Kel used the way the product is used, not as a note pasted into the prompt.
+"""Arms KP ("K-prod") and KH ("K-hook"): Kel used the way the product is used, not as a note pasted into the prompt.
 
     python kprod.py survey      # once per scored repo: the survey_repo workflow writes .stealth/claims.md
 
@@ -16,6 +16,13 @@ KP_ADAPTATIONS and in the protocol): no user to ask, no subagents, no code execu
 arm), knowledge frozen (report_discovery / submit_way / recommend_models / report_model_run are not
 offered), and `repo_claims` may be passed as "@.stealth/claims.md" so the file need not be retyped
 inside a 2,000-token completion (find_ways receives the same text either way).
+
+Arm KH is the installed product with the Claude Code knowledge hook (`stealthlab-mcp install` adds it; DS-1000
+round 5's confirmed arm, experiments/ds1000/PREREGISTRATION_5.md). Same agent, tools, system prompt and claims.md
+as KP, but the user's message is the issue itself (no plan_and_run workflow): before the agent starts, the hook
+looks the issue up with `find_ways` (its own MCP session) and appends its own formatted text
+(packaging/npm/lib/hook.mjs) after the issue, where Claude Code puts a hook's additionalContext. `find_ways` stays
+callable. KH_ADAPTATIONS states the same unattended-run facts as KP's, minus the workflow's .stealth/ files.
 """
 from __future__ import annotations
 
@@ -46,6 +53,14 @@ KP_ADAPTATIONS = """How this session differs from an interactive one (fixed for 
   pass the literal "@.stealth/claims.md" instead of retyping the file.
 - Write .stealth/ files with create_file / edit_file. They are your working files and are never part of the fix.
 - The fix itself is your edits outside .stealth/; call finish when it is done."""
+KH_ADAPTATIONS = """How this session differs from an interactive one (fixed for every task):
+- There is no user to ask: decide yourself and go on.
+- You cannot run code or tests. Check your fix by reading the changed code carefully.
+- The knowledge base is read-only here: report_discovery, submit_way, recommend_models and report_model_run are
+  not available.
+- .stealth/claims.md was already written by the survey_repo workflow for this repository. For repo_claims you may
+  pass the literal "@.stealth/claims.md" instead of retyping the file. Nothing under .stealth/ is part of the fix.
+- The fix itself is your edits outside .stealth/; call finish when it is done."""
 SURVEY_ADAPTATIONS = ("Adaptations for this session: you cannot run git, so write `sha=-` in each source; write the "
                       "file with create_file at .stealth/claims.md (edit_file to extend it); call finish when it is "
                       "written.")
@@ -63,6 +78,21 @@ def instructions() -> str:
     return kpa.mcp_system(SYSTEM) + "\n" + task_prompt("<issue>")
 
 
+def hook_prompt(problem_statement: str, claims: str | None, bridge, session: str) -> tuple[str, str, dict]:
+    """KH's user message: the issue, then the hook's text (when it adds any), then KH_ADAPTATIONS. The hook looks
+    up the issue as the user would have typed it. Returns (message, hook text, hook summary)."""
+    ctx, summary = kpa.hook_context(bridge, problem_statement, claims or "", session=session)
+    message = f"{problem_statement}\n\n{ctx}" if ctx else problem_statement
+    return f"{message}\n\n{KH_ADAPTATIONS}", ctx, summary
+
+
+def kh_instructions() -> str:
+    """Everything KH adds apart from the per-instance hook text, for the record (hashed into each attempt)."""
+    from app.execution.coding_agent import SYSTEM
+
+    return kpa.mcp_system(SYSTEM) + "\n" + KH_ADAPTATIONS
+
+
 def survey_instructions() -> str:
     return kpa.survey_instructions(SURVEY_ADAPTATIONS)
 
@@ -76,7 +106,9 @@ make_sandbox = kpa.make_sandbox
 
 
 def make_agent(model_client, model: str, max_steps: int, temperature: float, bridge):
-    return kpa.make_agent(model_client, model, max_steps, temperature, bridge, KP["tool_max_chars"])
+    """governed: each episode is its own MCP session (the sandbox root), so find_ways's governor (cache, loop
+    breaker, budget) applies as in production and in DS-1000 round 5."""
+    return kpa.make_agent(model_client, model, max_steps, temperature, bridge, KP["tool_max_chars"], governed=True)
 
 
 # ------------------------------------------------------------------ survey_repo, once per repo
@@ -144,7 +176,7 @@ def claims_for(repo: str) -> str | None:
 
 
 def survey_tokens() -> dict[str, int]:
-    """Total survey tokens per repo (every attempt), charged to KP in the analysis."""
+    """Total survey tokens per repo (every attempt), charged to KP and KH in the analysis (both use claims.md)."""
     log = json.loads(SURVEY_LOG.read_text(encoding="utf-8")) if SURVEY_LOG.exists() else {}
     return {repo: sum((a["usage"].get("prompt_tokens", 0) + a["usage"].get("completion_tokens", 0)) for a in atts)
             for repo, atts in log.items()}

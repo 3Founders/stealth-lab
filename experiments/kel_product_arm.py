@@ -12,6 +12,8 @@ No environment setup here: the caller has already isolated the process to its ow
 * Delivery as in production: the v1 MCP server instructions go into the SYSTEM prompt (`mcp_system`, as a
   host injects them) and the user's message IS the `plan_and_run` prompt with the task inside it
   (`task_prompt`), followed by the experiment's fixed adaptations.
+* `hook_context(...)`: the Claude Code knowledge hook (arm KH): one `find_ways` lookup of the user's prompt
+  before the agent starts, formatted by the shipped hook's own code (packaging/npm/lib/hook.mjs).
 """
 from __future__ import annotations
 
@@ -70,6 +72,28 @@ def survey_instructions(adaptations: str) -> str:
 
 def sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+HOOK_FORMAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ds1000", "hook_format.mjs")
+
+
+def hook_context(bridge: "KelBridge", prompt: str, claims: str, session: str) -> tuple[str, dict]:
+    """Exactly what the shipped hook does: one find_ways lookup of the user's prompt (its own MCP session, as a
+    hook process is), formatted by the hook's own code. Returns (text to append after the prompt, summary);
+    the text is "" when the hook would add nothing."""
+    import subprocess
+
+    reply = bridge.find_ways(prompt.strip()[:1500], claims or "", session=session)
+    fmt = subprocess.run(["node", HOOK_FORMAT], input=reply, capture_output=True, text=True, encoding="utf-8",
+                         timeout=60, check=True).stdout
+    try:
+        d = json.loads(reply)
+    except ValueError:
+        d = {}
+    summary = {"outcome": d.get("outcome"), "related_examples": len(d.get("related_examples") or []),
+               "suggested": bool(d.get("suggested")), "procedures": len(d.get("procedures") or []),
+               "context_chars": len(fmt)}
+    return fmt, summary
 
 
 class KelBridge:

@@ -5,7 +5,7 @@
 
 Stages and dependencies (docs/knowledge_side_improvements.md, operator steps 4-9):
     calibration (40 + 60 step budgets, concurrently) -> freeze -> train (A0) -> [grading tail] -> learn -> notes
-    -> test A0 -> test A0r + KP + K/E/C1/C2 (fresh only where notes exist) -> [grading tail] -> analyze
+    -> test A0 -> test A0r + KP + KH + K/E/C1/C2 (fresh only where notes exist) -> [grading tail] -> analyze
 Grading streams alongside generation (gce_queue.py stream), so it only adds a TAIL after the last episode of a
 stage whose grades the next stage needs (train -> learn; test -> analyze). Episode duration = steps x step
 seconds, steps sampled (seeded) from the calibration attempts; episodes run on a fixed pool (list scheduling).
@@ -67,7 +67,7 @@ def scenario(conc: int, step_s: float, train: int, test: int, notes_cov: float, 
     stages["learn"] = learn_min
     stages["notes"] = notes_min
     stages["test_A0"] = makespan(test, conc, step_s, steps, rng) / 60
-    fresh = int(test * 2 + test * 4 * notes_cov)        # A0r + KP always fresh; K/E/C1/C2 only where notes exist
+    fresh = int(test * 3 + test * 4 * notes_cov)        # A0r + KP + KH always fresh; K/E/C1/C2 only where notes exist
     stages["test_others"] = makespan(fresh, conc, step_s, steps, rng) / 60
     stages["test_grade_tail"] = grade_tail_min
     stages["analyze"] = 3.0

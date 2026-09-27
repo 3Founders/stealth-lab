@@ -14,6 +14,9 @@ Run-to-run noise is reported as A0r - A0 (discordant pairs = instances whose out
 Arm KP (Kel used the way the product is used, kprod.py) gets its own verdict, "PRODUCT HELPS", under
 rules (1), (3), (4) and (5) with KP in place of K (no placebo exists for a workflow). KP's tokens include
 the survey_repo episodes, charged to each repo's held-out instances in equal shares.
+Arm KH (the Claude Code knowledge hook, kprod.py; DS-1000 round 5's confirmed arm) gets the same product verdict
+("HOOK HELPS") under the same rules with KH in place of K, and the same survey charge. Reported only when KH is
+among the configured arms.
 Harness errors (`status: error`) are excluded from EVERY arm for that instance, never counted as failures.
 """
 from __future__ import annotations
@@ -81,7 +84,8 @@ def main() -> None:
     rep["primary_K_minus_A0"] = paired(ids, res["A0"], res["K"], repo_of)
     rep["secondary"] = {f"{y}-{x}": paired(ids, res[x], res[y], repo_of)
                         for x, y in (("A0", "E"), ("E", "K"), ("A0", "C1"), ("A0", "C2"), ("C2", "K"), ("C1", "K"),
-                                     ("A0r", "K"), ("A0", "KP"), ("A0r", "KP"), ("K", "KP"), ("E", "KP"))}
+                                     ("A0r", "K"), ("A0", "KP"), ("A0r", "KP"), ("K", "KP"), ("E", "KP"),
+                                     *((("A0", "KH"), ("A0r", "KH"), ("K", "KH"), ("KP", "KH")) if "KH" in ARMS else ()))}
     noise = paired(ids, res["A0"], res["A0r"], repo_of)
     rep["noise_A0r_minus_A0"] = {**noise, "flip_rate": round((noise["gained"] + noise["lost"]) / max(noise["n"], 1), 3)}
     rep["per_repo_K_minus_A0"] = {repo: paired([i for i in ids if repo_of[i] == repo], res["A0"], res["K"], repo_of)
@@ -96,7 +100,9 @@ def main() -> None:
     per_repo_n = defaultdict(int)
     for i in ids:
         per_repo_n[repo_of[i]] += 1
-    tokens["KP"] = {i: t + survey.get(repo_of[i], 0) / per_repo_n[repo_of[i]] for i, t in tokens["KP"].items()}
+    product_arms = [arm for arm in ("KP", "KH") if arm in ARMS]
+    for arm in product_arms:   # both use the survey's claims.md
+        tokens[arm] = {i: t + survey.get(repo_of[i], 0) / per_repo_n[repo_of[i]] for i, t in tokens[arm].items()}
     cost = {}
     for arm in ARMS:
         solved = [i for i in ids if res[arm][i]]
@@ -119,33 +125,53 @@ def main() -> None:
                                   ("1_K_beats_A0", "2_not_explained_by_placebo", "3_no_repo_regression", "4_cost_ok",
                                    "5_K_beats_time_matched_A0r"))
                                   else "NOT SHOWN")
-    kp = rep["secondary"]["KP-A0"]
-    kp_regress = [r for r in sorted(set(repo_of[i] for i in ids))
-                  if (v := paired([i for i in ids if repo_of[i] == r], res["A0"], res["KP"], repo_of)).get("n")
-                  and v["delta"] < 0 and v["mcnemar_p"] < 0.05]
-    kp_ratio = (cost["KP"]["tokens_per_resolved"] or float("inf")) / max(cost["A0"]["tokens_per_resolved"] or 1, 1)
-    kp_attempts = {r["instance_id"]: r for r in load_jsonl(swe_env.RUNS / "attempts_test_KP.jsonl")
-                   if not r.get("environmental_failure")}
-    calls = [kp_attempts[i].get("kel_calls") or [] for i in ids if i in kp_attempts]
-    rep["KP_usage"] = {
+    for arm in product_arms:
+        rep[f"{arm}_usage"], rep[f"decision_{arm}"] = product_decision(arm, ids, res, cost, rep, repo_of, survey)
+    (swe_env.RUNS / "report.json").write_text(json.dumps(rep, indent=1), encoding="utf-8")
+    print(json.dumps({k: rep[k] for k in ("n_scored", "primary_K_minus_A0", "noise_A0r_minus_A0", "secondary",
+                                          "coverage_K", "cost", "decision",
+                                          *(f"{a}_{s}" if s == "usage" else f"decision_{a}"
+                                            for a in product_arms for s in ("usage", "decision")))}, indent=1))
+
+
+def product_decision(arm: str, ids, res, cost, rep, repo_of, survey) -> tuple[dict, dict]:
+    """KP's and KH's product verdict: rules 1, 3, 4 and 5 with the arm in place of K (a workflow has no placebo)."""
+    d = rep["secondary"][f"{arm}-A0"]
+    regress = [r for r in sorted(set(repo_of[i] for i in ids))
+               if (v := paired([i for i in ids if repo_of[i] == r], res["A0"], res[arm], repo_of)).get("n")
+               and v["delta"] < 0 and v["mcnemar_p"] < 0.05]
+    ratio = (cost[arm]["tokens_per_resolved"] or float("inf")) / max(cost["A0"]["tokens_per_resolved"] or 1, 1)
+    attempts = {r["instance_id"]: r for r in load_jsonl(swe_env.RUNS / f"attempts_test_{arm}.jsonl")
+                if not r.get("environmental_failure")}
+    calls = [attempts[i].get("kel_calls") or [] for i in ids if i in attempts]
+    usage = {
         "episodes": len(calls),
         "called_find_ways": sum(any(c["tool"] == "find_ways" for c in cs) for cs in calls),
         "got_resolved": sum(any(c.get("outcome") == "resolved" for c in cs) for cs in calls),
         "got_verified_solution": sum(any(c.get("verified_solution") for c in cs) for cs in calls),
         "mean_kel_calls": round(sum(len(cs) for cs in calls) / max(len(calls), 1), 2),
         "survey_tokens": survey}
-    rep["decision_KP"] = {
-        "1_KP_beats_A0": bool(kp.get("n") and kp["ci95"][0] > 0 and kp["mcnemar_p"] < 0.05),
-        "3_no_repo_regression": not kp_regress, "regressing_repos": kp_regress,
-        "4_cost_per_resolved_ratio": round(kp_ratio, 3), "4_cost_ok": kp_ratio <= 1.2,
-        "5_KP_beats_time_matched_A0r": bool(rep["secondary"]["KP-A0r"].get("n") and rep["secondary"]["KP-A0r"]["delta"] > 0),
+    hooks = [attempts[i]["hook"] for i in ids if i in attempts and attempts[i].get("hook")]
+    if hooks:
+        outcomes: dict = {}
+        for h in hooks:
+            outcomes[str(h.get("outcome"))] = outcomes.get(str(h.get("outcome")), 0) + 1
+        usage["hook"] = {"episodes": len(hooks), "outcomes": outcomes,
+                         "with_related_examples": sum(1 for h in hooks if h.get("related_examples")),
+                         "with_suggested": sum(1 for h in hooks if h.get("suggested")),
+                         "with_procedures": sum(1 for h in hooks if h.get("procedures")),
+                         "empty_context": sum(1 for h in hooks if not h.get("context_chars")),
+                         "context_chars_mean": round(sum(h.get("context_chars") or 0 for h in hooks) / len(hooks))}
+    decision = {
+        f"1_{arm}_beats_A0": bool(d.get("n") and d["ci95"][0] > 0 and d["mcnemar_p"] < 0.05),
+        "3_no_repo_regression": not regress, "regressing_repos": regress,
+        "4_cost_per_resolved_ratio": round(ratio, 3), "4_cost_ok": ratio <= 1.2,
+        f"5_{arm}_beats_time_matched_A0r": bool(rep["secondary"][f"{arm}-A0r"].get("n")
+                                                and rep["secondary"][f"{arm}-A0r"]["delta"] > 0),
     }
-    rep["decision_KP"]["VERDICT"] = ("PRODUCT HELPS" if all(rep["decision_KP"][k] for k in
-                                     ("1_KP_beats_A0", "3_no_repo_regression", "4_cost_ok", "5_KP_beats_time_matched_A0r"))
-                                     else "NOT SHOWN")
-    (swe_env.RUNS / "report.json").write_text(json.dumps(rep, indent=1), encoding="utf-8")
-    print(json.dumps({k: rep[k] for k in ("n_scored", "primary_K_minus_A0", "noise_A0r_minus_A0", "secondary",
-                                          "coverage_K", "cost", "decision", "KP_usage", "decision_KP")}, indent=1))
+    decision["VERDICT"] = (("PRODUCT HELPS" if arm == "KP" else "HOOK HELPS") if all(decision[k] for k in (
+        f"1_{arm}_beats_A0", "3_no_repo_regression", "4_cost_ok", f"5_{arm}_beats_time_matched_A0r")) else "NOT SHOWN")
+    return usage, decision
 
 
 if __name__ == "__main__":

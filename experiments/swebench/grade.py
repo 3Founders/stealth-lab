@@ -89,7 +89,7 @@ def reused_a0_grades(tag: str, preds: dict[str, str]) -> dict[str, dict]:
     observation; copying keeps the arms' results identical where their inputs are identical, as designed.
     Copied only when the patch is verifiably identical to A0's and A0's grade is a real verdict (never `error`)."""
     part, _, arm = tag.partition("_")
-    if arm in ("A0", "A0r", "KP") or not arm:
+    if arm in ("A0", "A0r", "KP", "KH") or not arm:
         return {}
     a0_grades_path = swe_env.RUNS / f"grades_{part}_A0.json"
     if not a0_grades_path.exists():

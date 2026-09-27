@@ -49,7 +49,8 @@
     "C1",
     "C2",
     "A0r",
-    "KP"
+    "KP",
+    "KH"
   ],
   "grading": {
     "harness": "swebench.harness.run_evaluation",
@@ -87,11 +88,13 @@
     "what": "a fresh repeat of A0 (no memory, never reused), run concurrently with K/E/C1/C2: measures run-to-run noise and is the time-matched baseline"
   },
   "kel_settings": {
-    "_doc": "Set in the environment by swe_env.py for EVERY step, so Kel learns and answers with the same settings. verified_examples: KNOWLEDGE_VERIFIED_EXAMPLES (the verified patch is stored with its Procedure and returned by find_ways as verified_solution; the prompt-note arms K/E/C1/C2 read patches from runs/ and are unaffected).",
-    "verified_examples": true
+    "_doc": "Set in the environment by swe_env.py for EVERY step, so Kel learns and answers with the same settings. verified_examples: KNOWLEDGE_VERIFIED_EXAMPLES (the verified patch is stored with its Procedure and returned by find_ways as verified_solution; the prompt-note arms K/E/C1/C2 read patches from runs/ and are unaffected). related_examples / suggested_candidate: KNOWLEDGE_RELATED_EXAMPLES / KNOWLEDGE_SUGGESTED_CANDIDATE, DS-1000 round 5's delivery fixes (experiments/ds1000/PREREGISTRATION_5.md): find_ways adds up to 3 verified solutions of judged-similar Goals to every answer, and names one candidate on an ambiguous answer. Both only ADD fields to the reply; notes.py K reads outcome/procedures/candidates only, so K's notes are unchanged. They reach KP and KH (DEVIATIONS.md 12).",
+    "verified_examples": true,
+    "related_examples": true,
+    "suggested_candidate": true
   },
   "kprod": {
-    "_doc": "Arm KP: Kel as the product is used (kprod.py). Tool results are cut at these sizes instead of the agent's usual 2,800 characters, because an MCP host shows the whole find_ways reply.",
+    "_doc": "Arms KP and KH: Kel as the product is used (kprod.py). Tool results are cut at these sizes instead of the agent's usual 2,800 characters, because an MCP host shows the whole find_ways reply. KH (the Claude Code knowledge hook) looks the issue up with find_ways BEFORE the agent starts and appends the hook's own text (packaging/npm/lib/hook.mjs, capped by the hook at 8,000 characters) to the issue.",
     "tool_max_chars": {
       "find_ways": 24000,
       "read_procedure_claims": 8000

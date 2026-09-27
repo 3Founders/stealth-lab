@@ -2,7 +2,7 @@
 
     python generate.py --part calibration --arm A0 --max-steps 40      # calibration only (unscored)
     python generate.py --part train --arm A0                           # the train pool Kel learns from
-    python generate.py --part test  --arm A0|K|E|C1|C2|A0r|KP          # held-out arms (A0r: fresh repeat of A0)
+    python generate.py --part test  --arm A0|K|E|C1|C2|A0r|KP|KH       # held-out arms (A0r: fresh repeat of A0)
 
 * The agent is app.execution.coding_agent.Agent -- identical tools, budget and decoding for every arm;
   the ONLY difference between arms is the memory block appended to the first user message
@@ -14,6 +14,9 @@
   way the product is used -- find_ways as a tool, the product's own instructions, .stealth/ files
   the agent writes itself (never part of the patch). Same model, budget, decoding and coding tools.
   It always runs fresh (never reuses A0), because the agent decides whether to use Kel.
+* KH ("K-hook", kprod.py) is the same product setup with the Claude Code knowledge hook: the user's
+  message is the issue, and the hook's own find_ways lookup of it is appended before the agent starts
+  (no plan_and_run). It always runs fresh too.
 * Resumable: an (instance, arm, part) already in attempts is skipped. A provider/infrastructure
   failure is recorded with `environmental_failure: true` and retried on the next invocation.
 
@@ -37,6 +40,7 @@ import swe_env
 HEADER = ("Notes from previous work on similar tasks in this repository (may or may not apply; verify "
           "against the current code before relying on them):\n")
 _lock = threading.Lock()
+PRODUCT_ARMS = ("KP", "KH")   # Kel used as the product: always fresh, never reuse A0 (kprod.py)
 
 
 def instances() -> dict:
@@ -131,9 +135,9 @@ def main() -> None:
     attempts_path = swe_env.RUNS / f"attempts_{tag}.jsonl"
     preds_path = swe_env.RUNS / f"predictions_{tag}.jsonl"
     notes = {}
-    if a.arm == "KP" and a.part != "test":
-        raise SystemExit("KP is a held-out arm only")
-    if a.arm not in ("A0", "A0r", "KP"):
+    if a.arm in PRODUCT_ARMS and a.part != "test":
+        raise SystemExit(f"{a.arm} is a held-out arm only")
+    if a.arm not in ("A0", "A0r", *PRODUCT_ARMS):
         notes = json.loads((swe_env.RUNS / f"notes_{a.arm}.json").read_text(encoding="utf-8"))
     done = {r["instance_id"] for r in load_jsonl(attempts_path) if not r.get("environmental_failure")}
     a0 = {r["instance_id"]: r for r in load_jsonl(swe_env.RUNS / f"attempts_{a.part}_A0.jsonl")
@@ -149,15 +153,17 @@ def main() -> None:
     model = swe_env.CONFIG["model"]["id"]
     agent = Agent(client(), model, max_steps=max_steps, temperature=swe_env.CONFIG["agent"]["temperature"])
     bridge = kp_block = None
-    if a.arm == "KP":
+    if a.arm in PRODUCT_ARMS:
         import kprod
 
         missing_survey = sorted({inst[i]["repo"] for i in ids if kprod.claims_for(inst[i]["repo"]) is None})
         if missing_survey and not kprod.SURVEY_LOG.exists():
             raise SystemExit("run `python kprod.py survey` first (the survey_repo step writes .stealth/claims.md)")
+        if a.arm == "KH" and shutil.which("node") is None:
+            raise SystemExit("KH needs Node.js on PATH: the hook's own formatter (packaging/npm/lib/hook.mjs) runs in it")
         bridge = kprod.KelBridge()
         agent = kprod.make_agent(client(), model, max_steps, swe_env.CONFIG["agent"]["temperature"], bridge)
-        kp_block = kprod.instructions()
+        kp_block = kprod.instructions() if a.arm == "KP" else kprod.kh_instructions()
 
     def record(iid: str, rec: dict) -> None:
         append(attempts_path, rec)
@@ -167,33 +173,44 @@ def main() -> None:
 
     def work(iid: str) -> None:
         text = (notes.get(iid) or {}).get("text")
-        if a.arm not in ("A0", "A0r", "KP") and not text and iid in a0:
+        if a.arm not in ("A0", "A0r", *PRODUCT_ARMS) and not text and iid in a0:
             record(iid, {**a0[iid], "arm": a.arm, "reused_from": "A0"})
             print(f"{iid:<45} reused A0 (no notes)", flush=True)
             return
         row = inst[iid]
-        memory = "" if a.arm == "KP" else ((HEADER + text) if text else "")
+        memory = "" if a.arm in PRODUCT_ARMS else ((HEADER + text) if text else "")
         started = time.time()
         wt = None
+        hook = None
         try:
             wt = checkout(row["repo"], row["base_commit"], f"{tag}_{iid}".replace("/", "_"))
-            if a.arm == "KP":
+            added = memory
+            if a.arm in PRODUCT_ARMS:
                 import kprod
 
-                sandbox = kprod.make_sandbox(wt, kprod.claims_for(row["repo"]))
-                row = {**row, "problem_statement": kprod.task_prompt(row["problem_statement"])}
+                claims = kprod.claims_for(row["repo"])
+                sandbox = kprod.make_sandbox(wt, claims)
+                if a.arm == "KP":
+                    row = {**row, "problem_statement": kprod.task_prompt(row["problem_statement"])}
+                    added = kp_block
+                else:   # KH: the hook's lookup is its own MCP session, as a hook process is
+                    message, hook_text, hook = kprod.hook_prompt(row["problem_statement"], claims, bridge,
+                                                                 session=wt + "#hook")
+                    row = {**row, "problem_statement": message}
+                    added = kp_block + "\n" + hook_text
             else:
                 sandbox = RepoSandbox(wt)
             run = agent.run(row, sandbox, a.arm, memory_block=memory)
-            added = kp_block if a.arm == "KP" else memory
             rec = {**asdict(run), "usage": asdict(run.usage), "part": a.part, "max_steps": max_steps,
                    "memory_sha256": hashlib.sha256(added.encode()).hexdigest(), "memory_chars": len(added),
                    # A provider failure ended the episode early: infrastructure, not the arm -- retried, never
                    # scored, even when a partial patch exists (rate limits would otherwise count against
                    # whichever arm ran into them).
                    "environmental_failure": run.stop_reason == "api_error"}
-            if a.arm == "KP":
+            if a.arm in PRODUCT_ARMS:
                 rec["kel_calls"] = sandbox.kel_log
+            if a.arm == "KH":
+                rec["hook"] = hook
         except Exception as exc:  # noqa: BLE001 -- infrastructure, not the arm: retried next invocation
             rec = {"instance_id": iid, "arm": a.arm, "part": a.part, "environmental_failure": True,
                    "error": f"{type(exc).__name__}: {str(exc)[:300]}", "wall_seconds": time.time() - started}

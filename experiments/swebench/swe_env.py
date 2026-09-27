@@ -5,7 +5,8 @@
   (SEARCH_DATABASE_URL, CONTROL_DATABASE_URL, K0xx shards, ...) is removed, so no code path
   can reach production.
 * Loads experiment.json (the frozen settings) as CONFIG, and sets Kel's knowledge flags from
-  `kel_settings` for every step (learning and answering must use the same settings).
+  `kel_settings` for every step (learning and answering must use the same settings): verified_examples,
+  related_examples, suggested_candidate.
 """
 from __future__ import annotations
 
@@ -46,6 +47,10 @@ DSN = os.environ.get("KEL_SWEBENCH_DSN", "postgresql://postgres@127.0.0.1:5432/"
 DSN = DSN.rsplit("/", 1)[0] + "/" + CONFIG["kel_database"]   # each experiment config learns into its own database
 
 
+# DS-1000 round 5's knowledge-delivery flags (PREREGISTRATION_5.md), set from kel_settings like verified_examples.
+_ROUND5_FLAGS = {"related_examples": "KNOWLEDGE_RELATED_EXAMPLES", "suggested_candidate": "KNOWLEDGE_SUGGESTED_CANDIDATE"}
+
+
 class NotIsolated(RuntimeError):
     pass
 
@@ -62,6 +67,8 @@ def isolate() -> None:
             del os.environ[key]
     os.environ["DATABASE_URL"] = DSN
     os.environ["KNOWLEDGE_VERIFIED_EXAMPLES"] = "true" if CONFIG["kel_settings"]["verified_examples"] else "false"
+    for key, flag in _ROUND5_FLAGS.items():   # absent from a config = off (the config predates them)
+        os.environ[flag] = "true" if CONFIG["kel_settings"].get(key) else "false"
     os.environ.setdefault("AGENT_FAILED_REQUEST_DIR", str(RUNS / "failed_requests"))   # keep dumps out of the source tree
     for path in (BACKEND, HERE):
         if str(path) not in sys.path:
@@ -78,6 +85,9 @@ def verify_after_import() -> None:
         raise NotIsolated("app settings do not point at the experiment database")
     if bool(settings.knowledge_verified_examples) != bool(CONFIG["kel_settings"]["verified_examples"]):
         raise NotIsolated("KNOWLEDGE_VERIFIED_EXAMPLES does not match experiment.json kel_settings")
+    for key, flag in _ROUND5_FLAGS.items():
+        if bool(getattr(settings, "knowledge_" + key)) != bool(CONFIG["kel_settings"].get(key)):
+            raise NotIsolated(f"{flag} does not match experiment.json kel_settings")
     if shards.search_database_url() is not None:
         raise NotIsolated("SEARCH_DATABASE_URL leaked into the experiment process")
 
