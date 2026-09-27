@@ -834,8 +834,10 @@ def backoff_seconds(exc: Exception, attempt: int) -> float:
 class Agent:
     def __init__(self, client, model: str, max_steps: int = 25, temperature: float = 0.0,
                  compactor=None, tools: Optional[list] = None,
-                 tool_max_chars: Optional[dict] = None):
+                 tool_max_chars: Optional[dict] = None, system: Optional[str] = None):
         self._client = client
+        # `system`: a replacement for SYSTEM (same {repo}/{max_steps} fields) for a non-repository task set.
+        self._system = system or SYSTEM
         # `tools` / `tool_max_chars`: an experiment arm that adds tools (e.g. Kel's find_ways) and lets their
         # results through at a larger cap. None keeps TOOLS and MAX_TOOL_CHARS, i.e. the unchanged agent.
         self._tools = tools or TOOLS
@@ -854,7 +856,7 @@ class Agent:
         t0 = time.time()
         usage = Usage()
         messages = [
-            {"role": "system", "content": SYSTEM.format(
+            {"role": "system", "content": self._system.format(
                 repo=instance["repo"], max_steps=self._max_steps)},
             {"role": "user", "content": USER.format(
                 problem_statement=instance["problem_statement"],

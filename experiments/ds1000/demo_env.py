@@ -36,7 +36,7 @@ def _check_dsn(dsn: str) -> None:
     parsed = urlparse(dsn)
     if parsed.hostname not in _LOCAL_HOSTS:
         raise NotIsolated(f"experiment database must be local, got host {parsed.hostname!r}")
-    if (parsed.path or "").lstrip("/") not in ("kel_ds1000_demo", "kel_ds1000_pl", "kel_ds1000_r3"):
+    if (parsed.path or "").lstrip("/") not in ("kel_ds1000_demo", "kel_ds1000_pl", "kel_ds1000_r3", "kel_ds1000_r4"):
         raise NotIsolated("experiment database must be 'kel_ds1000_demo' or 'kel_ds1000_pl' (production-like)")
 
 

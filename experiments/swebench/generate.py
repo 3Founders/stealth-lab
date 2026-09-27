@@ -172,7 +172,7 @@ def main() -> None:
             print(f"{iid:<45} reused A0 (no notes)", flush=True)
             return
         row = inst[iid]
-        memory = kp_block if a.arm == "KP" else ((HEADER + text) if text else "")
+        memory = "" if a.arm == "KP" else ((HEADER + text) if text else "")
         started = time.time()
         wt = None
         try:
@@ -181,11 +181,13 @@ def main() -> None:
                 import kprod
 
                 sandbox = kprod.make_sandbox(wt, kprod.claims_for(row["repo"]))
+                row = {**row, "problem_statement": kprod.task_prompt(row["problem_statement"])}
             else:
                 sandbox = RepoSandbox(wt)
             run = agent.run(row, sandbox, a.arm, memory_block=memory)
+            added = kp_block if a.arm == "KP" else memory
             rec = {**asdict(run), "usage": asdict(run.usage), "part": a.part, "max_steps": max_steps,
-                   "memory_sha256": hashlib.sha256(memory.encode()).hexdigest(), "memory_chars": len(memory),
+                   "memory_sha256": hashlib.sha256(added.encode()).hexdigest(), "memory_chars": len(added),
                    "environmental_failure": bool(run.error and not run.patch)}
             if a.arm == "KP":
                 rec["kel_calls"] = sandbox.kel_log
