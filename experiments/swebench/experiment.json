@@ -48,7 +48,8 @@
     "E",
     "C1",
     "C2",
-    "A0r"
+    "A0r",
+    "KP"
   ],
   "grading": {
     "harness": "swebench.harness.run_evaluation",
@@ -61,5 +62,16 @@
   "noise_arm": {
     "arm": "A0r",
     "what": "a fresh repeat of A0 (no memory, never reused), run concurrently with K/E/C1/C2: measures run-to-run noise and is the time-matched baseline"
+  },
+  "kel_settings": {
+    "_doc": "Set in the environment by swe_env.py for EVERY step, so Kel learns and answers with the same settings. verified_examples: KNOWLEDGE_VERIFIED_EXAMPLES (the verified patch is stored with its Procedure and returned by find_ways as verified_solution; the prompt-note arms K/E/C1/C2 read patches from runs/ and are unaffected).",
+    "verified_examples": true
+  },
+  "kprod": {
+    "_doc": "Arm KP: Kel as the product is used (kprod.py). Tool results are cut at these sizes instead of the agent's usual 2,800 characters, because an MCP host shows the whole find_ways reply.",
+    "tool_max_chars": {
+      "find_ways": 24000,
+      "read_procedure_claims": 8000
+    }
   }
 }

@@ -4,7 +4,8 @@
   postgresql://postgres@127.0.0.1:5432/kel_swebench); every other database setting
   (SEARCH_DATABASE_URL, CONTROL_DATABASE_URL, K0xx shards, ...) is removed, so no code path
   can reach production.
-* Loads experiment.json (the frozen settings) as CONFIG.
+* Loads experiment.json (the frozen settings) as CONFIG, and sets Kel's knowledge flags from
+  `kel_settings` for every step (learning and answering must use the same settings).
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ def isolate() -> None:
                    "DATABASE_URL_LOCAL", "TEST_DATABASE_URL") or re.fullmatch(r"K\d{3}_DATABASE_URL", key):
             del os.environ[key]
     os.environ["DATABASE_URL"] = DSN
+    os.environ["KNOWLEDGE_VERIFIED_EXAMPLES"] = "true" if CONFIG["kel_settings"]["verified_examples"] else "false"
     os.environ.setdefault("AGENT_FAILED_REQUEST_DIR", str(RUNS / "failed_requests"))   # keep dumps out of the source tree
     for path in (BACKEND, HERE):
         if str(path) not in sys.path:
@@ -53,6 +55,8 @@ def verify_after_import() -> None:
 
     if str(getattr(settings, "database_url", "") or "") != DSN:
         raise NotIsolated("app settings do not point at the experiment database")
+    if bool(settings.knowledge_verified_examples) != bool(CONFIG["kel_settings"]["verified_examples"]):
+        raise NotIsolated("KNOWLEDGE_VERIFIED_EXAMPLES does not match experiment.json kel_settings")
     if shards.search_database_url() is not None:
         raise NotIsolated("SEARCH_DATABASE_URL leaked into the experiment process")
 

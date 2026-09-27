@@ -2,7 +2,7 @@
 
     python generate.py --part calibration --arm A0 --max-steps 40      # calibration only (unscored)
     python generate.py --part train --arm A0                           # the train pool Kel learns from
-    python generate.py --part test  --arm A0|K|E|C1|C2|A0r             # held-out arms (A0r: fresh repeat of A0)
+    python generate.py --part test  --arm A0|K|E|C1|C2|A0r|KP          # held-out arms (A0r: fresh repeat of A0)
 
 * The agent is app.execution.coding_agent.Agent -- identical tools, budget and decoding for every arm;
   the ONLY difference between arms is the memory block appended to the first user message
@@ -10,6 +10,10 @@
 * Each attempt runs in a fresh git worktree of the repo at the instance's base_commit, deleted after.
 * A held-out arm whose memory block is empty for an instance REUSES that instance's A0 attempt
   (byte-identical prompt), never re-samples it.
+* KP ("K-prod", kprod.py) is the exception to "only the memory block differs": it is Kel used the
+  way the product is used -- find_ways as a tool, the product's own instructions, .stealth/ files
+  the agent writes itself (never part of the patch). Same model, budget, decoding and coding tools.
+  It always runs fresh (never reuses A0), because the agent decides whether to use Kel.
 * Resumable: an (instance, arm, part) already in attempts is skipped. A provider/infrastructure
   failure is recorded with `environmental_failure: true` and retried on the next invocation.
 
@@ -127,7 +131,9 @@ def main() -> None:
     attempts_path = swe_env.RUNS / f"attempts_{tag}.jsonl"
     preds_path = swe_env.RUNS / f"predictions_{tag}.jsonl"
     notes = {}
-    if a.arm not in ("A0", "A0r"):
+    if a.arm == "KP" and a.part != "test":
+        raise SystemExit("KP is a held-out arm only")
+    if a.arm not in ("A0", "A0r", "KP"):
         notes = json.loads((swe_env.RUNS / f"notes_{a.arm}.json").read_text(encoding="utf-8"))
     done = {r["instance_id"] for r in load_jsonl(attempts_path) if not r.get("environmental_failure")}
     a0 = {r["instance_id"]: r for r in load_jsonl(swe_env.RUNS / f"attempts_{a.part}_A0.jsonl")
@@ -142,6 +148,16 @@ def main() -> None:
             raise SystemExit("Kel is not frozen yet -- build the notes (notes.py) before any held-out arm")
     model = swe_env.CONFIG["model"]["id"]
     agent = Agent(client(), model, max_steps=max_steps, temperature=swe_env.CONFIG["agent"]["temperature"])
+    bridge = kp_block = None
+    if a.arm == "KP":
+        import kprod
+
+        missing_survey = sorted({inst[i]["repo"] for i in ids if kprod.claims_for(inst[i]["repo"]) is None})
+        if missing_survey and not kprod.SURVEY_LOG.exists():
+            raise SystemExit("run `python kprod.py survey` first (the survey_repo step writes .stealth/claims.md)")
+        bridge = kprod.KelBridge()
+        agent = kprod.make_agent(client(), model, max_steps, swe_env.CONFIG["agent"]["temperature"], bridge)
+        kp_block = kprod.instructions()
 
     def record(iid: str, rec: dict) -> None:
         append(attempts_path, rec)
@@ -151,20 +167,28 @@ def main() -> None:
 
     def work(iid: str) -> None:
         text = (notes.get(iid) or {}).get("text")
-        if a.arm not in ("A0", "A0r") and not text and iid in a0:
+        if a.arm not in ("A0", "A0r", "KP") and not text and iid in a0:
             record(iid, {**a0[iid], "arm": a.arm, "reused_from": "A0"})
             print(f"{iid:<45} reused A0 (no notes)", flush=True)
             return
         row = inst[iid]
-        memory = (HEADER + text) if text else ""
+        memory = kp_block if a.arm == "KP" else ((HEADER + text) if text else "")
         started = time.time()
         wt = None
         try:
             wt = checkout(row["repo"], row["base_commit"], f"{tag}_{iid}".replace("/", "_"))
-            run = agent.run(row, RepoSandbox(wt), a.arm, memory_block=memory)
+            if a.arm == "KP":
+                import kprod
+
+                sandbox = kprod.make_sandbox(wt, kprod.claims_for(row["repo"]))
+            else:
+                sandbox = RepoSandbox(wt)
+            run = agent.run(row, sandbox, a.arm, memory_block=memory)
             rec = {**asdict(run), "usage": asdict(run.usage), "part": a.part, "max_steps": max_steps,
                    "memory_sha256": hashlib.sha256(memory.encode()).hexdigest(), "memory_chars": len(memory),
                    "environmental_failure": bool(run.error and not run.patch)}
+            if a.arm == "KP":
+                rec["kel_calls"] = sandbox.kel_log
         except Exception as exc:  # noqa: BLE001 -- infrastructure, not the arm: retried next invocation
             rec = {"instance_id": iid, "arm": a.arm, "part": a.part, "environmental_failure": True,
                    "error": f"{type(exc).__name__}: {str(exc)[:300]}", "wall_seconds": time.time() - started}
@@ -177,8 +201,12 @@ def main() -> None:
 
     todo = [i for i in ids if i not in done]
     print(f"{tag}: {len(todo)} to run ({len(done)} done), model={model}, max_steps={max_steps}", flush=True)
-    with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        list(ex.map(work, todo))
+    try:
+        with ThreadPoolExecutor(max_workers=a.workers) as ex:
+            list(ex.map(work, todo))
+    finally:
+        if bridge is not None:
+            bridge.close()
 
 
 if __name__ == "__main__":

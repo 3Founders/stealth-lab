@@ -833,8 +833,13 @@ def backoff_seconds(exc: Exception, attempt: int) -> float:
 
 class Agent:
     def __init__(self, client, model: str, max_steps: int = 25, temperature: float = 0.0,
-                 compactor=None):
+                 compactor=None, tools: Optional[list] = None,
+                 tool_max_chars: Optional[dict] = None):
         self._client = client
+        # `tools` / `tool_max_chars`: an experiment arm that adds tools (e.g. Kel's find_ways) and lets their
+        # results through at a larger cap. None keeps TOOLS and MAX_TOOL_CHARS, i.e. the unchanged agent.
+        self._tools = tools or TOOLS
+        self._tool_max_chars = tool_max_chars or {}
         self._model = model
         self._max_steps = max_steps
         self._temperature = temperature
@@ -937,7 +942,7 @@ class Agent:
                 done = done or done_now
                 messages.append({
                     "role": "tool", "tool_call_id": call.id,
-                    "content": result[:MAX_TOOL_CHARS] + self._budget_note(
+                    "content": result[:self._tool_max_chars.get(name, MAX_TOOL_CHARS)] + self._budget_note(
                         step, sandbox),
                 })
             if done:
@@ -1015,7 +1020,7 @@ class Agent:
                 # relied on alone anymore.
                 with _bounded_socket_timeout(REQUEST_TIMEOUT):
                     return self._client.chat.completions.create(
-                        model=self._model, messages=messages, tools=TOOLS,
+                        model=self._model, messages=messages, tools=self._tools,
                         temperature=self._temperature, max_tokens=2000,
                         # A request with no timeout blocks the entire experiment
                         # indefinitely if the provider stops responding -- there is
