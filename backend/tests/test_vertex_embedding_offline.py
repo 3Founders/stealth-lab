@@ -32,6 +32,9 @@ class _FakeCredentials:
 
 @pytest.fixture(autouse=True)
 def _vertex_config(monkeypatch):
+    # embeddings caches ADC credentials per process; each test patches google.auth.default itself
+    import app.services.embeddings as _emb
+    monkeypatch.setattr(_emb, "_vertex_creds", None)
     monkeypatch.setattr(settings, "vertex_project", "test-project")
     monkeypatch.setattr(settings, "vertex_region", "us-central1")
     monkeypatch.setattr(settings, "gemini_embedding_model", "gemini-embedding-001")

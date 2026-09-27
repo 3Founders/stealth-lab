@@ -75,6 +75,7 @@ import asyncpg
 from app.services.artifact_blocks import Block
 from app.services.claims import capture_claim
 from app.services.embeddings import Embedder
+from app.utils.aio import run_blocking
 
 log = logging.getLogger(__name__)
 
@@ -612,7 +613,7 @@ async def _detect_and_record_equivalence(
 
     neighbours = await claim_equivalence.find_candidate_claim_pairs(pool, claim_id)
     for neighbour in neighbours:
-        relation = claim_equivalence.classify_claim_relation(
+        relation = await run_blocking(claim_equivalence.classify_claim_relation,
             statement, neighbour["statement"], client=client, model=model,
         )
         if relation["relation"] == "unknown":

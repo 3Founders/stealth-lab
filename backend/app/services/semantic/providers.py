@@ -269,8 +269,8 @@ class _VertexRefreshingCompletions:
     async def create(self, **kwargs):
         import google.auth.transport.requests
 
-        if not self._credentials.valid:
-            self._credentials.refresh(google.auth.transport.requests.Request())
+        if not self._credentials.valid:   # synchronous token fetch: keep it off the event loop
+            await asyncio.to_thread(self._credentials.refresh, google.auth.transport.requests.Request())
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
         headers = dict(kwargs.pop("extra_headers", None) or {})

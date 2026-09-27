@@ -50,13 +50,27 @@ async def create_pool(dsn: Optional[str] = None, **kwargs) -> asyncpg.Pool:
     transaction-mode pooler is a second, independent hazard beyond
     prepared statements.
     """
+    dsn = dsn or settings.require("database_url")
+    if "statement_cache_size" not in kwargs and _is_transaction_pooler(dsn):
+        kwargs["statement_cache_size"] = 0   # PgBouncer transaction mode: see the note above
     return await asyncpg.create_pool(
-        dsn or settings.require("database_url"),
+        dsn,
         init=_init_connection,
-        min_size=kwargs.pop("min_size", 1),
-        max_size=kwargs.pop("max_size", 10),
+        min_size=kwargs.pop("min_size", settings.db_pool_min_size),
+        max_size=kwargs.pop("max_size", settings.db_pool_max_size),
         **kwargs,
     )
+
+
+def _is_transaction_pooler(dsn: str) -> bool:
+    """Neon's pooled endpoint carries `-pooler` in its host (PgBouncer, transaction mode). Scaling past a
+    few instances needs it, and asyncpg's prepared-statement cache must be off behind it."""
+    from urllib.parse import urlparse
+
+    try:
+        return "-pooler" in (urlparse(dsn).hostname or "")
+    except ValueError:
+        return False
 
 
 async def get_pool() -> asyncpg.Pool:

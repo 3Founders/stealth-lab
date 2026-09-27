@@ -43,6 +43,7 @@ installed package plus the SDK's own release notes, not assumed).
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import secrets
@@ -111,6 +112,7 @@ from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
 from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
 from app.services import claim_graph_api
 from app.services import procedure_task_graph_api
+from app.utils.aio import run_blocking
 
 # Set once by `lifespan` (below) so the non-MCP custom HTTP routes
 # (/claim-graph, /claim-graph/data) can reach the same pool the MCP tools
@@ -799,7 +801,14 @@ async def local_sync_preflight(request: Request) -> Response:
 # middleware, /mcp route, every custom_route above including local-sync) --
 # see anonymous_read.py's own module docstring for why this is the robust
 # shape (injects a credential rather than forking the SDK's auth enforcement).
-app = AnonymousReadInjectorMiddleware(server.streamable_http_app(transport_security=_transport_security()))
+# Stateless Streamable HTTP: no Mcp-Session-Id held in this process's memory, so any worker or Cloud Run
+# instance can serve any request (spec 2026-07-28 removes protocol sessions). The v1 tools are plain
+# request/response. The v2 surface keeps the stateful default because its long-running task tools poll
+# TasksExtension's in-process store. STEALTHLAB_MCP_STATELESS=1/0 overrides either default.
+MCP_STATELESS = os.environ.get("STEALTHLAB_MCP_STATELESS", "1" if MCP_SURFACE == "v1" else "0").strip() in (
+    "1", "true", "yes")
+app = AnonymousReadInjectorMiddleware(server.streamable_http_app(
+    transport_security=_transport_security(), stateless_http=MCP_STATELESS))
 
 
 def _resolve_caller_identity(fallback: str) -> str:
@@ -1970,7 +1979,7 @@ async def find_best_way(task_description: str, ctx: Context,
     # than propagating an exception.
     seed_files: list[str] = []
     try:
-        git_diff = subprocess.run(
+        git_diff = await run_blocking(subprocess.run,
             ["git", "diff", "--name-only", "HEAD"],
             cwd=repo_path, capture_output=True, text=True, timeout=5,
         )
@@ -4084,6 +4093,13 @@ async def _attach_candidate_ways(pool, candidates: list, query: str, facts: list
         cand["ways"] = ways
 
 
+@functools.lru_cache(maxsize=4)
+def _find_ways_llm_client(api_key: str, base_url: str) -> "OpenAI":
+    """One client per (key, base URL) per process: a client per call rebuilt its HTTP connection pool --
+    a fresh TCP + TLS handshake on every find_ways. Keyed on the key so a rotated key takes effect."""
+    return OpenAI(max_retries=0, api_key=api_key, base_url=base_url)
+
+
 async def _find_ways_impl(
     query: str, ctx: Context, *, repo_claims: str, current_scope_json: str, max_depth: int,
     semantic: bool, use_llm: bool, top_k: int,
@@ -4103,10 +4119,8 @@ async def _find_ways_impl(
     client = None
     if use_llm:
         try:
-            client = OpenAI(
-                max_retries=0, api_key=settings.require("general_compute_api_key"),
-                base_url=settings.general_compute_base_url,
-            )
+            client = _find_ways_llm_client(settings.require("general_compute_api_key"),
+                                           settings.general_compute_base_url)
         except Exception:  # noqa: BLE001 -- no configured key is a real, honest degrade, not a crash
             client = None
 

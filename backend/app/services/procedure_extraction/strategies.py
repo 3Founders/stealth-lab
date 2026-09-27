@@ -37,6 +37,7 @@ from app.services.procedure_extraction.schema import (
     ExtractionTransientFailure,
     ProcedureStep,
 )
+from app.utils.aio import run_blocking
 
 
 class ExtractionStrategy(ABC):
@@ -166,7 +167,7 @@ class GroundedHybridExtractor(ExtractionStrategy):
         user_prompt = f"Goal: {evidence.goal_text}\nTool-call pattern: {summary}"
 
         try:
-            response = self._client.chat.completions.create(
+            response = await run_blocking(self._client.chat.completions.create,
                 model=self._model,
                 messages=[
                     {"role": "system", "content": _ABSTRACTION_SYSTEM_PROMPT},
@@ -431,7 +432,7 @@ class CodeSolutionExtractor(ExtractionStrategy):
         user_prompt = ("Task:\n" + task[:6000] + "\n\nVerified solution (passes the full test suite):\n"
                        + "```python\n" + code[:8000] + "\n```")
         try:
-            response = self._client.chat.completions.create(
+            response = await run_blocking(self._client.chat.completions.create,
                 model=self._model,
                 messages=[{"role": "system", "content": _CODE_SOLUTION_SYSTEM_PROMPT},
                           {"role": "user", "content": user_prompt}],

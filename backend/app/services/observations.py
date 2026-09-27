@@ -25,6 +25,7 @@ import asyncpg
 from app.services.access import AccessScope, visibility_predicate
 from app.services.claims import capture_claim
 from app.services.embeddings import Embedder
+from app.utils.aio import run_blocking
 
 CREATED_BY = "observation_extraction"
 
@@ -330,7 +331,7 @@ async def extract_model_observation(
         f"Output: {json.dumps(tool_output, default=str)[:1000]}"
     )
 
-    response = client.chat.completions.create(
+    response = await run_blocking(client.chat.completions.create,
         model=model,
         messages=[
             {"role": "system", "content": _SEMANTIC_LABEL_SYSTEM_PROMPT},

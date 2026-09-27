@@ -21,6 +21,7 @@ Two deliberate choices:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -38,6 +39,31 @@ from app.config import settings
 log = logging.getLogger(__name__)
 
 InputType = Literal["document", "query"]
+
+
+
+# ADC credentials for the Vertex embedding endpoint, built once per process and refreshed only when
+# expired. Both `google.auth.default()` and `credentials.refresh()` are synchronous network calls; doing
+# them on every embed (as this module used to) blocked the event loop on every query.
+_vertex_creds: Any = None
+_vertex_creds_lock = threading.Lock()
+
+
+def _vertex_credentials_sync() -> Any:
+    global _vertex_creds
+    import google.auth
+    import google.auth.transport.requests
+
+    with _vertex_creds_lock:
+        if _vertex_creds is None:
+            _vertex_creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        if not _vertex_creds.valid:
+            _vertex_creds.refresh(google.auth.transport.requests.Request())
+        return _vertex_creds
+
+
+async def _vertex_credentials() -> Any:
+    return await asyncio.to_thread(_vertex_credentials_sync)
 
 
 @dataclass(frozen=True)
@@ -174,6 +200,53 @@ class EmbeddingError(Exception):
     pass
 
 
+# Provider clients, built once per configuration and reused for the process
+# lifetime.
+#
+# Both of these used to be constructed inside the per-call loop, which meant
+# a new underlying connection pool -- and therefore a fresh TCP + TLS
+# handshake to Voyage or Google -- on every single embed() call, with no
+# keep-alive reuse across calls.
+#
+# The cache key must cover EVERY constructor argument, not just the api key.
+# That is not theoretical: VOYAGE_MAX_RETRIES is a setting, and a client
+# cached under an older value keeps retrying the old number of times after
+# the setting changes. The key is (api_key, max_retries) for exactly that
+# reason, and a test that changes the setting gets a correctly-configured
+# client rather than a stale one. The api key stays in the key because both
+# loops rotate across keys on failure: sharing one client across keys would
+# send one key's traffic on another key's connection and, for a rotation
+# that exists to survive a per-key quota, defeat the point of rotating.
+_voyage_clients: dict[tuple[str, int], Any] = {}
+_gemini_clients: dict[str, Any] = {}
+_provider_client_lock = threading.Lock()
+
+
+def _voyage_client(api_key: str, max_retries: Optional[int] = None) -> Any:
+    import voyageai
+
+    if max_retries is None:
+        max_retries = settings.voyage_max_retries
+    key = (api_key, max_retries)
+    with _provider_client_lock:
+        client = _voyage_clients.get(key)
+        if client is None:
+            client = voyageai.AsyncClient(api_key=api_key, max_retries=max_retries)
+            _voyage_clients[key] = client
+        return client
+
+
+def _gemini_client(api_key: str) -> Any:
+    from google import genai
+
+    with _provider_client_lock:
+        client = _gemini_clients.get(api_key)
+        if client is None:
+            client = genai.Client(api_key=api_key)
+            _gemini_clients[api_key] = client
+        return client
+
+
 class Embedder:
     """Thin wrapper over Voyage. Batches, because per-node calls are wasteful."""
 
@@ -266,29 +339,63 @@ class Embedder:
         # to the provider chain.
         task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
         results: dict[int, list[float]] = {}
-        missing_idx: list[int] = []
-        missing_texts: list[str] = []
+        # Two fixes over the previous version of this loop, both of which
+        # got worse as ingest volume grew:
+        #
+        # 1. The cache key hashes the WHOLE text, and it was computed twice
+        #    per text -- once to look up, once to store. At the 8k-token
+        #    chunk size that is 2x the SHA-256 work for nothing. Keyed once
+        #    here and reused for the store.
+        # 2. Misses were NOT deduplicated within a call, so a text repeated
+        #    k times in one batch was sent to the provider k times. Ingest
+        #    batches repeat text constantly (identical claim statements,
+        #    identical boilerplate sections) and the batch API is
+        #    rate-limited, so each repeat was a paid, rate-limited round
+        #    trip for a vector already in hand. The experiment-path
+        #    embedder in embed_cache.py has always deduped here; this
+        #    closes the gap between the two.
+        missing_pairs: list[tuple[int, str]] = []   # (index, text) -- first occurrence
+        duplicate_pairs: list[tuple[int, str]] = [] # (index, text) -- later repeats
+        missing_texts: list[str] = []               # unique, provider-bound order
+        missing_keys: dict[str, str] = {}           # text -> cache key
+        seen: set[str] = set()
         for i, text in enumerate(texts):
             key = _cache_key(model_id, self.dimension, task_type, text)
             with _EMBED_CACHE_LOCK:
                 cached = _EMBED_CACHE.get(key)
             if cached is not None:
                 results[i] = cached
+            elif text in seen:
+                duplicate_pairs.append((i, text))
             else:
-                missing_idx.append(i)
+                seen.add(text)
+                missing_keys[text] = key
+                missing_pairs.append((i, text))
                 missing_texts.append(text)
 
         if missing_texts:
             vectors = await self._embed_configured_provider(missing_texts, input_type)
-            for i, text, vec in zip(missing_idx, missing_texts, vectors):
-                results[i] = vec
-                _cache_put(
-                    _cache_key(model_id, self.dimension, task_type, text),
-                    vec,
+            if len(vectors) != len(missing_texts):
+                # Previously this surfaced as a bare KeyError from the
+                # return comprehension below, which reads like a cache bug.
+                # A provider that answers with the wrong vector count is a
+                # different problem and deserves to say so.
+                raise EmbeddingError(
+                    f"embedding provider returned {len(vectors)} vectors for "
+                    f"{len(missing_texts)} inputs (model={model_id}, "
+                    f"provider={self._configured_provider()})"
                 )
-            if len(missing_texts) < len(texts):
+            by_text = dict(zip(missing_texts, vectors))
+            for text in missing_texts:
+                _cache_put(missing_keys[text], by_text[text])
+            for i, text in missing_pairs:
+                results[i] = by_text[text]
+            for i, text in duplicate_pairs:
+                results[i] = by_text[text]
+            served = len(texts) - len(missing_texts)
+            if served:
                 log.info("embedding cache: %d/%d served without a provider call",
-                         len(texts) - len(missing_texts), len(texts))
+                         served, len(texts))
 
         return [results[i] for i in range(len(texts))]
 
@@ -359,8 +466,7 @@ class Embedder:
         if not settings.vertex_project:
             raise EmbeddingError("no Vertex project configured (VERTEX_PROJECT)")
         try:
-            credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            credentials.refresh(google.auth.transport.requests.Request())
+            credentials = await _vertex_credentials()
         except Exception as exc:  # noqa: BLE001
             raise EmbeddingError(f"Vertex ADC unavailable: {exc}") from exc
 
@@ -407,7 +513,6 @@ class Embedder:
         in phaseJ because four concurrent simulations drained one key's
         TPM; two keys double that ceiling.
         """
-        from google import genai
         from google.genai import types
 
         keys = [
@@ -424,7 +529,7 @@ class Embedder:
 
         failures: list[str] = []
         for i, key in enumerate(keys):
-            client = genai.Client(api_key=key)
+            client = _gemini_client(key)
             t0 = time.perf_counter()
             try:
                 result = await client.aio.models.embed_content(
@@ -542,8 +647,6 @@ class Embedder:
     async def _embed_voyage(
         self, texts: Sequence[str], input_type: InputType
     ) -> list[list[float]]:
-        import voyageai
-
         # ROOT CAUSE of the observed T1-v3/B_default provider crash: the SDK's
         # own AsyncClient ships a real tenacity retry/backoff controller
         # (exponential + jitter, retry_if_exception_type restricted to
@@ -572,7 +675,7 @@ class Embedder:
 
         failures: list[str] = []
         for i, key in enumerate(keys):
-            client = voyageai.AsyncClient(api_key=key, max_retries=settings.voyage_max_retries)
+            client = _voyage_client(key)
             try:
                 result = await client.embed(
                     list(texts), model=self.model, input_type=input_type

@@ -42,7 +42,9 @@ flow -- this module never writes to the `goals` table itself.
 """
 from __future__ import annotations
 
+import copy
 import json
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
@@ -51,6 +53,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.services.access import AccessScope, TenantScope
 from app.services.goals import goal_embedding_text, normalize_goal_name, search_goals
+from app.utils.aio import run_blocking
 
 _INTENT_SYSTEM_PROMPT = """You turn a vague, colloquial request about a software repository into a structured statement of intent. The request may be a symptom ("why is this flaky?"), a command ("deploy it"), or underspecified ("make it faster").
 
@@ -130,6 +133,14 @@ def _parse_intent_response(text: str) -> Optional[_IntentResponse]:
         return None
 
 
+# Per-process LRU of successful normalizations. The same query text classifies the same way, and the
+# LLM call is 1-3 s on the hot path of every find_ways, so repeats skip it. Keyed on the client object
+# (one cached client per process in the server) and the model/temperature, so a different client or model
+# never reuses another's result.
+_INTENT_CACHE: "OrderedDict[tuple, NormalizedIntent]" = OrderedDict()
+_INTENT_CACHE_MAX = 4096
+
+
 async def normalize_intent(
     user_input: str, *, client: Any = None, model: str = "gemma-4-31B-it", temperature: float = 0.1,
 ) -> NormalizedIntent:
@@ -147,9 +158,14 @@ async def normalize_intent(
         return NormalizedIntent(raw_input=raw, outcome="", used_fallback=True, rationale="empty input")
     if client is None:
         return NormalizedIntent(raw_input=raw, outcome=raw, used_fallback=True, rationale="no LLM client configured")
+    cache_key = (id(client), model, temperature, raw)
+    cached = _INTENT_CACHE.get(cache_key)
+    if cached is not None:
+        _INTENT_CACHE.move_to_end(cache_key)
+        return copy.deepcopy(cached)
 
     try:
-        response = client.chat.completions.create(
+        response = await run_blocking(client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": _INTENT_SYSTEM_PROMPT},
@@ -169,12 +185,16 @@ async def normalize_intent(
             rationale=f"LLM response did not parse: {text[:200]!r}",
         )
 
-    return NormalizedIntent(
+    result = NormalizedIntent(
         raw_input=raw, outcome=parsed.outcome, object=parsed.object, action=parsed.action,
         constraints=parsed.constraints, verification=parsed.verification, entities=parsed.entities,
         uncertainty=parsed.uncertainty, alternative_interpretations=parsed.alternative_interpretations,
         used_fallback=False, rationale="normalized via LLM extraction",
     )
+    _INTENT_CACHE[cache_key] = copy.deepcopy(result)   # successes only: a fallback is retried next time
+    if len(_INTENT_CACHE) > _INTENT_CACHE_MAX:
+        _INTENT_CACHE.popitem(last=False)
+    return result
 
 
 @dataclass

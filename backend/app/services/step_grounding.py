@@ -48,6 +48,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.services.goal_categories import KNOWN_GOAL_CATEGORIES
+from app.utils.aio import run_blocking
 
 _GROUNDING_SYSTEM_PROMPT = f"""You ground one abstract step of a procedure into the concrete repo/task it is being run against.
 
@@ -196,7 +197,7 @@ async def ground_step(
     )
 
     try:
-        response = client.chat.completions.create(
+        response = await run_blocking(client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": _GROUNDING_SYSTEM_PROMPT},

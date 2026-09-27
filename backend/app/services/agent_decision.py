@@ -25,6 +25,7 @@ import asyncpg
 
 from app.services.agent_review_state_machine import AgentReviewStateMachine
 from app.services.execution import SkillRegistry
+from app.utils.aio import run_blocking
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ async def _compute_runnable(
             return False
 
         from app.services.sandbox import run_sandboxed
-        result = run_sandboxed(code, input_data={})
+        result = await run_blocking(run_sandboxed, code, input_data={})
         if result.isolation_failed:
             log.error(
                 "sandbox isolation mechanism unavailable for agent %s -- "

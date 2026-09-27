@@ -117,6 +117,10 @@ class Settings(BaseSettings):
     # wrong. Get this wrong and every call 404s before it ever reaches a
     # model.
     general_compute_base_url: str = "https://api.generalcompute.com/v1"
+    # asyncpg pool per process. Direct Neon connections are capped by the compute's max_connections, so
+    # (instances x db_pool_max_size) must stay under it -- or use the -pooler endpoint (see db/session.py).
+    db_pool_min_size: int = 1
+    db_pool_max_size: int = 10
     # Comma-separated, must be genuinely distinct model families -- the
     # heterogeneity check enforces this at construction, not just at
     # request time, so a bad configuration fails loudly before spending

@@ -34,6 +34,8 @@ PROVIDERS AND THE FALLBACK CONTRACT
 """
 from __future__ import annotations
 
+import asyncio
+
 import hashlib
 import json
 import logging
@@ -328,7 +330,10 @@ class LLMJudge:
     async def judge_batch(
         self, goal: str, candidates: list[JudgeCandidateInput],
     ) -> list[ApplicabilityJudgment]:
-        return [self._judge_one(goal, c) for c in candidates]
+        # The client is synchronous: each call runs in a worker thread so it never blocks the event loop,
+        # and the candidates (independent, already capped by the caller's judge budget) run concurrently
+        # instead of one after another. Order is preserved; the first failure propagates as before.
+        return list(await asyncio.gather(*(asyncio.to_thread(self._judge_one, goal, c) for c in candidates)))
 
     def _judge_one(self, goal: str, candidate: JudgeCandidateInput) -> ApplicabilityJudgment:
         if self.client is None:

@@ -55,6 +55,7 @@ from app.services.invariants import check_invariants_async
 from app.services.relevance_gate import passes_relevance_gate
 from app.services.retrieval import fuse_rrf
 from app.services.state import project_state
+from app.utils.aio import run_blocking
 
 # Ticket 12's cold-start answer: "disable procedure retrieval entirely
 # while evidence is thin... fall back to generative planning." The
@@ -254,7 +255,7 @@ async def _claims_satisfy_precondition_via_reasoning(
     precondition_text = f"subject={subject!r}, predicate={predicate!r}, object={expected_object!r}"
     claims_text = "\n".join(f"- {s}" for s in candidate_claim_statements)
     try:
-        response = client.chat.completions.create(
+        response = await run_blocking(client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": _PRECONDITION_REASONING_SYSTEM_PROMPT},

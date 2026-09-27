@@ -40,6 +40,7 @@ import asyncpg
 
 from app.debate.panel import PanelAgent, _extract_json
 from app.services.agent_review_state_machine import AgentReviewStateMachine
+from app.utils.aio import run_blocking
 
 log = logging.getLogger(__name__)
 
@@ -187,7 +188,7 @@ class CodeSourcedReviewOrchestrator:
         scan_error: Optional[str] = None
         if code:
             try:
-                scan_findings, scan_high_severity = _run_bandit(code)
+                scan_findings, scan_high_severity = await run_blocking(_run_bandit, code)
             except Exception as exc:  # noqa: BLE001
                 log.error("bandit scan failed for agent %s: %s", agent_id, exc)
                 scan_error = str(exc)
