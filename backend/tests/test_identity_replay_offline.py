@@ -688,6 +688,7 @@ async def test_procedure_no_candidates_is_persisted_and_replayed(monkeypatch):
     assert replay_decision == "no_candidates"
     assert replay_resolved is None
     assert candidate_calls == 1
+    assert judge.batch_calls == 0
     assert judge.single_calls == 0
     assert len(pool.inserts) == 1
 
@@ -821,17 +822,17 @@ async def test_procedure_concurrent_insert_returns_winner_decision(monkeypatch):
     async def candidates(*_args, **_kwargs):
         return [Candidate("local-procedure", "local", "local procedure")]
 
-    async def same(_kind, _text, _candidate):
-        judge.single_calls += 1
+    async def same_batch(kind, text, candidate_texts):
+        judge.batch_calls += 1
         return ChainResult(
             ok=True,
-            value={"relation": "same", "confidence": 0.99},
+            value=[{"relation": "same", "confidence": 0.99} for _ in candidate_texts],
             provider="local",
             model="local-model",
         )
 
     monkeypatch.setattr(procedure_identity, "_candidates", candidates)
-    monkeypatch.setattr(judge, "judge_identity", same)
+    monkeypatch.setattr(judge, "judge_identity_batch", same_batch)
     decision, resolved = await resolve_procedure_identity(
         pool,
         goal_id="goal-1",
@@ -849,7 +850,8 @@ async def test_procedure_concurrent_insert_returns_winner_decision(monkeypatch):
 
     assert decision == "distinct"
     assert resolved is None
-    assert judge.single_calls == 1
+    assert judge.batch_calls == 1
+    assert judge.single_calls == 0
 
 
 class VersionReplayPool:

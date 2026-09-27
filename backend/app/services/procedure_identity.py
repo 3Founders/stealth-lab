@@ -6,7 +6,7 @@ Canonical Procedure ingestion with goal-constrained, model-decided identity
       -> exact source dedup            (procedures.source_key unique index; retry/race safe)
       -> resolve Goal                  (goals.find_or_create_goal: exact | FTS+vector -> judge)
       -> candidates WITHIN that Goal   (FTS + ANN over the goal's live procedures only)
-      -> judge kind=procedure          same | refinement | distinct
+      -> judge kind=procedure          same | refinement | distinct   (ONE batch over the fused list)
              same       -> reuse the existing Procedure; attach this source as provenance
              refinement -> supersede_procedure (new VERSION of the same procedure_id)
              distinct   -> new Procedure linked directly to the SAME goal_id
@@ -259,6 +259,27 @@ async def _candidates(pool: asyncpg.Pool, goal_id: str, text: str, embedding: Op
     return sorted(by.values(), key=lambda c: (-c.rrf, c.id))[:5]
 
 
+def _require_batch_identity(judge: Any) -> Any:
+    """Procedure identity is judged as ONE batch over the RRF-fused candidate list.
+
+    A judge that cannot serve that contract is a wiring error, not a reason to
+    fall back: silently degrading to N per-pair ``judge_identity`` calls would
+    both re-introduce the per-candidate round trip this path exists to remove
+    and hide a misconfigured judge behind a plausible-looking verdict. Same rule
+    the chain itself enforces for providers without ``identity_batch``."""
+    method = getattr(judge, "judge_identity_batch", None)
+    if not callable(method):
+        raise SemanticJudgmentUnavailable(
+            "procedure identity requires the judge_identity_batch contract; "
+            "a per-pair judge_identity fallback is forbidden"
+        )
+    return method
+
+
+async def _judge_procedure_batch(judge: Any, text: str, cands: list[Candidate]) -> Any:
+    return await _require_batch_identity(judge)("procedure", text, [cand.text for cand in cands])
+
+
 async def resolve_procedure_identity(
     pool: asyncpg.Pool, *, goal_id: str, name: str, goal_text: str, steps: list, source_key: Optional[str], scope_type: str,
     scope_entity_id: Optional[str], embedder: Any, judge: SemanticJudge, on_unavailable: str, job_id: Optional[int] = None,
@@ -299,20 +320,26 @@ async def resolve_procedure_identity(
     cands = _validate_candidate_objects(await _candidates(pool, goal_id, text, emb, model))
     decision, resolved, provider, mdl = "no_candidates", None, None, None
     if cands:
-        for cand in cands:
-            res = await judge.judge_identity("procedure", text, cand.text)
-            if not res.ok:
-                if on_unavailable == "raise":
-                    raise SemanticJudgmentUnavailable(f"procedure identity unavailable ({res.reason})", attempts=res.attempts)
-                decision = "judge_unavailable"
-                break
-            cand.relation, cand.confidence = res.value["relation"], res.value["confidence"]
-            provider, mdl = res.provider, res.model
-            if cand.relation in ("same", "refinement") and cand.confidence >= SAME_MIN_CONFIDENCE:
-                decision, resolved = ("same" if cand.relation == "same" else "new_version"), cand.id
-                break
+        res = await _judge_procedure_batch(judge, text, cands)
+        if not res.ok:
+            if on_unavailable == "raise":
+                raise SemanticJudgmentUnavailable(f"procedure identity unavailable ({res.reason})", attempts=res.attempts)
+            decision = "judge_unavailable"
+        elif not isinstance(res.value, list) or len(res.value) != len(cands):
+            if on_unavailable == "raise":
+                raise SemanticJudgmentUnavailable(
+                    f"procedure identity unavailable (identity batch returned an invalid verdict count); "
+                    f"{len(cands)} candidate(s) unresolved", attempts=res.attempts)
+            decision = "judge_unavailable"
         else:
-            decision = "distinct"
+            provider, mdl = res.provider, res.model
+            for cand, verdict in zip(cands, res.value):
+                cand.relation, cand.confidence = verdict["relation"], verdict["confidence"]
+                if cand.relation in ("same", "refinement") and cand.confidence >= SAME_MIN_CONFIDENCE:
+                    decision, resolved = ("same" if cand.relation == "same" else "new_version"), cand.id
+                    break
+            else:
+                decision = "distinct"
     if decision == "no_candidates" and idempotency_key is None:
         return decision, resolved
     written = await record_decision(
