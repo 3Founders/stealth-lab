@@ -200,11 +200,23 @@ def controls() -> None:
     print(f"C1 notes on {sum(1 for v in c1.values() if v['text'])}, C2 on {sum(1 for v in c2.values() if v['text'])}")
 
 
+FROZEN = swe_env.RUNS / "kel_frozen.json"
+
+
+def freeze() -> None:
+    """Kel's knowledge is frozen from the first notes step on: learn.py refuses to run after this."""
+    if not FROZEN.exists():
+        procs = json.loads((swe_env.RUNS / "procedures_train.json").read_text(encoding="utf-8"))
+        FROZEN.write_text(json.dumps({"procedures": len(procs), "procedure_ids": sorted(p["procedure_id"] for p in procs.values())},
+                                     indent=1), encoding="utf-8")
+
+
 def main(action: str) -> None:
     from check_env import require_pinned
 
     require_pinned(scored=True)
     swe_env.verify_after_import()
+    freeze()
     if action == "queries":
         queries()
     elif action == "K":

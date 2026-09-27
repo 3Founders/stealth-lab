@@ -133,6 +133,13 @@ def main() -> None:
     a0 = {r["instance_id"]: r for r in load_jsonl(swe_env.RUNS / f"attempts_{a.part}_A0.jsonl")
           if not r.get("environmental_failure")}
     inst, ids = instances(), design()[a.part]
+    if a.part == "test" and a.arm != "A0":
+        missing_a0 = [i for i in ids if i not in a0]
+        if missing_a0:
+            raise SystemExit(f"run and finish `--part test --arm A0` first ({len(missing_a0)} instances missing): "
+                             "the other arms reuse A0 wherever they have no notes")
+        if not (swe_env.RUNS / "kel_frozen.json").exists():
+            raise SystemExit("Kel is not frozen yet -- build the notes (notes.py) before any held-out arm")
     model = swe_env.CONFIG["model"]["id"]
     agent = Agent(client(), model, max_steps=max_steps, temperature=swe_env.CONFIG["agent"]["temperature"])
 

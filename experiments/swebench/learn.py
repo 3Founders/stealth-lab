@@ -147,6 +147,9 @@ async def main(action: str) -> None:
 
     require_pinned(scored=True)
     swe_env.verify_after_import()
+    if (swe_env.RUNS / "kel_frozen.json").exists():
+        raise SystemExit("Kel is frozen (runs/kel_frozen.json): held-out notes were already built from it. "
+                         "Changing Kel now would make the arms incomparable -- start a new run instead.")
     if action == "name":
         return name()
     from app.db.session import create_pool

@@ -22,10 +22,17 @@ Single-shot tasks on well-known public libraries leave little room for knowledge
 | Change | Status | Where |
 |---|---|---|
 | 7. Judge batch fixes + `judge-health` | **Shipped** (a production bug) | `main` |
-| 1–2. Store and return verified solutions | Built; **being redone with `source_locator` / `source_artifacts`** instead of a new column | branch `knowledge-examples-experimental` |
+| 1–2. Store and return verified solutions | **Done on the provenance model**, flag `KNOWLEDGE_VERIFIED_EXAMPLES` (off by default), migration 124. See "Verified solutions" below | `main` |
 | 3–4. `related_examples` | Built; **off**. No confirmed benefit; costs tokens | same branch |
 | 5. Strict candidate ways | Built; off | same branch |
 | 6, 8 | Not built | — |
+
+**Verified solutions (changes 1–2, on `main`).** How a verified solution is recorded, with no new Procedure column:
+- **What is reported:** the agent sends a `code_solution` observation (`code`, `verified: true`, `verified_by`, optional `locator` {repository, commit, path, line_start, line_end}) through `report_execution` or extraction.
+- **Code committed in a repo** (a commit and a path are given): Kel stores **only the location**. `procedures.source_locator` holds `{uri, path, commit, lines, content_hash, granularity: "span"}`, and no code is copied.
+- **Code with no durable home:** stored **once** as an `ingested_artifacts` row with role `verified_solution` (migration 124). The bytes go to object storage when `OBJECT_STORAGE_URL` is set, otherwise inline (64 KB or less), otherwise only the hash is kept. `source_locator` points at that artifact.
+- **Either way:** the Procedure gets a `source_artifacts` ref `{artifact_id, role: "verified_solution", execution_allowed: false, note: <task>}`. Existing provenance is never overwritten, and the code passes known-token redaction first.
+- **`find_ways`:** returns `verified_solution` {task, locator, code (null when Kel keeps no bytes; open the locator), verified_by} on each resolved Procedure and on each candidate way.
 
 **Next test:** where knowledge should matter. Multi-step agent work in repositories, with knowledge the model cannot already have: see the SWE-bench protocol below.
 

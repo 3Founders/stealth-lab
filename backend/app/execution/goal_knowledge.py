@@ -89,6 +89,8 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             "alternatives": [_alt(a) for a in node.procedure_alternates],
             "steps": [],
         }
+        if proc.get("verified_solution"):          # docs/knowledge_side_improvements.md change 2
+            entry["verified_solution"] = proc["verified_solution"]
         procedures.append(entry)
         # _resolve_procedure_children builds exactly one child per step, in
         # the same sorted order -- so they line up one to one.

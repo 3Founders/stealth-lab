@@ -41,7 +41,8 @@ BINDING_KINDS = (
     "source_artifact",   # run an immutable ingested artifact (by id) -- only if that artifact is screened + execution_allowed
 )
 BINDING_ADDRESS_KEYS = frozenset({"endpoint", "server_url", "path", "image", "args", "env_refs", "entrypoint", "sandbox_policy"})
-ARTIFACT_ROLES = ("executable_source", "style_reference", "design_reference", "documentation", "dependency_manifest", "test_fixture")
+ARTIFACT_ROLES = ("executable_source", "style_reference", "design_reference", "documentation", "dependency_manifest", "test_fixture",
+                  "verified_solution")   # db/124: the verified code a Procedure was extracted from (reference only)
 SANDBOX_POLICIES = ("isolated", "isolated_network")
 BINDING_KEYS = frozenset({"kind", *BINDING_KINDS, *BINDING_ADDRESS_KEYS, "locator", "parameters", "verifier", "resources"})
 

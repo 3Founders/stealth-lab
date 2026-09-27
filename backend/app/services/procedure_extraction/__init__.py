@@ -259,6 +259,21 @@ async def extract_procedure(
         "capability_statement = $2, extracted_by = $3 WHERE id = $1::uuid",
         result["id"], extracted.capability_statement, extracted_by,
     )
+    from app.config import settings as _cfg
+
+    if extracted_by == CODE_SOLUTION_TAG and _cfg.knowledge_verified_examples:
+        # docs/knowledge_side_improvements.md changes 1-2: record the verified solution on the provenance model
+        # (source_locator + a 'verified_solution' source artifact), pointing at its durable location when given.
+        from app.services import verified_solutions as _vs
+
+        solution = verified_code_solution(evidence) or {}
+        props = solution.get("properties") or {}
+        task = next((str((o.get("properties") or {}).get("text") or "") for o in (evidence.observations or [])
+                     if isinstance(o, dict) and o.get("observation_type") == "task_statement"), "")
+        await _vs.preserve(pool, procedure_row_id=str(result["id"]), code=str(props.get("code") or ""),
+                           task=task or str(evidence.goal_text or ""), language=str(props.get("language") or "python"),
+                           verified_by=props.get("verified_by"), locator=props.get("locator"),
+                           owner_id=owner_id, visibility=visibility)
 
     return ExtractionResult(
         procedure_id=result["procedure_id"], version_row_id=result["id"],

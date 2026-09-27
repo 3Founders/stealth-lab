@@ -21,6 +21,7 @@ Reuses goals.py::normalize_goal_name (the same dedup key find_or_create_goal use
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
@@ -29,6 +30,8 @@ import asyncpg
 from app.services.access import AccessScope
 from app.services.goals import normalize_goal_name
 from app.services.routed_reads import fetch_goal
+
+log = logging.getLogger(__name__)
 
 DEFAULT_MAX_DEPTH = 6
 
@@ -109,6 +112,22 @@ async def resolve_goal_id_for_text(
         pool, [normalized], scope_type=scope_type, scope_entity_id=scope_entity_id,
     )
     return found.get(normalized)
+
+
+async def _verified_solution(pool: asyncpg.Pool, row: dict) -> Optional[dict]:
+    """docs/knowledge_side_improvements.md change 2: the Procedure's verified solution (code + where it came
+    from), when KNOWLEDGE_VERIFIED_EXAMPLES is on and it has one. Never fatal to resolution."""
+    from app.config import settings
+
+    if not settings.knowledge_verified_examples or not row.get("source_artifacts"):
+        return None
+    from app.services import verified_solutions
+
+    try:
+        return await verified_solutions.resolve(pool, row.get("source_artifacts"), row.get("source_locator"))
+    except Exception:  # noqa: BLE001 -- the Procedure still stands without its example
+        log.warning("verified solution unavailable for procedure %s", row.get("id"), exc_info=True)
+        return None
 
 
 SPECIFIC_GOAL_DEPTH = 2          # how far below a Goal its "more specific" ways are looked for
@@ -280,6 +299,7 @@ async def resolve_goal_via_procedure(
         procedure={
             "id": str(procedure["id"]), "procedure_id": str(procedure["procedure_id"]),
             "name": procedure.get("name"), "version": procedure.get("version"),
+            **({"verified_solution": vs} if (vs := await _verified_solution(pool, procedure)) else {}),
         },
         verification_requirement=goal.get("verification_requirement") or {},
         children=children,
@@ -408,6 +428,7 @@ async def resolve_goal(
                 "steps": sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0) if isinstance(s, dict) else 0),
                 **({"repo_fit": proc["_repo_fit"]} if proc.get("_repo_fit") else {}),
                 **({"observed_on_more_specific_goal": observed_on} if observed_on else {}),
+                **({"verified_solution": vs} if (vs := await _verified_solution(pool, proc)) else {}),
             },
             verification_requirement=goal.get("verification_requirement") or {},
             children=children, procedure_alternates=feasible[1:],

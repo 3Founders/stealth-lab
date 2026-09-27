@@ -3198,6 +3198,18 @@ async def report_execution(procedure_id: str, success: bool, context_key: str, c
     is byte-identical to this tool's pre-existing behavior -- outcome
     recording only, no extraction attempt.
 
+    A VERIFIED CODE SOLUTION is reported as one more observation:
+    `{"observation_type": "code_solution", "label": "...", "properties":
+    {"code": "<the code or diff>", "verified": true, "verified_by":
+    "<the check that passed>", "language": "python", "locator":
+    {"repository": "owner/repo", "commit": "<sha>", "path": "src/x.py",
+    "line_start": 10, "line_end": 42}}}` (plus a `task_statement`
+    observation with the task text). The Procedure is then extracted from
+    the code itself, and with KNOWLEDGE_VERIFIED_EXAMPLES on the solution is
+    kept as provenance (docs/knowledge_side_improvements.md): with a
+    committed `locator` only the location is stored, never the code;
+    without one the code is stored once as an artifact.
+
     Returns the procedure row's state AFTER any transition this call
     caused (promotion to verified, quarantine opening/closing), plus
     `extraction` (present only when an extraction attempt was made):
@@ -3999,7 +4011,11 @@ async def _attach_candidate_ways(pool, candidates: list, query: str, facts: list
             row = item["_row"]
             source = str(row.get("achieves_goal_id") or goal_id)
             source_row = await fetch_goal(pool, source) if source != str(goal_id) else None
+            from app.execution.goal_resolution import _verified_solution
+
+            vs = await _verified_solution(pool, row)
             ways.append({
+                **({"verified_solution": vs} if vs else {}),
                 "procedure_id": str(row["procedure_id"]), "name": row.get("name"),
                 "verification_state": row.get("verification_state"),
                 "steps": sorted(row.get("steps") or [], key=lambda st: st.get("order", 0) if isinstance(st, dict) else 0),

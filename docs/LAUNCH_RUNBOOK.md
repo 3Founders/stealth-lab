@@ -21,10 +21,11 @@ Website (prod_frontend)      talks to the API; points installers at the MCP URL
 | `8c57638`, `7df90df` | Per-Goal model recommender; the MCP tools `recommend_models` and `report_model_run` (v1 and v2 surfaces) | Migrations 120 (control) and 121 (project B), then step 19b |
 | `b71a234` | Goal ranking: demand only raises a Goal; lists and the roots view rank globally | Nothing beyond a normal deploy (API + website) |
 | `4c67865` | Step-level routing (per run.md node) | Migrations 122 (control) and 123 (project B); `routing-refit` once; redeploy MCP (step 19b) |
-| (this push) | Semantic judge fixes: JEV identity batches are split into chunks (it returned HTTP 400 above ~170k characters), replies wrapped in prose parse, and the Gemma fallback uses `GENERAL_COMPUTE_JUDGE_MODEL`. New `admin judge-health` command | **No migration.** Redeploy the API, MCP and workers. Run `judge-health` (step 20) |
+| (verified solutions) | A Procedure's verified solution is kept on the provenance model: `source_locator` plus a new artifact role `verified_solution`; returned by `find_ways` as `verified_solution`. Flag `KNOWLEDGE_VERIFIED_EXAMPLES`, **off by default** | **Migration 124** (control DB and every shard; not project B). Set the flag only after 124 is everywhere |
+| `4c72b5c` | Semantic judge fixes: JEV identity batches are split into chunks (it returned HTTP 400 above ~170k characters), replies wrapped in prose parse, and the Gemma fallback uses `GENERAL_COMPUTE_JUDGE_MODEL`. New `admin judge-health` command | **No migration.** Redeploy the API, MCP and workers. Run `judge-health` (step 20) |
 | `865d0f8` | (1) Benchmark import (`benchmark-import`); (2) Procedures from verified code solutions; (3) `find_ways` offers judged ways from more specific Goals and lists ways on ambiguous candidates; (4) `recommend_models` constraint `allow_retries` | **No migration, no new variable.** Redeploy the API and MCP (step 12). Benchmark import is optional (step 19c) |
 
-Details of each item are in the steps below. The newest migrations are **122** on the control DB and shards, and **123** on project B.
+Details of each item are in the steps below. The newest migrations are **124** on the control DB and shards, and **123** on project B.
 
 Two rules for the whole runbook:
 
@@ -130,7 +131,7 @@ This creates a copy-on-write Neon branch, which costs nothing until used. It nev
      DATABASE_URL="$CONTROL_DATABASE_URL" python scripts/migrate.py
      ```
 
-**Check:** `cd backend && DATABASE_URL="$CONTROL_DATABASE_URL" python scripts/migrate.py --status` shows no pending migrations. The newest applied migration is `122_step_routing.sql` or later. Migrations 121 and 123 start with `-- target: search`; they belong to project B (step 6) and are not applied here.
+**Check:** `cd backend && DATABASE_URL="$CONTROL_DATABASE_URL" python scripts/migrate.py --status` shows no pending migrations. The newest applied migration is `124_verified_solution_role.sql` or later. Migrations 121 and 123 start with `-- target: search`; they belong to project B (step 6) and are not applied here.
 
 ### 6. Search/log database (project B)
 

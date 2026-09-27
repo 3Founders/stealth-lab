@@ -127,6 +127,11 @@ class Settings(BaseSettings):
     # same OpenAI-compatible client/base URL is used for both models.
     general_compute_fallback_model: str = ""
 
+    # docs/knowledge_side_improvements.md changes 1-2: keep the verified solution a Procedure was extracted from
+    # (procedures.source_locator + source_artifacts role 'verified_solution', migration 124) and return it with the
+    # Procedure from find_ways. Off by default: apply migration 124 everywhere first.
+    knowledge_verified_examples: bool = False
+
     # --- Vertex AI (OAuth2/ADC, no API key) ---
     # The Cloud Run job's own attached service account already has
     # roles/editor (includes aiplatform.endpoints.predict) on this
