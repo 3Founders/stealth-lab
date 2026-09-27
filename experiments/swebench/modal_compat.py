@@ -3,7 +3,7 @@
     python modal_compat.py            # apply (idempotent); prints the patched file's sha256
     python modal_compat.py --check    # exit 1 unless the patch is applied
 
-Three transport-level fixes to swebench/harness/modal_eval/run_evaluation_modal.py, nothing else:
+Transport-level fixes to swebench/harness/modal_eval/run_evaluation_modal.py, nothing else:
 
 1. write_file: Modal removed the legacy Sandbox filesystem API server-side (`sandbox.open(...)` ->
    FAILED_PRECONDITION "The legacy Sandbox filesystem API is no longer supported"). Every released swebench
@@ -18,6 +18,10 @@ Three transport-level fixes to swebench/harness/modal_eval/run_evaluation_modal.
    was dropped before report.json was saved. The remote side now returns it as a str, and the client saves the
    logs under the log dir it computes itself (the same `get_log_dir` path).
 
+4. SWE-rebench images (swerebench/*) install the repo editable from /<name> but ship it at /testbed, so the
+   package does not import on Modal (gold check: ModuleNotFoundError for dask/briefcase/pennylane). Each missing
+   editable root is symlinked to /testbed at image build; Verified images are untouched.
+
 The patch applied, the eval script, the log parser and report.json are the harness's own. Logged as a
 deviation (DEVIATIONS.md 8); check_env.py refuses Modal grading unless this is applied.
 """
@@ -27,7 +31,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-MARK = "# kel-modal-compat v2"
+MARK = "# kel-modal-compat v3"
 
 OLD_WRITE = '''    def write_file(self, file_path: str, content: str):
         self.sandbox.open(file_path, "w").write(content)'''
@@ -36,9 +40,29 @@ NEW_WRITE = f'''    def write_file(self, file_path: str, content: str):  {MARK}
 
 OLD_IMAGE_HEAD = '''    @staticmethod
     def get_instance_image(test_spec: TestSpec) -> modal.Image:'''
+# SWE-rebench images install the repo editable from /<name> but ship it at /testbed: link each missing
+# absolute root named in the testbed env's editable finders / .pth files to /testbed (never overwrites).
+REBENCH_LINK_SH = """\
+for f in /opt/conda/envs/testbed/lib/python3*/site-packages/__editable__*finder.py \\
+         /opt/conda/envs/testbed/lib/python3*/site-packages/*.pth; do
+  [ -f "$f" ] || continue
+  for d in $(grep -oE "['\\" ]?/[A-Za-z0-9_.-]+" "$f" | tr -d "'\\" " | sort -u); do
+    [ -e "$d" ] || ln -s /testbed "$d"
+  done
+done
+true
+"""
+_B64 = __import__("base64").b64encode(REBENCH_LINK_SH.encode()).decode()
+
 NEW_IMAGE = f'''    @staticmethod
     def get_instance_image(test_spec: TestSpec) -> modal.Image:  {MARK}
-        return modal.Image.from_registry(test_spec.image, add_python="3.11").workdir("/testbed/")
+        image = modal.Image.from_registry(test_spec.image, add_python="3.11")
+        if test_spec.image.startswith("swerebench/"):
+            # SWE-rebench images install the repo editable from /<name> but ship it at /testbed; link each
+            # missing editable root to /testbed so imports resolve to the code the patch is applied to.
+            # (script: experiments/swebench/modal_compat.py REBENCH_LINK_SH, base64 to avoid quoting)
+            image = image.run_commands("echo {_B64} | base64 -d | bash")
+        return image.workdir("/testbed/")
 
     @staticmethod
     def _unused_legacy_get_instance_image(test_spec: TestSpec) -> modal.Image:'''

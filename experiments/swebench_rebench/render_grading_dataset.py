@@ -24,7 +24,34 @@ sys.path.insert(0, str(HERE.parent / "swebench"))
 import swe_env  # noqa: E402
 
 CHILD = r'''
-import json, sys
+import importlib.abc, importlib.machinery, json, sys, types
+
+class _Any(types.ModuleType):          # the fork's package imports its TractoAI backend (tracto_eval, `yt`) at
+    __path__ = []                      # load time; rendering never calls it, so those imports get a permissive dummy
+    def __getattr__(self, name):
+        return _Any(f"{self.__name__}.{name}")
+    def __call__(self, *a, **k):
+        return _Any(self.__name__)
+    def __setitem__(self, key, value):
+        pass
+    def __getitem__(self, item):       # type hints such as yt.X[...] / X | None, and use as a base class
+        return self
+    def __or__(self, other):
+        return self
+    __ror__ = __or__
+    def __mro_entries__(self, bases):
+        return (object,)
+
+class _YtFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    def find_spec(self, name, path, target=None):
+        stub = name == "yt" or name.startswith(("yt.", "swebench.harness.tracto_eval"))
+        return importlib.machinery.ModuleSpec(name, self) if stub else None
+    def create_module(self, spec):
+        return _Any(spec.name)
+    def exec_module(self, module):
+        pass
+
+sys.meta_path.insert(0, _YtFinder())
 from swebench.harness.test_spec.test_spec import make_test_spec
 src = json.load(open(sys.argv[1], encoding="utf-8"))
 out = []
