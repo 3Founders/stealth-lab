@@ -41,18 +41,25 @@ criteria. Sources: each step's `.scratch/ingestion/step_N_SUMMARY.md`, the read-
 | Severity | Where | Problem |
 |---|---|---|
 | High | `trajectory_semantics._SYSTEM_PROMPT` | Prompt fields ≠ schema fields (I3). The owner is editing this file. |
-| Medium | `skill_extraction` | Same "did not parse" class as the claim extractor |
-| Medium | `skillmd_dataset.py:519-534` | Fetch stage submits the whole ×12 oversampled batch before the limit check, ~5× more fetches than the yield needs |
+| ~~Medium~~ | `skill_extraction` | Same "did not parse" class as the claim extractor. **Fixed 2026-09-28 (`fc7e127`)** |
+| ~~Medium~~ | `skillmd_dataset.py:519-534` | Fetch stage submits the whole ×12 oversampled batch before the limit check. **Fixed 2026-09-28 (`a6f8e5f`): fetches in waves sized to the remaining limit** |
 | Medium | Step 7 OpenRewrite | Static tier only; `license_metadata["commit"]` always `None`; checks run in place against the pinned checkout |
 | Medium | Steps 4 and 7 | Two check runners with different isolation contracts (I9) |
-| Low | Step 2 dry-run script | `--max-scan` counts accepted rows, not rows seen |
-| Low | Step 3 | No spend cap wired into the pilot path |
+| ~~Low~~ | Step 2 dry-run script | `--max-scan` counts accepted rows, not rows seen. **Fixed 2026-09-28 (`f17585e`): `scan_limit` caps rows read** |
+| ~~Low~~ | Step 3 | No spend cap wired into the pilot path. **Fixed 2026-09-28 (`97167a1`): the workers' budget, `--max-usd`** |
+| ~~High~~ | shard placement (I5) | Procedures of K000-homed Goals rolled over to a knowledge shard and were rejected. **Fixed 2026-09-28 (`77fa1fa`)** |
+| ~~Medium~~ | `dispatch.ingest_openhands_trajectories` | Read trajectory files on the worker's event loop (found by the new async guard). **Fixed 2026-09-28 (`bbfdcfa`)** |
+| High | held-out gate (steps 0 and 2) | Fails open when `experiments/*/runs/design.json` is absent, which it is on any fresh clone (BLOCKERS I15) |
 
 ## Cross-cutting lessons
 1. **Every step independently hit "blocking call inside async".** A multi-level static check (async → sync →
-   blocking) belongs in CI; the current scanner only follows one level.
+   blocking) belongs in CI; the current scanner only follows one level. **Done 2026-09-28:**
+   `tests/test_no_blocking_in_async_offline.py` follows same-module helpers 3 levels deep and flags the
+   SourceAdapter's sync methods called un-awaited from async code.
 2. **Migrations moving under a running pilot** (step 3 vs step 4) caused 54/60 failures. Run
    `migrate.py --status` at the start of every run, and commit migrations with the code that uses them.
+   **Done 2026-09-28:** writing pilot commands (`skillmd-import`, `step6-ci-workflows`, `step6-bot-prs`) refuse
+   to start while migrations are pending (`app/ingestion/preflight.py`).
 3. **License gates work as designed and cut deep:** SWE-Gym 2,029/2,438 unmappable, step 6 Source A 0/1,000.
    The CC-BY-4.0 ruling (I7) is the largest single lever on usable volume.
 4. **Research quality is high.** Several builders corrected the build prompt itself: SkillMD mirrors, the nebius
