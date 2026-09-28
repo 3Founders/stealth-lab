@@ -116,6 +116,15 @@ async def _amain(a: argparse.Namespace) -> int:
         if a.cmd.startswith("benchmark-"):
             from app.benchmarks import admin_cli as _bench_cli
             return await _bench_cli.run(pool, a)
+        if a.cmd in ("skillmd-import", "step6-ci-workflows", "step6-bot-prs") and not getattr(a, "dry_run", False):
+            # Writing pilots refuse to start on a database with pending migrations (app/ingestion/preflight.py).
+            from app.ingestion.preflight import PendingMigrations, assert_schema_current
+
+            try:
+                await assert_schema_current(pool, command=a.cmd)
+            except PendingMigrations as exc:
+                print(f"ERROR: {exc}")
+                return 2
         if a.cmd == "skillmd-import":
             from app.ingestion import skillmd_cli as _skillmd_cli
             return await _skillmd_cli.run(pool, a)
