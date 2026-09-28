@@ -1,6 +1,9 @@
 // The executor runtime behind the stealthlab-exec MCP tools (spec section 4).
 //
-// A run = one achieve() call. It has 1 attempt, or 2 when racing. Each attempt gets its own detached
+// A run = one achieve() call. It has 1 attempt, or 2 when racing -- plus, with escalate=n, up to n more
+// attempts, one at a time, each on the next untried rung of the ladder after the previous attempt(s) failed
+// verification (check-and-escalate: a cheap model first, a stronger one only when the check says so). Each
+// escalated rung is verified by the same checks and reports its own outcome. Each attempt gets its own detached
 // worktree, runs one adapter's headless command there (auto-approve flags are only ever used inside that
 // worktree), is verified by the caller's checks + scope, and ends in exactly one report_model_run
 // (hosted, or the outbox). The user's checkout is only read -- until apply_run, which refuses unless the
@@ -81,6 +84,7 @@ export class ExecRuntime {
     const checkTimeoutS = clampInt(input.check_timeout_s, 1, 3600, 600);
     const race = input.race === undefined || input.race === null ? undefined : Number(input.race);
     if (race !== undefined && race !== 1 && race !== 2) throw new Error("race must be 1 or 2");
+    const escalate = clampInt(input.escalate, 0, 3, 0);
     const base = input.base || "HEAD";
     if (base !== "HEAD" && base !== "working-tree") throw new Error('base must be "HEAD" or "working-tree"');
     if (input.executor) await this.registry.get(String(input.executor));
@@ -99,7 +103,7 @@ export class ExecRuntime {
       input: {
         task: input.task, checks, scope, goal_id: input.goal_id || null, procedure_id: input.procedure_id || null,
         step_order: stepOrder, executor: input.executor || null, model: input.model || null, timeoutS, hangS,
-        checkTimeoutS, race, base, noChangeExpected: NO_CHANGE_RE.test(input.task),
+        checkTimeoutS, race, escalate, base, noChangeExpected: NO_CHANGE_RE.test(input.task),
       },
       attempts: [], winner: null, error: null, selection: null, applied: null, discarded: false,
       cancelRequested: false, lastEvent: "queued", waiters: new Set(),
@@ -217,20 +221,42 @@ export class ExecRuntime {
     });
     run.selection = { source: sel.source, race: sel.race, note: sel.note, recommendation: sel.recommendation };
     run.instanceKey = sel.recommendation?.instance_key || `stealth-${run.id}`;
-    run.attempts = sel.units.map((u, i) => ({
+    run.attempts = sel.units.map((u, i) => this.newAttempt(run, u, i));
+    this.event(run, { event: "selected", source: sel.source, race: sel.race, units: sel.units, note: sel.note });
+    this.persist(run);
+    if (run.cancelRequested) for (const a of run.attempts) a.cancelRequested = true;
+    await Promise.all(run.attempts.map((a) => this.runGuarded(run, a)));
+
+    // Check-and-escalate: while nothing is verified, climb to the next untried rung, one at a time.
+    const tried = new Set(run.attempts.map((a) => `${a.model}|${a.executor}`));
+    const rungs = (sel.ladder || []).filter((u) => !tried.has(`${u.model}|${u.executor}`));
+    for (let i = 0; i < (run.input.escalate || 0) && i < rungs.length; i++) {
+      if (run.winner !== null || run.cancelRequested) break;
+      const failed = run.attempts.map((a) => ({ executor: a.executor, model: a.model, state: a.state }));
+      const a = this.newAttempt(run, rungs[i], run.attempts.length);
+      a.escalated = true;
+      run.attempts.push(a);
+      this.event(run, { event: "escalate", attempt: a.index + 1, executor: a.executor, model: a.model, after: failed });
+      this.persist(run);
+      await this.runGuarded(run, a);
+    }
+  }
+
+  newAttempt(run, u, i) {
+    return {
       index: i, executor: u.executor, model: u.model, state: "queued",
       worktree: path.join(this.worktreeRoot, `${run.id}-a${i + 1}`), startedAt: null, finishedAt: null,
       checks: [], scopeViolations: [], diff: null, summary: "", learned: [], tokens: { in: null, out: null },
       costUsd: null, exitCode: null, reason: null, error: null, evidence: null, handle: null, checkHandle: null,
-      cancelRequested: false, worktreeRemoved: false,
-    }));
-    this.event(run, { event: "selected", source: sel.source, race: sel.race, units: sel.units, note: sel.note });
-    this.persist(run);
-    if (run.cancelRequested) for (const a of run.attempts) a.cancelRequested = true;
-    await Promise.all(run.attempts.map((a) => this.runAttempt(run, a).catch((err) => {
+      cancelRequested: !!run.cancelRequested, worktreeRemoved: false,
+    };
+  }
+
+  runGuarded(run, a) {
+    return this.runAttempt(run, a).catch((err) => {
       a.error = this.red(err.message);
       if (!TERMINAL.has(a.state)) this.setState(run, a, a.cancelRequested ? "cancelled" : "failed");
-    })));
+    });
   }
 
   setState(run, a, state, extra = {}) {
@@ -445,8 +471,11 @@ export class ExecRuntime {
     if (run.attempts.length > 1) {
       view.race = run.attempts.map((x) => ({
         executor: x.executor, model: x.model, state: x.state, verified: x.state === "verified", attempt: x.index + 1,
+        ...(x.escalated ? { escalated: true } : {}),
         evidence: { ...(x.evidence || {}), instance_key: run.instanceKey || null },
       }));
+      const n = run.attempts.filter((x) => x.escalated).length;
+      if (n) view.escalated = n;
     }
     if (run.selection) view.selection = { source: run.selection.source, note: run.selection.note || undefined };
     if (run.applied) view.applied = run.applied;
@@ -469,7 +498,7 @@ export class ExecRuntime {
       input: { ...run.input, task: this.red(run.input.task), checks: run.input.checks.map((c) => this.red(c)) },
       attempts: run.attempts.map((a) => ({
         ...this.attemptView(run, a), base_tree: a.baseTree || null, worktree: a.worktree,
-        worktree_removed: !!a.worktreeRemoved, did_not_run: !a.spawned,
+        worktree_removed: !!a.worktreeRemoved, did_not_run: !a.spawned, escalated: !!a.escalated,
         started_at: iso(a.startedAt), finished_at: iso(a.finishedAt),
       })),
     };

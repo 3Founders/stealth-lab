@@ -204,5 +204,6 @@ export async function selectUnits({ registry, config, executor, model, race, goa
     raceN = 1;
     note = `${note ? note + "; " : ""}race=2 requested but only one runnable unit`;
   }
-  return { units: units.slice(0, raceN), race: raceN, source, recommendation, note };
+  // ladder: every runnable unit in rank order -- the rungs achieve(escalate=n) climbs after a failed attempt.
+  return { units: units.slice(0, raceN), ladder: units, race: raceN, source, recommendation, note };
 }

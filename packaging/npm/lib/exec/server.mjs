@@ -46,6 +46,7 @@ export const TOOLS = [
         hang_s: { type: "integer", minimum: 1, maximum: 3600, description: "Kill the executor after this many seconds without output (default 180)." },
         check_timeout_s: { type: "integer", minimum: 1, maximum: 3600, description: "Per-check timeout (default 600)." },
         race: { type: "integer", enum: [1, 2], description: "2 = run the top two candidates; the first verified wins." },
+        escalate: { type: "integer", minimum: 0, maximum: 3, description: "Check-and-escalate: if no attempt verifies, try up to this many further rungs of the ladder (next cheapest model/executor), one at a time, each verified by the same checks. Default 0." },
         base: { type: "string", enum: ["HEAD", "working-tree"], description: "working-tree copies your uncommitted diff (tracked files) into the worktree." },
       },
       additionalProperties: false,

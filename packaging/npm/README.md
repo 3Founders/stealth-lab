@@ -107,6 +107,13 @@ run started. Each outcome is recorded with `report_model_run` so the recommender
 learns which agent and model to pick next time (queued in
 `~/.stealthlab/outbox/` when you are offline or not logged in).
 
+**Check-and-escalate.** `achieve(..., escalate: n)` (0 to 3, default 0): when no attempt passes its checks,
+the runtime tries the next untried rung of the ladder (the next agent/model in the recommender's or your
+`default_order`), one at a time, each in a fresh worktree and verified by the same checks, until one verifies or
+`n` further rungs have run. Cheap models do the work that passes; stronger ones are paid only when a check says
+so. Every rung is reported, so the recommender learns from failures too. The delegator subagent passes
+`escalate: 2`.
+
 For Claude Code, `--with-exec` also writes (and `uninstall` removes):
 
 | File | What it is |

@@ -29,11 +29,14 @@ you never apply a run.
    - `checks`: the node's `check=` command (it must exit 0 when the work is done);
    - `scope`: globs for the files the node may change (as narrow as the node allows);
    - `procedure_id` and `step_order` when the node has `step=P-n:<order>` and `.stealth/procedures.md` maps
-     `P-n` to a procedure id. Leave `executor` and `model` unset unless the task names them.
+     `P-n` to a procedure id. Leave `executor` and `model` unset unless the task names them;
+   - `escalate: 2`: if the first (cheapest) rung fails its checks, the executor tries up to two further rungs
+     of the ladder by itself, each verified by the same checks. Use `escalate: 0` only if the task says so.
 3. Poll `run_result(run_id, wait_s=55)` until `state` is terminal (verified, failed, timed_out, cancelled).
    Use `run_status` only if you need progress. If the task is abandoned, call `cancel_run`.
 4. Reply with only: `verified` (true/false), the `summary`, `diff.stat`, the failing check's tail if not
-   verified, `scope_violations` if any, and the `run_id`. Say that the change is NOT applied and that the
+   verified, `scope_violations` if any, which rungs ran (`race`: executor, model, state; `escalated`: how many
+   were escalations), and the `run_id`. Say that the change is NOT applied and that the
    caller applies it with `apply_run(run_id)` only if it wants to.
 
 Never call apply_run. Never paste secrets, tokens or `.env` values. `verified` comes from the executor's own
