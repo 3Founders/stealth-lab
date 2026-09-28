@@ -23,7 +23,7 @@ capture" posture, generalized from steps-only to the new object types.
 from __future__ import annotations
 
 import asyncio
-import json
+from app.services.llm_json import parse_json_object
 import logging
 import re
 from typing import Any, Optional
@@ -187,18 +187,10 @@ def _parse_response(text: str) -> Any:
     sentinel, or `None` (parse/schema failure) -- same three-way shape
     `procedure_extraction/strategies.py::_parse_abstraction_response`
     already establishes."""
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.strip("`")
-        if stripped.lower().startswith("json"):
-            stripped = stripped[4:]
-        stripped = stripped.strip()
-
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
+    # Fenced, prose-wrapped or trailing-remark replies are unwrapped (BLOCKERS.md I4); a truncated or
+    # non-object reply is still a parse failure.
+    parsed = parse_json_object(text)
+    if parsed is None:
         return None
     if parsed.get("abstain"):
         return _ABSTAIN

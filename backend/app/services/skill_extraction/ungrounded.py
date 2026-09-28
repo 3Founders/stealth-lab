@@ -14,7 +14,7 @@ single-module removal, never a scattered edit.
 from __future__ import annotations
 
 import asyncio
-import json
+from app.services.llm_json import parse_json_object
 import logging
 from typing import Any, Optional
 
@@ -140,18 +140,10 @@ def _looks_like_rate_limit(exc: Exception) -> bool:
 
 
 def _parse_response(text: str) -> Any:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.strip("`")
-        if stripped.lower().startswith("json"):
-            stripped = stripped[4:]
-        stripped = stripped.strip()
-
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
+    # Fenced, prose-wrapped or trailing-remark replies are unwrapped (BLOCKERS.md I4); a truncated or
+    # non-object reply is still a parse failure.
+    parsed = parse_json_object(text)
+    if parsed is None:
         return None
     if parsed.get("abstain"):
         return _ABSTAIN
