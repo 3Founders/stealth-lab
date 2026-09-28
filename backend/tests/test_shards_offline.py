@@ -142,3 +142,15 @@ async def test_dead_shard_backoff_prevents_connection_storm(monkeypatch):
         with pytest.raises(ShardUnavailable):
             await p.get("K007")
     assert p.connects == 1   # 4 of 5 attempts short-circuited by backoff
+
+
+def test_children_of_a_home_shard_goal_never_roll_away_from_it():
+    """BLOCKERS.md I5: with K000's weight at 0 (a single-shard pilot's setting), Procedures of Goals matched on
+    K000 rolled over to a knowledge shard, whose migration-96 trigger rejects any reference to a K000-homed Goal.
+    Children of a K000 Goal stay on K000; rollover between knowledge shards is unchanged."""
+    shards = [_s("K000", weight=0), _s("K002")]
+    assert choose_child_shard("K000", "p1", shards) == "K000"
+    assert choose_child_shard("K000", "p1", [_s("K000", status="full"), _s("K002")]) == "K000"
+    # a knowledge-shard Goal still rolls over when its shard can't take writes, and stays when it can
+    assert choose_child_shard("K001", "p1", [_s("K001", weight=0), _s("K002")]) == "K002"
+    assert choose_child_shard("K002", "p1", shards) == "K002"

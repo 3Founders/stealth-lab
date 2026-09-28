@@ -307,7 +307,16 @@ def choose_shard(key: str, shards: Iterable[ShardInfo]) -> str:
 def choose_child_shard(preferred_shard: Optional[str], key: str, shards: Sequence[ShardInfo]) -> str:
     """Goal-local objects (Procedure, Claim): colocate with the Goal's home
     shard when it can still take writes; otherwise roll over (rendezvous). The
-    Goal keeps its identity and shard; only the NEW object lands elsewhere."""
+    Goal keeps its identity and shard; only the NEW object lands elsewhere.
+
+    Never away from the home shard: migration 96's validation trigger on a knowledge shard only accepts a
+    reference to a Goal that is local or routed to ANOTHER KNOWLEDGE shard (`home_shard_id <> 'K000'`), so a
+    child of a K000-homed Goal written to Kxxx is always rejected ("has no goal, neither local nor routed to a
+    shard"). That is BLOCKERS.md I5: a single-shard pilot set K000's weight to 0, and every Procedure of a Goal
+    matched on K000 rolled over to K002 and failed. Weight 0 on K000 means "place no NEW Goals here", not
+    "orphan the children of the Goals already here"."""
+    if preferred_shard == HOME_SHARD:
+        return HOME_SHARD
     if preferred_shard:
         for s in shards:
             if s.shard_id == preferred_shard and s.writable:
