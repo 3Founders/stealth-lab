@@ -92,8 +92,13 @@ async def ingest_openhands_trajectories(
     quarantined = 0
     results: list[dict] = []
 
-    for ref in adapter.discover():
-        artifact = adapter.fetch(ref)
+    # discover()/fetch() are the sync SourceAdapter contract and read trajectory files from disk: run them off
+    # the event loop so a large directory does not freeze the worker (tests/test_no_blocking_in_async_offline.py).
+    from app.utils.aio import run_blocking
+
+    refs = await run_blocking(lambda: list(adapter.discover()))
+    for ref in refs:
+        artifact = await run_blocking(adapter.fetch, ref)
         ingestion_context_id = await open_ingestion_context(
             pool,
             source_type=adapter.source_type,
