@@ -11,19 +11,57 @@
 // time out after STEALTHLAB_HOOK_TIMEOUT_MS; inject at most STEALTHLAB_HOOK_MAX_CHARS characters; inject
 // nothing when find_ways has nothing usable. Fail open: any error means no injection, never a blocked prompt.
 // STEALTHLAB_HOOK=off disables it.
+//
+// Delivery mode (STEALTHLAB_HOOK_MODE, default "full"): full = everything below; lean = only a resolved (exact)
+// way, nothing for near misses or related examples; off = no lookup. STEALTHLAB_HOOK_MODE_STRONG overrides the
+// mode when the session's model matches STEALTHLAB_HOOK_STRONG_MODELS (default /opus|sonnet|fable/i), e.g.
+// "off" to save the lookup for frontier models. Unset = the same mode for every model. Evidence as of
+// 2026-09-28 (docs/findings.md): full is the only mode shown to help (open models, +8.5); on DS-1000 Sonnet
+// gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
+// lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
 import fs from "node:fs";
 import path from "node:path";
-import { rememberLookup } from "./capture_hook.mjs";
+import { claudeDir } from "./claude_exec.mjs";
+import { modelFromTranscript, rememberLookup } from "./capture_hook.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
 
+const MODES = new Set(["full", "lean", "off"]);
+const modeOf = (v, fallback) => (MODES.has(String(v || "").toLowerCase()) ? String(v).toLowerCase() : fallback);
+
 export function hookPolicy(env = process.env) {
+  const mode = modeOf(env.STEALTHLAB_HOOK_MODE, "full");
+  let strong;
+  try { strong = new RegExp(env.STEALTHLAB_HOOK_STRONG_MODELS || "opus|sonnet|fable", "i"); } catch { strong = /opus|sonnet|fable/i; }
   return {
     enabled: (env.STEALTHLAB_HOOK || "on").toLowerCase() !== "off",
     minWords: Number(env.STEALTHLAB_HOOK_MIN_WORDS || 6),
     timeoutMs: Number(env.STEALTHLAB_HOOK_TIMEOUT_MS || 25000),
     maxChars: Number(env.STEALTHLAB_HOOK_MAX_CHARS || 8000),
+    mode,
+    strongMode: env.STEALTHLAB_HOOK_MODE_STRONG ? modeOf(env.STEALTHLAB_HOOK_MODE_STRONG, mode) : null,
+    strongModels: strong,
   };
+}
+
+// The session's model, best effort: the transcript's last assistant message (from the 2nd prompt on), else
+// $ANTHROPIC_MODEL, else "model" in Claude Code's settings.json. No hook payload carries it.
+export function detectModel(payload, env = process.env) {
+  const fromTranscript = payload?.transcript_path ? modelFromTranscript(payload.transcript_path) : null;
+  if (fromTranscript) return fromTranscript;
+  if (env.ANTHROPIC_MODEL) return env.ANTHROPIC_MODEL;
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(claudeDir(env), "settings.json"), "utf8"))?.model;
+    return typeof m === "string" && m ? m : null;
+  } catch {
+    return null;
+  }
+}
+
+// The mode for this prompt: the strong-model override applies only when set and the model is known and matches.
+export function deliveryMode(policy, model) {
+  if (policy.strongMode && model && policy.strongModels.test(model)) return policy.strongMode;
+  return policy.mode;
 }
 
 export function shouldLookUp(prompt, policy) {
@@ -99,13 +137,19 @@ function solution(vs, n) {
 }
 
 // The knowledge block added to the agent's context, or "" when find_ways had nothing usable.
-export function formatKnowledge(reply, maxChars = 8000) {
-  if (!reply || typeof reply !== "object") return "";
+// mode "lean": only a resolved way (the exact Goal); near misses and related examples are left out.
+export function formatKnowledge(reply, maxChars = 8000, { mode = "full" } = {}) {
+  if (!reply || typeof reply !== "object" || mode === "off") return "";
   const parts = [];
   const procs = reply.outcome === "resolved" ? (reply.procedures || []) : [];
   for (const p of procs.slice(0, 2)) {
     parts.push(`Known way (verified for this Goal) -- ${p.name || p.goal_name || p.procedure_id}:\n${steps(p)}` +
       (p.verified_solution ? `\n${solution(p.verified_solution, 2400)}` : ""));
+  }
+  if (mode === "lean") {
+    if (!parts.length) return "";
+    return cut("StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +
+      "don't call it again for the same request). What it knows:\n\n" + parts.join("\n\n"), maxChars);
   }
   if (reply.outcome === "ambiguous") {
     const s = reply.suggested;
@@ -140,6 +184,8 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     return;
   }
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
+  const mode = deliveryMode(policy, policy.strongMode ? detectModel(payload, env) : null);
+  if (mode === "off") return;
   try {
     const reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
@@ -147,7 +193,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     });
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env }); } catch { /* capture is best-effort */ }
-    const context = formatKnowledge(reply, policy.maxChars);
+    const context = formatKnowledge(reply, policy.maxChars, { mode });
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }

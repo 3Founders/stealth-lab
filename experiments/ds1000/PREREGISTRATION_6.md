@@ -74,3 +74,7 @@ Everything is round-5 KH exactly: tasks (89: 82 transfer + 7 control), models (g
    - State: KH0 89/89 per model; KHnR 24/23/21 (gemma/gpt-oss/deepseek).
    - No duplicates; no graded episode ended on an API error.
    - It resumes with the same command when a quota resets. Nothing else changes.
+
+3. **2026-09-28, the shipped hook file changed during the run; its output did not.** `packaging/npm/lib/hook.mjs`, which `hook_format.mjs` imports, gained the capture-hook call (`07805fe`) and delivery modes (default `full`).
+   - `formatKnowledge` in the default mode was compared byte for byte with the version round 6 started from (`2363b26`), on 9 replies covering every branch at 3 length caps: 27 of 27 identical.
+   - What reaches the agent is unchanged.
