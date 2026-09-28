@@ -32,6 +32,23 @@ DESIGN_PATHS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _held_out_list(monkeypatch, tmp_path):
+    """The enqueue path now fails closed without a held-out list (BLOCKERS.md I15). Where the real designs and
+    the tracked list are both absent (a fresh clone), these tests run against a tracked list holding just the
+    repo they reference, so they test the gates, not this machine's files."""
+    import json
+
+    from app.services.ingestion_sources import verified_solutions_hf as vs
+
+    if all(p.exists() for p in DESIGN_PATHS) or vs._TRACKED_IDS.is_file():
+        return
+    tracked = tmp_path / "held_out_ids.json"
+    tracked.write_text(json.dumps({"splits": ["test", "calibration"], "sources": [], "instance_ids": [],
+                                   "scored_repos": ["django/django"]}), encoding="utf-8")
+    monkeypatch.setattr(vs, "_TRACKED_IDS", tracked)
+
+
 class FakePool:
     """Captures enqueue calls; never a connection."""
 

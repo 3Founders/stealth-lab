@@ -347,8 +347,12 @@ class HeldOutSet:
 _HELD_OUT_SPLITS: tuple[str, ...] = ("test", "calibration")
 
 
+_TRACKED_IDS = Path(__file__).resolve().parents[4] / "experiments" / "held_out_ids.json"
+
+
 def load_held_out(
-    design_paths: Iterable[Path], *, include_repos: bool = True
+    design_paths: Iterable[Path], *, include_repos: bool = True, allow_missing: bool = False,
+    tracked_path: Optional[Path] = None,
 ) -> HeldOutSet:
     """Collect the ids we must never ingest, from our own experiment designs.
 
@@ -359,13 +363,37 @@ def load_held_out(
     teaches the agent the same codebase the held-out instances live in. The
     instance-level rule alone would not catch that. Set `include_repos=False`
     to relax it.
+
+    Fails CLOSED (BLOCKERS.md I15): the designs are gitignored, so when one is missing the tracked list
+    (`experiments/held_out_ids.json`, from `experiments/export_held_out_ids.py`) is used instead; with neither,
+    `HeldOutUnavailable` is raised. Before this, a missing design was a warning and an EMPTY set, so a fresh
+    clone or a production worker would have admitted our own held-out tasks. `allow_missing=True` restores the
+    old warn-and-continue behaviour for a dry run only.
     """
+    from app.services.ingestion_sources.held_out import HeldOutUnavailable, load_tracked_ids
+
+    paths = [Path(p) for p in design_paths]
+    tracked = Path(tracked_path) if tracked_path is not None else _TRACKED_IDS
+    if any(not p.exists() for p in paths):
+        if tracked.is_file():
+            t_ids, t_repos, record = load_tracked_ids(tracked, _HELD_OUT_SPLITS)
+            return HeldOutSet(
+                instance_ids=frozenset(t_ids),
+                repos=frozenset(r.lower() for r in t_repos) if include_repos else frozenset(),
+                design_paths=(record["path"],),
+            )
+        if not allow_missing:
+            missing = [str(p) for p in paths if not p.exists()]
+            raise HeldOutUnavailable(
+                f"held-out design(s) missing: {missing}, and no tracked list at {tracked}. Run "
+                "experiments/export_held_out_ids.py where the designs exist and commit its output; "
+                "allow_missing=True is for a dry run only.")
     ids: set[str] = set()
     repos: set[str] = set()
     seen: list[str] = []
-    for path in design_paths:
+    for path in paths:
         if not path.exists():
-            log.warning("held-out design missing: %s", path)
+            log.warning("held-out design missing (allow_missing, dry run): %s", path)
             continue
         data = json.loads(path.read_text(encoding="utf-8"))
         for split in _HELD_OUT_SPLITS:

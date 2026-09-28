@@ -51,8 +51,32 @@ DESIGN_GLOBS: tuple[str, ...] = (
 )
 
 
+#: The TRACKED copy of the held-out ids (BLOCKERS.md I15). The designs above are gitignored, so on a fresh
+#: clone, in CI or on a production worker they are absent; `experiments/export_held_out_ids.py` writes this file
+#: from them (public ids and repos only, plus each design's sha256). Used whenever a design file is missing.
+TRACKED_IDS: str = "experiments/held_out_ids.json"
+
+
 class HeldOutUnavailable(RuntimeError):
     """A design file is missing or unreadable. Fail closed."""
+
+
+def load_tracked_ids(path: Path, splits: Iterable[str] = HELD_OUT_SPLITS) -> "tuple[set[str], set[str], dict[str, Any]]":
+    """(ids, repos, record) from the tracked list, or raise HeldOutUnavailable. The list must cover every
+    requested split: a list exported for fewer splits would under-exclude."""
+    try:
+        raw = path.read_bytes()
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HeldOutUnavailable(f"tracked held-out list is unreadable: {path}: {exc}") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("instance_ids"), list):
+        raise HeldOutUnavailable(f"tracked held-out list has no instance_ids: {path}")
+    missing_splits = set(splits) - set(data.get("splits") or [])
+    if missing_splits:
+        raise HeldOutUnavailable(f"tracked held-out list does not cover splits {sorted(missing_splits)}: {path}")
+    record = {"path": str(path).replace("\\", "/"), "sha256": hashlib.sha256(raw).hexdigest(),
+              "sources": data.get("sources") or []}
+    return ({str(v) for v in data["instance_ids"]}, {str(v) for v in data.get("scored_repos") or []}, record)
 
 
 @dataclass(frozen=True)
@@ -162,14 +186,28 @@ def load_held_out(
     snapshots: list[DesignSnapshot] = []
     missing: list[str] = []
     wanted = tuple(splits)
+    globs = tuple(design_globs)
 
-    for glob in design_globs:
+    # Any design missing (a fresh clone, CI, a worker): use the whole tracked list instead -- never a mix of
+    # some designs and nothing for the rest (BLOCKERS.md I15).
+    tracked = base / TRACKED_IDS
+    if any(not (base / g).is_file() for g in globs) and tracked.is_file():
+        t_ids, t_repos, record = load_tracked_ids(tracked, wanted)
+        counts = {"instance_ids": len(t_ids), "scored_repos": len(t_repos)}
+        return HeldOutSet(
+            ids=frozenset(t_ids), scored_repos=tuple(sorted(t_repos)),
+            snapshots=(DesignSnapshot(path=record["path"], sha256=record["sha256"], counts=counts),),
+            missing=(),
+        )
+
+    for glob in globs:
         path = base / glob
         if not path.is_file():
             if not allow_missing:
                 raise HeldOutUnavailable(
-                    f"held-out design file is missing: {path}. Pass allow_missing=True "
-                    f"for a dry run only; a real ingestion must fail closed.")
+                    f"held-out design file is missing: {path}, and there is no tracked list at "
+                    f"{TRACKED_IDS} (run experiments/export_held_out_ids.py where the designs exist). "
+                    f"Pass allow_missing=True for a dry run only; a real ingestion must fail closed.")
             missing.append(glob)
             continue
         snapshots.append(load_design(path))

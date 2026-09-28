@@ -36,8 +36,9 @@ DESIGN_PATHS = (
 )
 
 
-def scan(source_key: str, target: int, max_scan: int, include_repos: bool) -> dict:
-    held = vs.load_held_out(DESIGN_PATHS, include_repos=include_repos)
+def scan(source_key: str, target: int, max_scan: int, include_repos: bool, allow_missing: bool = False) -> dict:
+    # Fails closed without the held-out list (BLOCKERS.md I15); --allow-missing-held-out is for counting only.
+    held = vs.load_held_out(DESIGN_PATHS, include_repos=include_repos, allow_missing=allow_missing)
     counters = vs.GateCounters()
     languages: Counter[str] = Counter()
     seen_bytes = 0
@@ -83,6 +84,8 @@ def main() -> int:
     ap.add_argument("--target", type=int, default=500)
     ap.add_argument("--max-scan", type=int, default=20000)
     ap.add_argument("--no-repo-exclusion", action="store_true")
+    ap.add_argument("--allow-missing-held-out", action="store_true",
+                    help="dry-run counts without the held-out list (never for a real ingestion)")
     args = ap.parse_args()
 
     keys = sorted(vs.SOURCES) if args.all else (args.source or [])
@@ -94,7 +97,7 @@ def main() -> int:
         print(f"scanning {key} ...", file=sys.stderr, flush=True)
         try:
             results.append(
-                scan(key, args.target, args.max_scan, not args.no_repo_exclusion)
+                scan(key, args.target, args.max_scan, not args.no_repo_exclusion, args.allow_missing_held_out)
             )
         except Exception as exc:  # a corpus being unavailable is a result
             results.append({"source": key, "error": f"{type(exc).__name__}: {exc}"})

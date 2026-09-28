@@ -60,8 +60,30 @@ def _counters():
     return vs.GateCounters()
 
 
+def _real_held_available() -> bool:
+    """The real designs are gitignored; the tracked list (experiments/held_out_ids.json) is their committed copy."""
+    return all(p.exists() for p in DESIGN_PATHS) or vs._TRACKED_IDS.is_file()
+
+
+def _synthetic_tracked() -> Path:
+    """A tracked list holding just the ids and repos these tests reference, so the held-out LOGIC is tested
+    everywhere, including a fresh clone without the real designs (BLOCKERS.md I15)."""
+    import tempfile
+
+    path = Path(tempfile.mkdtemp(prefix="held-out-")) / "held_out_ids.json"
+    path.write_text(json.dumps({"splits": ["test", "calibration"], "sources": [],
+                                "instance_ids": ["astropy__astropy-14096"],
+                                "scored_repos": ["django/django"]}), encoding="utf-8")
+    return path
+
+
+_SYNTHETIC_TRACKED = _synthetic_tracked()
+
+
 def _held():
-    return vs.load_held_out(DESIGN_PATHS)
+    if _real_held_available():
+        return vs.load_held_out(DESIGN_PATHS)
+    return vs.load_held_out((REPO_ROOT / "no" / "such.json",), tracked_path=_SYNTHETIC_TRACKED)
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +211,9 @@ def test_dedup_key_is_repo_plus_commit():
 # Held-out exclusion
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _real_held_available(), reason=(
+    "real held-out designs absent and experiments/held_out_ids.json not committed yet: run "
+    "experiments/export_held_out_ids.py where the designs exist (BLOCKERS.md I15)"))
 def test_held_out_loads_both_designs_with_real_counts():
     held = _held()
     # 193 test + 12 calibration per design, two designs.
@@ -206,14 +231,36 @@ def test_held_out_repos_are_lowercased_for_case_insensitive_match():
 
 
 def test_repo_exclusion_can_be_relaxed():
-    held = vs.load_held_out(DESIGN_PATHS, include_repos=False)
+    held = vs.load_held_out((REPO_ROOT / "no" / "such.json",), include_repos=False, tracked_path=_SYNTHETIC_TRACKED)
     assert held.repos == frozenset()
     assert held.instance_ids
 
 
-def test_missing_design_file_is_warned_not_fatal():
-    held = vs.load_held_out((REPO_ROOT / "no" / "such.json",))
-    assert held.instance_ids == frozenset()
+def test_missing_design_fails_closed_without_a_tracked_list():
+    """BLOCKERS.md I15: this used to be a warning and an EMPTY set, which admits every held-out task."""
+    from app.services.ingestion_sources.held_out import HeldOutUnavailable
+
+    nowhere = REPO_ROOT / "no" / "such.json"
+    with pytest.raises(HeldOutUnavailable):
+        vs.load_held_out((nowhere,), tracked_path=REPO_ROOT / "no" / "tracked.json")
+    # a dry run may still count without it -- explicitly
+    dry = vs.load_held_out((nowhere,), tracked_path=REPO_ROOT / "no" / "tracked.json", allow_missing=True)
+    assert dry.instance_ids == frozenset()
+
+
+def test_missing_design_uses_the_tracked_list():
+    held = vs.load_held_out((REPO_ROOT / "no" / "such.json",), tracked_path=_SYNTHETIC_TRACKED)
+    assert "astropy__astropy-14096" in held.instance_ids
+    assert "django/django" in held.repos
+
+
+def test_tracked_list_missing_a_split_fails_closed(tmp_path):
+    from app.services.ingestion_sources.held_out import HeldOutUnavailable
+
+    partial = tmp_path / "held_out_ids.json"
+    partial.write_text(json.dumps({"splits": ["test"], "instance_ids": ["x"], "scored_repos": []}), encoding="utf-8")
+    with pytest.raises(HeldOutUnavailable):
+        vs.load_held_out((REPO_ROOT / "no" / "such.json",), tracked_path=partial)
 
 
 # ---------------------------------------------------------------------------
