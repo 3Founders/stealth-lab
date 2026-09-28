@@ -170,13 +170,16 @@ class Settings(BaseSettings):
     # application-default login`) does too, never fails the job.
     vertex_project: str = ""
     vertex_region: str = "us-central1"
-    # "google/gemini-2.5-flash" is the only Gemini flash model actually
-    # published on Vertex's catalog for this project/region as of
-    # 2026-09-22 (confirmed live: gemini-3.6-flash/3.8-flash both 404
-    # "Publisher model ... not found"). Vertex's own publisher catalog
-    # lags the direct Generative Language API's -- re-check before
-    # assuming a newer model is available here.
+    # Default stays "google/gemini-2.5-flash", which is served from the regional endpoint. The newer
+    # Flash models (gemini-3.5/3.6/3.7/3.8-flash, listed in the publisher catalog) are NOT served regionally:
+    # on us-central1 they 404 "Publisher model ... not found" (what was seen on 2026-09-22), but they answer
+    # on the `global` location. Use them with VERTEX_LLM_LOCATION=global, e.g.
+    #   VERTEX_MODEL=google/gemini-3.8-flash  VERTEX_LLM_LOCATION=global
+    # (verified live 2026-09-29 through ADC: HTTP 200, bare JSON reply).
     vertex_model: str = "google/gemini-2.5-flash"
+    # Location for the chat/extraction models only. Empty = same as vertex_region (unchanged behaviour).
+    # Embeddings keep using vertex_region: `gemini-embedding-001` is served regionally.
+    vertex_llm_location: str = ""
 
     # --- OpenRouter (WAVE-3 debate panel wiring) ---
     # Fourth provider posture next to local / General Compute / the paid

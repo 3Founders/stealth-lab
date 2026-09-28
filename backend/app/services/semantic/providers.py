@@ -511,10 +511,9 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
             credentials.refresh(google.auth.transport.requests.Request())
         except Exception:  # noqa: BLE001 -- ADC unavailable is "not configured", not a failure
             return None
-        base_url = (
-            f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/"
-            f"projects/{settings.vertex_project}/locations/{settings.vertex_region}/endpoints/openapi"
-        )
+        from app.services.vertex_endpoints import llm_location, openapi_base
+
+        base_url = openapi_base(settings.vertex_project, llm_location(settings.vertex_region, settings.vertex_llm_location))
         raw_client = AsyncOpenAI(api_key="placeholder", base_url=base_url, max_retries=0, timeout=timeout_s)
         # This provider is built once and cached for the worker process's
         # whole lifetime (identity_resolution.py's default_judge()), so the

@@ -237,10 +237,9 @@ def _vertex_oauth_client() -> Optional[Any]:
     except Exception:  # noqa: BLE001 -- ADC unavailable/misconfigured is not a job failure
         log.warning("vertex: ADC unavailable, skipping the Vertex AI OAuth2 tier", exc_info=True)
         return None
-    base_url = (
-        f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/"
-        f"projects/{settings.vertex_project}/locations/{settings.vertex_region}/endpoints/openapi"
-    )
+    from app.services.vertex_endpoints import llm_location, openapi_base
+
+    base_url = openapi_base(settings.vertex_project, llm_location(settings.vertex_region, settings.vertex_llm_location))
     client = OpenAI(api_key=credentials.token, base_url=base_url)
     return _VertexOAuthClient(client, settings.vertex_model)
 
