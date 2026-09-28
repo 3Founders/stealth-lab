@@ -459,8 +459,10 @@ _V1_INSTRUCTIONS = (
 _V2_INSTRUCTIONS = (
     "Retrieval, Goal/Procedure, and knowledge-graph "
     "tools for StealthLab's bi-temporal task/knowledge graph, plus a "
-    "retrieval-grounded coding agent. find_best_way is genuinely "
-    "long-running (multi-step agent loop) -- clients that declare the "
+    "retrieval-grounded coding agent. find_best_way is DEPRECATED (2026-09-28) "
+    "-- use find_ways + submit_way from the default v1 surface instead. It stays "
+    "available here only for existing callers; it is genuinely long-running "
+    "(multi-step agent loop) -- clients that declare the "
     "io.modelcontextprotocol/tasks extension capability get a "
     "CreateTaskResult back immediately and poll tasks/get; clients "
     "that don't get the plain synchronous result, same as before."
@@ -1531,6 +1533,21 @@ async def find_best_way(task_description: str, ctx: Context,
                          exclusions: Optional[str] = None,
                          ground_steps: bool = False) -> str:
     """
+    DEPRECATED (2026-09-28, founder decision): do not extend this tool or
+    add new callers. It predates the v1 architecture split (`final_architecture.md`:
+    the server only KNOWS, the local planner agent plans and does) and its tier-2
+    behavior -- the server running its own sandboxed agent loop against a repo it
+    reaches over `repo_path` -- contradicts that split outright. There is no
+    like-for-like replacement for tier-2: that capability was removed BY DESIGN,
+    not yet reimplemented. For tier-1 (lookup), use `find_ways` (Goal/Procedure
+    knowledge, returns knowledge not a plan) and `submit_way` (propose a Procedure)
+    instead; both are on the default v1 MCP surface. This tool stays registered,
+    v2-surface-only (`STEALTHLAB_MCP_SURFACE=v2`), because real tests and internal
+    callers still exercise it (`app/execution/durable_run.py`,
+    `route_decision.py`, ~80 files under `backend/tests/` -- see `git grep
+    find_best_way` for the current list) -- removing it is a separate, larger
+    change, not a doc fix. Every call logs a deprecation warning.
+
     `ground_steps`: meta-harness Sec 6-7 wiring -- default False, so
     every existing caller/test keeps its exact byte-for-byte behavior and
     cost. When True (tier-2 only; a tier-1 lookup-only or plan_only call
@@ -1680,6 +1697,10 @@ async def find_best_way(task_description: str, ctx: Context,
     (see EXTRACTION above) always runs on a real success regardless of
     this flag.
     """
+    log.warning(
+        "find_best_way is deprecated (2026-09-28) -- use find_ways/submit_way instead; "
+        "mode=%r repo_path=%r", mode, bool(repo_path),
+    )
     pool = ctx.request_context.lifespan_context["pool"]
 
     from app.services.route_decision import (

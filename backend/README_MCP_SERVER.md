@@ -5,6 +5,24 @@ Goal/Procedure/Implementation Registry, the Problem/Benchmark/Solution/
 Evaluation product model, and a retrieval-grounded coding agent as MCP
 tools.
 
+> **`find_best_way` is DEPRECATED (2026-09-28, founder decision). Do not
+> extend it or add new callers.** It predates the current v1 architecture
+> (`final_architecture.md`: the server only KNOWS, the local planner agent
+> plans and does) and its tier-2 behavior -- the server running its own
+> sandboxed agent loop against a repo over `repo_path` -- contradicts that
+> split outright. Use `find_ways` (knowledge lookup) + `submit_way`
+> (propose a Procedure) instead; both are on the default v1 MCP surface
+> (see below). There is no like-for-like replacement for tier-2 today --
+> that capability was removed by design, not yet reimplemented elsewhere.
+> `find_best_way` stays registered, v2-surface-only
+> (`STEALTHLAB_MCP_SURFACE=v2`), because real internal callers and tests
+> still exercise it (`app/execution/durable_run.py`, `route_decision.py`,
+> ~80 files under `backend/tests/`) -- removing it is a separate, larger
+> change. Every call now logs a deprecation warning
+> (`app/mcp_server/server.py::find_best_way`). Everything below this
+> notice describing `find_best_way` as current/recommended predates this
+> decision.
+
 > **Debate/decomposition MCP surface removed (2026-09-16, founder
 > directive).** `propose_synthesis`, `detect_conflict_trigger`,
 > `decompose_task`, `decide_decomposition`, `submit_approval` are no
@@ -84,7 +102,7 @@ the top of this file._
 |---|---|---|
 | `retrieve_precedent` | Find prior solved patterns relevant to a query | No -- read-only |
 | `check_procedure` | Audit-mode ALLOW/WOULD_REFUSE verdict on reusing a named procedure right now, with evidence | No -- read-only, informs the caller, never blocks |
-| `find_best_way` | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
+| `find_best_way` **(DEPRECATED, see notice above)** | Retrieval-grounded coding agent against a real repo on disk | Yes -- to the filesystem, not the graph |
 | `search_procedures` | Find procedures applicable to a task/state -- lookup only, nothing executes | No -- read-only |
 | `get_procedure` | Fetch one procedure's full current detail by its stable handle | No -- read-only |
 | `check_applicability` | Is this NAMED procedure applicable right now, given this state? | No -- read-only |

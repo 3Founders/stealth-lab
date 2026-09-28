@@ -73,6 +73,18 @@ DATABASE_URL=... STEALTHLAB_MCP_TOKEN=local STEALTHLAB_MCP_PUBLIC_URL=https://mc
 npx -y --package=./packaging/npm stealthlab-mcp doctor --url http://127.0.0.1:8765/mcp
 ```
 
+7. **`find_best_way` is DEPRECATED (2026-09-28, founder decision).** Do not
+   extend it, do not add new callers. Its tier-2 (server runs its own
+   sandboxed agent loop against `repo_path`) contradicts the v1 split above --
+   the server only knows, the local planner agent plans and does. Use
+   `find_ways` + `submit_way` instead (both on the default v1 MCP surface).
+   There is no replacement for tier-2 today; it was removed by design, not
+   yet rebuilt. It stays registered, v2-surface-only, because real internal
+   callers and ~80 test files still exercise it -- see the notice at the top
+   of `backend/README_MCP_SERVER.md` and the docstring on
+   `app/mcp_server/server.py::find_best_way`, which now also logs a
+   deprecation warning on every call.
+
 ---
 
 ## P0 — launch blockers (install via `irm | iex` / `curl | bash` / `npx`)
