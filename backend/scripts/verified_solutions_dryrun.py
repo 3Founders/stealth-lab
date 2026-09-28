@@ -42,21 +42,20 @@ def scan(source_key: str, target: int, max_scan: int, include_repos: bool) -> di
     languages: Counter[str] = Counter()
     seen_bytes = 0
     accepted = 0
-    scanned = 0
     started = time.time()
+    # max_scan caps rows READ (inside the source), so a corpus that admits almost nothing still stops;
+    # counting in this loop only counted admitted rows and never fired for such a corpus.
     for row, content in vs.VerifiedSolutionSource(
         source_key,
         held_out=held,
         license_classify=classify_spdx,
         counters=counters,
+        scan_limit=max_scan,
     ).iter_admissible():
         accepted += 1
         languages[row.language] += 1
         seen_bytes += len(content.encode("utf-8"))
-        scanned += 1
         if accepted >= target:
-            break
-        if scanned >= max_scan:
             break
     return {
         "source": source_key,

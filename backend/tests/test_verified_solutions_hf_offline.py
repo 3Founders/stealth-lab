@@ -446,3 +446,33 @@ def test_revision_pins_are_present_and_not_placeholder():
 
     for key, spec in vs.SOURCES.items():
         assert re.fullmatch(r"[0-9a-f]{40}", spec["revision"]), key
+
+
+# ---------------------------------------------------------------------------
+# scan_limit caps rows READ (row_limit caps rows ADMITTED)
+# ---------------------------------------------------------------------------
+
+def test_scan_limit_stops_a_corpus_that_admits_nothing():
+    """A near-all-reject corpus (SWE-Gym's shape) never reaches an admission cap. Before scan_limit, the dry-run's
+    --max-scan counted admitted rows only, so it could never fire for such a corpus."""
+    read: list[int] = []
+
+    def rows():
+        for i in range(10_000):
+            read.append(i)
+            yield _raw(instance_id=f"acme__widget-{i}", license="")   # no license: every row is rejected
+
+    src = vs.VerifiedSolutionSource("swe_bench_extra", held_out=_held(), license_classify=_classify,
+                                    rows=rows(), scan_limit=50)
+    assert list(src.iter_admissible()) == []
+    assert len(read) == 50
+    assert src.counters.rows_seen == 50
+
+
+def test_scan_limit_counts_every_row_and_row_limit_still_counts_admissions():
+    # distinct (repo, base_commit) per row, so the dedup gate admits all of them
+    good = [_raw(instance_id=f"acme__widget-{i}", base_commit=f"{i:040x}") for i in range(10)]
+    assert len(list(vs.VerifiedSolutionSource("swe_bench_extra", held_out=_held(), license_classify=_classify,
+                                              rows=list(good), scan_limit=3).iter_admissible())) == 3
+    assert len(list(_source(list(good), row_limit=4).iter_admissible())) == 4
+    assert len(list(_source(list(good)).iter_admissible())) == 10, "no limits: unchanged"

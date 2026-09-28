@@ -563,7 +563,10 @@ class VerifiedSolutionSource:
         counters: Optional[GateCounters] = None,
         row_limit: Optional[int] = None,
         rows: Optional[Iterable[dict[str, Any]]] = None,
+        scan_limit: Optional[int] = None,
     ) -> None:
+        # row_limit caps rows ADMITTED; scan_limit caps rows READ. Only the second bounds a corpus that rejects
+        # almost everything (SWE-Gym: 0 of 2,438 admitted), which a cap on admissions never stops.
         if source_key not in SOURCES:
             raise KeyError(f"unknown verified-solution source: {source_key!r}")
         self.source_key = source_key
@@ -572,6 +575,7 @@ class VerifiedSolutionSource:
         self.license_classify = license_classify
         self.counters = counters if counters is not None else GateCounters()
         self.row_limit = row_limit
+        self.scan_limit = scan_limit
         self._rows = rows
 
     @property
@@ -597,7 +601,12 @@ class VerifiedSolutionSource:
         """Yield (row, content) for every row that passes every gate."""
         produced = 0
         tally = counters if counters is not None else self.counters
-        for raw in self._iter_raw_rows():
+        raw_rows: Iterable[dict[str, Any]] = self._iter_raw_rows()
+        if self.scan_limit is not None:
+            from itertools import islice
+
+            raw_rows = islice(raw_rows, self.scan_limit)   # reads exactly scan_limit rows, never one more
+        for raw in raw_rows:
             if self.row_limit is not None and produced >= self.row_limit:
                 return
             row = row_to_verified_solution_row(raw, source_key=self.source_key)
