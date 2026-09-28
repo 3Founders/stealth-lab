@@ -72,6 +72,8 @@ def _parse(argv=None) -> argparse.Namespace:
     _routing_cli.add_parsers(sub)
     from app.benchmarks import admin_cli as _bench_cli   # benchmark ingestion: benchmark-import
     _bench_cli.add_parsers(sub)
+    from app.ingestion import skillmd_cli as _skillmd_cli  # SkillMD-138K: skillmd-import (UNCOMMITTED: another agent's WIP)
+    _skillmd_cli.add_parsers(sub)
     from app.ingestion import step6_admin as _step6_cli  # step 6: CI workflows + bot PRs
     _step6_cli.add_parsers(sub)
     sub.add_parser("judge-health")   # probe every semantic judge path (single + batch) and each General Compute key
@@ -114,6 +116,9 @@ async def _amain(a: argparse.Namespace) -> int:
         if a.cmd.startswith("benchmark-"):
             from app.benchmarks import admin_cli as _bench_cli
             return await _bench_cli.run(pool, a)
+        if a.cmd == "skillmd-import":
+            from app.ingestion import skillmd_cli as _skillmd_cli
+            return await _skillmd_cli.run(pool, a)
         if a.cmd.startswith("step6-"):
             from app.ingestion import step6_admin as _step6_cli
             return await _step6_cli.run(pool, a)
