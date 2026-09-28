@@ -112,7 +112,7 @@ Kel's knowledge pays off where it gives a model something it lacks, delivered wi
 | **Closing the coverage gap** | related examples, suggested candidate, Goal abstraction placement, ingestion sources, method library, contributor profiles, leaderboard and economy APIs | Partly: a third of DS-1000 lookups still find nothing | Network effect not measured |
 | **Learning which knowledge helps** | evidence-aware selection (a lower bound on each Procedure's success rate) and demotion on negative evidence | Largely exists for Procedures | No: frozen in experiments |
 
-**The cross-cutting gap:** reading knowledge is automatic now, through the hook. Writing it (discoveries) and reporting outcomes (did the fix pass, which model succeeded) still depend on the agent choosing to call a tool, which round 4 showed models don't reliably do. So in real use the learning loop may barely turn.
+**The cross-cutting gap:** reading knowledge is automatic now, through the hook. Writing it (discoveries) still depends on the agent choosing to call a tool, which round 4 showed models don't reliably do. Reporting outcomes is now automatic too: the npm package's capture hooks read the test verdict after each test run and send one `report_model_run` per prompt when the agent stops. A local end-to-end test on 2026-09-28 confirmed the loop: the hook injected the matching verified example, and the report reached the database with the Goal and Procedure the lookup found.
 
 **Build order:**
 1. Publish the hook.
