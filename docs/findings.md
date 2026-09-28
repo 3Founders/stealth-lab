@@ -1,6 +1,6 @@
 # Findings
 
-As of 2026-09-28. Across DS-1000 rounds 1–7 (round 6 still running), BigCodeBench routing, and a routing simulation. Details and statistics: `experiments/ds1000/PREREGISTRATION*.md`.
+As of 2026-09-28. Across DS-1000 rounds 1–7, BigCodeBench routing, and a routing simulation. Details and statistics: `experiments/ds1000/PREREGISTRATION*.md`.
 
 Contents: [Headlines](#headlines) · [What helps the most](#what-helps-the-most) · [What does not help](#what-does-not-help) · [What hurts, and why](#what-hurts-and-why) · [Evidence behind each claim](#evidence-behind-each-claim) · [Still running or open](#still-running-or-open) · [What can be done](#what-can-be-done) · [Making the knowledge side useful](#making-the-knowledge-side-useful-what-exists-today) · [Methodology](#methodology)
 
@@ -9,7 +9,7 @@ Contents: [Headlines](#headlines) · [What helps the most](#what-helps-the-most)
 Kel's knowledge makes open-model coding agents measurably better when it is delivered automatically. It does not measurably help Sonnet on public-library tasks. The biggest cost win comes from routing to cheaper models behind a reliable check. All results are on the DS-1000 benchmark (pandas, numpy and similar tasks), rounds 1 to 7, unless stated otherwise.
 
 1. **Routing is much cheaper at equal or better accuracy.** On single-shot tasks, routing to open models cost 32–62% less than Sonnet at equal or better accuracy (BigCodeBench and DS-1000 rounds 1–3).
-2. **Knowledge helps open-model agents, but only when it is delivered for them.** Kel's hook looks the task up before the agent starts: 52.0% to 60.6% solved, +8.5 points (95% confidence interval +2.7 to +14.4, p = 0.004). Pasting the same knowledge by hand gave the same +8.5.
+2. **Knowledge helps open-model agents, but only when it is delivered for them.** Kel's hook looks the task up before the agent starts: 52.0% to 60.6% solved, +8.5 points (95% confidence interval +2.7 to +14.4, p = 0.004). It replicated in round 6 with fresh lookups: +8.9 points (+3.9 to +14.0, p = 0.003). Pasting the same knowledge by hand gave the same +8.5.
 3. **Letting the model decide when to ask Kel does not work reliably.** +3.3 and +4.1 points, neither significant; one model never asked at all.
 4. **Sonnet gains nothing measurable from the same knowledge.** It already solves 81.7% of these tasks; with the hook, 82.9% (+1.2, interval −5.0 to +7.7).
 5. **The largest opportunity is routing with a check.** Replaying our real results as a ladder (cheap model first, escalate to Sonnet only when a check fails) gives 89–93% solved versus Sonnet's 82%, at 45–55% lower cost. That assumes a perfect check; real checks are weaker, so this is an upper bound. Kel's knowledge adds 1–3 tasks on top of routing.
@@ -60,7 +60,8 @@ Two claims are confirmed by preregistered tests; the frontier-model and combined
 
 | Claim | Numbers | Status |
 | --- | --- | --- |
-| Knowledge delivered by the hook makes open-model agents solve more tasks | 52.0% → 60.6%, +8.5 points (+2.7 to +14.4), p = 0.004, 246 task–model pairs | Confirmed (preregistered) |
+| Knowledge delivered by the hook makes open-model agents solve more tasks | 52.0% → 60.6%, +8.5 points (+2.7 to +14.4), p = 0.004, 246 task–model pairs; replicated: +8.9 (+3.9 to +14.0), p = 0.003 | Confirmed twice (preregistered; same tasks and models) |
+| The hook needs the new knowledge flags | the hook with both flags off already gives +5.7 (p = 0.098); the flags add +2.8 (−0.4 to +6.2, p = 0.19), mostly via the suggested candidate; related examples add +0.4 | Not confirmed |
 | The same gain when knowledge is pasted by hand | +8.5 points, p = 0.003, same tasks and models | Confirmed (a repeat, not independent) |
 | The gain comes from the knowledge itself | +11.4 where knowledge arrived (184 pairs, p = 0.0005); 0.0 where none did (62 pairs) | Supporting (descriptive) |
 | The hook does not raise cost | 0.7–1.5 times the agent's tokens per solved task | Measured |
@@ -75,7 +76,7 @@ Two claims are confirmed by preregistered tests; the frontier-model and combined
 
 Three questions are open. One is running now; two wait on other people or a decision.
 
-- **Which knowledge features the hook needs (running).** DS-1000 round 6 turns off related examples, the suggested candidate, or both, and re-runs the full hook once. The arm with both off is complete: 159 of 267 solved across all tasks, against 163 with both on and 140 for the agent alone. That hints the hook works nearly as well without the new features, but the preregistered test waits for all arms. The rest runs on General Compute, which is slow today.
+- **Which knowledge features the hook needs (answered, round 6).** The hook itself carries most of the gain: +5.7 with both new flags off, +8.9 with both on. The flags' extra +2.8 is not confirmed (p = 0.19); what there is comes from the suggested candidate, and related examples add nothing on top of it. Recommendation: verified examples and suggested candidate on, related examples off by default.
 - **Does knowledge help on real repositories, including for strong models?** SWE-bench now has a hook arm; Kel learns from earlier issues in the same repository, so its knowledge is not public. Chaitanya runs it; it has not started.
 - **Is Claude Code with Kel cheaper and better?** Drafted in [experiment_claude_code_with_kel.md](experiment_claude_code_with_kel.md), not run: routing with the repository's tests as the check, with and without Kel's knowledge, against plain Claude Code. It needs four decisions: which issue set, whether the agent may run tests, which models the ladder uses, and the error margin.
 
@@ -88,16 +89,15 @@ Ship the hook, stop relying on the model to ask, and build the product around ro
 1. **Ship knowledge through the hook, not the tool.** Publish the npm package with the hook. Keep the lookup tool for explicit use, but don't depend on models calling it.
 2. **Lighten or drop the plan_and_run workflow for small tasks.** It is the main source of extra cost and of the deepseek loss.
 3. **Make the hook quieter for strong models.** For example: send code only on a confident exact match, and otherwise pitfalls or nothing. This is untested; Sonnet showed confident snippets can mislead.
-4. **Decide the knowledge features after round 6.** If the hook works as well without them, keep them off for other clients, where they added cost and hurt deepseek.
+4. **Knowledge flags (decided by round 6):** turn on `KNOWLEDGE_VERIFIED_EXAMPLES` and `KNOWLEDGE_SUGGESTED_CANDIDATE`; keep `KNOWLEDGE_RELATED_EXAMPLES` off by default. It added nothing measurable on top of the suggestion, and it raised cost for clients without the hook.
 5. **Build routing around a check.** Cheap model first; accept only if the repository's tests and a reproduction test pass; otherwise escalate. Route only work that can be checked; send the rest straight to the frontier model.
 
 **Experiments**
 
-1. Finish round 6.
-2. Run SWE-bench with the hook arm: the first test of repository knowledge, where Sonnet cannot already know the answer.
-3. Preregister and run the combined Claude Code experiment. Report the check's false-accept rate, since it decides whether routing is safe.
-4. Replace placeholder prices with real ones, and measure Sonnet's tokens instead of estimating them.
-5. Measure the network effect: split contributors into 1, 2, 4 and 8 groups and chart cost and accuracy.
+1. Run SWE-bench with the hook arm: the first test of repository knowledge, where Sonnet cannot already know the answer.
+2. Preregister and run the combined Claude Code experiment. Report the check's false-accept rate, since it decides whether routing is safe.
+3. Replace placeholder prices with real ones, and measure Sonnet's tokens instead of estimating them.
+4. Measure the network effect: split contributors into 1, 2, 4 and 8 groups and chart cost and accuracy.
 
 ## Making the knowledge side useful: what exists today
 
@@ -168,7 +168,7 @@ The model works as an agent: it can list, read, search and edit files, with a bu
 | --- | --- | --- | --- |
 | 4 | Does Kel help when used the product's way? | **AG** agent alone · **KN** round 3's note pasted into the prompt · **KP** the product: MCP instructions in the system prompt, the `plan_and_run` workflow as the user message, `find_ways` as a tool the agent may call, repo claims from `survey_repo` | KP − AG pooled (not confirmed, +3.3) |
 | 5 | Do the round-4 fixes and the Claude Code hook recover what KP lost? | **AG5** fresh baseline · **KP5** KP with the fixes (related examples, suggested candidate, lighter workflow, call governor) · **KH** the hook: Kel's lookup runs on the task before the agent starts, and the shipped hook's own formatter (`hook.mjs`) appends its text to the prompt; no workflow | KH − AG5 pooled (confirmed, +8.5) |
-| 6 (running) | Which knowledge features does the hook need? | **KH0** both new features off · **KHnR** related examples off · **KHnS** suggested candidate off · **KHr** round-5 hook re-run (replication and Kel's run-to-run noise). Round-5 KH is the comparator, justified by a replay: 234 of 267 lookups identical | KH − KH0 pooled |
+| 6 | Which knowledge features does the hook need? | **KH0** both new features off · **KHnR** related examples off · **KHnS** suggested candidate off · **KHr** round-5 hook re-run (replication and Kel's run-to-run noise). Round-5 KH is the comparator, justified by a replay: 234 of 267 lookups identical | KH − KH0 pooled (not confirmed, +2.8); replication KHr − AG5 +8.9, p = 0.003 |
 | 7 | Does the hook help a frontier model? | Sonnet through Claude Code subagents, in batches of 6 tasks from different families: **AG7** Sonnet alone · **KH7** Sonnet with the MCP instructions and the hook's text per task. Both arms run side by side, because Sonnet is not deterministic | KH7 − AG7 (not confirmed, +1.2) |
 
 **Recorded every round:**
