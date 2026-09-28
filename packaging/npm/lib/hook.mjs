@@ -13,6 +13,7 @@
 // STEALTHLAB_HOOK=off disables it.
 import fs from "node:fs";
 import path from "node:path";
+import { rememberLookup } from "./capture_hook.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
 
@@ -144,6 +145,8 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
       repoClaims: readClaims(payload.cwd), timeoutMs: policy.timeoutMs, fetchImpl,
     });
+    // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
+    try { rememberLookup(payload, reply, { env }); } catch { /* capture is best-effort */ }
     const context = formatKnowledge(reply, policy.maxChars);
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));

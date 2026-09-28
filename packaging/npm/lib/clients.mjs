@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { addCaptureHooks, removeCaptureHooks } from "./capture_hook.mjs";
 
 export const SERVER_NAME = "stealthlab";
 
@@ -150,6 +151,9 @@ function isOurs(group) {
   });
 }
 
+// The knowledge hook (UserPromptSubmit) and its capture hooks (PostToolUse on Bash, Stop; lib/capture_hook.mjs)
+// are installed and removed together. commandSpec is the hook-prompt command; the capture commands are the
+// same launcher with their own subcommand.
 export function upsertClaudeHook(file, commandSpec, timeoutSec = 30) {
   const doc = readJsonOrThrow(file);
   if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
@@ -157,6 +161,8 @@ export function upsertClaudeHook(file, commandSpec, timeoutSec = 30) {
   const groups = (doc.hooks.UserPromptSubmit || []).filter((g) => !isOurs(g));
   groups.push({ hooks: [{ type: "command", command: shellJoin(commandSpec), timeout: timeoutSec }] });
   doc.hooks.UserPromptSubmit = groups;
+  const args = commandSpec.args || [];
+  addCaptureHooks(doc, { command: commandSpec.command, args: args[args.length - 1] === HOOK_MARK ? args.slice(0, -1) : args });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
 }
@@ -166,10 +172,14 @@ export function removeClaudeHook(file) {
   const doc = readJsonOrThrow(file);
   const before = doc.hooks?.UserPromptSubmit || [];
   const after = before.filter((g) => !isOurs(g));
-  if (after.length === before.length) return false;
+  const prompt = after.length !== before.length;
+  if (prompt) {
+    if (after.length) doc.hooks.UserPromptSubmit = after;
+    else delete doc.hooks.UserPromptSubmit;
+  }
+  const capture = removeCaptureHooks(doc);
+  if (!prompt && !capture) return false;
   fs.copyFileSync(file, `${file}.bak`);
-  if (after.length) doc.hooks.UserPromptSubmit = after;
-  else delete doc.hooks.UserPromptSubmit;
   if (doc.hooks && !Object.keys(doc.hooks).length) delete doc.hooks;
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
   return true;

@@ -53,6 +53,23 @@ under Desktop's **Settings → Connectors → Add custom connector** instead.
 JSON configs are edited in place. Other servers and keys are kept, a `.bak`
 copy is written first, and a file that doesn't parse is left untouched.
 
+## Claude Code hooks (installed with Claude Code; `--no-hooks` skips them)
+
+The hooks make knowledge flow both ways without the model having to decide to call a tool. They are added to
+`~/.claude/settings.json` next to your own hooks, and `uninstall` removes only ours.
+
+| Hook | When it runs | What it does | What leaves your machine |
+|---|---|---|---|
+| `hook-prompt` (UserPromptSubmit) | you send a task-like prompt (at least 6 words, not a slash command) | runs `find_ways` on the prompt and adds what Kel knows to Claude's context (at most 8,000 characters); nothing when Kel has nothing | the prompt (up to 1,500 characters) and `.stealth/claims.md`, to your StealthLab endpoint |
+| `hook capture-tool` (PostToolUse, Bash) | Claude runs a test command (pytest, npm test, go test, cargo test, jest, vitest, …) | reads pass or fail from the runner's own summary line | nothing; kept locally as a verdict only |
+| `hook capture-stop` (Stop) | Claude finishes a turn | if the prompt's lookup identified a Goal and a test verdict is known, reports one outcome per prompt with `report_model_run` (from a detached process, so you never wait) | model, `scaffold="claude-code"`, pass/fail, the Goal/Procedure ids, `check_kind="tests"`. Never the prompt, commands, test output, diffs or transcript |
+
+- Capture is active only with a saved token (`stealthlab-mcp login`); without one nothing is recorded or queued.
+  Reports that can't be sent wait in `~/.stealthlab/outbox/`.
+- Locally, capture keeps only ids, verdicts and times (`~/.stealthlab/hooks/sessions/`, mode 0600, deleted after
+  24 h). Failures go to `~/.stealthlab/hooks.log`, never to your session.
+- Switches: `STEALTHLAB_HOOK=off` (no lookups), `STEALTHLAB_CAPTURE=off` (no outcome reports).
+
 ## Endpoint and token
 
 - **URL.** Resolved in this order: `--url`, then `$STEALTHLAB_MCP_URL`, then

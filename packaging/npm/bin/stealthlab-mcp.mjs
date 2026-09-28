@@ -19,6 +19,7 @@ import { runStdioRelay } from "../lib/proxy.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
 import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs";
 import { runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
+import { runCaptureHook, runCaptureWorker } from "../lib/capture_hook.mjs";
 
 const pkg = readPackage();
 const UA = `stealthlab-mcp/${pkg.version} node/${process.versions.node}`;
@@ -35,7 +36,11 @@ Usage:
   stealthlab-mcp config                      print the saved config (token masked)
   stealthlab-mcp hook-prompt                 Claude Code UserPromptSubmit hook (installed by "install"):
                                              looks each task up with find_ways and adds what Kel knows
-  stealthlab-mcp exec                        run the local executor MCP server (stdio; installed only by
+  stealthlab-mcp hook capture-tool           Claude Code PostToolUse (Bash) / Stop hooks (installed with
+  stealthlab-mcp hook capture-stop           hook-prompt; active only with a saved token): read test verdicts
+                                             and report one outcome per prompt with report_model_run
+                                             (ids, model, pass/fail only; STEALTHLAB_CAPTURE=off disables)
+  stealthlab-mcp exec                       run the local executor MCP server (stdio; installed only by
                                              "install --with-exec"): drives YOUR locally installed agents
                                              in git worktrees and verifies their work with your checks
   stealthlab-mcp hook subagent-start         Claude Code SubagentStart / SubagentStop hooks (installed by
@@ -245,7 +250,15 @@ async function main() {
     case "hook": {
       // Always exit 0: a non-zero exit shows as an error in Claude Code, and 2 would block the subagent.
       try {
-        if (sub === "subagent-stop" && process.env.STEALTHLAB_HOOK_WORKER_FILE) {
+        if (sub === "capture-stop" && process.env.STEALTHLAB_CAPTURE_JOB) {
+          await runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
+        } else if (sub === "capture-tool" || sub === "capture-stop") {
+          const chunks = [];
+          for await (const c of process.stdin) chunks.push(c);
+          await runCaptureHook(sub, {
+            stdinText: Buffer.concat(chunks).toString("utf8"), hasToken: Boolean(resolveSettings({}).token),
+          });
+        } else if (sub === "subagent-stop" && process.env.STEALTHLAB_HOOK_WORKER_FILE) {
           await runStopWorker(process.env.STEALTHLAB_HOOK_WORKER_FILE);
         } else {
           const chunks = [];
