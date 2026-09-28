@@ -343,6 +343,28 @@ def _render_hints(document_hints: Optional[dict[str, Any]]) -> str:
     )
 
 
+def _parse_json_object(text: str) -> dict:
+    """Parse the model's JSON reply. Providers often wrap it in a ```json fence or add a line of prose around
+    it; bare json.loads rejected every such reply, so the chunk silently yielded no claims (observed repeatedly
+    in the step-3 pilot). Unwrap a fence, else take the outermost {...}; anything still invalid raises, and the
+    caller degrades to no candidates as before. Never guesses at a truncated object."""
+    body = text.strip()
+    if body.startswith("```"):
+        body = body.split("\n", 1)[1] if "\n" in body else ""
+        if body.rstrip().endswith("```"):
+            body = body.rstrip()[:-3]
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        start, end = body.find("{"), body.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        parsed = json.loads(body[start:end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("claim extraction reply is not a JSON object")
+    return parsed
+
+
 def _extract_from_chunk(
     client: Any, chunk: list[Block], blocks_by_index: dict[int, Block], *,
     hint_lines: str, model: str, temperature: float, usage_sink: Optional[list] = None,
@@ -370,7 +392,7 @@ def _extract_from_chunk(
         if usage_sink is not None:
             usage_sink.append(getattr(response, "usage", None))
         text = (response.choices[0].message.content or "").strip()
-        parsed = json.loads(text)
+        parsed = _parse_json_object(text)
         raw_claims = parsed["claims"]
         if not isinstance(raw_claims, list):
             return []
