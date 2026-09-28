@@ -132,6 +132,7 @@ async def run_skillmd_pilot(
     embed: bool = False,
     created_by: str = "skillmd_138k_pilot",
     dry_run: bool = False,
+    max_usd: Optional[float] = None,
 ) -> dict[str, Any]:
     """Gate `limit` skills, report the disposition table, and (unless
     `dry_run`) compile the survivors through the existing skill path.
@@ -196,10 +197,23 @@ async def run_skillmd_pilot(
     ingest_started = time.monotonic()
     client, model = build_extraction_client()
     summary["llm"] = {"client_configured": client is not None, "model": model}
-    result = await run_skill_ingestion(
-        pool, source, created_by=created_by,
-        client=client, extraction_llm_model=model,
-    )
+    # The same spend cap the ingestion workers enforce (rolling 24h on the llm_spend ledger; a paid call that
+    # starts over the cap raises BudgetExceeded). Before this the pilot ran uncapped (docs/ingestion_review.md).
+    # max_usd None = the configured DAILY_LLM_BUDGET_USD; an already-installed budget (inside a worker) is kept.
+    from app.services import ingest_budget
+
+    budget = ingest_budget.install(pool, cap_usd=max_usd) if ingest_budget.active() is None else None
+    try:
+        result = await run_skill_ingestion(
+            pool, source, created_by=created_by,
+            client=client, extraction_llm_model=model,
+        )
+    finally:
+        if budget is not None:
+            try:
+                summary["budget"] = (await budget.status(fresh=True)).as_dict()
+            finally:
+                ingest_budget.uninstall()
     ingest_seconds = time.monotonic() - ingest_started
 
     metrics = result.get("metrics", {})

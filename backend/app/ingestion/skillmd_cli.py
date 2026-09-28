@@ -47,6 +47,9 @@ def add_parsers(sub: Any) -> None:
                    help="local parquet cache for the metadata columns")
     p.add_argument("--embed", action="store_true",
                    help="embed procedures (costs money); off for a gate-only pilot")
+    p.add_argument("--max-usd", type=float, default=None,
+                   help="spend cap for the model calls (rolling 24h, same ledger as the workers); "
+                        "default: DAILY_LLM_BUDGET_USD")
     p.add_argument("--json", default=None, help="write the summary JSON here")
     p.add_argument("--markdown", default=None, help="write the summary table here")
     p.add_argument("--offline-adapter", action="store_true",
@@ -88,6 +91,7 @@ async def run(pool: Any, a: Any) -> int:
         fetch_workers=a.fetch_workers,
         embed=a.embed,
         dry_run=a.dry_run,
+        max_usd=a.max_usd,
     )
     projection = project_to_full_corpus(summary)
     summary["projection"] = projection
