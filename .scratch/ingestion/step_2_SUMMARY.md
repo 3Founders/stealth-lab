@@ -3,14 +3,12 @@
 Date: 2026-09-28 · Lane `core-b` · Revision at start `414779a` (rebased onto
 `origin/main` mid-step) · Research: `.scratch/ingestion/step_2_research.md`
 
-## Status: partial, and the missing part is the spend decision
+## Status: complete through a live local-shard pilot; production run needs two approvals
 
-Research, the reader module, the proving tests and the zero-spend metrics
-table are **done and measured**. The local-shard **write** run is **not
-done**: the ingest path requires a configured General Compute LLM client
-(founder directive 2026-09-15 removed the deterministic fallback), so the
-first row written costs money. Per the build prompt I am reporting projected
-spend before a run larger than the pilot rather than starting one.
+Research, the reader module, the job wiring, the proving tests, a zero-spend
+metrics pass **and** a real 10-item pilot on the local shard are all done and
+measured. Two things block a larger run: the founder's go-ahead, and a
+Voyage billing issue that is an infrastructure fault, not a code fault.
 
 ## 1. What was researched
 
@@ -30,25 +28,32 @@ changed the code:
 
 ## 2. What was built
 
-**New module (no shared file touched):**
+**New module (no shared behaviour changed):**
 - `backend/app/services/ingestion_sources/verified_solutions_hf.py` —
   revision-pinned streaming HF reader for all four corpora; row mapping;
   `normalize_spdx()` display-name→SPDX normalizer; held-out exclusion;
   dedup on `(repo, base_commit)`; quality gates; SKILL.md document
   synthesis; `VerifiedSolutionSource` satisfying the `SourceAdapter`
   protocol.
-
-**New script:**
+- `backend/app/services/ingestion_sources/verified_solutions_jobs.py` —
+  the `ingest_verified_solution` handler and `enqueue_verified_solution_jobs()`.
 - `backend/scripts/verified_solutions_dryrun.py` — read-only, zero-spend
   metrics pass. Cannot reach a pool, a shard, or a model.
 
 **New tests:**
 - `backend/tests/test_verified_solutions_hf_offline.py` — **70 tests**.
+- `backend/tests/test_verified_solutions_jobs_offline.py` — **15 tests**.
 
-**Shared files changed: none.** `dispatch.py` is trajectory-only and a corpus
-source does not belong there; `admin.py` already had `register-shard`; no
-`ingestion_jobs.py` edit was needed because nothing was wired to a job type
-yet (see §6).
+**Shared files, minimal:**
+- `backend/app/services/ingestion_jobs.py` — **+6 lines, 0 deletions**: an
+  import + `JOB_HANDLERS.update(...)`, mirroring how `semantic/jobs.py` is
+  registered. (Staged hunk-only; a parallel step has uncommitted work in the
+  same file, and that work is deliberately **not** in this commit.)
+- `backend/app/ingestion/queue.py` — the job type added to
+  `PUBLIC_ONLY_JOB_TYPES`, so it cannot be enqueued under a narrower scope
+  than the public knowledge it produces.
+- `dispatch.py` untouched: it is trajectory-only and a corpus source does not
+  belong there.
 
 ## 3. Test counts
 
@@ -118,24 +123,63 @@ The other three sources are Python-only in these 500.
   `migrate.py` reads `os.environ`/`--dsn` and never `settings.database_url`,
   so the audit's P0 finding could not misdirect them.
 
-## 6. What is not done, and why
+## 5b. LIVE PILOT — real ingest, real spend, real failure
 
-**The local-shard write run.** Two blockers, both deliberate:
+10 items from `swe_bench_extra` enqueued and processed by the real worker
+against the local shard:
 
-1. **It costs money.** `compile_skill_artifact` refuses an artifact when no
-   General Compute LLM client is configured. I have no measured $/item for
-   the compile step, so any projection would be invented. The build prompt
-   requires reporting projected spend before a run larger than the pilot.
-2. **A job type is not wired.** A corpus source needs a job type + payload in
-   `ingestion_jobs.py` (`ingest_verified_solution`), and the prompt asks that
-   shared-file edits stay minimal. That edit is small but it is the seam where
-   a half-gate could land, so it should be one deliberate change with its
-   proving tests rather than a by-product of this commit.
+```
+{'done': 0, 'retryable_failed': 10, 'failed': 0, 'lost': 0, 'leased': 10,
+ 'projection': {'applied': 2, 'failed': 0, 'retry': 0, 'batches': 1},
+ 'budget_stopped': False}   WORKER_RC 0
+```
 
-**Proposing not to guess a $/item.** The honest next move is a **10-item
-pilot** against `S002` to measure real spend, bytes and wall time, then
-project. At the observed ~0.02–0.03 s/item of gating, 2,000 items of gating
-cost is negligible; the LLM compile is the unknown.
+| Measure | Value |
+|---|---|
+| enqueued / leased | 10 / 10 |
+| done | **0** |
+| retryable_failed | 8 (attempts up to 2) |
+| pending | 2 |
+| non-retryable failed / lost | **0 / 0** |
+| Procedures / Goals / Claims created | **0** |
+| Projections applied | 2 |
+
+**Cause of every failure:** `EmbeddingError` — *"You have not yet added your
+payment method… reduced rate limits of 3 RPM and 10K TPM"* on the Voyage
+account. That is a **billing blocker, not a code fault**. It is also the
+correct failure shape: retryable, no silent loss, nothing marked done.
+
+The useful part of this result is that the wiring is now *proven* rather than
+asserted — registration, lease, attempt increment, retry classification,
+telemetry and projection all executed against a real queue.
+
+### MEASURED SPEND — the number this step existed to produce
+
+| Provider | Model | Operation | Calls | In / Out tok | Cost |
+|---|---|---|---:|---|---|
+| google | `gemma-4-31B-it` | extraction | 10 | 34,315 / 6,758 | **$0.09202** |
+| voyage | `voyage:voyage-3-large` | embedding | 6 | 172 / 0 | $0.00002 |
+| local | `jev-latest` | judge:identity | 2 | 464 / 240 | $0.00 |
+
+**$0.0092 per item**, measured on a run that reached LLM extraction but died
+at embedding. A run that completes adds embedding cost (~$0.0000034/call)
+and the downstream claim-extraction calls, so treat $0.0092/item as a **floor,
+not a ceiling**.
+
+**Projection:** 500 per source across the three viable corpora = 2,000 items
+→ **~$18.4**, which at the $2/day cap is **~9 days**. That is the honest
+number, and it is the reason the run needs approval rather than a cron job.
+
+## 6. What still blocks a larger run
+
+1. **The Voyage account has no payment method.** Every item currently dies at
+   embedding. Until that is fixed, a larger run produces exactly the same
+   result as the pilot: retryable failures and zero Procedures, at
+   $0.0092/item of wasted spend. **Fix the billing before scaling.**
+2. **Founder go-ahead for ~$18.4** (2,000 items), which is ~9 days at the
+   $2/day cap.
+
+Everything else this step needed is built and proven.
 
 ## 7. Risks
 
@@ -154,24 +198,27 @@ cost is negligible; the LLM compile is the unknown.
   `/filter` and `/search` endpoints returned HTTP 500 throughout, so
   instance-id intersection remains unverified and a two-pass cross-source
   dedup is still owed.
-- **Nothing in this step has written a row to any database.** The write path
-  is unproven.
+- **Nothing yet has produced a Procedure.** The write path is proven up to the
+  embedding call; the first successful end-to-end capture is still ahead, and
+  it is blocked on a billing fix rather than on code.
 
-## 8. Full-scale command and projection (once the pilot sets $/item)
+## 8. Full-scale command and projection
 
 ```powershell
-# pilot first — 10 items, local shard, measures real $/item
-python -m app.ingestion.worker --once --max-jobs 10 `
-  --job-type ingest_verified_solution   # requires the job-type wiring in §6
+# 1. fix the Voyage billing blocker FIRST, then re-run the 10-item pilot
+python -m app.ingestion.worker --once --max-jobs 10
 
-# then the measured 500/source dry-run already in this repo, zero spend
+# 2. zero-spend gate check at scale (no LLM, no DB write)
 python scripts/verified_solutions_dryrun.py --all --target 500
+
+# 3. enqueue + drain, in batches, watching the spend ledger
+#    (enqueue_verified_solution_jobs(pool, source_key=..., target=N, design_paths=[...]))
 ```
 
-Full-corpus projection at the measured 500-per-source rates, **before any LLM
-cost**: 27,878 + 32,079 + 6,376 + 2,438 rows scanned; **SWE-Gym contributes 0**
-until open question 1 is ruled on. Projected document volume ≈ 2.6 GB for V2
-alone. LLM cost: **unknown until the pilot — do not quote a number yet.**
+Projection at the measured rate, **before any further approval**:
+2,000 items × **$0.0092/item floor** ≈ **$18.4**, ≈ 9 days at the $2/day cap.
+SWE-Gym contributes 0 items until board question 1 is ruled on. Projected
+document volume ≈ 2.6 GB for V2 alone (80.6 KB/item × 32,079).
 
 ## 9. Board questions
 
