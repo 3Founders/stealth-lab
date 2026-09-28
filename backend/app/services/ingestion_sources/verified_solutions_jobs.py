@@ -30,6 +30,7 @@ import asyncpg
 
 from app.services.ingestion_sources import verified_solutions_hf as vs
 from app.services.repo_license_policy import classify_spdx
+from app.utils.aio import run_blocking
 
 log = logging.getLogger(__name__)
 
@@ -102,13 +103,40 @@ async def handle_ingest_verified_solution(pool: asyncpg.Pool, payload: dict) -> 
             identity_job_id=_trusted_identity_job_id(payload),
         )
         status = getattr(outcome, "status", None)
+        preserved = await _preserve_gold_patch(pool, payload, outcome, instance_id)
         _tel.set_attrs(
             sp, ingest_status=status,
             items_accepted=int(status in ("captured", "new_version")),
             items_duplicate=int(status in ("duplicate", "unchanged")),
             items_rejected=int(status == "rejected"),
+            verified_solution_preserved=int(preserved),
         )
 
+
+
+async def _preserve_gold_patch(pool: Any, payload: dict, outcome: Any, instance_id: str) -> bool:
+    """Record the gold patch as the compiled Procedure version's `verified_solution` artifact.
+
+    The compiler only sees the markdown rendering; without this the patch and its FAIL_TO_PASS check never
+    became a structured artifact (`verified_solutions.preserve` had no callers). No durable locator is
+    passed on purpose: the patch lives in a dataset row, not at a fetchable file, so it is stored (inline or
+    object storage). `preserve` never overwrites the source_locator the compile step already recorded.
+    """
+    from app.services.verified_solutions import preserve
+
+    status = getattr(outcome, "status", None)
+    row_id = getattr(outcome, "version_row_id", None)
+    patch = payload.get("gold_patch") or ""
+    if status not in ("captured", "new_version") or not row_id or not patch.strip():
+        return False
+    f2p = [str(t) for t in (payload.get("fail_to_pass") or [])]
+    verified_by = ("FAIL_TO_PASS: " + ", ".join(f2p)) if f2p else f"{JOB_TYPE}:{instance_id}"
+    ref = await preserve(
+        pool, procedure_row_id=str(row_id), code=patch,
+        task=payload.get("problem_statement") or instance_id, language="diff",
+        verified_by=verified_by[:300], locator=None, visibility="public",
+    )
+    return ref is not None
 
 def _trusted_identity_job_id(payload: dict) -> Optional[str]:
     """Read the identity the CONSUMER stamped, never one a payload asserts.
@@ -157,7 +185,12 @@ async def enqueue_verified_solution_jobs(
 
     enqueued = 0
     existing = 0
-    for row, content in source.iter_admissible():
+    rows = source.iter_admissible()   # a sync generator doing HF network I/O: advance it off the event loop
+    while True:
+        item = await run_blocking(next, rows, None)
+        if item is None:
+            break
+        row, content = item
         if enqueued >= target:
             break
         job_id, created = await enqueue(
@@ -172,6 +205,11 @@ async def enqueue_verified_solution_jobs(
                 "license_raw": row.license_raw,
                 "license_spdx": row.license_spdx,
                 "language": row.language,
+                # What makes this a VERIFIED solution: the gold patch and the check it passes. The handler
+                # stores them as a durable `verified_solution` artifact on the compiled Procedure.
+                "gold_patch": row.patch,
+                "fail_to_pass": list(row.fail_to_pass),
+                "problem_statement": (row.problem_statement or "")[:1000],
             },
             # Instance + revision + document hash, so a re-run over the same
             # pinned revision is a no-op and a new revision enqueues anew.

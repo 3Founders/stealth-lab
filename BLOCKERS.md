@@ -1,0 +1,54 @@
+# Blockers
+
+As of 2026-09-29. Each item: what blocks, the evidence, who can clear it, and the next action.
+**Owner**: **F** = founder decision or account action · **E** = engineering · **L** = legal/counsel.
+The detailed ingestion review is `docs/ingestion_review.md`.
+
+## 1. Ingestion: why nothing can be ingested at scale yet
+
+| # | Blocker | Evidence | Owner | Next action |
+|---|---|---|---|---|
+| I1 | **Embedding provider misconfigured.** `backend/.env` has `EMBEDDING_PROVIDER_CHAIN=voyage` (added during the "pure General Compute" change), but **production is entirely `gemini-embedding-001`** (1,448 goals, 59 procedures; `goal_search_index` 1,027 Vertex + 415 AI Studio vectors). The Voyage account has **no payment method** (3 req/min; 3 of 6 concurrent test calls got 429). | Step 2 pilot: every item died at embedding, 0 Procedures. Prod query 2026-09-29. | **F + E** | Decision taken: use Gemini embeddings. Set the chain back to Gemini on a **paid** tier (the free/unpaid Gemini API uses content to improve Google products). Decide `gemini-embedding-001` (continuity, no re-embed, 2,048-token input limit) vs `gemini-embedding-2` (8,192 tokens, MTEB Code 84.0 reported, $0.20/M, incompatible space: re-embed ~1.5k rows now, trivial cost). Research prompt: `.scratch/prompts/gemini_embedding_deep_research_prompt.md`. Purge the few Voyage vectors from pilot shards before any merge. |
+| I2 | **Gemini credentials not usable as configured.** The Gemini API keys are commented out in `.env` (kept per instruction). Vertex needs a GCP project with ADC and billing: the old project's billing account is closed, and the new project `project-cbf120d5-4a54-4b36-968` has Vertex AI enabled but no service identity or config yet. | `.env`; `gcloud` checks 2026-09-27/28 | **F + E** | Choose the surface (Gemini API paid tier, or Vertex on the new project), then uncomment or set the keys/ADC and run `admin judge-health`. |
+| I3 | **Trajectory extraction yields 0** (steps 0/1). 13/13 extraction calls failed. The JSON-fence cause was fixed in step 0's working tree. **Prompt/schema drift remains**: the prompt asks for `goal`, `subgoal_text`, `OBSERVED`; the schema wants `primary_goal`, `description`, `observed`. | `step_0_SUMMARY.md` §5 B1 | **E** (step 0/1 owner; uncommitted edit in `trajectory_semantics.py`) | Align the prompt with the schema, or send the JSON schema in the request; re-run the 13-call probe. |
+| I4 | **Brittle JSON parsing in extractors.** The claim extractor dropped every fenced reply. | Step 3 pilot | E | **Fixed: `cc455d8`** (claim extractor). `skill_extraction` shows the same "did not parse" class: still open. |
+| I5 | **Goals and Procedures land on different shards.** 11/30 step-3 artifacts failed with "procedures.achieves_goal_id has no goal, neither locally nor by remote reference". | `step_3_SUMMARY.md` §5 | E | Run `admin verify-refs` before any multi-shard run; make Goal placement follow the Procedure (or allow remote refs) for pilots. |
+| I6 | **Migration 125 (`procedures.verifier_check`) is untracked**, but uncommitted code in `procedures.py`, `check_runner.py`, `ast_grep_rules.py` needs it. 54/60 step-3 artifacts failed until it was applied. (Committed code does not reference it, so a clean clone is safe.) | `git status`; step 3 §5 | E (step 4 owner) | Commit 125 together with its code (half-gate rule). Run `migrate.py --status` before every run. |
+| I7 | **CC-BY-4.0 not on the license allowlist.** It blocks step 6 Source A (0/1,000 admitted) and the nebius trajectory corpus (steps 0/1), and affects SkillMD's compilation license. | `Q-STEP6-CCBY.md` | **F (+L)** | Rule: add CC-BY-4.0 with attribution recorded in provenance and shown where served, or keep it quarantined. |
+| I8 | **OpenRewrite recipes only have a static check** (tests never executed: JDK/Gradle/network/token). Step 7 also used `check_kind: "benchmark"` with `check_semantics: "self-consistency"` rather than extend the closed `routing.CHECK_KINDS`. | `Q-STEP7-OPENREWRITE-STATIC.md`, `step_7_SUMMARY.md` §9 | **F** | Proposed default: ingest as candidates, never as verified. Decide whether to extend the check vocabulary (spec change). |
+| I9 | **Two check runners may exist** (step 4 `check_runner.py`, step 7 `codemod_checks.py`) with different isolation contracts. | `step_4_SUMMARY.md` §9 | E | Keep `check_runner.py` as the single security contract, or document why the JVM path needs its own. |
+| I10 | **Uncommitted work across sessions**: steps 0 and 4 (`traj_pilot_cli.py`, `check_runner.py`, migration 125), step 7 (codemod modules), and edits to shared files (`ingestion_jobs.py`, `trace_worker.py`, `procedures.py`, `trajectory_semantics.py`, `bot_dependency_prs.py`, `workflow_knowledge.py`, `packaging/.../_bootstrap.py`, `.gitignore`). | `git status` 2026-09-29 | E (owning sessions) | Each owner commits its step with its tests; rebase, never force. |
+| I11 | **Stale duplicate step-6 attempt**: untracked `gh_client.py` + `tests/test_step6_ingestion_sources_offline.py` (all 41 tests fail against the committed module). | review_step_6.md | **F** | Delete both, or fold `gh_client.py` into a shared GitHub client and delete the test. |
+| I12 | **Spend approvals.** Step 2: ~$18.4 for 2,000 items at the $2/day cap (~9 days). Other steps: see each summary's §8. | step summaries | **F** | Approve per step after I1-I3 are fixed. |
+| I13 | **Shared LLM quota.** General Compute: one key, 10M tokens/day, shared by ingestion, experiments and (future) serving. | Rate-limit headers | F + E | Separate keys/providers for serving vs batch work. |
+| I14 | `.scratch/build-board.md` has uncommitted edits and **git treats it as binary** (likely stray NUL bytes). | `git grep` output | E | Owner strips NULs and commits; lanes can't file board questions reliably until then. |
+
+## 2. Production and release
+
+| # | Blocker | Evidence | Owner | Next action |
+|---|---|---|---|---|
+| P1 | **Nothing deployed.** The old GCP project's billing account is closed (Cloud Run, Vertex down). The new project exists (`project-cbf120d5-4a54-4b36-968`, open billing) with no Cloud Run, Artifact Registry, Secret Manager or Cloud Build enabled, no secrets migrated, and `job.yaml` still hard-codes `VERTEX_PROJECT: kell-509215`. | `gcloud` 2026-09-28 | **F + E** | Follow `reports/Hosted MCP server release plan.md`: service accounts, secrets, Artifact Registry, budget alert, then deploy. |
+| P2 | **Production database is 7 migrations behind** (115, 116, 118, 119, 120 routing, 122 step routing, 124 verified-solution role; plus 125 once committed). `recommend_models` / `report_model_run` (v1 tools) fail in production. | `migrate.py --status` | **F** (production step) | Apply to a staging branch first, then production. |
+| P3 | **Neon API key rejected (401)**, which blocks shard provisioning and ops. | earlier ops runs | F | Rotate the key. |
+| P4 | **MCP auth**: the local `.mcp.json` token is rejected (401). Custom routes send a bare `WWW-Authenticate: Bearer` without `resource_metadata`, so Claude clients can't discover sign-in. No OAuth server yet (Claude requires a 401-initiated flow, CIMD or DCR, PKCE S256). | release report | E | Token rotation; RFC 9728 metadata on every 401; pick an IdP (e.g. WorkOS AuthKit). |
+| P5 | **Stored prompt injection and tenant isolation.** Submitted procedure text is executed by other users' agents. No automated cross-tenant leak test. | release report | E | Quarantine unverified submissions to their tenant, screen writes, and add CI leak tests. |
+| P6 | **`init_workspace`-style raw writes land public with no owner.** | `final_thing.md` (unchecked) | E | Fix before any repo facts sync. |
+| P7 | **Repo hygiene.** Real session traces committed (`.scratch/real_trial_trace*`), a duplicate migration `110_retarget_goal_id_to_goals.sql`, Storybook cache under `node_modules/`. The untracked `backend/.env.bak.20260927141635` holds **live keys**. | `git ls-files` | **F + E** | Remove the traces (history rewrite is a founder call; never force-push without it); delete the `.env.bak`; add secret scanning. |
+| P8 | **Compliance.** CERT-In (6-hour incident reports, 180 days of logs in India) applies now. A privacy policy is required (and mandatory for the Anthropic Connectors Directory). DPA, subprocessor list, EU representative by beta. | release report | **L + F** | Lawyer review of ToS, privacy policy and DPA; an `asia-south1` log sink. |
+| P9 | **Provider terms.** BYOK plus a managed open-model tier is the approved model. Never intermediate Claude/Codex subscriptions; no "Claude"/"Codex"/"GPT" in names. Grey area: serving Claude-generated content (e.g. SWE-smith trajectories, users' Claude Code sessions) to other models' agents. | Anthropic legal page; X launch report | **L** | Counsel on the grey area; tag Claude-generated sources until then. |
+
+## 3. Experiments and proof
+
+| # | Blocker | Evidence | Owner | Next action |
+|---|---|---|---|---|
+| X1 | **SWE-bench / SWE-rebench generation is quota-bound.** gpt-oss-120b on General Compute: 10M tokens/day cap; ~340M tokens per benchmark needed (~34 days). Calibration stalled on 429s. | calibration logs; `OPTIMIZATION_SUMMARY.md` | **F** | Raise the General Compute limit, or switch the agent model (e.g. a pinned Gemini Flash) before calibration, logged as a deviation. |
+| X2 | **Grading infrastructure.** The Modal workspace was disabled ($30.47 uncapped fan-out). The GCE VM path works (official harness, 3/3 gold in 57 s) but the full 522-task SWE-rebench gold check hasn't run. The Compute Engine quota is 12 vCPU global. | GCE smoke; Modal billing | F + E | Request a CPU quota raise; run the gold check in capped batches. |
+| X3 | **No measured routing savings.** The 45–55% figure is a perfect-check simulation with placeholder prices. It can't be marketed (FTC substantiation). | `docs/findings.md` | E | Preregistered real-session routing study before any savings claim. |
+
+## 4. Launch
+
+| # | Blocker | Owner | Next action |
+|---|---|---|---|
+| L1 | Product name (no vendor marks) and handles not chosen. | F | Pick and clear the name. |
+| L2 | Connectors Directory prerequisites: tool annotations (`title` + `readOnlyHint`/`destructiveHint`), OAuth, privacy policy, reviewer test account. | E + F | After P4/P8. |
+| L3 | Launch copy waits on the corrected plan in `reports/X launch strategy for dev tools.md` (no savings numbers). | F | Approve the plan, then write `tweets.md`. |

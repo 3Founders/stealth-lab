@@ -306,3 +306,75 @@ def test_public_only_scope_is_enforced_for_this_job_type():
     validate_scope(vsj.JOB_TYPE, "global", "public", None)
     with pytest.raises(ScopeError):
         validate_scope(vsj.JOB_TYPE, "project", "private", "owner-1")
+
+
+# ---------------------------------------------------------------------------
+# The gold patch becomes a durable verified_solution artifact
+# ---------------------------------------------------------------------------
+
+def _stub_compile_and_preserve(monkeypatch, *, status="captured", row_id="11111111-1111-1111-1111-111111111111"):
+    import app.services.ingestion_jobs as ij
+    from app.services import skill_ingestion, verified_solutions
+
+    calls: list = []
+
+    async def fake_compile(pool, artifact, **kwargs):
+        return type("_Outcome", (), {"status": status, "version_row_id": row_id})()
+
+    async def fake_preserve(pool, **kw):
+        calls.append(kw)
+        return {"artifact_id": "a", "role": "verified_solution"}
+
+    monkeypatch.setattr(ij, "_general_compute_client", lambda: object())
+    monkeypatch.setattr(skill_ingestion, "compile_skill_artifact", fake_compile)
+    monkeypatch.setattr(verified_solutions, "preserve", fake_preserve)
+    monkeypatch.setattr(vsj, "_trusted_identity_job_id", lambda payload: None, raising=False)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_captured_solution_preserves_the_gold_patch_and_its_check(monkeypatch):
+    calls = _stub_compile_and_preserve(monkeypatch)
+    await vsj.handle_ingest_verified_solution(FakePool(), _payload(
+        gold_patch="diff --git a/x.py b/x.py\n+fix\n", fail_to_pass=["tests/test_x.py::test_fix"],
+        problem_statement="widget crashes on empty input"))
+    assert len(calls) == 1
+    kw = calls[0]
+    assert kw["procedure_row_id"] == "11111111-1111-1111-1111-111111111111"
+    assert kw["code"].startswith("diff --git")
+    assert kw["verified_by"] == "FAIL_TO_PASS: tests/test_x.py::test_fix"
+    assert kw["task"] == "widget crashes on empty input"
+    assert kw["locator"] is None            # a dataset row is not a fetchable file: store the patch itself
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["duplicate", "unchanged", "rejected"])
+async def test_no_new_version_means_nothing_is_preserved(monkeypatch, status):
+    calls = _stub_compile_and_preserve(monkeypatch, status=status)
+    await vsj.handle_ingest_verified_solution(FakePool(), _payload(gold_patch="diff\n+x\n", fail_to_pass=["t::1"]))
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_missing_version_row_or_patch_preserves_nothing(monkeypatch):
+    calls = _stub_compile_and_preserve(monkeypatch, row_id=None)
+    await vsj.handle_ingest_verified_solution(FakePool(), _payload(gold_patch="diff\n+x\n", fail_to_pass=["t::1"]))
+    calls2 = _stub_compile_and_preserve(monkeypatch)
+    await vsj.handle_ingest_verified_solution(FakePool(), _payload())          # no gold_patch in payload
+    assert calls == [] and calls2 == []
+
+
+@pytest.mark.asyncio
+async def test_enqueued_payload_carries_gold_patch_and_fail_to_pass(monkeypatch):
+    from app.services.ingestion_sources import verified_solutions_hf as vs
+
+    rows = [{"instance_id": "a__b-1", "repo": "a/b", "base_commit": "c" * 40,
+             "problem_statement": "boom", "patch": "diff --git a/y b/y\n+ok\n", "test_patch": "t",
+             "FAIL_TO_PASS": ["t::1"], "license": "mit"}]
+    monkeypatch.setattr(vs.VerifiedSolutionSource, "_iter_raw_rows", lambda self: iter(rows))
+    pool = FakePool()
+    out = await vsj.enqueue_verified_solution_jobs(pool, source_key="swe_bench_extra", target=10,
+                                                   design_paths=DESIGN_PATHS)
+    assert out["enqueued"] == 1
+    blob = str(pool.calls[0]["args"])
+    assert "diff --git a/y b/y" in blob and "t::1" in blob and "boom" in blob
