@@ -65,9 +65,16 @@ async def open_ingestion_context(
     owner_id: Optional[str] = None,
     tenant_id: Optional[str] = None,
     run_ref: Optional[str] = None,
+    license_spdx: Optional[str] = None,
+    attribution: Optional[dict] = None,
 ) -> str:
     """
     Open one IngestionContext and return its id (a uuid7 string).
+
+    ``license_spdx`` / ``attribution`` (migration 126) record the license the source was ingested under and the
+    credit it requires, so everything derived from an attribution license can be found and removed as a class
+    (`license_takedown`). They are written only when ``license_spdx`` is given, so a database without migration
+    126 is unaffected until it ingests such a source.
 
     ``scope_type`` is V0-gated (the 10 canonical values; a non-global scope
     must name what it points at) -- the same rule migration 65's own CHECK
@@ -81,27 +88,51 @@ async def open_ingestion_context(
     context_id = uuid7()
     scope = TenantScope.commons()
     bound_tenant = tenant_id if tenant_id is not None else scope.tenant_id
+    base_args = (
+        context_id, source_ref, source_type, source_uri, source_hash,
+        actor_id, workspace_id, environment_id,
+        scope_type, scope_entity_id, visibility, owner_id, bound_tenant,
+        classification, extractor_id, extractor_version, run_ref,
+    )
     async with tenant_transaction(pool, scope) as conn:
-        await conn.fetchrow(
-            """
-            INSERT INTO ingestion_contexts (
-                id, source_ref, source_type, source_uri, source_hash,
-                actor_id, workspace_id, environment_id,
-                scope_type, scope_entity_id, visibility, owner_id, tenant_id,
-                classification, extractor_id, extractor_version, run_ref, status
-            ) VALUES (
-                $1::uuid, $2::uuid, $3, $4, $5,
-                $6, $7::uuid, $8,
-                $9, $10, $11::visibility_level, $12, $13::uuid,
-                $14, $15, $16, $17::uuid, 'open'
+        if license_spdx:
+            await conn.fetchrow(
+                """
+                INSERT INTO ingestion_contexts (
+                    id, source_ref, source_type, source_uri, source_hash,
+                    actor_id, workspace_id, environment_id,
+                    scope_type, scope_entity_id, visibility, owner_id, tenant_id,
+                    classification, extractor_id, extractor_version, run_ref, status,
+                    license_spdx, attribution
+                ) VALUES (
+                    $1::uuid, $2::uuid, $3, $4, $5,
+                    $6, $7::uuid, $8,
+                    $9, $10, $11::visibility_level, $12, $13::uuid,
+                    $14, $15, $16, $17::uuid, 'open',
+                    $18, $19::jsonb
+                )
+                RETURNING id
+                """,
+                *base_args, license_spdx, attribution,     # the pools' jsonb codec encodes the dict
             )
-            RETURNING id
-            """,
-            context_id, source_ref, source_type, source_uri, source_hash,
-            actor_id, workspace_id, environment_id,
-            scope_type, scope_entity_id, visibility, owner_id, bound_tenant,
-            classification, extractor_id, extractor_version, run_ref,
-        )
+        else:
+            await conn.fetchrow(
+                """
+                INSERT INTO ingestion_contexts (
+                    id, source_ref, source_type, source_uri, source_hash,
+                    actor_id, workspace_id, environment_id,
+                    scope_type, scope_entity_id, visibility, owner_id, tenant_id,
+                    classification, extractor_id, extractor_version, run_ref, status
+                ) VALUES (
+                    $1::uuid, $2::uuid, $3, $4, $5,
+                    $6, $7::uuid, $8,
+                    $9, $10, $11::visibility_level, $12, $13::uuid,
+                    $14, $15, $16, $17::uuid, 'open'
+                )
+                RETURNING id
+                """,
+                *base_args,
+            )
     return str(context_id)
 
 

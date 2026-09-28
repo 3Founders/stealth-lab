@@ -901,6 +901,17 @@ async def _open_ingestion_provenance(
         SKILL_MD_CLASSIFICATION_SCREENED if injection_signals
         else SKILL_MD_CLASSIFICATION_PUBLIC
     )
+    # Content under an attribution license (CC-BY-4.0) is tagged on its context: the credit that must travel with
+    # it, and the handle `admin license-takedown` uses to remove everything ingested under that license.
+    from app.services.repo_license_policy import attribution_for, attribution_required
+
+    license_meta = getattr(artifact, "license_metadata", None) or {}
+    license_spdx = str(license_meta.get("spdx_id") or "").strip()
+    attribution = None
+    if license_spdx and attribution_required(license_spdx):
+        attribution = attribution_for(
+            license_spdx, source_uri=artifact.uri,
+            creator=license_meta.get("creator") or artifact.repository, title=parsed.name)
     context_id = await open_ingestion_context(
         pool,
         source_type=SKILL_MD_INGESTION_CONTEXT_SOURCE_TYPE,
@@ -916,6 +927,7 @@ async def _open_ingestion_provenance(
         visibility=visibility,
         owner_id=owner_id,
         run_ref=run_id,
+        **({"license_spdx": license_spdx, "attribution": attribution} if attribution else {}),
     )
     return source["id"], source["reused"], context_id
 

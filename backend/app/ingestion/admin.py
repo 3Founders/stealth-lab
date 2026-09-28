@@ -8,6 +8,7 @@
     python -m app.ingestion.admin shards [--json]
     python -m app.ingestion.admin shard-weight K000 0        # placement weight only (0 = no NEW public placement); nothing moves
     python -m app.ingestion.admin count-source --source-key K [--goal-name "..."]   # idempotency assertions (shard-aware)
+    python -m app.ingestion.admin license-takedown --spdx CC-BY-4.0 [--apply]   # plan (default) or tombstone everything ingested under a license
     python -m app.ingestion.admin probe-providers             # live 1-call embedding + judge probe (exit 1 = embedding down / judge down)
     python -m app.ingestion.admin reindex [goal|claim|procedure|all] [--shard K002]
     python -m app.ingestion.admin drain-projections
@@ -62,6 +63,10 @@ def _parse(argv=None) -> argparse.Namespace:
     cs = sub.add_parser("count-source")
     cs.add_argument("--source-key", required=True)
     cs.add_argument("--goal-name")
+    lt = sub.add_parser("license-takedown")
+    lt.add_argument("--spdx", required=True, help="license id, e.g. CC-BY-4.0")
+    lt.add_argument("--apply", action="store_true", help="actually tombstone; without it only a plan is printed")
+    lt.add_argument("--actor", default="admin-cli")
     sub.add_parser("probe-providers")
     ri = sub.add_parser("reindex")
     ri.add_argument("object_type", nargs="?", default="all", choices=["goal", "claim", "procedure", "all"])
@@ -136,6 +141,10 @@ async def _amain(a: argparse.Namespace) -> int:
             return await _judge_health.run(pool, a)
         if a.cmd == "status":
             print(json.dumps({"jobs": await q.stats(pool), "projection_lag": await sp.projection_lag(pool)}, default=str, indent=2))
+        elif a.cmd == "license-takedown":
+            from app.services import license_takedown as _takedown
+            out = await (_takedown.apply(pool, a.spdx, actor=a.actor) if a.apply else _takedown.plan(pool, a.spdx))
+            print(json.dumps(out, default=str, indent=2))
         elif a.cmd == "failures":
             rows = await pool.fetch(
                 "SELECT id, job_type, attempts, last_error, source_id FROM ingestion_jobs WHERE status = 'failed' "

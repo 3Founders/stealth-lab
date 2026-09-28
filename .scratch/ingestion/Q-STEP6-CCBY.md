@@ -1,5 +1,10 @@
 # Q-STEP6-CCBY: should CC-BY-4.0 be on the ingestion allowlist?
 
+> **RULED 2026-09-29 (founder): accept CC-BY-4.0, with attribution, and keep a way to remove all of it.**
+> Implemented in `repo_license_policy` (CC-BY-4.0 allowed, `ATTRIBUTION_REQUIRED`, `attribution_for`; allowlist `@v2`), migration 126 + `open_ingestion_context` (license and attribution on the IngestionContext), and `admin license-takedown --spdx CC-BY-4.0 [--apply]` (`license_takedown.py`).
+> This does **not** by itself admit step 6's Source A: the CC-BY-4.0 on the Zenodo record covers the compilation, and each workflow is still gated on its own repository's license (`gate_license`), which needs a per-repository license lookup. It does admit items whose own license is CC-BY-4.0.
+
+
 Raised: 2026-09-28 · by: step 6 build · status: **OPEN — blocking step 6's Source A**
 Founder ruling needed. Proceeding under the stated default meanwhile (CC-BY-4.0 stays
 quarantined), which is the safe reading.

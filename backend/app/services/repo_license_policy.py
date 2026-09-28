@@ -59,7 +59,9 @@ from typing import Any, Iterable, Mapping, Optional
 
 VERDICTS: tuple[str, ...] = ("ALLOW", "QUARANTINE", "REJECT")
 
-ALLOWLIST_VERSION = "repo-license-allowlist@v1"
+# v2 (2026-09-29, founder ruling Q-STEP6-CCBY): CC-BY-4.0 is admitted WITH ATTRIBUTION, and everything ingested
+# under it stays removable (`admin license-takedown`, see license_takedown.py). v1 was the eight permissive ids.
+ALLOWLIST_VERSION = "repo-license-allowlist@v2"
 
 DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     "MIT",
@@ -70,7 +72,41 @@ DEFAULT_ALLOWLIST: frozenset[str] = frozenset({
     "0BSD",
     "Unlicense",
     "CC0-1.0",
+    "CC-BY-4.0",
 })
+
+# Allowed, but only if the credit travels with the content: the license requires the creator, a license link and
+# a note that changes were made. These ids get an attribution record on their ingestion context, shown where the
+# content is served. Listing an id here does not allow it (DEFAULT_ALLOWLIST does); it makes the notice mandatory.
+ATTRIBUTION_REQUIRED: frozenset[str] = frozenset({"CC-BY-4.0"})
+
+_LICENSE_URLS: dict[str, str] = {
+    "CC-BY-4.0": "https://creativecommons.org/licenses/by/4.0/",
+}
+
+
+def attribution_required(spdx_id: Optional[str]) -> bool:
+    return _norm_id(spdx_id).upper() in {i.upper() for i in ATTRIBUTION_REQUIRED}
+
+
+def attribution_for(spdx_id: Optional[str], *, source_uri: Optional[str] = None,
+                    creator: Optional[str] = None, title: Optional[str] = None) -> Optional[dict]:
+    """The attribution record for content under an attribution-required license, else None.
+
+    CC BY 4.0 s3(a)(1): keep the creator, a copyright/attribution notice, the license notice and a link to the
+    license, and indicate that the material was modified. Ingestion always modifies it (the source is turned into
+    Goals, Procedures and Claims), so `changes` is always stated.
+    """
+    if not attribution_required(spdx_id):
+        return None
+    sid = _norm_id(spdx_id)
+    url = _LICENSE_URLS.get(sid) or _LICENSE_URLS.get(sid.upper())
+    parts = [f'"{title}"' if title else "Source material", f"by {creator}" if creator else None,
+             f"({source_uri})" if source_uri else None, f"licensed under {sid}" + (f" ({url})" if url else ""),
+             "modified: converted into structured procedures and claims"]
+    return {"license": sid, "license_url": url, "creator": creator, "title": title, "source_uri": source_uri,
+            "changes": "converted into structured procedures and claims",
+            "notice": ", ".join(x for x in parts if x)}
 
 REJECT_FAMILIES: tuple[str, ...] = (
     "GPL",

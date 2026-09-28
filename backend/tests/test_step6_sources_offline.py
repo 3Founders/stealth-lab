@@ -497,14 +497,16 @@ def test_artifact_states_it_is_unverified():
 # License gate: the load-bearing refusal
 # ==========================================================================
 
-def test_cc_by_4_is_quarantined_not_ingested():
-    """CC-BY-4.0 is NOT on DEFAULT_ALLOWLIST. Every step-6 workflow artifact
-    must be quarantined. This test fails if someone widens the allowlist
-    without a ruling."""
-    from app.services.repo_license_policy import DEFAULT_ALLOWLIST, classify_spdx
+def test_cc_by_4_compilation_license_is_provenance_and_the_item_license_still_gates():
+    """Founder ruling 2026-09-29: CC-BY-4.0 is on DEFAULT_ALLOWLIST (with attribution, and removable as a class).
+    That does NOT admit every step-6 workflow artifact: the CC-BY-4.0 on the Zenodo record covers the compilation,
+    not the third-party files inside it, so each item is still gated on ITS repository's license, and an
+    unresolved one is still QUARANTINE."""
+    from app.services.repo_license_policy import DEFAULT_ALLOWLIST, attribution_required, classify_spdx
 
-    assert "CC-BY-4.0" not in DEFAULT_ALLOWLIST
-    assert classify_spdx("CC-BY-4.0").decision == "QUARANTINE"
+    assert "CC-BY-4.0" in DEFAULT_ALLOWLIST and attribution_required("CC-BY-4.0")
+    assert classify_spdx("CC-BY-4.0").decision == "ALLOW"
+    assert classify_spdx("CC-BY-SA-4.0").decision == "QUARANTINE"      # share-alike stays out
 
     data = (_HEADER + "\n" + _csv_row() + "\n").encode()
     source = cwh.CiWorkflowHistorySource(data)

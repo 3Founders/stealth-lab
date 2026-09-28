@@ -1,5 +1,8 @@
 # Q-STEP7-OPENREWRITE-STATIC: may OpenRewrite recipes enter with a static check only?
 
+> **RULED 2026-09-29 (founder): OpenRewrite is fine; start with the static check.** Ingest the recipes as candidates with `check_tier="static"` (never as verified Procedures), as proposed below.
+
+
 **Raised:** 2026-09-29, from the read-only review of step 7 (`.scratch/ingestion/review_step_7.md`).
 **Blocking:** only the OpenRewrite half of step 7. Node.js codemods are unaffected.
 
