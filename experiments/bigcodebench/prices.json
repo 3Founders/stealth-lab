@@ -1,7 +1,27 @@
 {
-  "_note": "USD per million tokens. General Compute publishes no per-model rates (checked 2026-09-26): the three open-model rows are PLACEHOLDERS to exercise the pipeline -- replace with the provider's real rates before quoting any cost. Sonnet 5 is Anthropic's list price.",
-  "gemma-4-31B-it": {"input": 0.10, "output": 0.30, "placeholder": true},
-  "gpt-oss-120b": {"input": 0.15, "output": 0.60, "placeholder": true},
-  "deepseek-v3.2": {"input": 0.28, "output": 0.42, "placeholder": true},
-  "claude-sonnet-5": {"input": 2.00, "output": 10.00, "placeholder": false}
+  "_note": "USD per million tokens. deepseek-v3.2 and gpt-oss-120b: General Compute's published rates (https://docs.generalcompute.com/models.md, read 2026-09-28). gemma-4-31B-it is NOT in General Compute's price table: its row is still a PLACEHOLDER. claude-sonnet-5 is Anthropic's list price. Before 2026-09-28 all three open-model rows were placeholders (deepseek 0.28/0.42, gpt-oss 0.15/0.60); results recorded before then are re-priced by experiments/reprice_routing.py.",
+  "gemma-4-31B-it": {
+    "input": 0.1,
+    "output": 0.3,
+    "placeholder": true
+  },
+  "gpt-oss-120b": {
+    "input": 0.21,
+    "output": 0.79,
+    "placeholder": false,
+    "source": "https://docs.generalcompute.com/models.md",
+    "as_of": "2026-09-28"
+  },
+  "deepseek-v3.2": {
+    "input": 0.25,
+    "output": 0.38,
+    "placeholder": false,
+    "source": "https://docs.generalcompute.com/models.md",
+    "as_of": "2026-09-28"
+  },
+  "claude-sonnet-5": {
+    "input": 2.0,
+    "output": 10.0,
+    "placeholder": false
+  }
 }

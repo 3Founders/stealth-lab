@@ -8,7 +8,7 @@ Contents: [Headlines](#headlines) · [What helps the most](#what-helps-the-most)
 
 Kel's knowledge makes open-model coding agents measurably better when it is delivered automatically. It does not measurably help Sonnet on public-library tasks. The biggest cost win comes from routing to cheaper models behind a reliable check. All results are on the DS-1000 benchmark (pandas, numpy and similar tasks), rounds 1 to 7, unless stated otherwise.
 
-1. **Routing is much cheaper at equal or better accuracy.** On single-shot tasks, routing to open models cost 32–62% less than Sonnet at equal or better accuracy (BigCodeBench and DS-1000 rounds 1–3).
+1. **Routing is much cheaper at equal or better accuracy.** On single-shot tasks, routing to open models cost about 36–60% less than Sonnet at equal or better accuracy, at General Compute's published prices (DS-1000 rounds 1–2: 49–60% less; BigCodeBench: about 37% less). With the earlier placeholder prices this read 32–62%.
 2. **Knowledge helps open-model agents, but only when it is delivered for them.** Kel's hook looks the task up before the agent starts: 52.0% to 60.6% solved, +8.5 points (95% confidence interval +2.7 to +14.4, p = 0.004). It replicated in round 6 with fresh lookups: +8.9 points (+3.9 to +14.0, p = 0.003). Pasting the same knowledge by hand gave the same +8.5.
 3. **Letting the model decide when to ask Kel does not work reliably.** +3.3 and +4.1 points, neither significant; one model never asked at all.
 4. **Sonnet gains nothing measurable from the same knowledge.** It already solves 81.7% of these tasks; with the hook, 82.9% (+1.2, interval −5.0 to +7.7).
@@ -23,10 +23,10 @@ Three things move results: deciding for the model when knowledge arrives, giving
 | **Delivering knowledge automatically** (the Claude Code hook runs Kel's lookup before the agent starts) | +8.5 points for open models, p = 0.004; +11.4 where the hook found something, 0.0 where it found nothing | Knowledge arrives every time, whether or not the model would have asked; no workflow overhead |
 | **Knowledge for weaker models** | gemma +11.0, deepseek +9.8, gpt-oss +4.9 points with the hook | Worked examples show the right library call and answer format; one model stopped writing throw-away scripts once it saw examples |
 | **Knowledge that costs little** | the hook costs 0.7 to 1.5 times the agent's own tokens per solved task, and fewer for gemma | One lookup of about 800 characters, added once to the prompt |
-| **Routing to open models** | 32–62% cheaper than Sonnet at equal or better accuracy (single-shot tasks) | Most tasks do not need the most expensive model |
+| **Routing to open models** | about 36–60% cheaper than Sonnet at equal or better accuracy (single-shot tasks, real prices) | Most tasks do not need the most expensive model |
 | **Routing with a check** (simulated on real results) | 89–93% solved vs Sonnet's 82%, at 45–55% lower cost | Cheap models solve most tasks; the check sends the rest to Sonnet; different models fail on different tasks (12 of Sonnet's 15 failures were solved by some open model) |
 
-Routing numbers use placeholder open-model prices; the ladder simulation assumes a perfect check.
+Routing numbers use General Compute's published prices for gpt-oss and deepseek (2026-09-28); gemma has no published price and keeps a placeholder, 0–14% of routing spend. The ladder simulation assumes a perfect check.
 
 ## What does not help
 
@@ -65,7 +65,7 @@ Two claims are confirmed by preregistered tests; the frontier-model and combined
 | The same gain when knowledge is pasted by hand | +8.5 points, p = 0.003, same tasks and models | Confirmed (a repeat, not independent) |
 | The gain comes from the knowledge itself | +11.4 where knowledge arrived (184 pairs, p = 0.0005); 0.0 where none did (62 pairs) | Supporting (descriptive) |
 | The hook does not raise cost | 0.7–1.5 times the agent's tokens per solved task | Measured |
-| Routing is cheaper at equal or better accuracy | 32–62% cheaper than Sonnet, single-shot tasks | Replicated (placeholder prices, estimated Sonnet tokens) |
+| Routing is cheaper at equal or better accuracy | at real prices: DS-1000 round 1, 49% cheaper at Sonnet's accuracy (69/84) and 57% cheaper at higher accuracy (71/84); round 2, 56–60% cheaper while solving more (98–100 vs 87 of 124); BigCodeBench about 37% cheaper (18/20 both) | Replicated (gemma still placeholder-priced; Sonnet tokens estimated in rounds 1–3) |
 | Routing with a check beats Sonnet on cost and accuracy | 89–93% vs 82%, 45–55% cheaper | Simulation only, perfect check |
 | The model deciding when to ask Kel helps | +3.3 (p = 0.37), +4.1 (p = 0.25) | Not confirmed |
 | Kel's knowledge helps Sonnet | +3.7 (p = 0.65) as a tool; +1.2 (−5.0 to +7.7) with the hook | Not shown on DS-1000; a gain of +8.5 or more is unlikely there |
@@ -96,7 +96,7 @@ Ship the hook, stop relying on the model to ask, and build the product around ro
 
 1. Run SWE-bench with the hook arm: the first test of repository knowledge, where Sonnet cannot already know the answer.
 2. Preregister and run the combined Claude Code experiment. Report the check's false-accept rate, since it decides whether routing is safe.
-3. Replace placeholder prices with real ones, and measure Sonnet's tokens instead of estimating them.
+3. Get gemma's price from General Compute (the last placeholder), and measure Sonnet's tokens instead of estimating them.
 4. Measure the network effect: split contributors into 1, 2, 4 and 8 groups and chart cost and accuracy.
 
 ## Making the knowledge side useful: what exists today
@@ -141,7 +141,7 @@ Every scored experiment follows the same discipline. What changes from round to 
 - **Models.**
   - Open models on General Compute: gemma-4-31B-it, gpt-oss-120b, deepseek-v3.2, temperature 0.
   - Claude Sonnet through fresh Claude Code subagents.
-  - Open-model prices are placeholders, so cost results are indicative.
+  - Open-model prices: General Compute's published rates for gpt-oss and deepseek (from 2026-09-28; earlier results re-priced by `experiments/reprice_routing.py`); gemma is still a placeholder.
 
 ### Rounds 1–3: knowledge as a note pasted into one prompt (single-shot)
 
@@ -158,7 +158,7 @@ The model answers in one reply, with no tools. A script calls `find_ways` once a
 - **The check:** a step is accepted when a realistic check passes (the first test case, or a smoke run when a problem has one test), never the hidden grading tests. The delivered answer is then graded by the full tests.
 - **Targets:** reliability targets 0.5 to 0.9.
 
-This is where the 32–62% saving comes from. The earlier BigCodeBench demo ran the same loop on a small sample: 40 fit and 20 held-out tasks.
+This is where the routing saving comes from: about 36–60% at real prices. The earlier BigCodeBench demo ran the same loop on a small sample: 40 fit and 20 held-out tasks.
 
 ### Rounds 4–7: knowledge delivered to an agent working in a loop
 
