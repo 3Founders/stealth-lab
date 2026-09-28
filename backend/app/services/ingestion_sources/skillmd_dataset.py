@@ -537,6 +537,42 @@ class SkillMD138KSource:
             candidates_emitted += 1
             yield row, exact
 
+    def _fetch_in_waves(self, candidates: list) -> Iterator[tuple[Any, str, str, Optional[str], Optional[GateVerdict]]]:
+        """PHASE B, lazily and in row order. With a limit, each wave fetches only
+        2x the admissions PHASE C still needs (at least `fetch_workers`), and the
+        next wave is sized after PHASE C has counted this one -- so a limit of N
+        no longer fetches all N*FETCH_OVERSAMPLE candidates up front (the ~5x
+        over-fetch in docs/ingestion_review.md). Outcomes are consumed in
+        submission order, so every count and dedup winner is the same as one big
+        batch; only fetches PHASE C would never have looked at are skipped."""
+        pool = None
+        if self._fetch_workers > 1 and len(candidates) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            pool = ThreadPoolExecutor(max_workers=self._fetch_workers)
+        try:
+            i = 0
+            while i < len(candidates):
+                if self._limit is None:
+                    wave = len(candidates) - i
+                else:
+                    remaining = self._limit - self.stats.admitted
+                    if remaining <= 0:
+                        # PHASE C checks the limit before reading an outcome: a placeholder lets it
+                        # record `limit_reached` exactly as before, without fetching another row.
+                        yield (None, "", "", None, None)
+                        return
+                    wave = max(self._fetch_workers, 2 * remaining)
+                chunk = candidates[i:i + wave]
+                i += len(chunk)
+                if pool is not None and len(chunk) > 1:
+                    yield from pool.map(self._fetch_and_gate, chunk)
+                else:
+                    yield from (self._fetch_and_gate(c) for c in chunk)
+        finally:
+            if pool is not None:
+                pool.shutdown(wait=True)
+
     def _fetch_and_gate(self, candidate: tuple[Any, str]) -> tuple[Any, str, str, Optional[str], Optional[GateVerdict]]:
         """PHASE B -- the only parallel stage. Pure and order-independent."""
         row, exact = candidate
@@ -575,18 +611,11 @@ class SkillMD138KSource:
         # identical to a serial run. Nothing downstream observes completion
         # order.
         candidates = list(self._candidates())
-        if self._fetch_workers > 1 and len(candidates) > 1:
-            from concurrent.futures import ThreadPoolExecutor
-
-            with ThreadPoolExecutor(max_workers=self._fetch_workers) as pool:
-                outcomes = list(pool.map(self._fetch_and_gate, candidates))
-        else:
-            outcomes = [self._fetch_and_gate(c) for c in candidates]
 
         # PHASE C -- sequential, in row order. The admitted limit is enforced
         # HERE, because this is where `admitted` is counted; see
         # FETCH_OVERSAMPLE for why it cannot be enforced in PHASE A.
-        for row, exact, text, fetch_reason, verdict in outcomes:
+        for row, exact, text, fetch_reason, verdict in self._fetch_in_waves(candidates):
             if self._limit is not None and self.stats.admitted >= self._limit:
                 self.stats.bump("limit_reached")
                 break
