@@ -2,7 +2,7 @@
 
 As of 2026-09-28. Across DS-1000 rounds 1–7 (round 6 still running), BigCodeBench routing, and a routing simulation. Details and statistics: `experiments/ds1000/PREREGISTRATION*.md`.
 
-Contents: [Headlines](#headlines) · [What helps the most](#what-helps-the-most) · [What does not help](#what-does-not-help) · [What hurts, and why](#what-hurts-and-why) · [Evidence behind each claim](#evidence-behind-each-claim) · [Still running or open](#still-running-or-open) · [What can be done](#what-can-be-done) · [Methodology](#methodology)
+Contents: [Headlines](#headlines) · [What helps the most](#what-helps-the-most) · [What does not help](#what-does-not-help) · [What hurts, and why](#what-hurts-and-why) · [Evidence behind each claim](#evidence-behind-each-claim) · [Still running or open](#still-running-or-open) · [What can be done](#what-can-be-done) · [Making the knowledge side useful](#making-the-knowledge-side-useful-what-exists-today) · [Methodology](#methodology)
 
 ## Headlines
 
@@ -98,6 +98,28 @@ Ship the hook, stop relying on the model to ask, and build the product around ro
 3. Preregister and run the combined Claude Code experiment. Report the check's false-accept rate, since it decides whether routing is safe.
 4. Replace placeholder prices with real ones, and measure Sonnet's tokens instead of estimating them.
 5. Measure the network effect: split contributors into 1, 2, 4 and 8 groups and chart cost and accuracy.
+
+## Making the knowledge side useful: what exists today
+
+Kel's knowledge pays off where it gives a model something it lacks, delivered without the model having to ask. Of six ideas that would make it more useful, two largely exist, three exist in part, and one is missing. Most have never been measured.
+
+| Idea | In the system now | Status | Measured? |
+| --- | --- | --- | --- |
+| **Store what frontier models can't know** (repository conventions, internal APIs, failed approaches) | `report_discovery` (fix, missing step, precondition, better way, correction; with proof; optionally repository-scoped; private claims returned through `stealth://procedures/<id>/claims`); `survey_repo` repository facts that `find_ways` judges candidates against; pitfalls in Procedures | Partly: capture depends on the agent choosing to call `report_discovery` | No: knowledge was frozen and `report_discovery` off in every round |
+| **Knowledge serving routing** | `recommend_models` ladder, `report_model_run` outcomes feeding a per-Goal recommender, check kinds (tests, procedure check, judge, self-report), per-step proof in `plan_and_run` | Partly: no automated check-and-escalate loop inside Claude Code; check recipes are not stored or retrieved as their own kind of knowledge | Only on recorded single-shot attempts and in simulation |
+| **Delivery adapted to model strength** | hook labels ("not verified to apply", "not the same as this request"); per-client call statistics recorded | Missing: the same text for every model, no model input to `find_ways`, no confidence gating | Indirectly: round 7 shows the need |
+| **Automatic, small delivery** | the Claude Code hook (at most 8,000 characters), the call governor, the small-task fast path | Largely exists; the npm package is not published; no proxy for hosts without hooks | Yes: +8.5 (round 5) |
+| **Closing the coverage gap** | related examples, suggested candidate, Goal abstraction placement, ingestion sources, method library, contributor profiles, leaderboard and economy APIs | Partly: a third of DS-1000 lookups still find nothing | Network effect not measured |
+| **Learning which knowledge helps** | evidence-aware selection (a lower bound on each Procedure's success rate) and demotion on negative evidence | Largely exists for Procedures | No: frozen in experiments |
+
+**The cross-cutting gap:** reading knowledge is automatic now, through the hook. Writing it (discoveries) and reporting outcomes (did the fix pass, which model succeeded) still depend on the agent choosing to call a tool, which round 4 showed models don't reliably do. So in real use the learning loop may barely turn.
+
+**Build order:**
+1. Publish the hook.
+2. Add an automatic capture hook: when the agent finishes or runs tests, send the diff, the test commands and their results to Kel as an outcome and a candidate discovery.
+3. Add model-aware delivery: code for weak models, pitfalls and repository facts for strong ones.
+4. Automate routing as a check-and-escalate loop.
+5. Measure capture and learning on SWE-bench with knowledge growing during the run, and the network effect with the contributor-scaling curve.
 
 ## Methodology
 
