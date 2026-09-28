@@ -2,6 +2,8 @@
 
 As of 2026-09-28. Across DS-1000 rounds 1–7 (round 6 still running), BigCodeBench routing, and a routing simulation. Details and statistics: `experiments/ds1000/PREREGISTRATION*.md`.
 
+Contents: [Headlines](#headlines) · [What helps the most](#what-helps-the-most) · [What does not help](#what-does-not-help) · [What hurts, and why](#what-hurts-and-why) · [Evidence behind each claim](#evidence-behind-each-claim) · [Still running or open](#still-running-or-open) · [What can be done](#what-can-be-done) · [Methodology](#methodology)
+
 ## Headlines
 
 Kel's knowledge makes open-model coding agents measurably better when it is delivered automatically. It does not measurably help Sonnet on public-library tasks. The biggest cost win comes from routing to cheaper models behind a reliable check. All results are on the DS-1000 benchmark (pandas, numpy and similar tasks), rounds 1 to 7, unless stated otherwise.
@@ -96,3 +98,73 @@ Ship the hook, stop relying on the model to ask, and build the product around ro
 3. Preregister and run the combined Claude Code experiment. Report the check's false-accept rate, since it decides whether routing is safe.
 4. Replace placeholder prices with real ones, and measure Sonnet's tokens instead of estimating them.
 5. Measure the network effect: split contributors into 1, 2, 4 and 8 groups and chart cost and accuracy.
+
+## Methodology
+
+Every scored experiment follows the same discipline. What changes from round to round is the question, the arms, and how knowledge reaches the model.
+
+### Rules every round follows
+
+- **Preregistered.** Before the first scored run, the hypothesis, arms, primary endpoint and decision rule are written in `experiments/ds1000/PREREGISTRATION*.md`. That file is hashed together with the sample and the runner code (`runsN/design.sha256`), and committed so its timestamp precedes the runs. Nothing about the code, prompts or parameters changes afterwards. Anything unexpected is logged under Deviations, with the date and the reason.
+- **Paired comparisons.** Every arm runs on the same tasks with the same models, so each task yields a pair (with vs without). The effect is the difference in solve rate.
+- **Statistics.**
+  - Exact McNemar test on the pairs that disagree.
+  - 95% confidence interval from a bootstrap clustered by problem family (10,000 resamples), because variants of one problem are correlated.
+  - Holm correction when a claim is made per model.
+  - **Confirmed** only if the interval excludes 0 **and** p < 0.05.
+- **Held-out knowledge.** Kel learns only from "fit" problems. Scored "test" problems are variants of those (transfer tasks), plus unrelated problems (control tasks, where Kel should have nothing to offer). Test problems are never imported into Kel.
+- **Grading.** DS-1000's own unchanged test harness decides pass or fail (the "gold" grade). Generated code is screened and run in an isolated subprocess with a timeout and no secrets.
+- **Isolation.** Experiments use only local Postgres databases (`127.0.0.1:55432`, `kel_*`). Production is never touched.
+- **Re-runs.** Only infrastructure failures (API errors, rate limits) are re-run. A graded attempt is never re-run.
+- **Models.**
+  - Open models on General Compute: gemma-4-31B-it, gpt-oss-120b, deepseek-v3.2, temperature 0.
+  - Claude Sonnet through fresh Claude Code subagents.
+  - Open-model prices are placeholders, so cost results are indicative.
+
+### Rounds 1–3: knowledge as a note pasted into one prompt (single-shot)
+
+The model answers in one reply, with no tools. A script calls `find_ways` once and pastes what Kel returns above the problem, under a neutral "may or may not apply" header. Every round uses fresh problem families.
+
+| Round | Question | Knowledge base and tasks | Arms (notes) | Primary rule |
+| --- | --- | --- | --- | --- |
+| 1 (pilot) | Do Kel's Procedures help, beyond routing? | 60 fit problems (40 with variants, 20 distractors); about 80 transfer tasks and 20 controls | A none · B Kel's Procedure (steps, APIs, pitfalls; no code) · C oracle (the task's own family Procedure) · D placebo (another family's Procedure) · E plain retrieval (nearest past problem plus its code, BM25) · A′ repeat of A | per model B − A, Holm-corrected |
+| 2 | Does returning the verified code with the Procedure help? | 60 new fit families; about 96 transfer tasks per model | A · B · **Bc** (Procedure + verified code) · Cc (oracle + code) · E · Bw (Kel's retrieval shown as a worked example) | per model Bc − A significant **and** pooled interval above 0 |
+| 3 | Do the knowledge-side improvements help (verified examples, related examples)? | a fresh production-like database: 150 fit problems, real ingestion and judging; all 82 variants of 30 families plus 7 controls | A · B (flags off) · **K** (flags on: Procedure + verified example + up to 3 related examples) · E | pooled K − A |
+
+**Routing in rounds 1–3.**
+- **Setups:** "full Kel" (routing over the arm-B attempts) and "routing without knowledge" (over the arm-A attempts), both computed from the recorded attempts. They use the real `recommend_models` ladder over the 3 open models and Sonnet.
+- **The check:** a step is accepted when a realistic check passes (the first test case, or a smoke run when a problem has one test), never the hidden grading tests. The delivered answer is then graded by the full tests.
+- **Targets:** reliability targets 0.5 to 0.9.
+
+This is where the 32–62% saving comes from. The earlier BigCodeBench demo ran the same loop on a small sample: 40 fit and 20 held-out tasks.
+
+### Rounds 4–7: knowledge delivered to an agent working in a loop
+
+The model works as an agent: it can list, read, search and edit files, with a budget of 20 tool calls and no code execution, and writes its answer to `solution.py`. All four rounds reuse round 3's 89 tasks (82 transfer, 7 control) and knowledge base, so they compare only how knowledge is delivered.
+
+| Round | Question | Arms | Primary |
+| --- | --- | --- | --- |
+| 4 | Does Kel help when used the product's way? | **AG** agent alone · **KN** round 3's note pasted into the prompt · **KP** the product: MCP instructions in the system prompt, the `plan_and_run` workflow as the user message, `find_ways` as a tool the agent may call, repo claims from `survey_repo` | KP − AG pooled (not confirmed, +3.3) |
+| 5 | Do the round-4 fixes and the Claude Code hook recover what KP lost? | **AG5** fresh baseline · **KP5** KP with the fixes (related examples, suggested candidate, lighter workflow, call governor) · **KH** the hook: Kel's lookup runs on the task before the agent starts, and the shipped hook's own formatter (`hook.mjs`) appends its text to the prompt; no workflow | KH − AG5 pooled (confirmed, +8.5) |
+| 6 (running) | Which knowledge features does the hook need? | **KH0** both new features off · **KHnR** related examples off · **KHnS** suggested candidate off · **KHr** round-5 hook re-run (replication and Kel's run-to-run noise). Round-5 KH is the comparator, justified by a replay: 234 of 267 lookups identical | KH − KH0 pooled |
+| 7 | Does the hook help a frontier model? | Sonnet through Claude Code subagents, in batches of 6 tasks from different families: **AG7** Sonnet alone · **KH7** Sonnet with the MCP instructions and the hook's text per task. Both arms run side by side, because Sonnet is not deterministic | KH7 − AG7 (not confirmed, +1.2) |
+
+**Recorded every round:**
+- every `find_ways` call and its outcome (resolved, ambiguous, no match);
+- what the hook delivered (procedures, related examples, suggested candidate, text length);
+- steps, tokens, and tokens and dollars per solved task.
+
+### Routing simulation (after round 7, descriptive)
+
+Replays the real per-task results of rounds 5 and 7 as a ladder: cheap model first, the next model only if the answer fails, Sonnet last. The check is DS-1000's hidden tests, a perfect check, so the result is an upper bound. It is not preregistered and not a routed system.
+
+### Next: real repositories (prepared, not run)
+
+- **SWE-bench Verified** (`experiments/swebench/`, run by Chaitanya).
+  - **Split:** issues are split per repository by date. Kel learns only from the earlier 60% (the train pool) and is frozen. Held-out later issues are graded by the official SWE-bench harness.
+  - **Model:** gpt-oss-120b, temperature 0; the step budget is chosen by calibration and then frozen.
+  - **Arms:** A0 none · K Kel's note · E plain retrieval · C1/C2 placebos · A0r repeat of A0 (noise and time-matched baseline) · KP product workflow · **KH hook** (added 2026-09-28, before calibration).
+  - **Primary:** K − A0, with a five-part decision rule: beats A0, beats the placebo, no repository regresses, cost at most 1.2 times, beats the time-matched repeat. KP and KH get their own product verdicts under the same rules.
+- **Claude Code with Kel** ([experiment_claude_code_with_kel.md](experiment_claude_code_with_kel.md), draft).
+  - **Arms:** plain Claude Code vs routing with a check vs routing with a check plus Kel's knowledge vs knowledge alone, run through real headless Claude Code on SWE-bench issues.
+  - **Primary:** two endpoints, both required: at least 30% lower cost, and success non-inferior within 3 points.
