@@ -29,7 +29,14 @@ SCOPE_TYPES = ("global", "organization", "team", "project", "repository", "branc
 # Handlers that write PUBLIC/GLOBAL canonical knowledge: a job for them must be
 # explicitly global+public, or it is refused (no worker publishes private
 # knowledge globally just because it is processing the source).
-PUBLIC_ONLY_JOB_TYPES = frozenset({"ingest_skill_package", "ingest_document"})
+PUBLIC_ONLY_JOB_TYPES = frozenset({
+    "ingest_skill_package",
+    "ingest_document",
+    # Same posture: a verified solution is derived from a public open-source
+    # repository, so a private-scoped enqueue of it would be a request to
+    # publish global knowledge under a narrower scope than it can honor.
+    "ingest_verified_solution",
+})
 
 
 @dataclass

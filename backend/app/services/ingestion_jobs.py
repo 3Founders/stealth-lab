@@ -2512,6 +2512,13 @@ from app.services.semantic import jobs as _semantic_jobs  # noqa: E402
 
 JOB_HANDLERS.update(_semantic_jobs.HANDLERS)
 
+# Verified-solution corpora (ingestion_sources/verified_solutions_jobs.py). Same
+# shape as the semantic registration above: the handler lives in its own module
+# and this file only merges the mapping.
+from app.services.ingestion_sources import verified_solutions_jobs as _vs_jobs  # noqa: E402
+
+JOB_HANDLERS.update(_vs_jobs.HANDLERS)
+
 
 async def claim_jobs(
     pool: asyncpg.Pool, *, limit: int, job_types: Optional[list[str]] = None,
