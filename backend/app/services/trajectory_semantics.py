@@ -426,8 +426,14 @@ async def extract_trajectory_semantics(
     scope_entity_id: Optional[str] = None,
     created_by: str = EXTRACTOR_ID,
     compaction_judge: Any = None,
+    write_procedures: bool = True,
 ) -> dict:
     """
+    `write_procedures=False` (2026-09-29): the caller knows the run FAILED (e.g. a benchmark-graded trajectory with
+    resolved=0). Goals and Claims -- including the failure modes and recovery patterns -- are still written, but no
+    Procedure is: a way that did not work is evidence of what fails, never a way to follow
+    (docs/ingestion_sources_plan.md, hard rule 4). The withheld candidates are counted in the result.
+
     One structured semantic-extraction pass over one episode. Writes a
     `trajectory_extractions` row up front (status='pending'), so a crash
     mid-call leaves a real, inspectable, re-runnable failure record
@@ -600,7 +606,8 @@ async def extract_trajectory_semantics(
         """
         # index -> [trace_event ids]; a compacted line can stand for several events.
         event_ids_by_index = prepared.index_refs
-        counts = {"goals": 0, "claims": 0, "procedures": 0}
+        counts = {"goals": 0, "claims": 0, "procedures": 0, "failure_claims": 0, "procedures_withheld": 0}
+        written: dict[str, Any] = {"primary_goal_id": None, "goal_ids": [], "claim_ids": [], "procedure_rows": []}
 
         async def _link(object_type: str, object_id: str, indices: list[int],
                          epistemic_status: str, confidence: Optional[float] = None) -> None:
@@ -640,12 +647,15 @@ async def extract_trajectory_semantics(
                 await _link("goal", goal["id"], extraction.primary_goal.event_indices,
                             extraction.primary_goal.epistemic_status, extraction.primary_goal.confidence)
                 counts["goals"] += 1
+                written["primary_goal_id"] = str(goal["id"])
+                written["goal_ids"].append(str(goal["id"]))
 
         for sg in extraction.subgoals:
             goal = await _goal_or_none(sg.text)
             if goal is not None:
                 await _link("goal", goal["id"], sg.event_indices, sg.epistemic_status, sg.confidence)
                 counts["goals"] += 1
+                written["goal_ids"].append(str(goal["id"]))
 
         for claim_el in extraction.claims:
             # Single-trajectory extraction can never earn anything stronger
@@ -676,8 +686,40 @@ async def extract_trajectory_semantics(
             if claim_id:
                 await _link("claim", claim_id, claim_el.event_indices, claim_el.epistemic_status, claim_el.confidence)
                 counts["claims"] += 1
+                written["claim_ids"].append(str(claim_id))
 
-        for proc in extraction.candidate_procedures:
+        # Failure modes and recovery patterns were extracted (and paid for) but never stored before 2026-09-29, so a
+        # failed run left no record of WHY it failed. They are Claims of their own type, cited like every other.
+        for claim_type, elements in (("failure_mode", extraction.failure_modes),
+                                     ("recovery_pattern", extraction.recovery_patterns)):
+            for el in elements:
+                claim_id = await capture_claim(
+                    pool,
+                    statement=el.text,
+                    task_ids=[],
+                    justification_episode_id=episode_id,
+                    claim_type=claim_type,
+                    epistemic_status="observed" if el.epistemic_status == "observed" else "inferred",
+                    extraction_version=f"{EXTRACTOR_ID}:{model}",
+                    confidence=el.confidence,
+                    properties={"generalization_level": "single_trace_observation"
+                                if el.epistemic_status == "observed" else "single_trace_inference",
+                                "extracted_by": EXTRACTOR_ID, "run_outcome": extraction.outcome},
+                    owner_id=resolved_owner_id,
+                    visibility=resolved_visibility,
+                    scope_type=resolved_scope_type,
+                    scope_entity_id=resolved_scope_entity_id,
+                    ingestion_context_id=ingestion_context_id,
+                )
+                if claim_id:
+                    await _link("claim", claim_id, el.event_indices, el.epistemic_status, el.confidence)
+                    counts["claims"] += 1
+                    counts["failure_claims"] += 1
+                    written["claim_ids"].append(str(claim_id))
+
+        if not write_procedures:
+            counts["procedures_withheld"] = len(extraction.candidate_procedures)
+        for proc in (extraction.candidate_procedures if write_procedures else []):
             steps: list[dict[str, Any]] = []
             for step in proc.steps:
                 step_goal_id = None
@@ -727,6 +769,9 @@ async def extract_trajectory_semantics(
             await _link("procedure", procedure_row["procedure_id"], proc.event_indices,
                         proc.epistemic_status, proc.confidence)
             counts["procedures"] += 1
+            written["procedure_rows"].append({"id": str(procedure_row["id"]),
+                                          "procedure_id": str(procedure_row["procedure_id"]),
+                                          "name": proc.capability_statement[:120]})
 
         output_hash = _output_hash(raw_text)
         all_confidences = [
@@ -764,6 +809,7 @@ async def extract_trajectory_semantics(
             "episode_id": episode_id,
             "outcome": extraction.outcome,
             **counts,
+            **written,
             "uncertainties": [*extraction.uncertainties, *dropped_goals],
             "compaction": prepared.compaction,
         }

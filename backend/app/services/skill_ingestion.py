@@ -908,7 +908,13 @@ async def _open_ingestion_provenance(
     license_meta = getattr(artifact, "license_metadata", None) or {}
     license_spdx = str(license_meta.get("spdx_id") or "").strip()
     attribution = None
-    if license_spdx and attribution_required(license_spdx):
+    explicit = license_meta.get("attribution")
+    if isinstance(explicit, dict) and explicit.get("notice") and license_spdx:
+        # The caller built the credit itself (app/ingest pipelines: the file's own repository and license at the
+        # exact commit, plus the dataset it came through). Recorded as given, for every license, not only
+        # attribution-required ones: the notice is what find_ways serves next to the content.
+        attribution = explicit
+    elif license_spdx and attribution_required(license_spdx):
         attribution = attribution_for(
             license_spdx, source_uri=artifact.uri,
             creator=license_meta.get("creator") or artifact.repository, title=parsed.name)

@@ -15,7 +15,7 @@ import ast
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "app"
-SCOPE = [APP / "services" / "ingestion_sources", APP / "ingestion"]
+SCOPE = [APP / "services" / "ingestion_sources", APP / "ingestion", APP / "ingest"]
 MAX_DEPTH = 3
 
 BLOCKING = {
