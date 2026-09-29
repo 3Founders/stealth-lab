@@ -1,4 +1,4 @@
--- Migration 128: goal_search_index.has_procedures -- only Goals with a live Procedure are offered to agents.
+-- Migration 130: goal_search_index.has_procedures -- only Goals with a live Procedure are offered to agents.
 -- Next free migration number: 129.
 --
 -- WHY (2026-09-29, local ingestion test): extraction mints a Goal for every step's sub-goal. 75 Goals held 9

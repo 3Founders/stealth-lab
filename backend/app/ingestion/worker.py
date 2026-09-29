@@ -268,7 +268,7 @@ class Worker:
                 log.warning("worker maintenance tick failed; will retry", exc_info=True)
 
     async def _maintenance(self) -> None:
-        """Periodic upkeep. Projections are drained FIRST: Goal.has_procedures (migration 128) is maintained by the
+        """Periodic upkeep. Projections are drained FIRST: Goal.has_procedures (migration 130) is maintained by the
         projection, and placement repair places exactly the Goals whose flag just flipped."""
         if self.cfg.drain_projections:
             from app.services.search_projection import drain_outbox

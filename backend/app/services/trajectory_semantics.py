@@ -751,7 +751,7 @@ async def extract_trajectory_semantics(
                         counts["goals"] += 1
                         # A step-level Goal is a real, distinct canonical object this extraction created -- it earns
                         # its own citation row like the primary Goal/subgoals do. (Not retrievable on its own until
-                        # it has a Procedure: goal_search_index.has_procedures, migration 128.)
+                        # it has a Procedure: goal_search_index.has_procedures, migration 130.)
                         await _link(
                             "goal", step_goal_id,
                             step.event_indices or proc.event_indices,

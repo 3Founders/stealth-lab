@@ -273,7 +273,7 @@ async def goal_has_live_procedure(conn: Any, goal_id: str) -> bool:
 
 
 async def refresh_goal_has_procedures(conn: Any, goal_id: str) -> Optional[bool]:
-    """Recompute one Goal's `has_procedures` (migration 128). A flip bumps `updated_at`, which is what the worker's
+    """Recompute one Goal's `has_procedures` (migration 130). A flip bumps `updated_at`, which is what the worker's
     placement-repair sweep watches: a Goal enters the abstraction hierarchy when it first gets a Procedure.
     Returns the new value, or None when the Goal has no projection yet (its own projection computes it)."""
     has = await goal_has_live_procedure(conn, goal_id)

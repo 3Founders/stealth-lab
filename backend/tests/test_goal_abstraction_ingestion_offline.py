@@ -260,7 +260,7 @@ def wire_handler(
 
 @pytest.mark.asyncio
 async def test_extracted_goal_is_not_placed_until_it_has_a_procedure():
-    # migration 128: a Goal from extraction enters the hierarchy when it first gets a live Procedure (the worker's
+    # migration 130: a Goal from extraction enters the hierarchy when it first gets a live Procedure (the worker's
     # placement-repair sweep sees has_procedures flip), not at creation.
     pool = GoalPool()
     created = await find_or_create_goal(

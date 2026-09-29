@@ -530,7 +530,7 @@ async def find_or_create_goal(
             log.warning("goal %s optional relation proposals failed", row["id"], exc_info=True)
     # Placement only for Goals a person created. Every other Goal (extraction, step sub-goals, procedure capture)
     # is placed when it first gets a live Procedure: its projection's has_procedures flips, and the worker's
-    # placement-repair sweep enqueues it (migration 128). An empty Goal in the hierarchy is noise and judge spend.
+    # placement-repair sweep enqueues it (migration 130). An empty Goal in the hierarchy is noise and judge spend.
     if created_from != "user_created":
         return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": True,
                 "home_shard_id": row.get("home_shard_id", home_shard), "decision": outcome.decision}
@@ -716,7 +716,7 @@ async def search_goals(
     require_procedures: bool = False,
 ) -> list[dict[str, Any]]:
     """Lexical + optional semantic search over Goals, RRF-fused. `require_procedures=True` for agent-facing callers:
-    only Goals with a live Procedure (migration 128)."""
+    only Goals with a live Procedure (migration 130)."""
     if not query_text and not query_embedding:
         raise ValueError("search_goals requires query_text and/or query_embedding")
     if offset < 0:

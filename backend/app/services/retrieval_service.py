@@ -378,7 +378,7 @@ async def search_goals(
             pool, table="goal_search_index", id_col="goal_id", name_col="canonical_name",
             text_expr="canonical_name || COALESCE(': ' || short_description, '')", extra_cols="",
             ctx_text=ctx.query, embedding=emb, embedding_model=model, scope=scope,
-            # only Goals an agent can act on (migration 128): a Goal without a live Procedure is not a candidate
+            # only Goals an agent can act on (migration 130): a Goal without a live Procedure is not a candidate
             where_extra="status IN ('active', 'candidate') AND has_procedures", extra_params=[], cfg=cfg)
         meta.latency_ms["goal_search"] = (time.monotonic() - t0) * 1000
         meta.counts.update(goal_fts_candidates=n_fts, goal_vector_candidates=n_vec, goal_fused=len(cands))
@@ -1289,7 +1289,7 @@ async def search_goal_candidates(
     require_procedures: bool = False,
 ) -> list[dict]:
     """Judge-free Goal search with resolution filtering and safe public rows. `require_procedures=True` (agent-facing
-    callers) keeps only Goals with a live Procedure (migration 128); browsing and identity keep every Goal."""
+    callers) keeps only Goals with a live Procedure (migration 130); browsing and identity keep every Goal."""
     if not query_text and not query_embedding:
         raise ValueError("search_goal_candidates requires query_text and/or query_embedding")
     if resolved not in ("all", "resolved", "unresolved"):

@@ -326,7 +326,7 @@ async def resolve_intent(
     raw_candidates = await search_goals(
         pool, query_text=query_text, query_embedding=query_embedding,
         scope=scope, tenant_scope=tenant_scope, status=status, limit=max(top_k, 5),
-        require_procedures=True,   # an agent is resolving a task: only Goals it can act on (migration 128)
+        require_procedures=True,   # an agent is resolving a task: only Goals it can act on (migration 130)
     )
     ranked = _rank_candidates(raw_candidates, normalized, context=context)[:top_k]
 

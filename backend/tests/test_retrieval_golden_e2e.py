@@ -118,7 +118,7 @@ async def add_proc(pool, name, goal, *, attempts=0, successes=0, precond=None, j
 async def build(pool, *, with_ways: bool = False):
     """Ingest the golden corpus through the production path and project it.
 
-    `with_ways=True` gives every golden Goal one plain Procedure: since migration 128 agent-facing Goal search only
+    `with_ways=True` gives every golden Goal one plain Procedure: since migration 130 agent-facing Goal search only
     offers Goals that have a live Procedure (a Goal an agent cannot act on is not a candidate), so tier-1 tests that
     check WHICH Goal resolves need their Goals to be actionable. Tier-2 tests add their own Procedures."""
     for g in (G_CALLERS, G_CALLERS_PARA, G_DELETE, G_DEPLOY, G_MIG_PG, G_MIG_MY):

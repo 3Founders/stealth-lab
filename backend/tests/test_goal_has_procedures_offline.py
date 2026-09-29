@@ -1,4 +1,4 @@
-"""Offline: goal_search_index.has_procedures (migration 128) -- only Goals with a live Procedure are agent candidates,
+"""Offline: goal_search_index.has_procedures (migration 130) -- only Goals with a live Procedure are agent candidates,
 and a Goal enters the hierarchy when it first gets one."""
 from __future__ import annotations
 
