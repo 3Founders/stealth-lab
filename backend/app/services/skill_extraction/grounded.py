@@ -327,6 +327,12 @@ async def extract_document(
             f"- {p}" for p in resource_paths
         )
 
+    # Pre-spend gate, in the same change as the `record_completion` writer
+    # below (hard rule 6). Placed OUTSIDE the try/except on purpose: the
+    # handler below converts everything into SkillExtractionTransientFailure,
+    # and a budget stop is a cost decision, not a provider failure to retry.
+    await ingest_budget.guard("extraction")
+
     try:
         response = await asyncio.to_thread(  # sync client: keep it off the event loop
             client.chat.completions.create,

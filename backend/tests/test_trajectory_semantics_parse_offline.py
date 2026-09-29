@@ -171,13 +171,30 @@ def test_uppercase_status_and_outcome_are_normalised():
 
 
 def test_the_prompt_names_exactly_the_schema_fields():
-    """The drift that broke extraction: the prompt must spell every key the schema has, and no other."""
-    import re
+    """The drift that broke extraction: the prompt and the parser must agree on every key. The prompt now EMBEDS the
+    schema generated from the Pydantic models, so the check is on that embedded contract: every property it names is a
+    real model field and every model field is named -- the prompt can no longer describe a key the parser rejects."""
+    import json
 
     from app.services.trajectory_semantics import (
-        _SYSTEM_PROMPT, CandidateProcedure, CandidateProcedureStep, SemanticElement, TrajectorySemanticExtraction)
+        _SCHEMA_CONTRACT, _SYSTEM_PROMPT, CandidateProcedure, CandidateProcedureStep, SemanticElement,
+        TrajectorySemanticExtraction)
 
-    named = set(re.findall(r'"([a-z_]+)":', _SYSTEM_PROMPT))
+    assert _SCHEMA_CONTRACT in _SYSTEM_PROMPT, "the contract is embedded verbatim, not paraphrased"
+
+    def property_names(node) -> set:
+        found = set()
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "properties" and isinstance(value, dict):
+                    found |= set(value)
+                found |= property_names(value)
+        elif isinstance(node, list):
+            for item in node:
+                found |= property_names(item)
+        return found
+
+    named = property_names(json.loads(_SCHEMA_CONTRACT))
     fields = set()
     for model in (TrajectorySemanticExtraction, CandidateProcedure, CandidateProcedureStep, SemanticElement):
         fields |= set(model.model_fields)

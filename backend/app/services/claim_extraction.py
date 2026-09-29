@@ -523,12 +523,17 @@ async def extract_claim_candidates_cached(
 
     # Sync client + one call per chunk: run in a worker thread so it doesn't freeze the event
     # loop (and every other ingestion lane in this process) for the whole document.
+    from app.services import ingest_budget
+
+    # Pre-spend gate, same change as the `record_completion` writer below: the
+    # ledger was written after every paid call and checked before none of them,
+    # so the daily cap was a post-hoc tally rather than a ceiling.
+    await ingest_budget.guard("claim_extraction")
     usage: list = []
     candidates = await asyncio.to_thread(
         extract_claim_candidates, client, blocks, document_hints=document_hints, model=model,
         temperature=temperature, usage_sink=usage,
     )
-    from app.services import ingest_budget
     for u in usage:
         await ingest_budget.record_completion(model, "claim_extraction", u)
     # `client is None` means extraction never actually ran (Phase 9's own

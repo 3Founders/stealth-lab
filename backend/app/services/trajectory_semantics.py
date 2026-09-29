@@ -1,4 +1,4 @@
-﻿"""
+"""
 LLM semantic extraction over one episode's trajectory (trajectory-
 ingestion-hardening task, Sec 6). This is the layer the task's spec
 insists on: `deterministic_v1` (observations.py) stays the STRUCTURAL
@@ -50,16 +50,28 @@ from pydantic import BaseModel, Field, ValidationError
 from app.services.claims import capture_claim
 from app.services.goals import find_or_create_goal
 from app.services.llm_json import parse_json_object
+from app.services.governance import BudgetExceeded
 from app.services.observations import _decode_json_field
 from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.procedures import capture_procedure
+from app.utils.aio import run_blocking
 
 log = logging.getLogger(__name__)
 
 EXTRACTOR_ID = "trajectory_semantic_v1"
-PROMPT_VERSION = "v2"   # v2 (BLOCKERS I3): the prompt states the output shape; v1 never sent the schema
+# v2, not v1: the prompt now carries the Pydantic contract verbatim (it used
+# to describe names/enums the strict parser rejects -- measured 13/13 step-0
+# calls rejected, 0 knowledge items, spend incurred). A prompt is a versioned
+# artifact, so the fix gets its own version rather than silently reusing v1.
+PROMPT_VERSION = "v2"
 SCHEMA_VERSION = "v1"
 DEFAULT_MODEL = "gemma-4-31B-it"
+
+#: `llm_spend.operation` for this pass. Same string the guard and the
+#: completion record use, so a pre-spend stop and its ledger row are
+#: attributable to the same thing (hard rule 6: the gate and the writer
+#: land together).
+SEMANTICS_OP = "trajectory_semantics"
 
 _MAX_EVENTS_IN_PROMPT = 200  # long trajectories are segmented upstream; this is a hard safety cap
 _MAX_FIELD_CHARS = 300
@@ -133,33 +145,57 @@ class TrajectorySemanticExtraction(BaseModel):
 
 # --------------------------------------------------------------- prompt
 
+def _schema_contract() -> str:
+    """`TrajectorySemanticExtraction`'s own JSON Schema, rendered for the model.
+
+    The prompt used to *describe* the contract in prose ("output STRICT JSON
+    matching the given schema" -- with no schema given) and drifted from it in
+    three independent, measured ways on the step-0 pilot: it said `goal` where
+    the model wants `primary_goal`, `subgoal_text` where a step wants
+    `description`, and `OBSERVED`/`INFERRED`/`GENERALIZED` where the enum is
+    lowercase. A model that obeyed the prompt therefore produced a response the
+    strict parser *must* reject: 13 of 13 calls failed and 0 knowledge items
+    were produced while the run still spent money.
+
+    Rendering the Pydantic model itself is the fix that cannot rot -- a field
+    rename changes the prompt and the parser in the same edit. `title` keys are
+    dropped (pure noise to a model, and a thing it might echo back, which
+    `extra="forbid"` would then reject); `description` is kept because it is
+    where the event_indices/UUID rationale lives.
+    """
+    def _strip_titles(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {k: _strip_titles(v) for k, v in node.items() if k != "title"}
+        if isinstance(node, list):
+            return [_strip_titles(v) for v in node]
+        return node
+
+    return json.dumps(
+        _strip_titles(TrajectorySemanticExtraction.model_json_schema()), separators=(",", ":")
+    )
+
+
+_SCHEMA_CONTRACT = _schema_contract()
+
 _SYSTEM_PROMPT = """You perform semantic extraction over one agent trajectory (a bounded, \
-numbered sequence of tool-call events). Output ONE JSON object with exactly this shape and these key names \
-(no other keys, no prose around it; every list may be empty):
+numbered sequence of tool-call events).
 
-{"primary_goal": ELEMENT or null,
- "subgoals": [ELEMENT, ...],
- "candidate_procedures": [{"capability_statement": "...", "steps": [{"description": "...", "subgoal_text": "..." \
-or null, "tool_name": "..." or null, "event_indices": [1, 2]}], "event_indices": [1, 2], "epistemic_status": \
-STATUS, "confidence": 0.0-1.0}, ...],
- "claims": [ELEMENT, ...],
- "preconditions": [ELEMENT, ...],
- "failure_modes": [ELEMENT, ...],
- "recovery_patterns": [ELEMENT, ...],
- "verification_actions": [ELEMENT, ...],
- "outcome": "success" | "failure" | "partial_success" | "abandoned" | "blocked" | "unknown" | null,
- "reusable_elements": [ELEMENT, ...],
- "uncertainties": ["plain text note", ...]}
+Output ONE JSON object that validates against the JSON Schema below, and nothing \
+else -- no prose, no explanation, no schema keywords (`$schema`, `title`, \
+`additionalProperties`, `$defs`) in your answer. The schema is the contract: use \
+its field names exactly, its enum values exactly (they are lowercase), and no \
+field that is not in it.
 
-ELEMENT = {"text": "...", "event_indices": [at least one int], "epistemic_status": STATUS, "confidence": 0.0-1.0}
-STATUS = "observed" | "inferred" | "generalized"
+<schema>
+""" + _SCHEMA_CONTRACT + """
+</schema>
 
 Rules:
 - Every extracted element MUST cite `event_indices`: the 1-based numbers of the events (from the \
 numbered list given to you) that directly support it. Never cite an index outside the given range. \
 Never leave event_indices empty for anything except `uncertainties` (which is plain text, not an \
 element).
-- Tag every element's `epistemic_status`:
+- Tag every element's `epistemic_status` with the exact lowercase enum value the schema allows:
   "observed" = directly present in the trajectory (e.g. "a file was read then edited").
   "inferred" = a reasonable semantic interpretation of what happened (e.g. "the agent was debugging \
 a test failure").
@@ -169,15 +205,19 @@ generated files, editing the source and regenerating beats editing the generated
 - A `candidate_procedures[]` entry requires an ACTUAL ordered sequence of steps genuinely present in \
 the trajectory -- never invent one from a single ambiguous action. If the trajectory has no coherent \
 reusable procedure, leave candidate_procedures empty; do not force one.
-- Each procedure step's `subgoal_text` should name the STEP'S GOAL (e.g. "locate the failing test"), \
-not the literal tool call (e.g. NOT "run pytest tests/test_foo.py") -- concrete tools belong in \
-`tool_name`, not in the procedure step text. `tool_name` names the CONCRETE tool/mechanism the step \
-actually used (e.g. "pytest", "ripgrep"); never invent a tool that wasn't actually called.
+- Each procedure step's `description` states what the step did, and its `subgoal_text` names the \
+STEP'S GOAL (e.g. "locate the failing test"), not the literal tool call (e.g. NOT "run pytest \
+tests/test_foo.py") -- concrete tools belong in `tool_name`, not in the procedure step text. \
+`tool_name` names the CONCRETE tool/mechanism the step actually used (e.g. "pytest", "ripgrep"); \
+never invent a tool that wasn't actually called.
+- `primary_goal` is the trajectory's single main objective; `subgoals` are the intermediate objectives.
 - `claims[]` are semantic propositions ("the test failure disappeared after regenerating the client \
 from the schema"), never a restatement of raw telemetry ("a file was modified").
 - Extract real value from a FAILED trajectory too: attempted goal, failure point, failed \
 precondition, recovery attempts, and any repeated-action/thrashing pattern belong in \
 failure_modes/recovery_patterns -- do not leave everything empty just because the run failed.
+- Any list may legitimately be empty -- that is a real answer, not a failure. Do not fabricate an \
+element to make a list non-empty.
 - If you are unsure how to classify something, put a short note in `uncertainties` instead of \
 forcing it into a typed field with a low-quality guess.
 """
@@ -403,7 +443,10 @@ async def extract_trajectory_semantics(
     Raises `ExtractionTransientFailure` on any LLM/parse failure (mirrors
     `GroundedHybridExtractor`'s discipline) -- the caller decides whether
     to retry, escalate to a stronger model, or give up; nothing here
-    silently degrades.
+    silently degrades. One exception to that rule, on purpose: a
+    `BudgetExceeded` from the pre-spend `ingest_budget.guard` propagates
+    as itself rather than as a transient failure, because it is a cost
+    stop and a retry loop must not turn it into a spend.
 
     `escalated`/`escalation_reason`: this function does not decide model
     routing itself -- the caller is expected to have already called
@@ -475,10 +518,31 @@ async def extract_trajectory_semantics(
     extraction_id = str(extraction_row["id"])
 
     try:
-        from app.utils.aio import run_blocking
+        # Hard rule: never let a blocking call run inside an `async def`. This
+        # module is called from the FastAPI API, the MCP server (one process,
+        # one event loop) and headless workers, so a synchronous
+        # `chat.completions.create` invoked inline froze every other coroutine
+        # for the length of the call.
+        #
+        # `run_blocking` rather than a bare `await` because the injected
+        # `client` is a sync `OpenAI` (`ingestion_jobs._general_compute_client()`
+        # / `_extraction_client()` build one, and `_RotatingOpenAIClient` only
+        # exposes a sync `.create`). `run_blocking` puts a sync call in the
+        # default thread pool and awaits a coroutine if the callable returns
+        # one, so an `AsyncOpenAI` injected by a future caller also works -- the
+        # previous shape had neither: a sync client blocked the loop, and an
+        # async one silently produced an un-awaited coroutine that died on
+        # `.choices` (`'coroutine' object has no attribute 'choices'`) after the
+        # call had already been paid for.
+        #
+        # The pre-spend guard is a no-op unless an ingestion worker installed a
+        # budget, and it is checked BEFORE the call, so the daily cap is a real
+        # ceiling rather than a post-hoc tally.
+        from app.services import ingest_budget
 
-        # a sync client: off the event loop, so one slow extraction does not stall the worker's other jobs
-        response = await run_blocking(lambda: client.chat.completions.create(
+        await ingest_budget.guard(SEMANTICS_OP)
+        response = await run_blocking(
+            client.chat.completions.create,
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -486,8 +550,23 @@ async def extract_trajectory_semantics(
             ],
             temperature=0.1,
             max_tokens=4000,
-        ))
+        )
+        await ingest_budget.record_completion(
+            model, SEMANTICS_OP, getattr(response, "usage", None)
+        )
         raw_text = response.choices[0].message.content.strip()
+    except BudgetExceeded:
+        # A cost stop, not a provider failure. It is deliberately NOT wrapped in
+        # ExtractionTransientFailure: a caller that retries transient failures
+        # must not burn attempts against a budget that is already spent, and the
+        # ingestion worker treats a raised BudgetExceeded as "hand the job
+        # back, do not spend an attempt".
+        await pool.execute(
+            "UPDATE trajectory_extractions SET status='failed', error=$2, completed_at=now() "
+            "WHERE id=$1::uuid",
+            extraction_id, f"budget guard refused the call: op={SEMANTICS_OP}",
+        )
+        raise
     except Exception as exc:  # noqa: BLE001 -- any transport/client failure is real
         await pool.execute(
             "UPDATE trajectory_extractions SET status='failed', error=$2, completed_at=now() "
@@ -506,150 +585,181 @@ async def extract_trajectory_semantics(
         )
         raise
 
-    # index -> [trace_event ids]; a compacted line can stand for several events.
-    event_ids_by_index = prepared.index_refs
-    counts = {"goals": 0, "claims": 0, "procedures": 0}
+    async def _persist() -> dict[str, Any]:
+        """Write the extracted objects and close the row.
 
-    async def _link(object_type: str, object_id: str, indices: list[int],
-                     epistemic_status: str, confidence: Optional[float] = None) -> None:
-        event_refs = list(dict.fromkeys(r for i in indices for r in event_ids_by_index.get(i, [])))
-        if not event_refs:
-            return
-        await pool.execute(
-            "INSERT INTO trajectory_extraction_objects "
-            "(extraction_id, object_type, object_id, event_refs, epistemic_status, confidence) "
-            "VALUES ($1::uuid,$2,$3::uuid,$4::uuid[],$5,$6)",
-            extraction_id, object_type, object_id, event_refs, epistemic_status, confidence,
-        )
+        Split out of the enclosing function for ONE reason: so the handler
+        below can cover every persistence step, not just the LLM call and the
+        parse. A rejection raised while writing the objects (observed on the
+        step-0 re-run: `GoalQualityRejected` from `find_or_create_goal`, twice
+        in ten passes) otherwise leaves the row at 'pending' -- which reads as
+        "never ran" to this module's own re-extraction query and leaves a
+        report that says `completed 8, failed 0` beside a counter that says
+        two failed.
+        """
+        # index -> [trace_event ids]; a compacted line can stand for several events.
+        event_ids_by_index = prepared.index_refs
+        counts = {"goals": 0, "claims": 0, "procedures": 0}
 
-    goal_kwargs = dict(
-        scope_type=resolved_scope_type,
-        scope_entity_id=resolved_scope_entity_id,
-        provenance="system_pending_review",
-        owner_id=resolved_owner_id,
-        visibility=resolved_visibility,
-        created_by=created_by,
-    )
-
-    if extraction.primary_goal is not None:
-        goal = await find_or_create_goal(pool, canonical_name=extraction.primary_goal.text, **goal_kwargs)
-        await _link("goal", goal["id"], extraction.primary_goal.event_indices,
-                    extraction.primary_goal.epistemic_status, extraction.primary_goal.confidence)
-        counts["goals"] += 1
-
-    for sg in extraction.subgoals:
-        goal = await find_or_create_goal(pool, canonical_name=sg.text, **goal_kwargs)
-        await _link("goal", goal["id"], sg.event_indices, sg.epistemic_status, sg.confidence)
-        counts["goals"] += 1
-
-    for claim_el in extraction.claims:
-        # Single-trajectory extraction can never earn anything stronger
-        # than these two tiers -- multi_trace_support/benchmark_support/
-        # external_source_support are reserved for future cross-trace
-        # corroboration this task does not build (Sec 18: preserve the
-        # field, don't fabricate the evidence).
-        generalization_level = (
-            "single_trace_observation" if claim_el.epistemic_status == "observed"
-            else "single_trace_inference"
-        )
-        claim_id = await capture_claim(
-            pool,
-            statement=claim_el.text,
-            task_ids=[],
-            justification_episode_id=episode_id,
-            claim_type="trajectory_semantic",
-            epistemic_status="observed" if claim_el.epistemic_status == "observed" else "inferred",
-            extraction_version=f"{EXTRACTOR_ID}:{model}",
-            confidence=claim_el.confidence,
-            properties={"generalization_level": generalization_level, "extracted_by": EXTRACTOR_ID},
-            owner_id=resolved_owner_id,
-            visibility=resolved_visibility,
-            scope_type=resolved_scope_type,
-            scope_entity_id=resolved_scope_entity_id,
-            ingestion_context_id=ingestion_context_id,
-        )
-        if claim_id:
-            await _link("claim", claim_id, claim_el.event_indices, claim_el.epistemic_status, claim_el.confidence)
-            counts["claims"] += 1
-
-    for proc in extraction.candidate_procedures:
-        steps: list[dict[str, Any]] = []
-        for step in proc.steps:
-            step_goal_id = None
-            if step.subgoal_text:
-                step_goal = await find_or_create_goal(pool, canonical_name=step.subgoal_text, **goal_kwargs)
-                step_goal_id = step_goal["id"]
-                counts["goals"] += 1
-                # A step-level Goal is a real, distinct canonical object
-                # this extraction created -- it earns its own citation
-                # row exactly like the primary Goal/subgoals do, not just
-                # an embedded goal_id inside the procedure's own steps
-                # JSONB. Falls back to the procedure's own event_indices
-                # if the step didn't cite any of its own.
-                await _link(
-                    "goal", step_goal_id,
-                    step.event_indices or proc.event_indices,
-                    proc.epistemic_status, proc.confidence,
-                )
-            step_doc: dict[str, Any] = {
-                "description": step.description,
-                "goal_id": step_goal_id,
-                "event_refs": list(dict.fromkeys(r for i in step.event_indices for r in event_ids_by_index.get(i, []))),
-                "source_locator": {"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "span"},
-            }
-            if step.tool_name:
-                step_doc["binding"] = {"kind": "tool", "tool": step.tool_name.strip()}
-            steps.append(step_doc)
-        procedure_row = await capture_procedure(
-            pool,
-            name=proc.capability_statement[:120],
-            goal=proc.capability_statement,
-            steps=steps,
-            source_locator={"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "document"},
-            source_episode_ids=[episode_id],
-            provenance="system_pending_review",
-            created_by=created_by,
-            owner_id=resolved_owner_id,
-            visibility=resolved_visibility,
-            scope_type=resolved_scope_type,
-            scope_entity_id=resolved_scope_entity_id,
-        )
-        if ingestion_context_id:
+        async def _link(object_type: str, object_id: str, indices: list[int],
+                         epistemic_status: str, confidence: Optional[float] = None) -> None:
+            event_refs = list(dict.fromkeys(r for i in indices for r in event_ids_by_index.get(i, [])))
+            if not event_refs:
+                return
             await pool.execute(
-                "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
-                ingestion_context_id, procedure_row["id"],
+                "INSERT INTO trajectory_extraction_objects "
+                "(extraction_id, object_type, object_id, event_refs, epistemic_status, confidence) "
+                "VALUES ($1::uuid,$2,$3::uuid,$4::uuid[],$5,$6)",
+                extraction_id, object_type, object_id, event_refs, epistemic_status, confidence,
             )
-        await _link("procedure", procedure_row["procedure_id"], proc.event_indices,
-                    proc.epistemic_status, proc.confidence)
-        counts["procedures"] += 1
 
-    output_hash = _output_hash(raw_text)
-    all_confidences = [
-        el.confidence for el in (
-            ([extraction.primary_goal] if extraction.primary_goal else [])
-            + extraction.subgoals + extraction.claims + extraction.preconditions
-            + extraction.failure_modes + extraction.recovery_patterns
-            + extraction.verification_actions + extraction.reusable_elements
+        goal_kwargs = dict(
+            scope_type=resolved_scope_type,
+            scope_entity_id=resolved_scope_entity_id,
+            provenance="system_pending_review",
+            owner_id=resolved_owner_id,
+            visibility=resolved_visibility,
+            created_by=created_by,
         )
-    ] + [p.confidence for p in extraction.candidate_procedures]
-    avg_confidence = sum(all_confidences) / len(all_confidences) if all_confidences else None
-    confidence_summary = {
-        **counts,
-        "uncertainties": len(extraction.uncertainties),
-        "avg_confidence": avg_confidence,
-        "min_confidence": min(all_confidences) if all_confidences else None,
-    }
-    await pool.execute(
-        "UPDATE trajectory_extractions SET status='completed', output_hash=$2, "
-        "confidence_summary=$3::jsonb, completed_at=now() WHERE id=$1::uuid",
-        extraction_id, output_hash, json.dumps(confidence_summary),
-    )
 
-    return {
-        "extraction_id": extraction_id,
-        "episode_id": episode_id,
-        "outcome": extraction.outcome,
-        **counts,
-        "uncertainties": extraction.uncertainties,
-        "compaction": prepared.compaction,
-    }
+        if extraction.primary_goal is not None:
+            goal = await find_or_create_goal(pool, canonical_name=extraction.primary_goal.text, **goal_kwargs)
+            await _link("goal", goal["id"], extraction.primary_goal.event_indices,
+                        extraction.primary_goal.epistemic_status, extraction.primary_goal.confidence)
+            counts["goals"] += 1
+
+        for sg in extraction.subgoals:
+            goal = await find_or_create_goal(pool, canonical_name=sg.text, **goal_kwargs)
+            await _link("goal", goal["id"], sg.event_indices, sg.epistemic_status, sg.confidence)
+            counts["goals"] += 1
+
+        for claim_el in extraction.claims:
+            # Single-trajectory extraction can never earn anything stronger
+            # than these two tiers -- multi_trace_support/benchmark_support/
+            # external_source_support are reserved for future cross-trace
+            # corroboration this task does not build (Sec 18: preserve the
+            # field, don't fabricate the evidence).
+            generalization_level = (
+                "single_trace_observation" if claim_el.epistemic_status == "observed"
+                else "single_trace_inference"
+            )
+            claim_id = await capture_claim(
+                pool,
+                statement=claim_el.text,
+                task_ids=[],
+                justification_episode_id=episode_id,
+                claim_type="trajectory_semantic",
+                epistemic_status="observed" if claim_el.epistemic_status == "observed" else "inferred",
+                extraction_version=f"{EXTRACTOR_ID}:{model}",
+                confidence=claim_el.confidence,
+                properties={"generalization_level": generalization_level, "extracted_by": EXTRACTOR_ID},
+                owner_id=resolved_owner_id,
+                visibility=resolved_visibility,
+                scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id,
+                ingestion_context_id=ingestion_context_id,
+            )
+            if claim_id:
+                await _link("claim", claim_id, claim_el.event_indices, claim_el.epistemic_status, claim_el.confidence)
+                counts["claims"] += 1
+
+        for proc in extraction.candidate_procedures:
+            steps: list[dict[str, Any]] = []
+            for step in proc.steps:
+                step_goal_id = None
+                if step.subgoal_text:
+                    step_goal = await find_or_create_goal(pool, canonical_name=step.subgoal_text, **goal_kwargs)
+                    step_goal_id = step_goal["id"]
+                    counts["goals"] += 1
+                    # A step-level Goal is a real, distinct canonical object
+                    # this extraction created -- it earns its own citation
+                    # row exactly like the primary Goal/subgoals do, not just
+                    # an embedded goal_id inside the procedure's own steps
+                    # JSONB. Falls back to the procedure's own event_indices
+                    # if the step didn't cite any of its own.
+                    await _link(
+                        "goal", step_goal_id,
+                        step.event_indices or proc.event_indices,
+                        proc.epistemic_status, proc.confidence,
+                    )
+                step_doc: dict[str, Any] = {
+                    "description": step.description,
+                    "goal_id": step_goal_id,
+                    "event_refs": list(dict.fromkeys(r for i in step.event_indices for r in event_ids_by_index.get(i, []))),
+                    "source_locator": {"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "span"},
+                }
+                if step.tool_name:
+                    step_doc["binding"] = {"kind": "tool", "tool": step.tool_name.strip()}
+                steps.append(step_doc)
+            procedure_row = await capture_procedure(
+                pool,
+                name=proc.capability_statement[:120],
+                goal=proc.capability_statement,
+                steps=steps,
+                source_locator={"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "document"},
+                source_episode_ids=[episode_id],
+                provenance="system_pending_review",
+                created_by=created_by,
+                owner_id=resolved_owner_id,
+                visibility=resolved_visibility,
+                scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id,
+            )
+            if ingestion_context_id:
+                await pool.execute(
+                    "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
+                    ingestion_context_id, procedure_row["id"],
+                )
+            await _link("procedure", procedure_row["procedure_id"], proc.event_indices,
+                        proc.epistemic_status, proc.confidence)
+            counts["procedures"] += 1
+
+        output_hash = _output_hash(raw_text)
+        all_confidences = [
+            el.confidence for el in (
+                ([extraction.primary_goal] if extraction.primary_goal else [])
+                + extraction.subgoals + extraction.claims + extraction.preconditions
+                + extraction.failure_modes + extraction.recovery_patterns
+                + extraction.verification_actions + extraction.reusable_elements
+            )
+        ] + [p.confidence for p in extraction.candidate_procedures]
+        avg_confidence = sum(all_confidences) / len(all_confidences) if all_confidences else None
+        confidence_summary = {
+            **counts,
+            "uncertainties": len(extraction.uncertainties),
+            "avg_confidence": avg_confidence,
+            "min_confidence": min(all_confidences) if all_confidences else None,
+        }
+        await pool.execute(
+            "UPDATE trajectory_extractions SET status='completed', output_hash=$2, "
+            "confidence_summary=$3::jsonb, completed_at=now() WHERE id=$1::uuid",
+            # The dict, NOT json.dumps(confidence_summary). The pool registers a
+            # jsonb codec (`app/db/session.py::_init_connection`) that already
+            # encodes it, so pre-encoding double-encodes and the column ends up
+            # holding a JSON *string* -- measured on the step-0 re-run:
+            # `jsonb_typeof(confidence_summary)` = "string", so
+            # `confidence_summary->>'goals'` is NULL for every completed
+            # extraction and this module's per-extraction yield counters are
+            # unreadable. Same trap already documented in
+            # `route_decision.py:450` and `trace_worker.py:1280`.
+            extraction_id, output_hash, confidence_summary,
+        )
+
+        return {
+            "extraction_id": extraction_id,
+            "episode_id": episode_id,
+            "outcome": extraction.outcome,
+            **counts,
+            "uncertainties": extraction.uncertainties,
+            "compaction": prepared.compaction,
+        }
+
+    try:
+        return await _persist()
+    except Exception as exc:  # noqa: BLE001 -- any persistence failure is real
+        await pool.execute(
+            "UPDATE trajectory_extractions SET status='failed', error=$2, completed_at=now() "
+            "WHERE id=$1::uuid AND status='pending'",
+            extraction_id, f"persistence failed after a successful parse: {exc!r}",
+        )
+        raise
