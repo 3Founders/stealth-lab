@@ -324,6 +324,14 @@ class Settings(BaseSettings):
     # down substrate_search mid-phaseH when Voyage's 3-RPM free tier ran dry.
     embedding_provider_chain: str = "gemini,voyage"
     gemini_embedding_model: str = "gemini-embedding-001"
+    # Vertex embedding pacing (app/services/embeddings.py::_VertexBatcher). Measured on a new project 2026-09-29:
+    # the published `gemini-embedding` quota is 5 requests/min, ~17/min was sustained, and 429s follow beyond that.
+    # Every text goes through one queue that sends up to `vertex_embed_max_batch` texts per request, so the quota
+    # is spent on requests, not on texts. Raise these when Google grants a higher quota for the project.
+    vertex_embed_rpm: int = 12
+    vertex_embed_tpm: int = 40_000
+    vertex_embed_max_batch: int = 64
+    vertex_embed_max_retries: int = 6
     # Shared cross-process TPM budget for Gemini embed calls -- all callers
     # (tau2 sweeps, backfills, smoke tests) draw from one rolling-minute
     # window kept in backend/logs/gemini_bucket.json. Default leaves ~17%

@@ -3095,15 +3095,6 @@ async def compile_skill_artifact(
                     except (V0Violation, GoalQualityRejected):
                         pass
                 steps_json.append(step_entry)
-            independent_step_procedure_ids.extend(await _persist_independent_steps(
-                pool, artifact, parent_name=proc.name, steps=proc.steps, steps_json=steps_json,
-                created_by=created_by, provenance=provenance, embedder=embedder,
-                goal_cache=goal_cache, goal_resolution_skips=ignored_goal_keys,
-                identity_job_id=identity_job_id, scope_type=resolved_scope_type,
-                scope_entity_id=resolved_scope_entity_id, owner_id=owner_id,
-                visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
-                ingestion_context_id=ingestion_context_id,
-            ))
             retrieval_doc = build_procedure_retrieval_document({
                 "name": proc.name, "goal": proc.goal, "steps": steps_json,
                 "preconditions": proc.preconditions, "invariants": [],
@@ -3114,6 +3105,19 @@ async def compile_skill_artifact(
             goal_vec, embedding_metadata = await embedder.embed_one_with_metadata(
                 retrieval_doc, input_type="document",
             )
+            # ORDER MATTERS: embed the parent BEFORE persisting its step procedures. The embedding is the network call
+            # that fails (quota 429, outage); the step procedures are written before capture_procedure, so an embedding
+            # failure AFTER them left `active` step procedures with no vector and no source_artifacts (found in production
+            # 2026-09-29: 4 such rows from 37 failed items). Embedding first makes that failure leave nothing behind.
+            independent_step_procedure_ids.extend(await _persist_independent_steps(
+                pool, artifact, parent_name=proc.name, steps=proc.steps, steps_json=steps_json,
+                created_by=created_by, provenance=provenance, embedder=embedder,
+                goal_cache=goal_cache, goal_resolution_skips=ignored_goal_keys,
+                identity_job_id=identity_job_id, scope_type=resolved_scope_type,
+                scope_entity_id=resolved_scope_entity_id, owner_id=owner_id,
+                visibility=_DOCUMENT_PROCEDURE_VISIBILITY,
+                ingestion_context_id=ingestion_context_id,
+            ))
             retrieval_doc_sha = retrieval_document_sha256(retrieval_doc)
             disp_name, disp_desc, disp_quality = build_display_metadata(
                 {"name": proc.name, "goal": proc.goal, "capability_statement": proc.goal}

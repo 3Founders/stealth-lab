@@ -28,6 +28,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -247,6 +248,122 @@ def _gemini_client(api_key: str) -> Any:
         return client
 
 
+class _VertexBatcher:
+    """One queue for every Vertex embedding request in this event loop.
+
+    WHY: the quota is on REQUESTS per minute (5 published, ~17 sustained on a new project) and on input tokens per
+    minute, not on texts. The ingestion path embeds one text per call (a novelty check and a goal per item, from
+    several workers at once), so it spent a request per text and failed on 429s: 37 of 40 items in the first
+    production SkillMD run. Here every text is queued; the flusher waits for the next request slot, and whatever has
+    piled up meanwhile goes out as ONE request (up to `max_batch` texts and a token cap). Under load the wait is what
+    creates the batch, so no timing window is needed. Texts are not reordered across `input_type`: a request carries
+    one `task_type`.
+
+    Limits, stated: pacing is per process (several worker processes share the project's quota and would each pace
+    themselves), and the token count is an estimate (len/3, conservative for code), not the provider's tokenizer.
+    """
+
+    def __init__(self, send: Any, *, rpm: int, tpm: int, max_batch: int) -> None:
+        self._send = send
+        self._interval = 60.0 / max(1, rpm)
+        self._tpm = max(1, tpm)
+        self._max_request_tokens = max(1, self._tpm // 2)
+        self._max_batch = max(1, max_batch)
+        self._pending: list[tuple[str, str, int, "asyncio.Future[list[float]]"]] = []
+        self._task: Optional["asyncio.Task[None]"] = None
+        self._next_at = 0.0
+        self._window: list[tuple[float, int]] = []          # (sent_at, estimated tokens) within the last 60 s
+        self.requests_sent = 0
+        self.texts_sent = 0
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return max(1, len(text) // 3)
+
+    async def submit(self, text: str, input_type: str) -> list[float]:
+        fut: "asyncio.Future[list[float]]" = asyncio.get_running_loop().create_future()
+        self._pending.append((text, input_type, self._estimate_tokens(text), fut))
+        if self._task is None or self._task.done():
+            self._task = asyncio.get_running_loop().create_task(self._run())
+        return await fut
+
+    def _take_batch(self) -> list[tuple[str, str, int, "asyncio.Future[list[float]]"]]:
+        input_type = self._pending[0][1]
+        batch: list = []
+        tokens = 0
+        for item in self._pending:
+            if item[1] != input_type or item[3].cancelled():
+                continue
+            if batch and (len(batch) >= self._max_batch or tokens + item[2] > self._max_request_tokens):
+                break
+            batch.append(item)
+            tokens += item[2]
+        for item in batch:
+            self._pending.remove(item)
+        return batch
+
+    async def _wait_for_tokens(self, tokens: int) -> None:
+        while True:
+            now = time.monotonic()
+            self._window = [(t, n) for t, n in self._window if now - t < 60.0]
+            used = sum(n for _, n in self._window)
+            if used + tokens <= self._tpm or not self._window:
+                return
+            await asyncio.sleep(max(0.05, 60.0 - (now - self._window[0][0])))
+
+    async def _run(self) -> None:
+        while self._pending:
+            wait = self._next_at - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)       # texts submitted while we sleep join the next request
+            self._pending = [p for p in self._pending if not p[3].cancelled()]
+            if not self._pending:
+                return
+            batch = self._take_batch()
+            if not batch:
+                continue
+            tokens = sum(item[2] for item in batch)
+            try:
+                await self._wait_for_tokens(tokens)
+                self._next_at = time.monotonic() + self._interval
+                self._window.append((time.monotonic(), tokens))
+                self.requests_sent += 1
+                self.texts_sent += len(batch)
+                vectors = await self._send([item[0] for item in batch], batch[0][1])
+                if len(vectors) != len(batch):
+                    raise EmbeddingError(f"Vertex returned {len(vectors)} embeddings for {len(batch)} texts")
+            except asyncio.CancelledError:
+                for item in batch:
+                    if not item[3].done():
+                        item[3].cancel()
+                raise
+            except Exception as exc:  # noqa: BLE001 -- every waiting caller gets the same failure
+                for item in batch:
+                    if not item[3].done():
+                        item[3].set_exception(exc)
+                continue
+            for item, vector in zip(batch, vectors):
+                if not item[3].done():
+                    item[3].set_result(vector)
+
+
+_VERTEX_BATCHERS: "weakref.WeakKeyDictionary[Any, dict[int, _VertexBatcher]]" = weakref.WeakKeyDictionary()
+
+
+def _vertex_batcher(send: Any, dimension: int) -> _VertexBatcher:
+    """The batcher for this event loop and vector dimension (a loop's futures cannot be shared with another loop)."""
+    loop = asyncio.get_running_loop()
+    per_loop = _VERTEX_BATCHERS.setdefault(loop, {})
+    batcher = per_loop.get(dimension)
+    if batcher is None:
+        batcher = _VertexBatcher(
+            send, rpm=settings.vertex_embed_rpm, tpm=settings.vertex_embed_tpm,
+            max_batch=settings.vertex_embed_max_batch,
+        )
+        per_loop[dimension] = batcher
+    return batcher
+
+
 class Embedder:
     """Thin wrapper over Voyage. Batches, because per-node calls are wasteful."""
 
@@ -459,16 +576,23 @@ class Embedder:
         own input_type/dimension, same MRL truncation _embed_gemini already
         relies on.
         """
-        import google.auth
-        import google.auth.transport.requests
-        import httpx
-
         if not settings.vertex_project:
             raise EmbeddingError("no Vertex project configured (VERTEX_PROJECT)")
-        try:
-            credentials = await _vertex_credentials()
-        except Exception as exc:  # noqa: BLE001
-            raise EmbeddingError(f"Vertex ADC unavailable: {exc}") from exc
+        # Every text goes through the per-loop queue (`_VertexBatcher`): paced under the quota, coalesced into shared
+        # requests, retried on 429/5xx. Callers see the same contract as before: one vector per text, in order.
+        batcher = _vertex_batcher(self._vertex_predict, self.dimension)
+        vectors = await asyncio.gather(*(batcher.submit(t, input_type) for t in texts))
+        vectors = list(vectors)
+        self._check_dimension(vectors, self.embedding_model_id())
+        return vectors
+
+    async def _vertex_predict(self, texts: Sequence[str], input_type: str) -> list[list[float]]:
+        """ONE Vertex `:predict` request for `texts` (one `task_type`), retried on 429/5xx/transport errors with
+        exponential backoff + jitter, honouring `Retry-After`. Raises EmbeddingError (its text keeps the status code,
+        which `embed_cache` matches on) once the retries are spent."""
+        import random
+
+        import httpx
 
         task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
         url = (
@@ -476,27 +600,45 @@ class Embedder:
             f"{settings.vertex_project}/locations/{settings.vertex_region}/publishers/google/"
             f"models/{settings.gemini_embedding_model}:predict"
         )
-        instances = [{"content": t, "task_type": task_type} for t in texts]
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    url,
-                    headers={"Authorization": f"Bearer {credentials.token}"},
-                    json={"instances": instances, "parameters": {"outputDimensionality": self.dimension}},
-                )
+        payload = {
+            "instances": [{"content": t, "task_type": task_type} for t in texts],
+            "parameters": {"outputDimensionality": self.dimension},
+        }
+        retries = max(0, settings.vertex_embed_max_retries)
+        body: dict = {}
+        for attempt in range(retries + 1):
+            try:
+                credentials = await _vertex_credentials()
+            except Exception as exc:  # noqa: BLE001
+                raise EmbeddingError(f"Vertex ADC unavailable: {exc}") from exc
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(url, headers={"Authorization": f"Bearer {credentials.token}"}, json=payload)
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+                    try:
+                        wait = float(resp.headers.get("retry-after", ""))
+                    except ValueError:
+                        wait = min(60.0, 5.0 * (2 ** attempt))
+                    wait *= 0.75 + 0.5 * random.random()
+                    log.warning("Vertex embedding %s (attempt %d/%d, %d texts): retrying in %.0fs",
+                                resp.status_code, attempt + 1, retries + 1, len(texts), wait)
+                    await asyncio.sleep(wait)
+                    continue
                 resp.raise_for_status()
                 body = resp.json()
-        except Exception as exc:  # noqa: BLE001
-            raise EmbeddingError(f"Vertex embedding failed: {exc}") from exc
+                break
+            except httpx.TransportError as exc:
+                if attempt < retries:
+                    await asyncio.sleep(min(30.0, 2.0 * (2 ** attempt)))
+                    continue
+                raise EmbeddingError(f"Vertex embedding failed: {exc!r}") from exc
+            except Exception as exc:  # noqa: BLE001
+                raise EmbeddingError(f"Vertex embedding failed: {exc}") from exc
 
         predictions = body.get("predictions") or []
         if len(predictions) != len(texts):
-            raise EmbeddingError(
-                f"Vertex returned {len(predictions)} embeddings for {len(texts)} texts"
-            )
-        vectors = [p["embeddings"]["values"] for p in predictions]
-        self._check_dimension(vectors, self.embedding_model_id())
-        return vectors
+            raise EmbeddingError(f"Vertex returned {len(predictions)} embeddings for {len(texts)} texts")
+        return [p["embeddings"]["values"] for p in predictions]
 
     async def _embed_gemini(
         self, texts: Sequence[str], input_type: InputType
