@@ -451,8 +451,10 @@ export function timeAgo(iso?: string | null): string | null {
 }
 
 /** Flattens a JSONB spec object into short, human-readable "label — value" pairs. Never prints raw JSON. */
-export function humanize(obj: Row | undefined | null): [string, string][] {
+export function humanize(obj: Row | string | undefined | null): [string, string][] {
   if (!obj) return [];
+  // Goals store expected_outcome / verification_requirement as free text; Object.entries on a string yields one entry per character.
+  if (typeof obj === "string") return obj.trim() ? [["", obj]] : [];
   const out: [string, string][] = [];
   for (const [k, v] of Object.entries(obj)) {
     if (v == null) continue;
