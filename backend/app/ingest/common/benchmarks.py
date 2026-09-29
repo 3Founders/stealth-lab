@@ -27,14 +27,14 @@ class TaskTests:
     pass_to_pass: tuple[str, ...]
     test_patch: str
     language: Optional[str] = None
-    fail_to_fail: tuple[str, ...] = ()      # tests that fail even with the accepted fix: the grade is unreliable
+    fail_to_fail: tuple[str, ...] = ()      # tests that fail before AND after the fix: known failures, not graded
     pass_to_fail: tuple[str, ...] = ()      # tests the accepted fix breaks
 
     @property
     def runnable(self) -> bool:
-        """A task Kel can faithfully evaluate against: a runnable image, tests that must flip, and a clean grade."""
-        return bool(self.docker_image and self.fail_to_pass and self.test_patch
-                    and not self.fail_to_fail and not self.pass_to_fail)
+        """A task Kel can faithfully evaluate against: a runnable image, tests that must flip, and an accepted fix
+        that breaks nothing. Always-failing tests (FAIL_TO_FAIL) are listed in the criteria as ignored, not graded."""
+        return bool(self.docker_image and self.fail_to_pass and self.test_patch and not self.pass_to_fail)
 
 
 async def ensure_task_benchmark(pool: Any, *, goal_id: str, tests: TaskTests) -> Optional[str]:
@@ -62,7 +62,9 @@ async def ensure_task_benchmark(pool: Any, *, goal_id: str, tests: TaskTests) ->
         environment_specification={"docker_image": tests.docker_image, "repo": tests.repo,
                                    "base_commit": tests.base_commit, "language": tests.language},
         success_criteria={"all_pass": list(tests.fail_to_pass), "still_pass": list(tests.pass_to_pass),
-                          "rule": "every FAIL_TO_PASS test passes and every PASS_TO_PASS test still passes"},
+                          "ignored_known_failures": list(tests.fail_to_fail),
+                          "rule": "every FAIL_TO_PASS test passes and every PASS_TO_PASS test still passes; "
+                                  "tests that fail with and without the accepted fix are not graded"},
         comparison_policy={"metric": "resolved", "direction": "higher_is_better"},
         provenance=tests.source,
         metadata={"task_key": tests.task_key, "source": tests.source},

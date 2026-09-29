@@ -4,7 +4,7 @@ Per task, in order; the first gate that says no decides and the ledger records w
 
   1. ledger     -- written/rejected items are never redone; failed ones are retried
   2. validity   -- instance id, repository, base commit, issue, gold patch, test patch, failing tests  -> missing_*
-  3. quality    -- tests that fail even with the gold patch, or that the gold patch breaks           -> flaky_* / gold_*
+  3. quality    -- the gold patch breaks tests that passed before (PASS_TO_FAIL)                      -> gold_*
   4. held-out   -- the task id or any task of a held-out repository                                  -> held_out_*
   5. identity   -- this task's solution already written by any source (first source wins)            -> duplicate_identity
   6. license    -- the row's license, or GitHub's detection at the base commit when the row has none -> license_*
@@ -47,8 +47,10 @@ def gate_row(task: Task, held: Any) -> Optional[tuple[str, dict]]:
             return f"missing_{field}", {}
     if not task.fail_to_pass:
         return "missing_fail_to_pass", {}
-    if task.fail_to_fail:
-        return "flaky_fail_to_fail", {"tests": list(task.fail_to_fail[:10])}
+    # FAIL_TO_FAIL is NOT a rejection: those tests fail before AND after the fix (network, credentials, missing
+    # dependencies, already broken) and say nothing about it -- FAIL_TO_PASS proves the fix. Rejecting them dropped
+    # 25% of SWE-rebench (5,242 tasks); the other sources do not even record the field. They are carried into the
+    # Benchmark as known failures that grading ignores.
     if task.pass_to_fail:
         return "gold_patch_breaks_tests", {"tests": list(task.pass_to_fail[:10])}
     if held.is_held_out(task.instance_id):

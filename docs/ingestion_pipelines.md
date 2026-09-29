@@ -73,7 +73,7 @@ A SWE task arrives from several sources: its accepted fix (the verified-solution
 | nebius/SWE-bench-extra | `11dcbfb3…` | `license` (lowercase SPDX) | no image → no Benchmark |
 | SWE-Gym/SWE-Gym | `bb94ed9e…` | no column → GitHub at the base commit | no image → no Benchmark |
 
-Rows are rejected for missing fields, tests that fail even with the fix (`FAIL_TO_FAIL`), a fix that breaks passing tests (`PASS_TO_FAIL`), held-out tasks or repositories, and licenses outside the allowlist. SWE-rebench and SWE-bench-extra share 4,568 tasks and SWE-Gym overlaps SWE-rebench on 196; a task is written by the first source that reaches it. The datasets' own LLM quality labels are recorded, not used as a filter (their thresholds are not documented).
+Rows are rejected for missing fields, a fix that breaks passing tests (`PASS_TO_FAIL`), held-out tasks or repositories, and licenses outside the allowlist. SWE-rebench and SWE-bench-extra share 4,568 tasks and SWE-Gym overlaps SWE-rebench on 196; a task is written by the first source that reaches it. The datasets' own LLM quality labels are recorded, not used as a filter (their thresholds are not documented). Tests that fail both with and without the fix (`FAIL_TO_FAIL`, 25% of SWE-rebench rows: network, credentials, missing dependencies) are not a rejection: FAIL_TO_PASS proves the fix, and the Benchmark lists them as known failures that are not graded.
 
 ## Model
 

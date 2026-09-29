@@ -31,7 +31,7 @@ class _Held:
 
 @pytest.mark.parametrize("override,reason", [
     (dict(patch=""), "missing_patch"), (dict(test_patch=" "), "missing_test_patch"),
-    (dict(FAIL_TO_PASS=[]), "missing_fail_to_pass"), (dict(FAIL_TO_FAIL=["x"]), "flaky_fail_to_fail"),
+    (dict(FAIL_TO_PASS=[]), "missing_fail_to_pass"),
     (dict(PASS_TO_FAIL=["y"]), "gold_patch_breaks_tests"), (dict(instance_id="held__x-1"), "held_out_instance"),
     (dict(repo="Django/Django"), "held_out_repo"),
 ])
@@ -67,7 +67,8 @@ def test_a_task_without_an_image_gets_no_benchmark():
     t = TaskTests("swe:x", "hf:d", "o/r", "c", None, "pytest", ("a",), (), "diff")
     assert not t.runnable
     assert TaskTests("swe:x", "hf:d", "o/r", "c", "img", "pytest", ("a",), (), "diff").runnable
-    assert not TaskTests("swe:x", "hf:d", "o/r", "c", "img", "pytest", ("a",), (), "diff", fail_to_fail=("f",)).runnable
+    # tests that fail with and without the fix are known failures, not a reason to refuse the task or its Benchmark
+    assert TaskTests("swe:x", "hf:d", "o/r", "c", "img", "pytest", ("a",), (), "diff", fail_to_fail=("f",)).runnable
     assert not TaskTests("swe:x", "hf:d", "o/r", "c", "img", "pytest", ("a",), (), "diff", pass_to_fail=("p",)).runnable
 
 
@@ -115,3 +116,9 @@ def test_extraction_refuses_what_breaks_the_contract(bad, msg):
 def test_extraction_refuses_non_json():
     with pytest.raises(ex.ExtractionFailed, match="not JSON"):
         _run("I think the fix is to change the separator.")
+
+
+def test_always_failing_tests_do_not_reject_a_task():
+    task = to_task(SOURCES["swe-rebench"], _row(FAIL_TO_FAIL=["t.py::needs_network"]))
+    assert gate_row(task, _Held()) is None
+    assert task.fail_to_fail == ("t.py::needs_network",)
