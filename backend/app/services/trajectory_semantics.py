@@ -48,7 +48,7 @@ import asyncpg
 from pydantic import BaseModel, Field, ValidationError
 
 from app.services.claims import capture_claim
-from app.services.goals import find_or_create_goal
+from app.services.goals import GoalQualityRejected, find_or_create_goal
 from app.services.llm_json import parse_json_object
 from app.services.governance import BudgetExceeded
 from app.services.observations import _decode_json_field
@@ -195,6 +195,7 @@ Rules:
 numbered list given to you) that directly support it. Never cite an index outside the given range. \
 Never leave event_indices empty for anything except `uncertainties` (which is plain text, not an \
 element).
+- Write `primary_goal`, every `subgoals` entry and every candidate procedure's `capability_statement` as a GENERALIZABLE outcome another agent could reuse on a different codebase ("Add a --version option to a CLI tool"), never as an edit to this one: no file paths, no module or function names, no code or command syntax, no backticks. Repository specifics belong in `claims`, which cite the events.
 - Tag every element's `epistemic_status` with the exact lowercase enum value the schema allows:
   "observed" = directly present in the trajectory (e.g. "a file was read then edited").
   "inferred" = a reasonable semantic interpretation of what happened (e.g. "the agent was debugging \
@@ -622,16 +623,29 @@ async def extract_trajectory_semantics(
             created_by=created_by,
         )
 
+        async def _goal_or_none(text: str) -> Optional[dict]:
+            """The goal-quality gate is right to refuse a goal that names a literal file path or code -- but one such
+            subgoal must not throw away the whole extraction after the model was already paid (measured 2026-09-29:
+            4 of 13 extractions lost to it). Drop that goal, keep everything else, and say so in `uncertainties`."""
+            try:
+                return await find_or_create_goal(pool, canonical_name=text, **goal_kwargs)
+            except GoalQualityRejected as exc:
+                dropped_goals.append(f"goal dropped by the quality gate: {str(exc)[:200]}")
+                return None
+
+        dropped_goals: list[str] = []
         if extraction.primary_goal is not None:
-            goal = await find_or_create_goal(pool, canonical_name=extraction.primary_goal.text, **goal_kwargs)
-            await _link("goal", goal["id"], extraction.primary_goal.event_indices,
-                        extraction.primary_goal.epistemic_status, extraction.primary_goal.confidence)
-            counts["goals"] += 1
+            goal = await _goal_or_none(extraction.primary_goal.text)
+            if goal is not None:
+                await _link("goal", goal["id"], extraction.primary_goal.event_indices,
+                            extraction.primary_goal.epistemic_status, extraction.primary_goal.confidence)
+                counts["goals"] += 1
 
         for sg in extraction.subgoals:
-            goal = await find_or_create_goal(pool, canonical_name=sg.text, **goal_kwargs)
-            await _link("goal", goal["id"], sg.event_indices, sg.epistemic_status, sg.confidence)
-            counts["goals"] += 1
+            goal = await _goal_or_none(sg.text)
+            if goal is not None:
+                await _link("goal", goal["id"], sg.event_indices, sg.epistemic_status, sg.confidence)
+                counts["goals"] += 1
 
         for claim_el in extraction.claims:
             # Single-trajectory extraction can never earn anything stronger
@@ -750,7 +764,7 @@ async def extract_trajectory_semantics(
             "episode_id": episode_id,
             "outcome": extraction.outcome,
             **counts,
-            "uncertainties": extraction.uncertainties,
+            "uncertainties": [*extraction.uncertainties, *dropped_goals],
             "compaction": prepared.compaction,
         }
 

@@ -551,3 +551,57 @@ async def test_confidence_summary_is_bound_as_an_object_not_a_pre_dumped_string(
     # A pre-dumped string is the failure mode, and the repo's own convention
     # (route_decision.py:450) is the opposite of what this used to do.
     assert not isinstance(summary, str)
+
+
+# ---------------------------------------------------------------- goal-quality rejections are per goal, not per extraction
+
+def _element(text, idx=1):
+    return {"text": text, "event_indices": [idx], "epistemic_status": "observed", "confidence": 0.8}
+
+
+def _reject_paths(monkeypatch):
+    from app.services.goals import GoalQualityRejected
+
+    async def gate(pool, *, canonical_name, **kwargs):
+        if "/" in canonical_name:
+            raise GoalQualityRejected(
+                f"canonical_name {canonical_name!r} rejected: names a hyper-specific literal file path, not a generalizable outcome")
+        return {"id": f"goal-{canonical_name[:8]}", "canonical_name": canonical_name, "created": True}
+
+    monkeypatch.setattr(ts, "find_or_create_goal", gate)
+
+
+@pytest.mark.asyncio
+async def test_a_subgoal_the_quality_gate_rejects_is_dropped_and_the_rest_of_the_extraction_survives(monkeypatch, budget_off):
+    """Measured on 13 real trajectories (2026-09-29): 4 lost, every one a single subgoal naming `pkg/module.py`. The gate
+    is right to refuse it; throwing away the primary goal, the claims and the procedures after the model was paid is not."""
+    pool = FakePool(_episode_row(), [_event_row(1), _event_row(2)])
+    _patch_writers(monkeypatch)
+    _reject_paths(monkeypatch)
+    payload = _payload(
+        subgoals=[_element("Modify GeometryArray.fillna in geopandas/array.py to support array-like values.", 1),
+                  _element("locate the failing test", 2)],
+        claims=[_element("the failure is an off-by-one in the parser", 2)],
+    )
+    result = await ts.extract_trajectory_semantics(pool, "episode-1", client=SyncClient(payload, usage=FakeUsage()))
+    assert pool.status_updates() == ["completed"], "one bad goal must not fail the row"
+    assert result["goals"] == 2, "the primary goal and the good subgoal are kept"
+    assert any("goal dropped by the quality gate" in u and "file path" in u for u in result["uncertainties"]), \
+        "the drop is recorded, not silent"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_primary_goal_does_not_discard_the_claims(monkeypatch, budget_off):
+    pool = FakePool(_episode_row(), [_event_row(1), _event_row(2)])
+    _patch_writers(monkeypatch)
+    _reject_paths(monkeypatch)
+    payload = _payload(
+        primary_goal=_element("Change AuthClient base URL in planet/auth.py to point at the auth API", 1),
+        claims=[_element("the auth client used the wrong base URL", 2)],
+    )
+    result = await ts.extract_trajectory_semantics(pool, "episode-1", client=SyncClient(payload, usage=FakeUsage()))
+    assert pool.status_updates() == ["completed"] and result["goals"] == 0 and result["claims"] == 1
+
+
+def test_the_prompt_tells_the_model_goals_must_be_generalizable():
+    assert "GENERALIZABLE" in ts._SYSTEM_PROMPT and "no file paths" in ts._SYSTEM_PROMPT
