@@ -354,8 +354,10 @@ async def authenticate_worker(pool: asyncpg.Pool) -> Optional[Any]:
     with no service-token config). Outside TEST the worker REFUSES to start
     without a valid credential holding ingestion:process: a worker is a
     registered, revocable, least-privilege service, not "whoever holds the
-    database URL". Credentials expire (see SERVICE_TOKEN_MAX_TTL_SECONDS), so
-    long-running workers re-verify on a timer (Worker.reauth)."""
+    database URL". Credentials expire (see SERVICE_TOKEN_MAX_TTL_SECONDS): a
+    worker stops itself gracefully shortly before its credential expires
+    (`_stop_before_expiry`), and its supervisor starts a new one with a fresh
+    credential -- tokens stay short-lived instead of being made long."""
     from app.config import settings
     from app.services import auth_context as ac
     from app.services.service_identity import PgServiceRegistry, ServiceTokenConfig, ServiceTokenRejected, verify_service_token
@@ -412,6 +414,7 @@ async def _amain(args: argparse.Namespace) -> int:
     worker = Worker(pool, cfg, worker_id=worker_id, pools=ShardPools(pool), service=service,
                     job_types=[t.strip() for t in args.job_types.split(",")] if args.job_types else None)
     loop = asyncio.get_running_loop()
+    _stop_before_expiry(loop, worker, service)
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, worker.stop.set)
@@ -430,6 +433,31 @@ async def _amain(args: argparse.Namespace) -> int:
     if result.get("failed"):
         return 1
     return EXIT_BUDGET if result.get("budget_stopped") else 0
+
+
+# How long before its credential expires a worker stops taking jobs. Found 2026-09-30: a worker kept running past
+# its 1-hour credential and every job after that was refused ("not permitted to read this object").
+STOP_BEFORE_EXPIRY_S = 600   # room for the final maintenance pass, which still needs the credential
+
+
+def _stop_before_expiry(loop: Any, worker: Any, service: Any) -> Optional[float]:
+    """Schedule a graceful stop (finish the job in hand, take no new one) STOP_BEFORE_EXPIRY_S before the service
+    credential expires. Returns the delay in seconds, or None when the credential does not expire."""
+    from datetime import datetime, timezone
+
+    expires = getattr(service, "expires_at", None) if service is not None else None
+    if expires is None:
+        return None
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    delay = max(0.0, (expires - datetime.now(timezone.utc)).total_seconds() - STOP_BEFORE_EXPIRY_S)
+
+    def _stop() -> None:
+        logging.getLogger().info("worker credential expires at %s: stopping gracefully for a fresh one", expires)
+        worker.stop.set()
+
+    loop.call_later(delay, _stop)
+    return delay
 
 
 def main(argv: Optional[list[str]] = None) -> None:

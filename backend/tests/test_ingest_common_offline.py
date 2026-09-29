@@ -211,3 +211,23 @@ def test_a_run_resumes_after_a_dropped_connection_and_keeps_its_limit(monkeypatc
 
     with pytest.raises(ValueError):
         asyncio.run(cli._resuming(Pool(), "r", NS(limit=None), broken))
+
+
+def test_a_worker_stops_itself_before_its_credential_expires():
+    import datetime as dt
+    from types import SimpleNamespace as NS
+
+    from app.ingestion import worker as w
+
+    class Loop:
+        def call_later(self, delay, fn):
+            self.delay, self.fn = delay, fn
+
+    stop = asyncio.Event()
+    loop = Loop()
+    expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)
+    delay = w._stop_before_expiry(loop, NS(stop=stop), NS(expires_at=expires))
+    assert 3600 - w.STOP_BEFORE_EXPIRY_S - 5 <= delay <= 3600 - w.STOP_BEFORE_EXPIRY_S
+    loop.fn()
+    assert stop.is_set()
+    assert w._stop_before_expiry(loop, NS(stop=asyncio.Event()), None) is None

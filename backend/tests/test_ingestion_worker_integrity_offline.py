@@ -124,6 +124,7 @@ async def test_embedding_metadata_records_the_selected_vector_space(monkeypatch)
 
     monkeypatch.setattr(embeddings.settings, "use_local_models", False)
     monkeypatch.setattr(embeddings.settings, "embedding_provider_chain", "gemini")
+    monkeypatch.setattr(embeddings.settings, "gemini_embedding_model", "gemini-embedding-001")   # not the .env's
     embedder = Embedder()
 
     async def gemini_succeeds(texts, input_type):
