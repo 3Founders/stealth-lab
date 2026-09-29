@@ -198,8 +198,12 @@ class _VertexOAuthCompletions:
         self._model = model
 
     def create(self, **kwargs):
+        from app.services.vertex_chat import shape_chat_kwargs
+
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
+        # Gemini 3.x: max_tokens counts hidden reasoning, so a small cap came back with content=None.
+        kwargs = shape_chat_kwargs(self._model, kwargs)
         return self._client.chat.completions.create(**kwargs)
 
 
