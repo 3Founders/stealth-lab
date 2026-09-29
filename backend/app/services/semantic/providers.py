@@ -29,6 +29,9 @@ CAP_SUMMARY = "summary"
 CAP_RELATION = "claim_relation"
 CAP_IDENTITY = "identity"
 ALL_CAPS = frozenset({CAP_APPLICABILITY, CAP_RETENTION, CAP_SUMMARY, CAP_RELATION, CAP_IDENTITY})
+# General free-form completion (used by find_ways' listwise sentence ranker). Deliberately NOT in
+# ALL_CAPS: JEV is a fixed-purpose judge and can never be configured to claim it.
+CAP_COMPLETION = "completion"
 
 
 class SemanticProvider:
@@ -42,6 +45,9 @@ class SemanticProvider:
 
     def _unsupported(self, op: str):
         raise ProviderError(ErrorKind.UNSUPPORTED, f"{op} not exposed", provider=self.name)
+
+    async def complete(self, system: str, user: str, max_tokens: int) -> str:
+        self._unsupported("completion")
 
     async def applicability(self, goal: str, candidates: list) -> list:
         self._unsupported("applicability")
@@ -288,7 +294,7 @@ class OpenAICompatProvider(SemanticProvider):
     """`clients` is a list of AsyncOpenAI-shaped objects (one per API key;
     rate-limit on one rotates to the next before the chain sees a failure)."""
 
-    capabilities = ALL_CAPS
+    capabilities = ALL_CAPS | {CAP_COMPLETION}
 
     def __init__(self, name: str, clients: list[Any], model: str, *, max_concurrency: int = 4,
                  min_max_tokens: int = 0):
@@ -305,6 +311,11 @@ class OpenAICompatProvider(SemanticProvider):
         # sets this floor at construction; everyone else's calls are
         # unaffected (default 0 = no floor).
         self._min_max_tokens = min_max_tokens
+
+    async def complete(self, system: str, user: str, max_tokens: int) -> str:
+        """Free-form completion (temperature 0), bounded by this provider's concurrency limit."""
+        async with self._sem:
+            return await self._complete(system, user, max_tokens)
 
     async def _complete(self, system: str, user: str, max_tokens: int) -> str:
         max_tokens = max(max_tokens, self._min_max_tokens)

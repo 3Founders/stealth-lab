@@ -4249,7 +4249,11 @@ async def _find_ways_impl(
             judge = ChainedApplicabilityJudge.from_settings()
         except Exception:  # noqa: BLE001 -- no provider configured: the selector reports not_checked
             judge = None
-        selector = _rf.RepoFactsProcedureSelector(claims=facts, judge=judge)
+        if (settings.find_ways_ranker or "pairwise").strip().lower() == "listwise":
+            from app.execution.sentence_ranker import SentenceRankingSelector
+            selector = SentenceRankingSelector.from_settings(facts)
+        else:
+            selector = _rf.RepoFactsProcedureSelector(claims=facts, judge=judge)
         resolve_context["_procedure_selector"] = selector
     try:
         tree = await resolve_goal(

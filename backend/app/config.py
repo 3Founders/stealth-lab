@@ -161,6 +161,11 @@ class Settings(BaseSettings):
     find_ways_identical_limit: int = 3
     find_ways_max_calls_per_window: int = 30
     find_ways_min_words: int = 3
+    # How find_ways fits a Goal's candidate Procedures to the caller's repo facts (.stealth/claims.md):
+    # "pairwise" = the claim-conditioned judge scores each candidate on its own (repo_facts.py);
+    # "listwise" = one LLM ranks all candidates together over numbered fact sentences
+    # (execution/sentence_ranker.py). Pairwise stays the default until listwise is measured.
+    find_ways_ranker: str = "pairwise"
 
     # --- Vertex AI (OAuth2/ADC, no API key) ---
     # The Cloud Run job's own attached service account already has
