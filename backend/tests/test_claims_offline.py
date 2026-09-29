@@ -109,9 +109,9 @@ def test_capture_claim_accepts_document_provenance_without_task_or_episode():
     ins = conn.stmt("INSERT INTO knowledge_nodes")
     assert ins is not None, "the claim node must still be written"
     sql, args = ins
-    # the ingestion_context_id column is set (9-arg INSERT variant)
+    # the ingestion_context_id column is set (the context-carrying INSERT variant)
     assert "ingestion_context_id" in sql
-    assert str(args[-1]) == CTX_ID
+    assert str(args[8]) == CTX_ID
     # source_ref, which has no column, is kept in properties
     assert args[1].get("source_ref") == "skill_md:acme/repo@deadbeef"
     # no task edge written (no task_nodes resolved)
@@ -160,3 +160,32 @@ def test_capture_claim_drops_when_task_ids_given_but_none_resolve_and_no_provena
     # the task_nodes resolution ran, then the no-anchor no-op fired
     assert conn.stmt("FROM task_nodes WHERE skill_ref = ANY") is not None
     assert conn.stmt("INSERT INTO knowledge_nodes") is None
+
+
+class _StampingEmbedder(FakeEmbedder):
+    dimension = 1024
+
+    def embedding_model_id(self):
+        return "vertex:gemini-embedding-2"
+
+
+def test_capture_claim_records_which_model_made_the_vector():
+    """Production 2026-09-29: hundreds of claims had NO embedding_model_id, so after a model switch their vector space
+    could neither be found nor converted. The model and dimension are recorded on both INSERT variants."""
+    for kwargs in ({"ingestion_context_id": CTX_ID}, {}):
+        conn = FakeConn()
+        _run(_real_capture_claim(
+            FakePool(conn), statement="the CLI rejects --force on a dirty tree", task_ids=[],
+            source_ref="skill_md:acme/repo@deadbeef", embedder=_StampingEmbedder(), **kwargs))
+        sql, args = conn.stmt("INSERT INTO knowledge_nodes")
+        assert "embedding_model_id, embedding_dim" in sql
+        assert args[-2:] == ("vertex:gemini-embedding-2", 1024)
+
+
+def test_an_embedder_without_model_metadata_still_writes_the_claim_with_nulls():
+    conn = FakeConn()
+    _run(_real_capture_claim(
+        FakePool(conn), statement="the CLI rejects --force on a dirty tree", task_ids=[],
+        source_ref="skill_md:acme/repo@deadbeef", embedder=FakeEmbedder()))
+    _sql, args = conn.stmt("INSERT INTO knowledge_nodes")
+    assert args[-2:] == (None, None)

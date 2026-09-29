@@ -304,6 +304,11 @@ async def capture_claim(
 
     embedder = embedder or Embedder()
     embedding = await embedder.embed_one(statement, input_type="document")
+    # Record WHICH model made the vector. Without it a claim's space is unknowable: after a model switch, mixed-space
+    # claims cannot be found or converted (production 2026-09-29: hundreds of claims with no model recorded).
+    _model_of = getattr(embedder, "embedding_model_id", None)
+    embedding_model_id = _model_of() if callable(_model_of) else None
+    embedding_dim = getattr(embedder, "dimension", None)
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -338,22 +343,24 @@ async def capture_claim(
                 node_id = await conn.fetchval(
                     "INSERT INTO knowledge_nodes "
                     "(node_type, name, properties, embedding, created_by, provenance, "
-                    " owner_id, visibility, scope_type, scope_entity_id, ingestion_context_id) "
+                    " owner_id, visibility, scope_type, scope_entity_id, ingestion_context_id, "
+                    " embedding_model_id, embedding_dim) "
                     "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, "
-                    " $6::visibility_level, $7, $8, $9::uuid) "
+                    " $6::visibility_level, $7, $8, $9::uuid, $10, $11) "
                     "RETURNING id",
                     statement[:200], props, to_pgvector(embedding), created_by,
                     owner_id, visibility, scope_type, scope_entity_id, ingestion_context_id,
+                    embedding_model_id, embedding_dim,
                 )
             else:
                 node_id = await conn.fetchval(
                     "INSERT INTO knowledge_nodes "
                     "(node_type, name, properties, embedding, created_by, provenance, "
-                    " owner_id, visibility, scope_type, scope_entity_id) "
-                    "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level, $7, $8) "
+                    " owner_id, visibility, scope_type, scope_entity_id, embedding_model_id, embedding_dim) "
+                    "VALUES ('claim', $1, $2, $3::vector, $4, 'company_ingested', $5, $6::visibility_level, $7, $8, $9, $10) "
                     "RETURNING id",
                     statement[:200], props, to_pgvector(embedding), created_by,
-                    owner_id, visibility, scope_type, scope_entity_id,
+                    owner_id, visibility, scope_type, scope_entity_id, embedding_model_id, embedding_dim,
                 )
             for row in rows:
                 await conn.execute(

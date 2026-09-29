@@ -172,7 +172,7 @@ class FakeDB:
         q = query.strip()
         if q.startswith("INSERT INTO knowledge_nodes"):
             (name, properties, embedding, created_by, owner_id, visibility,
-             scope_type, scope_entity_id) = params
+             scope_type, scope_entity_id, embedding_model_id, embedding_dim) = params
             nid = str(uuid4())
             self.knowledge_nodes[nid] = {
                 "id": UUID(nid), "node_type": "claim", "name": name,
