@@ -732,3 +732,27 @@ def test_override_note_labels_the_run_as_a_policy_override():
     from app.ingestion.step6_admin import CC_BY_OVERRIDE_NOTE
     assert "POLICY OVERRIDE" in CC_BY_OVERRIDE_NOTE
     assert "DEFAULT_ALLOWLIST is unchanged" in CC_BY_OVERRIDE_NOTE
+
+
+def test_ci_workflow_is_gated_on_its_own_repository_license_when_resolved():
+    """--resolve-repo-licenses: each workflow is judged by ITS repository's license, never the compilation's."""
+    from types import SimpleNamespace
+
+    from app.services.ingestion_sources.workflow_knowledge import gate_license
+
+    class _Resolver:
+        licenses = {"acme/mit": "MIT", "acme/gpl": "GPL-3.0", "acme/ccby": "CC-BY-4.0", "acme/none": None}
+
+        def spdx_for(self, repo):
+            return self.licenses[repo]
+
+    def art(repo):
+        return SimpleNamespace(source_type="ci_workflow_history", repository=repo, path=".github/workflows/ci.yml",
+                               uri="x", license_metadata={"license": "CC-BY-4.0", "spdx_id": "CC-BY-4.0"})
+
+    r = _Resolver()
+    assert gate_license(art("acme/mit"), repo_license=r) == ("ALLOW", None)
+    assert gate_license(art("acme/gpl"), repo_license=r)[0] == "REJECT"
+    assert gate_license(art("acme/ccby"), repo_license=r)[0] == "QUARANTINE", "step 6 records no attribution"
+    assert gate_license(art("acme/none"), repo_license=r)[0] == "QUARANTINE"
+    assert gate_license(art("acme/mit"))[0] == "QUARANTINE", "no resolver -> unchanged: quarantined"

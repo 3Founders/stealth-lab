@@ -166,23 +166,30 @@ def is_workflow_artifact(artifact: SourceArtifact) -> bool:
 # License gating -- per item
 # --------------------------------------------------------------------------
 
-def gate_license(artifact: SourceArtifact) -> "tuple[str, Optional[str]]":
+def gate_license(artifact: SourceArtifact, *, repo_license: Any = None) -> "tuple[str, Optional[str]]":
     """Return `(decision, reason)` from the allowlist, per artifact.
 
     The caller's configured allowlist can extend what is allowed but can never
     buy an ALLOW for a reject-family license -- that subtraction is
     `_effective_allowlist`'s job inside `classify_spdx`, not something to
     reimplement here.
+
+    `repo_license` (e.g. `skillmd_dataset.GitHubLicenseResolver`: cached, token-aware, counts rate limits) resolves
+    a CI workflow's OWN repository license; without it such an item stays QUARANTINE.
     """
     from app.services.repo_license_policy import classify_spdx
 
     metadata = artifact.license_metadata or {}
     spdx = metadata.get("spdx_id") or metadata.get("license")
     if artifact.source_type == "ci_workflow_history":
-        # A workflow file's license is the *repository's*, which this source
-        # does not resolve (Zenodo is a compilation; per-repo licensing is
-        # unknowable from it). The corpus license is recorded as provenance,
-        # but the item license is genuinely unknown -> QUARANTINE, not ALLOW.
+        # A workflow file's license is the *repository's*; the Zenodo record's CC-BY-4.0 covers the compilation
+        # only and is recorded as provenance. Unresolved -> QUARANTINE, not ALLOW.
+        repo = artifact.repository or ""
+        if repo_license is not None and repo.count("/") == 1:
+            repo_spdx = repo_license.spdx_for(repo)
+            verdict = classify_spdx(repo_spdx, source_path=artifact.path or artifact.uri)
+            return verdict.decision, (None if verdict.decision == "ALLOW"
+                                      else f"repository license {repo_spdx or 'unknown'}: {verdict.reason}")
         return classify_spdx(None, source_path=artifact.path or "unknown").decision, \
             "per-repository license is not resolvable from a Zenodo compilation"
     return classify_spdx(spdx, source_path=artifact.path or artifact.uri).decision, None

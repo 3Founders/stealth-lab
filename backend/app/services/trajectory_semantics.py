@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.services.claims import capture_claim
 from app.services.goals import find_or_create_goal
+from app.services.llm_json import parse_json_object
 from app.services.observations import _decode_json_field
 from app.services.procedure_extraction.schema import ExtractionTransientFailure
 from app.services.procedures import capture_procedure
@@ -56,7 +57,7 @@ from app.services.procedures import capture_procedure
 log = logging.getLogger(__name__)
 
 EXTRACTOR_ID = "trajectory_semantic_v1"
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"   # v2 (BLOCKERS I3): the prompt states the output shape; v1 never sent the schema
 SCHEMA_VERSION = "v1"
 DEFAULT_MODEL = "gemma-4-31B-it"
 
@@ -133,7 +134,25 @@ class TrajectorySemanticExtraction(BaseModel):
 # --------------------------------------------------------------- prompt
 
 _SYSTEM_PROMPT = """You perform semantic extraction over one agent trajectory (a bounded, \
-numbered sequence of tool-call events). Output STRICT JSON matching the given schema. Nothing else.
+numbered sequence of tool-call events). Output ONE JSON object with exactly this shape and these key names \
+(no other keys, no prose around it; every list may be empty):
+
+{"primary_goal": ELEMENT or null,
+ "subgoals": [ELEMENT, ...],
+ "candidate_procedures": [{"capability_statement": "...", "steps": [{"description": "...", "subgoal_text": "..." \
+or null, "tool_name": "..." or null, "event_indices": [1, 2]}], "event_indices": [1, 2], "epistemic_status": \
+STATUS, "confidence": 0.0-1.0}, ...],
+ "claims": [ELEMENT, ...],
+ "preconditions": [ELEMENT, ...],
+ "failure_modes": [ELEMENT, ...],
+ "recovery_patterns": [ELEMENT, ...],
+ "verification_actions": [ELEMENT, ...],
+ "outcome": "success" | "failure" | "partial_success" | "abandoned" | "blocked" | "unknown" | null,
+ "reusable_elements": [ELEMENT, ...],
+ "uncertainties": ["plain text note", ...]}
+
+ELEMENT = {"text": "...", "event_indices": [at least one int], "epistemic_status": STATUS, "confidence": 0.0-1.0}
+STATUS = "observed" | "inferred" | "generalized"
 
 Rules:
 - Every extracted element MUST cite `event_indices`: the 1-based numbers of the events (from the \
@@ -141,12 +160,12 @@ numbered list given to you) that directly support it. Never cite an index outsid
 Never leave event_indices empty for anything except `uncertainties` (which is plain text, not an \
 element).
 - Tag every element's `epistemic_status`:
-  OBSERVED = directly present in the trajectory (e.g. "a file was read then edited").
-  INFERRED = a reasonable semantic interpretation of what happened (e.g. "the agent was debugging \
+  "observed" = directly present in the trajectory (e.g. "a file was read then edited").
+  "inferred" = a reasonable semantic interpretation of what happened (e.g. "the agent was debugging \
 a test failure").
-  GENERALIZED = a candidate reusable insight that plausibly extends beyond this one run (e.g. "for \
+  "generalized" = a candidate reusable insight that plausibly extends beyond this one run (e.g. "for \
 generated files, editing the source and regenerating beats editing the generated file directly").
-  Default to INFERRED when unsure; never claim OBSERVED for something not literally present.
+  Default to "inferred" when unsure; never claim "observed" for something not literally present.
 - A `candidate_procedures[]` entry requires an ACTUAL ordered sequence of steps genuinely present in \
 the trajectory -- never invent one from a single ambiguous action. If the trajectory has no coherent \
 reusable procedure, leave candidate_procedures empty; do not force one.
@@ -209,6 +228,20 @@ def _validate_indices(indices: list[int], max_index: int) -> list[int]:
     return [i for i in indices if 1 <= i <= max_index]
 
 
+_ENUM_KEYS = ("epistemic_status", "outcome")
+
+
+def _lowercase_enums(node: Any) -> Any:
+    """"OBSERVED" -> "observed", "Success" -> "success": case is never the meaning, and the schema's Literals
+    are lowercase. Anything else stays exactly as the model wrote it."""
+    if isinstance(node, dict):
+        return {k: (v.strip().lower() if k in _ENUM_KEYS and isinstance(v, str) else _lowercase_enums(v))
+                for k, v in node.items()}
+    if isinstance(node, list):
+        return [_lowercase_enums(v) for v in node]
+    return node
+
+
 def parse_extraction_response(text: str, *, max_index: int) -> TrajectorySemanticExtraction:
     """Strict parse: valid JSON, valid against the Pydantic schema. Raises
     ExtractionTransientFailure on anything else -- same "never silently
@@ -217,12 +250,13 @@ def parse_extraction_response(text: str, *, max_index: int) -> TrajectorySemanti
     an element left with zero valid indices after filtering is dropped
     and recorded in `uncertainties` instead of persisted as canonical
     knowledge with fabricated evidence."""
-    try:
-        payload = json.loads(text)
-    except (ValueError, TypeError) as exc:
+    # BLOCKERS I3: models fence their JSON and capitalise the status words; neither is a real schema miss.
+    payload = parse_json_object(text or "")
+    if payload is None:
         raise ExtractionTransientFailure(
-            f"semantic extraction response was not valid JSON: {text[:200]!r}"
-        ) from exc
+            f"semantic extraction response was not valid JSON: {(text or '')[:200]!r}"
+        )
+    payload = _lowercase_enums(payload)
 
     try:
         parsed = TrajectorySemanticExtraction.model_validate(payload)
@@ -441,7 +475,10 @@ async def extract_trajectory_semantics(
     extraction_id = str(extraction_row["id"])
 
     try:
-        response = client.chat.completions.create(
+        from app.utils.aio import run_blocking
+
+        # a sync client: off the event loop, so one slow extraction does not stall the worker's other jobs
+        response = await run_blocking(lambda: client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
@@ -449,7 +486,7 @@ async def extract_trajectory_semantics(
             ],
             temperature=0.1,
             max_tokens=4000,
-        )
+        ))
         raw_text = response.choices[0].message.content.strip()
     except Exception as exc:  # noqa: BLE001 -- any transport/client failure is real
         await pool.execute(

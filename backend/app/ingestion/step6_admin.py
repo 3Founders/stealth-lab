@@ -47,6 +47,9 @@ def add_parsers(sub: Any) -> None:
     ci.add_argument("--record", default=None, help="Zenodo record id (must match the pin)")
     ci.add_argument("--allow-cc-by-4", action="store_true",
                     help="count what CC-BY-4.0 would yield; does NOT ingest by default")
+    ci.add_argument("--resolve-repo-licenses", action="store_true",
+                    help="look up each workflow's own repository license on GitHub (one cached call per repo; "
+                         "set GITHUB_TOKEN/PERSONAL_GITHUB_TOKEN for 5,000/h) and count what the allowlist admits")
     ci.add_argument("--dry-run", action="store_true")
 
     prs = sub.add_parser("step6-bot-prs", help="mine merged dependency-bump PRs as CANDIDATES")
@@ -123,6 +126,11 @@ async def _ci_workflows(pool: Any, a: Any) -> int:
     # No body tarball in a bounded probe, so every artifact is body-less. That
     # is fine for counting: the compiler gates on shape, not on body length.
     source = CiWorkflowHistorySource(path, record_id=record)
+    resolver = None
+    if getattr(a, "resolve_repo_licenses", False):
+        from app.services.ingestion_sources.skillmd_dataset import GitHubLicenseResolver
+
+        resolver = GitHubLicenseResolver()
 
     verdicts: dict[str, int] = {}
     goal_named = 0
@@ -139,7 +147,10 @@ async def _ci_workflows(pool: Any, a: Any) -> int:
             artifact = source.fetch(ref)
             if "change_type: A" in (artifact.content or ""):
                 additions += 1
-            decision, reason = gate_license(artifact)
+            decision, reason = gate_license(artifact, repo_license=resolver)
+            if resolver is not None and ref.repository:
+                repo_spdx = resolver.spdx_for(ref.repository) or "(none)"
+                reason = f"{repo_spdx}" if decision == "ALLOW" else reason
             key = f"{decision}:{reason or 'allowlisted'}"
             verdicts[key] = verdicts.get(key, 0) + 1
             if propose_goal(artifact) is not None:
@@ -158,6 +169,12 @@ async def _ci_workflows(pool: Any, a: Any) -> int:
     report["repositories"] = len(repos)
     report["additions"] = additions
     report["license_verdicts"] = verdicts
+    if resolver is not None:
+        report["repo_license_lookups"] = resolver.stats()
+        report["admissible_by_repo_license"] = sum(n for k, n in verdicts.items() if k.startswith("ALLOW:"))
+        if resolver.rate_limited:
+            report["warning"] = (f"{resolver.rate_limited} license lookups were rate-limited; their items count as "
+                                 "QUARANTINE here, so the admissible count is a lower bound")
     report["goals_named_deterministically"] = goal_named
     report["would_ingest_without_license_gate"] = goal_named if a.allow_cc_by_4 else 0
     if a.allow_cc_by_4:

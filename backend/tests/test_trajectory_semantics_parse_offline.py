@@ -153,3 +153,35 @@ def test_failure_outcome_trajectory_still_parses_with_failure_content():
     assert result.outcome == "failure"
     assert len(result.failure_modes) == 1
     assert len(result.recovery_patterns) == 1
+
+
+# BLOCKERS I3: 13/13 real extraction calls failed -- the prompt never sent the schema, asked for OBSERVED where the
+# schema wants "observed", and a fenced reply was not JSON to a strict json.loads.
+
+def test_fenced_reply_parses():
+    text = "Here it is:\n```json\n" + json.dumps(_valid_payload()) + "\n```"
+    assert parse_extraction_response(text, max_index=5).outcome == "success"
+
+
+def test_uppercase_status_and_outcome_are_normalised():
+    payload = _valid_payload(outcome="Success")
+    payload["primary_goal"]["epistemic_status"] = "OBSERVED"
+    result = parse_extraction_response(json.dumps(payload), max_index=5)
+    assert result.primary_goal.epistemic_status == "observed" and result.outcome == "success"
+
+
+def test_the_prompt_names_exactly_the_schema_fields():
+    """The drift that broke extraction: the prompt must spell every key the schema has, and no other."""
+    import re
+
+    from app.services.trajectory_semantics import (
+        _SYSTEM_PROMPT, CandidateProcedure, CandidateProcedureStep, SemanticElement, TrajectorySemanticExtraction)
+
+    named = set(re.findall(r'"([a-z_]+)":', _SYSTEM_PROMPT))
+    fields = set()
+    for model in (TrajectorySemanticExtraction, CandidateProcedure, CandidateProcedureStep, SemanticElement):
+        fields |= set(model.model_fields)
+    assert named == fields, (named - fields, fields - named)
+    for status in ("observed", "inferred", "generalized"):
+        assert f'"{status}"' in _SYSTEM_PROMPT
+    assert "OBSERVED" not in _SYSTEM_PROMPT and "INFERRED" not in _SYSTEM_PROMPT
