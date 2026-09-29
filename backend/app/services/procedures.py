@@ -160,6 +160,7 @@ async def capture_procedure(
     source_artifacts: Optional[list] = None,
     goal_cache: Optional[dict] = None,
     ingestion_context_id: Optional[str] = None,
+    verifier_check: Optional[dict] = None,
 ) -> dict:
     """
     Inserts a new procedure, always starting `candidate` / `fresh` /
@@ -384,7 +385,7 @@ async def capture_procedure(
             retrieval_document, retrieval_document_version, retrieval_document_sha256,
             display_name, display_description, display_metadata_version, tenant_id,
             availability, is_engineering_fixture, achieves_goal_id, home_shard_id, source_key, source_locator,
-            source_artifacts, ingestion_context_id
+            source_artifacts, ingestion_context_id, verifier_check
         ) VALUES (
             $24::uuid, $40::uuid, $1, $2, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb,
             $7::jsonb, $8::jsonb, $9::jsonb, $10::jsonb,
@@ -394,7 +395,7 @@ async def capture_procedure(
             $25, $26, $27, $28, $29, $30, $31,
             $32, $33, $34, $35, $36, $37, $38::uuid,
             $39::procedure_availability, $41, $42::uuid, $43, $44, $45::jsonb, $46::jsonb,
-            $47::uuid
+            $47::uuid, $48::jsonb
         )
         ON CONFLICT (source_key) WHERE source_key IS NOT NULL AND t_invalid IS NULL DO NOTHING
         RETURNING id, procedure_id
@@ -452,6 +453,7 @@ async def capture_procedure(
         source_locator,
         source_artifacts,
         ingestion_context_id,
+        verifier_check,
     )
     if row is None:
         if home_shard_id != "K000":
@@ -514,10 +516,14 @@ _SUPERSEDE_CARRY_COLUMNS: tuple[str, ...] = (
     # and lives on the same shard. (Before this, supersede silently dropped
     # the link, leaving every re-ingested version un-linked.)
     "achieves_goal_id", "home_shard_id", "source_locator", "source_artifacts",
+    # Migration 125. Carried forward like every other content column: a
+    # supersede that only touches `steps` must keep the Procedure's runnable
+    # check, or the new version would silently stop being checkable.
+    "verifier_check",
 )
 
 # Columns added by later migrations: a prior row read before they existed simply carries NULL/default forward.
-_SUPERSEDE_OPTIONAL_COLUMNS = frozenset({"source_locator", "source_artifacts"})
+_SUPERSEDE_OPTIONAL_COLUMNS = frozenset({"source_locator", "source_artifacts", "verifier_check"})
 
 # Per-column SQL cast for the carry-forward INSERT. asyncpg infers scalar
 # text/int/timestamptz from the INSERT target, so only the structured
@@ -539,6 +545,7 @@ _SUPERSEDE_COLUMN_CASTS: dict[str, str] = {
     "achieves_goal_id": "uuid",
     "source_locator": "jsonb",
     "source_artifacts": "jsonb",
+    "verifier_check": "jsonb",
 }
 
 
