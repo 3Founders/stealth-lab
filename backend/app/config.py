@@ -332,6 +332,11 @@ class Settings(BaseSettings):
     vertex_embed_tpm: int = 40_000
     vertex_embed_max_batch: int = 64
     vertex_embed_max_retries: int = 6
+    # gemini-embedding-2: location=global, `:embedContent`, its own vector space, 300,000 requests/min on this project.
+    # Switch with GEMINI_EMBEDDING_MODEL=gemini-embedding-2 -- and RE-EMBED everything already stored (a different model
+    # is a different space; `embedding_model_id` is recorded per row so mixed rows are detectable, not comparable).
+    vertex_embed_rpm_gen2: int = 6000
+    vertex_embedding_location: str = ""      # "" = global for gemini-embedding-2
     # Shared cross-process TPM budget for Gemini embed calls -- all callers
     # (tau2 sweeps, backfills, smoke tests) draw from one rolling-minute
     # window kept in backend/logs/gemini_bucket.json. Default leaves ~17%

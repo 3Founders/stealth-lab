@@ -186,6 +186,7 @@ def vertex(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
     _FakeClient.script, _FakeClient.posts = [], []
     emb._VERTEX_BATCHERS.clear()
+    emb._VERTEX_HTTP_CLIENTS.clear()
     return _FakeClient
 
 
@@ -235,3 +236,79 @@ def test_the_parent_is_embedded_before_its_step_procedures_are_written():
     steps_at = src.index("independent_step_procedure_ids.extend(await _persist_independent_steps(")
     capture_at = src.index("result = await capture_procedure(", steps_at)
     assert embed_at < steps_at < capture_at
+
+
+# ------------------------------------------------------------------------------------------------ gemini-embedding-2
+
+class _Gen2Client(_FakeClient):
+    urls: list = []
+
+    async def post(self, url, headers=None, json=None):
+        type(self).urls.append(url)
+        type(self).posts.append(json)
+        dim = json["outputDimensionality"]
+        return _Resp(200, {"embedding": {"values": [0.5] * dim}})
+
+
+@pytest.fixture()
+def gen2(monkeypatch, vertex):
+    import httpx
+
+    monkeypatch.setattr(emb.settings, "gemini_embedding_model", "gemini-embedding-2", raising=False)
+    monkeypatch.setattr(emb.settings, "vertex_embedding_location", "", raising=False)
+    monkeypatch.setattr(emb.settings, "vertex_embed_rpm_gen2", 60_000, raising=False)
+    monkeypatch.setattr(httpx, "AsyncClient", _Gen2Client)
+    _Gen2Client.urls, _Gen2Client.posts = [], []
+    emb._VERTEX_BATCHERS.clear()
+    emb._VERTEX_HTTP_CLIENTS.clear()
+    return _Gen2Client
+
+
+def test_gen2_uses_the_global_embedcontent_endpoint_and_the_configured_dimension(gen2):
+    e = emb.Embedder()
+    out = _run(e.embed([f"goal {uuid.uuid4().hex}"], input_type="document"))
+    assert len(out) == 1 and len(out[0]) == e.dimension
+    assert gen2.urls[0].startswith("https://aiplatform.googleapis.com/v1/projects/p/locations/global/publishers/google/")
+    assert gen2.urls[0].endswith("/models/gemini-embedding-2:embedContent"), "not :predict -- that 404s for this model"
+    assert gen2.posts[0]["outputDimensionality"] == e.dimension
+
+
+def test_gen2_states_the_task_in_the_text_because_it_has_no_task_type(gen2):
+    e = emb.Embedder()
+    tag = uuid.uuid4().hex
+    _run(e.embed([f"deploy {tag}"], input_type="document"))
+    _run(e.embed([f"deploy {tag}"], input_type="query"))
+    texts = [p["content"]["parts"][0]["text"] for p in gen2.posts]
+    assert texts == [f"title: none | text: deploy {tag}", f"task: search result | query: deploy {tag}"]
+    assert all("task_type" not in p for p in gen2.posts)
+
+
+def test_gen2_sends_one_request_per_text_and_keeps_order(gen2):
+    e = emb.Embedder()
+    tag = uuid.uuid4().hex
+    out = _run(e.embed([f"a{i} {tag}" for i in range(5)], input_type="document"))
+    assert len(out) == 5 and len(gen2.posts) == 5
+
+
+def test_the_embedding_model_id_changes_with_the_model_so_vector_spaces_are_never_mixed_silently(gen2):
+    assert emb.Embedder().embedding_model_id() == "vertex:gemini-embedding-2"
+
+
+def test_one_http_client_serves_every_request_in_a_loop(gen2):
+    """Building a client costs ~1 s of blocking CA-bundle loading on Windows; a client per request made 60 concurrent
+    embeds take 63 s against a provider that answered 60 raw requests in 1.4 s."""
+    built = []
+    real = gen2.__init__
+
+    def counting_init(self, *a, **kw):
+        built.append(1)
+        real(self, *a, **kw)
+
+    gen2.__init__ = counting_init
+    try:
+        e = emb.Embedder()
+        tag = uuid.uuid4().hex
+        _run(e.embed([f"x{i} {tag}" for i in range(20)], input_type="document"))
+    finally:
+        gen2.__init__ = real
+    assert len(gen2.posts) == 20 and len(built) == 1

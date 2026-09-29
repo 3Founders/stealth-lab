@@ -248,6 +248,24 @@ def _gemini_client(api_key: str) -> Any:
         return client
 
 
+_VERTEX_HTTP_CLIENTS: "weakref.WeakKeyDictionary[Any, Any]" = weakref.WeakKeyDictionary()
+
+
+async def _vertex_http_client() -> Any:
+    """ONE keep-alive httpx client per event loop. Building a client loads the CA bundle, which took ~1 s of blocking CPU
+    each time on Windows: with a client per request, 60 concurrent embeds took 63 s (measured 2026-09-29) although the
+    provider answered 60 raw requests in 1.4 s. The client is built in a thread so that one load does not block the loop."""
+    import httpx
+
+    loop = asyncio.get_running_loop()
+    task = _VERTEX_HTTP_CLIENTS.get(loop)
+    if task is None:
+        task = loop.create_task(asyncio.to_thread(lambda: httpx.AsyncClient(
+            timeout=60.0, limits=httpx.Limits(max_connections=32, max_keepalive_connections=16))))
+        _VERTEX_HTTP_CLIENTS[loop] = task
+    return await task
+
+
 class _VertexBatcher:
     """One queue for every Vertex embedding request in this event loop.
 
@@ -356,10 +374,15 @@ def _vertex_batcher(send: Any, dimension: int) -> _VertexBatcher:
     per_loop = _VERTEX_BATCHERS.setdefault(loop, {})
     batcher = per_loop.get(dimension)
     if batcher is None:
-        batcher = _VertexBatcher(
-            send, rpm=settings.vertex_embed_rpm, tpm=settings.vertex_embed_tpm,
-            max_batch=settings.vertex_embed_max_batch,
-        )
+        if settings.gemini_embedding_model.startswith("gemini-embedding-2"):
+            # 300,000 requests/min and no input-token quota on this project (measured 2026-09-29: 60 concurrent
+            # requests, all 200, 1.4 s): pace far above the -001 limits, and batch only for connection reuse.
+            batcher = _VertexBatcher(send, rpm=settings.vertex_embed_rpm_gen2, tpm=10_000_000, max_batch=64)
+        else:
+            batcher = _VertexBatcher(
+                send, rpm=settings.vertex_embed_rpm, tpm=settings.vertex_embed_tpm,
+                max_batch=settings.vertex_embed_max_batch,
+            )
         per_loop[dimension] = batcher
     return batcher
 
@@ -586,34 +609,28 @@ class Embedder:
         self._check_dimension(vectors, self.embedding_model_id())
         return vectors
 
-    async def _vertex_predict(self, texts: Sequence[str], input_type: str) -> list[list[float]]:
-        """ONE Vertex `:predict` request for `texts` (one `task_type`), retried on 429/5xx/transport errors with
-        exponential backoff + jitter, honouring `Retry-After`. Raises EmbeddingError (its text keeps the status code,
-        which `embed_cache` matches on) once the retries are spent."""
+    def _is_gen2(self) -> bool:
+        """`gemini-embedding-2` is served at location=global through `:embedContent` (not `:predict`), takes no
+        `task_type`, and lives in its own vector space; its project quota is 300,000 requests/min against 5 for -001."""
+        return settings.gemini_embedding_model.startswith("gemini-embedding-2")
+
+    async def _vertex_post_json(self, url: str, payload: dict, n_texts: int) -> dict:
+        """POST to Vertex, retried on 429/5xx/transport errors with exponential backoff + jitter, honouring
+        `Retry-After`. Raises EmbeddingError (its text keeps the status code, which `embed_cache` matches on) once the
+        retries are spent."""
         import random
 
         import httpx
 
-        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
-        url = (
-            f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/projects/"
-            f"{settings.vertex_project}/locations/{settings.vertex_region}/publishers/google/"
-            f"models/{settings.gemini_embedding_model}:predict"
-        )
-        payload = {
-            "instances": [{"content": t, "task_type": task_type} for t in texts],
-            "parameters": {"outputDimensionality": self.dimension},
-        }
         retries = max(0, settings.vertex_embed_max_retries)
-        body: dict = {}
         for attempt in range(retries + 1):
             try:
                 credentials = await _vertex_credentials()
             except Exception as exc:  # noqa: BLE001
                 raise EmbeddingError(f"Vertex ADC unavailable: {exc}") from exc
             try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    resp = await client.post(url, headers={"Authorization": f"Bearer {credentials.token}"}, json=payload)
+                client = await _vertex_http_client()
+                resp = await client.post(url, headers={"Authorization": f"Bearer {credentials.token}"}, json=payload)
                 if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
                     try:
                         wait = float(resp.headers.get("retry-after", ""))
@@ -621,12 +638,11 @@ class Embedder:
                         wait = min(60.0, 5.0 * (2 ** attempt))
                     wait *= 0.75 + 0.5 * random.random()
                     log.warning("Vertex embedding %s (attempt %d/%d, %d texts): retrying in %.0fs",
-                                resp.status_code, attempt + 1, retries + 1, len(texts), wait)
+                                resp.status_code, attempt + 1, retries + 1, n_texts, wait)
                     await asyncio.sleep(wait)
                     continue
                 resp.raise_for_status()
-                body = resp.json()
-                break
+                return resp.json()
             except httpx.TransportError as exc:
                 if attempt < retries:
                     await asyncio.sleep(min(30.0, 2.0 * (2 ** attempt)))
@@ -634,11 +650,54 @@ class Embedder:
                 raise EmbeddingError(f"Vertex embedding failed: {exc!r}") from exc
             except Exception as exc:  # noqa: BLE001
                 raise EmbeddingError(f"Vertex embedding failed: {exc}") from exc
+        raise EmbeddingError("Vertex embedding failed: retries exhausted")     # unreachable; keeps the type checker honest
 
+    async def _vertex_predict(self, texts: Sequence[str], input_type: str) -> list[list[float]]:
+        """The provider request(s) for `texts` (one input_type). `gemini-embedding-001`: ONE `:predict` request carrying
+        every text. `gemini-embedding-2`: one `:embedContent` request per text (its quota is not the constraint)."""
+        if self._is_gen2():
+            return await self._vertex_embed_content(texts, input_type)
+        task_type = "RETRIEVAL_QUERY" if input_type == "query" else "RETRIEVAL_DOCUMENT"
+        url = (
+            f"https://{settings.vertex_region}-aiplatform.googleapis.com/v1/projects/"
+            f"{settings.vertex_project}/locations/{settings.vertex_region}/publishers/google/"
+            f"models/{settings.gemini_embedding_model}:predict"
+        )
+        body = await self._vertex_post_json(url, {
+            "instances": [{"content": t, "task_type": task_type} for t in texts],
+            "parameters": {"outputDimensionality": self.dimension},
+        }, len(texts))
         predictions = body.get("predictions") or []
         if len(predictions) != len(texts):
             raise EmbeddingError(f"Vertex returned {len(predictions)} embeddings for {len(texts)} texts")
         return [p["embeddings"]["values"] for p in predictions]
+
+    @staticmethod
+    def _gen2_text(text: str, input_type: str) -> str:
+        """gemini-embedding-2 has no `task_type`; the task is stated in the text (Google's documented retrieval form)."""
+        return f"task: search result | query: {text}" if input_type == "query" else f"title: none | text: {text}"
+
+    async def _vertex_embed_content(self, texts: Sequence[str], input_type: str) -> list[list[float]]:
+        """`gemini-embedding-2` at location=global. `outputDimensionality` is Google's Matryoshka reduction (3072, 1536,
+        1024, 768 ... verified 2026-09-29); the returned vector is already unit-normalized at every size."""
+        location = settings.vertex_embedding_location or "global"
+        host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
+        url = (f"https://{host}/v1/projects/{settings.vertex_project}/locations/{location}/publishers/google/"
+               f"models/{settings.gemini_embedding_model}:embedContent")
+        gate = asyncio.Semaphore(16)
+
+        async def one(text: str) -> list[float]:
+            async with gate:
+                body = await self._vertex_post_json(url, {
+                    "content": {"parts": [{"text": self._gen2_text(text, input_type)}]},
+                    "outputDimensionality": self.dimension,
+                }, 1)
+            values = (body.get("embedding") or {}).get("values")
+            if not values:
+                raise EmbeddingError("Vertex embedContent returned no embedding")
+            return values
+
+        return list(await asyncio.gather(*(one(t) for t in texts)))
 
     async def _embed_gemini(
         self, texts: Sequence[str], input_type: InputType
