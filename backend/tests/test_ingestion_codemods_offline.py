@@ -1925,3 +1925,45 @@ class _ThreadRecordingAdapter:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ---------------------------------------------------------------------------------------- the generated document parses
+
+def test_the_generated_document_survives_the_real_skill_parser_for_hostile_yaml_values():
+    """The first --apply failed 39 of 39 with `invalid YAML frontmatter`: the document wrote `name: @nodejs/x` unquoted
+    ('@' cannot start a plain YAML scalar), and a description containing ': ' or a newline breaks a plain scalar the same
+    way. The dry run never parsed the document, so nothing caught it. This runs it through the real parser."""
+    from types import SimpleNamespace
+
+    from app.services.ingestion_sources.codemod_node import _composed_document
+    from app.services.skill_ingestion import parse_skill_md
+
+    inventory = SimpleNamespace(layout="nested", negative_case_count=1, case_count=4)
+    check = {"case_count": 4, "gates": {"jssg_fixture_suite": "pass"}, "claim": "maps 4 inputs to 4 outputs"}
+    hostile = [
+        ("@nodejs/import-assertions-to-attributes", "Handle `import x from 'y' assert {type: \"json\"}`."),
+        ("@nodejs/fs-rm", "Replace rmdir: recursive.\nSecond line, with a # hash and 'quotes' and \"double\"."),
+        ("@nodejs/tls-legacy", "- starts with a dash, and ends with a colon:"),
+        ("@nodejs/percent", "100% of {braces} and [brackets] & ampersands *stars* !bang |pipe >fold"),
+    ]
+    for name, description in hostile:
+        document = _composed_document(recipe_name=name, manifest={"description": description}, package={},
+                                      transforms=["src/workflow.ts"], test_command="npm test", inventory=inventory, check=check)
+        parsed = parse_skill_md(document, fallback_name="fallback")          # must not raise: invalid YAML frontmatter
+        assert parsed.name == name and parsed.description == " ".join(description.replace("`", "'").split())
+
+
+def test_backticks_in_the_description_do_not_reach_the_goal_gate():
+    """DEP0116's description quotes `url.parse` and `new URL()`; the goal gate rejects literal code syntax, which cost
+    1 of the 39 recipes on the first real --apply."""
+    from types import SimpleNamespace
+
+    from app.services.ingestion_sources.codemod_node import _composed_document
+    from app.services.skill_ingestion import parse_skill_md
+
+    document = _composed_document(
+        recipe_name="@nodejs/url-parse-to-url", manifest={"description": "Handle DEP0116 via transforming `url.parse` to `new URL()`"},
+        package={}, transforms=[], test_command=None,
+        inventory=SimpleNamespace(layout="flat", negative_case_count=0, case_count=1), check={})
+    parsed = parse_skill_md(document, fallback_name="x")
+    assert "`" not in parsed.description and "url.parse" in parsed.description

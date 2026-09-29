@@ -20,6 +20,8 @@
     python -m app.ingestion.admin metrics                     # one JSON snapshot: queue, providers, retrieval, shards, projection, cost
     python -m app.ingestion.admin alerts [--no-notify] [--fail-on critical]   # evaluate thresholds, de-dupe, notify (ops_alerts.py)
     python -m app.ingestion.admin fold-implementations        # convert archived legacy implementations into step bindings / one-step procedures
+    python -m app.ingestion.admin ingest-codemods --source nodejs --checkout DIR --commit SHA [--apply --shard-dsn-env ENV]   # step 7 (local shard only)
+    python -m app.ingestion.admin ingest-trajectories --shard-dsn-env ENV [--limit N --semantics N --budget-cap-usd X]      # steps 0/1 (local shard only)
 """
 from __future__ import annotations
 
@@ -81,6 +83,10 @@ def _parse(argv=None) -> argparse.Namespace:
     _skillmd_cli.add_parsers(sub)
     from app.ingestion import step6_admin as _step6_cli  # step 6: CI workflows + bot PRs
     _step6_cli.add_parsers(sub)
+    from app.ingestion import codemod_cli as _codemod_cli  # step 7: ingest-codemods (local shard only)
+    _codemod_cli.add_parsers(sub)
+    from app.ingestion import traj_pilot_cli as _traj_cli  # steps 0/1: ingest-trajectories (local shard only)
+    _traj_cli.add_parsers(sub)
     sub.add_parser("judge-health")   # probe every semantic judge path (single + batch) and each General Compute key
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
@@ -108,11 +114,62 @@ async def _record_verify(pool, name: str, ok: bool) -> None:
         pass
 
 
+LOCAL_PILOT_COMMANDS = ("ingest-codemods", "ingest-trajectories")
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+async def _run_local_pilot(a: argparse.Namespace) -> int:
+    """Local-shard pilots (step 7 codemods, steps 0/1 trajectories).
+
+    The pool is built from the SAME loopback DSN the pilot validates -- never from the control database. The pilots'
+    own loopback checks inspect an environment variable, so handing them the control pool would let a loopback env var
+    authorise writes to somewhere else entirely. A dry-run codemod pass needs no pool at all."""
+    import os
+    from urllib.parse import urlparse
+
+    from app.db.session import create_pool
+
+    writing = a.cmd == "ingest-trajectories" or bool(getattr(a, "apply", False))
+    pool = None
+    if writing:
+        env_name = getattr(a, "shard_dsn_env", None) or "DATABASE_URL"
+        dsn = os.environ.get(env_name)
+        if not dsn:
+            print(f"ERROR: {env_name} is not set; local pilots resolve a DSN by NAME, never by value")
+            return 2
+        if (urlparse(dsn).hostname or "").lower() not in _LOOPBACK:
+            print(f"ERROR: refusing: {env_name} points at {urlparse(dsn).hostname or '?'}, which is not loopback. "
+                  "These pilots write rows and may only write a local shard.")
+            return 2
+        pool = await create_pool(dsn, max_size=2)
+    try:
+        if pool is not None:
+            from app.ingestion.preflight import PendingMigrations, assert_schema_current
+
+            try:
+                await assert_schema_current(pool, command=a.cmd)
+            except PendingMigrations as exc:
+                print(f"ERROR: {exc}")
+                return 2
+        if a.cmd == "ingest-codemods":
+            from app.ingestion import codemod_cli as _codemod_cli
+
+            return await _codemod_cli.run(pool, a)
+        from app.ingestion import traj_pilot_cli as _traj_cli
+
+        return await _traj_cli.run(pool, a)
+    finally:
+        if pool is not None:
+            await pool.close()
+
+
 async def _amain(a: argparse.Namespace) -> int:
     from app.db.session import create_pool
     from app.services import search_projection as sp
     from app.services import shards as sh
 
+    if a.cmd in LOCAL_PILOT_COMMANDS:
+        return await _run_local_pilot(a)
     pool = await create_pool(control_database_url(), max_size=2)
     try:
         if a.cmd.startswith("routing-"):

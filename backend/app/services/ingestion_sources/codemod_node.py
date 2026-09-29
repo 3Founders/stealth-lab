@@ -44,6 +44,7 @@ HONEST SCOPE LIMITS
 """
 from __future__ import annotations
 
+import json
 import hashlib
 import re
 import shlex
@@ -490,8 +491,13 @@ def _composed_document(
 
     lines = [
         "---",
-        f"name: {recipe_name}",
-        f"description: {description}",
+        # JSON strings are valid YAML double-quoted scalars. Unquoted, `name: @nodejs/x` is invalid YAML ('@' is a
+        # reserved indicator) and every generated document failed to parse (39 of 39 on the first --apply);
+        # a description with ': ' or a newline breaks a plain scalar the same way.
+        f"name: {json.dumps(recipe_name)}",
+        # The description becomes the procedure's goal, and the goal gate refuses literal code syntax ("...
+        # `url.parse` to `new URL()`" was rejected), so backticks become quotes here. The body keeps the original text.
+        f"description: {json.dumps(' '.join(description.replace(chr(96), chr(39)).split()))}",
         "---",
         "",
         f"# {recipe_name}",
@@ -506,24 +512,21 @@ def _composed_document(
         "",
         "## When to apply",
         "",
-        f"1. Target language: {', '.join(languages) or 'not declared in codemod.yaml'}.",
-        f"2. Declared capabilities: {', '.join(capabilities) or 'none'}.",
-        f"3. Transform entrypoints: {', '.join(transforms) or 'none found under src/'}.",
-        f"4. Keywords: {', '.join(keywords) or 'none declared'}.",
+        f"- Target language: {', '.join(languages) or 'not declared in codemod.yaml'}.",
+        f"- Declared capabilities: {', '.join(capabilities) or 'none'}.",
+        f"- Transform entrypoints: {', '.join(transforms) or 'none found under src/'}.",
+        f"- Keywords: {', '.join(keywords) or 'none declared'}.",
         "",
-        "## How to run it",
+        # The parser takes steps ONLY from a Steps/Procedure/Workflow section when there is one (numbered items under
+        # "When to apply" are deliberately not steps), so the runnable procedure lives here.
+        "## Steps",
         "",
-        "```bash",
-        f"npx codemod {recipe_name}",
-        "```",
-        "",
-        "Offline, against a local checkout, without touching the hosted registry:",
-        "",
-        "```bash",
-        f"codemod workflow run -w ./{RECIPES_DIRNAME}/{recipe_name.split('/', 1)[-1]}/workflow.yaml",
-        "```",
-        "",
-        f"The repository's own test command for this recipe is: `{test_command or 'not declared'}`",
+        f"1. Confirm the project targets {', '.join(languages) or 'the language this codemod declares'} and uses the "
+        "API described above.",
+        f"2. Run the codemod: `npx codemod {recipe_name}`. Offline, against a local checkout, without the hosted "
+        f"registry: `codemod workflow run -w ./{RECIPES_DIRNAME}/{recipe_name.split('/', 1)[-1]}/workflow.yaml`.",
+        "3. Review the diff. The transform is a deterministic source-to-source rewrite, not a model call.",
+        f"4. Re-run the project's own tests: `{test_command or 'not declared'}`.",
         "",
         "## Check (self-consistency, not correctness)",
         "",

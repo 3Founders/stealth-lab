@@ -59,9 +59,9 @@ SOURCES = ("nodejs", "openrewrite")
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "[::1]"})
 
 COST_NOTE = (
-    "0.0 by construction: this source is LLM-free. Extraction is a directory read "
-    "plus a static declaration parse, and the check is a subprocess or a parse. No "
-    "judge, no extractor, no embedding."
+    "0.0 by construction on a dry run: this source is LLM-free. Extraction is a directory read "
+    "plus a static declaration parse, and the check is a subprocess or a parse. --apply compiles each recipe with "
+    "a budget-guarded model call (--max-usd) and embeds it, so `dollars` here stays 0.0 and the spend is on the ledger."
 )
 
 
@@ -99,6 +99,14 @@ def add_parsers(sub: Any) -> None:
                         ".js fixture look malformed")
     p.add_argument("--max-pages", type=int, default=None,
                    help="cap on OpenRewrite documentation pages fetched")
+    p.add_argument("--max-usd", type=float, default=1.0,
+                   help="model-spend ceiling for --apply, enforced BEFORE each paid call (rolling 24h ledger)")
+    p.add_argument("--deterministic", action="store_true",
+                   help="--apply through the raw ingest_skill_md path: no provenance, no idempotency (re-runs duplicate "
+                        "every row); local experiments only")
+    p.add_argument("--no-embed", action="store_true",
+                   help="write rows WITHOUT vectors or the duplicate check (they stay invisible to semantic search "
+                        "until a backfill runs); the default embeds")
     p.add_argument("--no-checks", action="store_true",
                    help="skip the executable gates (NOT for a real run; they are the point)")
     p.add_argument("--include-rejected", action="store_true",
@@ -188,26 +196,67 @@ def _report_item(artifact: Any) -> dict[str, Any]:
     }
 
 
-async def _apply(pool: Any, documents: list[tuple[str, str]]) -> dict[str, Any]:
-    from app.services.skill_ingestion import ingest_skill_md
+async def _apply(pool: Any, artifacts: list[Any], *, embed: bool = True, deterministic: bool = False,
+                 max_usd: float = 1.0) -> dict[str, int]:
+    """Write the gated artifacts. The default is the REAL compiler (`compile_skill_artifact`): it registers the Source,
+    opens the IngestionContext every derived row stamps (so a license takedown can find them), records the artifact by
+    content hash (a re-run is a no-op, a changed recipe is a new version), extracts the structured claims/goals with a
+    budget-guarded model call, and embeds. `--deterministic` keeps the old raw `ingest_skill_md` path -- no provenance,
+    no idempotency (every re-run duplicated all rows), for local experiments only."""
+    outcomes: dict[str, int] = {}
 
-    outcomes: dict[str, int] = {"captured": 0, "duplicate": 0, "error": 0}
-    for name, content in documents:
-        try:
-            result = await ingest_skill_md(
-                pool,
-                content,
-                fallback_name=name,
-                created_by="codemod_ingestion",
-                visibility="public",
-                embed=False,
-            )
-        except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
-            outcomes["error"] += 1
-            print(f"ERROR ingesting {name}: {exc}", file=sys.stderr)
-            continue
-        status = str(result.get("status", "error"))
-        outcomes[status if status in outcomes else "error"] += 1
+    def bump(key: str) -> None:
+        outcomes[key] = outcomes.get(key, 0) + 1
+
+    if deterministic:
+        from app.services.skill_ingestion import ingest_skill_md
+
+        for artifact in artifacts:
+            name = getattr(artifact, "path", None) or getattr(artifact, "uri", "?")
+            try:
+                result = await ingest_skill_md(pool, artifact.content, fallback_name=name, created_by="codemod_ingestion",
+                                               visibility="public", embed=embed)
+            except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
+                bump("error")
+                print(f"ERROR ingesting {name}: {exc}", file=sys.stderr)
+                continue
+            bump(str(result.get("status", "error")))
+        return outcomes
+
+    from app.config import settings
+    from app.services import ingest_budget
+    from app.services.embeddings import Embedder
+    from app.services.governance import BudgetExceeded
+    from app.services.ingestion_jobs import _general_compute_client
+    from app.services.skill_ingestion import compile_skill_artifact
+
+    client = await run_blocking(_general_compute_client)
+    judge_model = settings.general_compute_judge_model or "gemma-4-31B-it"
+    # Every paid extraction path checks the budget BEFORE it spends, but only when a budget is installed.
+    budget = ingest_budget.install(pool, cap_usd=max_usd) if ingest_budget.active() is None else None
+    try:
+        for artifact in artifacts:
+            name = getattr(artifact, "path", None) or getattr(artifact, "uri", "?")
+            try:
+                outcome = await compile_skill_artifact(
+                    pool, artifact, embedder=Embedder(rate_limit_pool=pool), client=client,
+                    created_by="codemod_ingestion", admission_llm_model=judge_model,
+                    extraction_llm_model=judge_model,
+                    fallback_extraction_llm_model=settings.general_compute_fallback_model or None,
+                    claim_extraction_llm_model=judge_model,
+                )
+            except BudgetExceeded as exc:
+                bump("budget_exceeded")
+                print(f"STOP: {exc}", file=sys.stderr)
+                break
+            except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
+                bump("error")
+                print(f"ERROR ingesting {name}: {exc}", file=sys.stderr)
+                continue
+            bump(str(getattr(outcome, "status", None) or "error"))
+    finally:
+        if budget is not None:
+            ingest_budget.uninstall()
     return outcomes
 
 
@@ -256,7 +305,7 @@ async def run(pool: Any, a: Any) -> int:
     bytes_stored = 0
     processed = 0
     discovery_stats: dict[str, int] = {}
-    capture: list[tuple[str, str]] = []
+    capture: list[Any] = []
 
     refs = await run_blocking(_discover_all, adapter)   # the whole walk+fetch, off the loop
     for ref in refs:
@@ -307,7 +356,7 @@ async def run(pool: Any, a: Any) -> int:
         item = _report_item(artifact)
         accepted.append(item)
         bytes_produced += item["bytes"]
-        capture.append((item["recipe_id"] or item["path"] or item["uri"], artifact.content))
+        capture.append(artifact)
 
     # Read after the generator has been drained: `discover()` is a
     # generator, so its counters are only populated once iteration is
@@ -316,7 +365,9 @@ async def run(pool: Any, a: Any) -> int:
 
     write_outcomes: dict[str, int] = {}
     if not dry_run:
-        write_outcomes = await _apply(pool, capture)
+        write_outcomes = await _apply(pool, capture, embed=not getattr(a, "no_embed", False),
+                                      deterministic=bool(getattr(a, "deterministic", False)),
+                                      max_usd=float(getattr(a, "max_usd", 1.0)))
         bytes_stored = bytes_produced
 
     # Counts we did not measure are None, not zero. Reporting 0 for a
@@ -336,7 +387,7 @@ async def run(pool: Any, a: Any) -> int:
         "rejected_by_reason": dict(sorted(rejections.items())),
         "duplicate_hits": duplicates,
         "knowledge_items": {
-            "procedures": write_outcomes.get("captured") if not dry_run else None,
+            "procedures": (write_outcomes.get("captured", 0) + write_outcomes.get("new_version", 0)) if not dry_run else None,
             "procedures_planned": len(accepted) if dry_run else None,
             "claims": None,
             "goals": None,
