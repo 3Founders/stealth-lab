@@ -1257,11 +1257,16 @@ async def reconcile_goals(
                                     survivor, loser = (cand.id, g["id"]) if cand.id < g["id"] else (g["id"], cand.id)
                                     decision_row = await record_decision(
                                         pool, object_type="goal", candidate_text=text, scope_type=g["scope_type"],
-                                        scope_entity_id=g["scope_entity_id"], decision="same", resolved_id=survivor,
+                                        # The decision is "G is the same as this candidate": resolved_id is the
+                                        # candidate (a member of the stored candidates, as the replay check
+                                        # requires). Which of the two SURVIVES is the tie-break below, recorded in
+                                        # detail -- passing the survivor raised whenever G was the older one, and
+                                        # the exception aborted the whole sweep (found in the 2026-09-30 pilot).
+                                        scope_entity_id=g["scope_entity_id"], decision="same", resolved_id=cand.id,
                                         candidates=cands, judge=judge, provider=res.provider, model=res.model,
                                         fts_n=n_fts, vec_n=n_vec, job_id=None,
                                         idempotency_key=f"reconcile:{loser}:{survivor}",
-                                        detail={"reconcile": True, "merged_loser": loser})
+                                        detail={"reconcile": True, "merged_loser": loser, "survivor": survivor})
                                     decision_id = _row_value(decision_row, "id", decision_row)
                                     await merge_goal(pool, loser, survivor, decision_id=decision_id)
                                     out["merged"] += 1

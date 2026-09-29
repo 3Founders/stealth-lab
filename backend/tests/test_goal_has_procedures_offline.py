@@ -109,3 +109,12 @@ def test_placement_repair_only_considers_goals_with_procedures():
     from app.services import identity_resolution
 
     assert "g.has_procedures" in inspect.getsource(identity_resolution.enqueue_missing_goal_placements)
+
+
+def test_verification_actions_are_not_offered_by_claim_search():
+    """They stay linked to their Procedure (how to check it) but are steps, not standalone knowledge."""
+    from app.services import search_projection as sp
+
+    assert sp._SEARCHABLE_CLAIM in sp._CLAIM_SQL
+    assert sp._SEARCHABLE_CLAIM in sp._CANONICAL_IDS["claim"]
+    assert "'verification'" in sp._SEARCHABLE_CLAIM

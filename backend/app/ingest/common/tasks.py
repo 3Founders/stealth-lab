@@ -59,14 +59,26 @@ async def _name(client: Any, model: str, issue: str, correction: Optional[str]) 
     return str(parsed.get("goal") or "").strip().rstrip(".")
 
 
+async def _registered(conn: Any, key: str) -> Optional[TaskGoal]:
+    """The task's registered Goal, followed through merges: identity reconciliation can merge a task Goal into an
+    older duplicate, and a Procedure written to a merged Goal would never be found."""
+    row = await conn.fetchrow(
+        "WITH RECURSIVE chain(id, depth) AS ("
+        "  SELECT goal_id, 0 FROM ingest_task_goals WHERE task_key = $1"
+        "  UNION ALL SELECT g.merged_into_id, c.depth + 1 FROM chain c JOIN goals g ON g.id = c.id"
+        "  WHERE g.status = 'merged' AND g.merged_into_id IS NOT NULL AND c.depth < 20) "
+        "SELECT g.id::text AS goal_id, g.canonical_name FROM chain c JOIN goals g ON g.id = c.id "
+        "ORDER BY c.depth DESC LIMIT 1", key)
+    return TaskGoal(row["goal_id"], row["canonical_name"], False) if row else None
+
+
 async def ensure_task_goal(pool: Any, *, key: str, issue: str, client: Any, model: str, named_by: str,
                            source: str, provenance: str = "system_pending_review") -> TaskGoal:
     from app.services.goals import describe_goal_quality_issue, find_or_create_goal
 
-    existing = await pool.fetchrow("SELECT goal_id::text AS goal_id, canonical_name FROM ingest_task_goals "
-                                   "WHERE task_key = $1", key)
+    existing = await _registered(pool, key)
     if existing:
-        return TaskGoal(existing["goal_id"], existing["canonical_name"], False)
+        return existing
 
     name, problem = "", None
     for correction in (None, "first"):
@@ -80,10 +92,9 @@ async def ensure_task_goal(pool: Any, *, key: str, issue: str, client: Any, mode
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"ingest_task_goal:{key}")
-            again = await conn.fetchrow("SELECT goal_id::text AS goal_id, canonical_name FROM ingest_task_goals "
-                                        "WHERE task_key = $1", key)
+            again = await _registered(conn, key)
             if again:
-                return TaskGoal(again["goal_id"], again["canonical_name"], False)
+                return again
             goal = await find_or_create_goal(
                 pool, canonical_name=name, scope_type="global", provenance=provenance,
                 description=issue[:2000], created_from="benchmark_task", created_by=named_by,

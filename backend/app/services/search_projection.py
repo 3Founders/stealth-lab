@@ -62,10 +62,15 @@ _PROC_SQL = (
     "AND is_engineering_fixture = false "
     "ORDER BY version DESC LIMIT 1"
 )
+# A trajectory's verification actions ("run the failing test", "check git diff") are stored as claims only so a
+# Procedure can say how to check it (procedure_claim_refs VERIFICATION); they are steps, not knowledge, so claim
+# search never offers them on their own (pilot 2026-09-30: 23 of 114 claims were such actions).
+_SEARCHABLE_CLAIM = "COALESCE(properties->>'claim_type', '') <> 'verification'"
 _CLAIM_SQL = (
     "SELECT id, name, subject, predicate, object, properties, claim_status, visibility, owner_id, "
     "scope_type, scope_entity_id, tenant_id, embedding::text AS embedding, embedding_model_id "
-    "FROM knowledge_nodes WHERE id = $1::uuid AND node_type = 'claim' AND t_invalid IS NULL"
+    "FROM knowledge_nodes WHERE id = $1::uuid AND node_type = 'claim' AND t_invalid IS NULL "
+    f"AND {_SEARCHABLE_CLAIM}"
 )
 _READ_SQL = {"goal": _GOAL_SQL, "procedure": _PROC_SQL, "claim": _CLAIM_SQL}
 
@@ -355,7 +360,7 @@ async def retry_failed(pool: asyncpg.Pool) -> int:
 _CANONICAL_IDS = {
     "goal": "SELECT id::text FROM goals WHERE t_invalid IS NULL AND status <> 'merged'",
     "procedure": "SELECT DISTINCT procedure_id::text FROM procedures WHERE t_invalid IS NULL AND is_engineering_fixture = false",
-    "claim": "SELECT id::text FROM knowledge_nodes WHERE node_type = 'claim' AND t_invalid IS NULL",
+    "claim": f"SELECT id::text FROM knowledge_nodes WHERE node_type = 'claim' AND t_invalid IS NULL AND {_SEARCHABLE_CLAIM}",
 }
 
 
