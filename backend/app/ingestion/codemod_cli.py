@@ -90,6 +90,9 @@ def add_parsers(sub: Any) -> None:
                    help="run every gate and write nothing (the default)")
     p.add_argument("--apply", action="store_true",
                    help="write through the shared compiler; refused unless the DSN is loopback")
+    p.add_argument("--production", action="store_true",
+                   help="with --apply: write through the deployment's control database (the same posture as skillmd-import) "
+                        "instead of a loopback shard; needs the migrations preflight to pass and honours --max-usd")
     p.add_argument("--shard-dsn-env", default=None,
                    help="env var holding the local shard DSN; defaults to DATABASE_URL")
     p.add_argument("--node-bin", default="codemod",
@@ -285,7 +288,15 @@ async def run(pool: Any, a: Any) -> int:
     dry_run = not bool(getattr(a, "apply", False))
 
     dsn: str | None = None
-    if not dry_run:
+    production = bool(getattr(a, "production", False))
+    if not dry_run and production:
+        # The deployment's control database, exactly like `skillmd-import`: only ever through the admin dispatcher, which runs
+        # the pending-migrations preflight first and hands over the control pool. The write goes through the real compiler
+        # (provenance, idempotency, a --max-usd cap enforced before each paid call).
+        if pool is None:
+            print("ERROR: --production needs the control pool; run this through the admin dispatcher", file=sys.stderr)
+            return 1
+    elif not dry_run:
         import os
 
         env_name = a.shard_dsn_env or "DATABASE_URL"
@@ -296,7 +307,7 @@ async def run(pool: Any, a: Any) -> int:
         if not _dsn_is_loopback(dsn):
             print(
                 f"ERROR: refusing to write to a non-loopback database ({dsn.split('@')[-1]}). "
-                "This pilot targets a local shard only.",
+                "Pass --production to write through the deployment's control database.",
                 file=sys.stderr,
             )
             return 1

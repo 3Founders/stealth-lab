@@ -244,3 +244,23 @@ def test_recipes_are_compiled_concurrently_but_never_more_than_the_bound(monkeyp
     finally:
         ingest_budget.uninstall()
     assert out == {"captured": 12} and live["peak"] == 3
+
+
+def test_production_is_an_explicit_opt_in_that_uses_the_control_database_and_the_preflight(wired, monkeypatch):
+    monkeypatch.setenv("CONTROL_DATABASE_URL", "postgresql://u:p@prod.example.internal/control")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert _run(admin._run_local_pilot(_ns(apply=True, production=True))) == 0
+    assert wired["dsns"] == ["postgresql://u:p@prod.example.internal/control"], "the control pool, only because --production was passed"
+    assert wired["preflight"] == 1 and wired["pools"][0].closed
+
+
+def test_without_the_flag_a_production_shaped_dsn_is_still_refused(wired, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@prod.example.internal/control")
+    assert _run(admin._run_local_pilot(_ns(apply=True, production=False))) == 2
+    assert wired["dsns"] == [] and "not loopback" in capsys.readouterr().out
+
+
+def test_production_never_applies_to_trajectories(wired, monkeypatch):
+    """The trajectory pilot has no production write path (its normalize_trace_event fan-out needs a worker plan)."""
+    monkeypatch.setenv("TRAJ_DSN", "postgresql://u:p@db.example.internal/prod")
+    assert _run(admin._run_local_pilot(_ns(cmd="ingest-trajectories", shard_dsn_env="TRAJ_DSN", production=True))) == 2

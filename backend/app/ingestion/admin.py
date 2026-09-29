@@ -130,8 +130,12 @@ async def _run_local_pilot(a: argparse.Namespace) -> int:
     from app.db.session import create_pool
 
     writing = a.cmd == "ingest-trajectories" or bool(getattr(a, "apply", False))
+    production = a.cmd == "ingest-codemods" and bool(getattr(a, "production", False))
     pool = None
-    if writing:
+    if writing and production:
+        # Explicit opt-in (like skillmd-import): the deployment's control database, guarded by the preflight below.
+        pool = await create_pool(control_database_url(), max_size=2)
+    elif writing:
         env_name = getattr(a, "shard_dsn_env", None) or "DATABASE_URL"
         dsn = os.environ.get(env_name)
         if not dsn:
