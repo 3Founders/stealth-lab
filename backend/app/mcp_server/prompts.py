@@ -240,13 +240,58 @@ CLAIMS_MD_FORMAT = (
 RUN_MD_FORMAT = (
     "NODE|<node_id>|<status>|<what to do>|step=<P-n>:<order>|claims=<R-a..R-b,...>|deps=<node_ids or ->|check=<how to tell it worked>"
 )
-_TOPICS = "stack, runtime, deps, build, test, lint, ci, layout, conventions, env, absent"
+_TOPICS = ("purpose, stack, runtime, deps, build, test, lint, ci, layout, conventions, features, "
+           "decisions, env, issues, absent")
+
+# What makes a repository fact useful to find_ways, in plain language. Drawn from the leaderboard-
+# extraction work (Singh et al., "Automated Early Leaderboard Generation From Comparative Tables",
+# arXiv:1802.04538; see docs/claim_formation.md): which approach fits depends on the whole context
+# (task, data, conditions, what is measured, trade-offs), a fact read on its own loses that context,
+# comparisons need to say what was compared and who reported it, and a missing comparison is not a win.
+# Kept as guidance for the writer, not as fields: facts stay natural-language sentences end to end.
+_WHAT_TO_CAPTURE = """   The choice of a way to do a task depends on this repository's context: what it is for,
+   what it runs on, what it already has, what it has decided, and what it prefers when
+   goals conflict. Capture that context. Useful kinds of facts:
+   - purpose: what the project is and who uses it (a CLI, a web app, a library, a service),
+     and its main surfaces. It decides which goal a vague request means.
+   - stack, runtime, deps: languages, runtimes and frameworks with their versions, and the
+     libraries that matter for everyday tasks, by the names people search for (give the
+     package's registry name and the name people use for it, e.g. "the docx npm package
+     (docx-js)").
+   - build, test, lint, ci: how work is checked here -- the exact commands, what CI must
+     pass, and anything slow or special (needs a database, needs network, runs only on Linux).
+   - layout, conventions: where things live and the patterns new code must follow.
+   - features: what already exists that a task might build on or duplicate ("PDF export
+     exists in src/export/pdf.ts"). Knowing the strongest thing already here is what keeps a
+     plan from rebuilding it.
+   - decisions: choices the repo made between alternatives, with what was compared and why
+     ("uses pnpm, not npm, because of workspaces (README)"; "moved from Jest to Vitest").
+     A decision says which way fits; a bare list of tools doesn't.
+   - env: the platform, operating system, deployment target, and which secrets or services
+     are needed (names only).
+   - issues: known problems, flaky tests, workarounds, deprecations, and migrations in
+     progress -- the current state, not the history.
+   - absent: what was looked for and is not there ("No Python toolchain", "No end-to-end
+     tests"). Silence is not support: a missing fact means unknown, not "fine"."""
+
+_HOW_TO_WRITE = """   - Each sentence stands on its own. Carry its context inside it: the version, the place,
+     and the condition under which it holds ("On CI only, tests run against Postgres 15").
+     Never "it", "this" or "the library" -- name the thing.
+   - When a fact involves a trade-off or a direction, say which side the repo prefers
+     ("prefers a smaller bundle over build speed", "lower is better").
+   - When a fact is a comparison or a choice, say what was compared, what won, and where
+     that is stated.
+   - Say a fact once. If two sources disagree, write both and say in the statement that they
+     disagree; don't pick one silently.
+   - Prefer what is true now over what used to be; mark a migration as in progress.
+   - Write only what a file shows. If something looks surprising, say where it came from
+     rather than smoothing it over."""
 
 
 def survey_repo(repo_path: str = "") -> str:
     """Look around this repo and write .stealth/claims.md: short, cited facts
-    (runtime, dependencies, how to build and test) that find_ways uses to
-    pick Procedures that fit."""
+    about its purpose, stack, how work is checked, what exists, what it has
+    decided and what is missing, that find_ways uses to pick Procedures that fit."""
     where = f" at `{repo_path}`" if repo_path else ""
     return f"""Survey the repository{where} and write `.stealth/claims.md`.
 
@@ -254,23 +299,26 @@ def survey_repo(repo_path: str = "") -> str:
    lockfiles (package.json, pyproject.toml, requirements*.txt, go.mod,
    Cargo.toml, ...), version pins (.nvmrc, .python-version, .tool-versions),
    build/test config (Makefile, tsconfig, jest/vitest/pytest config),
-   CI workflows, Dockerfile, README / AGENTS.md / CLAUDE.md, .env.example.
-2. Write one fact per line, in this exact format:
+   CI workflows, Dockerfile, README / AGENTS.md / CLAUDE.md / CONTRIBUTING,
+   CHANGELOG, .env.example, and the top level of the source tree.
+2. What to capture.
+{_WHAT_TO_CAPTURE}
+3. Write one fact per line, in this exact format:
    `{CLAIMS_MD_FORMAT}`
    e.g. `CLAIM|R-001|current|runtime|repository|Node 20.11|source=.nvmrc:1#sha=9f2c1ab|version=1`
    - statement: one plain sentence a stranger could check ("Tests run with `pnpm test`").
+{_HOW_TO_WRITE}
    - source: the file and line that shows it; sha = first 7 chars of
      `git hash-object <path>`, so the fact goes stale when the file changes.
-   - Facts about absence are useful ("No Python toolchain"): topic `absent`,
-     source=`search:<what you looked for>`.
-3. Group by topic, in this order: {_TOPICS}. Number ids R-001, R-002, ...
+   - Facts about absence use topic `absent` and source=`search:<what you looked for>`.
+4. Group by topic, in this order: {_TOPICS}. Number ids R-001, R-002, ...
    straight down the file, so every topic is one contiguous range and an
    agent can read a whole topic in one `rg`/read.
-4. Rules: only what a file actually shows -- never guess. Never copy a
+5. Rules: only what a file actually shows -- never guess. Never copy a
    secret or an env value (names only). At most 200 facts; prefer the ones
-   that change how work is done. Start the file with a `#` comment line
-   saying what it is and when it was written.
-5. Re-survey: keep the id of a fact that still holds, set `status=stale` on
+   that change how work is done or which way fits. Start the file with a
+   `#` comment line saying what it is and when it was written.
+6. Re-survey: keep the id of a fact that still holds, set `status=stale` on
    one whose source line changed and re-check it, append new facts at the
    end of their topic block.
 
@@ -334,7 +382,13 @@ own every file in `.stealth/`.
    after every attempt, pass or fail.
 8. Learn. When a step needed a fix or there was a better way:
    - rewrite the remaining nodes in `run.md` now;
-   - add new repo facts to `.stealth/claims.md` in their topic block;
+   - keep `.stealth/claims.md` true, in the survey_repo style (plain sentences that name
+     their subject and carry their conditions). Add what this work taught about the repo:
+     a decision you made and what you compared ("used the docx npm package, not
+     python-docx, because the repo has no Python toolchain"), a feature the change added,
+     a check that turned out slow or special, a problem you hit and its workaround. When a
+     step showed a fact is wrong, set that line to `status=stale` and append the corrected
+     fact -- never edit it in place. When two facts disagree, keep both and say so;
    - if it would help anyone doing this Procedure, not just this repo, call
      `report_discovery(kind, procedure_id, problem, solution, step_order, proof, repo)`
      with kind = fix | missing_step | precondition | better_way | correction | filled_gap.
