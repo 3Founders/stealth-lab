@@ -221,7 +221,7 @@ async def enqueue_missing_goal_placements(
         "SELECT g.goal_id::text AS id, COALESCE(g.scope_type, 'global') AS scope_type, g.scope_entity_id, "
         "g.owner_id, g.visibility::text AS visibility, g.version "
         "FROM goal_search_index g "
-        "WHERE g.status IN ('active', 'candidate') "
+        "WHERE g.status IN ('active', 'candidate') AND g.has_procedures "
         "AND g.updated_at >= now() - make_interval(mins => $1) "
         "AND NOT EXISTS (SELECT 1 FROM ingestion_jobs j WHERE j.job_type = $3 "
         "                AND j.idempotency_key = 'goal-abstraction-placement:' || g.goal_id::text) "

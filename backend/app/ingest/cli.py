@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-PIPELINES = ("openhands", "skills")
+PIPELINES = ("openhands", "skills", "verified")
 
 
 def _parse(argv: Optional[list[str]]) -> argparse.Namespace:
@@ -34,6 +34,8 @@ def _parse(argv: Optional[list[str]]) -> argparse.Namespace:
     p.add_argument("--limit", type=int, default=None, help="process at most N new items")
     p.add_argument("--instances", default=None, help="openhands: comma-separated task ids only")
     p.add_argument("--outcomes", default="resolved,failed", help="openhands: resolved,failed")
+    p.add_argument("--sources", default=None,
+                   help="verified: comma-separated subset of swe-rebench,swe-rebench-v2,swe-bench-extra,swe-gym")
     return p.parse_args(argv)
 
 
@@ -79,9 +81,10 @@ async def _amain(a: argparse.Namespace) -> int:
                                                    configured_model=Embedder().embedding_model_id())
             from app.config import settings
 
-            models = ([settings.trajectory_extraction_strong_model]
-                      if a.pipeline == "openhands" else [settings.general_compute_judge_model or "gemma-4-31B-it"])
-            checks["models"] = await run_blocking(probe, extraction_client(), models)
+            from app.ingest.common.llm import ingest_model
+
+            models = [ingest_model()]
+            checks["models"] = await run_blocking(probe, extraction_client(models[0]), models)
         except (TargetRefused, preflight.PreflightFailed, ModelUnavailable) as exc:
             print(f"REFUSED: {exc}", file=sys.stderr)
             return 2
@@ -101,6 +104,13 @@ async def _amain(a: argparse.Namespace) -> int:
                 result = await oh.run(pool, ledger=ledger, limit=a.limit,
                                       instances=set(a.instances.split(",")) if a.instances else None,
                                       outcomes=tuple(o.strip() for o in a.outcomes.split(",") if o.strip()))
+            elif a.pipeline == "verified":
+                from app.ingest.verified import pipeline as vf
+                from app.ingest.verified.sources import ORDER
+
+                result = await vf.run(pool, ledger=ledger, limit=a.limit,
+                                      sources=tuple(a.sources.split(",")) if a.sources else ORDER,
+                                      instances=set(a.instances.split(",")) if a.instances else None)
             else:
                 from app.ingest.skills import pipeline as sk
 

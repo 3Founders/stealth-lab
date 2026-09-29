@@ -36,6 +36,8 @@ class Selected:
     row_index: int          # index within the row group
     messages: int
     exit_status: str
+    runs_total: int = 0        # every recorded run of this task in the corpus
+    runs_resolved: int = 0     # how many of them passed the task's tests
 
     @property
     def item_key(self) -> str:
@@ -67,7 +69,7 @@ def pick(runs: Iterable[dict[str, Any]]) -> list[Selected]:
                 best = min(pool, key=key)
                 out.append(Selected(instance_id, str(best["repo"]), str(best["trajectory_id"]), outcome,
                                     int(best["row_group"]), int(best["row_index"]), int(best["messages"]),
-                                    str(best.get("exit_status") or "")))
+                                    str(best.get("exit_status") or ""), len(runs_of), len(good)))
     return out
 
 
@@ -90,7 +92,7 @@ def scan(path: Path) -> list[dict[str, Any]]:
 
 def selection(path: Path, *, revision: str, cache_dir: Path) -> list[Selected]:
     """The cached selection for this pinned file, computed on first use. Blocking."""
-    cache = cache_dir / f"openhands_selection@{revision}.json"
+    cache = cache_dir / f"openhands_selection_v2@{revision}.json"   # v2: run counts per task
     if cache.exists():
         return [Selected(**d) for d in json.loads(cache.read_text(encoding="utf-8"))]
     picked = pick(scan(path))

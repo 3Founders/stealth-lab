@@ -84,5 +84,11 @@ def test_the_canonical_adapters_opt_in_and_the_local_tier_does_not():
     root = pathlib.Path(__file__).resolve().parents[1] / "app"
     assert "procedure_dedup=True" in (root / "services/skill_ingestion.py").read_text(encoding="utf-8")
     assert "procedure_dedup=True" in (root / "services/publication.py").read_text(encoding="utf-8")
-    for local in ("stealth/local_sync.py", "services/trajectory_semantics.py", "services/procedure_extraction/__init__.py"):
+    for local in ("stealth/local_sync.py", "services/procedure_extraction/__init__.py"):
         assert "procedure_dedup" not in (root / local).read_text(encoding="utf-8"), local
+    # Trajectory extraction serves both tiers: it opts in ONLY for the ingestion pipelines, which pass the shared
+    # benchmark task Goal (`task_goal`); a user's own trajectory (no task_goal) never dedups.
+    ts = (root / "services/trajectory_semantics.py").read_text(encoding="utf-8")
+    assert ts.count("procedure_dedup") == 1
+    before = ts.split('"procedure_dedup"')[0].splitlines()[-4:]
+    assert any(line.strip() == "if task_goal is not None:" for line in before)

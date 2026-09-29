@@ -194,7 +194,10 @@ async def _feasible_procedures_for_goal(
         ordered.append(result.selected)
     ordered.extend(item for item in result.ranked if item is not result.selected)
     applicable_ids = {str(item["id"]) for item in ordered}
-    out: list[tuple[dict, bool]] = [(item["_row"], True) for item in ordered]
+    # The shared tier's source support (K7) rides on the row, so the chosen way can say it was graded by a source.
+    out: list[tuple[dict, bool]] = [({**item["_row"], "source_support": item.get("source_support") or 0,
+                                      "tested_by_source": bool(item.get("tested_by_source"))}, True)
+                                     for item in ordered]
     out.extend(
         (diagnostic.procedure, False) for diagnostic in result.diagnostics
         if str(diagnostic.procedure["id"]) not in applicable_ids
@@ -424,6 +427,7 @@ async def resolve_goal(
                 # instruction it can carry out, not a dead end.
                 "goal": proc.get("goal"), "description": proc.get("display_description"),
                 "verification_state": proc.get("verification_state"),
+                "tested_by_source": bool(proc.get("tested_by_source")),
                 "preconditions": proc.get("preconditions") or [],
                 "steps": sorted(proc.get("steps") or [], key=lambda s: s.get("order", 0) if isinstance(s, dict) else 0),
                 **({"repo_fit": proc["_repo_fit"]} if proc.get("_repo_fit") else {}),

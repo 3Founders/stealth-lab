@@ -115,11 +115,18 @@ async def add_proc(pool, name, goal, *, attempts=0, successes=0, precond=None, j
     return r
 
 
-async def build(pool):
-    """Ingest the golden corpus through the production path and project it."""
+async def build(pool, *, with_ways: bool = False):
+    """Ingest the golden corpus through the production path and project it.
+
+    `with_ways=True` gives every golden Goal one plain Procedure: since migration 128 agent-facing Goal search only
+    offers Goals that have a live Procedure (a Goal an agent cannot act on is not a candidate), so tier-1 tests that
+    check WHICH Goal resolves need their Goals to be actionable. Tier-2 tests add their own Procedures."""
     for g in (G_CALLERS, G_CALLERS_PARA, G_DELETE, G_DEPLOY, G_MIG_PG, G_MIG_MY):
         await find_or_create_goal(pool, canonical_name=n(g), scope_type="global", provenance="prior_library",
                                   embedder=EMB, judge=ingest_judge(), status="active")
+    if with_ways:
+        for g in (G_CALLERS, G_DELETE, G_DEPLOY, G_MIG_PG, G_MIG_MY):
+            await add_proc(pool, f"way to {g}", g)
     await sp.drain_outbox(pool)
     # embeddings on goals come from find_or_create_goal; procedures get theirs in add_proc
 
@@ -145,7 +152,7 @@ async def test_dedup_at_ingestion_collapsed_the_paraphrase(pool):
 
 @pytest.mark.asyncio
 async def test_goal_exact_lexical_match(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     res = await query(pool, G_CALLERS)
     assert goal_names(res) == [n(G_CALLERS)]
     assert res["goal_resolution"]["status"] == "matches" and res["retrieval"]["mode"] == "jev"
@@ -153,7 +160,7 @@ async def test_goal_exact_lexical_match(pool):
 
 @pytest.mark.asyncio
 async def test_goal_vector_only_semantic_match(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     res = await query(pool, "discover usages")          # shares NO word with the goal text
     cand = {c["name"]: c for c in res["goal_resolution"]["candidates"]}[n(G_CALLERS)]
     assert cand.get("fts_rank") is None and cand.get("vec_rank") is not None   # found by ANN only
@@ -162,7 +169,7 @@ async def test_goal_vector_only_semantic_match(pool):
 
 @pytest.mark.asyncio
 async def test_misleading_lexical_overlap_and_two_similar_distinct_goals(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     res = await query(pool, G_DELETE)
     assert goal_names(res) == [n(G_DELETE)]              # not the (lexically near) callers goal
     res2 = await query(pool, G_CALLERS)
@@ -171,7 +178,7 @@ async def test_misleading_lexical_overlap_and_two_similar_distinct_goals(pool):
 
 @pytest.mark.asyncio
 async def test_local_claims_change_the_resolved_goal(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     none = await query(pool, "migrate the database schema")
     assert none["goal_resolution"]["status"] == "partial" and len(goal_names(none)) == 2      # ambiguous without context
     pg = await query(pool, "migrate the database schema", claims=[{"id": "c-pg", "statement": "the project database is postgres"}])
@@ -195,7 +202,7 @@ async def test_only_a_bounded_working_set_of_local_claims_is_used(pool):
 
 @pytest.mark.asyncio
 async def test_jev_unavailable_falls_back_to_the_nli_model_not_a_heuristic(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     j = make_judge(jev(fail=down), nli())
     res = await query(pool, G_CALLERS, judge=j)
     assert res["retrieval"]["mode"] == "model" and res["retrieval"]["providers"] == ["gemma"]
@@ -225,7 +232,7 @@ async def test_all_semantic_rerankers_down_returns_degraded_candidates_not_fake_
 
 @pytest.mark.asyncio
 async def test_embedding_outage_is_lexical_only_and_flagged(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     res = await query(pool, G_CALLERS, embedder=ConceptEmbedder(fail=True))
     assert res["retrieval"]["degraded"] and any("embedding provider unavailable" in x for x in res["retrieval"]["degraded_reasons"])
     assert goal_names(res) == [n(G_CALLERS)]
@@ -233,9 +240,12 @@ async def test_embedding_outage_is_lexical_only_and_flagged(pool):
 
 @pytest.mark.asyncio
 async def test_scope_private_goals_do_not_leak_through_the_projection(pool):
-    await build(pool)
+    await build(pool, with_ways=True)
     await find_or_create_goal(pool, canonical_name=n("private secret rollout plan"), scope_type="global", provenance="prior_library",
                               embedder=EMB, judge=ingest_judge(), visibility="private", owner_id="alice", status="active")
+    await capture_procedure(pool, name=n("way to private secret rollout plan"), goal=n("private secret rollout plan"),
+                            steps=[{"description": "roll out"}], provenance="prior_library", scope_type="global",
+                            visibility="private", owner_id="alice", goal_embedder=EMB, goal_judge=ingest_judge())
     await sp.drain_outbox(pool)
     anon = await find_best_way(pool, "private secret rollout plan", scope=AccessScope(viewer_id=None), embedder=EMB, judge=make_judge(jev()))
     assert all("secret rollout" not in c["name"] for c in anon["goal_resolution"]["candidates"])

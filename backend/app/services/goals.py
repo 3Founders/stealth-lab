@@ -528,6 +528,12 @@ async def find_or_create_goal(
             await propose_goal_relations(pool, str(row["id"]), outcome.relations, decision_id=outcome.decision_id)
         except Exception:
             log.warning("goal %s optional relation proposals failed", row["id"], exc_info=True)
+    # Placement only for Goals a person created. Every other Goal (extraction, step sub-goals, procedure capture)
+    # is placed when it first gets a live Procedure: its projection's has_procedures flips, and the worker's
+    # placement-repair sweep enqueues it (migration 128). An empty Goal in the hierarchy is noise and judge spend.
+    if created_from != "user_created":
+        return {"id": str(row["id"]), "canonical_name": row["canonical_name"], "created": True,
+                "home_shard_id": row.get("home_shard_id", home_shard), "decision": outcome.decision}
     try:
         await enqueue_goal_abstraction_placement(
             pool,
@@ -707,8 +713,10 @@ async def search_goals(
     resolved: str = "all",
     limit: int = 10,
     offset: int = 0,
+    require_procedures: bool = False,
 ) -> list[dict[str, Any]]:
-    """Lexical + optional semantic search over Goals, RRF-fused."""
+    """Lexical + optional semantic search over Goals, RRF-fused. `require_procedures=True` for agent-facing callers:
+    only Goals with a live Procedure (migration 128)."""
     if not query_text and not query_embedding:
         raise ValueError("search_goals requires query_text and/or query_embedding")
     if offset < 0:
@@ -723,7 +731,7 @@ async def search_goals(
     rows, _has_more = await rs.search_goal_candidates_page(
         pool, query_text=query_text, query_embedding=query_embedding, embedding_model=model,
         scope=scope or AccessScope.unrestricted(), status=status, resolved=resolved,
-        limit=page_size, offset=offset,
+        limit=page_size, offset=offset, require_procedures=require_procedures,
     )
     return rows
 

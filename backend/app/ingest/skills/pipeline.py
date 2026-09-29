@@ -173,7 +173,9 @@ async def compile_item(pool: Any, row: Row, content: str, commit: str, spdx: str
             "dataset_row": row.index, "stars": row.stars, "collection_source": row.source,
         },
     )
-    model = settings.general_compute_judge_model or "gemma-4-31B-it"
+    from app.ingest.common.llm import ingest_model
+
+    model = ingest_model()
     outcome = await compile_skill_artifact(
         pool, artifact, embedder=Embedder(rate_limit_pool=pool), client=client, run_id=run_id,
         created_by=EXTRACTOR, admission_llm_model=model, extraction_llm_model=model,

@@ -255,7 +255,9 @@ def _nuts_diagnostics(mcmc: Any) -> dict:
     from numpyro.diagnostics import summary
 
     grouped = mcmc.get_samples(group_by_chain=True)
-    stats = summary({k: v for k, v in grouped.items()}, prob=0.9)
+    # A parameter can be legitimately empty on small data (e.g. no Goal has a parent yet): it has nothing to diagnose,
+    # and numpyro's summary cannot reshape a zero-size site (the nightly refit crashed on it, 2026-09-29).
+    stats = summary({k: v for k, v in grouped.items() if np.asarray(v).size}, prob=0.9)
     rhat = [float(np.nanmax(s["r_hat"])) for s in stats.values() if "r_hat" in s]
     ess = [float(np.nanmin(s["n_eff"])) for s in stats.values() if "n_eff" in s]
     divergences = int(np.asarray(mcmc.get_extra_fields()["diverging"]).sum())

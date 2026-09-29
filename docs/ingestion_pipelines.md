@@ -1,6 +1,6 @@
 # Ingestion pipelines (rebuilt 2026-09-29)
 
-The step 0–8 pipelines were abandoned. `backend/app/ingest/` replaces them, built from `docs/ingestion_sources_plan.md`. It reuses only the core writers (Goals, Procedures, Claims, traces, evidence, routing) and the license and held-out rulebooks. Two pipelines are ready: **OpenHands trajectories** and **SkillMD skills**.
+The step 0–8 pipelines were abandoned. `backend/app/ingest/` replaces them, built from `docs/ingestion_sources_plan.md`. It reuses only the core writers (Goals, Procedures, Claims, traces, evidence, routing) and the license and held-out rulebooks. Three pipelines: **OpenHands trajectories**, **SkillMD skills** and **verified solutions** (SWE-rebench, SWE-rebench-V2, SWE-bench-extra, SWE-Gym).
 
 ## How to run
 
@@ -8,6 +8,7 @@ The step 0–8 pipelines were abandoned. `backend/app/ingest/` replaces them, bu
 # local test database (the DSN is read from the named environment variable, never typed or printed)
 python -m app.ingest.cli skills    --target local --dsn-env KEL_INGEST_DSN --max-usd 2 --limit 20
 python -m app.ingest.cli openhands --target local --dsn-env KEL_INGEST_DSN --max-usd 2 --limit 5
+python -m app.ingest.cli verified  --target local --dsn-env KEL_INGEST_DSN --max-usd 2 --limit 5 --sources swe-rebench
 
 # production: only with a named approver
 python -m app.ingest.cli openhands --target production --approved-by "Anuj" --max-usd 20
@@ -51,6 +52,46 @@ Pinned at `0d73048a…`. 138,133 files from 20,556 repositories.
 4. **License at that commit** (GitHub's own detection). No license file → rejected (`license_missing`).
 5. **Compiled by the core SKILL.md compiler.** It screens for prompt injection before any model sees the text, applies the admission gate, and produces **candidate** Procedures only. A model outage is retried, never recorded as a rejection.
 6. **Credit** on every item: file, repository, commit, license and the dataset.
+
+
+## One task, one Goal (migration 129)
+
+A SWE task arrives from several sources: its accepted fix (the verified-solution datasets) and agent runs on it (OpenHands). All of it meets on one Goal. The first pipeline to reach a task names its Goal from the issue (one model call; the name must pass the core quality gate) and records it in `ingest_task_goals`; every later pipeline attaches to it. On that Goal:
+
+- **Procedures:** the agents' successful ways (trajectories) and the way to the accepted fix (verified solutions). Steps carry a role (plan / edit / verify) and, where one exists, a concrete check.
+- **Verified solution:** the maintainers' accepted fix (gold patch), served with every Procedure of the task. It's never the agent's patch.
+- **Benchmark:** the task's own tests, frozen: docker image, test command, which tests must flip, which must keep passing. Created only when the task has a runnable image (SWE-rebench, V2), so Kel can later run Procedures against it.
+- **Claims:** failure modes, pitfalls and facts, in plain language, each naming what it's about and its conditions, linked to the Procedure where they apply. Plus one measured Claim per task from the clean signal: "Qwen3-Coder-480B with OpenHands solved *this Goal* in k of n runs, graded by the task's tests".
+- **Routing:** each run's model, scaffold and outcome on the task Goal.
+
+## Verified solutions
+
+| Dataset | Pinned revision | License from | Benchmark |
+|---|---|---|---|
+| nebius/SWE-rebench (test split) | `89cdfbab…` | `license_name` (exact table) | yes (`docker_image`) |
+| nebius/SWE-rebench-V2 (32k, 8+ languages) | `475dd5e8…` | `license`; `custom-check-github` → GitHub at the base commit | yes (`image_name`) |
+| nebius/SWE-bench-extra | `11dcbfb3…` | `license` (lowercase SPDX) | no image → no Benchmark |
+| SWE-Gym/SWE-Gym | `bb94ed9e…` | no column → GitHub at the base commit | no image → no Benchmark |
+
+Rows are rejected for missing fields, tests that fail even with the fix (`FAIL_TO_FAIL`), a fix that breaks passing tests (`PASS_TO_FAIL`), held-out tasks or repositories, and licenses outside the allowlist. SWE-rebench and SWE-bench-extra share 4,568 tasks and SWE-Gym overlaps SWE-rebench on 196; a task is written by the first source that reaches it. The datasets' own LLM quality labels are recorded, not used as a filter (their thresholds are not documented).
+
+## Model
+
+One setting, `INGEST_MODEL`, for every pipeline. Production: Vertex `google/gemini-3.8-flash` (decided 2026-09-29), called through the core Vertex client with `VERTEX_MODEL` set to the same model; the client refuses a mismatch instead of letting a different model answer.
+
+## Core changes made for these pipelines (2026-09-29)
+
+| Change | Why | Where |
+|---|---|---|
+| **Only Goals with a live Procedure are agent candidates** (`goal_search_index.has_procedures`, migration 128). Goal identity still sees every Goal. | Extraction made a Goal per step: 75 Goals for 9 Procedures on the first test, and the empty ones outranked the real task Goals. With the filter the three test questions went from wrong or second-place Goals to the right one. | `search_projection`, `retrieval_service.search_goals`, `goals.search_goals(require_procedures=)` |
+| **A Goal enters the hierarchy when it gets its first Procedure**; person-created Goals are still placed at creation | Placing empty step Goals filled the hierarchy with noise and review items | `goals.find_or_create_goal`, `identity_resolution.enqueue_missing_goal_placements` |
+| **Second judge for low-confidence hierarchy links**: two agreeing judgments accept, a confident "unrelated/overlapping" rejects, only disagreement goes to a human | 363 of 367 links stayed "proposed" with nobody reviewing, so hierarchy, benchmark transfer and recommender pooling were all off | `goal_relation_second_judge.py`, placement handler |
+| **Source-tested Procedures rank above untested ones** (after how clearly they apply); still no winner without Kel's own runs | A benchmark-passed Procedure ranked the same as an untested SKILL.md | `retrieval_service._select` |
+| **Trajectory extractor**: shared task Goal, Procedure dedup, step role and check, and preconditions, verification actions and failure modes kept and linked | These were extracted, paid for and thrown away | `trajectory_semantics.extract_trajectory_semantics(task_goal=, write_procedures=)` |
+| **Claims in plain language, formed as reusable facts**: name what they're about, keep conditions, state both sides of a comparison, drop implausible numbers (after Singh et al., arXiv:1802.04538) | Unbound or context-free claims can't be reused or checked | trajectory and document claim prompts (prompt versions bumped) |
+| **Benchmark JSON stored as objects** | `create_benchmark` stored its protocol, environment and criteria as JSON strings, so SQL could not read inside them | `product_model` |
+| **Benchmark transfer works** | It called `get_judge(pool)`, which takes no arguments, so every transfer failed | `benchmark_transfer._judge_transfer` |
+| **The worker's upkeep runs while it loops**, and the nightly model refit is scheduled | In `--loop` mode the projection drain, placement repair and reconciliation only ran at exit; the nightly refit was "schedule it daily" with nothing scheduling it | `ingestion/worker.py` |
 
 ## Decisions, in plain words
 

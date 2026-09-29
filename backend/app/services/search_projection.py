@@ -150,9 +150,9 @@ def build_projection(object_type: str, row: dict, shard_id: str) -> dict:
 _UPSERT_GOAL = """
 INSERT INTO goal_search_index (goal_id, canonical_name, short_description, aliases, search_text, search_tsv,
     embedding, embedding_model, embedding_version, embedding_dim, home_shard_id, status, version,
-    visibility, owner_id, scope_type, scope_entity_id, resolved_at, t_created, updated_at)
+    visibility, owner_id, scope_type, scope_entity_id, resolved_at, t_created, has_procedures, updated_at)
 VALUES ($1::uuid, $2, $3, $4, $5, to_tsvector('english', $5), $6::vector, $7, $8, $9, $10, $11, $12,
-    $13::visibility_level, $14, $15, $16, $17, $18, now())
+    $13::visibility_level, $14, $15, $16, $17, $18, $19, now())
 ON CONFLICT (goal_id) DO UPDATE SET
     canonical_name = EXCLUDED.canonical_name, short_description = EXCLUDED.short_description,
     aliases = EXCLUDED.aliases, search_text = EXCLUDED.search_text, search_tsv = EXCLUDED.search_tsv,
@@ -161,7 +161,7 @@ ON CONFLICT (goal_id) DO UPDATE SET
     home_shard_id = EXCLUDED.home_shard_id, status = EXCLUDED.status, version = EXCLUDED.version,
     visibility = EXCLUDED.visibility, owner_id = EXCLUDED.owner_id, scope_type = EXCLUDED.scope_type,
     scope_entity_id = EXCLUDED.scope_entity_id, resolved_at = EXCLUDED.resolved_at,
-    t_created = EXCLUDED.t_created, updated_at = now(), projected_at = now()
+    t_created = EXCLUDED.t_created, has_procedures = EXCLUDED.has_procedures, updated_at = now(), projected_at = now()
 """
 _UPSERT_PROC = """
 INSERT INTO procedure_search_index (procedure_id, procedure_row_id, name, summary, goal_id,
@@ -207,7 +207,7 @@ async def _upsert(conn, object_type: str, p: dict) -> None:
     if object_type == "goal":
         await conn.execute(_UPSERT_GOAL, p["key"], p["canonical_name"], p["short_description"], p["aliases"],
                            p["search_text"], *common, p["status"], p["version"], *tail,
-                           p.get("resolved_at"), p.get("t_created"))
+                           p.get("resolved_at"), p.get("t_created"), bool(p.get("has_procedures")))
     elif object_type == "procedure":
         await conn.execute(_UPSERT_PROC, p["key"], p["procedure_row_id"], p["name"], p["summary"], p["goal_id"],
                            p["preconditions_summary"], p["outcome_summary"], p["verification_summary"],
@@ -240,11 +240,48 @@ async def project_object(
     # is configured. The outbox entry stays on the control database, in the caller's
     # transaction: a failed write here leaves it pending and the drainer retries it.
     target = conn if object_type == "goal" else await search_pool(conn)
+    # Procedure -> Goal: the Goal(s) whose `has_procedures` may change are the one the projection pointed at
+    # before and the one it points at now.
+    previous_goal = None
+    if object_type == "procedure":
+        previous_goal = await target.fetchval(
+            "SELECT goal_id::text FROM procedure_search_index WHERE procedure_id = $1::uuid", object_id)
     if row is None or (object_type == "goal" and row["status"] == "merged"):
         await target.execute(f"DELETE FROM {table} WHERE {key} = $1::uuid", object_id)
+        if object_type == "procedure" and previous_goal:
+            await refresh_goal_has_procedures(conn, previous_goal)
         return "deleted"
-    await _upsert(target, object_type, build_projection(object_type, dict(row), shard))
+    projection = build_projection(object_type, dict(row), shard)
+    if object_type == "goal":
+        projection["has_procedures"] = await goal_has_live_procedure(conn, object_id)
+    await _upsert(target, object_type, projection)
+    if object_type == "procedure":
+        for goal_id in {g for g in (previous_goal, projection.get("goal_id")) if g}:
+            await refresh_goal_has_procedures(conn, str(goal_id))
     return "upserted"
+
+
+# ------------------------------------------------------ Goal.has_procedures
+
+
+async def goal_has_live_procedure(conn: Any, goal_id: str) -> bool:
+    """True when the Goal has at least one 'active' Procedure projection (search database when configured)."""
+    sp = await search_pool(conn)
+    return bool(await sp.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM procedure_search_index WHERE goal_id = $1::uuid AND status = 'active')",
+        goal_id))
+
+
+async def refresh_goal_has_procedures(conn: Any, goal_id: str) -> Optional[bool]:
+    """Recompute one Goal's `has_procedures` (migration 128). A flip bumps `updated_at`, which is what the worker's
+    placement-repair sweep watches: a Goal enters the abstraction hierarchy when it first gets a Procedure.
+    Returns the new value, or None when the Goal has no projection yet (its own projection computes it)."""
+    has = await goal_has_live_procedure(conn, goal_id)
+    changed = await conn.fetchval(
+        "UPDATE goal_search_index SET has_procedures = $2, "
+        "updated_at = CASE WHEN has_procedures IS DISTINCT FROM $2 THEN now() ELSE updated_at END "
+        "WHERE goal_id = $1::uuid RETURNING has_procedures", goal_id, has)
+    return changed
 
 
 # ------------------------------------------------------------------ outbox

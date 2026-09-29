@@ -571,9 +571,11 @@ async def create_benchmark(
             "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12::jsonb) "
             "RETURNING *",
             bid, goal_id, name, description, version,
-            json.dumps(evaluation_protocol or {}), json.dumps(environment_specification or {}),
-            json.dumps(success_criteria or {}), json.dumps(comparison_policy or {}),
-            status, provenance, json.dumps(metadata or {}),
+            # objects, not json.dumps strings: the pool's jsonb codec encodes them (app/db/session.py). A pre-encoded
+            # string was stored as a JSON *string*, so SQL could not read inside it (2026-09-29).
+            dict(evaluation_protocol or {}), dict(environment_specification or {}),
+            dict(success_criteria or {}), dict(comparison_policy or {}),
+            status, provenance, dict(metadata or {}),
         )
     return _row(r)
 
@@ -657,7 +659,7 @@ async def associate_solution(
             "  SET status=EXCLUDED.status, metadata=EXCLUDED.metadata, updated_at=now() "
             "RETURNING *",
             sid, goal_id, solution_type, target_id, target_table, version, status,
-            proposer, provenance, json.dumps(metadata or {}), owner_id, scope_type, scope_entity_id,
+            proposer, provenance, dict(metadata or {}), owner_id, scope_type, scope_entity_id,
         )
     return _row(r)
 
@@ -752,8 +754,8 @@ async def request_evaluation(
             " methodology, status, provenance) "
             "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,'requested',$9) RETURNING *",
             eid, goal_id, benchmark_id, solution_id, procedure_id, procedure_version,
-            json.dumps(environment or {}),
-            json.dumps(methodology or {}), provenance,
+            dict(environment or {}),
+            dict(methodology or {}), provenance,
         )
     return _row(r)
 
@@ -906,8 +908,8 @@ async def complete_evaluation(
             "UPDATE evaluations SET status='completed', completed_at=now(), "
             " run_count=$2, metrics=$3::jsonb, aggregate_result=$4, "
             " verification_summary=$5::jsonb WHERE id=$1 RETURNING *",
-            evaluation_id, run_count, json.dumps(metrics), agg,
-            json.dumps({"verified_successes": int(verified), "successes": successes,
+            evaluation_id, run_count, metrics, agg,
+            ({"verified_successes": int(verified), "successes": successes,
                         "run_count": run_count, "source": "recomputed_from_evaluation_executions"}),
         )
     if r is None:

@@ -205,7 +205,8 @@ async def test_placement_to_transfer_pipeline(pool):
         "'accepted', 'reviewer', 'system_pending_review', 'global', 'reviewer', 'public', 'reviewer', now())",
         parent, bench["id"], bench["name"])
     await pm.freeze_benchmark(pool, bench["id"])
-    child = await _goal(pool, f"deploy {run} service to staging on kubernetes")
+    # A user-created Goal is placed at once; an extracted one waits until it has a Procedure (migration 128).
+    child = await _goal(pool, f"deploy {run} service to staging on kubernetes", created_from="user_created")
 
     job = await _job_row(pool, "idempotency_key = $1", goal_abstraction_placement_key(child))
     payload = {**job["payload"], "judge_mode": "model", "_job": q.trusted_job_metadata(job)}

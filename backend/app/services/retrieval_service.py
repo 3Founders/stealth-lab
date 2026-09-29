@@ -378,7 +378,8 @@ async def search_goals(
             pool, table="goal_search_index", id_col="goal_id", name_col="canonical_name",
             text_expr="canonical_name || COALESCE(': ' || short_description, '')", extra_cols="",
             ctx_text=ctx.query, embedding=emb, embedding_model=model, scope=scope,
-            where_extra="status IN ('active', 'candidate')", extra_params=[], cfg=cfg)
+            # only Goals an agent can act on (migration 128): a Goal without a live Procedure is not a candidate
+            where_extra="status IN ('active', 'candidate') AND has_procedures", extra_params=[], cfg=cfg)
         meta.latency_ms["goal_search"] = (time.monotonic() - t0) * 1000
         meta.counts.update(goal_fts_candidates=n_fts, goal_vector_candidates=n_vec, goal_fused=len(cands))
         _tel.set_attrs(sp, fts=n_fts, vector=n_vec, fused=len(cands))
@@ -1100,6 +1101,7 @@ async def _rank_procedure_candidates(
                 i["claims"] = by.get(i["procedure_id"], [])
         except Exception:  # noqa: BLE001 -- evidence enrichment is best-effort
             meta.degrade("linked-claim lookup failed")
+        await _attach_source_support(pool, items, meta)
 
     result = _select(items, meta, cfg)
     # ApplicabilityResult order: applicable candidates in selection order first, then the rest by fused rank
@@ -1110,9 +1112,42 @@ async def _rank_procedure_candidates(
     return result
 
 
+async def _attach_source_support(pool: asyncpg.Pool, items: list[dict], meta: RetrievalMeta) -> None:
+    """How many independent sources tested each candidate (2026-09-29): distinct task groups of supporting
+    `benchmark` evidence -- a dataset's test grade of the run or fix the Procedure came from. It is testimony, not
+    Kel's own execution: it orders candidates when Kel has no runs of its own and never makes a winner or a
+    `verified` state (those stay on execution evidence)."""
+    for i in items:
+        i["source_support"] = 0
+        i["tested_by_source"] = False
+    if not items:
+        return
+    try:
+        rows = await pool.fetch(
+            "SELECT target_id::text AS rid, count(DISTINCT coalesce(independence_group, id::text)) AS n "
+            "FROM evidence WHERE target_type = 'procedure' AND evidence_type = 'benchmark' "
+            "AND direction = 'supports' AND t_invalid IS NULL AND target_id = ANY($1::uuid[]) GROUP BY 1",
+            [str(i["id"]) for i in items])
+    except Exception:  # noqa: BLE001 -- ordering enrichment is best-effort, like the linked-claim lookup
+        meta.degrade("source-support lookup failed")
+        return
+    support = {r["rid"]: int(r["n"]) for r in rows}
+    for i in items:
+        n = support.get(str(i["id"]), 0)
+        i["source_support"] = n
+        i["tested_by_source"] = n > 0
+
+
+def _relation_tier(i: dict) -> int:
+    return 2 if i.get("relation") == "applies" else 1 if i.get("relation") == "partial" else 0
+
+
 def _select(items: list[dict], meta: RetrievalMeta, cfg: RetrievalConfig) -> ProcedureSearchResult:
-    # deterministic presentation order only (fused rank); this is NOT a semantic ranking
-    ranked = sorted(items, key=lambda i: (-(i["applicability_score"] or 0.0), -i["rrf"], i["procedure_id"]))
+    # deterministic presentation order: how clearly it applies, then how many independent sources tested it (when
+    # Kel has no runs of its own, a Procedure whose run or fix passed its task's tests comes before an untested one),
+    # then the judge's confidence and the fused rank. This is NOT the winner rule: a winner needs execution evidence.
+    ranked = sorted(items, key=lambda i: (-_relation_tier(i), -int(i.get("source_support") or 0),
+                                          -(i["applicability_score"] or 0.0), -i["rrf"], i["procedure_id"]))
     judged = [i for i in ranked if i["judged"] and i["relation"] in ("applies", "partial")]
     if meta.mode == MODE_CANDIDATES or not judged:
         return ProcedureSearchResult(ranked, None, ranked[: cfg.procedure_alternatives], [],
@@ -1251,13 +1286,17 @@ async def search_goal_candidates(
     pool: asyncpg.Pool, *, query_text: Optional[str], query_embedding: Optional[list[float]] = None,
     embedding_model: Optional[str] = None, scope: AccessScope, status: Optional[str] = None,
     resolved: str = "all", limit: int = 10, cfg: RetrievalConfig = RetrievalConfig(),
+    require_procedures: bool = False,
 ) -> list[dict]:
-    """Judge-free Goal search with resolution filtering and safe public rows."""
+    """Judge-free Goal search with resolution filtering and safe public rows. `require_procedures=True` (agent-facing
+    callers) keeps only Goals with a live Procedure (migration 128); browsing and identity keep every Goal."""
     if not query_text and not query_embedding:
         raise ValueError("search_goal_candidates requires query_text and/or query_embedding")
     if resolved not in ("all", "resolved", "unresolved"):
         raise ValueError("resolved must be all, resolved, or unresolved")
     where = "status IN ('active', 'candidate')" if status is None else "status = $1"
+    if require_procedures:
+        where += " AND has_procedures"
     params = [] if status is None else [status]
     cfg2 = replace_cfg(cfg, search_top_k=max(limit * 3, 10))
     cands, _n, _m = await _legs(
@@ -1310,7 +1349,7 @@ async def search_goal_candidates_page(
     pool: asyncpg.Pool, *, query_text: Optional[str], query_embedding: Optional[list[float]] = None,
     embedding_model: Optional[str] = None, scope: AccessScope, status: Optional[str] = None,
     resolved: str = "all", limit: int = 10, offset: int = 0,
-    cfg: RetrievalConfig = RetrievalConfig(),
+    cfg: RetrievalConfig = RetrievalConfig(), require_procedures: bool = False,
 ) -> tuple[list[dict], bool]:
     """Return one candidate page and whether another page exists."""
     if offset < 0:
@@ -1319,7 +1358,7 @@ async def search_goal_candidates_page(
     rows = await search_goal_candidates(
         pool, query_text=query_text, query_embedding=query_embedding,
         embedding_model=embedding_model, scope=scope, status=status,
-        resolved=resolved, limit=offset + page_size + 1, cfg=cfg,
+        resolved=resolved, limit=offset + page_size + 1, cfg=cfg, require_procedures=require_procedures,
     )
     page = rows[offset:offset + page_size]
     return page, len(rows) > offset + page_size

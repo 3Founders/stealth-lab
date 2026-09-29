@@ -1221,7 +1221,7 @@ async def _judge_transfer(
     if judge is None:
         from app.ingestion.handlers import Dependencies
 
-        judge = Dependencies.get_judge(pool)
+        judge = Dependencies.get_judge()   # get_judge takes no pool: the old call raised TypeError on every transfer
     source_text = canonical_json({
         "benchmark": {
             "name": source["name"],

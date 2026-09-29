@@ -122,3 +122,16 @@ test("format: CC-BY content carries its credit under the title, before steps and
   assert.match(cand, /C\n {2}credit: by d\n {2}1\. go/);
   assert.doesNotMatch(formatKnowledge({ outcome: "resolved", procedures: [{ name: "N", steps: [{ order: 1, do: "go on" }] }] }), /credit/);
 });
+
+test("format: steps are numbered by position and carry their check", () => {
+  const out = formatKnowledge({ outcome: "resolved", procedures: [{ name: "W", steps: [
+    { order: 0, do: "Find where paths are built", role: "plan" },
+    { order: 1, do: "Run the failing test", role: "verify", check: "pytest t.py::test_a passes" }] }] });
+  assert.match(out, /\n {2}1\. Find where paths are built\n {2}2\. Run the failing test \(check: pytest t\.py::test_a passes\)/);
+});
+
+test("a way graded by its source's own tests says so", () => {
+  const out = formatKnowledge({ outcome: "resolved", procedures: [{ name: "Fix it", tested_by_source: true, steps: [{ do: "edit" }] }] });
+  assert.match(out, /Fix it \[its solution passed the source task's own tests\]:/);
+  assert.doesNotMatch(formatKnowledge({ outcome: "resolved", procedures: [{ name: "Fix it", steps: [{ do: "edit" }] }] }), /own tests/);
+});

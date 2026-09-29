@@ -1318,6 +1318,31 @@ async def handle_goal_abstraction_placement(
             continue
         confidence = float(candidate.confidence or 0.0)
         high_confidence = confidence >= context["minimum_confidence"]
+        second = None
+        if not high_confidence and current_status is None:
+            # K8 (2026-09-29): below the single-judge threshold, ask a second model independently. Two agreeing
+            # judgments accept; a confident "unrelated/overlapping" rejects; only disagreement reaches a human.
+            from app.services.goal_relation_second_judge import second_opinion
+
+            # the pair is already ordered (specific, abstract), whichever way the first judge phrased it
+            second = await second_opinion(adjudication["specific_goal"], adjudication["abstract_goal"],
+                                          first_relation="specializes")
+            if second.decision == "reject":
+                try:
+                    await persist_goal_relation(
+                        pool, specific, abstract, status="rejected", provenance="identity_resolution",
+                        access_scope=context["access_scope"], tenant_scope=context["tenant_scope"],
+                        confidence=confidence, decision_id=decision_id,
+                        decision_metadata={"operation": "goal_abstraction_placement", "policy": RELATION_POLICY,
+                                           "policy_version": RELATION_POLICY_VERSION, "authority": RELATION_AUTHORITY,
+                                           "relation": relation, "second_judge": second.__dict__},
+                        decided_by=RELATION_AUTHORITY, expected_status=current_status, pools=pools)
+                except (GoalRelationCycleError, GoalRelationRedundancyError, GoalRelationScopeError,
+                        GoalRelationStatusConflict, GoalRelationVisibilityError, GoalRelationSelfError):
+                    pass
+                rejected_count += 1
+                continue
+            high_confidence = second.decision == "accept"
         try:
             if high_confidence:
                 await persist_goal_relation(
@@ -1338,6 +1363,7 @@ async def handle_goal_abstraction_placement(
                         "relation": relation,
                         "judge_provider": provider,
                         "judge_model": model,
+                        **({"second_judge": second.__dict__} if second is not None else {}),
                     },
                     decided_by=None if decision_id else RELATION_AUTHORITY,
                     expected_status=current_status,

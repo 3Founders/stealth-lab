@@ -125,9 +125,14 @@ const cut = (s, n) => {
   return t.length <= n ? t : t.slice(0, n - 15) + "\n[... truncated]";
 };
 
+// A step's check (how to tell it worked) rides on the same line, so the agent can verify each step without another
+// lookup; it is what .stealth/run.md's `check=` wants.
 function steps(proc) {
-  return (proc.steps || []).map((s, i) => `  ${s.order ?? i + 1}. ${s.do || s.action || s.goal || s.instruction || ""}`.trimEnd())
-    .filter((l) => l.trim().length > 3).join("\n");
+  return (proc.steps || []).map((s, i) => {
+    const text = `${s.do || s.action || s.goal || s.instruction || s.description || ""}`.trim();
+    const check = typeof s.check === "string" && s.check.trim() ? ` (check: ${cut(s.check.trim(), 160)})` : "";
+    return text ? `  ${i + 1}. ${text}${check}` : "";   // position, not `order` (0- or 1-based by source)
+  }).filter(Boolean).join("\n");
 }
 
 // CC-BY content must carry its credit wherever it is shared (BLOCKERS I7). It sits right under the title, before
@@ -149,7 +154,8 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full" } = {}) 
   const parts = [];
   const procs = reply.outcome === "resolved" ? (reply.procedures || []) : [];
   for (const p of procs.slice(0, 2)) {
-    parts.push(`Known way (verified for this Goal) -- ${p.name || p.goal_name || p.procedure_id}:${credit(p)}\n${steps(p)}` +
+    const tested = p.tested_by_source ? " [its solution passed the source task's own tests]" : "";
+    parts.push(`Known way (verified for this Goal) -- ${p.name || p.goal_name || p.procedure_id}${tested}:${credit(p)}\n${steps(p)}` +
       (p.verified_solution ? `\n${solution(p.verified_solution, 2400)}` : ""));
   }
   if (mode === "lean") {

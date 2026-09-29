@@ -155,3 +155,20 @@ def test_step_difficulties_are_recovered_and_the_local_refit_returns_them():
     mu = fit._goal_prior_parts(g, g.phi1(None), [])
     _, _, steps_out, _ = fit._local_posterior(g, mu, local, CFG, seed=4)
     assert steps_out["d"].shape == (CFG.draws, 3) and steps_out["e"].shape == (CFG.draws, 3, g.k)
+
+
+def test_diagnostics_skip_an_empty_parameter():
+    """Small data can leave a parameter with zero size (e.g. no Goal has a parent); the nightly refit crashed on it."""
+    import numpy as np
+    from app.routing.fit import _nuts_diagnostics
+
+    class _Mcmc:
+        def get_samples(self, group_by_chain=False):
+            rng = np.random.default_rng(0)
+            return {"mu": rng.normal(size=(2, 200)), "theta_hist": np.zeros((2, 200, 0))}
+
+        def get_extra_fields(self, group_by_chain=False):
+            return {"diverging": np.zeros((2, 200), dtype=bool)}
+
+    d = _nuts_diagnostics(_Mcmc())
+    assert d["divergences"] == 0 and d["min_ess"] > 0

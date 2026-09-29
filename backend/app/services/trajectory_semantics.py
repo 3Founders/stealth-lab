@@ -63,7 +63,7 @@ EXTRACTOR_ID = "trajectory_semantic_v1"
 # to describe names/enums the strict parser rejects -- measured 13/13 step-0
 # calls rejected, 0 knowledge items, spend incurred). A prompt is a versioned
 # artifact, so the fix gets its own version rather than silently reusing v1.
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"   # v3 (2026-09-29): step role + check; claims name their subject and keep conditions
 SCHEMA_VERSION = "v1"
 DEFAULT_MODEL = "gemma-4-31B-it"
 
@@ -106,6 +106,10 @@ class CandidateProcedureStep(BaseModel):
     # The concrete tool/mechanism the step used (e.g. "pytest"); stored as the step's `binding`.
     tool_name: Optional[str] = None
     event_indices: list[int] = Field(default_factory=list)
+    # What kind of step this is (plan = locate/understand/reproduce, edit = change code, verify = run a check), so
+    # per-step model routing and .stealth/run.md have something to key on; and how to tell the step worked.
+    role: Optional[Literal["plan", "edit", "verify", "other"]] = None
+    check: Optional[str] = None
 
 
 class CandidateProcedure(BaseModel):
@@ -211,9 +215,18 @@ STEP'S GOAL (e.g. "locate the failing test"), not the literal tool call (e.g. NO
 tests/test_foo.py") -- concrete tools belong in `tool_name`, not in the procedure step text. \
 `tool_name` names the CONCRETE tool/mechanism the step actually used (e.g. "pytest", "ripgrep"); \
 never invent a tool that wasn't actually called.
+- Each step's `role` is "plan" (locate, understand, reproduce), "edit" (change code), "verify" (run a check) or \
+"other". Its `check` is the concrete way the trajectory showed the step worked -- the command and the result that \
+proved it (e.g. "pytest tests/test_x.py::test_y passes") -- or omitted when the trajectory shows none. Never invent a \
+check the trajectory did not run.
 - `primary_goal` is the trajectory's single main objective; `subgoals` are the intermediate objectives.
 - `claims[]` are semantic propositions ("the test failure disappeared after regenerating the client \
-from the schema"), never a restatement of raw telemetry ("a file was modified").
+from the schema"), never a restatement of raw telemetry ("a file was modified"). Write every claim, failure mode, \
+recovery pattern, precondition and verification action as a plain sentence that (a) names exactly what it is about \
+(the function, option, library, command or behaviour -- never "it" or "this"), (b) keeps the conditions under which \
+it holds (versions, platform, configuration, "in this repository"), and (c) is grounded in what the events show. \
+For a comparison, state both sides, what was compared and which direction is better. Drop anything unbound, \
+hypothetical or implausible (e.g. an improvement over 100%, a negative duration).
 - Extract real value from a FAILED trajectory too: attempted goal, failure point, failed \
 precondition, recovery attempts, and any repeated-action/thrashing pattern belong in \
 failure_modes/recovery_patterns -- do not leave everything empty just because the run failed.
@@ -427,8 +440,18 @@ async def extract_trajectory_semantics(
     created_by: str = EXTRACTOR_ID,
     compaction_judge: Any = None,
     write_procedures: bool = True,
+    task_goal: Optional[dict] = None,
 ) -> dict:
     """
+    `task_goal` ({"id", "canonical_name"}, 2026-09-29): the caller already knows which Goal this run attempted (a
+    benchmark task, shared by every source of that task -- migration 129). It then IS the run's primary Goal (the
+    extracted primary goal is cited against it instead of creating a second Goal), every Procedure achieves it
+    (and goes through Procedure identity, so the same way from another run or source is reused, not duplicated),
+    and every Claim carries it as its Goal. Without it, behaviour is unchanged.
+
+    Also stored since 2026-09-29: the extracted preconditions (on each Procedure), verification actions (Claims
+    linked to each Procedure as VERIFICATION), and failure modes linked to each Procedure as FAILURE_MODE -- all were
+    extracted and paid for before, and then discarded.
     `write_procedures=False` (2026-09-29): the caller knows the run FAILED (e.g. a benchmark-graded trajectory with
     resolved=0). Goals and Claims -- including the failure modes and recovery patterns -- are still written, but no
     Procedure is: a way that did not work is evidence of what fails, never a way to follow
@@ -641,7 +664,14 @@ async def extract_trajectory_semantics(
                 return None
 
         dropped_goals: list[str] = []
-        if extraction.primary_goal is not None:
+        if task_goal is not None:
+            # The caller knows the task's Goal: it IS the primary Goal. The extracted primary goal only cites events.
+            written["primary_goal_id"] = str(task_goal["id"])
+            written["goal_ids"].append(str(task_goal["id"]))
+            if extraction.primary_goal is not None:
+                await _link("goal", str(task_goal["id"]), extraction.primary_goal.event_indices,
+                            extraction.primary_goal.epistemic_status, extraction.primary_goal.confidence)
+        elif extraction.primary_goal is not None:
             goal = await _goal_or_none(extraction.primary_goal.text)
             if goal is not None:
                 await _link("goal", goal["id"], extraction.primary_goal.event_indices,
@@ -657,26 +687,25 @@ async def extract_trajectory_semantics(
                 counts["goals"] += 1
                 written["goal_ids"].append(str(goal["id"]))
 
-        for claim_el in extraction.claims:
-            # Single-trajectory extraction can never earn anything stronger
-            # than these two tiers -- multi_trace_support/benchmark_support/
-            # external_source_support are reserved for future cross-trace
-            # corroboration this task does not build (Sec 18: preserve the
-            # field, don't fabricate the evidence).
-            generalization_level = (
-                "single_trace_observation" if claim_el.epistemic_status == "observed"
-                else "single_trace_inference"
-            )
+        claim_goal = {"goal_id": written["primary_goal_id"]} if written["primary_goal_id"] else {}
+        linked: dict[str, list[str]] = {"FAILURE_MODE": [], "VERIFICATION": []}
+
+        async def _claim(el: SemanticElement, claim_type: str, extra: dict) -> Optional[str]:
+            # Single-trajectory extraction can never earn anything stronger than these two tiers --
+            # multi_trace_support/benchmark_support/external_source_support are reserved for future cross-trace
+            # corroboration this task does not build (Sec 18: preserve the field, don't fabricate the evidence).
             claim_id = await capture_claim(
                 pool,
-                statement=claim_el.text,
+                statement=el.text,
                 task_ids=[],
                 justification_episode_id=episode_id,
-                claim_type="trajectory_semantic",
-                epistemic_status="observed" if claim_el.epistemic_status == "observed" else "inferred",
+                claim_type=claim_type,
+                epistemic_status="observed" if el.epistemic_status == "observed" else "inferred",
                 extraction_version=f"{EXTRACTOR_ID}:{model}",
-                confidence=claim_el.confidence,
-                properties={"generalization_level": generalization_level, "extracted_by": EXTRACTOR_ID},
+                confidence=el.confidence,
+                properties={"generalization_level": "single_trace_observation"
+                            if el.epistemic_status == "observed" else "single_trace_inference",
+                            "extracted_by": EXTRACTOR_ID, **claim_goal, **extra},
                 owner_id=resolved_owner_id,
                 visibility=resolved_visibility,
                 scope_type=resolved_scope_type,
@@ -684,74 +713,78 @@ async def extract_trajectory_semantics(
                 ingestion_context_id=ingestion_context_id,
             )
             if claim_id:
-                await _link("claim", claim_id, claim_el.event_indices, claim_el.epistemic_status, claim_el.confidence)
+                await _link("claim", claim_id, el.event_indices, el.epistemic_status, el.confidence)
                 counts["claims"] += 1
                 written["claim_ids"].append(str(claim_id))
+            return str(claim_id) if claim_id else None
 
-        # Failure modes and recovery patterns were extracted (and paid for) but never stored before 2026-09-29, so a
-        # failed run left no record of WHY it failed. They are Claims of their own type, cited like every other.
+        for claim_el in extraction.claims:
+            await _claim(claim_el, "trajectory_semantic", {})
+
+        # Failure modes, recovery patterns and verification actions were extracted (and paid for) but never stored
+        # before 2026-09-29, so a failed run left no record of WHY it failed and a Procedure no record of its checks.
         for claim_type, elements in (("failure_mode", extraction.failure_modes),
                                      ("recovery_pattern", extraction.recovery_patterns)):
             for el in elements:
-                claim_id = await capture_claim(
-                    pool,
-                    statement=el.text,
-                    task_ids=[],
-                    justification_episode_id=episode_id,
-                    claim_type=claim_type,
-                    epistemic_status="observed" if el.epistemic_status == "observed" else "inferred",
-                    extraction_version=f"{EXTRACTOR_ID}:{model}",
-                    confidence=el.confidence,
-                    properties={"generalization_level": "single_trace_observation"
-                                if el.epistemic_status == "observed" else "single_trace_inference",
-                                "extracted_by": EXTRACTOR_ID, "run_outcome": extraction.outcome},
-                    owner_id=resolved_owner_id,
-                    visibility=resolved_visibility,
-                    scope_type=resolved_scope_type,
-                    scope_entity_id=resolved_scope_entity_id,
-                    ingestion_context_id=ingestion_context_id,
-                )
-                if claim_id:
-                    await _link("claim", claim_id, el.event_indices, el.epistemic_status, el.confidence)
-                    counts["claims"] += 1
+                cid = await _claim(el, claim_type, {"run_outcome": extraction.outcome})
+                if cid:
                     counts["failure_claims"] += 1
-                    written["claim_ids"].append(str(claim_id))
+                    if claim_type == "failure_mode":
+                        linked["FAILURE_MODE"].append(cid)
+        for el in extraction.verification_actions:
+            cid = await _claim(el, "verification", {"run_outcome": extraction.outcome})
+            if cid:
+                linked["VERIFICATION"].append(cid)
 
+        preconditions = [{"source": "trajectory_extraction", "description": el.text}
+                         for el in extraction.preconditions]
         if not write_procedures:
             counts["procedures_withheld"] = len(extraction.candidate_procedures)
         for proc in (extraction.candidate_procedures if write_procedures else []):
             steps: list[dict[str, Any]] = []
-            for step in proc.steps:
+            for order, step in enumerate(proc.steps):
                 step_goal_id = None
                 if step.subgoal_text:
-                    step_goal = await find_or_create_goal(pool, canonical_name=step.subgoal_text, **goal_kwargs)
-                    step_goal_id = step_goal["id"]
-                    counts["goals"] += 1
-                    # A step-level Goal is a real, distinct canonical object
-                    # this extraction created -- it earns its own citation
-                    # row exactly like the primary Goal/subgoals do, not just
-                    # an embedded goal_id inside the procedure's own steps
-                    # JSONB. Falls back to the procedure's own event_indices
-                    # if the step didn't cite any of its own.
-                    await _link(
-                        "goal", step_goal_id,
-                        step.event_indices or proc.event_indices,
-                        proc.epistemic_status, proc.confidence,
-                    )
+                    step_goal = await _goal_or_none(step.subgoal_text)
+                    if step_goal is not None:
+                        step_goal_id = step_goal["id"]
+                        counts["goals"] += 1
+                        # A step-level Goal is a real, distinct canonical object this extraction created -- it earns
+                        # its own citation row like the primary Goal/subgoals do. (Not retrievable on its own until
+                        # it has a Procedure: goal_search_index.has_procedures, migration 128.)
+                        await _link(
+                            "goal", step_goal_id,
+                            step.event_indices or proc.event_indices,
+                            proc.epistemic_status, proc.confidence,
+                        )
                 step_doc: dict[str, Any] = {
+                    "order": order,
                     "description": step.description,
+                    "do": step.description,
                     "goal_id": step_goal_id,
                     "event_refs": list(dict.fromkeys(r for i in step.event_indices for r in event_ids_by_index.get(i, []))),
                     "source_locator": {"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "span"},
                 }
+                if step.role:
+                    step_doc["role"] = step.role
+                if step.check:
+                    step_doc["check"] = step.check.strip()
                 if step.tool_name:
                     step_doc["binding"] = {"kind": "tool", "tool": step.tool_name.strip()}
                 steps.append(step_doc)
+            capture_kwargs: dict[str, Any] = {}
+            if task_goal is not None:
+                # The same way from another run or source of this task is reused (judged identity), not duplicated.
+                capture_kwargs = {"procedure_dedup": True,
+                                  "source_key": f"trajectory:{task_goal['id']}:{proc.capability_statement[:80]}"}
             procedure_row = await capture_procedure(
                 pool,
                 name=proc.capability_statement[:120],
-                goal=proc.capability_statement,
+                goal=str(task_goal["canonical_name"]) if task_goal is not None else proc.capability_statement,
                 steps=steps,
+                preconditions=preconditions,
+                failure_conditions=[{"source": "trajectory_extraction", "description": el.text}
+                                    for el in extraction.failure_modes],
                 source_locator={"source_id": f"trajectory-extraction:{extraction_id}", "granularity": "document"},
                 source_episode_ids=[episode_id],
                 provenance="system_pending_review",
@@ -760,8 +793,9 @@ async def extract_trajectory_semantics(
                 visibility=resolved_visibility,
                 scope_type=resolved_scope_type,
                 scope_entity_id=resolved_scope_entity_id,
+                **capture_kwargs,
             )
-            if ingestion_context_id:
+            if ingestion_context_id and not procedure_row.get("reused"):
                 await pool.execute(
                     "UPDATE procedures SET ingestion_context_id = $1::uuid WHERE id = $2::uuid",
                     ingestion_context_id, procedure_row["id"],
@@ -770,8 +804,23 @@ async def extract_trajectory_semantics(
                         proc.epistemic_status, proc.confidence)
             counts["procedures"] += 1
             written["procedure_rows"].append({"id": str(procedure_row["id"]),
-                                          "procedure_id": str(procedure_row["procedure_id"]),
-                                          "name": proc.capability_statement[:120]})
+                                              "procedure_id": str(procedure_row["procedure_id"]),
+                                              "name": proc.capability_statement[:120],
+                                              "reused": bool(procedure_row.get("reused"))})
+            # K4: this run's failure modes and verification actions are attached to the way itself, so
+            # procedures.md and the claims resource show "this fails because ..." and "check it by ..." with it.
+            if linked["FAILURE_MODE"] or linked["VERIFICATION"]:
+                from app.services.procedure_claim_refs import add_procedure_claim_ref
+
+                version = int(await pool.fetchval("SELECT version FROM procedures WHERE id = $1::uuid",
+                                                  procedure_row["id"]) or 1)
+                for role, claim_ids in linked.items():
+                    for cid in claim_ids:
+                        await add_procedure_claim_ref(
+                            pool, procedure_id=str(procedure_row["procedure_id"]), procedure_version=version,
+                            claim_id=cid, role=role, ref_origin="derived",
+                            extractor_version=f"{EXTRACTOR_ID}:{PROMPT_VERSION}",
+                            ingestion_context_id=ingestion_context_id, created_by=created_by)
 
         output_hash = _output_hash(raw_text)
         all_confidences = [

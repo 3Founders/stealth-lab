@@ -39,7 +39,8 @@ class FakeContext:
 def test_search_goals_lexical_only_by_default_never_touches_the_embedder(monkeypatch):
     captured = {}
 
-    async def fake_search(pool, *, query_text, query_embedding, scope, status, limit):
+    async def fake_search(pool, *, query_text, query_embedding, scope, status, limit, require_procedures):
+        assert require_procedures is True   # the agent-facing search only offers Goals that have a way
         captured["query_embedding"] = query_embedding
         return [{"id": "g1", "canonical_name": "find references"}]
 
@@ -58,7 +59,8 @@ def test_search_goals_lexical_only_by_default_never_touches_the_embedder(monkeyp
 def test_search_goals_semantic_true_computes_a_real_embedding(monkeypatch):
     captured = {}
 
-    async def fake_search(pool, *, query_text, query_embedding, scope, status, limit):
+    async def fake_search(pool, *, query_text, query_embedding, scope, status, limit, require_procedures):
+        assert require_procedures is True   # the agent-facing search only offers Goals that have a way
         captured["query_embedding"] = query_embedding
         return []
 
@@ -76,7 +78,8 @@ def test_search_goals_semantic_true_computes_a_real_embedding(monkeypatch):
 
 
 def test_search_goals_narrows_by_scope_type_after_the_scope_checked_fetch(monkeypatch):
-    async def fake_search(pool, *, query_text, query_embedding, scope, status, limit):
+    async def fake_search(pool, *, query_text, query_embedding, scope, status, limit, require_procedures):
+        assert require_procedures is True   # the agent-facing search only offers Goals that have a way
         return [
             {"id": "g1", "canonical_name": "x", "scope_type": "global", "scope_entity_id": None},
             {"id": "g2", "canonical_name": "y", "scope_type": "project", "scope_entity_id": "repo-a"},

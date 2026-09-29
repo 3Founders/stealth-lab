@@ -83,7 +83,7 @@ log = logging.getLogger(__name__)
 # extractions can be audited/re-run/compared later. Stored in each
 # persisted claim's own `extraction_version` property (an existing
 # ClaimProperties field -- no schema change).
-CLAIM_EXTRACTION_PROMPT_VERSION = "claim_extraction_prompt@v1"
+CLAIM_EXTRACTION_PROMPT_VERSION = "claim_extraction_prompt@v2"   # v2: named subject, conditions, plausibility (2026-09-29)
 CLAIM_EXTRACTION_SCHEMA_VERSION = "claim_extraction_schema@v1"
 CLAIM_EXTRACTION_VERSION = f"{CLAIM_EXTRACTION_PROMPT_VERSION}+{CLAIM_EXTRACTION_SCHEMA_VERSION}"
 
@@ -204,6 +204,17 @@ expected effect, environment fact, or documented decision. It is NEVER:
     that as scope="repo_local" or "source_scoped", never promote it to scope="global");
   - invented -- every claim must be grounded in one exact block you were given, with a verbatim
     quote from that block backing it. Never fabricate a quote.
+
+How to write each statement (plain language, no fixed template):
+  - name exactly what it is about -- the library, option, function, command, file type or behaviour -- so it \
+still makes sense out of this document; never "it", "this" or "the tool" without the name;
+  - keep every condition that changes whether it is true (versions, platform, configuration, size, "in this \
+repository") inside the sentence, and repeat them in "conditions";
+  - a comparison states both sides, what was compared and which direction is better ("lower latency is better");
+  - numbers keep their unit; drop a claim whose number is implausible (an improvement over 100%, a negative \
+duration, a percentage over 100) rather than repeat it;
+  - prefer what a later run, file or command could confirm or contradict; a claim nobody could ever check is \
+rarely worth keeping.
 
 Return EXACTLY one JSON object on one line, no other text, of this shape:
 {"claims": [{"statement": str, "claim_type": one of ["fact","invariant","assumption",\

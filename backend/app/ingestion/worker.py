@@ -235,8 +235,45 @@ class Worker:
 
             self.budget = ingest_budget.install(self.pool)   # same ledger + cap as the API's CostGovernor
         await q.reap_exhausted(self.pool)
-        await asyncio.gather(*[self._lane(i, budget) for i in range(self.cfg.concurrency)])
+        maintenance = None
+        if loop:
+            # A looping worker's lanes never return, so maintenance that only ran after them never ran at all while
+            # the worker was up (found 2026-09-29: 1,263 placement jobs unclaimed, projections undrained).
+            maintenance = asyncio.create_task(self._maintenance_loop())
+        try:
+            await asyncio.gather(*[self._lane(i, budget) for i in range(self.cfg.concurrency)])
+        finally:
+            if maintenance is not None:
+                maintenance.cancel()
+                try:
+                    await maintenance
+                except asyncio.CancelledError:
+                    pass
         await q.reap_exhausted(self.pool)
+        await self._maintenance()
+        return dict(self.counts, worker_id=self.worker_id, budget_stopped=self.budget_stopped)
+
+
+    async def _maintenance_loop(self) -> None:
+        interval = float(os.environ.get("INGEST_MAINTENANCE_INTERVAL_SECONDS", "300"))
+        while not self.stop.is_set():
+            try:
+                await asyncio.wait_for(self.stop.wait(), timeout=interval)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await self._maintenance()
+            except Exception:  # noqa: BLE001 -- maintenance never kills the worker; the next tick retries
+                log.warning("worker maintenance tick failed; will retry", exc_info=True)
+
+    async def _maintenance(self) -> None:
+        """Periodic upkeep. Projections are drained FIRST: Goal.has_procedures (migration 128) is maintained by the
+        projection, and placement repair places exactly the Goals whose flag just flipped."""
+        if self.cfg.drain_projections:
+            from app.services.search_projection import drain_outbox
+
+            self.counts["projection"] = await drain_outbox(self.pool, batch=self.cfg.projection_batch, pools=self.pools)
         if self.cfg.reconcile_goals:
             from app.ingestion.handlers import Dependencies
             from app.services.identity_resolution import reconcile_goals
@@ -273,7 +310,29 @@ class Worker:
             from app.services.search_projection import drain_outbox
 
             self.counts["projection"] = await drain_outbox(self.pool, batch=self.cfg.projection_batch, pools=self.pools)
-        return dict(self.counts, worker_id=self.worker_id, budget_stopped=self.budget_stopped)
+        await self._schedule_nightly_refit()
+
+    async def _schedule_nightly_refit(self) -> None:
+        """R3: the recommender's joint refit (`routing_refit`) was documented as "schedule it daily" and scheduled by
+        nothing. Enqueue it once per UTC day when there are routing observations; the idempotency key makes every
+        worker and every tick agree on one job per day."""
+        from datetime import datetime, timezone
+
+        try:
+            has_obs = await self.pool.fetchval("SELECT EXISTS (SELECT 1 FROM routing_observations)")
+        except Exception:  # noqa: BLE001 -- no routing tables on this database
+            return
+        if not has_obs:
+            return
+        from app.routing.store import NIGHTLY_REFIT_JOB
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        try:
+            await q.enqueue(self.pool, NIGHTLY_REFIT_JOB, {}, idempotency_key=f"routing-refit:{day}",
+                            scope_type="global", visibility="public", max_attempts=3, offload=False)
+            self.counts["nightly_refit"] = day
+        except Exception:  # noqa: BLE001 -- retried next tick
+            log.warning("nightly routing refit enqueue failed; will retry", exc_info=True)
 
 
 def _parse(argv: Optional[list[str]] = None) -> argparse.Namespace:

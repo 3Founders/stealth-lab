@@ -83,8 +83,11 @@ def test_selection_keeps_the_most_direct_success_and_one_real_wrong_attempt():
             _run("f1", "A", 0, "RuntimeError: Agent reached maximum iteration", messages=10),
             _run("f2", "A", 0, messages=60), _run("f3", "A", 0, messages=55),
             _run("g1", "B", 0, "Timeout", messages=5)]
-    picked = {(s.instance_id, s.outcome): s.trajectory_id for s in pick(runs)}
+    chosen = pick(runs)
+    picked = {(s.instance_id, s.outcome): s.trajectory_id for s in chosen}
     assert picked == {("A", "resolved"): "t1", ("A", "failed"): "f3"}, "B has only a timeout: nothing to learn"
+    a = next(s for s in chosen if s.instance_id == "A")
+    assert (a.runs_total, a.runs_resolved) == (6, 3)
 
 
 def test_item_keys_are_task_and_outcome():
@@ -111,7 +114,7 @@ def _state(**kw):
         def is_held_out(self, x):
             return x == "held__one-1"
 
-    parents = kw.pop("parents", {"o__r-1": ParentTask("MIT License", "abc", 1, "img")})
+    parents = kw.pop("parents", {"o__r-1": ParentTask("MIT License", "abc", ("t",), (), "img")})
     return RunState(ledger=kw.pop("ledger", _Ledger()), held=Held(), parents=parents, client=None)
 
 
@@ -139,7 +142,7 @@ def test_license_gates():
 
     for name, reason in (("BSD", "license_unmappable"), (None, "license_unmappable"),
                          ("Zope Public License 2.1", "license_quarantine")):
-        got, _ = asyncio.run(gate(_state(parents={"o__r-1": ParentTask(name, "c", 1, None)}), _item()))
+        got, _ = asyncio.run(gate(_state(parents={"o__r-1": ParentTask(name, "c")}), _item()))
         assert got == reason, name
     ok, detail = asyncio.run(gate(_state(), _item()))
     assert ok is None and detail["used_under"] == "MIT"

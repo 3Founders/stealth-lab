@@ -882,3 +882,28 @@ def test_migration_is_additive_idempotent_and_has_no_backfill():
     assert "DROP TABLE" not in sql
     assert "benchmark_transfer_decisions_append_only" in sql
     assert "app.benchmark_transfer_compensation" in sql
+
+
+def test_default_judge_is_fetched_without_arguments(monkeypatch):
+    """2026-09-29: `_judge_transfer` called `Dependencies.get_judge(pool)`, but get_judge takes no arguments, so every
+    transfer that relied on the default judge failed with TypeError. The default path must call it bare."""
+    import asyncio
+
+    from app.ingestion import handlers
+    from app.services import benchmark_transfer as bt
+
+    class Stop(Exception):
+        pass
+
+    calls = []
+
+    def get_judge():
+        calls.append(True)
+        raise Stop
+
+    monkeypatch.setattr(handlers.Dependencies, "get_judge", staticmethod(get_judge))
+    try:
+        asyncio.run(bt._judge_transfer(None, {}, {}, "abstract_to_specific", None))
+    except Stop:
+        pass
+    assert calls == [True]

@@ -53,18 +53,29 @@ EXTRACTION_POLICY = "openhands_pipeline:strong_model_for_every_run"
 
 
 def extraction_model() -> str:
-    from app.config import settings
+    from app.ingest.common.llm import ingest_model
 
-    return settings.trajectory_extraction_strong_model
+    return ingest_model()
+
+
 CACHE_DIR = REPO_ROOT / "backend" / "data" / "ingest_cache"
 
 
 @dataclass
 class ParentTask:
+    """The task a trajectory attempted, from the pinned parent nebius/SWE-rebench: its license, its accepted fix
+    (the gold patch -- the verified solution served with the run's Procedure) and its tests (the Benchmark)."""
     license_name: Optional[str]
-    base_commit: str
-    fail_to_pass: int
-    docker_image: Optional[str]
+    base_commit: str = ""
+    fail_to_pass: tuple[str, ...] = ()
+    pass_to_pass: tuple[str, ...] = ()
+    docker_image: Optional[str] = None
+    test_patch: str = ""
+    patch: str = ""
+    test_cmd: Optional[str] = None
+    problem_statement: str = ""
+    fail_to_fail: tuple[str, ...] = ()
+    pass_to_fail: tuple[str, ...] = ()
 
 
 @dataclass
@@ -80,10 +91,19 @@ def load_parents() -> dict[str, ParentTask]:
     """instance_id -> the parent task facts the pipeline needs. Blocking."""
     out: dict[str, ParentTask] = {}
     for pinned in PARENT_FILES:
-        for row in read_columns(pinned.local_path(), ["instance_id", "license_name", "base_commit",
-                                                     "FAIL_TO_PASS", "docker_image"]):
-            out[str(row["instance_id"])] = ParentTask(row.get("license_name"), str(row.get("base_commit") or ""),
-                                                      len(row.get("FAIL_TO_PASS") or []), row.get("docker_image"))
+        for row in read_columns(pinned.local_path(), ["instance_id", "license_name", "base_commit", "FAIL_TO_PASS",
+                                                     "PASS_TO_PASS", "docker_image", "test_patch", "patch",
+                                                     "install_config", "problem_statement", "FAIL_TO_FAIL",
+                                                     "PASS_TO_FAIL"]):
+            install = row.get("install_config") or {}
+            out[str(row["instance_id"])] = ParentTask(
+                license_name=row.get("license_name"), base_commit=str(row.get("base_commit") or ""),
+                fail_to_pass=tuple(row.get("FAIL_TO_PASS") or ()), pass_to_pass=tuple(row.get("PASS_TO_PASS") or ()),
+                docker_image=row.get("docker_image"), test_patch=str(row.get("test_patch") or ""),
+                patch=str(row.get("patch") or ""),
+                test_cmd=(install.get("test_cmd") if isinstance(install, dict) else None) or None,
+                problem_statement=str(row.get("problem_statement") or ""),
+                fail_to_fail=tuple(row.get("FAIL_TO_FAIL") or ()), pass_to_fail=tuple(row.get("PASS_TO_FAIL") or ()))
     return out
 
 
@@ -147,6 +167,29 @@ async def _prior_extraction(pool: Any, episode_id: str) -> Optional[dict]:
             "procedure_ids": [o["id"] for o in objs if o["object_type"] == "procedure"]}
 
 
+async def _run_outcome_claim(pool: Any, item: Selected, goal: Any, context_id: str) -> Optional[str]:
+    """One measured Claim per task from the clean signal -- how often this model and scaffold solved it, as graded by
+    the task's own tests (Singh et al.: comparisons from structured results, not prose). Natural language, with its
+    conditions. Written once per task, whichever of its items comes first."""
+    from app.services.claims import capture_claim
+
+    exists = await pool.fetchval(
+        "SELECT id::text FROM knowledge_nodes WHERE node_type = 'claim' AND t_invalid IS NULL "
+        "AND properties->>'task_key' = $1 AND properties->>'kind' = 'run_outcomes' LIMIT 1", f"swe:{item.instance_id}")
+    if exists or not item.runs_total:
+        return exists
+    statement = (f"{nz.MODEL.split('/')[-1]} with {nz.PROVIDER_VERSION.replace('-', ' ')} solved \"{goal.canonical_name}\" "
+                 f"in {item.runs_resolved} of {item.runs_total} recorded runs on {item.repo}, graded by the task's own "
+                 "tests (SWE-rebench).")
+    return await capture_claim(
+        pool, statement=statement, task_ids=[], claim_type="measured_outcome", epistemic_status="observed",
+        extraction_version=f"{EXTRACTOR}:{EXTRACTOR_VERSION}", created_by=EXTRACTOR,
+        properties={"kind": "run_outcomes", "task_key": f"swe:{item.instance_id}", "goal_id": goal.goal_id,
+                    "provenance": "third_party", "runs_total": item.runs_total, "runs_resolved": item.runs_resolved,
+                    "model": nz.MODEL, "scaffold": nz.PROVIDER_VERSION},
+        ingestion_context_id=context_id)
+
+
 async def process(state: RunState, item: Selected, row: dict[str, Any],
                   license_detail: dict) -> tuple[str, str, dict, dict]:
     """Write one gated item. Returns (status, reason, detail, objects). Raises only BudgetExceeded."""
@@ -185,13 +228,23 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
             "UPDATE episodes SET metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('declared_goal', $2::text) "
             "WHERE id = $1::uuid", episode_id, trajectory.metadata["declared_goal"])
 
-        result = await _prior_extraction(pool, episode_id)
+        # K3: every source of this task meets on ONE Goal (migration 129). Named once from the issue.
+        from app.ingest.common.tasks import ensure_task_goal, task_key
+
         model = extraction_model()
+        parent = state.parents[item.instance_id]
+        key = task_key(item.instance_id)
+        goal = await ensure_task_goal(pool, key=key, issue=parent.problem_statement or trajectory.metadata["declared_goal"],
+                                      client=state.client, model=model, named_by=EXTRACTOR, source=DATASET.source_id)
+        objects["task_goal_id"] = goal.goal_id
+
+        result = await _prior_extraction(pool, episode_id)
         if result is None:
             result = await extract_trajectory_semantics(
                 pool, episode_id, client=state.client, model=model, escalated=True,
                 escalation_reason=EXTRACTION_POLICY, ingestion_context_id=context_id,
-                created_by=EXTRACTOR, write_procedures=resolved)
+                created_by=EXTRACTOR, write_procedures=resolved,
+                task_goal={"id": goal.goal_id, "canonical_name": goal.canonical_name})
             procedure_rows = result.get("procedure_rows") or []
         else:
             procedure_rows = [dict(r) for r in await pool.fetch(
@@ -203,31 +256,43 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
         if not resolved and procedure_rows:
             raise RuntimeError("a failed run produced Procedures; the extractor ignored write_procedures=False")
 
-        evidence_ids = []
+        # The task's tests as its frozen Benchmark (idempotent per task), and the benchmark grade as testimony.
+        from app.ingest.common.benchmarks import TaskTests, ensure_task_benchmark
         from app.ingest.common.evidence import record_benchmark_support
 
+        objects["benchmark_id"] = await ensure_task_benchmark(pool, goal_id=goal.goal_id, tests=TaskTests(
+            task_key=key, source=f"hf:nebius/SWE-rebench@{PARENT_FILES[0].revision}", repo=item.repo,
+            base_commit=parent.base_commit, docker_image=parent.docker_image, test_cmd=parent.test_cmd,
+            fail_to_pass=parent.fail_to_pass, pass_to_pass=parent.pass_to_pass, test_patch=parent.test_patch,
+            language="python", fail_to_fail=parent.fail_to_fail, pass_to_fail=parent.pass_to_fail))
+        evidence_ids, solutions = [], 0
         for proc in procedure_rows:
             version = await pool.fetchval("SELECT version FROM procedures WHERE id = $1::uuid", proc["id"])
             evidence_ids.append(await record_benchmark_support(
-                pool, procedure_row_id=proc["id"], target_version=int(version or 1),
-                task_key=f"swe-rebench:{item.instance_id}", context_key=f"swe-rebench:{item.instance_id}",
+                pool, procedure_row_id=proc["id"], target_version=int(version or 1), task_key=key, context_key=key,
                 ingestion_context_id=context_id, created_by=EXTRACTOR, extractor_version=EXTRACTOR_VERSION))
+            # The code served with this way is the maintainers' accepted fix, not the agent's patch.
+            if parent.patch.strip():
+                from app.services.verified_solutions import preserve
+
+                ref = await preserve(pool, procedure_row_id=proc["id"], code=parent.patch,
+                                     task=parent.problem_statement, language="diff",
+                                     verified_by=("FAIL_TO_PASS: " + ", ".join(parent.fail_to_pass[:20]))[:300],
+                                     locator=None, visibility="public")
+                solutions += int(bool(ref))
         objects["evidence_ids"] = evidence_ids
+        objects["verified_solutions"] = solutions
+        objects["run_outcome_claim_id"] = await _run_outcome_claim(pool, item, goal, context_id)
 
-        primary_goal = result.get("primary_goal_id") or (objects["goal_ids"][0] if result.get("reused") and
-                                                           objects["goal_ids"] else None)
         reason = "written" if (procedure_rows or not resolved) else "written_without_procedure"
-        if primary_goal:
-            from app.routing.service import record_observation
+        from app.routing.service import record_observation
 
-            objects["routing_observation_id"] = await record_observation(pool, {
-                "source": "public_import", "goal_id": primary_goal,
-                "procedure_id": procedure_rows[0]["procedure_id"] if len(procedure_rows) == 1 else None,
-                "model_key": nz.MODEL, "scaffold": nz.PROVIDER_VERSION, "instance_key": item.instance_id,
-                "check_kind": "benchmark", "accepted": resolved, "gold_correct": resolved, "visibility": "public",
-            })
-        else:
-            reason = reason if reason != "written" else "written_without_primary_goal"
+        objects["routing_observation_id"] = await record_observation(pool, {
+            "source": "public_import", "goal_id": goal.goal_id,
+            "procedure_id": procedure_rows[0]["procedure_id"] if len(procedure_rows) == 1 else None,
+            "model_key": nz.MODEL, "scaffold": nz.PROVIDER_VERSION, "instance_key": item.instance_id,
+            "check_kind": "benchmark", "accepted": resolved, "gold_correct": resolved, "visibility": "public",
+        })
         await complete_ingestion_context(pool, context_id, status="completed")
         detail = {"events": len(trajectory.events), "events_inserted": written.get("inserted"),
                   "model": model, "extraction_policy": EXTRACTION_POLICY,

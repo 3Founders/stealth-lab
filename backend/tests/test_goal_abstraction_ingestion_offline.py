@@ -259,6 +259,18 @@ def wire_handler(
 
 
 @pytest.mark.asyncio
+async def test_extracted_goal_is_not_placed_until_it_has_a_procedure():
+    # migration 128: a Goal from extraction enters the hierarchy when it first gets a live Procedure (the worker's
+    # placement-repair sweep sees has_procedures flip), not at creation.
+    pool = GoalPool()
+    created = await find_or_create_goal(
+        pool, canonical_name="Deploy the service safely", scope_type="global",
+        provenance="system_pending_review", created_from="trajectory_semantics")
+    assert created["created"] is True
+    assert pool.jobs == {}
+
+
+@pytest.mark.asyncio
 async def test_new_goal_enqueues_one_idempotent_placement_job():
     pool = GoalPool()
 
@@ -267,6 +279,7 @@ async def test_new_goal_enqueues_one_idempotent_placement_job():
         canonical_name="Deploy the service safely",
         scope_type="global",
         provenance="system_pending_review",
+        created_from="user_created",
     )
 
     assert created["created"] is True

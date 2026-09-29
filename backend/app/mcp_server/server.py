@@ -1699,7 +1699,8 @@ async def find_best_way(task_description: str, ctx: Context,
     (see EXTRACTION above) always runs on a real success regardless of
     this flag.
     """
-    log.warning(
+    import logging
+    logging.getLogger(__name__).warning(
         "find_best_way is deprecated (2026-09-28) -- use find_ways/submit_way instead; "
         "mode=%r repo_path=%r", mode, bool(repo_path),
     )
@@ -3666,7 +3667,7 @@ async def search_goals(
     pool = ctx.request_context.lifespan_context["pool"]
     results = await _search_goals(
         pool, query_text=query, query_embedding=query_embedding,
-        scope=_caller_access_scope(), status=status, limit=limit,
+        scope=_caller_access_scope(), status=status, limit=limit, require_procedures=True,
     )
     # scope_type/scope_entity_id narrowing happens after the scope-checked
     # fetch, not instead of it -- a caller cannot use these to see a Goal
@@ -4109,6 +4110,7 @@ async def _attach_candidate_ways(pool, candidates: list, query: str, facts: list
                 **({"verified_solution": vs} if vs else {}),
                 "procedure_id": str(row["procedure_id"]), "name": row.get("name"),
                 "verification_state": row.get("verification_state"),
+                "tested_by_source": bool(item.get("tested_by_source")),
                 "steps": sorted(row.get("steps") or [], key=lambda st: st.get("order", 0) if isinstance(st, dict) else 0),
                 "observed_on_goal": None if source == str(goal_id) else {
                     "goal_id": source, "goal_name": (source_row or {}).get("canonical_name")},

@@ -6,6 +6,19 @@ As of 2026-09-29; updated 2026-09-28 evening (IST) with the engineering fixes be
 **Owner**: **F** = founder decision or account action · **E** = engineering · **L** = legal/counsel.
 The detailed ingestion review is `docs/ingestion_review.md`.
 
+## 0. Rebuilt ingestion (2026-09-29): what is ready and what the first production run needs
+
+The old pipelines were abandoned; `backend/app/ingest/` replaces them (design and rules: `docs/ingestion_pipelines.md`). **Built and tested:** OpenHands trajectories, SkillMD skills, and verified SWE solutions (gold patches from SWE-rebench, SWE-rebench-V2, SWE-bench-extra, SWE-Gym). One SWE task = one Goal shared by every source; a runnable task gets a frozen Benchmark. Core changes that came with them: search only offers Goals that have a Procedure (migration 128), a second judge for hierarchy edges, source-tested ways rank first and are labelled in `find_ways` and the hook, the worker now runs its maintenance and the nightly model refit while it loops, and plain-language claim rules. Acceptance run on a clean local database passed (3 tasks, both sides: knowledge and routing). The other pipelines (SWE-agent/SWE-smith trajectories, step 4 verifiers, step 6 CI/bot PRs, step 7 codemods, step 8) are not rebuilt yet.
+
+| # | Needed before the first production run | Owner |
+|---|---|---|
+| R1 | Apply migrations 127 (ledger), 128 (`has_procedures`), 129 (task Goals) to production, after a staging branch. | F approves, E runs |
+| R2 | Production `.env`: `INGEST_MODEL=google/gemini-3.8-flash` (= `VERTEX_MODEL`), `VERTEX_LLM_LOCATION=global`, one embedding model everywhere, a realistic `DAILY_LLM_BUDGET_USD`. | F + E |
+| R3 | Re-embed production so all vectors use one model (it holds a mix of `gemini-embedding-001` and `-2`). | F approves, E runs |
+| R4 | `gcloud auth application-default login` on the machine that runs ingestion; then re-measure claim quality with `gemini-3.8-flash` on ~20 tasks before the full run. | F, then E |
+| R5 | Worker service token (`SERVICE_TOKEN_KEYS`, register + mint `ingest-worker` with `ingestion:process`). | F approves, E runs |
+| R6 | Rotate the secrets that were shared in chat (database password, R2 keys, GitHub token, General Compute keys). | Chaitanya |
+
 ## 1. Ingestion: why nothing can be ingested at scale yet
 
 | # | Blocker | Evidence | Owner | Next action |
