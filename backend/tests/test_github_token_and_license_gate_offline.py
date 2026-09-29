@@ -121,3 +121,22 @@ def test_ordinary_api_errors_do_not_block_a_real_run(compile_spy):
     summary = _pilot(_Errors())
     assert "warning" not in summary
     assert not str(summary.get("note", "")).startswith("refused"), "only rate limiting makes the gate untrustworthy"
+
+
+def test_the_repo_file_fetcher_also_sees_a_token_that_lives_only_in_dotenv(dotenv_only_token):
+    """github_corpus._default_http_get (used by the repo ingester and the code cascade's sibling paths) read only
+    os.environ["GITHUB_TOKEN"], the same defect as the SkillMD resolver."""
+    from app.services.ingestion_sources import github_corpus
+
+    assert github_corpus._request_headers()["Authorization"] == "Bearer dotenv-token"
+
+
+def test_no_token_means_no_authorization_header_not_an_error(monkeypatch):
+    from app.services.ingestion_sources import github_corpus
+    import app.config as config
+
+    for name in ("GITHUB_TOKEN", "PERSONAL_GITHUB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config.settings, "personal_github_token", None, raising=False)
+    monkeypatch.setattr(config.settings, "github_token", None, raising=False)
+    assert "Authorization" not in github_corpus._request_headers()

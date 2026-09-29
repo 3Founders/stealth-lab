@@ -22,6 +22,7 @@
     python -m app.ingestion.admin fold-implementations        # convert archived legacy implementations into step bindings / one-step procedures
     python -m app.ingestion.admin ingest-codemods --source nodejs --checkout DIR --commit SHA [--apply --shard-dsn-env ENV]   # step 7 (local shard only)
     python -m app.ingestion.admin ingest-trajectories --shard-dsn-env ENV [--limit N --semantics N --budget-cap-usd X]      # steps 0/1 (local shard only)
+    python -m app.ingestion.admin cascade-repo owner/name [--top N] [--no-judge] [--apply --max-usd X]              # code cascade: non-trivial spans of a repo
 """
 from __future__ import annotations
 
@@ -87,6 +88,8 @@ def _parse(argv=None) -> argparse.Namespace:
     _codemod_cli.add_parsers(sub)
     from app.ingestion import traj_pilot_cli as _traj_cli  # steps 0/1: ingest-trajectories (local shard only)
     _traj_cli.add_parsers(sub)
+    from app.ingestion import cascade_cli as _cascade_cli  # code cascade: cascade-repo (dry run unless --apply)
+    _cascade_cli.add_parsers(sub)
     sub.add_parser("judge-health")   # probe every semantic judge path (single + batch) and each General Compute key
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
@@ -191,6 +194,18 @@ async def _amain(a: argparse.Namespace) -> int:
             except PendingMigrations as exc:
                 print(f"ERROR: {exc}")
                 return 2
+        if a.cmd == "cascade-repo":
+            if a.apply:
+                # a writing run refuses to start on a database with pending migrations (migration 128 adds the artifact role)
+                from app.ingestion.preflight import PendingMigrations, assert_schema_current
+
+                try:
+                    await assert_schema_current(pool, command=a.cmd)
+                except PendingMigrations as exc:
+                    print(f"ERROR: {exc}")
+                    return 2
+            from app.ingestion import cascade_cli as _cascade_cli
+            return await _cascade_cli.run(pool, a)
         if a.cmd == "skillmd-import":
             from app.ingestion import skillmd_cli as _skillmd_cli
             return await _skillmd_cli.run(pool, a)

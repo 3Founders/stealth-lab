@@ -77,7 +77,7 @@ class CascadeResult:
 
 def run_structural_cascade(
     files: Mapping[str, str], *, max_spans: int = DEFAULT_MAX_SPANS, per_file: int = DEFAULT_PER_FILE,
-    languages: Optional[set[str]] = None,
+    languages: Optional[set[str]] = None, go_mod_text: Optional[str] = None,
 ) -> CascadeResult:
     funnel = Funnel(files_in=len(files))
     survivors: dict[str, tuple[str, str]] = {}         # path -> (text, role)
@@ -98,7 +98,7 @@ def run_structural_cascade(
     funnel.files_scored = len(survivors)
 
     indegree = graph.build_indegree({p: (text, languages_of[p]) for p, (text, _t) in survivors.items()},
-                                    go_mod_text=files.get("go.mod"))
+                                    go_mod_text=go_mod_text if go_mod_text is not None else files.get("go.mod"))
 
     per_file_spans: dict[str, list[RankedSpan]] = {}
     for path, (text, role) in survivors.items():

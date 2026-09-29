@@ -42,7 +42,8 @@ BINDING_KINDS = (
 )
 BINDING_ADDRESS_KEYS = frozenset({"endpoint", "server_url", "path", "image", "args", "env_refs", "entrypoint", "sandbox_policy"})
 ARTIFACT_ROLES = ("executable_source", "style_reference", "design_reference", "documentation", "dependency_manifest", "test_fixture",
-                  "verified_solution")   # db/124: the verified code a Procedure was extracted from (reference only)
+                  "verified_solution",   # db/124: the verified code a Procedure was extracted from (reference only)
+                  "reference_code")      # db/128: a non-trivial code span the code cascade kept for small models (reference only)
 SANDBOX_POLICIES = ("isolated", "isolated_network")
 BINDING_KEYS = frozenset({"kind", *BINDING_KINDS, *BINDING_ADDRESS_KEYS, "locator", "parameters", "verifier", "resources"})
 

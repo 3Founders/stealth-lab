@@ -51,17 +51,27 @@ _BACKTICK_PATH_RE = re.compile(
 )
 
 
-def _default_http_get(url: str) -> tuple[int, bytes]:
-    import httpx
-
-    from app.services.screening import assert_safe_locator
+def _request_headers() -> dict[str, str]:
+    """Headers for a GitHub request. The token comes from the environment OR backend/.env (GITHUB_TOKEN or
+    PERSONAL_GITHUB_TOKEN): reading only os.environ meant a token that lives in .env was invisible, so every request ran
+    unauthenticated (60/hour) -- the defect that quarantined a whole SkillMD run as "license unknown"."""
+    from app.services.ingestion_sources.skillmd_dataset import _github_headers
 
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "stealthlab-skill-ingestion",
     }
-    if os.environ.get("GITHUB_TOKEN"):
-        headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
+    if "Authorization" in (auth := _github_headers()):
+        headers["Authorization"] = auth["Authorization"]
+    return headers
+
+
+def _default_http_get(url: str) -> tuple[int, bytes]:
+    import httpx
+
+    from app.services.screening import assert_safe_locator
+
+    headers = _request_headers()
     # SSRF guard (G3 tail): screen every locator + redirect hop.
     assert_safe_locator(url)
     current = url
