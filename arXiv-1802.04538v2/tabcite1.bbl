@@ -1,0 +1,94 @@
+\begin{thebibliography}{12}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Al-Zaidy and Giles(2015)]{al2015automatic}
+R.~A. Al-Zaidy and C.~L. Giles.
+\newblock Automatic extraction of data from bar charts.
+\newblock In \emph{Proceedings of the 8th International Conference on Knowledge
+  Capture}, page~30. ACM, 2015.
+
+\bibitem[Cafarella et~al.(2008)Cafarella, Halevy, Wang, Wu, and
+  Zhang]{CafarellaHWWZ2008WebTables2}
+M.~J. Cafarella, A.~Halevy, D.~Z. Wang, E.~Wu, and Y.~Zhang.
+\newblock {WebTables}: exploring the power of tables on the {Web}.
+\newblock \emph{PVLDB}, 1\penalty0 (1):\penalty0 538--549, 2008.
+\newblock ISSN 2150-8097.
+\newblock \doi{http://doi.acm.org/10.1145/1453856.1453916}.
+\newblock URL
+  \url{http://www.eecs.umich.edu/~michjc/papers/webtables_vldb08.pdf}.
+
+\bibitem[David(1987)]{David1987Tournament}
+H.~A. David.
+\newblock Ranking from unbalanced paired-comparison data.
+\newblock \emph{Biometrika}, 74\penalty0 (2):\penalty0 432--436, 1987.
+\newblock URL
+  \url{https://academic.oup.com/biomet/article-pdf/74/2/432/659083/74-2-432.pdf}.
+
+\bibitem[Hashimoto et~al.(2017)Hashimoto, Shinoda, Yokono, and
+  Aizawa]{hashimoto7automatic}
+H.~Hashimoto, K.~Shinoda, H.~Yokono, and A.~Aizawa.
+\newblock Automatic generation of review matrices as multi-document
+  summarization of scientific papers.
+\newblock In \emph{Workshop on bibliometric-enhanced information retrieval and
+  natural language processing for digital libraries (BIRNDL)}, volume~7, pages
+  850--865, 2017.
+
+\bibitem[Jech(1983)]{Jech1983Tournament}
+T.~Jech.
+\newblock The ranking of incomplete tournaments: a mathematician's guide to
+  popular sports.
+\newblock \emph{The American Mathematical Monthly}, 90\penalty0 (4):\penalty0
+  246--266, 1983.
+\newblock URL \url{http://www.jstor.org/stable/2975756}.
+
+\bibitem[Jung et~al.(2017)Jung, Kim, Song, Hwang, Lee, Kim, and Seo]{Jung:2017}
+D.~Jung, W.~Kim, H.~Song, J.-i. Hwang, B.~Lee, B.~Kim, and J.~Seo.
+\newblock Chartsense: Interactive data extraction from chart images.
+\newblock In \emph{Proceedings of the 2017 CHI Conference on Human Factors in
+  Computing Systems}, CHI '17, pages 6706--6717, 2017.
+\newblock ISBN 978-1-4503-4655-9.
+
+\bibitem[Mitra et~al.(2006)Mitra, Giles, Wang, and Lu]{mitra2006automatic}
+P.~Mitra, C.~L. Giles, J.~Z. Wang, and X.~Lu.
+\newblock Automatic categorization of figures in scientific documents.
+\newblock In \emph{Digital Libraries, 2006. JCDL'06. Proceedings of the 6th
+  ACM/IEEE-CS Joint Conference on}, pages 129--138. IEEE, 2006.
+
+\bibitem[Page et~al.(1998)Page, Brin, Motwani, and
+  Winograd]{PageBMW1998pagerank}
+L.~Page, S.~Brin, R.~Motwani, and T.~Winograd.
+\newblock The {PageRank} citation ranking: Bringing order to the {Web}.
+\newblock Manuscript, Stanford University, 1998.
+
+\bibitem[Redmond(2003)]{Redmond2003Tournament}
+C.~Redmond.
+\newblock A natural generalization of the win-loss rating system.
+\newblock \emph{Mathematics Magazine}, 76\penalty0 (2):\penalty0 119--126,
+  2003.
+\newblock URL \url{http://www.jstor.org/stable/3219304}.
+
+\bibitem[Sarawagi and Chakrabarti(2014)]{SarawagiC2014QEWT}
+S.~Sarawagi and S.~Chakrabarti.
+\newblock Open-domain quantity queries on {Web} tables: Annotation, response,
+  and consensus models.
+\newblock In \emph{SIGKDD Conference}, 2014.
+
+\bibitem[Singh et~al.(2018)Singh, Sarkar, Vyas, Goyal, Mukherjee, and
+  Chakrabarti]{SinghSVGMC2019TabCite}
+M.~Singh, R.~Sarkar, A.~Vyas, P.~Goyal, A.~Mukherjee, and S.~Chakrabarti.
+\newblock Automated early leaderboard generation from comparative tables.
+\newblock \emph{arXiv}, 1802.04538, 2018.
+\newblock URL \url{https://arxiv.org/abs/1802.04538}.
+\newblock In ECIR~2019.
+
+\bibitem[Xing and Ghorbani(2004)]{xing2004weighted}
+W.~Xing and A.~Ghorbani.
+\newblock Weighted pagerank algorithm.
+\newblock In \emph{Communication Networks and Services Research, 2004.
+  Proceedings. Second Annual Conference on}, pages 305--314. IEEE, 2004.
+
+\end{thebibliography}
