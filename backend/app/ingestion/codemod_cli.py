@@ -203,7 +203,7 @@ def _report_item(artifact: Any) -> dict[str, Any]:
 
 
 async def _apply(pool: Any, artifacts: list[Any], *, embed: bool = True, deterministic: bool = False,
-                 max_usd: float = 1.0, concurrency: int = 4) -> dict[str, int]:
+                 max_usd: float = 1.0, concurrency: int = 4, reasons_out: list | None = None) -> dict[str, int]:
     """Write the gated artifacts. The default is the REAL compiler (`compile_skill_artifact`): it registers the Source,
     opens the IngestionContext every derived row stamps (so a license takedown can find them), records the artifact by
     content hash (a re-run is a no-op, a changed recipe is a new version), extracts the structured claims/goals with a
@@ -267,7 +267,14 @@ async def _apply(pool: Any, artifacts: list[Any], *, embed: bool = True, determi
                 bump("error")
                 print(f"ERROR ingesting {name}: {exc}", file=sys.stderr)
                 return
-            bump(str(getattr(outcome, "status", None) or "error"))
+            status = str(getattr(outcome, "status", None) or "error")
+            bump(status)
+            reason = getattr(outcome, "reason", None)
+            if status not in ("captured", "new_version", "unchanged") and reason:
+                # Without this a "rejected" recipe is a bare count with no way to see why (2 of 39 on the first real run).
+                print(f"{status.upper()} {name}: {str(reason)[:300]}", file=sys.stderr)
+                if reasons_out is not None:
+                    reasons_out.append({"recipe": str(name), "status": status, "reason": str(reason)[:300]})
 
     try:
         await asyncio.gather(*(compile_one(artifact) for artifact in artifacts))
@@ -389,8 +396,9 @@ async def run(pool: Any, a: Any) -> int:
     discovery_stats = dict(getattr(adapter, "discovery_stats", {}) or {})
 
     write_outcomes: dict[str, int] = {}
+    write_reasons: list[dict[str, str]] = []
     if not dry_run:
-        write_outcomes = await _apply(pool, capture, embed=not getattr(a, "no_embed", False),
+        write_outcomes = await _apply(pool, capture, embed=not getattr(a, "no_embed", False), reasons_out=write_reasons,
                                       deterministic=bool(getattr(a, "deterministic", False)),
                                       max_usd=float(getattr(a, "max_usd", 1.0)),
                                       concurrency=int(getattr(a, "concurrency", 4)))
@@ -430,6 +438,8 @@ async def run(pool: Any, a: Any) -> int:
     }
     if write_outcomes:
         report["write_outcomes"] = write_outcomes
+    if write_reasons:
+        report["write_reasons"] = write_reasons
 
     print(json.dumps(report, indent=2, default=str))
     await run_blocking(_write_report, a.out, report)   # blocking filesystem write inside an async def

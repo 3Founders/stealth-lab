@@ -135,7 +135,16 @@ class Worker:
             if run in done:
                 exc = run.exception()
                 if exc is None:
-                    ok = await q.complete(self.pool, job)
+                    # A handler may report WHAT it did ("captured", "duplicate", "rejected: no extractable structure") by
+                    # returning {"ingest_outcome": {...}}. Every ingest job used to end as a bare `done`, so 12 of 30
+                    # verified-solution items produced no procedure and nothing said why. Only that explicit marker is
+                    # stored; any other return value keeps being ignored, exactly as before.
+                    returned = run.result()
+                    marker = returned.get("ingest_outcome") if isinstance(returned, dict) else None
+                    if isinstance(marker, dict):
+                        ok = await q.complete(self.pool, job, {"ingest_outcome": marker})
+                    else:
+                        ok = await q.complete(self.pool, job)
                     self.counts["done" if ok else "lost"] += 1
                     if not ok:
                         log.warning("job %s finished but its lease was lost; result is idempotent, discarding state write", job.id)

@@ -264,3 +264,20 @@ def test_production_never_applies_to_trajectories(wired, monkeypatch):
     """The trajectory pilot has no production write path (its normalize_trace_event fan-out needs a worker plan)."""
     monkeypatch.setenv("TRAJ_DSN", "postgresql://u:p@db.example.internal/prod")
     assert _run(admin._run_local_pilot(_ns(cmd="ingest-trajectories", shard_dsn_env="TRAJ_DSN", production=True))) == 2
+
+
+def test_a_rejected_recipe_reports_why(compiler, capsys):
+    """2 of 39 came back "rejected" on the first real run with no way to see the reason."""
+    from app.ingestion import codemod_cli
+
+    async def with_reason(pool, artifact, **kw):
+        return type("Outcome", (), {"status": "rejected", "reason": "the document had no extractable structure"})()
+
+    import app.services.skill_ingestion as skill_ingestion
+
+    skill_ingestion.compile_skill_artifact = with_reason
+    reasons = []
+    out = _run(codemod_cli._apply(object(), [_Artifact("a")], reasons_out=reasons))
+    assert out == {"rejected": 1}
+    assert reasons == [{"recipe": "a", "status": "rejected", "reason": "the document had no extractable structure"}]
+    assert "REJECTED a: the document had no extractable structure" in capsys.readouterr().err

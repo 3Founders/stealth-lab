@@ -118,6 +118,12 @@ async def handle_ingest_verified_solution(pool: asyncpg.Pool, payload: dict) -> 
             items_rejected=int(status == "rejected"),
             verified_solution_preserved=int(preserved),
         )
+    # Recorded on the job row by the worker (see worker.run_job): without it every item ended as a bare `done`, and 12 of 30
+    # items produced no procedure with nothing saying whether they were rejected, duplicates or unchanged.
+    return {"ingest_outcome": {
+        "status": status, "reason": (str(getattr(outcome, "reason", "") or "")[:300] or None),
+        "verified_solution_preserved": bool(preserved), "instance_id": instance_id,
+    }}
 
 
 
