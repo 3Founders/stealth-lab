@@ -27,6 +27,7 @@ tmpl = getattr(rm, "_templates", None) or getattr(rm, "templates", None) or {}
 print(json.dumps({
     "tools": sorted(t.name for t in srv.server._tool_manager.list_tools()),
     "resources": sorted(tmpl.keys()),
+    "static_resources": sorted(str(k) for k in (getattr(rm, "_resources", None) or {}).keys()),
     "prompts": sorted(p.name for p in srv.server._prompt_manager.list_prompts()),
 }))
 """
@@ -51,6 +52,8 @@ def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
         "stealth://procedures/{procedure_id}/claims",
     ]
     assert s["prompts"] == ["plan_and_run", "survey_repo"]
+    # The same two prompts as readable resources, for clients that don't surface MCP prompts.
+    assert s["static_resources"] == ["stealth://prompts/plan_and_run", "stealth://prompts/survey_repo"]
 
 
 def test_v2_still_exposes_the_legacy_surface():

@@ -436,7 +436,9 @@ MCP_SURFACE = os.environ.get("STEALTHLAB_MCP_SURFACE", "v1").strip().lower()
 _V1_INSTRUCTIONS = (
     "StealthLab: proven procedures for coding tasks. You plan; StealthLab "
     "knows. 0) Once per repo, run the survey_repo prompt to write "
-    ".stealth/claims.md (facts about this repo, each citing file:line). "
+    ".stealth/claims.md (facts about this repo, each citing file:line). If "
+    "your client doesn't show MCP prompts, read the same text from the "
+    "resources stealth://prompts/survey_repo and stealth://prompts/plan_and_run. "
     "1) find_ways(query, repo_claims=<claims.md text>) returns knowledge: the "
     "Goal, the chosen Procedure(s) with every step in full, alternatives, and "
     "which repo facts supported or blocked each choice. 2) You compile the "

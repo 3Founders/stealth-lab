@@ -374,6 +374,20 @@ async def goal_claims_resource(goal_id: str, ctx: Context) -> str:
     return f"# claims for goal {goal_id} ({goal.get('canonical_name')})\n" + (body + "\n" if body else "")
 
 
+async def survey_repo_prompt_resource() -> str:
+    """stealth://prompts/survey_repo -- the survey_repo prompt's text, for clients that don't show MCP prompts."""
+    from app.mcp_server.prompts import survey_repo
+
+    return survey_repo()
+
+
+async def plan_and_run_prompt_resource() -> str:
+    """stealth://prompts/plan_and_run -- the plan_and_run prompt's text with a `<your task>` placeholder."""
+    from app.mcp_server.prompts import plan_and_run
+
+    return plan_and_run("<your task>")
+
+
 _V1_RESOURCES = [
     ("stealth://claims/{claim_id}", "claim", "Claim",
      "One structured claim: subject/predicate/object, truth state, epistemic "
@@ -384,6 +398,15 @@ _V1_RESOURCES = [
      "preconditions cite, and claims related to its goal.", procedure_claims_resource),
     ("stealth://goals/{goal_id}/claims", "goal-claims", "Claims for a goal",
      "Claims related to one Goal, as grep-friendly CLAIM lines.", goal_claims_resource),
+    # The two v1 prompts as plain resources: the same text, for MCP clients that can read
+    # resources but don't surface MCP prompts to the model (a model can't call prompts/get).
+    ("stealth://prompts/survey_repo", "prompt-survey-repo", "survey_repo prompt",
+     "The survey_repo prompt: how to write .stealth/claims.md (what facts to capture and how "
+     "to write them). Same text as the MCP prompt.", survey_repo_prompt_resource),
+    ("stealth://prompts/plan_and_run", "prompt-plan-and-run", "plan_and_run prompt",
+     "The plan_and_run prompt with a <your task> placeholder: find_ways, compile "
+     ".stealth/run.md, do and check each step, keep claims.md true, report what was "
+     "learned. Same text as the MCP prompt.", plan_and_run_prompt_resource),
 ]
 
 _RESOURCES = [

@@ -196,3 +196,15 @@ def test_plan_and_run_has_the_tiny_packet_and_node_format():
     assert 'Do node N-3. Read: rg "N-3" .stealth/run.md' in body
     assert prm.RUN_MD_FORMAT in body
     assert "survey_repo" in body  # facts first
+
+
+def test_v1_prompts_are_also_readable_as_resources_with_the_same_text():
+    """Clients that don't surface MCP prompts read the identical text from resources."""
+    import asyncio
+
+    from app.mcp_server import resources as res
+
+    assert asyncio.run(res.survey_repo_prompt_resource()) == prm.survey_repo()
+    assert asyncio.run(res.plan_and_run_prompt_resource()) == prm.plan_and_run("<your task>")
+    uris = [r[0] for r in res.resources_for_surface("v1")]
+    assert "stealth://prompts/survey_repo" in uris and "stealth://prompts/plan_and_run" in uris
