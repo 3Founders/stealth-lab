@@ -62,7 +62,8 @@ def decide(first_relation: str, relation: Optional[str], confidence: Optional[fl
 def _model() -> Optional[str]:
     from app.config import settings
 
-    return (os.environ.get("GOAL_RELATION_SECOND_JUDGE_MODEL") or os.environ.get("INGEST_MODEL")
+    return (os.environ.get("GOAL_RELATION_SECOND_JUDGE_MODEL") or settings.goal_relation_second_judge_model
+            or os.environ.get("INGEST_MODEL") or settings.ingest_model
             or settings.trajectory_extraction_strong_model or None)
 
 

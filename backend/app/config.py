@@ -189,6 +189,11 @@ class Settings(BaseSettings):
     # Location for the chat/extraction models only. Empty = same as vertex_region (unchanged behaviour).
     # Embeddings keep using vertex_region: `gemini-embedding-001` is served regionally.
     vertex_llm_location: str = ""
+    # The one model every ingestion pipeline uses (app/ingest/common/llm.py). A `google/...` name must equal
+    # vertex_model (served by Vertex); anything else is served by General Compute. Read from .env like every
+    # other setting -- it was read from the process environment only, so a value in .env was ignored.
+    ingest_model: str = ""
+    goal_relation_second_judge_model: str = ""   # empty = ingest_model
 
     # --- OpenRouter (WAVE-3 debate panel wiring) ---
     # Fourth provider posture next to local / General Compute / the paid

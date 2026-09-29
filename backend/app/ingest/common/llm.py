@@ -24,7 +24,7 @@ class ModelUnavailable(RuntimeError):
 def ingest_model() -> str:
     from app.config import settings
 
-    return (os.environ.get("INGEST_MODEL") or settings.trajectory_extraction_strong_model or "").strip()
+    return (os.environ.get("INGEST_MODEL") or settings.ingest_model or settings.trajectory_extraction_strong_model or "").strip()
 
 
 def extraction_client(model: str | None = None) -> Any:

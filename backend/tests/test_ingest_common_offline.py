@@ -135,3 +135,15 @@ def test_an_undrained_queue_refuses_the_run():
 
     with pytest.raises(PreflightFailed, match="no job worker"):
         asyncio.run(check_queue_alive(Pool()))
+
+
+def test_ingest_model_is_read_from_settings_not_only_the_process_environment(monkeypatch):
+    """A value in backend/.env reaches `settings`, not os.environ; it was silently ignored before."""
+    from app.config import settings
+    from app.ingest.common import llm
+
+    monkeypatch.delenv("INGEST_MODEL", raising=False)
+    monkeypatch.setattr(settings, "ingest_model", "google/gemini-3.8-flash")
+    assert llm.ingest_model() == "google/gemini-3.8-flash"
+    monkeypatch.setenv("INGEST_MODEL", "deepseek-v3.2")
+    assert llm.ingest_model() == "deepseek-v3.2"
