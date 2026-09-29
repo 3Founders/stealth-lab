@@ -36,7 +36,7 @@ def _tree(*paths: str) -> list[dict]:
 
 def test_disclosed_permissive_ids_allow():
     for spdx in sorted(DEFAULT_ALLOWLIST):
-        verdict = classify_spdx(spdx)
+        verdict = classify_spdx(spdx, records_attribution=True)     # CC-BY-4.0 needs a path that records credit
         assert verdict.decision == "ALLOW", spdx
         assert verdict.spdx_id == spdx
         assert verdict.allowlist_version == ALLOWLIST_VERSION

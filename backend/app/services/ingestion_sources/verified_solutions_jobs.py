@@ -34,6 +34,13 @@ from app.utils.aio import run_blocking
 
 log = logging.getLogger(__name__)
 
+
+def _classify_recording_attribution(spdx_id):
+    """Step 2 compiles through compile_skill_artifact, which records an attribution license (spdx_id on the
+    artifact) on the IngestionContext -- so it may admit CC-BY-4.0 (repo_license_policy.classify_spdx)."""
+    return classify_spdx(spdx_id, records_attribution=True)
+
+
 JOB_TYPE = "ingest_verified_solution"
 
 
@@ -179,7 +186,7 @@ async def enqueue_verified_solution_jobs(
     held = vs.load_held_out(design_paths, include_repos=include_repos)
     counters = vs.GateCounters()
     source = vs.VerifiedSolutionSource(
-        source_key, held_out=held, license_classify=classify_spdx,
+        source_key, held_out=held, license_classify=_classify_recording_attribution,
         counters=counters,
     )
 

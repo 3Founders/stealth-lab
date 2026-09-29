@@ -28,6 +28,7 @@ from app.api.deps import (
     require_scopes,
 )
 from app.services import auth_context as _ac
+from app.services.license_attribution import attach_attribution
 from app.services import benchmark_transfer as _benchmark_transfer
 from app.services import product_model as pm
 from app.services.access import AccessScope, TenantScope
@@ -338,7 +339,9 @@ async def goal_solutions(goal_id: str, pool=Depends(get_pool),
     # app.economy.submissions.review_procedure_submission/
     # review_benchmark_submission, once a human has accepted the submission.
     all_solutions = await pm.list_goal_solutions(pool, goal_id, scope=scope)
-    return {"solutions": [s for s in all_solutions if s.get("status") == "active"]}
+    body = {"solutions": [s for s in all_solutions if s.get("status") == "active"]}
+    await attach_attribution(pool, body)     # CC-BY content carries its credit wherever it is served (I7)
+    return body
 
 
 @router.get("/{goal_id}/benchmarks")
@@ -371,7 +374,9 @@ _best_way_router = APIRouter(tags=["goals"])
 @_best_way_router.get("/v1/best-way")
 async def best_verified_solution(goal: str, pool=Depends(get_pool),
                                  scope: AccessScope = Depends(get_scope)) -> dict[str, Any]:
-    return await pm.find_best_verified_solution(pool, goal, scope=scope)
+    body = await pm.find_best_verified_solution(pool, goal, scope=scope)
+    await attach_attribution(pool, body)     # CC-BY content carries its credit wherever it is served (I7)
+    return body
 
 
 # ---------------------------------------------------------------------------

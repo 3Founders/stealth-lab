@@ -17,10 +17,12 @@ Three rules, all load-bearing
 
 2. **License is decided per item, never per compilation.**
    `repo_license_policy.classify_spdx` is called for each artifact. The step-6
-   corpus is CC-BY-4.0, which is **not** on `DEFAULT_ALLOWLIST`, so it returns
-   QUARANTINE and the artifact is not ingested. That is the allowlist working
-   correctly. This module does not widen it; the board question is
-   `.scratch/build-board.md` Q-STEP6-LICENSE.
+   corpus's CC-BY-4.0 covers the Zenodo compilation, not the workflow files in
+   it, so a CI workflow is gated on its repository's license, which this source
+   cannot resolve -> QUARANTINE. CC-BY-4.0 itself is allowed with attribution
+   (ruling 2026-09-29, `.scratch/ingestion/Q-STEP6-CCBY.md`), but only on paths
+   that record the credit; this one does not (`records_attribution` stays False),
+   so an item whose own license is CC-BY-4.0 is quarantined here too.
 
 3. **Scope + provenance on everything** (hard rule 2): source id, revision,
    row id, extractor version, and SPDX in the `source_locator`.

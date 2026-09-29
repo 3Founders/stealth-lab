@@ -130,6 +130,12 @@ function steps(proc) {
     .filter((l) => l.trim().length > 3).join("\n");
 }
 
+// CC-BY content must carry its credit wherever it is shared (BLOCKERS I7). It sits right under the title, before
+// the steps and the code, so the length cut can never keep the content and drop its credit.
+function credit(x) {
+  return x?.attribution ? `\n  credit: ${cut(String(x.attribution).replace(/\s+/g, " "), 400)}` : "";
+}
+
 function solution(vs, n) {
   if (!vs?.code) return "";
   return `  verified solution${vs.task ? ` (it solved: ${cut(vs.task.replace(/\s+/g, " "), 240)})` : ""}:\n` +
@@ -143,7 +149,7 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full" } = {}) 
   const parts = [];
   const procs = reply.outcome === "resolved" ? (reply.procedures || []) : [];
   for (const p of procs.slice(0, 2)) {
-    parts.push(`Known way (verified for this Goal) -- ${p.name || p.goal_name || p.procedure_id}:\n${steps(p)}` +
+    parts.push(`Known way (verified for this Goal) -- ${p.name || p.goal_name || p.procedure_id}:${credit(p)}\n${steps(p)}` +
       (p.verified_solution ? `\n${solution(p.verified_solution, 2400)}` : ""));
   }
   if (mode === "lean") {
@@ -155,19 +161,19 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full" } = {}) 
     const s = reply.suggested;
     if (s) {
       parts.push(`Closest known Goal (not the same as this request -- adapt it): ${s.goal_name || s.goal_id}` +
-        (s.way ? `\n  way: ${s.way}` : "") + (s.verified_solution ? `\n${solution(s.verified_solution, 2000)}` : ""));
+        credit(s) + (s.way ? `\n  way: ${s.way}` : "") + (s.verified_solution ? `\n${solution(s.verified_solution, 2000)}` : ""));
     } else {
       const c = (reply.candidates || []).find((x) => x.ways?.length);
       if (c) {
         const w = c.ways[0];
         parts.push(`Closest known Goal (not the same as this request -- adapt it): ${c.goal?.canonical_name || ""}` +
-          `\n${steps(w)}` + (w.verified_solution ? `\n${solution(w.verified_solution, 2000)}` : ""));
+          credit(w) + `\n${steps(w)}` + (w.verified_solution ? `\n${solution(w.verified_solution, 2000)}` : ""));
       }
     }
   }
   for (const ex of (reply.related_examples || []).slice(0, 3)) {
     parts.push(`Similar solved problem (NOT verified to apply -- a worked example to adapt, never copy): ` +
-      `${ex.goal_name || ex.goal_id}\n${solution(ex.verified_solution, 1500)}`);
+      `${ex.goal_name || ex.goal_id}${credit(ex)}\n${solution(ex.verified_solution, 1500)}`);
   }
   if (!parts.length) return "";
   const head = "StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +

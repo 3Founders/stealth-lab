@@ -4183,6 +4183,10 @@ async def _find_ways_impl(
 
                 logging.getLogger(__name__).warning("related examples unavailable", exc_info=True)
                 body["related_examples"] = []
+        # CC-BY content must carry its credit wherever it is handed out (BLOCKERS I7).
+        from app.services.license_attribution import attach_attribution
+
+        await attach_attribution(pool, body)
         return json.dumps(body, default=str)
 
     if goal_choice is not None:

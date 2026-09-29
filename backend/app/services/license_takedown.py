@@ -43,8 +43,9 @@ _CONTEXT_IDS = "SELECT id::text FROM ingestion_contexts WHERE upper(license_spdx
 
 _COUNT_SQL = {
     "procedures": "SELECT count(*) FROM procedures WHERE ingestion_context_id = ANY($1::uuid[]) AND t_invalid IS NULL",
-    "claims": ("SELECT count(*) FROM knowledge_nodes WHERE ingestion_context_id = ANY($1::uuid[]) "
-               "AND node_type = 'claim' AND t_invalid IS NULL"),
+    # every knowledge node derived from the content, as the tombstone below removes; the key keeps its name
+    # because Claims are almost all of them
+    "claims": "SELECT count(*) FROM knowledge_nodes WHERE ingestion_context_id = ANY($1::uuid[]) AND t_invalid IS NULL",
     "evidence": "SELECT count(*) FROM evidence WHERE ingestion_context_id = ANY($1::uuid[]) AND t_invalid IS NULL",
     "artifacts": "SELECT count(*) FROM ingested_artifacts WHERE ingestion_context_id = ANY($1::uuid[])",
 }

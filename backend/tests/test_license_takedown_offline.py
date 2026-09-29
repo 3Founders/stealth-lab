@@ -27,7 +27,8 @@ def _norm(sql: str) -> str:
 # ------------------------------------------------------------------------------------------------ policy
 
 def test_cc_by_4_is_allowed_and_attribution_is_mandatory():
-    assert pol.classify_spdx("CC-BY-4.0").decision == "ALLOW"
+    assert pol.classify_spdx("CC-BY-4.0", records_attribution=True).decision == "ALLOW"
+    assert pol.classify_spdx("CC-BY-4.0").decision == "QUARANTINE"     # only where the credit is recorded
     assert pol.attribution_required("CC-BY-4.0") and pol.attribution_required("cc-by-4.0")
     assert pol.ATTRIBUTION_REQUIRED <= pol.DEFAULT_ALLOWLIST      # a required-attribution id must also be allowed
 

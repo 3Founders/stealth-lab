@@ -14,8 +14,11 @@ Two rules that shaped this file:
   an explicit flag is the cheapest way to keep that honest.
 
 The license reality, stated once so it is not a surprise in the report:
-`classify_spdx("CC-BY-4.0")` returns QUARANTINE, because CC-BY-4.0 is not on
-`DEFAULT_ALLOWLIST`. A default `step6-ci-workflows` run therefore reports
+CC-BY-4.0 is allowed with attribution since 2026-09-29, but the Zenodo record's
+CC-BY-4.0 covers the compilation, not the workflow files in it: each file is
+gated on its repository's license, which this source cannot resolve, and this
+path does not record attribution either, so every item is QUARANTINEd
+(`workflow_knowledge.gate_license`). A default `step6-ci-workflows` run therefore reports
 `quarantined_license == considered` and ingests nothing. That is the allowlist
 working. `--allow-cc-by-4` exists to make the *counterfactual* measurable
 without editing a frozen policy, and its report line is labelled as a

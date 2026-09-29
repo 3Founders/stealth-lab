@@ -254,8 +254,14 @@ def classify_spdx(
     allow: Optional[Iterable[str]] = None,
     source_path: Optional[str] = None,
     from_file: bool = False,
+    records_attribution: bool = False,
 ) -> LicenseVerdict:
     """The pure decision: one SPDX id in, one ALLOW/QUARANTINE/REJECT verdict out.
+
+    `records_attribution=True` is the caller's promise that its path stores the credit an attribution license
+    requires (`attribution_for` on the IngestionContext, which is also what `admin license-takedown` finds). An
+    ATTRIBUTION_REQUIRED id is ALLOWed only then; any other path QUARANTINEs it, so no CC-BY content can enter
+    without its credit or beyond the reach of the takedown (fail closed).
 
     `from_file=True` means the id (or the absence of one) came from an
     in-repo LICENSE blob rather than from a repository-level declaration,
@@ -282,6 +288,12 @@ def classify_spdx(
         )
 
     if upper in effective:
+        if attribution_required(raw) and not records_attribution:
+            return LicenseVerdict(
+                "QUARANTINE",
+                f"{raw} requires attribution, and this ingestion path does not record it",
+                raw or None, source_path, version,
+            )
         configured = allow is not None
         reason = (
             f"{raw} is on the "

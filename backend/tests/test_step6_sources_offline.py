@@ -505,7 +505,8 @@ def test_cc_by_4_compilation_license_is_provenance_and_the_item_license_still_ga
     from app.services.repo_license_policy import DEFAULT_ALLOWLIST, attribution_required, classify_spdx
 
     assert "CC-BY-4.0" in DEFAULT_ALLOWLIST and attribution_required("CC-BY-4.0")
-    assert classify_spdx("CC-BY-4.0").decision == "ALLOW"
+    assert classify_spdx("CC-BY-4.0", records_attribution=True).decision == "ALLOW"
+    assert classify_spdx("CC-BY-4.0").decision == "QUARANTINE", "step 6 does not record the credit"
     assert classify_spdx("CC-BY-SA-4.0").decision == "QUARANTINE"      # share-alike stays out
 
     data = (_HEADER + "\n" + _csv_row() + "\n").encode()

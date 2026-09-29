@@ -646,11 +646,16 @@ class SkillMD138KSource:
                 self.stats.bump("near_duplicate_of_" + near)
                 continue
 
+            origin_spdx = None
             if self._enforce_license:
                 decision = self._decide_license(row)
                 if decision != "ALLOW":
                     self.stats.bump(f"license_{decision.lower()}")
                     continue
+                # carried on the artifact: an attribution license (CC-BY-4.0) is recorded on the IngestionContext
+                # from it (skill_ingestion._open_ingestion_provenance), for the credit and for license-takedown
+                spdx_for = getattr(self._license_resolver, "spdx_for", None)
+                origin_spdx = spdx_for(row.origin_repo) if callable(spdx_for) else None
 
             self.stats.admitted += 1
             parts = html_url_parts(row.html_url)
@@ -676,6 +681,7 @@ class SkillMD138KSource:
                     "origin_recoverable": row.origin_recoverable,
                     "is_mirror": row.is_mirror,
                     "gate_version": GATE_VERSION,
+                    **({"spdx_id": origin_spdx} if origin_spdx else {}),
                 },
             )
             yield SourceRef(
@@ -823,7 +829,8 @@ class GitHubLicenseResolver:
     def _decide(self, spdx: Optional[str]) -> tuple[str, str]:
         from app.services.repo_license_policy import classify_spdx
 
-        verdict = classify_spdx(spdx, allow=self._allow)
+        # this path records the credit (spdx_id on the artifact -> the IngestionContext), so it may admit CC-BY-4.0
+        verdict = classify_spdx(spdx, allow=self._allow, records_attribution=True)
         return verdict.decision, verdict.reason
 
     def stats(self) -> dict[str, Any]:

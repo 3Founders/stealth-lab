@@ -106,3 +106,19 @@ test("settings.json: hook upsert keeps other hooks; uninstall removes only ours"
   assert.ok(doc.hooks.Stop);
   assert.equal(removeClaudeHook(file), false);
 });
+
+test("format: CC-BY content carries its credit under the title, before steps and code, in every place", () => {
+  const vs = { code: "x".repeat(5000), language: "python" };
+  const resolved = formatKnowledge({ outcome: "resolved", procedures: [
+    { name: "W", procedure_id: "p1", attribution: "by acme, CC-BY-4.0", steps: [{ order: 1, do: "step one" }], verified_solution: vs },
+  ] }, 600);
+  assert.match(resolved, /W:\n {2}credit: by acme, CC-BY-4\.0\n {2}1\. step one/);
+  const amb = formatKnowledge({ outcome: "ambiguous", suggested: { goal_name: "G", attribution: "by b", verified_solution: vs },
+    related_examples: [{ goal_name: "R", attribution: "by c", verified_solution: vs }] });
+  assert.match(amb, /G\n {2}credit: by b/);
+  assert.match(amb, /R\n {2}credit: by c/);
+  const cand = formatKnowledge({ outcome: "ambiguous", candidates: [{ goal: { canonical_name: "C" },
+    ways: [{ attribution: "by d", steps: [{ order: 1, do: "go" }] }] }] });
+  assert.match(cand, /C\n {2}credit: by d\n {2}1\. go/);
+  assert.doesNotMatch(formatKnowledge({ outcome: "resolved", procedures: [{ name: "N", steps: [{ order: 1, do: "go on" }] }] }), /credit/);
+});
