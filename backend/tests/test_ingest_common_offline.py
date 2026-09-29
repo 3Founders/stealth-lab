@@ -147,3 +147,9 @@ def test_ingest_model_is_read_from_settings_not_only_the_process_environment(mon
     assert llm.ingest_model() == "google/gemini-3.8-flash"
     monkeypatch.setenv("INGEST_MODEL", "deepseek-v3.2")
     assert llm.ingest_model() == "deepseek-v3.2"
+
+
+def test_vertex_calls_are_priced_like_google_not_worst_case():
+    from app.services.governance import estimate_cost
+
+    assert estimate_cost("vertex", 1_000_000, 1_000_000) == estimate_cost("google", 1_000_000, 1_000_000) == 7.5

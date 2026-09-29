@@ -134,6 +134,10 @@ _PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
     "anthropic": (3.0, 15.0),
     "openai": (2.5, 10.0),
     "google": (1.5, 6.0),
+    # Google's models through Vertex AI (ingestion: gemini-3.8-flash, gemini-embedding-2) are the same models as
+    # "google": same rounded-up rate. Before 2026-09-30 they fell through to the worst-case (Anthropic) rate,
+    # which overstated ingestion spend ~2.5x and would have tripped the daily cap early.
+    "vertex": (1.5, 6.0),
     "moonshot": (1.0, 3.0),
     "voyage": (0.12, 0.0),
     "local": (0.0, 0.0),
