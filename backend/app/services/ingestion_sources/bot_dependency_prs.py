@@ -310,7 +310,13 @@ def _token_from_env() -> Optional[str]:
         value = os.environ.get(name)
         if value:
             return value
-    return None
+    # `.env` is read by app.config and never exported: a token that lives only in backend/.env was invisible here.
+    try:
+        from app.config import settings
+
+        return settings.personal_github_token or settings.github_token or None
+    except Exception:  # noqa: BLE001 -- config unavailable (offline tests): unauthenticated
+        return None
 
 
 def _is_rate_limit_body(body: Any) -> bool:

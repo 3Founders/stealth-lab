@@ -206,7 +206,17 @@ def _github_headers() -> dict[str, str]:
     ~40 repositories. The pilot reports how many lookups it made and how many
     were rate-limited rather than pretending the run was complete.
     """
-    token = os.environ.get("GITHUB_TOKEN")
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("PERSONAL_GITHUB_TOKEN")
+    if not token:
+        # `.env` is read by `app.config`, not exported to os.environ: a token that lives only in backend/.env
+        # (as PERSONAL_GITHUB_TOKEN does) was invisible here, every license lookup ran unauthenticated, hit the
+        # 60/hour wall after ~60 repos, and the rest of the corpus was quarantined as "license unknown".
+        try:
+            from app.config import settings
+
+            token = settings.github_token or settings.personal_github_token
+        except Exception:  # noqa: BLE001 -- config unavailable (offline tests): run unauthenticated, and say so in stats
+            token = None
     if not token:
         return {}
     return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}

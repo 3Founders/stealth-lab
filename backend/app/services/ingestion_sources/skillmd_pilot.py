@@ -145,13 +145,12 @@ async def run_skillmd_pilot(
     if shard_dsn:
         assert_not_experiment_database(shard_dsn)
 
+    if license_resolver is None and enforce_license:
+        license_resolver = GitHubLicenseResolver()     # kept in a name so its stats reach the summary below
     source = SkillMD138KSource(
         reader=reader or SkillMD138KReader(),
         limit=limit,
-        license_resolver=(
-            license_resolver if license_resolver is not None
-            else (GitHubLicenseResolver() if enforce_license else None)
-        ),
+        license_resolver=license_resolver,
         enforce_license=enforce_license,
         star_prior=star_prior,
         fetch_workers=fetch_workers,
@@ -181,6 +180,20 @@ async def run_skillmd_pilot(
         "dry_run": dry_run,
         "dataset": {"repo": DATASET_REPO, "revision": DATASET_REVISION, "gate": GATE_VERSION},
     }
+
+    lic = gate_stats.get("license_api") or {}
+    if int(lic.get("rate_limited", 0) or 0):
+        # Rate-limited lookups are quarantined as "license unknown", which reads as a low admission rate. It is not one:
+        # it is an unfinished gate (an unauthenticated run gets 60 lookups/hour). Say so, and do not write on it.
+        # `api_errors` is NOT a trigger: a deleted or moved repo answers 404, which is an ordinary per-row outcome.
+        summary["warning"] = (
+            f"license lookups were rate-limited (rate_limited={lic.get('rate_limited')}); the admitted count is a floor, "
+            "not a measurement. Check that a GitHub token is configured."
+        )
+        if not dry_run:
+            summary["ingestion"] = None
+            summary["note"] = "refused to compile: " + summary["warning"]
+            return summary
 
     if dry_run:
         summary["ingestion"] = None

@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # all three of the above families, so the judge needs a fourth,
     # distinct provider -- Gemini via its OpenAI-compatible endpoint.
     google_api_key: Optional[str] = None
+    # GitHub REST token for the ingestion sources (license lookups, PR mining). `backend/.env` names it
+    # PERSONAL_GITHUB_TOKEN; declaring it here is what makes a `.env`-only token reach a process that never exported it.
+    personal_github_token: Optional[str] = None
+    github_token: Optional[str] = None
 
     voyage_api_key: Optional[str] = None
     # Comma-separated additional Voyage keys, rotated in order on a per-key
