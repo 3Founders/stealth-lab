@@ -98,23 +98,7 @@ async def _amain(a: argparse.Namespace) -> int:
         ingest_budget.install(pool, cap_usd=a.max_usd)
         ledger = Ledger(pool, pipeline=a.pipeline, run_id=run_id, target=target.name)
         try:
-            if a.pipeline == "openhands":
-                from app.ingest.openhands import pipeline as oh
-
-                result = await oh.run(pool, ledger=ledger, limit=a.limit,
-                                      instances=set(a.instances.split(",")) if a.instances else None,
-                                      outcomes=tuple(o.strip() for o in a.outcomes.split(",") if o.strip()))
-            elif a.pipeline == "verified":
-                from app.ingest.verified import pipeline as vf
-                from app.ingest.verified.sources import ORDER
-
-                result = await vf.run(pool, ledger=ledger, limit=a.limit,
-                                      sources=tuple(a.sources.split(",")) if a.sources else ORDER,
-                                      instances=set(a.instances.split(",")) if a.instances else None)
-            else:
-                from app.ingest.skills import pipeline as sk
-
-                result = await sk.run(pool, ledger=ledger, limit=a.limit)
+            result = await _resuming(pool, run_id, a, lambda limit: _dispatch(pool, ledger, a, limit))
         finally:
             ingest_budget.uninstall()
 
@@ -137,6 +121,63 @@ async def _amain(a: argparse.Namespace) -> int:
 
 def main(argv: Optional[list[str]] = None) -> None:
     raise SystemExit(asyncio.run(_amain(_parse(argv))))
+
+
+async def _dispatch(pool: Any, ledger: Any, a: Any, limit: Optional[int]) -> dict:
+    """Run the chosen pipeline once (the ledger makes a re-run skip every item already decided)."""
+    if a.pipeline == "openhands":
+        from app.ingest.openhands import pipeline as oh
+
+        return await oh.run(pool, ledger=ledger, limit=limit,
+                          instances=set(a.instances.split(",")) if a.instances else None,
+                          outcomes=tuple(o.strip() for o in a.outcomes.split(",") if o.strip()))
+    elif a.pipeline == "verified":
+        from app.ingest.verified import pipeline as vf
+        from app.ingest.verified.sources import ORDER
+
+        return await vf.run(pool, ledger=ledger, limit=limit,
+                          sources=tuple(a.sources.split(",")) if a.sources else ORDER,
+                          instances=set(a.instances.split(",")) if a.instances else None)
+    else:
+        from app.ingest.skills import pipeline as sk
+
+        return await sk.run(pool, ledger=ledger, limit=limit)
+
+
+# Transient failures of the connection to the database or the network (2026-09-30: a production run died on
+# "WinError 1236: the network connection was aborted by the local system" an hour in). The ledger records every
+# decided item and the writes are idempotent (shared task Goal, procedure dedup), so the safe response is to wait,
+# reconnect and resume -- never to guess. A run that keeps failing still stops.
+_RESUME_ATTEMPTS = 8
+_RESUME_WAIT_S = (30, 60, 120, 300, 300, 300, 300, 300)
+
+
+def _transient(exc: BaseException) -> bool:
+    import asyncpg
+
+    return isinstance(exc, (ConnectionError, TimeoutError, asyncpg.InterfaceError,
+                            asyncpg.PostgresConnectionError, asyncpg.exceptions.ConnectionDoesNotExistError)) or (
+        isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError))
+
+
+async def _resuming(pool: Any, run_id: str, a: Any, once: Any) -> dict:
+    """`once(limit)`, resumed after transient connection failures. With --limit, items this run already decided
+    count against it, so a resume never processes more than asked."""
+    for attempt in range(_RESUME_ATTEMPTS + 1):
+        limit = a.limit
+        try:
+            if a.limit is not None:
+                done = await pool.fetchval("SELECT count(*) FROM ingest_ledger WHERE run_id = $1::uuid", run_id)
+                limit = max(0, a.limit - int(done or 0))
+            return await once(limit)
+        except Exception as exc:  # noqa: BLE001 -- only transient ones are resumed; everything else is re-raised
+            if not _transient(exc) or attempt == _RESUME_ATTEMPTS:
+                raise
+            wait = _RESUME_WAIT_S[min(attempt, len(_RESUME_WAIT_S) - 1)]
+            print(f"transient failure ({type(exc).__name__}: {str(exc)[:200]}); resuming in {wait}s "
+                  f"(attempt {attempt + 1}/{_RESUME_ATTEMPTS})", file=sys.stderr, flush=True)
+            await asyncio.sleep(wait)
+    raise AssertionError("unreachable")
 
 
 if __name__ == "__main__":

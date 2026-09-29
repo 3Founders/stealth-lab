@@ -153,3 +153,61 @@ def test_vertex_calls_are_priced_like_google_not_worst_case():
     from app.services.governance import estimate_cost
 
     assert estimate_cost("vertex", 1_000_000, 1_000_000) == estimate_cost("google", 1_000_000, 1_000_000) == 7.5
+
+
+def test_vertex_client_refreshes_an_expiring_token():
+    """ADC tokens last ~1h; the client held one fixed token, so long ingestion runs 401'd after an hour."""
+    import datetime as dt
+    from types import SimpleNamespace as NS
+
+    from app.services.ingestion_jobs import _VertexOAuthCompletions
+
+    class Creds:
+        def __init__(self):
+            self.token, self.valid, self.refreshed = "old", True, 0
+            self.expiry = dt.datetime.utcnow() + dt.timedelta(minutes=2)       # expiring soon
+
+        def refresh(self, _request):
+            self.refreshed += 1
+            self.token, self.expiry = f"new{self.refreshed}", dt.datetime.utcnow() + dt.timedelta(hours=1)
+
+    calls = []
+    inner = NS(api_key="old", chat=NS(completions=NS(create=lambda **kw: calls.append(kw) or "ok")))
+    creds = Creds()
+    c = _VertexOAuthCompletions(inner, "google/gemini-3.8-flash", creds)
+    assert c.create(messages=[]) == "ok" and inner.api_key == "new1" and creds.refreshed == 1
+    c.create(messages=[])                       # fresh now: no second refresh
+    assert creds.refreshed == 1 and len(calls) == 2
+
+
+def test_a_run_resumes_after_a_dropped_connection_and_keeps_its_limit(monkeypatch):
+    """2026-09-30: a production run died when the network dropped. It now waits, reconnects and resumes; items it
+    already decided count against --limit; anything that is not a connection failure still stops the run."""
+    from types import SimpleNamespace as NS
+
+    from app.ingest import cli
+
+    monkeypatch.setattr(cli, "_RESUME_WAIT_S", (0,))
+    decided = {"n": 0}
+
+    class Pool:
+        async def fetchval(self, *_a):
+            return decided["n"]
+
+    limits = []
+
+    async def once(limit):
+        limits.append(limit)
+        if len(limits) == 1:
+            decided["n"] = 30
+            raise ConnectionAbortedError("[WinError 1236] aborted by the local system")
+        return {"ok": True}
+
+    assert asyncio.run(cli._resuming(Pool(), "r", NS(limit=100), once)) == {"ok": True}
+    assert limits == [100, 70]
+
+    async def broken(_limit):
+        raise ValueError("a real bug")
+
+    with pytest.raises(ValueError):
+        asyncio.run(cli._resuming(Pool(), "r", NS(limit=None), broken))

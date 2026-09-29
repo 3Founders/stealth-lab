@@ -12,6 +12,15 @@ from app.services import embeddings as emb
 from app.services.embeddings import EmbeddingError, _VertexBatcher
 
 
+@pytest.fixture(autouse=True)
+def _pin_embedding_model(monkeypatch):
+    """These tests exercise gemini-embedding-001's batched `:predict` request; pin it so a machine whose .env selects
+    gemini-embedding-2 (production, 2026-09-30) does not silently switch them to the per-text `:embedContent` path."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "gemini_embedding_model", "gemini-embedding-001")
+
+
 def _run(coro):
     return asyncio.run(coro)
 

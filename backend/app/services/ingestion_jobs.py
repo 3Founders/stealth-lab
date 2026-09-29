@@ -25,6 +25,7 @@ should not retry forever unattended).
 """
 from __future__ import annotations
 
+import threading
 import hashlib
 import json
 import logging
@@ -193,13 +194,34 @@ class _VertexOAuthCompletions:
     model here, rather than requiring every caller to know Vertex's naming,
     keeps this a drop-in rotation member."""
 
-    def __init__(self, client: Any, model: str):
+    def __init__(self, client: Any, model: str, credentials: Any = None):
         self._client = client
         self._model = model
+        self._credentials = credentials
+        self._lock = threading.Lock()
+
+    def _fresh_token(self) -> None:
+        """An ADC access token lives about an hour and the OpenAI client holds it as a fixed api_key, so every
+        long ingestion run failed with 401 after an hour (2026-09-30). Refresh it shortly before it expires."""
+        creds = self._credentials
+        if creds is None:
+            return
+        import datetime as _dt
+
+        with self._lock:
+            expiry = getattr(creds, "expiry", None)
+            soon = expiry is not None and expiry - _dt.timedelta(minutes=5) <= _dt.datetime.utcnow()
+            if creds.token and getattr(creds, "valid", True) and not soon:
+                return
+            import google.auth.transport.requests
+
+            creds.refresh(google.auth.transport.requests.Request())
+            self._client.api_key = creds.token
 
     def create(self, **kwargs):
         from app.services.vertex_chat import shape_chat_kwargs
 
+        self._fresh_token()
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
         # Gemini 3.x: max_tokens counts hidden reasoning, so a small cap came back with content=None.
@@ -208,8 +230,8 @@ class _VertexOAuthCompletions:
 
 
 class _VertexOAuthClient:
-    def __init__(self, client: Any, model: str):
-        self.chat = _SimpleNamespace(completions=_VertexOAuthCompletions(client, model))
+    def __init__(self, client: Any, model: str, credentials: Any = None):
+        self.chat = _SimpleNamespace(completions=_VertexOAuthCompletions(client, model, credentials))
 
 
 def _vertex_oauth_client() -> Optional[Any]:
@@ -245,7 +267,7 @@ def _vertex_oauth_client() -> Optional[Any]:
 
     base_url = openapi_base(settings.vertex_project, llm_location(settings.vertex_region, settings.vertex_llm_location))
     client = OpenAI(api_key=credentials.token, base_url=base_url)
-    return _VertexOAuthClient(client, settings.vertex_model)
+    return _VertexOAuthClient(client, settings.vertex_model, credentials)
 
 
 def _general_compute_client() -> Optional[Any]:
