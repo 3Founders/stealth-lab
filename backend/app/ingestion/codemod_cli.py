@@ -42,6 +42,7 @@ SAFE BY DEFAULT
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import shutil
 import sys
@@ -101,6 +102,8 @@ def add_parsers(sub: Any) -> None:
                    help="cap on OpenRewrite documentation pages fetched")
     p.add_argument("--max-usd", type=float, default=1.0,
                    help="model-spend ceiling for --apply, enforced BEFORE each paid call (rolling 24h ledger)")
+    p.add_argument("--concurrency", type=int, default=4,
+                   help="recipes compiled at once under --apply (default 4; each compile is several model calls)")
     p.add_argument("--deterministic", action="store_true",
                    help="--apply through the raw ingest_skill_md path: no provenance, no idempotency (re-runs duplicate "
                         "every row); local experiments only")
@@ -197,7 +200,7 @@ def _report_item(artifact: Any) -> dict[str, Any]:
 
 
 async def _apply(pool: Any, artifacts: list[Any], *, embed: bool = True, deterministic: bool = False,
-                 max_usd: float = 1.0) -> dict[str, int]:
+                 max_usd: float = 1.0, concurrency: int = 4) -> dict[str, int]:
     """Write the gated artifacts. The default is the REAL compiler (`compile_skill_artifact`): it registers the Source,
     opens the IngestionContext every derived row stamps (so a license takedown can find them), records the artifact by
     content hash (a re-run is a no-op, a changed recipe is a new version), extracts the structured claims/goals with a
@@ -234,9 +237,16 @@ async def _apply(pool: Any, artifacts: list[Any], *, embed: bool = True, determi
     judge_model = settings.general_compute_judge_model or "gemma-4-31B-it"
     # Every paid extraction path checks the budget BEFORE it spends, but only when a budget is installed.
     budget = ingest_budget.install(pool, cap_usd=max_usd) if ingest_budget.active() is None else None
-    try:
-        for artifact in artifacts:
-            name = getattr(artifact, "path", None) or getattr(artifact, "uri", "?")
+    # A recipe compile is several model calls (extraction, identity judges) at 3-30 s each; one at a time, 39 recipes took
+    # over two hours. Bounded concurrency; a budget stop halts the remaining recipes (in-flight ones finish).
+    gate = asyncio.Semaphore(max(1, int(concurrency)))
+    stop = asyncio.Event()
+
+    async def compile_one(artifact: Any) -> None:
+        name = getattr(artifact, "path", None) or getattr(artifact, "uri", "?")
+        async with gate:
+            if stop.is_set():
+                return
             try:
                 outcome = await compile_skill_artifact(
                     pool, artifact, embedder=Embedder(rate_limit_pool=pool), client=client,
@@ -248,12 +258,16 @@ async def _apply(pool: Any, artifacts: list[Any], *, embed: bool = True, determi
             except BudgetExceeded as exc:
                 bump("budget_exceeded")
                 print(f"STOP: {exc}", file=sys.stderr)
-                break
+                stop.set()
+                return
             except Exception as exc:  # noqa: BLE001 -- reported, never swallowed
                 bump("error")
                 print(f"ERROR ingesting {name}: {exc}", file=sys.stderr)
-                continue
+                return
             bump(str(getattr(outcome, "status", None) or "error"))
+
+    try:
+        await asyncio.gather(*(compile_one(artifact) for artifact in artifacts))
     finally:
         if budget is not None:
             ingest_budget.uninstall()
@@ -367,7 +381,8 @@ async def run(pool: Any, a: Any) -> int:
     if not dry_run:
         write_outcomes = await _apply(pool, capture, embed=not getattr(a, "no_embed", False),
                                       deterministic=bool(getattr(a, "deterministic", False)),
-                                      max_usd=float(getattr(a, "max_usd", 1.0)))
+                                      max_usd=float(getattr(a, "max_usd", 1.0)),
+                                      concurrency=int(getattr(a, "concurrency", 4)))
         bytes_stored = bytes_produced
 
     # Counts we did not measure are None, not zero. Reporting 0 for a

@@ -207,7 +207,7 @@ def test_apply_stops_at_the_budget_and_never_disguises_it_as_an_error(compiler):
     from app.services.governance import BudgetExceeded
 
     compiler["statuses"] = ["captured", BudgetExceeded("cap"), "captured"]
-    out = _run(codemod_cli._apply(object(), [_Artifact("a"), _Artifact("b"), _Artifact("c")]))
+    out = _run(codemod_cli._apply(object(), [_Artifact("a"), _Artifact("b"), _Artifact("c")], concurrency=1))
     assert out == {"captured": 1, "budget_exceeded": 1}, "the third artifact is not attempted after the cap"
     assert len(compiler["calls"]) == 2 and compiler["uninstalled"] == 1
 
@@ -217,3 +217,30 @@ def test_one_failing_recipe_is_reported_and_the_rest_continue(compiler):
 
     compiler["statuses"] = [RuntimeError("boom"), "captured"]
     assert _run(codemod_cli._apply(object(), [_Artifact("a"), _Artifact("b")])) == {"error": 1, "captured": 1}
+
+
+def test_recipes_are_compiled_concurrently_but_never_more_than_the_bound(monkeypatch):
+    """Compiling 39 recipes one at a time took over two hours: each is several model calls."""
+    from app.ingestion import codemod_cli
+
+    import app.services.ingest_budget as ingest_budget
+    import app.services.ingestion_jobs as ingestion_jobs
+    import app.services.skill_ingestion as skill_ingestion
+
+    live = {"now": 0, "peak": 0}
+
+    async def compile_skill_artifact(pool, artifact, **kw):
+        live["now"] += 1
+        live["peak"] = max(live["peak"], live["now"])
+        await asyncio.sleep(0.02)
+        live["now"] -= 1
+        return type("Outcome", (), {"status": "captured"})()
+
+    monkeypatch.setattr(skill_ingestion, "compile_skill_artifact", compile_skill_artifact)
+    monkeypatch.setattr(ingestion_jobs, "_general_compute_client", lambda: object())
+    ingest_budget.uninstall()
+    try:
+        out = _run(codemod_cli._apply(object(), [_Artifact(str(i)) for i in range(12)], concurrency=3))
+    finally:
+        ingest_budget.uninstall()
+    assert out == {"captured": 12} and live["peak"] == 3
