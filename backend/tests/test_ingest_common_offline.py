@@ -127,14 +127,23 @@ def test_a_foreign_embedding_model_in_the_index_refuses_the_run():
 
 def test_an_undrained_queue_refuses_the_run():
     class Pool:
+        claimed_recently = 0
+
         async def fetchrow(self, sql, *a):
             return {"stale": 1263, "pending": 1263, "oldest": "2026-09-25"}
+
+        async def fetchval(self, sql, *a):
+            return self.claimed_recently
 
         async def fetch(self, sql, *a):
             return [{"job_type": "goal_abstraction_placement", "n": 1263}]
 
     with pytest.raises(PreflightFailed, match="no job worker"):
         asyncio.run(check_queue_alive(Pool()))
+    # a backlog behind a worker that IS claiming jobs is not a dead queue
+    busy = Pool()
+    busy.claimed_recently = 40
+    assert asyncio.run(check_queue_alive(busy))["claimed_recently"] == 40
 
 
 def test_ingest_model_is_read_from_settings_not_only_the_process_environment(monkeypatch):
@@ -271,3 +280,29 @@ def test_a_stop_starts_nothing_new_and_a_failure_cancels_the_rest():
 
     with pytest.raises(ConnectionResetError):
         asyncio.run(asyncio.wait_for(run_units([["bad"], ["slow"]], boom, concurrency=2, stop=Stop()), 5))
+
+
+def test_an_unreadable_spend_ledger_resumes_but_a_reached_cap_stops(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from app.ingest import cli
+
+    monkeypatch.setattr(cli, "_RESUME_WAIT_S", (0,))
+
+    class Pool:
+        async def fetchval(self, *_a):
+            return 0
+
+    calls = []
+
+    async def once(limit):
+        calls.append(limit)
+        return {"stopped": "budget: ingestion model budget ledger unavailable"} if len(calls) == 1 else {"stopped": None}
+
+    assert asyncio.run(cli._resuming(Pool(), "r", NS(limit=None), once)) == {"stopped": None}
+    assert len(calls) == 2
+
+    async def capped(limit):
+        return {"stopped": "budget: ingestion model budget exceeded: $600.10 of $600.00"}
+
+    assert "exceeded" in asyncio.run(cli._resuming(Pool(), "r", NS(limit=None), capped))["stopped"]

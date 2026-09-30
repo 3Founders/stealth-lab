@@ -102,6 +102,13 @@ async def check_queue_alive(pool: Any, *, stale_minutes: int = QUEUE_STALE_MINUT
         "       count(*) AS pending, min(created_at) AS oldest "
         "FROM ingestion_jobs WHERE status = 'pending' AND claimed_at IS NULL", stale_minutes)
     if row and int(row["stale"] or 0) > 0:
+        # A backlog behind a working worker is not a dead queue (2026-09-30: goal placement takes ~100 s a job, so
+        # a busy worker always has jobs older than 10 minutes). Refuse only when nothing has been claimed lately.
+        recent = await pool.fetchval(
+            "SELECT count(*) FROM ingestion_jobs WHERE claimed_at > now() - make_interval(mins => $1)", stale_minutes)
+        if int(recent or 0) > 0:
+            return {"pending": int(row["pending"] or 0), "backlog_older_than_min": int(row["stale"]),
+                    "claimed_recently": int(recent)}
         by_type = await pool.fetch(
             "SELECT job_type, count(*) AS n FROM ingestion_jobs WHERE status = 'pending' AND claimed_at IS NULL "
             "AND created_at < now() - make_interval(mins => $1) GROUP BY 1 ORDER BY 2 DESC", stale_minutes)

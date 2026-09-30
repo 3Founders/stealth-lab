@@ -179,7 +179,17 @@ async def _resuming(pool: Any, run_id: str, a: Any, once: Any) -> dict:
             if a.limit is not None:
                 done = await pool.fetchval("SELECT count(*) FROM ingest_ledger WHERE run_id = $1::uuid", run_id)
                 limit = max(0, a.limit - int(done or 0))
-            return await once(limit)
+            result = await once(limit)
+            # The spend cap could not be READ (the ledger query itself failed on a dropped connection): spending
+            # was paused correctly, but that is an outage, not a reached cap -- wait and resume like one
+            # (2026-09-30, production). A real "budget exceeded" still ends the run.
+            if "ledger unavailable" in str((result or {}).get("stopped") or "") and attempt < _RESUME_ATTEMPTS:
+                wait = _RESUME_WAIT_S[min(attempt, len(_RESUME_WAIT_S) - 1)]
+                print(f"spend ledger unavailable; resuming in {wait}s (attempt {attempt + 1}/{_RESUME_ATTEMPTS})",
+                      file=sys.stderr, flush=True)
+                await asyncio.sleep(wait)
+                continue
+            return result
         except Exception as exc:  # noqa: BLE001 -- only transient ones are resumed; everything else is re-raised
             if not _transient(exc) or attempt == _RESUME_ATTEMPTS:
                 raise
