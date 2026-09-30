@@ -30,6 +30,22 @@ from app.utils.ids import uuid7
 
 SUBMISSION_PROVENANCE = "system_pending_review"
 
+
+class DuplicateWay(ValueError):
+    """A new way is too close to one the Goal already has (a live Procedure or
+    an open submission), and the caller asked for duplicates to be refused
+    rather than stored for review. Raised BEFORE anything is written."""
+
+    def __init__(self, duplicate: Mapping[str, Any], threshold: float) -> None:
+        self.match_id = duplicate.get("best_match_id")
+        self.match_kind = duplicate.get("best_match_kind")
+        self.score = float(duplicate.get("score") or 0.0)
+        self.threshold = threshold
+        super().__init__(
+            f"a way like this already exists for this Goal ({self.match_kind} {self.match_id}, "
+            f"similarity {self.score:.2f} >= {threshold:.2f})"
+        )
+
 _PROCEDURE_DETAIL_COLUMNS = (
     "s.id, s.goal_id, s.submission_type, s.parent_procedure_row_id, s.procedure_row_id, "
     "s.name, s.content, s.rationale, s.applicability_context, s.constraints, "
@@ -233,7 +249,12 @@ async def create_procedure_submission(
     tenant_scope: Optional[TenantScope] = None,
     embedder: Optional[Embedder] = None,
     llm_evaluator=None,
+    refuse_duplicate_at: Optional[float] = None,
 ) -> dict[str, Any]:
+    """`refuse_duplicate_at`: when set, a NEW way whose best match on this Goal
+    scores at or above it raises DuplicateWay before any row is written, instead
+    of being stored as `needs_review`. Improvements are exempt: they are meant to
+    resemble their parent, which score_against_parent already judges."""
     del provenance, scope_type, scope_entity_id, visibility
     if submission_type not in ("new", "improvement"):
         raise ValueError("submission_type must be 'new' or 'improvement'")
@@ -266,6 +287,9 @@ async def create_procedure_submission(
     duplicate = await score_procedure_duplicate(
         pool, goal_id=goal_id, embedding=embedding, scope=access_scope, tenant_scope=tenant_scope
     )
+    if (refuse_duplicate_at is not None and submission_type == "new"
+            and float(duplicate.get("score") or 0.0) >= refuse_duplicate_at):
+        raise DuplicateWay(duplicate, refuse_duplicate_at)
     parent_similarity = None
     if submission_type == "improvement":
         parent_similarity = await score_against_parent(

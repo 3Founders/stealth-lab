@@ -51,6 +51,11 @@ def srv(monkeypatch):
     return server_module
 
 
+def _sw(srv, goal_id, *args, **kw):
+    """submit_way now takes goal_id as a keyword (it may instead name a new Goal)."""
+    return srv.submit_way(*args, goal_id=goal_id, **kw)
+
+
 def _ctx(pool):
     return SimpleNamespace(request_context=SimpleNamespace(lifespan_context={"pool": pool}))
 
@@ -75,7 +80,7 @@ def _steps() -> str:
 @pytest.mark.asyncio
 async def test_anonymous_callers_cannot_submit(pool, srv, monkeypatch):
     monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.anonymous())
-    out = await srv.submit_way(await _goal(pool), "a way", _steps(), "because", PRE, OUT, _ctx(pool))
+    out = await _sw(srv, await _goal(pool), "a way", _steps(), "because", PRE, OUT, _ctx(pool))
     assert out.startswith("REFUSED: sign in")
 
 
@@ -84,13 +89,13 @@ async def test_bad_input_is_refused_before_anything_is_written(pool, srv, monkey
     monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.for_user(f"u-{uuid.uuid4().hex[:6]}"))
     goal = await _goal(pool)
     ctx = _ctx(pool)
-    assert "steps_json must be valid JSON" in await srv.submit_way(goal, "n", "not json", "r", PRE, OUT, ctx)
-    assert "1-50 steps" in await srv.submit_way(goal, "n", "[]", "r", PRE, OUT, ctx)
-    assert "1-50 steps" in await srv.submit_way(goal, "n", json.dumps(["s"] * 51), "r", PRE, OUT, ctx)
-    assert "non-empty string" in await srv.submit_way(goal, "n", json.dumps([{"order": 1}]), "r", PRE, OUT, ctx)
-    assert "not found or not visible" in await srv.submit_way(str(uuid.uuid4()), "n", _steps(), "r", PRE, OUT, ctx)
-    assert "rationale" in await srv.submit_way(goal, "n", _steps(), "   ", PRE, OUT, ctx)
-    assert "parent_procedure_row_id" in await srv.submit_way(goal, "n", _steps(), "r", PRE, OUT, ctx, submission_type="improvement")
+    assert "steps_json must be valid JSON" in await _sw(srv, goal, "n", "not json", "r", PRE, OUT, ctx)
+    assert "1-50 steps" in await _sw(srv, goal, "n", "[]", "r", PRE, OUT, ctx)
+    assert "1-50 steps" in await _sw(srv, goal, "n", json.dumps(["s"] * 51), "r", PRE, OUT, ctx)
+    assert "non-empty string" in await _sw(srv, goal, "n", json.dumps([{"order": 1}]), "r", PRE, OUT, ctx)
+    assert "not found or not visible" in await _sw(srv, str(uuid.uuid4()), "n", _steps(), "r", PRE, OUT, ctx)
+    assert "rationale" in await _sw(srv, goal, "n", _steps(), "   ", PRE, OUT, ctx)
+    assert "parent_procedure_row_id" in await _sw(srv, goal, "n", _steps(), "r", PRE, OUT, ctx, submission_type="improvement")
     assert await pool.fetchval("SELECT count(*) FROM procedure_submissions WHERE goal_id = $1::uuid", goal) == 0
 
 
@@ -99,7 +104,7 @@ async def test_submission_is_attributed_to_the_token_and_never_self_promotes(poo
     viewer = f"u-{uuid.uuid4().hex[:6]}"
     monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.for_user(viewer))
     goal = await _goal(pool)
-    out = json.loads(await srv.submit_way(
+    out = json.loads(await _sw(srv, 
         goal, "Fix a failing test", _steps(), "Reading failures first finds the real cause.",
         PRE, OUT, _ctx(pool),
     ))
@@ -121,7 +126,7 @@ async def test_submission_is_attributed_to_the_token_and_never_self_promotes(poo
 async def test_secrets_are_redacted_before_storage(pool, srv, monkeypatch):
     monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.for_user(f"u-{uuid.uuid4().hex[:6]}"))
     secret = "sk-" + "a1B2c3D4e5F6g7H8i9J0k1L2"
-    out = json.loads(await srv.submit_way(
+    out = json.loads(await _sw(srv, 
         await _goal(pool), "Deploy", json.dumps([f"export KEY={secret} then deploy"]), "because", PRE, OUT, _ctx(pool)))
     assert out["redacted"] is True
     stored = await pool.fetchval("SELECT content::text FROM procedure_submissions WHERE id = $1::uuid",
@@ -137,8 +142,8 @@ async def test_submissions_are_rate_limited_per_user(pool, srv, monkeypatch):
     goal = await _goal(pool)
     ctx = _ctx(pool)
     for i in range(2):
-        assert "submission_id" in await srv.submit_way(goal, f"way {i}", _steps(), "because", PRE, OUT, ctx)
-    assert "rate limit" in await srv.submit_way(goal, "way 3", _steps(), "because", PRE, OUT, ctx)
+        assert "submission_id" in await _sw(srv, goal, f"way {i}", _steps(), "because", PRE, OUT, ctx)
+    assert "rate limit" in await _sw(srv, goal, "way 3", _steps(), "because", PRE, OUT, ctx)
 
 
 @pytest.mark.asyncio

@@ -452,10 +452,12 @@ _V1_INSTRUCTIONS = (
     "report_discovery(...) anything you had to fix or found a better way to "
     "do -- it's saved privately and comes back through "
     "stealth://procedures/{procedure_id}/claims next time. 4) If find_ways "
-    "found no good way (or a clearly better one), submit_way(goal_id, ...) "
-    "proposes yours for that Goal -- pick goal_id from find_ways' resolved or "
-    "ambiguous candidates; it enters human review, it is never live or "
-    "verified on submission. 5) Optional, to pick the cheapest model that "
+    "found no good way (or a clearly better one), submit_way(...) "
+    "proposes yours: pass goal_id from find_ways' resolved or ambiguous "
+    "candidates, or -- when find_ways said no_match -- goal + goal_objective "
+    "and the Goal is created too, only if nothing like it exists; a way too "
+    "like an existing one is not stored. It enters human review, it is never "
+    "live or verified on submission. 5) Optional, to pick the cheapest model that "
     "will pass: recommend_models(procedure_id, candidates=[\"model|scaffold\", ...]) "
     "returns a ladder (try A; if its check fails, B); after each attempt call "
     "report_model_run(...) with the returned instance_key so the per-goal model "
@@ -4431,40 +4433,101 @@ _WAY_TOTAL_MAX = 64_000
 _WAY_PATH = "mcp/submit_way"
 
 
+async def _find_or_create_submitted_goal(pool, *, scope: AccessScope, goal: str, objective: str,
+                                         rationale: str):
+    """The Goal half of submit_way: reuse a Goal that already exists, create one
+    only when nothing like it does. "Like it" is decided exactly as find_ways
+    decides it (intent_resolution.resolve_intent over the caller's visible
+    Goals, lexical + semantic, no LLM normalization so a submission costs no
+    model call): `resolved` -> that Goal; `ambiguous` -> the candidates, nothing
+    written; `no_match` -> create_goal_from_user, whose own exact-name / alias /
+    near-identical-embedding tiers still catch a same-Goal race. Returns a dict,
+    or a "REFUSED: ..." string."""
+    from app.execution.intent_resolution import resolve_intent as _resolve_intent
+    from app.services.embeddings import Embedder
+    from app.services.goals import GoalQualityRejected, create_goal_from_user
+    from app.services.v0_gate import V0Violation
+
+    embedder = Embedder()
+    found = await _resolve_intent(pool, goal, client=None, embedder=embedder, scope=scope)
+    if found.outcome == "resolved" and found.selected_goal:
+        g = found.selected_goal
+        return {"goal_id": str(g["id"]), "canonical_name": g.get("canonical_name"), "created": False,
+                "matched": "existing"}
+    if found.outcome == "ambiguous":
+        return {
+            "outcome": "goal_ambiguous",
+            "candidates": [{"goal_id": str(c.goal["id"]), "canonical_name": c.goal.get("canonical_name"),
+                            "score": round(c.score, 3)} for c in found.candidates],
+            "next": "Nothing was stored. If one of these is your Goal, call submit_way again with its goal_id.",
+        }
+    try:
+        made = await create_goal_from_user(
+            pool, canonical_name=goal, rationale=rationale, objective=objective,
+            scope_type="global", owner_id=scope.viewer_id, embedder=embedder,
+            allow_create_anyway=True,   # the "is there one like it" check is resolve_intent's, above
+        )
+    except (V0Violation, GoalQualityRejected, ValueError) as exc:
+        return f"REFUSED: goal -- {exc}"
+    g = made["goal"]
+    gid = g.get("id") or g.get("goal_id")
+    return {"goal_id": str(gid), "canonical_name": g.get("canonical_name", goal),
+            "created": made["outcome"] == "created",
+            "matched": "created" if made["outcome"] == "created" else "existing"}
+
+
 @server.tool()
 async def submit_way(
-    goal_id: str, name: str, steps_json: str, rationale: str,
+    name: str, steps_json: str, rationale: str,
     preconditions_json: str, expected_outcome_json: str, ctx: Context,
+    goal_id: Optional[str] = None, goal: Optional[str] = None,
+    goal_objective: Optional[str] = None, goal_rationale: Optional[str] = None,
     submission_type: str = "new", parent_procedure_id: Optional[str] = None,
 ) -> str:
     """
-    Propose a way to achieve a Goal. Use it when find_ways found no good way,
-    or you carried out a better one. Choose `goal_id` from find_ways' `resolved`
-    Goal or one of its `ambiguous` candidates -- never invent one; a `no_match`
-    means the Goal doesn't exist yet and a person creates it first.
+    Contribute a way to do something -- and its Goal, if the Goal is new.
+    One call; nothing is stored when something like it already exists.
+    Requires a signed-in user; your identity comes from the token, never from
+    an argument (a shared or anonymous token is refused).
 
-    Nothing you submit goes live. It is recorded as a submission that a
-    human reviewer must accept; only then does it count for Credits, and it
-    becomes "verified" only through real, evidenced reuse -- never by being
-    submitted, never by an agent's own say-so. Requires a signed-in user;
-    your identity comes from the token, not from any argument.
+    Name the Goal ONE of two ways:
+      goal_id -- a Goal find_ways returned (`resolved` or an `ambiguous`
+        candidate). Use it whenever find_ways found the Goal.
+      goal -- one plain sentence naming the capability ("Export a Word
+        document from a Node service"), plus goal_objective (what counts as
+        done). The server looks for the Goal first, the same way find_ways
+        does: an existing match is used; several close matches are returned
+        for you to pick from (nothing written; call again with goal_id); only
+        when nothing like it exists is a new Goal created (a candidate, owned
+        by you). goal_rationale (why it is worth doing) defaults to
+        `rationale`.
+
+    Then the way itself is compared with every way that Goal already has
+    (live Procedures and open submissions). If one is too similar, nothing is
+    written and you get that way's id back -- report_discovery a fix to it
+    instead, or submission_type "improvement" with parent_procedure_id.
+
+    Nothing you submit goes live. A human reviewer must accept it; it counts
+    for Credits only then, and becomes "verified" only through real,
+    evidenced reuse -- never by being submitted.
 
     steps_json: JSON array, 1-50 steps, each a plain-language string or
       {"order": int, "goal": str}. Say what to do and how to tell it worked.
     rationale: why this works (required, plain sentences).
     preconditions_json: required, a non-empty JSON array of
-      {"subject","predicate","value"} facts that must hold for this to apply
-      (same shape the website form uses).
+      {"subject","predicate","value"} facts that must hold for this to apply.
     expected_outcome_json: required, a non-empty JSON object describing the
       success state.
     submission_type: "new", or "improvement" (then parent_procedure_id, the
       version row id of the Procedure you improve, is required).
 
-    Returns the submission id and its status: `candidate` (passed the
-    automated checks) or `needs_review` (flagged -- duplicate of an existing
-    way, missing pieces, or a conflict of interest); either way a reviewer
-    decides. Limits: 10 submissions per hour per user; secrets in the text
-    are redacted before storage.
+    Returns one of:
+      {"outcome": "submitted", "goal": {..., "created": bool}, "submission_id",
+       "status": "candidate"|"needs_review", ...}
+      {"outcome": "goal_ambiguous", "candidates": [...]}   -- nothing written
+      {"outcome": "duplicate_way", "existing": {...}}      -- nothing written
+    Limits: 10 submissions per hour per user; secrets are redacted before
+    storage.
     """
     from app.economy import constants as econ
     from app.economy import submissions as submissions_service
@@ -4474,6 +4537,11 @@ async def submit_way(
     scope = _caller_access_scope()
     if not scope.viewer_id:
         return "REFUSED: sign in to contribute -- submit_way needs a real user identity"
+    goal = (goal or "").strip() or None
+    if bool(goal_id) == bool(goal):
+        return "REFUSED: name the Goal with exactly one of goal_id (an existing Goal) or goal (a new one)"
+    if goal and not (goal_objective and goal_objective.strip()):
+        return "REFUSED: a new goal needs goal_objective -- what counts as done"
 
     def _load(text: str, label: str, kind: type):
         try:
@@ -4500,16 +4568,15 @@ async def submit_way(
                 raise ValueError(f"a step is longer than {_WAY_TEXT_MAX} characters")
         if len(name) > 200 or len(rationale) > _WAY_TEXT_MAX:
             raise ValueError("name (200) or rationale (4000) is too long")
+        if goal and (len(goal) > 200 or len(goal_objective or "") > _WAY_TEXT_MAX
+                     or len(goal_rationale or "") > _WAY_TEXT_MAX):
+            raise ValueError("goal (200), goal_objective or goal_rationale (4000) is too long")
     except ValueError as exc:
         return f"REFUSED: {exc}"
 
-    matched: list[str] = []
-    payload = redact_value({
-        "name": name.strip(), "rationale": rationale.strip(), "steps": steps,
-        "preconditions": preconditions, "expected_outcome": expected_outcome,
-    }, matched)
-
     pool = ctx.request_context.lifespan_context["pool"]
+    # Rate limit before anything is looked up or written: a refused call must
+    # not leave a new Goal behind.
     limit = RateLimit(max_requests=econ.SUBMISSION_RATE_LIMIT_MAX,
                       window=timedelta(hours=econ.SUBMISSION_RATE_LIMIT_WINDOW_HOURS))
     try:
@@ -4517,14 +4584,41 @@ async def submit_way(
     except RateLimitExceeded as exc:
         return f"REFUSED: rate limit -- retry in {exc.retry_after_seconds}s ({exc})"
 
+    goal_info: dict = {"goal_id": goal_id, "created": False}
+    if goal:
+        resolved = await _find_or_create_submitted_goal(
+            pool, scope=scope, goal=goal, objective=goal_objective or "",
+            rationale=(goal_rationale or rationale),
+        )
+        if isinstance(resolved, str):
+            return resolved
+        if resolved.get("outcome") == "goal_ambiguous":
+            return json.dumps(resolved, default=str)
+        goal_info = resolved
+        goal_id = resolved["goal_id"]
+
+    matched: list[str] = []
+    payload = redact_value({
+        "name": name.strip(), "rationale": rationale.strip(), "steps": steps,
+        "preconditions": preconditions, "expected_outcome": expected_outcome,
+    }, matched)
+
     org_ids = tuple(scope.org_ids or ())
     tenant_scope = TenantScope.for_tenant(org_ids[0]) if org_ids else TenantScope.commons()
     try:
         row = await submissions_service.create_procedure_submission(
             pool, goal_id=goal_id, submission_type=submission_type,
             parent_procedure_row_id=parent_procedure_id, actor_subject=scope.viewer_id,
-            access_scope=scope, tenant_scope=tenant_scope, **payload,
+            access_scope=scope, tenant_scope=tenant_scope,
+            refuse_duplicate_at=econ.DUPLICATE_REVIEW_THRESHOLD, **payload,
         )
+    except submissions_service.DuplicateWay as dup:
+        return json.dumps({
+            "outcome": "duplicate_way", "goal": goal_info,
+            "existing": {"id": dup.match_id, "kind": dup.match_kind, "similarity": round(dup.score, 3)},
+            "next": "Nothing was stored. If that way needs a fix, report_discovery it; if yours is better, "
+                    "submit it as submission_type='improvement' with parent_procedure_id.",
+        }, default=str)
     except ValueError as exc:
         return f"REFUSED: {exc}"
 
@@ -4532,6 +4626,7 @@ async def submit_way(
     if isinstance(layer1, str):
         layer1 = json.loads(layer1)
     return json.dumps({
+        "outcome": "submitted", "goal": {**goal_info, "goal_id": str(row["goal_id"])},
         "submission_id": str(row["id"]), "goal_id": str(row["goal_id"]),
         "procedure_row_id": str(row["procedure_row_id"]) if row.get("procedure_row_id") else None,
         "status": row["status"], "status_reason": row.get("status_reason"),

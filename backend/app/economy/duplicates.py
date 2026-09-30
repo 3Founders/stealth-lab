@@ -94,12 +94,17 @@ async def score_procedure_duplicate(
         UNION ALL
         SELECT p.id, 'procedure' AS kind, 1 - (p.embedding <=> $1::vector) AS similarity
         FROM procedures p
-        JOIN solutions sol ON sol.target_table = 'procedures'
-          AND (sol.target_id = p.id OR sol.target_id = p.procedure_id)
-          AND sol.status = 'active'
-        JOIN goals pg ON pg.id = sol.goal_id
-        WHERE sol.goal_id = $2 AND p.embedding IS NOT NULL AND p.t_invalid IS NULL
-          AND pg.t_invalid IS NULL AND {procedure_sql} AND {procedure_goal_sql}
+        JOIN goals pg ON pg.id = $2
+        WHERE p.embedding IS NOT NULL AND p.t_invalid IS NULL AND pg.t_invalid IS NULL
+          -- a way belongs to the Goal either through an accepted Solution or, for
+          -- ingested and extracted Procedures, through achieves_goal_id; checking
+          -- only Solutions let a submission duplicate every ingested way unseen
+          AND (p.achieves_goal_id = $2
+               OR EXISTS (SELECT 1 FROM solutions sol
+                          WHERE sol.target_table = 'procedures' AND sol.status = 'active'
+                            AND sol.goal_id = $2
+                            AND (sol.target_id = p.id OR sol.target_id = p.procedure_id)))
+          AND {procedure_sql} AND {procedure_goal_sql}
         ORDER BY similarity DESC
         LIMIT ${limit_index}
         """,
