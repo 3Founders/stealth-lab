@@ -182,7 +182,14 @@ def test_a_private_goal_is_not_offered_to_another_user(srv):
                 rows = await search_goals(pool, query_text=name, query_embedding=vec, scope=scope, limit=20)
                 return {str(r["id"]) for r in rows}
 
-            assert gid in await ids(AccessScope.for_user(alice)), "the owner cannot find her own Goal"
+            indexed = await pool.fetchrow(
+                "SELECT visibility::text AS visibility, owner_id, status, embedding IS NOT NULL AS has_vec "
+                "FROM goal_search_index WHERE goal_id = $1::uuid", gid)
+            goal_row = await pool.fetchrow(
+                "SELECT visibility::text AS visibility, owner_id, status FROM goals WHERE id = $1::uuid", gid)
+            assert gid in await ids(AccessScope.for_user(alice)), (
+                f"the owner cannot find her own Goal; index row={dict(indexed) if indexed else None}, "
+                f"goal row={dict(goal_row) if goal_row else None}, made={made}")
             for other in (AccessScope.for_user(bob), AccessScope.anonymous()):
                 assert gid not in await ids(other), f"{other.viewer_id or 'anonymous'} was offered alice's private Goal"
         finally:
