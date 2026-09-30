@@ -491,7 +491,12 @@ server = MCPServer(
     # server when the Supabase Auth preset is configured (see
     # oauth_resource.py for the whole sign-in flow), else this server.
     # required_scopes stays: every accepted token is granted it server-side.
+    # validate_token_resource=False: clients (ChatGPT) send the RFC 8707 `resource`,
+    # but Supabase does not bind it into the token (aud stays "authenticated"), so
+    # the SDK's resource check would refuse every Supabase token. The verifier
+    # checks issuer, audience and signature itself (authn.OidcConfig).
     auth=AuthSettings(
+        validate_token_resource=False,
         issuer_url=AnyHttpUrl(_oauth.authorization_server_url(settings, _ISSUER_URL)),
         resource_server_url=AnyHttpUrl(f"{_ISSUER_URL}/mcp"),
         required_scopes=["stealthlab:tools"],
@@ -555,8 +560,28 @@ def surface_includes(tool_name: str, surface: str = None) -> bool:  # type: igno
     return (surface or MCP_SURFACE) != "v1" or tool_name in V1_TOOLS
 
 
+# Tool annotations for the v1 surface. Clients use them to decide what needs the
+# user's confirmation (ChatGPT asks before a non-read-only call; Anthropic's
+# Connectors Directory requires title + readOnlyHint/destructiveHint).
+_V1_ANNOTATIONS: dict[str, dict] = {
+    "find_ways": {"title": "Find proven ways", "read_only_hint": True, "open_world_hint": False},
+    "recommend_models": {"title": "Recommend models", "read_only_hint": True, "open_world_hint": False},
+    "report_discovery": {"title": "Report a discovery", "read_only_hint": False, "destructive_hint": False,
+                         "idempotent_hint": False, "open_world_hint": False},
+    "report_model_run": {"title": "Report a model run", "read_only_hint": False, "destructive_hint": False,
+                         "idempotent_hint": False, "open_world_hint": False},
+    # publishes to a shared library other people's agents read
+    "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
+                   "idempotent_hint": False, "open_world_hint": True},
+}
+
+
 def _traced_tool(*targs, **tkwargs):
     def deco(fn):
+        if "annotations" not in tkwargs and fn.__name__ in _V1_ANNOTATIONS:
+            from mcp.types import ToolAnnotations
+
+            tkwargs["annotations"] = ToolAnnotations(**_V1_ANNOTATIONS[fn.__name__])
         import functools as _ft
 
         @_ft.wraps(fn)
