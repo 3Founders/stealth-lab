@@ -4791,3 +4791,77 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
 - **Q-EXEC-4 (non-blocking) — test glob on Windows + Node < 21.** `npm test` is now `node --test test/*.test.mjs`
   (fixture scripts under `test/fixtures/` were being counted as tests). POSIX shells expand the glob; Node >= 21
   expands it itself; Windows cmd + Node 18/20 would not. CI runs Node 18 and 22 — confirm CI is POSIX.
+
+### 2026-09-28 — STEP4 (step-4 agent, ingestion wave) — verifiers as check types: board questions
+
+Owner of this item's questions: the step-4 agent (check runner + these questions). Implemented behind the
+proposed defaults so everything lands either way; ratification flips a name, not a design.
+
+- **Q-STEP4-1 (BLOCKING for ratification, non-blocking for the build) — where do external-verifier check
+  types live: `screening.CHECK_TYPES`, or a new vocabulary?**
+  The step brief assumed `screening.CHECK_TYPES` (8 values, `backend/app/services/screening.py:74-83`) is the
+  place to add actionlint/zizmor/ast-grep. **That would be wrong, and the spec being frozen is the reason it
+  is tempting.** `CHECK_TYPES` is 1:1 with the DB CHECK `check_type_chk_screening_decisions`
+  (`db/68_screening_decisions.sql`) and describes *admission screening of untrusted source text* — it is the
+  vocabulary in which `screening_decisions` rows record "we refused/quarantined this document because of
+  `prompt_injection` / `pii` / `license`". A verifier verdict answers a different question ("does this
+  candidate Procedure's rule still behave as its author asserted?") about a different subject (our own
+  derived knowledge, not untrusted input) at a different moment (verification, not admission).
+  Options: (a) extend `screening.CHECK_TYPES` with `actionlint`/`zizmor`/`ast_grep` — needs a spec + schema
+  change, and would make a screening-decision row indistinguishable from a verification verdict, corrupting
+  `claim_publication.py:121`'s reporting over blocking findings; (b) introduce a separate additive vocabulary
+  for verifier check types, stored on the Procedure itself, leaving `CHECK_TYPES` untouched; (c) reuse
+  `routing.CHECK_KINDS` — rejected: that vocabulary is "how much to distrust an *outcome*"
+  (`config.py:23-34`, a Beta prior on false-accept/false-reject), and `procedure_check` already exists there
+  with a ~10% false-accept prior; the tools are the *implementation* of `procedure_check`, not new kinds.
+  **Proposed default: (b)** — a new `app/services/check_runner.py` owning `VERIFIER_CHECK_TYPES =
+  ("actionlint", "zizmor", "ast_grep")`, plus additive migration `125_procedure_verifier_check.sql` adding
+  `procedures.verifier_check JSONB` with a named CHECK (`procedures_verifier_check_chk`) validating the shape.
+  Half-gate honoured: the column lands in the same change that writes it. Rationale for not reusing
+  `postconditions`: `verification.py:89-100` accepts only a string or `{statement, required}`, so a
+  `verifier` key there would be **silently dropped** by `derive_criteria` — a silent-drop hazard, which is
+  why a first-class column is the honest choice.
+- **Q-STEP4-2 (non-blocking) — a five-valued verdict, not a boolean.** A check must record one of
+  `pass | fail | error | no_input | not_run`. The reason is empirical, not stylistic: **`ast-grep test`
+  exits 0 with `0 passed; 0 failed` when a test file names a rule id that is not loaded** — reproduced
+  locally, see `step_4_research.md` §4.3. Gating on the exit code would record a Procedure as *verified*
+  having checked nothing. `error`/`no_input` must never be scored as pass. Options: (a) five-valued verdict
+  (proposed); (b) boolean + a separate liveness boolean (two fields to keep consistent — strictly worse);
+  (c) boolean and treat unknown as fail (safe but destroys the ability to tell "the rule is broken" from
+  "the tool is broken", which is the distinction that tells us where to fix).
+  **Proposed default: (a)**, carried on the Procedure's `verifier_check` and on the evidence row's
+  `success_criteria` shape.
+- **Q-STEP4-3 (non-blocking) — a single verifier pass must not by itself close a Procedure.** Every source
+  in the review that measured both directions found false-accept ≫ false-reject (7.8%, 11.0%, 19.78%, 24%),
+  and no published rate exists for these three tools — "the literature does not establish this". CodeQL's
+  autobuild failed on 71% of repos and Clang-Tidy failed to finish on 52.58%, i.e. the dangerous state is
+  "no output", not "wrong output". Options: (a) require two independent signals (e.g. the rule's own tests
+  **and** a compile/lint of the fixture) before a Procedure reaches `verified`; (b) one verifier pass is
+  enough, recorded honestly as `accepted-uncorroborated`.
+  **Proposed default: (a) for anything reaching `verified`; (b) permitted for `procedure_check` routing
+  observations**, which is a prior on trustworthiness, not a verification claim. This needs a ruling only if
+  we want single-pass `verified`, which we should not.
+- **Q-STEP4-4 (non-blocking, disclosure — NUMBERS CORRECTED after the run) — the upstream ast-grep-essentials
+  suite does not run whole.** At commit `73120109bf45c284d0cd8a37bdd7082e80e92e87` (Apache-2.0, 184 rules),
+  `ast-grep test` aborts with exit 8 on ast-grep 0.43.0, 0.44.1 **and** 0.45.3: **67** rules use a prelude
+  `utils:` form (`PATTERN_1(identifier)`, `PATTERN_3(field_expression)`) that every available CLI rejects as a
+  reserved-character utility id, and ast-grep loads all rules before running any test, so one bad rule kills the
+  suite. Per-rule isolation was implemented and **does not rescue them** — each of the 67 fails individually with
+  `Cannot parse rule` (exit 8). This is a genuine upstream corpus defect at this commit, not an invocation
+  artifact. I had first projected ~154/184 yield; the measured yield is **117/184 (63.6%)**: 117 pass, 67 cannot be
+  parsed by the pinned CLI, **0 fail their own test cases**. The 67 are quarantined with reason `check_error` and a
+  detail naming the cause as an upstream rule-definition defect, not a check failure. They become no Procedures, per
+  "only verified outcomes become Procedures". **The corpus needs re-checking whenever ast-grep or the upstream
+  commit moves** — that is a standing maintenance item, not a one-off. A related defect: 5 rules' test files do
+  not follow the `<rule_id>-test.yml` filename convention (one is literally
+  `networkcredential-hardcoded-secret-python-test.yml` for a *csharp* rule, one has a `typecript` typo), so tests
+  are joined to rules by declared `id`, never by filename; a test matching no rule is reported as
+  `test_without_rule`. **Proposed default: as implemented** — no ruling needed, but flagging the 63.6% ceiling so
+  nobody later reads it as a bug in our ingestion.
+- **Q-STEP4-5 (non-blocking, disclosure) — no measured base rate for these tools exists.** We will start
+  recording every verdict with its full configuration (tool version, every threshold/suppression flag,
+  resolved rule set, finding count) so a false-accept/false-reject rate becomes *measurable* on our own
+  corpus instead of borrowed from other tools. Related knob worth a ruling later: zizmor honours inline
+  `# zizmor: ignore` comments by default, so audited code can silence its own finding — we pass
+  `--no-ignores`; confirm the board wants that as the default rather than a per-procedure opt-in.
+  **Proposed default: `--no-ignores` always, recorded in the stored check config.**

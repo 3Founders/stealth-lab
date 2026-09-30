@@ -1,0 +1,143 @@
+{
+  "pilot": "step0_nebius_openhands_trajectories",
+  "dataset": {
+    "repo": "nebius/SWE-rebench-openhands-trajectories",
+    "revision": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+    "parent_repo": "nebius/SWE-rebench",
+    "parent_revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881"
+  },
+  "shard_dsn_env": "DATABASE_URL_LOCAL",
+  "held_out": {
+    "excluded_ids": 410,
+    "scored_repos": [
+      "PennyLaneAI/pennylane",
+      "astropy/astropy",
+      "beeware/briefcase",
+      "dask/dask",
+      "deepset-ai/haystack",
+      "django/django",
+      "jackdewinter/pymarkdown",
+      "matplotlib/matplotlib",
+      "nilearn/nilearn",
+      "omni-us/jsonargparse",
+      "pdm-project/pdm",
+      "pydata/xarray",
+      "pytest-dev/pytest",
+      "pyvista/pyvista",
+      "scikit-learn/scikit-learn",
+      "sphinx-doc/sphinx",
+      "streamlink/streamlink",
+      "sympy/sympy",
+      "tobymao/sqlglot",
+      "wemake-services/wemake-python-styleguide",
+      "zarr-developers/zarr-python"
+    ],
+    "designs": [
+      {
+        "path": "../experiments/swebench/runs/design.json",
+        "sha256": "c596c818466f3d3d1fc80012d69bafab2ccefe5216f96d2556dba1ebf64d389f",
+        "dataset": "princeton-nlp/SWE-bench_Verified",
+        "dataset_revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+        "counts": {
+          "scored_repos": 8,
+          "train": 286,
+          "test": 193,
+          "calibration": 12
+        }
+      },
+      {
+        "path": "../experiments/swebench_rebench/runs/design.json",
+        "sha256": "4cfb20219ca17a9671f88ffdbb99868549096512f131e26e4c9965e633965e44",
+        "dataset": "nebius/SWE-rebench",
+        "dataset_revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881",
+        "counts": {
+          "scored_repos": 13,
+          "train": 317,
+          "test": 193,
+          "calibration": 12
+        }
+      }
+    ],
+    "missing_designs": []
+  },
+  "requested_limit": 18,
+  "resolved_only": true,
+  "semantics_limit": 5,
+  "semantics_model": "gemma-4-31B-it",
+  "counters": {
+    "rows_streamed": 18,
+    "rows_resolved": 18,
+    "accepted": 3,
+    "duplicates": 13,
+    "events_written": 168,
+    "events_duplicate": 785,
+    "episodes_written": 3,
+    "malformed": 0,
+    "malformed_events": 0,
+    "turn_capped": 0,
+    "model_patch_bytes": 191368,
+    "patch_bytes_accepted": 27280,
+    "patch_bytes_duplicate": 164088,
+    "semantics_attempted": 5,
+    "semantics_completed": 0,
+    "semantics_failed": 5,
+    "llm_calls": 5,
+    "rejected": {
+      "license_quarantine": 1,
+      "held_out_repo": 1
+    },
+    "license_decisions": {
+      "QUARANTINE": 1,
+      "ALLOW": 16
+    }
+  },
+  "wall_time_s": 159.16,
+  "items_per_hour": 67.9,
+  "db_bytes_delta": 630784,
+  "bytes_per_accepted_item": 210261.3,
+  "model_usd_in_window": 0.184194,
+  "per_accepted_item": {
+    "events": 56.0,
+    "episodes": 1.0,
+    "model_patch_bytes": 9093.3,
+    "db_bytes": 210261.3,
+    "usd": 0.061398
+  },
+  "knowledge_delta": {
+    "goals": 0,
+    "claims": 0,
+    "procedures": 0,
+    "observations": 0,
+    "episodes": 3,
+    "trace_events": 168,
+    "agent_traces": 3,
+    "quarantined": 0,
+    "jobs": 168,
+    "contexts": 16
+  },
+  "knowledge_totals_after": {
+    "goals": 271,
+    "claims": 362,
+    "procedures": 279,
+    "observations": 67,
+    "episodes": 30,
+    "trace_events": 973,
+    "agent_traces": 19,
+    "quarantined": 0,
+    "jobs": 2250,
+    "contexts": 345
+  },
+  "trajectory_extractions": {
+    "total": 13,
+    "completed": 0,
+    "failed": 13
+  },
+  "projection_full_corpus": {
+    "resolved_trajectories_in_corpus": 32161,
+    "items": 32161,
+    "wall_time_hours": 473.96,
+    "db_bytes_tb": 0.007,
+    "usd_at_pilot_rate": 1974.62,
+    "note": "usd covers only what this run actually called; the raw path is LLM-free, so a real figure needs the extraction layer enabled for every episode, not a sub-sample."
+  }
+}

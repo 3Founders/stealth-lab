@@ -1,0 +1,105 @@
+{
+  "gate": {
+    "gate_version": "skillmd-gate@v1",
+    "dataset": "FayeZC/SkillMD-138K",
+    "dataset_revision": "0d73048a",
+    "rows_seen": 810,
+    "fetched": 80,
+    "admitted": 60,
+    "reasons": {
+      "mirror_origin_unrecoverable": 87,
+      "raw_404_deleted_or_moved": 47,
+      "screener_block_finding": 14,
+      "frontmatter_absent": 3,
+      "name_charset_invalid": 2,
+      "body_oversized": 1,
+      "filename_meta_skill_tooling": 1,
+      "limit_reached": 1,
+      "scan_budget_exhausted": 1
+    },
+    "mirror_rows": 202,
+    "mirror_origin_recovered": 115,
+    "exact_duplicates": 0,
+    "near_duplicates": 0,
+    "below_star_prior": 393,
+    "license_gate": null
+  },
+  "gate_seconds": 32.22,
+  "content_bytes": 389758,
+  "bytes_per_admitted": 6496.0,
+  "dry_run": false,
+  "dataset": {
+    "repo": "FayeZC/SkillMD-138K",
+    "revision": "0d73048a",
+    "gate": "skillmd-gate@v1"
+  },
+  "llm": {
+    "client_configured": true,
+    "model": "gemma-4-31B-it"
+  },
+  "ingestion": {
+    "run_id": "2d7379a4-b713-4b9c-a8f3-8a2f5c15766f",
+    "metrics": {
+      "sources_seen": 1,
+      "artifacts_seen": 60,
+      "candidates": 6,
+      "accepted": 0,
+      "duplicates": 0,
+      "unchanged": 0,
+      "stale": 0,
+      "rejected": 6,
+      "errors": 54,
+      "screened": 0,
+      "script_procedures": 0,
+      "reference_procedures": 0,
+      "independent_step_procedures": 0,
+      "procedure_dependencies": 0,
+      "admission_rejected": 0,
+      "quarantined": 0,
+      "admission_escalated": 0,
+      "sources": 0,
+      "observations": 0,
+      "document_evidence": 0,
+      "artifact_blocks": 0,
+      "screening_quarantine": 0,
+      "screening_reject": 0,
+      "document_claims": 0,
+      "zero_claim_documents": 0,
+      "block_observations": 0,
+      "semantic_decomposition_steps_seen": 0,
+      "semantic_decomposition_filtered": 0,
+      "semantic_decomposition_rewritten": 0,
+      "semantic_decomposition_errors": 0
+    },
+    "outcome_statuses": {
+      "error": 54,
+      "rejected": 6
+    },
+    "outcome_reasons": {
+      "UndefinedColumnError('column \"verifier_check\" of relation \"procedures\" does not exist')": 54,
+      "extraction produced zero procedures": 4,
+      "extraction failed: gemma-4-31B-it: LLM response did not parse into the expected shape: '```json\\n{\\n  \"procedures\": [\\n    {\\n      \"name\": \"Call WGBS DMRs with dmrseq\",\\n      \"goal\": \"Detect differentially methylated regions (DMRs) from WGBS data with a region-level FDR that accounts for th'": 1,
+      "extraction failed: gemma-4-31B-it: LLM response did not parse into the expected shape: '```json\\n{\\n  \"procedures\": [\\n    {\\n      \"name\": \"Systematic Bug Fixing\",\\n      \"goal\": \"Resolve end-to-end functional issues by cross-referencing error logs with design documentation and verifying via'": 1
+    },
+    "seconds": 1050.08,
+    "seconds_per_item": null
+  },
+  "cost_model": {
+    "judge_calls": 0,
+    "zero_claim_documents": 0,
+    "screened": 0,
+    "screening_quarantine": 0,
+    "screening_reject": 0
+  },
+  "wall_seconds_total": 1082.3,
+  "projection": {
+    "basis_rows_seen": 810,
+    "basis_admitted": 60,
+    "assumed_total_rows": 138133,
+    "scale_factor": 170.5,
+    "projected_admitted": 10232,
+    "projected_admitted_fraction": 0.0741,
+    "projected_content_bytes": 66467212,
+    "caveat": "PROJECTION, not a measurement. The sample is a prefix of the crawler's row order (90.0% registry rows first), not a uniform random sample, so the admitted fraction may not transfer."
+  }
+}

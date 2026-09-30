@@ -1,0 +1,115 @@
+{
+  "gate": {
+    "gate_version": "skillmd-gate@v1",
+    "dataset": "FayeZC/SkillMD-138K",
+    "dataset_revision": "0d73048a",
+    "rows_seen": 403,
+    "fetched": 37,
+    "admitted": 30,
+    "reasons": {
+      "mirror_origin_unrecoverable": 41,
+      "raw_404_deleted_or_moved": 22,
+      "screener_block_finding": 5,
+      "name_charset_invalid": 2,
+      "limit_reached": 1,
+      "scan_budget_exhausted": 1
+    },
+    "mirror_rows": 98,
+    "mirror_origin_recovered": 57,
+    "exact_duplicates": 0,
+    "near_duplicates": 0,
+    "below_star_prior": 202,
+    "license_gate": null
+  },
+  "gate_seconds": 15.66,
+  "content_bytes": 175454,
+  "bytes_per_admitted": 5848.5,
+  "dry_run": false,
+  "dataset": {
+    "repo": "FayeZC/SkillMD-138K",
+    "revision": "0d73048a",
+    "gate": "skillmd-gate@v1"
+  },
+  "llm": {
+    "client_configured": true,
+    "model": "gemma-4-31B-it"
+  },
+  "ingestion": {
+    "run_id": "16e02f78-a3e4-4ece-95b1-0bb25edef138",
+    "metrics": {
+      "sources_seen": 1,
+      "artifacts_seen": 30,
+      "candidates": 18,
+      "accepted": 1,
+      "duplicates": 0,
+      "unchanged": 15,
+      "stale": 0,
+      "rejected": 2,
+      "errors": 12,
+      "screened": 0,
+      "script_procedures": 0,
+      "reference_procedures": 0,
+      "independent_step_procedures": 3,
+      "procedure_dependencies": 0,
+      "admission_rejected": 0,
+      "quarantined": 0,
+      "admission_escalated": 0,
+      "sources": 1,
+      "observations": 1,
+      "document_evidence": 1,
+      "artifact_blocks": 46,
+      "screening_quarantine": 0,
+      "screening_reject": 0,
+      "document_claims": 48,
+      "zero_claim_documents": 0,
+      "block_observations": 46,
+      "semantic_decomposition_steps_seen": 0,
+      "semantic_decomposition_filtered": 0,
+      "semantic_decomposition_rewritten": 0,
+      "semantic_decomposition_errors": 0
+    },
+    "outcome_statuses": {
+      "unchanged": 15,
+      "error": 12,
+      "rejected": 2,
+      "captured": 1
+    },
+    "outcome_reasons": {
+      "status_unchanged": 15,
+      "extraction produced zero procedures": 2,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e807-3c34-7c39-b0bd-faa0bd1c7e1d has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e80b-c879-791a-b3e9-1019857078ce has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e80d-18ad-7ffe-8ea4-f648299e59c1 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e80d-4292-785b-ab6f-d045a9edd643 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e80d-f5c2-7b60-99d4-7c641c257aa1 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e810-058e-7cb9-a138-f064ce0c2b11 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e810-2390-7b3e-a956-5ffcd3bfe0a3 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e811-02a7-7e81-ad0d-38e359041546 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e811-6017-7603-827b-eb2a93f1ffa0 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e811-cf8d-7cb7-9c9b-ec075a3e2858 has no goal, neither local nor routed to a shard')": 1,
+      "ForeignKeyViolationError('reference procedures.achieves_goal_id = 01a0e82b-db6e-7bd4-b97b-4542de43ba29 has no goal, neither local nor routed to a shard')": 1,
+      "PermanentIdentityConflict('permanent identity conflict for procedure key proc:skill:084ea3240cba5967157270c86e16558cf159c184f4634ec2c2477f5f7af59016:Refresh Documentation Index: candidate_text differs from the stored decision')": 1,
+      "status_captured": 1
+    },
+    "seconds": 926.48,
+    "seconds_per_item": 926.475
+  },
+  "cost_model": {
+    "judge_calls": 48,
+    "zero_claim_documents": 0,
+    "screened": 0,
+    "screening_quarantine": 0,
+    "screening_reject": 0
+  },
+  "wall_seconds_total": 942.14,
+  "projection": {
+    "basis_rows_seen": 403,
+    "basis_admitted": 30,
+    "assumed_total_rows": 138133,
+    "scale_factor": 342.8,
+    "projected_admitted": 10283,
+    "projected_admitted_fraction": 0.0744,
+    "projected_content_bytes": 60138926,
+    "caveat": "PROJECTION, not a measurement. The sample is a prefix of the crawler's row order (90.0% registry rows first), not a uniform random sample, so the admitted fraction may not transfer."
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "gate": {
+    "gate_version": "skillmd-gate@v1",
+    "dataset": "FayeZC/SkillMD-138K",
+    "dataset_revision": "0d73048a",
+    "rows_seen": 536,
+    "fetched": 50,
+    "admitted": 40,
+    "reasons": {
+      "mirror_origin_unrecoverable": 54,
+      "raw_404_deleted_or_moved": 30,
+      "screener_block_finding": 9,
+      "limit_reached": 1,
+      "name_charset_invalid": 1,
+      "raw_fetch_error": 1,
+      "scan_budget_exhausted": 1
+    },
+    "mirror_rows": 130,
+    "mirror_origin_recovered": 76,
+    "exact_duplicates": 0,
+    "near_duplicates": 0,
+    "below_star_prior": 270,
+    "license_gate": null
+  },
+  "gate_seconds": 23.45,
+  "content_bytes": 254553,
+  "bytes_per_admitted": 6363.8,
+  "dry_run": false,
+  "dataset": {
+    "repo": "FayeZC/SkillMD-138K",
+    "revision": "0d73048a",
+    "gate": "skillmd-gate@v1"
+  },
+  "ingestion": {
+    "run_id": "bcb9e065-f1ea-4529-b9a0-03581405f00a",
+    "metrics": {
+      "sources_seen": 1,
+      "artifacts_seen": 40,
+      "candidates": 40,
+      "accepted": 0,
+      "duplicates": 0,
+      "unchanged": 0,
+      "stale": 0,
+      "rejected": 40,
+      "errors": 0,
+      "screened": 0,
+      "script_procedures": 0,
+      "reference_procedures": 0,
+      "independent_step_procedures": 0,
+      "procedure_dependencies": 0,
+      "admission_rejected": 0,
+      "quarantined": 0,
+      "admission_escalated": 0,
+      "sources": 0,
+      "observations": 0,
+      "document_evidence": 0,
+      "artifact_blocks": 0,
+      "screening_quarantine": 0,
+      "screening_reject": 0,
+      "document_claims": 0,
+      "zero_claim_documents": 0,
+      "block_observations": 0,
+      "semantic_decomposition_steps_seen": 0,
+      "semantic_decomposition_filtered": 0,
+      "semantic_decomposition_rewritten": 0,
+      "semantic_decomposition_errors": 0
+    },
+    "outcome_statuses": {
+      "rejected": 40
+    },
+    "outcome_reasons": {
+      "extraction failed: gemma-4-31B-it: ungrounded document extraction was selected with no LLM client configured": 40
+    },
+    "seconds": 0.88,
+    "seconds_per_item": null
+  },
+  "cost_model": {
+    "judge_calls": 0,
+    "zero_claim_documents": 0,
+    "screened": 0,
+    "screening_quarantine": 0,
+    "screening_reject": 0
+  },
+  "wall_seconds_total": 24.32,
+  "projection": {
+    "basis_rows_seen": 536,
+    "basis_admitted": 40,
+    "assumed_total_rows": 138133,
+    "scale_factor": 257.7,
+    "projected_admitted": 10308,
+    "projected_admitted_fraction": 0.0746,
+    "projected_content_bytes": 65601062,
+    "caveat": "PROJECTION, not a measurement. The sample is a prefix of the crawler's row order (90.0% registry rows first), not a uniform random sample, so the admitted fraction may not transfer."
+  }
+}

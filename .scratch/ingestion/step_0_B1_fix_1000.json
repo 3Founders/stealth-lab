@@ -1,0 +1,176 @@
+{
+  "pilot": "step0_nebius_openhands_trajectories",
+  "status": "ok",
+  "dataset": {
+    "repo": "nebius/SWE-rebench-openhands-trajectories",
+    "revision": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+    "parent_repo": "nebius/SWE-rebench",
+    "parent_revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881"
+  },
+  "shard_dsn_env": "DATABASE_URL_LOCAL",
+  "held_out": {
+    "excluded_ids": 410,
+    "scored_repos": [
+      "PennyLaneAI/pennylane",
+      "astropy/astropy",
+      "beeware/briefcase",
+      "dask/dask",
+      "deepset-ai/haystack",
+      "django/django",
+      "jackdewinter/pymarkdown",
+      "matplotlib/matplotlib",
+      "nilearn/nilearn",
+      "omni-us/jsonargparse",
+      "pdm-project/pdm",
+      "pydata/xarray",
+      "pytest-dev/pytest",
+      "pyvista/pyvista",
+      "scikit-learn/scikit-learn",
+      "sphinx-doc/sphinx",
+      "streamlink/streamlink",
+      "sympy/sympy",
+      "tobymao/sqlglot",
+      "wemake-services/wemake-python-styleguide",
+      "zarr-developers/zarr-python"
+    ],
+    "designs": [
+      {
+        "path": "../experiments/swebench/runs/design.json",
+        "sha256": "c596c818466f3d3d1fc80012d69bafab2ccefe5216f96d2556dba1ebf64d389f",
+        "dataset": "princeton-nlp/SWE-bench_Verified",
+        "dataset_revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+        "counts": {
+          "scored_repos": 8,
+          "train": 286,
+          "test": 193,
+          "calibration": 12
+        }
+      },
+      {
+        "path": "../experiments/swebench_rebench/runs/design.json",
+        "sha256": "4cfb20219ca17a9671f88ffdbb99868549096512f131e26e4c9965e633965e44",
+        "dataset": "nebius/SWE-rebench",
+        "dataset_revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881",
+        "counts": {
+          "scored_repos": 13,
+          "train": 317,
+          "test": 193,
+          "calibration": 12
+        }
+      }
+    ],
+    "missing_designs": []
+  },
+  "requested_limit": 1000,
+  "resolved_only": true,
+  "semantics_limit": 50,
+  "semantics_model": "gemma-4-31B-it",
+  "budget_cap_usd": 10.0,
+  "semantic_extraction": {
+    "ok": true,
+    "attempted": 50,
+    "succeeded": 34,
+    "yielded": 34,
+    "abstained": 0,
+    "failed": 16,
+    "failure_reasons": {
+      "GoalQualityRejected": 16
+    },
+    "knowledge_items": 421,
+    "usd_per_knowledge_item": 0.001943
+  },
+  "spend": {
+    "usd_in_run": 0.818129,
+    "llm_spend_rows_in_run": 723,
+    "spend_is_accounted_for": true,
+    "note": "usd comes from llm_spend over the run's own interval, not from a call site. spend_is_accounted_for=False means calls completed but the ledger has fewer rows than that, i.e. the money figure understates reality and the run is not a valid cost measurement."
+  },
+  "counters": {
+    "rows_streamed": 1000,
+    "rows_resolved": 1000,
+    "accepted": 729,
+    "duplicates": 0,
+    "events_written": 44795,
+    "events_duplicate": 0,
+    "episodes_written": 729,
+    "malformed": 0,
+    "malformed_events": 0,
+    "turn_capped": 30,
+    "model_patch_bytes": 6846929,
+    "patch_bytes_accepted": 6846929,
+    "patch_bytes_duplicate": 0,
+    "semantics_attempted": 50,
+    "semantics_succeeded": 34,
+    "semantics_abstained": 0,
+    "semantics_yielded": 34,
+    "semantics_failed": 16,
+    "semantics_failure_reasons": {
+      "GoalQualityRejected": 16
+    },
+    "semantics_knowledge_items": 421,
+    "llm_calls": 723,
+    "rejected": {
+      "license_quarantine": 27,
+      "held_out_repo": 64,
+      "held_out_instance": 10,
+      "license_unmappable": 35,
+      "duplicate_instance_in_run": 135
+    },
+    "license_decisions": {
+      "QUARANTINE": 27,
+      "ALLOW": 729,
+      "unmappable": 35
+    }
+  },
+  "wall_time_s": 3722.7,
+  "items_per_hour": 705.0,
+  "db_bytes_delta": 136208384,
+  "bytes_per_accepted_item": 186842.8,
+  "model_usd_in_run": 0.818129,
+  "llm_calls": 723,
+  "per_accepted_item": {
+    "events": 61.45,
+    "episodes": 1.0,
+    "model_patch_bytes": 9392.2,
+    "db_bytes": 186842.8,
+    "usd": 0.001122
+  },
+  "knowledge_delta": {
+    "goals": 330,
+    "claims": 61,
+    "procedures": 34,
+    "observations": 0,
+    "episodes": 729,
+    "trace_events": 44795,
+    "agent_traces": 729,
+    "quarantined": 0,
+    "jobs": 45125,
+    "contexts": 729
+  },
+  "knowledge_totals_after": {
+    "goals": 330,
+    "claims": 61,
+    "procedures": 34,
+    "observations": 0,
+    "episodes": 729,
+    "trace_events": 44795,
+    "agent_traces": 729,
+    "quarantined": 0,
+    "jobs": 45125,
+    "contexts": 729
+  },
+  "trajectory_extractions": {
+    "total": 50,
+    "completed": 34,
+    "failed": 16,
+    "pending": 0
+  },
+  "projection_full_corpus": {
+    "resolved_trajectories_in_corpus": 32161,
+    "items": 32161,
+    "wall_time_hours": 45.62,
+    "db_bytes_tb": 0.006,
+    "usd_at_pilot_rate": 36.09,
+    "note": "usd covers only what this run actually called; the raw path is LLM-free, so a real figure needs the extraction layer enabled for every episode, not a sub-sample."
+  }
+}

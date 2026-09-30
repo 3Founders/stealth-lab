@@ -1,0 +1,147 @@
+{
+  "pilot": "step0_nebius_openhands_trajectories",
+  "dataset": {
+    "repo": "nebius/SWE-rebench-openhands-trajectories",
+    "revision": "35455389ab51bf5e2306bfd436ef72d0f98bf882",
+    "parent_repo": "nebius/SWE-rebench",
+    "parent_revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881"
+  },
+  "shard_dsn_env": "DATABASE_URL_LOCAL",
+  "held_out": {
+    "excluded_ids": 410,
+    "scored_repos": [
+      "PennyLaneAI/pennylane",
+      "astropy/astropy",
+      "beeware/briefcase",
+      "dask/dask",
+      "deepset-ai/haystack",
+      "django/django",
+      "jackdewinter/pymarkdown",
+      "matplotlib/matplotlib",
+      "nilearn/nilearn",
+      "omni-us/jsonargparse",
+      "pdm-project/pdm",
+      "pydata/xarray",
+      "pytest-dev/pytest",
+      "pyvista/pyvista",
+      "scikit-learn/scikit-learn",
+      "sphinx-doc/sphinx",
+      "streamlink/streamlink",
+      "sympy/sympy",
+      "tobymao/sqlglot",
+      "wemake-services/wemake-python-styleguide",
+      "zarr-developers/zarr-python"
+    ],
+    "designs": [
+      {
+        "path": "../experiments/swebench/runs/design.json",
+        "sha256": "c596c818466f3d3d1fc80012d69bafab2ccefe5216f96d2556dba1ebf64d389f",
+        "dataset": "princeton-nlp/SWE-bench_Verified",
+        "dataset_revision": "c104f840cc67f8b6eec6f759ebc8b2693d585d4a",
+        "counts": {
+          "scored_repos": 8,
+          "train": 286,
+          "test": 193,
+          "calibration": 12
+        }
+      },
+      {
+        "path": "../experiments/swebench_rebench/runs/design.json",
+        "sha256": "4cfb20219ca17a9671f88ffdbb99868549096512f131e26e4c9965e633965e44",
+        "dataset": "nebius/SWE-rebench",
+        "dataset_revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881",
+        "counts": {
+          "scored_repos": 13,
+          "train": 317,
+          "test": 193,
+          "calibration": 12
+        }
+      }
+    ],
+    "missing_designs": []
+  },
+  "requested_limit": 1000,
+  "resolved_only": true,
+  "semantics_limit": 0,
+  "semantics_model": "gemma-4-31B-it",
+  "counters": {
+    "rows_streamed": 1000,
+    "rows_resolved": 1000,
+    "accepted": 713,
+    "duplicates": 16,
+    "events_written": 43842,
+    "events_duplicate": 953,
+    "episodes_written": 713,
+    "malformed": 0,
+    "malformed_events": 0,
+    "turn_capped": 30,
+    "model_patch_bytes": 6846929,
+    "patch_bytes_accepted": 6655561,
+    "patch_bytes_duplicate": 191368,
+    "semantics_attempted": 0,
+    "semantics_completed": 0,
+    "semantics_failed": 0,
+    "llm_calls": 0,
+    "rejected": {
+      "license_quarantine": 27,
+      "held_out_repo": 64,
+      "held_out_instance": 10,
+      "license_unmappable": 35,
+      "duplicate_instance_in_run": 135
+    },
+    "license_decisions": {
+      "QUARANTINE": 27,
+      "ALLOW": 729,
+      "unmappable": 35
+    }
+  },
+  "wall_time_s": 80.62,
+  "items_per_hour": 31836.9,
+  "db_bytes_delta": 126337024,
+  "bytes_per_accepted_item": 177190.8,
+  "model_usd_in_window": 0.200094,
+  "per_accepted_item": {
+    "events": 61.49,
+    "episodes": 1.0,
+    "model_patch_bytes": 9334.6,
+    "db_bytes": 177190.8,
+    "usd": 0.000281
+  },
+  "knowledge_delta": {
+    "goals": 0,
+    "claims": 0,
+    "procedures": 0,
+    "observations": 0,
+    "episodes": 713,
+    "trace_events": 43842,
+    "agent_traces": 713,
+    "quarantined": 0,
+    "jobs": 43842,
+    "contexts": 729
+  },
+  "knowledge_totals_after": {
+    "goals": 271,
+    "claims": 362,
+    "procedures": 279,
+    "observations": 67,
+    "episodes": 743,
+    "trace_events": 44815,
+    "agent_traces": 732,
+    "quarantined": 0,
+    "jobs": 46092,
+    "contexts": 1074
+  },
+  "trajectory_extractions": {
+    "total": 13,
+    "completed": 0,
+    "failed": 13
+  },
+  "projection_full_corpus": {
+    "resolved_trajectories_in_corpus": 32161,
+    "items": 32161,
+    "wall_time_hours": 1.01,
+    "db_bytes_tb": 0.006,
+    "usd_at_pilot_rate": 9.03,
+    "note": "usd covers only what this run actually called; the raw path is LLM-free, so a real figure needs the extraction layer enabled for every episode, not a sub-sample."
+  }
+}

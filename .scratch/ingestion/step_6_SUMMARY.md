@@ -1,229 +1,259 @@
-# Step 6 summary — CI workflow histories + dependency-bump PRs
+# Step 6 summary — CI workflow histories + bot dependency-bump PRs
 
 Date: 2026-09-28
-Branch: `main` (work in progress, not committed)
-Local shard: `sl-step6-pg` @ `127.0.0.1:55434`, all 124 migrations applied
-Spend: **$0.00**. No LLM was called at any point — see "Spend" for why that is the
-honest number and not an omission.
+Lane: `measure:` · Branch: `main` (rebased onto `origin/main` at the start)
+Spend cap for this step: **$2/day** (user-lowered from the $10/day in Common)
+Production writes: **none.** Everything below is a local Postgres 15.19 + pgvector
+container on `127.0.0.1:55434`, databases `sl_step6_control` / `sl_step6_shard`.
 
-## What I researched
+---
 
-- **Literature:** Cardoen et al., "A dataset of GitHub Actions workflow histories",
-  IEEE MSR 2024 (`https://orbi.umons.ac.be/bitstream/20.500.12907/48470/1/main.pdf`).
-  GHALogs (MSR 2025) — read for its related-work description, and **excluded on
-  license** (CC-BY-SA-4.0, confirmed via the Zenodo API). GitHub REST docs for
-  search qualifiers and rate limits. Full record with identifiers, dates and
-  evidence tiers: `.scratch/ingestion/step_6_research.md`.
-- **Exa sweep:** Zenodo records for all four versions (license, sizes, dates);
-  GitHub's official search-qualifier and rate-limit documentation.
-- **Verified locally:** ranged *and* full download of `workflows.csv.gz` from record
-  `20340547`, header and rows read directly; live `api.github.com` rate-limit probe;
-  live `author:app/dependabot` search with returned `user.login` checked.
+## 0. Two findings that changed the step's premise
 
-### The finding that reshapes the step
+**1. The admitted corpus contains no CI run outcomes.** Step 6's build item 1 asks
+for "each workflow change **+ its run outcome** into Procedures (passing runs)".
+Zenodo `10.5281/zenodo.10259013` cannot supply the outcome. Verified three ways: its
+17 columns are all file/git identity; its pipeline (SEART → `git clone` → first-parent
+traversal → JSON-Schema validation) never contacts a CI API; and the dataset authors'
+own follow-up (arXiv `2605.26825`) joined run conclusions in from the GitHub REST API
+afterwards, while the MSR '24 paper explicitly disclaims having CI-usage data.
 
-**The workflow corpus contains no execution data.** All 17 columns are
-commit/file-level. No `conclusion`, no `run_id`, no job result, no log. So step 6's
-build instruction 1 — "turning each workflow change **+ its run outcome** into
-Procedures (passing runs) or failure Claims" — is not executable against this source.
-There is no run outcome to read.
+Consequence, and it is the load-bearing one for this repo: **a workflow file version is
+an artifact. It can never, on this evidence, be a Procedure.** Every admitted item
+lands as `provenance=system_pending_review`, `verification_state=candidate`.
 
-Source A is therefore a **candidate generator** (like step 3's SkillMD), and the live
-GitHub API is the only place outcomes can come from. That is also the correct
-architecture: a Procedure cannot be verified by a check that was never observed.
+**2. A dependency bump is not reusable procedural knowledge.** Build item 2 asks for
+"merged PRs with green CI → version-bump Procedures". It is fully derivable from the
+diff the agent is already reading, the bot is the actor so the check is circular, and
+green CI tests the repository's existing suite rather than the bump. The literature's own
+account is that developers use these bots as notifications and do the work by hand
+(arXiv `2206.07230`: 65.2% "rapidly merge the PR if the tests pass and manually perform
+the update by hand otherwise"). The one non-derivable, checkable pattern is the
+**repair** — a bump that broke CI and the change that fixed it.
 
-## What I built
+---
 
-Four new modules, own files, no shared-file logic changes:
+## 1. Research (full record: `.scratch/ingestion/step_6_research.md`)
 
-| file | what |
+| Source | Finding | Identifier |
+|---|---|---|
+| Workflow histories | CC-BY-4.0, versions exist; 17-column schema confirmed **by streaming the file**, not from the card; **no run outcomes** | `10.5281/zenodo.10259013`, record `20340547` (2026-05-22) |
+| Paper | Cardoen, Mens, Decan, MSR '24, 677–681. 160,443 histories / 32,886 repos / 1,526,475 distinct contents — all three confirmed. No arXiv version exists (null result) | `10.1145/3643991.3644867` |
+| Extractor | `gigawork` v1.4.3 on PyPI, **LGPL-3.0-or-later** (tool) vs CC-BY-4.0 (data) — different licences | PyPI `gigawork` |
+| Run outcomes, authors' own follow-up | Had to fetch run results from the GitHub REST API; dataset has none | arXiv `2605.26825` (ICSME 2026) |
+| GHALogs | **CC BY-SA 4.0 confirmed**; has pass/fail (513,492 run logs); **no permissive re-release offered**. Exclusion upheld on two independent grounds | `10.5281/zenodo.14796970`; MSR@ICSE 2025 |
+| Dependabot/Renovate acceptance | 32–37% (all bots) vs 70%+ (Dependabot-only); breakage 24% vs 3.2% across methods. **No reconciled figure exists — not published** | ASE 2017 `10.1109/ASE.2017.8115621`; MSR 2021 `10.1109/MSR52588.2021.00037`; arXiv `2103.03591`, `2206.07230` |
+| GitHub API limits | 5,000/hr core, **30/min search**, 900 pts/min secondary; `/rate_limit` is free. **Search caps at 1,000 results/query** | docs.github.com, read 2026-09-28 |
+| Measured live | `is:pr author:app/dependabot is:merged` → **26,601,605** matches, so a global census is permanently truncated | this machine, token from `.env` |
+| Prior art on workflow knowledge | 9-scanner comparison: no scanner covers all weaknesses and findings are **not comparable across tools** (`scharf` 2,307 vs `zizmor` 509 vs `poutine` 0 on one rule) | arXiv `2601.14455` |
+| Workflow quality at scale | >99% of 200k real workflows fail ≥1 of 9 misconfiguration classes; 94.1% use mutable pins. "This workflow is good" is not a usable predicate | Soteria study (Rigg et al.) |
+
+---
+
+## 2. What was built
+
+All Step 6 code lives in its own modules. No shared file was edited.
+
+| File | Bytes | Role |
+|---|---|---|
+| `backend/app/services/ingestion_sources/ci_workflow_history.py` | 18k | Source A: pinned-corpus reader, `SchemaDrift`/`FingerprintDrift`, `.gz.gz` handling, content dedup |
+| `backend/app/services/ingestion_sources/bot_dependency_prs.py` | 40k | Source B: resumable `BumpCursor` search, check-run verdicts, host-pinned auth, per-repo SPDX cache |
+| `backend/app/services/ingestion_sources/workflow_knowledge.py` | 23k | The decision module: license gate, goal proposal, `capture_procedure` write |
+| `backend/app/services/ingestion_sources/held_out.py` | 7k | Held-out id exclusion |
+| `backend/scripts/step6_pilot.py` | new | Local-shard runner: DSN refusals, streaming metadata, per-repo license resolution |
+
+### Changes I made to the landed modules
+
+1. **`gate_license` accepts an out-of-band resolved per-repository license**
+   (`workflow_knowledge.py:167`). It previously quarantined 100% of workflow items with
+   `"per-repository license is not resolvable from a Zenodo compilation"`. That default
+   is **preserved exactly** — absent a resolved id, still QUARANTINE — and is only
+   widened on real evidence. This is the Question 2 default from the research: never
+   redistribute the 1.4 GB tarball; use the CSV as an index, fetch bytes from
+   `raw.githubusercontent.com` at the pinned commit, and gate per repository.
+2. **Repository scoping added to `BotDependencyPrSource`** (`discover`/`_search_url`).
+   The global query is truncated at 1,000 results and has 26.6M matches, so a census was
+   impossible. With `repos=()` the legacy global behaviour is unchanged, so a bounded
+   probe still works.
+3. **`.env` loading in the runner.** Without it the client runs *unauthenticated* — 60
+   req/hour, not 5,000 — and does not fail, it throttles, so a run just stops
+   progressing after ~60 calls. This cost me two 50-minute timeouts before I found it.
+
+---
+
+## 3. Tests
+
+| Suite | Before | After |
+|---|---|---|
+| `tests/test_step6_sources_offline.py` (inherited) | 64 passed | **64 passed** |
+| `tests/test_step6_license_and_scoping_offline.py` (mine) | — | **15 passed** |
+| **Step 6 total** | 64 | **79 passed, 0 failed** |
+
+My 15 cover: the quarantine default surviving a resolved id, the reject floor
+surviving a caller allowlist (GPL stays rejected when allowlisted), CC-BY-4.0 admissible
+only when the caller allowlists it, the bump path being unaffected, repo-scoped vs global
+search URLs, per-repo query iteration, cursor resume, and the license resolver preferring
+the LICENSE blob over the API `spdx_id` field.
+
+**The full backend suite was not re-measured after these edits.** Sibling lanes are
+actively editing `procedures.py`, `ingestion_jobs.py`, `admin.py` and `trace_worker.py`,
+so a whole-suite number taken now would not be attributable. The honest statement is the
+Step 6 count above; a full number belongs on a quiet tree.
+
+---
+
+## 4. The run (local shard, `127.0.0.1:55434`)
+
+Two runs were needed. A metadata **prefix** cannot diversify: the CSV is clustered by
+repository, so 12,500 consecutive rows still covered only 10 repositories. A strided
+sample across the file (85,443 rows scanned, every 8th kept → 10,681) was used instead.
+
+### Final shard state
+
+| Measure | Value |
 |---|---|
-| `backend/app/services/ingestion_sources/ci_workflow_history.py` | Zenodo reader. Streams, schema-pinned, `SourceAdapter` |
-| `backend/app/services/ingestion_sources/bot_dependency_prs.py` | GitHub API client + merged-bot-PR adapter |
-| `backend/app/services/ingestion_sources/workflow_knowledge.py` | The compiler. Decides what a step-6 artifact *is* |
-| `backend/app/services/ingestion_sources/held_out.py` | Held-out exclusion loader — **did not exist anywhere in `app/`** |
-| `backend/app/ingestion/step6_admin.py` | Three CLI commands, following the `benchmarks/admin_cli.py` delegation pattern |
-| `backend/tests/test_step6_sources_offline.py` | **64 tests**, all offline |
+| Procedures written | **1,198** |
+| Distinct `source_key` | 1,198 (no collisions, dedup clean) |
+| With `source_locator` | 1,198 / 1,198 |
+| `provenance` | `system_pending_review` × 1,198 |
+| `visibility` | `public` × 1,198 |
+| `verification_state='verified'` | **0** |
+| Goals | 89 |
+| Distinct repositories in provenance | 26 |
+| **Spend** | **$0.00** |
+| Bytes per item | 5,802 |
+| Wall time, 555-item prefix run | 4.1 min (0.44 s/item) |
+| Wall time, 25-item PR run | 141 s (5.6 s/PR) |
+| GitHub API, 25 PRs | 77 requests, **0 retries, 0 rate-limited** |
+| GitHub API, 555 workflow items | 11 requests (per-repo license cache), 1 retry |
 
-Shared-file edits: **10 lines in `backend/app/ingestion/admin.py`** (parser
-registration + dispatch), matching the existing `skillmd-import` precedent.
+### License outcomes (per item, never per compilation)
 
-## Tests
-
-**64 new, all passing, all offline (`DATABASE_URL` unset, no sockets).**
-
-| suite | result |
+| Outcome | Count |
 |---|---|
-| `tests/test_step6_sources_offline.py` | **64 passed** |
-| Full `backend/tests` **without** my step-6 work | 4127 passed, **14 failed**, 678 skipped |
-| Full `backend/tests` with my step-6 work | 4191 passed, **14 failed** + 41 from a foreign file (see Collision) |
+| Admitted | 520 of 555 (93.7%) |
+| Quarantined — license not resolvable (no endpoint / NOASSERTION) | 19 |
+| Quarantined — EPL-1.0 not on the allowlist | 12 |
+| **Rejected — LGPL-2.0-only, copyleft floor** | 4 |
+| Rejected — goal quality (`names a hyper-specific literal file path`) | 1 |
 
-The **14 failures are pre-existing** and identical to the baseline I measured in
-`.scratch/ingestion_testing_audit.md` at `24f1b48`. My change adds 64 passing tests
-and **zero** new failures. I verified this by stashing my work and re-running.
+License resolution route: **9 from the LICENSE blob**, 1 from the API `spdx_id` field,
+1 NOASSERTION. The blob is preferred deliberately — the project's 2026-09-28 correction
+is that the API field is a hint and the LICENSE file is the licence, with
+`actions/starter-workflows` (API `NOASSERTION`, shipped MIT) as the precedent. That
+preference is now proven by a test.
 
-Four of the 64 tests are there because they caught real bugs during the build:
-`_reserve` was both a method and an int attribute (self-shadowing); the
-conventional-commit title prefix went unparsed (26/30 live titles); `fetch()` could
-not resolve a ref that `discover()` had yielded; and reading only `/check-runs`
-reported `none` for 25/25 real PRs that report through the older status API.
+**Spend is structurally $0, not approximately $0.** The runner never constructs an LLM
+client, so the goal identity judge — up to five sequential calls per goal, the dominant
+cost in `ingestion_problems.md` P1 — cannot run. The cap is not being managed; it is
+unreachable by construction.
 
-## The runs
+### What did **not** meet target
 
-### Held-out exclusion (real, not dry-run)
+| Target | Achieved | Note |
+|---|---|---|
+| 1,000 workflow items | **~1,173** | met (strided sample) |
+| 500 bot PRs | **25** | **not met** — see below |
 
-```
-python -m app.ingestion.admin step6-held-out --root ..
-```
+The PR phase reached 25 items at 5.6 s/PR (≈47 min for 500) and the session's command
+budget could not absorb it alongside the workflow phase. `--prs 500` is a supported flag
+and the run is resumable by design; this is a time-budget shortfall, not a code limit.
+Merge-rate/breakage statistics were therefore **not** gathered, and none are claimed.
 
-**410 excluded ids**, 21 scored repos, across 2 design files, each SHA-256'd.
-Fails closed: a missing design file raises rather than returning an empty set,
-because an empty set reads as "nothing is held out" — the exact silent failure the
-rule exists to prevent.
+---
 
-### Source A — CI workflow histories (1,000 items, local shard)
+## 5. Risks
 
-```
-python -m app.ingestion.admin step6-ci-workflows --metadata wf_full.csv.gz --limit 1000 --dry-run
-```
+1. **26 repositories is not a corpus.** Everything measured here is clustered and
+   convenience-sampled. Selection bias in the source itself (≥100 stars, ≥300 commits,
+   SEART filter) is inherited and uncorrected.
+2. **Bot-authored workflow revisions are admitted as candidates.** Dependabot and
+   Renovate rewrite `uses:` pins inside workflows — row 0 of the corpus is literally
+   `dependabot[bot]`. Their CI check is circular, so they must never be Procedures. The
+   landed code does **not** currently demote them; `verification_state` staying
+   `candidate` is what currently prevents the error, not an explicit rule. This is the
+   one gap I would close first.
+3. **Check-run conclusions have no retention SLA.** They are attached to the commit SHA
+   and remain retrievable for closed-unmerged PRs, but GitHub documents no guarantee,
+   and it auto-deletes check runs beyond 1,000 with the same name per suite.
+4. **Contained-file licence is an unresolved legal question** (null result — nobody
+   publishes on it). Mitigated by never redistributing the compilation, but counsel is
+   still the right answer for a production run.
+5. **Cross-shard capture is unsafe to measure on.** The first run crashed with
+   `ForeignKeyViolationError: ... has no goal, neither local nor routed to a shard`.
+   A Procedure is homed with its Goal, and a 50/50 K000/K001 split can land them on
+   different shards across two databases with no compensation. The runner now zeroes
+   K000's weight so all placement targets one shard. This is the same class of hazard as
+   findings #10–#12 in `.scratch/ingestion_testing_audit.md` and is **not** fixed by this
+   step.
 
-| | |
-|---|---|
-| items considered | **1,000** (across 16 repositories) |
-| additions | 42 |
-| license verdicts | **QUARANTINE 1,000** — per-repository license not resolvable from a Zenodo compilation |
-| goals named deterministically | 1,000 |
-| **ingested** | **0** |
-| evidence available | **false** — no run outcome, no job result, no log |
-| step-4 verifier check attached | **false** |
-| wall time | 0.11 s |
-| bytes | 296.9 MB metadata streamed, O(1) memory |
+---
 
-### Source B — dependency-bump PRs (30 items, live write to local shard)
-
-```
-python -m app.ingestion.admin step6-bot-prs --limit 30 --since 2026-08-01
-```
-
-| | |
-|---|---|
-| discovered / fetched | 30 / 30 (19 repositories) |
-| title parse | 24 bump, 4 group-no-versions, 1 requirement, 1 unparsed (**29/30**) |
-| CI verdicts observed | **26 success, 4 failure** |
-| license verdicts | ALLOW MIT 17, ALLOW Apache-2.0 2, QUARANTINE no-license 5, QUARANTION NOASSERTION 5, QUARANTINE MPL-2.0 1 |
-| **accepted** | **19** |
-| quarantined on license | 11 |
-| **Procedures created** | **17** |
-| **Goals created / matched** | **10 / 7** |
-| API requests | 110 · **0 retries, 0 rate-limit hits** |
-| wall time | 158 s |
-| spend | $0.00 |
-
-Verified in the database after the run:
-
-- 17 Procedures, all `verification_state=candidate`, `provenance=system_pending_review`.
-- **0 Procedures verified.** 15 Goals, all `candidate`.
-- 17/17 carry a `source_locator` (hard rule 2).
-- **0 evidence rows** written.
-
-## Honest limits
-
-1. **Nothing from step 6 is verified, and it cannot be.** A merged PR's green CI is a
-   host self-report observed from outside this system. `record_execution_outcome`'s
-   `execution_verified` flag exists for exactly this distinction, and CI evidence is
-   therefore recorded as `experiment` — a witness type that cannot promote. This is
-   enforced by a test, not just a comment.
-2. **CI data expires.** Measured directly: the same code returns 26 success / 4
-   failure with `--since 2026-08-01` and **30/30 `none`** with the default 2024
-   window. GitHub retains run history ~90 days. A historical evidence chain cannot
-   be assembled after the fact; only forward observation works.
-3. **Green CI is not proof of correctness.** Six independent mechanisms (42.1% of GHA
-   workflows have no test step; ~11% of successful jobs are rerun; 67.73% of reruns
-   flaky; tests miss >50% of injected dependency faults; AtCoder's own suites accept
-   589/20,375 verifiably buggy submissions; developers merge with red CI). Documented
-   in `step_6_research.md`.
-4. **No step-4 verifier check attached.** `screening.CHECK_TYPES` is a closed 8-value
-   vocabulary 1:1 with a DB CHECK constraint (verified live) and step 4 has not run.
-5. **Renovate is not enabled.** Listed in `UNVERIFIED_BOT_AUTHORS` and shipped
-   disabled. `author:app/dependabot` is verified live; the Renovate probe hit a
-   secondary rate limit before returning and I would not guess a login.
-6. **The 1,000-item workflow sample is not corpus-representative.** The CSV is sorted
-   by repository, so the first 1,000 rows cover 16 repos. A representative sample
-   needs the full file.
-
-## Risks
-
-- **Parallel-agent collision (live).** See below — two implementations of step 6 now
-  exist in this checkout.
-- `github_corpus.py`'s token-on-redirect leak is **not** copied, but **still exists**
-  (audit P0 #3). My client's `_auth_host_allowed` is the fix; it has not been applied
-  to the older client.
-- Only 19/30 PRs passed the license gate, mostly on missing or NOASSERTION licenses.
-  A permissive-license bias is plausible and unmeasured.
-- The `chore(deps): bump` corpus skews toward monorepo/workspace bumps. Whether those
-  make *reusable* knowledge for another project is untested.
-
-## Spend
-
-**$0.00.** Not an oversight: `propose_goal` derives a goal name deterministically from
-the bot's own regular title, so no judge call is needed. The yield numbers here
-therefore measure *the corpus*, not a naming model. If you want LLM-refined naming,
-pass a `judge` — it is already behind `ingest_budget.guard` — but measure that
-separately, and it fits comfortably inside the $2/day cap: 17 items cost nothing, and
-a judge call per accepted item at ~$0.001–0.01 keeps 500 items well under $5.
-
-## Full-scale commands (local shard; production needs your go-ahead)
+## 6. Full-scale command
 
 ```powershell
-# Source A — 4.1M workflow revisions. Streams; O(1) memory.
-python -m app.ingestion.admin step6-ci-workflows --metadata <path>\workflows.csv.gz --limit 100000 --dry-run
+# local shard
+docker run -d --name sl-step6-pg -e POSTGRES_PASSWORD=step6local -e POSTGRES_DB=postgres `
+  -p 55434:5432 pgvector/pgvector:pg15
+$env:STEP6_CONTROL_DSN="postgresql://postgres:step6local@127.0.0.1:55434/sl_step6_control"
+$env:STEP6_SHARD_DSN="postgresql://postgres:step6local@127.0.0.1:55434/sl_step6_shard"
+cd backend
+python scripts\migrate.py --dsn $env:STEP6_CONTROL_DSN
+python scripts\migrate.py --dsn $env:STEP6_SHARD_DSN
 
-# Source B — resumable. Pass the last cursor from the prior run as --after.
-python -m app.ingestion.admin step6-bot-prs --limit 500 --since 2026-09-01
-python -m app.ingestion.admin step6-bot-prs --limit 500 --after <last_pr_id> --since 2026-09-01
+# strided metadata sample, then the run
+python ..\.scratch\step6\stride.py
+python scripts\step6_pilot.py --workflows 1200 `
+  --metadata-path ..\.scratch\step6\workflows_strided.csv `
+  --prs 500 --per-page 100 --max-pages 3 --since 2025-01-01 `
+  --repos expressjs/express axios/axios expressjs/body-parser sindresorhus/got chalk/chalk mozilla/pdf.js lodash/lodash nodejs/node facebook/react microsoft/vscode `
+  --out ..\.scratch\step6\acceptance.json
 ```
 
-Projections from the measured rates:
+**Projections at the measured rates**
 
-| | rate | 500 items | 100k items |
-|---|---|---|---|
-| Source B wall time | 5.3 s/item | ~44 min | — |
-| Source B API calls | 3.7/item | ~1,850 | — |
-| Source A wall time | 0.11 s/1,000 | — | ~3 h |
-| Spend | $0 | $0 | $0 |
+| Quantity | Projection |
+|---|---|
+| Wall time, 1,200 workflows | ~9 min (0.44 s/item) |
+| Wall time, 500 PRs | ~47 min (5.6 s/PR) |
+| GitHub core requests | ~1,100 (≈2/PR) + ~26 license — 22% of the 5,000/hr budget |
+| GitHub search requests | ~10–30 (repo-scoped) — under the 30/min budget |
+| **LLM spend** | **$0.00** |
+| Storage | ~7 MB per 1,200 items at 5.8 KB/item |
+| Corpus scale (160k histories) | ~20 h, ~9,300 core requests — needs 2 hourly windows, not one run |
 
-**API limits:** the measured run used 110 requests in 158 s with zero retries and zero
-rate-limit hits. At 500 items that is ~1,850 requests, well inside core 5,000/hr, and
-the self-throttle reserves 100 requests. Budget **one 500-item batch per hour** to stay
-clear of the secondary limiter, which is stricter than the documented one and is the
-thing that actually bites.
+A production run additionally needs the founder's go-ahead, the held-out exclusion
+count, and a ruling on the contained-file licence.
 
-## Blockers
+---
 
-1. **Q-STEP6-CCBY** (`.scratch/ingestion/Q-STEP6-CCBY.md`) — CC-BY-4.0 is not on the
-   allowlist, so Source A ingests 0. Proposed default: treat Zenodo as a *selection
-   index* and resolve each repository's real license from GitHub. Needs a ruling.
-2. **Step 4 has not run**, so no verifier check can be attached.
-3. **Parallel-agent collision** — needs resolution before either implementation is
-   merged.
+## 7. Questions for the board (not yet filed — the board is being concurrently edited)
 
-## Collision — please read
+1. **Step 4 landed mid-run.** `db/125_procedure_verifier_check.sql` appeared with
+   `actionlint`/`zizmor`/`ast_grep` check types while this step was running, so my
+   research note that Step 4 "has not landed" is now stale. Should Step 6 re-run and
+   attach verifier checks to admitted items? Default applied: none attached.
+2. **Bot-authored workflow revisions.** Propose demoting them to a non-admissible
+   outcome in `gate_license`'s sibling (`classify`), independent of CI outcome.
+   Default applied: nothing demoted; `verification_state` remains `candidate`.
+3. **Contained-file licence.** Default applied: CSV-as-index, per-repo gate, no
+   redistribution of the tarball. Counsel still recommended before production.
+4. **Permissive run-outcome alternative.** Zenodo `10.5281/zenodo.17599758` (CC-BY-4.0)
+   has conclusions joined to commit SHAs. Default applied: **not used** — the API join
+   has better provenance and avoids chasing an unreviewed living dataset.
+5. **`author:app/renovate` does not match.** Renovate is self-hosted under a user
+   account, so the working form is `author:renovatebot`. Default applied: Dependabot
+   only; Renovate parked in `UNVERIFIED_BOT_AUTHORS` and this step measures Dependabot
+   only, and says so.
 
-**Another agent implemented step 6 in this same checkout, concurrently.** Evidence:
+---
 
-- `backend/tests/test_step6_ingestion_sources_offline.py` — untracked, not mine,
-  41 failures, imports a `gh_client` module that did not exist and has since been
-  deleted (the other agent is mid-refactor).
-- Their file targets a *different* design: green+merged bumps demoted to Claims
-  (I produce candidate Procedures), and a routing table keyed on `step_6_research.md`
-  §A6 (a research file with a different section scheme than mine).
-- Filenames collide exactly: `ci_workflow_history.py`, `bot_dependency_prs.py`,
-  `workflow_knowledge.py`, `held_out.py`. Their versions were written to those paths
-  after mine; my code is what is on disk now, and my 64 tests pass against it.
-- Also present and not mine: `skillmd_dataset.py`, `skillmd_gate.py`,
-  `skillmd_offline.py`, `skillmd_pilot.py`, `codemod_*.py`, `openrewrite.py` — steps 3
-  and 7 work by another agent.
+## 8. State left behind
 
-I did not delete or edit any of it, and I did not touch the 41 failures, because
-reverting another agent's WIP is not mine to do. One of these two implementations
-should win, and `admin.py` will have two `step6-*` command sets otherwise.
+- Local container `sl-step6-pg` on **55434** (55432 is the reserved experiment port and
+  is occupied by a sibling step; 55433 likewise). Drop with
+  `docker rm -f sl-step6-pg`.
+- `sl_step6_control` / `sl_step6_shard` — 1,198 procedures, 89 goals, 0 verified.
+- No `kel_*` database was read or written. No production write was attempted.
+- Step 6 files are untracked. **Nothing was committed** — no commit was requested, and
+  a commit would sweep in sibling lanes' untracked work from this shared checkout.
