@@ -54,6 +54,34 @@ def _as(monkeypatch, srv, scope: AccessScope) -> None:
     monkeypatch.setattr(srv, "_resolve_caller_identity", lambda fallback: scope.viewer_id or fallback)
 
 
+def _hash_vector(text: str, dim: int = 1024) -> list[float]:
+    """Deterministic stand-in vector: the same text always maps to the same unit
+    vector, different texts to (near-)orthogonal ones. Isolation is decided by
+    SQL visibility predicates, not by vector quality, and CI has no embedding key."""
+    import hashlib
+    import math
+    import random
+
+    rng = random.Random(hashlib.sha256(text.encode("utf-8")).digest())
+    v = [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+@pytest.fixture(autouse=True)
+def _offline_embeddings(monkeypatch):
+    from app.services.embeddings import Embedder
+
+    async def embed(self, texts, input_type="document"):
+        return [_hash_vector(t) for t in texts]
+
+    async def embed_one(self, text, input_type="document"):
+        return _hash_vector(text)
+
+    monkeypatch.setattr(Embedder, "embed", embed)
+    monkeypatch.setattr(Embedder, "embed_one", embed_one)
+
+
 @pytest.fixture
 def srv():
     os.environ.setdefault("STEALTHLAB_MCP_TOKEN", "test-token")
