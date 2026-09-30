@@ -66,10 +66,10 @@ async def _make_goal(pool, canonical_name, *, owner_id=None, visibility="public"
     the thing under test here."""
     gid = str(uuid7())
     row = await pool.fetchrow(
-        "INSERT INTO goals (id, canonical_name, normalized_name, provenance, owner_id, "
-        " visibility, scope_type) VALUES ($1,$2,$3,$4,$5,$6::visibility_level,$7) "
+        "INSERT INTO goals (id, canonical_name, provenance, owner_id, "
+        " visibility, scope_type) VALUES ($1,$2,$3,$4,$5::visibility_level,$6) "
         "RETURNING id, canonical_name",
-        gid, canonical_name, normalize_goal_name(canonical_name), provenance, owner_id,
+        gid, canonical_name, provenance, owner_id,
         visibility, scope_type,
     )
     return {"id": str(row["id"]), "canonical_name": row["canonical_name"]}

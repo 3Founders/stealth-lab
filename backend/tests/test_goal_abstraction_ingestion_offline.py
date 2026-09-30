@@ -28,22 +28,23 @@ class GoalPool:
     async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
         compact = " ".join(sql.split())
         if compact.startswith("SELECT id, canonical_name FROM goals"):
-            normalized = str(args[0])
-            candidate_name = str(args[1])
+            # The real query computes normalize_goal_name() on both sides in SQL (migration 131).
+            from app.services.goals import normalize_goal_name
+
+            key = normalize_goal_name(str(args[0]))
             for row in self.rows:
-                aliases = {str(value).strip().lower() for value in row.get("aliases") or []}
-                if row.get("normalized_name") == normalized or candidate_name.strip().lower() in aliases:
+                aliases = {normalize_goal_name(str(value)) for value in row.get("aliases") or []}
+                if normalize_goal_name(row["canonical_name"]) == key or key in aliases:
                     return row
             return None
         if compact.startswith("INSERT INTO goals"):
             row = {
                 "id": str(args[0]),
                 "canonical_name": args[1],
-                "normalized_name": args[2],
-                "aliases": args[14],
-                "status": args[9],
-                "scope_type": args[16],
-                "scope_entity_id": args[17],
+                "aliases": args[13],
+                "status": args[8],
+                "scope_type": args[15],
+                "scope_entity_id": args[16],
                 "version": 1,
                 "home_shard_id": args[-1],
             }

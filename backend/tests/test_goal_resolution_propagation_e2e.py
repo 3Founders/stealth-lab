@@ -37,12 +37,11 @@ async def _capture(pool, prefix, owner):
 async def _insert_goal(pool, name, owner, *, resolved_at=None):
     goal_id = str(uuid.uuid4())
     await pool.execute(
-        "INSERT INTO goals (id, canonical_name, normalized_name, status, provenance, "
+        "INSERT INTO goals (id, canonical_name, status, provenance, "
         "owner_id, visibility, scope_type, scope_entity_id, resolved_at) "
-        "VALUES ($1,$2,$3,'active','system_pending_review',$4,'private','user',$4,$5)",
+        "VALUES ($1,$2,'active','system_pending_review',$3,'private','user',$3,$4)",
         goal_id,
         name,
-        normalize_goal_name(name),
         owner,
         resolved_at,
     )

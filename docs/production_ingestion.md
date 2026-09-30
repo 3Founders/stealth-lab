@@ -40,7 +40,7 @@ Procedure→Goal link and shard/projection bookkeeping automatically; see
 
 | Table | Important columns |
 |---|---|
-| `goals` (83–87) | `id, canonical_name, normalized_name, description, expected_outcome, verification_requirement, status(candidate/active/deprecated/merged), merged_into_id, aliases, version, embedding(+model/provider/text_hash), scope_*, visibility, owner_id, **home_shard_id, reconciled_at** (95)` |
+| `goals` (83–87) | `id, canonical_name (exact-match key computed from it in SQL: normalize_goal_name, migration 131), description, expected_outcome, verification_requirement, status(candidate/active/deprecated/merged), merged_into_id, aliases, version, embedding(+model/provider/text_hash), scope_*, visibility, owner_id, **home_shard_id, reconciled_at** (95)` |
 | `goal_relations` (95) | `specific_goal_id, abstract_goal_id, relation_type='SPECIALIZES', status(proposed/accepted/rejected), confidence, provenance, decision_id` |
 | `procedures` (18…) | `id (row/version), procedure_id (stable), name, goal (text, display), steps JSONB, preconditions, verification_state, verification_stats, availability, version, t_valid/t_invalid, embedding(+model), **achieves_goal_id, home_shard_id, source_key** (95: unique live)` |
 | `knowledge_nodes` (claims: `node_type='claim'`) | `name (statement), subject/predicate/object, claim_status, properties, embedding, scope_*, visibility, ingestion_context_id` |

@@ -22,7 +22,7 @@ async def _goal_with_procedure(pool, goal_name: str, procedure_name: str) -> tup
     proc = await capture_procedure(
         pool, name=n(procedure_name), goal=n(goal_name), steps=[{"description": "do it"}],
         provenance="prior_library", scope_type="global", goal_embedder=EMB, goal_judge=JUDGE)
-    goal_id = await pool.fetchval("SELECT goal_id::text FROM goal_names WHERE normalized_name = $1", n(goal_name).lower())
+    goal_id = await pool.fetchval("SELECT goal_id::text FROM goal_names WHERE normalize_goal_name(canonical_name) = normalize_goal_name($1)", n(goal_name))
     await sp.drain_outbox(pool, pools=sh.pools_for(pool))
     return goal_id, proc
 

@@ -39,7 +39,7 @@ async def env():
         await pool.execute(f"DELETE FROM {tbl} WHERE home_shard_id = 'K001'")
     await pool.execute("DELETE FROM object_routes WHERE home_shard_id = 'K001'")
     await pool.execute("DELETE FROM procedure_row_routes WHERE home_shard_id = 'K001'")
-    await pool.execute("DELETE FROM goal_names WHERE normalized_name LIKE $1", f"{T}%")
+    await pool.execute("DELETE FROM goal_names WHERE normalize_goal_name(canonical_name) LIKE $1", f"{T}%")
     await sh.register_shard(pool, "K000", dsn_env=None, weight=100)
     await pool.execute("DELETE FROM knowledge_shards WHERE shard_id = 'K001'")
     sh.invalidate_shard_cache()

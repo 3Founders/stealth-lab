@@ -52,7 +52,7 @@ import asyncpg
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.services.access import AccessScope, TenantScope
-from app.services.goals import goal_embedding_text, normalize_goal_name, search_goals
+from app.services.goals import goal_embedding_text, goal_name_words, normalize_goal_name, search_goals
 from app.utils.aio import run_blocking
 
 _INTENT_SYSTEM_PROMPT = """You turn a vague, colloquial request about a software repository into a structured statement of intent. The request may be a symptom ("why is this flaky?"), a command ("deploy it"), or underspecified ("make it faster").
@@ -215,7 +215,7 @@ _AMBIGUITY_MARGIN = 0.12  # top-vs-second score gap below this is "too close to 
 def _tokens(*parts: str) -> set[str]:
     out: set[str] = set()
     for p in parts:
-        out |= set(normalize_goal_name(p or "").split())
+        out |= set(goal_name_words(p or ""))
     return {t for t in out if t}
 
 

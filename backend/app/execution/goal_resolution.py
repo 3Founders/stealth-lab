@@ -108,10 +108,12 @@ async def resolve_goal_id_for_text(
     # The global goal_names index covers Goals homed on every shard (a query on
     # this database's own `goals` table would miss remote ones); the caller's
     # scope is preferred over 'global', exactly as before.
+    # The raw text goes to the database, which computes the name key on both sides (migration 131): a key
+    # computed here in Python can differ from Postgres's for a few letters (e.g. Turkish dotted I).
     found = await find_goals_by_exact_names(
-        pool, [normalized], scope_type=scope_type, scope_entity_id=scope_entity_id,
+        pool, [text], scope_type=scope_type, scope_entity_id=scope_entity_id,
     )
-    return found.get(normalized)
+    return found.get(text)
 
 
 async def _verified_solution(pool: asyncpg.Pool, row: dict) -> Optional[dict]:

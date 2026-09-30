@@ -16,8 +16,8 @@ TAG = "projtest"
 async def _mk_goal(pool, name, *, shard=HOME_SHARD, desc=None):
     gid = str(uuid.uuid4())
     await pool.execute(
-        "INSERT INTO goals (id, canonical_name, normalized_name, description, status, scope_type, home_shard_id) "
-        "VALUES ($1::uuid, $2, $3, $4, 'active', 'global', $5)", gid, name, name.lower(), desc, shard)
+        "INSERT INTO goals (id, canonical_name, description, status, scope_type, home_shard_id) "
+        "VALUES ($1::uuid, $2, $3, 'active', 'global', $4)", gid, name, desc, shard)
     return gid
 
 
@@ -113,8 +113,8 @@ async def test_remote_shard_canonical_is_projected_via_its_own_pool(pool):
     gid = str(uuid.uuid4())
     shard_pool = await pools.get("K900")
     await shard_pool.execute(
-        "INSERT INTO goals (id, canonical_name, normalized_name, status, scope_type, home_shard_id) "
-        "VALUES ($1::uuid, $2, 'remote', 'active', 'global', 'K900')", gid, f"{TAG} remote goal")
+        "INSERT INTO goals (id, canonical_name, status, scope_type, home_shard_id) "
+        "VALUES ($1::uuid, $2, 'active', 'global', 'K900')", gid, f"{TAG} remote goal")
     await pool.execute(
         "INSERT INTO object_routes (object_type, object_id, home_shard_id) VALUES ('goal', $1::uuid, 'K900')", gid)
     await sp.enqueue(pool, "goal", gid)

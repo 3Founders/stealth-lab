@@ -49,11 +49,11 @@ async def _make_goal(
     live model calls and isn't the thing under test here)."""
     gid = str(uuid7())
     row = await pool.fetchrow(
-        "INSERT INTO goals (id, canonical_name, normalized_name, description, objective, "
+        "INSERT INTO goals (id, canonical_name, description, objective, "
         " status, provenance, owner_id, visibility, scope_type, scope_entity_id) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::visibility_level,$10,$11) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8::visibility_level,$9,$10) "
         "RETURNING id, canonical_name",
-        gid, canonical_name, normalize_goal_name(canonical_name), description, objective,
+        gid, canonical_name, description, objective,
         status, provenance, owner_id, visibility, scope_type, scope_entity_id,
     )
     return {"id": str(row["id"]), "canonical_name": row["canonical_name"]}

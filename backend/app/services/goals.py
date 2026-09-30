@@ -51,6 +51,7 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from typing import Any, Optional
 
 import asyncpg
@@ -60,8 +61,13 @@ from app.services.embeddings import to_pgvector
 from app.services.v0_gate import validate_provenance, validate_scope
 from app.utils.ids import uuid7
 
-_NON_ALNUM_RE = re.compile(r"[^a-z0-9 ]")
 _WHITESPACE_RE = re.compile(r"\s+")
+# What normalize_goal_name removes: only what never changes meaning. Quote marks and backticks anywhere, and
+# sentence punctuation at the very end. Every other symbol stays -- "C++" / "C#" / "a+b" / ".NET" / "x/y" are
+# different Goals -- and so do non-Latin letters (the old rule deleted them, so every Chinese or Hindi name became
+# the same empty key). Migration 131.
+_QUOTES_RE = re.compile("[\"'`‘’“”]")
+_TRAILING_PUNCT_RE = re.compile(r"[\s.!?,;:]+$")
 log = logging.getLogger(__name__)
 
 
@@ -187,24 +193,27 @@ _RRF_K = 60
 
 
 def normalize_goal_name(text: str) -> str:
-    """Exact-match dedup key (ingestion.md Sec 8 tier 1): lowercase,
-    replace non-alphanumerics with spaces, collapse whitespace, trim.
+    """Exact-match dedup key (ingestion.md Sec 8 tier 1): the name with only its meaning-free differences removed --
+    Unicode compatibility form (NFKC), lowercase, no quote marks or backticks, whitespace collapsed, no sentence
+    punctuation at the end. "Fix the parser." and "fix  the `parser`" share a key; "Add C++ support" and "Add C#
+    support" do not (the rule before migration 131 replaced every non-[a-z0-9] character with a space, so they did,
+    and the exact tier then reused the wrong Goal without a judge).
 
-    MUST stay in exact lock-step with its SQL twin,
-    `normalize_goal_name()` in backend/db/83_goals.sql -- both are
-    relied on to agree bit-for-bit (this function for new writes via
-    find_or_create_goal, the SQL function for migration 83's own
-    backfill and any future direct-SQL query). See
+    MUST stay in lock-step with its SQL twin `normalize_goal_name()` (backend/db/131_goal_name_key.sql); see
     tests/test_goals_offline.py for the parity check against a real DB.
 
-    Deliberately NOT stemming or semantic normalization -- "find
-    references" and "find callers" stay distinct rows under this alone
-    (tier 3/4 embedding similarity, when opted into, is what unifies true
-    paraphrases; see module docstring).
+    Deliberately NOT stemming or semantic normalization -- "find references" and "find callers" stay distinct rows
+    under this alone (candidate search + the identity judge unify true paraphrases).
     """
-    lowered = text.strip().lower()
-    stripped = _NON_ALNUM_RE.sub(" ", lowered)
-    return _WHITESPACE_RE.sub(" ", stripped).strip()
+    t = unicodedata.normalize("NFKC", text or "").lower()
+    t = _QUOTES_RE.sub("", t)
+    t = _WHITESPACE_RE.sub(" ", t).strip()
+    return _TRAILING_PUNCT_RE.sub("", t)
+
+
+def goal_name_words(text: str) -> list[str]:
+    """The words of a name, for word-overlap scoring (not identity): letters and digits in any script."""
+    return re.findall(r"\w+", unicodedata.normalize("NFKC", text or "").lower())
 
 
 def goal_embedding_text(canonical_name: str, description: Optional[str] = None) -> str:
@@ -246,13 +255,14 @@ async def _find_remote_exact(pool, normalized: str, canonical_name: str, scope_t
 
     scope_key = "global" if scope_type == "global" else f"{scope_type}:{scope_entity_id or ''}"
     hit = await pool.fetchrow(
-        "SELECT goal_id::text AS id, home_shard_id FROM goal_names WHERE scope_key = $1 AND normalized_name = $2",
-        scope_key, normalized)
+        "SELECT goal_id::text AS id, home_shard_id FROM goal_names "
+        "WHERE scope_key = $1 AND normalize_goal_name(canonical_name) = normalize_goal_name($2)",
+        scope_key, canonical_name)
     if hit is None:
         hit = await pool.fetchrow(
             "SELECT goal_id::text AS id, home_shard_id FROM goal_search_index WHERE home_shard_id <> $1 AND status <> 'merged' "
             "AND COALESCE(scope_type, 'global') = $2 AND COALESCE(scope_entity_id, '') = COALESCE($3, '') "
-            "AND EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(trim(a)) = lower(trim($4))) LIMIT 1",
+            "AND EXISTS (SELECT 1 FROM unnest(aliases) a WHERE normalize_goal_name(a) = normalize_goal_name($4)) LIMIT 1",
             HOME_SHARD, scope_type, scope_entity_id, canonical_name)
     if hit is None or hit["home_shard_id"] == HOME_SHARD:
         return None
@@ -361,18 +371,18 @@ async def find_or_create_goal(
             "SELECT id, canonical_name FROM goals "
             "WHERE t_invalid IS NULL AND status <> 'merged' "
             "AND (scope_type IS NULL OR scope_type = 'global') "
-            "AND (normalized_name = $1 "
-            "     OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(trim(a)) = lower(trim($2))))",
-            normalized, canonical_name,
+            "AND (normalize_goal_name(canonical_name) = normalize_goal_name($1) "
+            "     OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE normalize_goal_name(a) = normalize_goal_name($1)))",
+            canonical_name,
         )
     else:
         existing = await pool.fetchrow(
             "SELECT id, canonical_name FROM goals "
             "WHERE t_invalid IS NULL AND status <> 'merged' "
             "AND scope_type = $2 AND scope_entity_id = $3 "
-            "AND (normalized_name = $1 "
-            "     OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE lower(trim(a)) = lower(trim($4))))",
-            normalized, resolved_scope_type, resolved_scope_entity_id, canonical_name,
+            "AND (normalize_goal_name(canonical_name) = normalize_goal_name($1) "
+            "     OR EXISTS (SELECT 1 FROM unnest(aliases) a WHERE normalize_goal_name(a) = normalize_goal_name($1)))",
+            canonical_name, resolved_scope_type, resolved_scope_entity_id,
         )
     if existing:
         return {
@@ -424,9 +434,10 @@ async def find_or_create_goal(
         from app.services.shards import home_pool as _home_pool
         owner_pool = await _home_pool(pool, "goal", outcome.resolved_id)
         matched = await owner_pool.fetchrow(
-            "UPDATE goals SET aliases = CASE WHEN $2 = ANY(aliases) OR normalized_name = $3 "
+            "UPDATE goals SET aliases = CASE WHEN $2 = ANY(aliases) "
+            "OR normalize_goal_name(canonical_name) = normalize_goal_name($2) "
             "THEN aliases ELSE array_append(aliases, $2) END WHERE id = $1::uuid "
-            "RETURNING id, canonical_name, home_shard_id", outcome.resolved_id, canonical_name, normalized)
+            "RETURNING id, canonical_name, home_shard_id", outcome.resolved_id, canonical_name)
         if matched is not None:
             return {"id": str(matched["id"]), "canonical_name": matched["canonical_name"], "created": False,
                     "home_shard_id": matched.get("home_shard_id", "K000"), "decision": outcome.decision}
@@ -454,8 +465,9 @@ async def find_or_create_goal(
         # global goal_names index BEFORE the row exists anywhere, then routes, then writes.
         scope_key = "global" if resolved_scope_type == "global" else f"{resolved_scope_type}:{resolved_scope_entity_id or ''}"
         claimed = await pool.fetchrow(
-            "INSERT INTO goal_names (scope_key, normalized_name, goal_id, home_shard_id) VALUES ($1, $2, $3::uuid, $4) "
-            "ON CONFLICT (scope_key, normalized_name) DO NOTHING RETURNING goal_id", scope_key, normalized, str(goal_id), home_shard)
+            "INSERT INTO goal_names (scope_key, canonical_name, goal_id, home_shard_id) VALUES ($1, $2, $3::uuid, $4) "
+            "ON CONFLICT (scope_key, normalize_goal_name(canonical_name)) DO NOTHING RETURNING goal_id",
+            scope_key, canonical_name, str(goal_id), home_shard)
         if claimed is None:
             winner = await _find_remote_exact(pool, normalized, canonical_name, resolved_scope_type, resolved_scope_entity_id)
             if winner:
@@ -475,20 +487,20 @@ async def find_or_create_goal(
         row = await wpool.fetchrow(
             """
             INSERT INTO goals (
-                id, canonical_name, normalized_name, description, objective, constraints,
+                id, canonical_name, description, objective, constraints,
                 metadata, expected_outcome,
                 verification_requirement, status, provenance, created_from, owner_id,
                 visibility, aliases, created_by, scope_type, scope_entity_id,
                 embedding, embedding_model_id, embedding_provider, embedding_text_hash,
                 home_shard_id
             ) VALUES (
-                $1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11, $12, $13,
-                $14::visibility_level, $15, $16, $17, $18,
-                $19::vector, $20, $21, $22, $23
+                $1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $12,
+                $13::visibility_level, $14, $15, $16, $17,
+                $18::vector, $19, $20, $21, $22
             )
             RETURNING id, canonical_name, home_shard_id
             """,
-            str(goal_id), canonical_name, normalized, description, objective,
+            str(goal_id), canonical_name, description, objective,
             constraints if constraints is not None else [],
             goal_metadata,
             expected_outcome if expected_outcome is not None else {},
@@ -505,7 +517,7 @@ async def find_or_create_goal(
             await _finish_remote_goal(pool, str(goal_id))
     except asyncpg.UniqueViolationError:
         # Lost a race against a concurrent insert of the identical
-        # (normalized_name, scope) pair -- migration 83's partial unique index
+        # name key + scope -- migration 131's unique index on normalize_goal_name(canonical_name)
         # caught it. Re-select the winner: semantically a successful dedup.
         return await find_or_create_goal(
             pool, canonical_name=canonical_name, scope_type=scope_type,

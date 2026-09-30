@@ -229,9 +229,14 @@ class _FakeRunPagePool:
 
     async def fetch(self, sql, *params):
         n = " ".join(sql.split())
-        if "FROM goals" in n:
-            names = set(params[0])
-            return [r for r in self._goal_rows if r["normalized_name"] in names]
+        if "JOIN goals" in n or "FROM goals" in n:
+            # The real query joins the caller's names to goals on normalize_goal_name() computed in SQL on both
+            # sides (migration 131) and returns each match with the name it matched (lookup_key).
+            from app.services.goals import normalize_goal_name
+
+            return [{**r, "lookup_key": name, "_scope_type": r.get("scope_type")}
+                    for name in params[0] for r in self._goal_rows
+                    if r["normalized_name"] == normalize_goal_name(name)]
         if "FROM verification_results" in n:
             ids = {str(i) for i in params[0]}
             return [r for r in self._verify_rows if str(r["execution_run_node_id"]) in ids]
@@ -314,9 +319,14 @@ class _FakeImplGoalsPool:
 
     async def fetch(self, sql, *params):
         n = " ".join(sql.split())
-        if "FROM goals" in n:
-            names = set(params[0])
-            return [r for r in self._goal_rows if r["normalized_name"] in names]
+        if "JOIN goals" in n or "FROM goals" in n:
+            # The real query joins the caller's names to goals on normalize_goal_name() computed in SQL on both
+            # sides (migration 131) and returns each match with the name it matched (lookup_key).
+            from app.services.goals import normalize_goal_name
+
+            return [{**r, "lookup_key": name, "_scope_type": r.get("scope_type")}
+                    for name in params[0] for r in self._goal_rows
+                    if r["normalized_name"] == normalize_goal_name(name)]
         raise AssertionError(f"unexpected fetch: {n[:80]}")
 
 

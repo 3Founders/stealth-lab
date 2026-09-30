@@ -51,11 +51,11 @@ async def _make_goal(pool, prefix: str) -> str:
     canonical_name = f"[{prefix}] a goal"
     gid = str(uuid7())
     row = await pool.fetchrow(
-        "INSERT INTO goals (id, canonical_name, normalized_name, description, objective, "
+        "INSERT INTO goals (id, canonical_name, description, objective, "
         " constraints, status, provenance, metadata, visibility, scope_type, scope_entity_id) "
-        "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9::jsonb,$10::visibility_level,$11,$12) "
+        "VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8::jsonb,$9::visibility_level,$10,$11) "
         "RETURNING id",
-        gid, canonical_name, normalize_goal_name(canonical_name), "d", "o",
+        gid, canonical_name, "d", "o",
         json.dumps([]), "candidate", "system_pending_review", json.dumps({}),
         "public", "global", None,
     )

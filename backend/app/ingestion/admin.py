@@ -273,7 +273,8 @@ async def _amain(a: argparse.Namespace) -> int:
             if a.goal_name:
                 from app.services.goals import normalize_goal_name
                 goals = await sh.fanout_fetchval_sum(
-                    pool, "SELECT count(*) FROM goals WHERE normalized_name = $1 AND t_invalid IS NULL AND status <> 'merged'",
+                    pool, "SELECT count(*) FROM goals WHERE normalize_goal_name(canonical_name) = normalize_goal_name($1) "
+                    "AND t_invalid IS NULL AND status <> 'merged'",
                     normalize_goal_name(a.goal_name), strict=True)
             jobs = await pool.fetchval("SELECT count(*) FROM ingestion_jobs WHERE idempotency_key = $1", a.source_key)
             print(json.dumps({"live_procedures": procs, "live_goals": goals, "jobs_with_key": jobs}))
@@ -353,7 +354,8 @@ async def _amain(a: argparse.Namespace) -> int:
             return 0 if rep["ok"] else 1
         elif a.cmd == "verify-dedup":
             names = await sh.fanout_fetch(
-                pool, "SELECT normalized_name, scope_type, scope_entity_id FROM goals WHERE t_invalid IS NULL AND status <> 'merged'", strict=True)
+                pool, "SELECT normalize_goal_name(canonical_name) AS normalized_name, scope_type, scope_entity_id FROM goals "
+                "WHERE t_invalid IS NULL AND status <> 'merged'", strict=True)
             counts: dict[tuple, int] = {}
             for r in names:
                 k = (r["normalized_name"], r["scope_type"], r["scope_entity_id"])

@@ -41,53 +41,58 @@ async def find_goals_by_exact_names(
     pool: Any, normalized_names: Sequence[str], *, scope_type: Optional[str], scope_entity_id: Optional[str],
     columns: str = "*",
 ) -> dict[str, dict]:
-    """{normalized_name: canonical Goal row} for LIVE Goals, preferring the
-    caller's own scope over 'global' (the same precedence the write path's dedup
-    uses). Resolved through the global `goal_names` index, so a Goal homed on any
-    shard is found; each row is read from its home shard in one batch per shard."""
+    """{name key: canonical Goal row} for LIVE Goals, preferring the caller's own scope over 'global' (the same
+    precedence the write path's dedup uses). Resolved through the global `goal_names` index, so a Goal homed on any
+    shard is found; each row is read from its home shard in one batch per shard.
+
+    The name key is computed in SQL on BOTH sides (`normalize_goal_name(canonical_name) = normalize_goal_name(key)`,
+    migration 131 -- no stored copy): the rule is idempotent, so a caller may pass raw names or keys, and results
+    are keyed by exactly what the caller passed."""
     names = sorted({n for n in normalized_names if n})
     if not names:
         return {}
     if not await multi_shard(pool):
         # One database: its own `goals` table IS every Goal (goal_names mirrors it
         # in the same transaction) -- read it directly, freshest possible.
-        if scope_type and scope_type != "global":
-            rows = await pool.fetch(
-                f"SELECT {columns} FROM goals WHERE normalized_name = ANY($1::text[]) AND t_invalid IS NULL "
-                "AND ((scope_type = $2 AND scope_entity_id IS NOT DISTINCT FROM $3) OR scope_type = 'global')",
-                names, scope_type, scope_entity_id)
-        else:
-            rows = await pool.fetch(
-                f"SELECT {columns} FROM goals WHERE normalized_name = ANY($1::text[]) AND t_invalid IS NULL "
-                "AND scope_type = 'global'", names)
+        scope_sql = ("((g.scope_type = $2 AND g.scope_entity_id IS NOT DISTINCT FROM $3) OR g.scope_type = 'global')"
+                     if scope_type and scope_type != "global" else "g.scope_type = 'global'")
+        args = [names, scope_type, scope_entity_id] if scope_type and scope_type != "global" else [names]
+        rows = await pool.fetch(
+            f"SELECT q.lookup_key, g.scope_type AS _scope_type, {_qualified(columns)} "
+            "FROM unnest($1::text[]) AS q(lookup_key) "
+            "JOIN goals g ON normalize_goal_name(g.canonical_name) = normalize_goal_name(q.lookup_key) "
+            f"WHERE g.t_invalid IS NULL AND {scope_sql}", *args)
         picked: dict[str, dict] = {}
         for row in rows:
             row = dict(row)
-            key = row.get("normalized_name")
+            key, scope = row.pop("lookup_key"), row.pop("_scope_type")
             current = picked.get(key)
-            if current is None or (current.get("scope_type") == "global" and row.get("scope_type") != "global"):
-                picked[key] = row
-        return picked
+            if current is None or (current[1] == "global" and scope != "global"):
+                picked[key] = (row, scope)
+        return {k: v[0] for k, v in picked.items()}
     keys = ["global"]
     own = goal_scope_key(scope_type, scope_entity_id)
     if own != "global":
         keys.append(own)
     hits = await pool.fetch(
-        "SELECT scope_key, normalized_name, goal_id::text AS goal_id, home_shard_id FROM goal_names "
-        "WHERE scope_key = ANY($1::text[]) AND normalized_name = ANY($2::text[])",
+        "SELECT n.scope_key, q.lookup_key, n.goal_id::text AS goal_id, n.home_shard_id "
+        "FROM unnest($2::text[]) AS q(lookup_key) "
+        "JOIN goal_names n ON normalize_goal_name(n.canonical_name) = normalize_goal_name(q.lookup_key) "
+        "WHERE n.scope_key = ANY($1::text[])",
         keys, names)
     chosen: dict[str, Any] = {}
     for hit in hits:
-        current = chosen.get(hit["normalized_name"])
+        current = chosen.get(hit["lookup_key"])
         if current is None or (current["scope_key"] == "global" and hit["scope_key"] != "global"):
-            chosen[hit["normalized_name"]] = hit
+            chosen[hit["lookup_key"]] = hit
     if not chosen:
         return {}
     routes = {hit["goal_id"]: hit["home_shard_id"] or HOME_SHARD for hit in chosen.values()}
 
     async def fetch(goal_pool: Any, ids: list[str]):
         return await goal_pool.fetch(
-            f"SELECT {columns} FROM goals WHERE id = ANY($1::uuid[]) AND t_invalid IS NULL AND status <> 'merged'", ids)
+            f"SELECT {_qualified(columns)} FROM goals g WHERE g.id = ANY($1::uuid[]) AND g.t_invalid IS NULL "
+            "AND g.status <> 'merged'", ids)
 
     hydration = await hydrate_rows(pools_for(pool), routes, fetch)
     if hydration.partial:
@@ -163,3 +168,34 @@ async def fetch_claim(pool: Any, claim_id: str, *, columns: str, where: str = "T
         f"SELECT {columns} FROM knowledge_nodes WHERE id = $1::uuid AND node_type = 'claim' AND {where}",
         str(claim_id), *args)
     return dict(rows[0]) if rows else None
+
+
+def _qualified(columns: str) -> str:
+    """A caller's column list read from `goals g`. `*` is `g.*`; plain names are prefixed; expressions (anything
+    with a parenthesis, e.g. `normalize_goal_name(canonical_name) AS normalized_name`) are passed through."""
+    if columns.strip() == "*":
+        return "g.*"
+    out = []
+    for part in _split_columns(columns):
+        part = part.strip()
+        out.append(part if ("(" in part or "." in part) else f"g.{part}")
+    return ", ".join(out)
+
+
+def _split_columns(columns: str) -> list[str]:
+    """Split on commas that are not inside parentheses."""
+    parts, depth, cur = [], 0, []
+    for ch in columns:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if "".join(cur).strip():
+        parts.append("".join(cur))
+    return parts
+

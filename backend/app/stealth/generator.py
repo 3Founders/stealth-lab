@@ -381,19 +381,25 @@ async def _resolve_goals_by_normalized_name(
     """
     from app.services.goals import normalize_goal_name
 
-    normalized_names = sorted({normalize_goal_name(n) for n in normalized_names_in if n} - {""})
-    if not normalized_names:
+    raw_names = sorted({n for n in normalized_names_in if n and normalize_goal_name(n)})
+    if not raw_names:
         return {}
 
     from app.services.routed_reads import find_goals_by_exact_names
 
     # The global goal_names index finds Goals homed on any shard; the caller's
     # own scope is preferred over 'global' (the same precedence as before).
-    return await find_goals_by_exact_names(
-        pool, normalized_names, scope_type=scope_type, scope_entity_id=scope_entity_id,
-        columns=("id, normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, "
+    # Raw names to the database (it computes the key on both sides, migration 131); results re-keyed here by this
+    # module's own key for its callers.
+    found = await find_goals_by_exact_names(
+        pool, raw_names, scope_type=scope_type, scope_entity_id=scope_entity_id,
+        columns=("id, normalize_goal_name(canonical_name) AS normalized_name, canonical_name, expected_outcome, scope_type, tags, status, version, "
                  "aliases, verification_requirement, scope_entity_id"),
     )
+    out: dict[str, dict] = {}
+    for raw, row in found.items():
+        out.setdefault(normalize_goal_name(raw), row)
+    return out
 
 
 def _stringify_jsonb(value: Any) -> Optional[str]:

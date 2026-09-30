@@ -72,7 +72,7 @@ async def env():
     await pool.execute("DELETE FROM goal_search_index WHERE canonical_name LIKE $1", f"{T}%")
     await pool.execute("DELETE FROM procedure_search_index WHERE name LIKE $1", f"{T}%")
     await pool.execute("DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{T}%")
-    await pool.execute("DELETE FROM goal_names WHERE normalized_name LIKE $1", f"{T}%")
+    await pool.execute("DELETE FROM goal_names WHERE normalize_goal_name(canonical_name) LIKE $1", f"{T}%")
     await _wipe(pool, shard)
     await sh.register_shard(pool, "K000", dsn_env=None, weight=100)
     await pool.execute("DELETE FROM knowledge_shards WHERE shard_id = 'K001'")     # leave a single-shard deployment behind
@@ -93,7 +93,7 @@ async def test_public_goal_is_written_to_the_remote_database_only(env):
     assert await shard.fetchval("SELECT count(*) FROM goals WHERE id=$1::uuid", g["id"]) == 1          # canonical row on the shard
     assert await pool.fetchval("SELECT count(*) FROM goals WHERE id=$1::uuid", g["id"]) == 0           # NOT in the control DB
     assert await pool.fetchval("SELECT home_shard_id FROM object_routes WHERE object_type='goal' AND object_id=$1::uuid", g["id"]) == "K001"
-    assert await pool.fetchval("SELECT goal_id::text FROM goal_names WHERE normalized_name=$1", n("find callers of a function").lower()) == g["id"]
+    assert await pool.fetchval("SELECT goal_id::text FROM goal_names WHERE normalize_goal_name(canonical_name) = normalize_goal_name($1)", n("find callers of a function")) == g["id"]
     proj = await pool.fetchrow("SELECT home_shard_id, canonical_name FROM goal_search_index WHERE goal_id=$1::uuid", g["id"])
     assert proj["home_shard_id"] == "K001"                                                              # searchable immediately
 

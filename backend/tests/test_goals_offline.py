@@ -38,8 +38,26 @@ def test_normalize_goal_name_lowercases_and_collapses_whitespace():
     assert normalize_goal_name("  Find   References  ") == "find references"
 
 
-def test_normalize_goal_name_strips_punctuation():
-    assert normalize_goal_name("Verify auth. behavior!!") == "verify auth behavior"
+def test_normalize_goal_name_strips_only_meaning_free_punctuation():
+    """Migration 131: quotes, backticks, repeated spaces and sentence punctuation at the END go; every other symbol
+    stays, because it can change which Goal a name means."""
+    assert normalize_goal_name("Verify auth behavior!!") == "verify auth behavior"
+    assert normalize_goal_name("  Fix “the” `parser`.  ") == normalize_goal_name("fix the parser")
+    assert normalize_goal_name("Verify auth. behavior") == "verify auth. behavior"
+
+
+def test_normalize_goal_name_keeps_symbols_that_change_the_goal():
+    """The rule before migration 131 replaced every non-[a-z0-9] character with a space, so these collided at the
+    exact-match tier -- which reuses a Goal without any judge."""
+    for a, b in [("Add C++ support", "Add C# support"), ("Fix a+b overflow", "Fix a-b overflow"),
+                 ("Parse .NET config", "Parse NET config"), ("Handle x/y paths", "Handle x y paths")]:
+        assert normalize_goal_name(a) != normalize_goal_name(b), (a, b)
+
+
+def test_normalize_goal_name_keeps_non_latin_names():
+    """Before migration 131 every non-Latin name normalized to "" -- all of them one key."""
+    assert normalize_goal_name("修复解析器") == "修复解析器"
+    assert normalize_goal_name("修复解析器") != normalize_goal_name("添加缓存")
 
 
 def test_normalize_goal_name_distinct_synonyms_stay_distinct():
@@ -115,38 +133,41 @@ class _FakeGoalsPool:
 
     @staticmethod
     def _alias_hit(row, candidate_name: str) -> bool:
-        return any(
-            a.strip().lower() == candidate_name.strip().lower() for a in row.get("aliases") or []
-        )
+        key = normalize_goal_name(candidate_name)
+        return any(normalize_goal_name(a) == key for a in row.get("aliases") or [])
+
+    @staticmethod
+    def _name_hit(row, candidate_name: str) -> bool:
+        # The real query computes normalize_goal_name() on both sides in SQL (migration 131).
+        return normalize_goal_name(row["canonical_name"]) == normalize_goal_name(candidate_name)
 
     async def fetchrow(self, sql, *params):
         s = " ".join(sql.split())
         if s.startswith("SELECT"):
-            normalized = params[0]
+            candidate_name = params[0]
             if "scope_type = $2" in s:
-                scope_type, scope_entity_id, candidate_name = params[1], params[2], params[3]
+                scope_type, scope_entity_id = params[1], params[2]
                 for r in self.rows:
                     if (r["status"] != "merged" and r["scope_type"] == scope_type
                             and r["scope_entity_id"] == scope_entity_id
-                            and (r["normalized_name"] == normalized or self._alias_hit(r, candidate_name))):
+                            and (self._name_hit(r, candidate_name) or self._alias_hit(r, candidate_name))):
                         return r
             else:
-                candidate_name = params[1]
                 for r in self.rows:
                     if (r["status"] != "merged" and (r["scope_type"] is None or r["scope_type"] == "global")
-                            and (r["normalized_name"] == normalized or self._alias_hit(r, candidate_name))):
+                            and (self._name_hit(r, candidate_name) or self._alias_hit(r, candidate_name))):
                         return r
             return None
         if s.startswith("INSERT INTO identity_decisions"):
             return {"id": "00000000-0000-0000-0000-00000000dec1"}
         # INSERT INTO goals ... RETURNING id, canonical_name, home_shard_id
         self.goal_insert_params = params
-        (goal_id, canonical_name, normalized_name, description, objective, constraints,
+        (goal_id, canonical_name, description, objective, constraints,
          metadata, expected_outcome, verification_requirement, status, provenance,
          created_from, owner_id, visibility, aliases, created_by, scope_type,
          scope_entity_id, *_embedding_fields, home_shard_id) = params
         row = {
-            "id": goal_id, "canonical_name": canonical_name, "normalized_name": normalized_name,
+            "id": goal_id, "canonical_name": canonical_name,
             "aliases": aliases, "home_shard_id": home_shard_id,
             "status": status, "scope_type": scope_type, "scope_entity_id": scope_entity_id,
         }
@@ -946,12 +967,12 @@ def test_create_goal_from_user_merges_rationale_and_persists_expected_outcome(mo
             "provenance": "spoofed-provenance",
         },
     ))
-    assert pool.goal_insert_params[4] == "the objective"
-    assert pool.goal_insert_params[6] == {
+    assert pool.goal_insert_params[3] == "the objective"
+    assert pool.goal_insert_params[5] == {
         "source": "form",
         "rationale": "why this matters",
     }
-    assert pool.goal_insert_params[7] == {"summary": "the expected outcome"}
+    assert pool.goal_insert_params[6] == {"summary": "the expected outcome"}
 
 
 def test_create_goal_from_user_requires_rationale_and_an_outcome():

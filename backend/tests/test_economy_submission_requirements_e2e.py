@@ -41,13 +41,12 @@ async def _make_private_goal(pool, prefix: str, owner: str) -> str:
     canonical_name = f"[{prefix}] safely regenerate generated bindings"
     goal_id = str(uuid7())
     await pool.execute(
-        "INSERT INTO goals (id, canonical_name, normalized_name, description, objective, "
+        "INSERT INTO goals (id, canonical_name, description, objective, "
         "expected_outcome, verification_requirement, status, provenance, visibility, owner_id, "
         "scope_type, scope_entity_id, created_by) "
-        "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,'candidate',$8,$9::visibility_level,$10,$11,$12,$10)",
+        "VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,'candidate',$7,$8::visibility_level,$9,$10,$11,$9)",
         goal_id,
         canonical_name,
-        normalize_goal_name(canonical_name),
         "Regenerate clients without drift",
         "Bindings match the source schema",
         json.dumps({"bindings_match": True}),
