@@ -24,7 +24,7 @@ class Step(BaseModel):
     model_config = {"extra": "forbid"}
     do: str = Field(min_length=3, max_length=400)
     role: Literal["plan", "edit", "verify", "other"]
-    check: str = Field(default="", max_length=300)
+    check: str = Field(default="", max_length=2000)   # a verify step names the exact tests; 300 cut real commands (2026-09-30)
 
 
 class Extraction(BaseModel):

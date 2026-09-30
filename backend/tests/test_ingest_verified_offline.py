@@ -122,3 +122,10 @@ def test_always_failing_tests_do_not_reject_a_task():
     task = to_task(SOURCES["swe-rebench"], _row(FAIL_TO_FAIL=["t.py::needs_network"]))
     assert gate_row(task, _Held()) is None
     assert task.fail_to_fail == ("t.py::needs_network",)
+
+
+def test_a_verify_step_may_name_many_tests():
+    """Production 2026-09-30: a check listing a fix's tests ran past 300 characters and the task was lost."""
+    long_check = "pytest " + " ".join(f"tests/test_mod.py::test_case_{i}" for i in range(20))
+    reply = {**GOOD, "steps": [*GOOD["steps"][:2], {"do": "Run the failing tests", "role": "verify", "check": long_check}]}
+    assert _run(json.dumps(reply)).steps[-1].check == long_check
