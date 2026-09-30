@@ -19,7 +19,6 @@ import pytest_asyncio
 from app.db.session import create_pool
 from app.economy import constants as econ
 from app.economy import submissions as submissions_service
-from app.execution.goal_resolution import resolve_goal
 from app.services.access import AccessScope
 from app.services.goals import find_or_create_goal
 
@@ -48,6 +47,13 @@ def srv(monkeypatch):
         return None
 
     monkeypatch.setattr(submissions_service, "embed_submission_text", no_embedding)
+
+    async def allow(submission, **kw):
+        from app.economy.content_screen import ScreenVerdict
+        return ScreenVerdict(True, "test", provider="test:allow")
+
+    # the real screen calls a model; these tests prove the storage path, the screen has its own tests
+    monkeypatch.setattr("app.economy.content_screen.screen_contribution", allow)
     return server_module
 
 
@@ -100,7 +106,7 @@ async def test_bad_input_is_refused_before_anything_is_written(pool, srv, monkey
 
 
 @pytest.mark.asyncio
-async def test_submission_is_attributed_to_the_token_and_never_self_promotes(pool, srv, monkeypatch):
+async def test_submission_is_attributed_to_the_token_and_never_self_verifies(pool, srv, monkeypatch):
     viewer = f"u-{uuid.uuid4().hex[:6]}"
     monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.for_user(viewer))
     goal = await _goal(pool)
@@ -108,18 +114,15 @@ async def test_submission_is_attributed_to_the_token_and_never_self_promotes(poo
         goal, "Fix a failing test", _steps(), "Reading failures first finds the real cause.",
         PRE, OUT, _ctx(pool),
     ))
-    assert out["status"] in ("candidate", "needs_review")
+    assert out["outcome"] == "accepted" and out["status"] == "accepted"   # the screen, not a human, accepts
     row = await pool.fetchrow("SELECT * FROM procedure_submissions WHERE id = $1::uuid", out["submission_id"])
-    assert row["submitted_by"] == viewer and row["reviewed_by"] is None and row["status"] != "accepted"
+    assert row["submitted_by"] == viewer and row["reviewed_by"] == "system:content-screen"
     proc = await pool.fetchrow(
         "SELECT verification_state, provenance FROM procedures WHERE id = $1::uuid", out["procedure_row_id"])
     assert proc["verification_state"] == "candidate"  # submitting never verifies
-    # no credits were awarded for an unreviewed submission
+    # no credits while acceptance is automated (no human review)
     assert await pool.fetchval(
         "SELECT count(*) FROM credit_ledger_events WHERE contributor_id = $1", viewer) == 0
-    # another agent asking for this Goal is not handed the unreviewed way as a chosen procedure
-    tree = await resolve_goal(pool, goal, context={}, scope=AccessScope.anonymous(), max_depth=2)
-    assert tree.procedure is None
 
 
 @pytest.mark.asyncio

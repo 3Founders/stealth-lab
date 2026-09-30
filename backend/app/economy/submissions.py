@@ -447,7 +447,11 @@ async def review_procedure_submission(
     note: Optional[str] = None,
     access_scope: AccessScope = AccessScope.unrestricted(),
     tenant_scope: Optional[TenantScope] = None,
+    award_credits: bool = True,
 ) -> dict[str, Any]:
+    """`award_credits=False` accepts without paying Credits -- used when the
+    acceptance is automated (content screen, no human review), so an unreviewed
+    contribution cannot earn."""
     if decision not in ("accepted", "rejected", "needs_review"):
         raise ValueError("decision must be 'accepted', 'rejected' or 'needs_review'")
     submission = await get_procedure_submission(pool, submission_id, scope=access_scope)
@@ -478,7 +482,9 @@ async def review_procedure_submission(
         if tenant_scope is not None:
             association["tenant_scope"] = tenant_scope
         await associate_solution(pool, **association)
-        if submission["submission_type"] == "new":
+        if not award_credits:
+            pass
+        elif submission["submission_type"] == "new":
             await credits_service.reward_new_procedure(pool, submission=submission)
         else:
             await credits_service.reward_improvement(pool, submission=submission)

@@ -456,8 +456,9 @@ _V1_INSTRUCTIONS = (
     "proposes yours: pass goal_id from find_ways' resolved or ambiguous "
     "candidates, or -- when find_ways said no_match -- goal + goal_objective "
     "and the Goal is created too, only if nothing like it exists; a way too "
-    "like an existing one is not stored. It enters human review, it is never "
-    "live or verified on submission. 5) Optional, to pick the cheapest model that "
+    "like an existing one is not stored. No links allowed; an automated "
+    "screen rejects malicious or NSFW content, then it is live (never "
+    "verified on submission). 5) Optional, to pick the cheapest model that "
     "will pass: recommend_models(procedure_id, candidates=[\"model|scaffold\", ...]) "
     "returns a ladder (try A; if its check fails, B); after each attempt call "
     "report_model_run(...) with the returned instance_key so the per-goal model "
@@ -4507,9 +4508,12 @@ async def submit_way(
     written and you get that way's id back -- report_discovery a fix to it
     instead, or submission_type "improvement" with parent_procedure_id.
 
-    Nothing you submit goes live. A human reviewer must accept it; it counts
-    for Credits only then, and becomes "verified" only through real,
-    evidenced reuse -- never by being submitted.
+    No human review for now: an automated screen decides. The submission may
+    contain NO links (any URL refuses it), and an LLM rejects malicious or
+    NSFW content; if the screen can't run, nothing is stored (fail-closed).
+    Accepted ways go live for other agents at once, as unverified candidates:
+    they become "verified" only through real, evidenced reuse, and earn no
+    Credits while acceptance is automated.
 
     steps_json: JSON array, 1-50 steps, each a plain-language string or
       {"order": int, "goal": str}. Say what to do and how to tell it worked.
@@ -4522,8 +4526,8 @@ async def submit_way(
       version row id of the Procedure you improve, is required).
 
     Returns one of:
-      {"outcome": "submitted", "goal": {..., "created": bool}, "submission_id",
-       "status": "candidate"|"needs_review", ...}
+      {"outcome": "accepted", "goal": {..., "created": bool}, "submission_id", ...}
+      {"outcome": "rejected_by_screen", "screen": {...}}    -- nothing written
       {"outcome": "goal_ambiguous", "candidates": [...]}   -- nothing written
       {"outcome": "duplicate_way", "existing": {...}}      -- nothing written
     Limits: 10 submissions per hour per user; secrets are redacted before
@@ -4584,6 +4588,19 @@ async def submit_way(
     except RateLimitExceeded as exc:
         return f"REFUSED: rate limit -- retry in {exc.retry_after_seconds}s ({exc})"
 
+    from app.economy.content_screen import screen_contribution
+
+    verdict = await screen_contribution({
+        "goal": goal, "goal_objective": goal_objective, "goal_rationale": goal_rationale,
+        "name": name, "rationale": rationale, "steps": steps,
+        "preconditions": preconditions, "expected_outcome": expected_outcome,
+    })
+    if not verdict.allowed:
+        return json.dumps({
+            "outcome": "rejected_by_screen", "screen": verdict.as_dict(),
+            "next": "Nothing was stored. Remove any links and anything flagged, then submit again.",
+        }, default=str)
+
     goal_info: dict = {"goal_id": goal_id, "created": False}
     if goal:
         resolved = await _find_or_create_submitted_goal(
@@ -4622,18 +4639,28 @@ async def submit_way(
     except ValueError as exc:
         return f"REFUSED: {exc}"
 
+    try:
+        row = await submissions_service.review_procedure_submission(
+            pool, submission_id=str(row["id"]), decision="accepted", actor_subject="system:content-screen",
+            note=f"accepted by the automated content screen ({verdict.provider}); no human review",
+            access_scope=scope, tenant_scope=tenant_scope, award_credits=False,
+        )
+    except ValueError as exc:
+        return f"REFUSED: stored but could not be made live -- {exc} (submission {row['id']})"
+
     layer1 = row.get("layer1_result")
     if isinstance(layer1, str):
         layer1 = json.loads(layer1)
     return json.dumps({
-        "outcome": "submitted", "goal": {**goal_info, "goal_id": str(row["goal_id"])},
+        "outcome": "accepted", "screen": verdict.as_dict(),
+        "goal": {**goal_info, "goal_id": str(row["goal_id"])},
         "submission_id": str(row["id"]), "goal_id": str(row["goal_id"]),
         "procedure_row_id": str(row["procedure_row_id"]) if row.get("procedure_row_id") else None,
         "status": row["status"], "status_reason": row.get("status_reason"),
         "automated_check_issues": (layer1 or {}).get("issues", []),
         "redacted": bool(matched),
-        "next": "A human reviewer decides; nothing is live or verified until then. "
-                "Track it at GET /v1/economy/procedure-submissions/{submission_id}.",
+        "next": "Live now for other agents as an unverified way; it becomes verified only through "
+                "evidenced reuse. Track it at GET /v1/economy/procedure-submissions/{submission_id}.",
     }, default=str)
 
 
