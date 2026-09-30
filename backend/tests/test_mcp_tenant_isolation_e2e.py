@@ -155,8 +155,12 @@ def test_a_private_procedure_is_not_found_by_anyone_else(srv, monkeypatch):
 
 
 def test_a_private_goal_is_not_offered_to_another_user(srv):
-    from app.execution.intent_resolution import resolve_intent
-    from app.services.goals import find_or_create_goal
+    """The Goal search find_ways and submit_way both sit on (search_goals over
+    goal_search_index, scoped by the caller) never returns another user's private
+    Goal. Checked on the search itself rather than on resolve_intent's ranking
+    thresholds, so the assertion is about visibility, not about a score."""
+    from app.services.embeddings import Embedder
+    from app.services.goals import find_or_create_goal, search_goals
 
     alice, bob = f"alice-{uuid.uuid4().hex[:6]}", f"bob-{uuid.uuid4().hex[:6]}"
     marker = f"zqx{uuid.uuid4().hex[:8]}"
@@ -169,18 +173,18 @@ def test_a_private_goal_is_not_offered_to_another_user(srv):
             made = await find_or_create_goal(
                 pool, canonical_name=name, scope_type="global", provenance="system_pending_review",
                 rationale="private ops", owner_id=alice, visibility="private", created_by=alice,
+                embedder=Embedder(),
             )
             gid = str(made["id"])
+            vec = _hash_vector(name)
 
-            def ids(res):
-                return {str(c.goal["id"]) for c in res.candidates} | (
-                    {str(res.selected_goal["id"])} if res.selected_goal else set())
+            async def ids(scope):
+                rows = await search_goals(pool, query_text=name, query_embedding=vec, scope=scope, limit=20)
+                return {str(r["id"]) for r in rows}
 
-            mine = await resolve_intent(pool, name, client=None, embedder=None, scope=AccessScope.for_user(alice))
-            assert gid in ids(mine)
+            assert gid in await ids(AccessScope.for_user(alice)), "the owner cannot find her own Goal"
             for other in (AccessScope.for_user(bob), AccessScope.anonymous()):
-                theirs = await resolve_intent(pool, name, client=None, embedder=None, scope=other)
-                assert gid not in ids(theirs), f"{other.viewer_id or 'anonymous'} was offered alice's private Goal"
+                assert gid not in await ids(other), f"{other.viewer_id or 'anonymous'} was offered alice's private Goal"
         finally:
             if gid:
                 await pool.execute("UPDATE goals SET t_invalid = now() WHERE id = $1::uuid", gid)
