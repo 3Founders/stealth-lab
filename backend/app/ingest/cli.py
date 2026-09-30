@@ -165,9 +165,14 @@ _RESUME_WAIT_S = (30, 60, 120, 300, 300, 300, 300, 300)
 def _transient(exc: BaseException) -> bool:
     import asyncpg
 
-    return isinstance(exc, (ConnectionError, TimeoutError, asyncpg.InterfaceError,
-                            asyncpg.PostgresConnectionError, asyncpg.exceptions.ConnectionDoesNotExistError)) or (
-        isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError))
+    if isinstance(exc, (ConnectionError, TimeoutError, asyncpg.InterfaceError,
+                        asyncpg.PostgresConnectionError, asyncpg.exceptions.ConnectionDoesNotExistError)) or (
+            isinstance(exc, OSError) and not isinstance(exc, FileNotFoundError)):
+        return True
+    # A database short of memory (Neon: "Couldn't connect to compute node" while it cannot start a backend, and
+    # "out of memory" on a query) recovers when load drops -- wait instead of ending the run (2026-09-30).
+    return isinstance(exc, asyncpg.exceptions.OutOfMemoryError) or (
+        isinstance(exc, asyncpg.exceptions.InternalServerError) and "connect to compute node" in str(exc))
 
 
 async def _resuming(pool: Any, run_id: str, a: Any, once: Any) -> dict:

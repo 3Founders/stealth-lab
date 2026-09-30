@@ -306,3 +306,14 @@ def test_an_unreadable_spend_ledger_resumes_but_a_reached_cap_stops(monkeypatch)
         return {"stopped": "budget: ingestion model budget exceeded: $600.10 of $600.00"}
 
     assert "exceeded" in asyncio.run(cli._resuming(Pool(), "r", NS(limit=None), capped))["stopped"]
+
+
+def test_a_database_short_of_memory_is_waited_out():
+    import asyncpg
+
+    from app.ingest.cli import _transient
+
+    assert _transient(asyncpg.exceptions.InternalServerError("Couldn't connect to compute node"))
+    assert _transient(asyncpg.exceptions.OutOfMemoryError("out of memory"))
+    assert not _transient(asyncpg.exceptions.InternalServerError("something else"))
+    assert not _transient(ValueError("a real bug"))
