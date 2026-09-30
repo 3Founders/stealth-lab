@@ -737,8 +737,9 @@ async def search_goals(
 
     model = None
     if query_embedding:
-        model = await pool.fetchval(
-            "SELECT embedding_model FROM goal_search_index WHERE embedding IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT 1")
+        from app.services.search_group import goal_embedding_model
+
+        model = await goal_embedding_model(pool)
     page_size = max(1, int(limit))
     rows, _has_more = await rs.search_goal_candidates_page(
         pool, query_text=query_text, query_embedding=query_embedding, embedding_model=model,
@@ -767,8 +768,9 @@ async def search_goals_page(
 
     model = None
     if query_embedding:
-        model = await pool.fetchval(
-            "SELECT embedding_model FROM goal_search_index WHERE embedding IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC LIMIT 1")
+        from app.services.search_group import goal_embedding_model
+
+        model = await goal_embedding_model(pool)
     return await rs.search_goal_candidates_page(
         pool, query_text=query_text, query_embedding=query_embedding, embedding_model=model,
         scope=scope or AccessScope.unrestricted(), status=status, resolved=resolved,

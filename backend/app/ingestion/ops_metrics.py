@@ -57,21 +57,26 @@ async def _providers(pool: Any, primary: str) -> dict[str, Any]:
         FROM ingestion_jobs
         WHERE last_error IS NOT NULL AND coalesce(completed_at, claimed_at, started_at) > now() - interval '15 minutes'
         """)
-    sdb = await sh.search_pool(pool)
-    ident = await sdb.fetch(
-        "SELECT judge_provider, count(*) AS n FROM identity_decisions "
+    from app.services import search_group   # the search/log tables: every member of a search group, combined
+
+    ident = await search_group.fetch_all(
+        pool, "SELECT judge_provider, count(*) AS n FROM identity_decisions "
         "WHERE created_at > now() - interval '60 minutes' AND judge_provider IS NOT NULL GROUP BY 1")
-    by_provider = {r["judge_provider"]: int(r["n"]) for r in ident}
+    by_provider: dict[str, int] = {}
+    for r in ident:
+        by_provider[r["judge_provider"]] = by_provider.get(r["judge_provider"], 0) + int(r["n"])
     total = sum(by_provider.values())
     fallback = sum(n for p, n in by_provider.items() if p != primary)
-    unavailable = await sdb.fetchval(
-        "SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND created_at > now() - interval '60 minutes'")
-    spend = await sdb.fetch(
+    unavailable = await search_group.fetchval_sum(
+        pool, "SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND created_at > now() - interval '60 minutes'")
+    spend = await search_group.fetch_all(
+        pool, 
         "SELECT provider, operation, count(*) AS calls, coalesce(sum(input_tokens),0) AS tin, coalesce(sum(output_tokens),0) AS tout "
         "FROM llm_spend WHERE scope_key = 'ingestion' AND occurred_at > now() - interval '60 minutes' GROUP BY 1, 2")
     calls: dict[str, int] = {}
     for r in spend:
-        calls[f"{r['provider']}:{r['operation']}"] = int(r["calls"])
+        k = f"{r['provider']}:{r['operation']}"
+        calls[k] = calls.get(k, 0) + int(r["calls"])
     return {
         "embedding_failures_15m": int(errs["embedding_failures_15m"]), "judge_failures_15m": int(errs["judge_failures_15m"]),
         "rate_limited_15m": int(errs["rate_limited_15m"]), "failing_jobs_15m": int(errs["failing_15m"]),
@@ -84,18 +89,27 @@ async def _providers(pool: Any, primary: str) -> dict[str, Any]:
 
 
 async def _retrieval(pool: Any) -> dict[str, Any]:
-    r = await (await sh.search_pool(pool)).fetchrow(
+    from app.services import search_group
+
+    # sums (not averages) per member, combined: an average of averages would weight members, not requests
+    parts = await search_group.fetch_all(
+        pool,
         """
         SELECT count(*) AS n,
                count(*) FILTER (WHERE degraded) AS degraded,
-               coalesce(avg(cardinality(goal_ids)), 0) AS avg_goal_candidates,
-               coalesce(avg(cardinality(procedure_ids)), 0) AS avg_procedure_candidates,
-               coalesce(avg(jsonb_array_length(CASE WHEN jsonb_typeof(detail->'shards') = 'array' THEN detail->'shards' ELSE '[]'::jsonb END)), 0) AS avg_shards_touched,
+               coalesce(sum(cardinality(goal_ids)), 0) AS avg_goal_candidates,
+               coalesce(sum(cardinality(procedure_ids)), 0) AS avg_procedure_candidates,
+               coalesce(sum(jsonb_array_length(CASE WHEN jsonb_typeof(detail->'shards') = 'array' THEN detail->'shards' ELSE '[]'::jsonb END)), 0) AS avg_shards_touched,
                count(*) FILTER (WHERE jsonb_typeof(detail->'unavailable_shards') = 'array'
                                 AND jsonb_array_length(detail->'unavailable_shards') > 0) AS with_unavailable_shards
         FROM retrieval_decisions WHERE created_at > now() - interval '60 minutes'
         """)
+    keys = ("n", "degraded", "avg_goal_candidates", "avg_procedure_candidates", "avg_shards_touched",
+            "with_unavailable_shards")
+    r = {k: sum(float(p[k] or 0) for p in parts) for k in keys}
     n = int(r["n"])
+    for k in ("avg_goal_candidates", "avg_procedure_candidates", "avg_shards_touched"):
+        r[k] = r[k] / n if n else 0.0
     return {"requests_60m": n, "degraded_60m": int(r["degraded"]), "degraded_rate_60m": round(int(r["degraded"]) / n, 4) if n else 0.0,
             "avg_goal_candidates": round(float(r["avg_goal_candidates"]), 2),
             "avg_procedure_candidates": round(float(r["avg_procedure_candidates"]), 2),
@@ -145,10 +159,13 @@ async def collect(pool: Any, pools: Any = None, *, probe_timeout_s: float = 10.0
     jobs, providers, retrieval, lag, shard_rows, budget = await asyncio.gather(
         _jobs(pool), _providers(pool, primary), _retrieval(pool), sp.projection_lag(pool),
         _shards(pool, pools, probe_timeout_s), IngestBudget(pool).status(fresh=True))
-    tokens = await (await sh.search_pool(pool)).fetchrow(
-        "SELECT coalesce(sum(input_tokens),0) AS tin, coalesce(sum(output_tokens),0) AS tout, count(*) AS calls, "
+    from app.services import search_group
+
+    token_parts = await search_group.fetch_all(
+        pool, "SELECT coalesce(sum(input_tokens),0) AS tin, coalesce(sum(output_tokens),0) AS tout, count(*) AS calls, "
         "count(*) FILTER (WHERE operation = 'embedding') AS embed_calls "
         "FROM llm_spend WHERE occurred_at > now() - interval '24 hours'")
+    tokens = {k: sum(int(p[k] or 0) for p in token_parts) for k in ("tin", "tout", "calls", "embed_calls")}
     return {
         "generated_at": time.time(), "jobs": jobs, "providers": providers, "retrieval": retrieval,
         "projection": lag, "shards": shard_rows,

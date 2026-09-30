@@ -56,21 +56,55 @@ with it). Completed so that everything that belongs to a Goal lives with it:
 - evidence, ingested artifacts, raw objects, ingestion contexts -> the shard of the object they describe;
 - trajectory data -> the shard of the run's task Goal (the pipelines name the task Goal before writing the run).
 
-## Dynamic growth
+## Dynamic growth (as built: `app/services/storage_autoscale.py`)
 
-A capacity manager in the worker's maintenance loop (extends `shard_capacity`): for each role, when the free
-headroom of writable members falls under a threshold, it creates a Neon project through the API
-(`scripts/provision_neon_shards.py` logic), migrates it, registers it (`knowledge_shards.role` = knowledge | search)
-and opens it to traffic; it keeps one spare per role and never exceeds a configured maximum. A is never grown;
-it raises `control_database_near_capacity` like today.
+The worker's maintenance pass runs the capacity guard (`shard_capacity`: a database at 85% of its limit is marked
+`full` -- it keeps its rows and stays readable, it takes no new placements), then `autoscale`: each role that the
+deployment uses keeps `STEALTH_MIN_WRITABLE_KNOWLEDGE` (4) / `STEALTH_MIN_WRITABLE_SEARCH` (2) writable databases with
+headroom. Short of that it first opens an idle registered database of the role (weight 0 -> 100), else creates a Neon
+project (`scripts/provision_neon_shards.py --kind knowledge|search`: create, migrate, mark its role), registers it at
+weight 0, waits out the registry cache every process holds, then weights it -- so no reader ever misses a row placed on
+a database it does not know yet. New connection strings go to the git-ignored `backend/.neon_shards.env`, which
+`shards.shard_dsn` reads when a variable is not in the environment: running processes reach a new database without a
+restart. `STEALTH_STORAGE_AUTOSCALE=0` turns it off; tests always do. A is never grown.
 
-## What must not change
+## As built (2026-10-01)
 
-- Retrieval results: the golden retrieval tests pass unchanged, and a side-by-side comparison of the single-database
-  layout vs the sharded one on the same data shows the same top results (quality) and acceptable latency.
+- B group: `search_group` (placement recorded in `search_routes`; reads ask every member and merge by the query's own
+  order). Identity, dedup, `has_procedures` and budget reads are STRICT: an unreachable member fails the read, as one
+  database that is down does -- never a decision on a partial view. Read-only user paths (retrieval legs, product
+  search) answer from the members that can.
+- On A the Goal row is slim (no text, tsvector or vector); readers that rank by text or vector (hierarchy neighbours,
+  product search, more-specific Goals, routing priors) take those scores from `goal_search_docs` and apply the
+  single-database ordering exactly.
+- Benchmarks, solutions, evaluations, submissions, usage events stay on A (measured: 2.8 MB for 589 benchmarks); their
+  Goal references are route-aware checks (migration 133). Evidence lives with its Procedure on the Procedure's shard.
+  Claim refs, ledger, contexts, artifacts stay on A (~20 KB per ingested item in all).
+- A knowledge shard / search member is marked in `sl_database_role` (migration 133) so its triggers keep no
+  control-plane rows of their own.
+
+## What must not change -- and how it is checked
+
+- `tests/test_search_group_equivalence_e2e.py`: one corpus, every read path the group touches run on one database and
+  then on a search group -- retrieval, hierarchy ranking, product search pages, more-specific Goal order, routing
+  vectors, projection checks -- must be IDENTICAL (each fix is proven by a mutant that makes it fail).
+- `tests/test_verified_write_sharded_e2e.py`: the verified pipeline's `write_task` in the production layout: every row
+  where its reader looks; retrieval counts the benchmark support read from the Procedure's shard; a retry reuses all.
+- The full suite on the pre-change code vs the new code, single database and search group: no test that passes before
+  fails after.
 - Exactly-once and dedup guarantees (name registry, routes and outbox stay in one transaction on A).
 
-## Existing production data
+## Existing production data -- cutover runbook
 
-The ~2,200 items ingested before this change are re-ingested into the new layout (the ledger makes it idempotent;
-~1 hour, ~$10), then K000's public knowledge is removed so A holds only control data.
+The 2,213 items ingested before this change ($22 of model spend) are wiped and re-ingested into the new layout
+(approved by Anuj, 2026-10-01): the ledger is wiped with them, so the verified pipeline starts over.
+
+1. stop ingestion; `scripts/storage_v2_prepare_shards.py` (every K/S database: migrations, ledger correction for
+   132/133, role marker);
+2. wipe what ingestion wrote on A (accounts, credentials, config, audit, spend ledger, registry and schema kept);
+3. `scripts/migrate.py` on A (132, 133);
+4. `provision_neon_shards.py --kind search --count 2` (search members), re-run the knowledge provisioning to register
+   the remaining K shards;
+5. `scripts/storage_v2_move_logs.py` (the spend ledger moves onto the members, sequences advanced -- the budget cap
+   keeps counting today's spend);
+6. K000 weight 0; the worker's autoscale opens the knowledge shards it needs; resume the pipelines.

@@ -93,6 +93,24 @@ def test_creates_migrates_registers_and_resumes(neon, tmp_path, monkeypatch):
     assert neon.creates == []
 
 
+def test_search_members_are_named_and_registered_as_the_search_role(neon, tmp_path, monkeypatch):
+    env_file = tmp_path / "shards.env"
+    kinds = []
+    monkeypatch.setattr(prov, "migrate", lambda dsn: None)
+
+    async def fake_register(control_dsn, index, dsn, *, weight, capacity_bytes):
+        kinds.append((prov.shard_id(index), prov.KIND))
+
+    monkeypatch.setattr(prov, "register", fake_register)
+    try:
+        assert prov.main(["--kind", "search", "--count", "2", "--env-file", str(env_file)]) == 0
+        assert [c["name"] for c in neon.creates] == ["stealthlab-s001", "stealthlab-s002"]
+        assert set(prov.read_env_file(env_file)) == {"S001_DATABASE_URL", "S002_DATABASE_URL"}
+        assert kinds == [("S001", "search"), ("S002", "search")]
+    finally:
+        prov.KIND = "knowledge"
+
+
 def test_a_failing_shard_does_not_stop_the_others(neon, tmp_path, monkeypatch):
     env_file = tmp_path / "shards.env"
 

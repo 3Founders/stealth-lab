@@ -92,6 +92,7 @@ def _load_dotenv_without_leaking_database_url(*args, **kwargs):
     result = _real_load_dotenv(*args, **kwargs)
     if not had_database_url:
         os.environ.pop("DATABASE_URL", None)
+    os.environ.pop("NEON_API_KEY", None)        # never provision real databases from a test
     for k in _AUTH_ENV_KEYS:
         if k not in had_auth and k not in _AUTH_ENV_AMBIENT_AT_STARTUP:
             os.environ.pop(k, None)
@@ -100,6 +101,13 @@ def _load_dotenv_without_leaking_database_url(*args, **kwargs):
 
 def pytest_configure(config):
     dotenv.load_dotenv = _load_dotenv_without_leaking_database_url
+    # The shard connection-string fallback (shards.shard_dsn) must never reach the deployment's
+    # backend/.neon_shards.env from a test: a test registering K002 expecting it unreachable would
+    # otherwise connect to a real shard. Tests set the env vars they mean to use.
+    os.environ["STEALTH_SHARDS_ENV_FILE"] = os.path.join(os.path.dirname(__file__), "_no_shards_env_file_in_tests")
+    # ...and a test worker must never create real databases (storage_autoscale provisions Neon projects)
+    os.environ["STEALTH_STORAGE_AUTOSCALE"] = "0"
+    os.environ.pop("NEON_API_KEY", None)
 
     # pydantic-settings reads backend/.env DIRECTLY (env_file=), bypassing
     # dotenv.load_dotenv, so the wrapper above cannot stop SUPABASE_* /

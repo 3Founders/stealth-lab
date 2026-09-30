@@ -48,6 +48,15 @@ async def pool():
     await p.execute("DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{T}%")
     await p.execute("DELETE FROM knowledge_nodes WHERE name LIKE $1", f"{T}%")
     await p.execute("DELETE FROM claim_search_index WHERE statement LIKE $1", f"{T}%")
+    # storage layout v2: with search members registered the same projection and log rows live on the members (this
+    # cleanup bypasses the projection, so it clears them there too)
+    from app.services import search_group
+
+    if await search_group.grouped(p):
+        await search_group.execute_all(p, "DELETE FROM claim_search_index WHERE statement LIKE $1", f"{T}%")
+        await search_group.execute_all(p, "DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{T}%")
+        await p.execute("DELETE FROM search_routes WHERE object_type = 'claim' AND NOT EXISTS "
+                        "(SELECT 1 FROM knowledge_nodes k WHERE k.id = search_routes.object_id)")
     await p.close()
 
 
@@ -105,7 +114,8 @@ async def test_replay_of_the_same_source_is_idempotent(pool):
     await ing(pool, "caches are on unless you opt out", "s2")
     again = await ing(pool, "caches are on unless you opt out", "s2")
     assert again["action"] == "reused" and again["claim_id"] == a["claim_id"]
-    assert await pool.fetchval("SELECT count(*) FROM identity_decisions WHERE object_type='claim' AND candidate_text LIKE $1", f"{T}%") >= 1
+    from app.services import search_group      # identity_decisions: the log database (every member of a group)
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM identity_decisions WHERE object_type='claim' AND candidate_text LIKE $1", f"{T}%") >= 1
 
 
 @pytest.mark.asyncio
@@ -170,8 +180,9 @@ async def test_claims_created_during_an_outage_are_judged_later_and_merged_into_
     a = await _private(pool, "the cache is enabled by default", "s1")                        # judged normally: created
     b = await _private(pool, "caches are on unless you opt out", "s2", judge=judge(fail=True))   # judge down: created anyway
     assert b["action"] == "created" and b["decision"] == "judge_unavailable" and b["claim_id"] != a["claim_id"]
-    assert (await pool.fetchval("SELECT detail->>'created_claim_id' FROM identity_decisions WHERE object_type='claim' "
-                                "AND candidate_text LIKE $1 AND decision='judge_unavailable'", f"{T}%")) == b["claim_id"]
+    from app.services import search_group      # identity_decisions: the log database (every member of a group)
+    assert (await search_group.fetchrow_any(pool, "SELECT detail->>'created_claim_id' AS c FROM identity_decisions WHERE object_type='claim' "
+                                            "AND candidate_text LIKE $1 AND decision='judge_unavailable'", f"{T}%"))["c"] == b["claim_id"]
     # the judge is still down: nothing is guessed, the claim waits
     assert (await reconcile_claims(pool, embedder=EMB, judge=judge(fail=True)))["deferred"] >= 1
     assert await pool.fetchval("SELECT t_invalid IS NULL FROM knowledge_nodes WHERE id=$1::uuid", b["claim_id"])

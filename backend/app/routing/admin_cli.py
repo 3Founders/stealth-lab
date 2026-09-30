@@ -69,14 +69,14 @@ async def run(pool: Any, a: Any) -> int:
     from app.services.shards import search_pool
 
     if a.cmd == "routing-status":
-        log = await search_pool(pool)
+        from app.services import search_group
         row = await pool.fetchrow(
             "SELECT version, method, fitted_at, diagnostics FROM routing_params WHERE status = 'active' "
             "ORDER BY version DESC LIMIT 1")
         print(json.dumps({
             "active_params": dict(row) if row else None,
-            "observations": await log.fetchval("SELECT count(*) FROM routing_observations"),
-            "decisions": await log.fetchval("SELECT count(*) FROM routing_decisions"),
+            "observations": await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_observations"),
+            "decisions": await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_decisions"),
             "goal_posteriors": await pool.fetchval("SELECT count(*) FROM routing_posteriors WHERE entity_kind = 'goal'"),
             "priced_models": await pool.fetchval("SELECT count(DISTINCT model_key) FROM routing_prices"),
         }, default=str, indent=2))
@@ -107,10 +107,12 @@ async def run(pool: Any, a: Any) -> int:
         print(json.dumps({"imported": len(ids), "next": "run routing-refit to fit them"}))
         return 0
     if a.cmd == "routing-audit":
-        log = await search_pool(pool)
-        tag = await log.execute("UPDATE routing_observations SET gold_correct = $2 WHERE id = $1::uuid",
-                                a.observation_id, a.correct == "true")
-        print(json.dumps({"updated": int(str(tag).split()[-1])}))
+        from app.services import search_group
+
+        updated = await search_group.execute_all(
+            pool, "UPDATE routing_observations SET gold_correct = $2 WHERE id = $1::uuid",
+            a.observation_id, a.correct == "true")
+        print(json.dumps({"updated": updated}))
         return 0
     if a.cmd == "routing-sbc":
         import numpy as np

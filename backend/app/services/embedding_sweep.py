@@ -27,8 +27,11 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-async def embed_goals(pool: Any, embedder: Any, *, ids: Optional[Sequence[str]] = None, limit: int = 500) -> int:
-    """Embed live Goals that have no vector (only `ids` when given). Returns how many were embedded."""
+async def embed_goals(pool: Any, embedder: Any, *, ids: Optional[Sequence[str]] = None, limit: int = 500,
+                      control: Any = None) -> int:
+    """Embed live Goals that have no vector (only `ids` when given) in the database `pool`. Returns how many were
+    embedded. `control` is the control database whose projection outbox is told (default: `pool` itself)."""
+    control = control if control is not None else pool
     from app.services.embeddings import to_pgvector
     from app.services.goals import goal_embedding_text
     from app.services.search_projection import enqueue
@@ -58,13 +61,13 @@ async def embed_goals(pool: Any, embedder: Any, *, ids: Optional[Sequence[str]] 
                 "embedding_text_hash = $5 WHERE id = $1::uuid AND embedding IS NULL",
                 row["id"], to_pgvector(vec), model_id, provider, _sha(text))
             if status.endswith(" 1"):
-                await enqueue(pool, "goal", row["id"])
+                await enqueue(control, "goal", row["id"])
                 done += 1
     return done
 
 
 async def embed_procedures(pool: Any, embedder: Any, *, ids: Optional[Sequence[str]] = None,
-                           limit: int = 500) -> int:
+                           limit: int = 500, control: Any = None) -> int:
     """Embed live Procedure rows that have no vector (only rows whose `id` is in `ids` when given), from the
     canonical retrieval document, stamping the document and its version exactly as the backfill script does."""
     from app.services.embeddings import to_pgvector
@@ -75,6 +78,7 @@ async def embed_procedures(pool: Any, embedder: Any, *, ids: Optional[Sequence[s
     )
     from app.services.search_projection import enqueue
 
+    control = control if control is not None else pool
     where = "t_invalid IS NULL AND embedding IS NULL"
     args: list[Any] = []
     if ids is not None:
@@ -114,12 +118,29 @@ async def embed_procedures(pool: Any, embedder: Any, *, ids: Optional[Sequence[s
                 json.dumps({"provider": provider, "model_id": model_id, "dimension": embedder.dimension,
                             "input_type": "document", "text_sha256": _sha(doc)}))
             if status.endswith(" 1"):
-                await enqueue(pool, "procedure", str(proc["procedure_id"]))
+                await enqueue(control, "procedure", str(proc["procedure_id"]))
                 done += 1
     return done
 
 
+async def embed_everywhere(control: Any, embedder: Any, *, goal_ids: Optional[Sequence[str]] = None,
+                           procedure_row_ids: Optional[Sequence[str]] = None, limit: int = 500,
+                           goals: bool = True, procedures: bool = True) -> dict:
+    """`embed_goals` / `embed_procedures` on the control database AND every knowledge shard (a Goal or Procedure
+    homed on a shard has its canonical row -- and so its vector -- there; docs/sharding.md). With no shard this is
+    exactly the two calls on the control database."""
+    from app.services.shards import all_pools
+
+    out = {"goals": 0, "procedures": 0}
+    for _shard, p in await all_pools(control):
+        if goals and (goal_ids is None or goal_ids):
+            out["goals"] += await embed_goals(p, embedder, ids=goal_ids, limit=limit, control=control)
+        if procedures and (procedure_row_ids is None or procedure_row_ids):
+            out["procedures"] += await embed_procedures(p, embedder, ids=procedure_row_ids, limit=limit,
+                                                        control=control)
+    return out
+
+
 async def sweep(pool: Any, embedder: Any, *, limit: int = 500) -> dict:
-    """Embed whatever is still missing a vector (worker maintenance)."""
-    return {"goals": await embed_goals(pool, embedder, limit=limit),
-            "procedures": await embed_procedures(pool, embedder, limit=limit)}
+    """Embed whatever is still missing a vector, on every knowledge database (worker maintenance)."""
+    return await embed_everywhere(pool, embedder, limit=limit)

@@ -82,20 +82,32 @@ async def insert_observations(pool: Any, rows: Sequence[Mapping[str, Any]]) -> l
     if not clean:
         return []
     await ensure_models(pool, (r["model_key"] for r in clean))
-    log = await search_pool(pool)
     ids = [str(uuid.uuid4()) for _ in clean]
     cols = ", ".join(("id",) + _OBS_COLUMNS)
     marks = ", ".join(f"${i}" for i in range(1, len(_OBS_COLUMNS) + 2))
     now = datetime.now().astimezone()
-    await log.executemany(
-        f"INSERT INTO routing_observations ({cols}) VALUES ({marks})",
-        [[obs_id, *[(r[c] if c != "occurred_at" else (r[c] or now)) for c in _OBS_COLUMNS]]
-         for obs_id, r in zip(ids, clean)])
+    # A Goal's observations stay together on one search member (per-Goal aggregates read one database);
+    # storage layout v2. Without a search group this is the single search pool, as before.
+    by_goal: dict[str, list] = {}
+    for obs_id, r in zip(ids, clean):
+        by_goal.setdefault(str(r["goal_id"]), []).append(
+            [obs_id, *[(r[c] if c != "occurred_at" else (r[c] or now)) for c in _OBS_COLUMNS]])
+    for goal_id, batch in by_goal.items():
+        log = await _goal_log_pool(pool, goal_id)
+        await log.executemany(f"INSERT INTO routing_observations ({cols}) VALUES ({marks})", batch)
     return ids
 
 
+async def _goal_log_pool(pool: Any, goal_id: str) -> Any:
+    """The search member holding a Goal's routing observations and decisions (the single search pool without a
+    search group)."""
+    from app.services import search_group
+
+    return await search_group.pool_for_object(pool, "routing_goal", str(goal_id), placement_key=f"goal:{goal_id}")
+
+
 async def goal_observations(pool: Any, goal_id: str) -> list[dict]:
-    log = await search_pool(pool)
+    log = await _goal_log_pool(pool, goal_id)
     rows = await log.fetch(
         "SELECT *, goal_id::text AS goal_id, procedure_id::text AS procedure_id FROM routing_observations "
         "WHERE goal_id = $1::uuid ORDER BY occurred_at", str(goal_id))
@@ -103,18 +115,19 @@ async def goal_observations(pool: Any, goal_id: str) -> list[dict]:
 
 
 async def all_observations(pool: Any, *, public_only: bool) -> list[dict]:
-    log = await search_pool(pool)
+    from app.services import search_group
+
     where = "WHERE visibility = 'public'" if public_only else ""
-    rows = await log.fetch(
-        f"SELECT *, goal_id::text AS goal_id, procedure_id::text AS procedure_id FROM routing_observations {where} "
-        "ORDER BY occurred_at")
-    return [dict(r) for r in rows]
+    rows = await search_group.fetch_all(
+        pool, f"SELECT *, goal_id::text AS goal_id, procedure_id::text AS procedure_id FROM routing_observations {where} "
+        "ORDER BY occurred_at", strict=True)
+    return [dict(r) for r in sorted(rows, key=lambda r: (r["occurred_at"], str(r["id"])))]
 
 
 async def goal_token_stats(pool: Any, goal_id: str, *, steps: bool = False) -> dict[str, dict[str, list[float]]]:
     """{unit: {"1"|"0": [n, mean ln in, mean ln out, mean ln(1+cached)]}} for one Goal's
     whole-task attempts, or (steps=True) its single-step attempts."""
-    log = await search_pool(pool)
+    log = await _goal_log_pool(pool, goal_id)
     kind = "step_order IS NOT NULL" if steps else "step_order IS NULL"
     rows = await log.fetch(
         "SELECT model_key || '|' || scaffold AS unit, accepted, count(*) AS n, "
@@ -130,7 +143,7 @@ async def goal_token_stats(pool: Any, goal_id: str, *, steps: bool = False) -> d
 
 
 async def record_decision(pool: Any, row: Mapping[str, Any]) -> None:
-    log = await search_pool(pool)
+    log = await _goal_log_pool(pool, str(row["goal_id"]))
     await log.execute(
         "INSERT INTO routing_decisions (id, goal_id, procedure_id, instance_key, params_version, candidates, ladder, "
         "propensity, meets_target, predicted, constraints, visibility, owner_id, step_order) "
@@ -235,6 +248,19 @@ def _vector(text: Optional[str]) -> Optional[list[float]]:
     return json.loads(text) if text else None
 
 
+async def _member_embeddings(pool: Any, goal_ids: Sequence[str]) -> Optional[dict[str, Optional[str]]]:
+    """With a search group (migration 132) a Goal's vector is in goal_search_docs on a member, not in the control
+    row: {goal id: vector text} from the members. None when there is no group (the control row has it)."""
+    from app.services import search_group
+
+    if not await search_group.grouped(pool):
+        return None
+    rows = await search_group.fetch_all(
+        pool, "SELECT goal_id::text AS id, embedding::text AS embedding FROM goal_search_docs "
+        "WHERE goal_id = ANY($1::uuid[])", list({str(g) for g in goal_ids}), strict=True)
+    return {r["id"]: r["embedding"] for r in rows}
+
+
 async def visible_goal(pool: Any, goal_id: str, access_scope: AccessScope) -> Optional[dict]:
     vis, params = visibility_predicate(access_scope, alias="g", param_index=2)
     row = await pool.fetchrow(
@@ -242,8 +268,10 @@ async def visible_goal(pool: Any, goal_id: str, access_scope: AccessScope) -> Op
         f"FROM goal_search_index g WHERE g.goal_id = $1::uuid AND {vis}", str(goal_id), *params)
     if row is None:
         return None
+    member = await _member_embeddings(pool, [row["id"]])
+    embedding = row["embedding"] if member is None else member.get(row["id"])
     return {"id": row["id"], "visibility": row["visibility"], "owner_id": row["owner_id"],
-            "embedding": _vector(row["embedding"])}
+            "embedding": _vector(embedding)}
 
 
 async def goal_rows(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
@@ -252,8 +280,9 @@ async def goal_rows(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
     rows = await pool.fetch(
         "SELECT goal_id::text AS id, visibility::text AS visibility, owner_id, embedding::text AS embedding "
         "FROM goal_search_index WHERE goal_id = ANY($1::uuid[])", list({str(g) for g in goal_ids}))
+    member = await _member_embeddings(pool, [r["id"] for r in rows]) if rows else None
     return {r["id"]: {"id": r["id"], "visibility": r["visibility"], "owner_id": r["owner_id"],
-                      "embedding": _vector(r["embedding"])} for r in rows}
+                      "embedding": _vector(r["embedding"] if member is None else member.get(r["id"]))} for r in rows}
 
 
 async def goal_parents(pool: Any, goal_ids: Sequence[str]) -> dict[str, list[str]]:

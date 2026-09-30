@@ -115,8 +115,12 @@ def assert_no_hosted_address(env=os.environ) -> None:
 
 
 async def assert_shards_local(pool: Any, env=os.environ) -> None:
-    """Registered shards are reached through their DSN variable; on a local run each must be local too."""
+    """Registered shards are reached through their DSN variable; on a local run each must be local too. The DSN
+    checked is the one the app will use: the variable, else the shards env file (`shards.shard_dsn`)."""
+    from app.services.shards import shard_dsn
+
     rows = await pool.fetch("SELECT shard_id, dsn_env FROM knowledge_shards WHERE dsn_env IS NOT NULL")
-    offenders = [r["shard_id"] for r in rows if not is_loopback(env.get(r["dsn_env"]))]
+    offenders = [r["shard_id"] for r in rows
+                 if not is_loopback(env.get(r["dsn_env"]) or (shard_dsn(r["dsn_env"]) if env is os.environ else None))]
     if offenders:
         raise TargetRefused("registered shards without a local DSN on a local run: " + ", ".join(offenders))

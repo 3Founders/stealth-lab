@@ -59,24 +59,32 @@ async def _name(client: Any, model: str, issue: str, correction: Optional[str]) 
     return str(parsed.get("goal") or "").strip().rstrip(".")
 
 
-async def _registered(conn: Any, key: str) -> Optional[TaskGoal]:
+async def _registered(conn: Any, key: str, pool: Any = None) -> Optional[TaskGoal]:
     """The task's registered Goal, followed through merges: identity reconciliation can merge a task Goal into an
-    older duplicate, and a Procedure written to a merged Goal would never be found."""
-    row = await conn.fetchrow(
-        "WITH RECURSIVE chain(id, depth) AS ("
-        "  SELECT goal_id, 0 FROM ingest_task_goals WHERE task_key = $1"
-        "  UNION ALL SELECT g.merged_into_id, c.depth + 1 FROM chain c JOIN goals g ON g.id = c.id"
-        "  WHERE g.status = 'merged' AND g.merged_into_id IS NOT NULL AND c.depth < 20) "
-        "SELECT g.id::text AS goal_id, g.canonical_name FROM chain c JOIN goals g ON g.id = c.id "
-        "ORDER BY c.depth DESC LIMIT 1", key)
-    return TaskGoal(row["goal_id"], row["canonical_name"], False) if row else None
+    older duplicate, and a Procedure written to a merged Goal would never be found. Each Goal is read on its home
+    shard (the control database when there is no other); `pool` is the control pool (`conn` is used when omitted)."""
+    from app.services.shards import home_pool
+
+    gid = await conn.fetchval("SELECT goal_id::text FROM ingest_task_goals WHERE task_key = $1", key)
+    found: Optional[TaskGoal] = None
+    for _depth in range(21):                       # the same 20-hop bound as before
+        if gid is None:
+            break
+        owner = await home_pool(pool if pool is not None else conn, "goal", gid)
+        row = await owner.fetchrow("SELECT id::text AS id, canonical_name, status, merged_into_id::text AS merged "
+                                   "FROM goals WHERE id = $1::uuid", gid)
+        if row is None:
+            break
+        found = TaskGoal(row["id"], row["canonical_name"], False)
+        gid = row["merged"] if row["status"] == "merged" else None
+    return found
 
 
 async def ensure_task_goal(pool: Any, *, key: str, issue: str, client: Any, model: str, named_by: str,
                            source: str, provenance: str = "system_pending_review", embedder: Any = None) -> TaskGoal:
     from app.services.goals import describe_goal_quality_issue, find_or_create_goal
 
-    existing = await _registered(pool, key)
+    existing = await _registered(pool, key, pool)
     if existing:
         return existing
 
@@ -92,7 +100,7 @@ async def ensure_task_goal(pool: Any, *, key: str, issue: str, client: Any, mode
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"ingest_task_goal:{key}")
-            again = await _registered(conn, key)
+            again = await _registered(conn, key, pool)
             if again:
                 return again
             goal = await find_or_create_goal(

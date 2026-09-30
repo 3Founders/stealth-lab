@@ -59,17 +59,20 @@ async def pool():
 @pytest.mark.skipif(not DATABASE_URL, reason="requires a real DATABASE_URL")
 async def test_retention_prunes_only_finished_old_operational_rows(pool):
     marker = f"retention-{uuid.uuid4().hex[:8]}"
+    from app.services import search_group
+
+    pool, control = await search_group.pool_for_log(pool, marker), pool   # the log's database (a member when grouped)
     old_id = await pool.fetchval(
         "INSERT INTO retrieval_decisions (query_sha256, mode, created_at) VALUES ($1, 'test', now() - interval '40 days') RETURNING id",
         marker)
     new_id = await pool.fetchval(
         "INSERT INTO retrieval_decisions (query_sha256, mode) VALUES ($1, 'test') RETURNING id", marker)
 
-    counted = await prune_operational_rows(pool, older_than_days=30, apply=False)
+    counted = await prune_operational_rows(control, older_than_days=30, apply=False)
     assert counted["tables"]["retrieval_decisions"] >= 1
     assert await pool.fetchval("SELECT count(*) FROM retrieval_decisions WHERE id = $1", old_id) == 1   # dry run
 
-    await prune_operational_rows(pool, older_than_days=30, apply=True)
+    await prune_operational_rows(control, older_than_days=30, apply=True)
     assert await pool.fetchval("SELECT count(*) FROM retrieval_decisions WHERE id = $1", old_id) == 0
     assert await pool.fetchval("SELECT count(*) FROM retrieval_decisions WHERE id = $1", new_id) == 1
     await pool.execute("DELETE FROM retrieval_decisions WHERE query_sha256 = $1", marker)

@@ -4062,9 +4062,9 @@ async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests
     _log = _logging.getLogger(__name__)
     _log.info("find_ways outcome=%s total_ms=%.1f shards=%s", outcome, total_ms, shard_requests)
     try:
-        from app.services.shards import search_pool
+        from app.services import search_group
 
-        pool = await search_pool(ctx.request_context.lifespan_context["pool"])
+        pool = await search_group.pool_for_log(ctx.request_context.lifespan_context["pool"], query)
         await pool.execute(
             "INSERT INTO retrieval_decisions (query_sha256, viewer_id, mode, degraded, detail) "
             "VALUES ($1, $2, 'find_ways', $3, $4::jsonb)",

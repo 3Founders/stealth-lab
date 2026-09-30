@@ -46,6 +46,13 @@ async def enforce_shard_capacity(pool: Any, *, apply: bool = True, ratio: Option
             continue
         entry: dict[str, Any] = {"shard_id": info.shard_id, "status": info.status,
                                  "capacity_bytes": info.capacity_bytes, "action": None}
+        if info.shard_id != HOME_SHARD and not info.writable:
+            # Only a database that takes new placements can grow. Measuring the others every pass (maintenance
+            # runs every 5 minutes, Neon suspends an idle compute after 5) would keep every free project's
+            # compute awake around the clock and spend its monthly compute hours for nothing.
+            entry["action"] = "not_measured_not_writable"
+            report.append(entry)
+            continue
         try:
             shard_pool = pool if info.shard_id == HOME_SHARD else await pools.get(info.shard_id)
             size = int(await shard_pool.fetchval(SIZE_SQL))

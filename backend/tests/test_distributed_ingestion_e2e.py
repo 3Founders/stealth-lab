@@ -6,6 +6,8 @@ import uuid
 from dataclasses import replace
 
 import pytest
+
+from app.services import search_group   # B tables: every member of a search group (migration 132)
 import pytest_asyncio
 
 from app.db.session import create_pool
@@ -65,6 +67,11 @@ async def pool():
     await p.execute("DELETE FROM goal_search_index WHERE canonical_name LIKE $1", f"{T} %")
     await p.execute("DELETE FROM procedure_search_index WHERE name LIKE $1", f"{T} %")
     await p.execute("DELETE FROM claim_search_index WHERE statement LIKE $1", f"{T} %")
+    if await search_group.grouped(p):    # the same projection/log rows on the search members (bypassing the projection)
+        await search_group.execute_all(p, "DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{T} %")
+        await search_group.execute_all(p, "DELETE FROM goal_search_docs WHERE canonical_name LIKE $1", f"{T} %")
+        await search_group.execute_all(p, "DELETE FROM procedure_search_index WHERE name LIKE $1", f"{T} %")
+        await search_group.execute_all(p, "DELETE FROM claim_search_index WHERE statement LIKE $1", f"{T} %")
     await p.execute("DELETE FROM ingestion_contexts WHERE source_uri LIKE $1", f"bundle:{T}-%")
     await p.close()
 
@@ -177,12 +184,12 @@ async def test_worker_dies_after_canonical_persistence_before_projection_and_com
     # A dies here: canonical rows exist, projection NOT applied, job still 'processing'
     rep = await sp.verify_projection(pool)
     assert rep["lag"]["pending"] >= 1 and rep["types"]["procedure"]["lagging"] >= 1     # visible, not silent
-    assert await pool.fetchval("SELECT count(*) FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == 0
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == 0
     await pool.execute("UPDATE ingestion_jobs SET lease_until = now() - interval '1 second' WHERE id=$1", a.id)
     await worker(pool, "B").run(loop=False)                     # retry re-runs the handler + drains the outbox
     assert (await counts(pool)) == dict(goals=1, procs=1, claims=1, ctx=1)               # replay created nothing new
-    assert await pool.fetchval("SELECT count(*) FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == 1
-    assert await pool.fetchval("SELECT count(*) FROM claim_search_index WHERE statement LIKE $1", f"{T} %") == 1
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == 1
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM claim_search_index WHERE statement LIKE $1", f"{T} %") == 1
     assert (await sp.verify_projection(pool))["ok"]
 
 
@@ -227,7 +234,7 @@ async def test_judge_temporary_failure_fails_closed_then_resolves_without_a_dupl
     await make_due(pool)
     await w.run(loop=False)
     assert (await counts(pool)) == dict(goals=1, procs=2, claims=0, ctx=2)                # merged into the ONE goal
-    assert await pool.fetchval("SELECT decision FROM identity_decisions WHERE object_type='goal' AND decision='same'") == "same"
+    assert (await search_group.fetchrow_any(pool, "SELECT decision FROM identity_decisions WHERE object_type='goal' AND decision='same'"))["decision"] == "same"
 
 
 @pytest.mark.asyncio
@@ -261,7 +268,7 @@ async def test_public_only_job_types_refuse_private_scope_and_bundles_keep_their
     assert await pool.fetchval("SELECT visibility::text FROM procedures WHERE name LIKE $1", f"{T} %") == "private"
     assert await pool.fetchval("SELECT visibility::text FROM goals WHERE canonical_name LIKE $1", f"{T} %") == "private"
     assert await pool.fetchval("SELECT visibility::text FROM knowledge_nodes WHERE node_type='claim' AND name LIKE $1", f"{T} %") == "private"
-    assert await pool.fetchval("SELECT visibility::text FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == "private"   # projection does not publish it
+    assert (await search_group.fetchrow_any(pool, "SELECT visibility::text AS v FROM procedure_search_index WHERE name LIKE $1", f"{T} %"))["v"] == "private"   # projection does not publish it
     assert await pool.fetchval("SELECT count(*) FROM goal_search_index WHERE canonical_name LIKE $1 AND visibility='public'", f"{T} %") == 0
 
 

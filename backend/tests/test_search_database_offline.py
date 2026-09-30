@@ -29,6 +29,8 @@ class RecordingPool:
         return "INSERT 0 1"
 
     async def fetch(self, sql, *args):
+        if "FROM knowledge_shards" in sql:
+            return []      # the shard registry (is B a search group? -- storage layout v2): empty, one database
         self.statements.append(" ".join(sql.split()))
         return []          # lookup_routes: no route -> home shard
 

@@ -202,6 +202,41 @@ ON CONFLICT (claim_id) DO UPDATE SET
     scope_entity_id = EXCLUDED.scope_entity_id, tenant_id = EXCLUDED.tenant_id, updated_at = now(), projected_at = now()
 """
 
+# storage layout v2 (migration 132): with a search group, a Goal's searchable text and vectors live on a search
+# member (goal_search_docs); the control database keeps the slim goal_search_index row that SQL joins and filters use.
+_UPSERT_GOAL_DOC = """
+INSERT INTO goal_search_docs (goal_id, canonical_name, short_description, search_text, search_tsv, embedding,
+    embedding_model, embedding_version, embedding_dim, status, has_procedures, scope_type, scope_entity_id,
+    visibility, owner_id, home_shard_id, resolved_at, t_created, updated_at)
+VALUES ($1::uuid, $2, $3, $4, to_tsvector('english', $4), $5::vector, $6, $7, $8, $9, $10, $11, $12,
+    $13::visibility_level, $14, $15, $16, $17, now())
+ON CONFLICT (goal_id) DO UPDATE SET
+    canonical_name = EXCLUDED.canonical_name, short_description = EXCLUDED.short_description,
+    search_text = EXCLUDED.search_text, search_tsv = EXCLUDED.search_tsv, embedding = EXCLUDED.embedding,
+    embedding_model = EXCLUDED.embedding_model, embedding_version = EXCLUDED.embedding_version,
+    embedding_dim = EXCLUDED.embedding_dim, status = EXCLUDED.status, has_procedures = EXCLUDED.has_procedures,
+    scope_type = EXCLUDED.scope_type, scope_entity_id = EXCLUDED.scope_entity_id, visibility = EXCLUDED.visibility,
+    owner_id = EXCLUDED.owner_id, home_shard_id = EXCLUDED.home_shard_id, resolved_at = EXCLUDED.resolved_at,
+    t_created = EXCLUDED.t_created, updated_at = now()
+"""
+
+
+async def _upsert_goal_doc(target: Any, p: dict) -> None:
+    await target.execute(_UPSERT_GOAL_DOC, p["key"], p["canonical_name"], p["short_description"], p["search_text"],
+                         p["embedding"], p["embedding_model"], p["embedding_version"], p["embedding_dim"], p["status"],
+                         bool(p.get("has_procedures")), p["scope_type"], p["scope_entity_id"], p["visibility"],
+                         p["owner_id"], p["home_shard_id"], p.get("resolved_at"), p.get("t_created"))
+
+
+def _placement_key(object_type: str, object_id: str, projection: Optional[dict]) -> str:
+    """Keep a Goal's search rows together on one member: a Goal by its id, a Procedure by its Goal, a Claim by its
+    primary Goal (else its own id). Reads always ask every member, so this is locality only."""
+    goal = (projection or {}).get("goal_id") or (projection or {}).get("primary_goal_id")
+    if object_type == "goal":
+        return f"goal:{object_id}"
+    return f"goal:{goal}" if goal else f"{object_type}:{object_id}"
+
+
 _INDEX_TABLE = {"goal": ("goal_search_index", "goal_id"), "procedure": ("procedure_search_index", "procedure_id"),
                 "claim": ("claim_search_index", "claim_id")}
 
@@ -242,50 +277,84 @@ async def project_object(
     table, key = _INDEX_TABLE[object_type]
     # Goal projections live with the Goal hierarchy on the control database;
     # Procedure/Claim projections live on the search database (project B) when one
-    # is configured. The outbox entry stays on the control database, in the caller's
+    # is configured -- with a search GROUP (migration 132), on the object's member, and a Goal's searchable
+    # doc too. The outbox entry stays on the control database, in the caller's
     # transaction: a failed write here leaves it pending and the drainer retries it.
-    target = conn if object_type == "goal" else await search_pool(conn)
+    from app.services import search_group
+
+    grouped = await search_group.grouped(conn)
+    projection = None if row is None else build_projection(object_type, dict(row), shard)
+    gone = row is None or (object_type == "goal" and row["status"] == "merged")
+    doc_target = None
+    if object_type == "goal":
+        target = conn
+        if grouped:
+            doc_target = await search_group.pool_for_object(
+                conn, "goal", object_id, place=not gone, placement_key=_placement_key("goal", object_id, None),
+                pools=pools)
+    else:
+        target = await search_group.pool_for_object(
+            conn, object_type, object_id, place=not gone,
+            placement_key=_placement_key(object_type, object_id, projection), pools=pools)
     # Procedure -> Goal: the Goal(s) whose `has_procedures` may change are the one the projection pointed at
     # before and the one it points at now.
     previous_goal = None
-    if object_type == "procedure":
+    if object_type == "procedure" and target is not None:
         previous_goal = await target.fetchval(
             "SELECT goal_id::text FROM procedure_search_index WHERE procedure_id = $1::uuid", object_id)
-    if row is None or (object_type == "goal" and row["status"] == "merged"):
-        await target.execute(f"DELETE FROM {table} WHERE {key} = $1::uuid", object_id)
+    if gone:
+        if target is not None:
+            await target.execute(f"DELETE FROM {table} WHERE {key} = $1::uuid", object_id)
+        if doc_target is not None:
+            await doc_target.execute("DELETE FROM goal_search_docs WHERE goal_id = $1::uuid", object_id)
         if object_type == "procedure" and previous_goal:
-            await refresh_goal_has_procedures(conn, previous_goal)
+            await refresh_goal_has_procedures(conn, previous_goal, pools=pools)
         return "deleted"
-    projection = build_projection(object_type, dict(row), shard)
     if object_type == "goal":
-        projection["has_procedures"] = await goal_has_live_procedure(conn, object_id)
+        projection["has_procedures"] = await goal_has_live_procedure(conn, object_id, pools=pools)
+        if doc_target is not None:
+            await _upsert_goal_doc(doc_target, projection)
+            # the control database keeps the slim row: no vector, no search text (they live in the doc)
+            await _upsert(target, object_type, {**projection, "embedding": None, "search_text": None})
+            return "upserted"
     await _upsert(target, object_type, projection)
     if object_type == "procedure":
         for goal_id in {g for g in (previous_goal, projection.get("goal_id")) if g}:
-            await refresh_goal_has_procedures(conn, str(goal_id))
+            await refresh_goal_has_procedures(conn, str(goal_id), pools=pools)
     return "upserted"
 
 
 # ------------------------------------------------------ Goal.has_procedures
 
 
-async def goal_has_live_procedure(conn: Any, goal_id: str) -> bool:
-    """True when the Goal has at least one 'active' Procedure projection (search database when configured)."""
-    sp = await search_pool(conn)
-    return bool(await sp.fetchval(
-        "SELECT EXISTS (SELECT 1 FROM procedure_search_index WHERE goal_id = $1::uuid AND status = 'active')",
-        goal_id))
+async def goal_has_live_procedure(conn: Any, goal_id: str, *, pools: Any = None) -> bool:
+    """True when the Goal has at least one 'active' Procedure projection (search database when configured; every
+    member of a search group)."""
+    from app.services import search_group
+
+    # the single-database query unchanged, asked of every member (strict: never a flag from a partial view)
+    parts = await search_group._each(
+        conn, lambda p: p.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM procedure_search_index WHERE goal_id = $1::uuid AND status = 'active')",
+            goal_id), strict=True, pools=pools)
+    return any(bool(x) for x in parts)
 
 
-async def refresh_goal_has_procedures(conn: Any, goal_id: str) -> Optional[bool]:
+async def refresh_goal_has_procedures(conn: Any, goal_id: str, *, pools: Any = None) -> Optional[bool]:
     """Recompute one Goal's `has_procedures` (migration 130). A flip bumps `updated_at`, which is what the worker's
     placement-repair sweep watches: a Goal enters the abstraction hierarchy when it first gets a Procedure.
     Returns the new value, or None when the Goal has no projection yet (its own projection computes it)."""
-    has = await goal_has_live_procedure(conn, goal_id)
+    has = await goal_has_live_procedure(conn, goal_id, pools=pools)
     changed = await conn.fetchval(
         "UPDATE goal_search_index SET has_procedures = $2, "
         "updated_at = CASE WHEN has_procedures IS DISTINCT FROM $2 THEN now() ELSE updated_at END "
         "WHERE goal_id = $1::uuid RETURNING has_procedures", goal_id, has)
+    from app.services import search_group
+
+    if changed is not None and await search_group.grouped(conn):
+        doc = await search_group.pool_for_object(conn, "goal", goal_id, place=False, pools=pools)
+        if doc is not None:
+            await doc.execute("UPDATE goal_search_docs SET has_procedures = $2 WHERE goal_id = $1::uuid", goal_id, has)
     return changed
 
 
@@ -387,13 +456,20 @@ async def reindex(
                 "INSERT INTO projection_outbox (object_type, object_id) SELECT $1, x::uuid FROM unnest($2::text[]) x "
                 "ON CONFLICT (object_type, object_id) WHERE status = 'pending' DO NOTHING", t, ids)
         table, key = _INDEX_TABLE[t]
-        index_pool = pool if t == "goal" else await search_pool(pool)
         orphan_sql = f"DELETE FROM {table} WHERE NOT ({key}::text = ANY($1::text[]))"
         params: list[Any] = [ids]
         if shard:
             orphan_sql = f"DELETE FROM {table} WHERE home_shard_id = $2 AND NOT ({key}::text = ANY($1::text[]))"
             params.append(shard)
-        orphans = int((await index_pool.execute(orphan_sql, *params)).split()[-1])
+        from app.services import search_group
+
+        if t == "goal":
+            orphans = int((await pool.execute(orphan_sql, *params)).split()[-1])
+            if await search_group.grouped(pool):
+                await search_group.execute_all(pool, orphan_sql.replace(table, "goal_search_docs"), *params,
+                                               pools=pools)
+        else:
+            orphans = await search_group.execute_all(pool, orphan_sql, *params, pools=pools)
         drained = await drain_outbox(pool, batch=batch, pools=pools)
         out[t] = {"enqueued": len(ids), "orphans_deleted": orphans, **drained}
     return out
@@ -409,7 +485,15 @@ async def verify_projection(pool: asyncpg.Pool) -> dict[str, Any]:
     for t in OBJECT_TYPES:
         table, key = _INDEX_TABLE[t]
         canon = _CANONICAL_IDS[t]
+        from app.services import search_group
+
         index_pool = pool if t == "goal" else await search_pool(pool)
+        if t != "goal" and await search_group.grouped(pool):
+            entry = await _verify_type_across_databases(pool, None, t, table, key, canon)
+            report["types"][t] = entry
+            if entry["missing"] or entry["orphans"] or entry["route_mismatch"] or entry["unrouted"]:
+                report["ok"] = False
+            continue
         if index_pool is not pool:
             # the projection is on the search database: no cross-database joins,
             # compare id sets instead (same definitions as the SQL below)
@@ -435,6 +519,14 @@ async def verify_projection(pool: asyncpg.Pool) -> dict[str, Any]:
             f"WHERE r.object_type = $1 AND r.object_id::text = c.id)", t)
         entry = {"missing": missing, "lagging": lagging, "orphans": orphans,
                  "route_mismatch": route_mismatch, "unrouted": unrouted}
+        if t == "goal" and await search_group.grouped(pool):
+            # a search group: the Goal's searchable doc on a member must exist too (a lost doc is a Goal search
+            # cannot find), with the same definitions
+            docs = await _verify_type_across_databases(pool, None, t, "goal_search_docs", key, canon)
+            entry.update({"docs_missing": docs["missing"], "docs_orphans": docs["orphans"],
+                          "docs_route_mismatch": docs["route_mismatch"]})
+            missing, orphans = missing + docs["missing"], orphans + docs["orphans"]
+            route_mismatch = route_mismatch + docs["route_mismatch"]
         report["types"][t] = entry
         if missing or orphans or route_mismatch or unrouted:
             report["ok"] = False
@@ -450,8 +542,14 @@ async def _verify_type_across_databases(
         "SELECT object_id::text AS id, home_shard_id FROM object_routes WHERE object_type = $1", object_type)}
     pending = {r[0] for r in await pool.fetch(
         "SELECT object_id::text FROM projection_outbox WHERE status = 'pending' AND object_type = $1", object_type)}
-    projected = {r["id"]: r["home_shard_id"] for r in await index_pool.fetch(
-        f"SELECT {key}::text AS id, home_shard_id FROM {table}")}
+    sql = f"SELECT {key}::text AS id, home_shard_id FROM {table}"
+    if index_pool is None:   # a search group: every member's rows
+        from app.services import search_group
+
+        rows = await search_group.fetch_all(pool, sql, strict=True)
+    else:
+        rows = await index_pool.fetch(sql)
+    projected = {r["id"]: r["home_shard_id"] for r in rows}
     return {
         "missing": len(canonical - set(projected) - pending),
         "lagging": len(pending),

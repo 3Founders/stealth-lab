@@ -141,7 +141,39 @@ async def _specific_goal_ids(pool: asyncpg.Pool, goal_id: str, query: str, *, ac
     `goal_id`, ordered by full-text relevance to the request (then newest)."""
     from app.services.access import visibility_predicate
 
+    from app.services import search_group
+
     vis, vis_params = visibility_predicate(access_scope, alias="g", param_index=4)
+    if await search_group.grouped(pool):
+        # storage layout v2 (migration 132): the Goals' text is in goal_search_docs on the search members, so the
+        # candidates come from here and the text rank from the members; the order is the query's below.
+        cands = await pool.fetch(
+            f"""
+            WITH RECURSIVE down(goal_id, depth) AS (
+                SELECT r.specific_goal_id, 1 FROM goal_relations r
+                 WHERE r.abstract_goal_id = $1::uuid AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+                UNION
+                SELECT r.specific_goal_id, down.depth + 1 FROM down
+                  JOIN goal_relations r ON r.abstract_goal_id = down.goal_id
+                   AND r.relation_type = 'SPECIALIZES' AND r.status = 'accepted'
+                 WHERE down.depth < $2
+            )
+            SELECT g.goal_id::text AS id, g.t_created, $3::text AS _q
+              FROM goal_search_index g
+             WHERE g.goal_id IN (SELECT goal_id FROM down) AND g.status IN ('active', 'candidate') AND {vis}
+            """,
+            str(goal_id), SPECIFIC_GOAL_DEPTH, query[:2000], *vis_params)
+        if not cands:
+            return []
+        rank = {r["id"]: float(r["r"] or 0.0) for r in await search_group.fetch_all(
+            pool, "SELECT goal_id::text AS id, ts_rank(search_tsv, plainto_tsquery('english', $2)) AS r "
+            "FROM goal_search_docs WHERE goal_id = ANY($1::uuid[])", [c["id"] for c in cands], query[:2000], strict=True)}
+        # ORDER BY rank DESC, t_created DESC NULLS LAST, goal_id -- as stable sorts, last key first
+        by_id = sorted(cands, key=lambda c: c["id"])
+        ordered = (sorted((c for c in by_id if c["t_created"] is not None), key=lambda c: c["t_created"], reverse=True)
+                   + [c for c in by_id if c["t_created"] is None])
+        ordered.sort(key=lambda c: rank.get(c["id"], 0.0), reverse=True)
+        return [c["id"] for c in ordered[:int(SPECIFIC_GOAL_LIMIT)]]
     rows = await pool.fetch(
         f"""
         WITH RECURSIVE down(goal_id, depth) AS (

@@ -26,7 +26,9 @@ _VECTOR_TABLES = (
     ("goal_search_index", "embedding_model", "embedding"),
     ("procedure_search_index", "embedding_model", "embedding"),
     ("claim_search_index", "embedding_model", "embedding"),
+    ("goal_search_docs", "embedding_model", "embedding"),     # migration 132: a Goal's vector on a search member
 )
+_CANONICAL = {"goals", "procedures", "knowledge_nodes"}
 
 
 class PreflightFailed(RuntimeError):
@@ -54,22 +56,31 @@ async def check_migrations(pool: Any, *, command: str) -> None:
 
 
 async def stored_embedding_models(pool: Any) -> dict[str, dict[str, int]]:
-    """{table: {model: rows with a vector}}; a vector with no recorded model is reported as '(unrecorded)'."""
+    """{table: {model: rows with a vector}}; a vector with no recorded model is reported as '(unrecorded)'.
+    Storage layout v2: canonical tables are counted on every knowledge shard and search tables on every search member
+    (goal_search_index stays on the control database), so vectors spread over many databases are still one space."""
+    from app.services import search_group
+    from app.services.shards import all_pools
+
+    canonical_dbs = [p for _sid, p in await all_pools(pool, strict=True)]
+    search_dbs = [p for _mid, p in await search_group.member_pools(pool, strict=True)]
     out: dict[str, dict[str, int]] = {}
     for table, model_col, vec_col in _VECTOR_TABLES:
-        exists = await pool.fetchval("SELECT to_regclass($1) IS NOT NULL", table)
-        if not exists:
-            continue
-        cols = {r["column_name"] for r in await pool.fetch(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() "
-            "AND table_name = $1", table)}
-        if model_col not in cols or vec_col not in cols:
-            continue
-        rows = await pool.fetch(
-            f"SELECT coalesce(nullif({model_col}, 'unknown'), '(unrecorded)') AS m, count(*) AS n "
-            f"FROM {table} WHERE {vec_col} IS NOT NULL GROUP BY 1")
-        if rows:
-            out[table] = {r["m"]: int(r["n"]) for r in rows}
+        dbs = canonical_dbs if table in _CANONICAL else [pool] if table == "goal_search_index" else search_dbs
+        for db in dbs:
+            exists = await db.fetchval("SELECT to_regclass($1) IS NOT NULL", table)
+            if not exists:
+                continue
+            cols = {r["column_name"] for r in await db.fetch(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() "
+                "AND table_name = $1", table)}
+            if model_col not in cols or vec_col not in cols:
+                continue
+            for r in await db.fetch(
+                    f"SELECT coalesce(nullif({model_col}, 'unknown'), '(unrecorded)') AS m, count(*) AS n "
+                    f"FROM {table} WHERE {vec_col} IS NOT NULL GROUP BY 1"):
+                counts = out.setdefault(table, {})
+                counts[r["m"]] = counts.get(r["m"], 0) + int(r["n"])
     return out
 
 

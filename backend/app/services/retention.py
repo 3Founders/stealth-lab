@@ -25,12 +25,21 @@ async def prune_operational_rows(pool: Any, *, older_than_days: int, apply: bool
     from app.services.shards import SEARCH_DB_TABLES, search_pool
 
     report: dict[str, Any] = {"older_than_days": older_than_days, "applied": apply, "tables": {}}
+    from app.services import search_group
+
     for table, column, condition in _PRUNABLE:
-        db = await search_pool(pool) if table in SEARCH_DB_TABLES else pool
         where = f"{column} < now() - make_interval(days => $1) AND {condition}"
+        if table in SEARCH_DB_TABLES:     # every member of a search group (the single search pool without one)
+            if apply:
+                report["tables"][table] = await search_group.execute_all(
+                    pool, f"DELETE FROM {table} WHERE {where}", older_than_days)
+            else:
+                report["tables"][table] = int(await search_group.fetchval_sum(
+                    pool, f"SELECT count(*) FROM {table} WHERE {where}", older_than_days))
+            continue
         if apply:
-            tag = await db.execute(f"DELETE FROM {table} WHERE {where}", older_than_days)
+            tag = await pool.execute(f"DELETE FROM {table} WHERE {where}", older_than_days)
             report["tables"][table] = int(str(tag).split()[-1])
         else:
-            report["tables"][table] = int(await db.fetchval(f"SELECT count(*) FROM {table} WHERE {where}", older_than_days))
+            report["tables"][table] = int(await pool.fetchval(f"SELECT count(*) FROM {table} WHERE {where}", older_than_days))
     return report

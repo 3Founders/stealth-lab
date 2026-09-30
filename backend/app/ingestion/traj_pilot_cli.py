@@ -218,11 +218,16 @@ async def _spend_between(pool, start: "datetime", end: "datetime") -> tuple[int,
     a non-zero attempt count means the *measurement* failed, not that the run
     was free -- and this report must be able to say which.
     """
-    total, rows = await pool.fetchrow(
+    from app.services import search_group
+
+    # llm_spend is a log on the search database (every member of a search group, migration 132)
+    parts = await search_group.fetch_all(
+        pool,
         "SELECT COALESCE(SUM(estimated_cost), 0) AS usd, count(*) AS n FROM llm_spend "
         "WHERE occurred_at >= $1 AND occurred_at <= $2",
         start, end,
     )
+    total, rows = sum((p["usd"] for p in parts), 0), sum(int(p["n"]) for p in parts)
     return int(rows or 0), float(total or 0.0)
 
 

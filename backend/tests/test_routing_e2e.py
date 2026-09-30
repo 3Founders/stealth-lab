@@ -72,10 +72,10 @@ async def test_recommender_end_to_end(pool):
     rec = res["recommended"]
     assert rec["ladder"] and 0 <= rec["p_success_q05"] <= rec["p_success"] <= rec["p_success_q95"] <= 1
     assert res["p_correct_single_attempt"][f"{big}|claude-code"] > res["p_correct_single_attempt"][f"{small}|claude-code"]
-    from app.services.shards import search_pool
-    logs = await search_pool(pool)                      # project B when SEARCH_DATABASE_URL is set
-    log = await logs.fetchrow("SELECT ladder, propensity FROM routing_decisions WHERE id = $1::uuid",
-                              res["recommendation_id"])
+    from app.services import search_group
+    # the log database B (SEARCH_DATABASE_URL, or every member of a search group -- migration 132)
+    log = await search_group.fetchrow_any(pool, "SELECT ladder, propensity FROM routing_decisions WHERE id = $1::uuid",
+                                          res["recommendation_id"])
     assert log is not None and 0 < log["propensity"] <= 1
 
     # --- the small model was rejected on THIS instance: the big one is now less likely too
@@ -91,7 +91,7 @@ async def test_recommender_end_to_end(pool):
     job = await pool.fetchrow("SELECT job_type, payload FROM ingestion_jobs WHERE idempotency_key = $1",
                               f"{child}:{obs_id}")
     assert job["job_type"] == "routing_local_refit"
-    assert await logs.fetchval("SELECT count(*) FROM routing_observations WHERE id = $1::uuid", obs_id) == 1
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_observations WHERE id = $1::uuid", obs_id) == 1
     out = await local_refit(pool, child, CFG, seed=2)
     assert out["observations"] == 81 and out["params_version"] == version
     post = (await store.load_posteriors(pool, "goal", [child]))[child]

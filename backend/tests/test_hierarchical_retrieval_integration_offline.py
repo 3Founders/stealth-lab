@@ -14,6 +14,8 @@ class FakePool:
         self.queries = []
 
     async def fetch(self, sql, *params):
+        if "FROM knowledge_shards" in sql:
+            return []      # the shard registry (is B a search group? -- storage layout v2): empty, one database
         self.queries.append((" ".join(sql.split()), params))
         if self.error is not None:
             raise self.error

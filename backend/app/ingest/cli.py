@@ -44,12 +44,11 @@ def _parse(argv: Optional[list[str]]) -> argparse.Namespace:
 
 
 async def _spend_since(pool: Any, since: datetime) -> Optional[float]:
-    from app.services.shards import search_pool
+    from app.services import search_group
 
-    sp = await search_pool(pool)
     try:
-        value = await sp.fetchval("SELECT coalesce(sum(estimated_cost), 0) FROM llm_spend WHERE occurred_at >= $1",
-                                  since)
+        value = await search_group.fetchval_sum(
+            pool, "SELECT coalesce(sum(estimated_cost), 0) FROM llm_spend WHERE occurred_at >= $1", since, strict=True)
         return round(float(value or 0), 4)
     except Exception:  # noqa: BLE001 -- the report says unknown rather than zero
         return None

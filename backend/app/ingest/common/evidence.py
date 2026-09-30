@@ -22,6 +22,7 @@ async def record_benchmark_support(pool: Any, *, procedure_row_id: str, target_v
                                    extractor_version: str) -> str:
     from app.execution.evidence import validate_evidence
     from app.services.access import TenantScope, tenant_transaction
+    from app.services.shards import home_pool
     from app.utils.ids import uuid7
 
     validate_evidence(
@@ -33,7 +34,9 @@ async def record_benchmark_support(pool: Any, *, procedure_row_id: str, target_v
     )
     evidence_id = uuid7()
     scope = TenantScope.commons()
-    async with tenant_transaction(pool, scope) as conn:
+    # evidence lives with its Procedure on the Procedure's home shard: retrieval's source-support count reads it there
+    owner = await home_pool(pool, "procedure", str(procedure_row_id), by_row_id=True)
+    async with tenant_transaction(owner, scope) as conn:
         row = await conn.fetchrow(
             """
             INSERT INTO evidence (

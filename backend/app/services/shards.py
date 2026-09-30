@@ -26,6 +26,7 @@ import math
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Optional, Sequence
 
 import asyncpg
@@ -54,7 +55,7 @@ def writable_shards(shards: Sequence["ShardInfo"], *, visibility: str = "public"
     if visibility != "public" or not remote_writes_enabled():
         # the home shard is ALWAYS a valid home for private data, whatever weight/status public placement gives it
         return [ShardInfo(HOME_SHARD, "active", 100)]
-    return list(shards)
+    return knowledge_members(shards)
 
 
 async def multi_shard(pool: Any) -> bool:
@@ -62,7 +63,7 @@ async def multi_shard(pool: Any) -> bool:
     if not isinstance(pool, asyncpg.Pool):   # test doubles / non-database stand-ins are single-shard by definition
         return False
     try:
-        return any(s.shard_id != HOME_SHARD for s in await cached_shards(pool))
+        return any(s.shard_id != HOME_SHARD and s.role == ROLE_KNOWLEDGE for s in await cached_shards(pool))
     except Exception:  # noqa: BLE001 -- a pool without the registry (offline fakes, pre-95 DB) is single-shard
         return False
 
@@ -204,6 +205,35 @@ async def close_search_pools() -> None:
 _POOLS: dict[int, "ShardPools"] = {}
 
 
+SHARDS_ENV_FILE = Path(__file__).resolve().parents[2] / ".neon_shards.env"
+_ENV_FILE_CACHE: dict[str, Any] = {"key": None, "values": {}}
+
+
+def shard_dsn(env_name: Optional[str]) -> Optional[str]:
+    """A shard's or search member's connection string: the process environment first, then the git-ignored
+    `.neon_shards.env` that provisioning writes (scripts/provision_neon_shards.py, storage_autoscale) -- re-read
+    when it changes, so a database added while a process runs is reachable without restarting it. The registry
+    only ever stores the variable NAME."""
+    if not env_name:
+        return None
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    path = Path(os.environ.get("STEALTH_SHARDS_ENV_FILE") or SHARDS_ENV_FILE)
+    try:
+        key = (str(path), path.stat().st_mtime)
+    except OSError:
+        return None
+    if _ENV_FILE_CACHE["key"] != key:
+        values: dict[str, str] = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name, sep, val = line.strip().partition("=")
+            if sep and name and not name.startswith("#"):
+                values[name] = val
+        _ENV_FILE_CACHE.update(key=key, values=values)
+    return _ENV_FILE_CACHE["values"].get(env_name)
+
+
 def pools_for(pool: Any) -> "ShardPools":
     """Process-wide ShardPools bound to a control pool (created once per control pool)."""
     key = id(pool)
@@ -274,6 +304,7 @@ class ShardInfo:
     dsn_env: Optional[str] = None
     capacity_rows: Optional[int] = None
     capacity_bytes: Optional[int] = None   # storage limit (migration 116), enforced by shard_capacity
+    role: str = "knowledge"                # migration 132: knowledge (canonical data) | search (search indexes + logs)
 
     @property
     def writable(self) -> bool:
@@ -327,7 +358,16 @@ def choose_child_shard(preferred_shard: Optional[str], key: str, shards: Sequenc
 async def list_shards(pool: asyncpg.Pool | asyncpg.Connection) -> list[ShardInfo]:
     rows = await pool.fetch("SELECT * FROM knowledge_shards ORDER BY shard_id")
     return [ShardInfo(r["shard_id"], r["status"], r["weight"], r["dsn_env"], r["capacity_rows"],
-                      dict(r).get("capacity_bytes")) for r in rows]
+                      dict(r).get("capacity_bytes"), dict(r).get("role") or ROLE_KNOWLEDGE) for r in rows]
+
+
+ROLE_KNOWLEDGE, ROLE_SEARCH = "knowledge", "search"
+
+
+def knowledge_members(shards: Sequence["ShardInfo"]) -> list["ShardInfo"]:
+    """Databases that hold canonical knowledge (K000 and K001..): placement, routes and fan-out reads of canonical
+    tables use only these. Search members (role 'search', migration 132) never hold canonical rows."""
+    return [s for s in shards if s.role == ROLE_KNOWLEDGE]
 
 
 _SHARD_CACHE: dict[int, tuple[float, list[ShardInfo]]] = {}
@@ -354,9 +394,9 @@ def invalidate_shard_cache() -> None:
 async def register_shard(
     pool: asyncpg.Pool, shard_id: str, *, dsn_env: Optional[str], weight: int = 100,
     status: str = "active", capacity_rows: Optional[int] = None, notes: Optional[str] = None,
-    capacity_bytes: Optional[int] = None,
+    capacity_bytes: Optional[int] = None, role: str = "knowledge",
 ) -> ShardInfo:
-    """Idempotent upsert of a shard record (never stores a DSN)."""
+    """Idempotent upsert of a shard record (never stores a DSN). `role`: knowledge | search (migration 132)."""
     if dsn_env is not None and "://" in dsn_env:
         raise ValueError("dsn_env must be the NAME of an environment variable, never a connection string")
     await pool.execute(
@@ -372,8 +412,10 @@ async def register_shard(
     )
     if capacity_bytes is not None:
         await pool.execute("UPDATE knowledge_shards SET capacity_bytes = $2 WHERE shard_id = $1", shard_id, capacity_bytes)
+    if role != ROLE_KNOWLEDGE:
+        await pool.execute("UPDATE knowledge_shards SET role = $2 WHERE shard_id = $1", shard_id, role)
     invalidate_shard_cache()
-    return ShardInfo(shard_id, status, weight, dsn_env, capacity_rows, capacity_bytes)
+    return ShardInfo(shard_id, status, weight, dsn_env, capacity_rows, capacity_bytes, role)
 
 
 async def set_shard_status(pool: asyncpg.Pool, shard_id: str, status: str) -> None:
@@ -463,7 +505,7 @@ class ShardPools:
                 raise ShardUnavailable(shard_id, "not registered")
             if info.status not in READABLE_STATUSES:
                 raise ShardUnavailable(shard_id, f"status={info.status}")
-            dsn = os.environ.get(info.dsn_env or "")
+            dsn = shard_dsn(info.dsn_env)
             if not dsn:
                 raise ShardUnavailable(shard_id, f"env var {info.dsn_env!r} is not set")
             try:
@@ -566,7 +608,7 @@ async def verify_routes(pool: Any, *, limit_per_shard: int = 100000) -> dict[str
     sp = pools_for(pool)
     tables = {"goal": ("goals", "id"), "procedure": ("procedures", "procedure_id"), "claim": ("knowledge_nodes", "id")}
     for shard in await list_shards(pool):
-        if shard.shard_id == HOME_SHARD:
+        if shard.shard_id == HOME_SHARD or shard.role != ROLE_KNOWLEDGE:
             continue
         try:
             spool = await sp.get(shard.shard_id)
@@ -616,7 +658,7 @@ async def all_pools(pool: Any, *, strict: bool = False) -> list[tuple[str, Any]]
         return out
     sp = pools_for(pool)
     for info in await cached_shards(pool):
-        if info.shard_id == HOME_SHARD or info.status not in READABLE_STATUSES:
+        if info.shard_id == HOME_SHARD or info.status not in READABLE_STATUSES or info.role != ROLE_KNOWLEDGE:
             continue
         try:
             out.append((info.shard_id, await sp.get(info.shard_id)))

@@ -6,6 +6,7 @@
 
     python scripts/provision_neon_shards.py --count 100 --dry-run      # show the plan, change nothing
     python scripts/provision_neon_shards.py --count 100                # create + migrate + register
+    python scripts/provision_neon_shards.py --kind search --count 4    # search members S001.. (layout v2)
 
 What it does, per shard K001..K<count> (all steps idempotent -- safe to re-run
 after a failure, it resumes):
@@ -15,9 +16,15 @@ after a failure, it resumes):
               (default backend/.neon_shards.env, git-ignored; NEVER commit it)
   3. migrate  `scripts/migrate.py --dsn <shard>` (the normal control migrations;
               skipped with --skip-migrate)
-  4. register the shard in the control database's knowledge_shards with
+  4. mark    the database's role (sl_database_role, migration 133): a knowledge shard
+              or a search member never keeps control-plane rows of its own
+  5. register the shard in the control database's knowledge_shards with
               dsn_env=K001_DATABASE_URL and --capacity-bytes (skipped with
               --skip-register). The registry stores the env var NAME, never the DSN.
+
+--kind search provisions search members instead (storage layout v2, migration 132):
+S001.., S001_DATABASE_URL, registered with role 'search' -- the group that holds the
+search projections and logs (docs/storage_layout_v2.md).
 
 After it finishes, every process that reads shards (API, MCP server, workers)
 needs the K0xx_DATABASE_URL variables from the env file in its environment.
@@ -45,8 +52,13 @@ NEON_API = "https://console.neon.tech/api/v2"
 DEFAULT_CAPACITY_BYTES = 500 * 1024 * 1024          # a 500 MB project
 
 
+KIND = "knowledge"      # --kind: "knowledge" (K001..) or "search" (S001..)
+_LETTER = {"knowledge": "K", "search": "S"}
+_DB_ROLE = {"knowledge": "knowledge_shard", "search": "search_member"}
+
+
 def shard_id(index: int) -> str:
-    return f"K{index:03d}"
+    return f"{_LETTER[KIND]}{index:03d}"
 
 
 def project_name(prefix: str, index: int) -> str:
@@ -55,6 +67,19 @@ def project_name(prefix: str, index: int) -> str:
 
 def dsn_env(index: int) -> str:
     return f"{shard_id(index)}_DATABASE_URL"
+
+
+async def mark_role(dsn: str) -> None:
+    """Record on the new database which role it plays (migration 133), so its triggers never write control-plane
+    rows (routes, outbox) that only the control database drains."""
+    import asyncpg
+
+    conn = await asyncpg.connect(dsn)
+    try:
+        await conn.execute("INSERT INTO sl_database_role (singleton, role) VALUES (true, $1) "
+                           "ON CONFLICT (singleton) DO UPDATE SET role = EXCLUDED.role", _DB_ROLE[KIND])
+    finally:
+        await conn.close()
 
 
 # ------------------------------------------------------------------ Neon API
@@ -142,6 +167,7 @@ def migrate(dsn: str) -> None:
                             capture_output=True, text=True, cwd=BACKEND_ROOT)
     if result.returncode != 0:
         raise RuntimeError(f"migrate failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
+    asyncio.run(mark_role(dsn))          # part of preparing the database: which role it plays (migration 133)
 
 
 async def register(control_dsn: str, index: int, dsn: str, *, weight: int, capacity_bytes: int) -> None:
@@ -156,7 +182,8 @@ async def register(control_dsn: str, index: int, dsn: str, *, weight: int, capac
     pool = await asyncpg.create_pool(control_dsn, min_size=1, max_size=2)
     try:
         await sh.register_shard(pool, shard_id(index), dsn_env=dsn_env(index), weight=weight,
-                                capacity_bytes=capacity_bytes, notes="neon project (provision_neon_shards.py)")
+                                capacity_bytes=capacity_bytes, notes="neon project (provision_neon_shards.py)",
+                                role=KIND)
     finally:
         await pool.close()
 
@@ -164,6 +191,8 @@ async def register(control_dsn: str, index: int, dsn: str, *, weight: int, capac
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--count", type=int, required=True, help="number of shards (K001..K<count>)")
+    ap.add_argument("--kind", choices=sorted(_LETTER), default="knowledge",
+                    help="knowledge shards K001.. (default) or search members S001.. (storage layout v2)")
     ap.add_argument("--start", type=int, default=1, help="first shard number (default 1 -> K001)")
     ap.add_argument("--prefix", default="stealthlab", help="Neon project name prefix (default: stealthlab)")
     ap.add_argument("--region", default="aws-us-east-2", help="Neon region id -- use the SAME region as the app")
@@ -178,6 +207,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--skip-register", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="show the plan; create/change nothing")
     args = ap.parse_args(argv)
+    global KIND
+    KIND = args.kind
 
     if args.count < 1 or args.start < 1 or args.start + args.count - 1 > 999:
         print("ERROR: shard numbers must stay within K001..K999", file=sys.stderr)

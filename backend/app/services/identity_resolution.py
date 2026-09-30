@@ -510,6 +510,22 @@ async def generate_goal_candidates(
     from app.services.shards import HOME_SHARD, multi_shard
 
     if await multi_shard(pool):
+        # storage layout v2: with a search group, a Goal's searchable text and vector are in goal_search_docs on the
+        # search members (the same filter columns); the rows are merged by the same ordering as one database gives.
+        from app.services import search_group
+
+        if await search_group.grouped(pool):
+            gtable = "goal_search_docs"
+            gtargets = [p for _mid, p in await search_group.member_pools(pool)]
+        else:
+            gtable, gtargets = "goal_search_index", [pool]
+
+        async def _goal_rows(sql: str, args: list, key: Any, limit: int) -> list:
+            if len(gtargets) == 1:
+                return list(await gtargets[0].fetch(sql, *args))
+            parts = await asyncio.gather(*[t.fetch(sql, *args) for t in gtargets])
+            return sorted((r for part in parts for r in part), key=key)[:limit]
+
         rparams: list[Any] = [HOME_SHARD, "global" if scope_type == "global" else scope_type, scope_entity_id or ""]
         rbase = ("home_shard_id <> $1 AND status <> 'merged' AND COALESCE(scope_type, 'global') = $2 "
                  "AND COALESCE(scope_entity_id, '') = $3")
@@ -518,20 +534,23 @@ async def generate_goal_candidates(
             rbase += f" AND goal_id <> ${len(rparams)}::uuid"
         if q:
             n = len(rparams) + 1
-            for rank, r in enumerate(await pool.fetch(
-                    f"SELECT goal_id::text AS id, canonical_name, short_description AS description, home_shard_id FROM goal_search_index "
+            for rank, r in enumerate(await _goal_rows(
+                    f"SELECT goal_id::text AS id, canonical_name, short_description AS description, home_shard_id, "
+                    f"ts_rank_cd(search_tsv, to_tsquery('english', ${n})) AS r FROM {gtable} "
                     f"WHERE {rbase} AND search_tsv @@ to_tsquery('english', ${n}) "
-                    f"ORDER BY ts_rank_cd(search_tsv, to_tsquery('english', ${n})) DESC, goal_id LIMIT {int(fts_k)}", *rparams, q), 1):
+                    f"ORDER BY r DESC, goal_id LIMIT {int(fts_k)}", [*rparams, q],
+                    lambda x: (-x["r"], x["id"]), int(fts_k)), 1):
                 c = by_id.setdefault(r["id"], Candidate(r["id"], r["canonical_name"], _goal_text(r), home_shard_id=r["home_shard_id"]))
                 c.fts_rank = c.fts_rank or rank
                 fts_ids.append(r["id"])
         if embedding is not None and embedding_model:
             n = len(rparams) + 1
-            for rank, r in enumerate(await pool.fetch(
+            for rank, r in enumerate(await _goal_rows(
                     f"SELECT goal_id::text AS id, canonical_name, short_description AS description, home_shard_id, "
-                    f"embedding <=> ${n}::vector AS dist FROM goal_search_index WHERE {rbase} AND embedding IS NOT NULL "
+                    f"embedding <=> ${n}::vector AS dist FROM {gtable} WHERE {rbase} AND embedding IS NOT NULL "
                     f"AND embedding_model = ${n + 1} ORDER BY dist, goal_id LIMIT {int(vector_k)}",
-                    *rparams, to_pgvector(embedding), embedding_model), 1):
+                    [*rparams, to_pgvector(embedding), embedding_model], lambda x: (x["dist"], x["id"]),
+                    int(vector_k)), 1):
                 c = by_id.setdefault(r["id"], Candidate(r["id"], r["canonical_name"], _goal_text(r), home_shard_id=r["home_shard_id"]))
                 c.vec_rank, c.vec_distance = rank, float(r["dist"])
                 vec_ids.append(r["id"])
@@ -762,9 +781,11 @@ def _validate_stored_decision_row(row: Any, object_type: str) -> tuple[str, list
 
 
 async def _load_prior_decision(pool, object_type: str, key: str) -> Optional[asyncpg.Record]:
-    from app.services.shards import search_pool
+    # every member of a search group (a decision made before a member was added lives on an older one)
+    from app.services import search_group
 
-    return await (await search_pool(pool)).fetchrow(
+    return await search_group.fetchrow_any(
+        pool,
         "SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision, "
         "resolved_id::text AS resolved_id, candidates, judge_provider, judge_model, "
         "fts_candidates, vector_candidates, job_id, detail, idempotency_key "
@@ -864,10 +885,17 @@ async def record_decision(
         raise IdentityReplayError("fts_n must be a non-negative integer")
     if isinstance(vec_n, bool) or not isinstance(vec_n, int) or vec_n < 0:
         raise IdentityReplayError("vec_n must be a non-negative integer")
-    from app.services.shards import search_pool
+    from app.services import search_group
 
+    # A search group (migration 132): the idempotency key must meet its earlier decision on whichever member holds
+    # it, so look it up everywhere first; a new decision goes to the member the key hashes to (two writers of the
+    # same key at the same moment land on the same member, where ON CONFLICT settles it as before).
+    grouped = await search_group.grouped(pool)
+    prior_elsewhere = (await _load_prior_decision(pool, object_type, idempotency_key)
+                       if grouped and idempotency_key else None)
+    target = await search_group.pool_for_log(pool, f"identity:{object_type}:{idempotency_key or candidate_text}")
     try:
-        row = await (await search_pool(pool)).fetchrow(
+        row = None if prior_elsewhere is not None else await target.fetchrow(
             """
             INSERT INTO identity_decisions (object_type, candidate_text, scope_type, scope_entity_id, decision,
                 resolved_id, candidates, judge_chain, judge_provider, judge_model, prompt_version,
@@ -917,9 +945,10 @@ async def load_goal_identity_decision(
         normalized = str(UUID(str(decision_id)))
     except (TypeError, ValueError, AttributeError) as exc:
         raise ValueError("decision_id must be a UUID") from exc
-    from app.services.shards import search_pool
+    from app.services import search_group
 
-    row = await (await search_pool(pool)).fetchrow(
+    row = await search_group.fetchrow_any(
+        pool,
         """
         SELECT id::text AS id, candidate_text, scope_type, scope_entity_id, decision,
                resolved_id::text AS resolved_id, candidates, judge_provider, judge_model,
@@ -1219,7 +1248,8 @@ async def reconcile_goals(
             from app.services.shards import HOME_SHARD, list_shards, multi_shard, pools_for
 
             sources: list[tuple[Any, Any]] = []      # (row, pool that owns it)
-            shard_list = [s.shard_id for s in await list_shards(pool)] if await multi_shard(pool) else [HOME_SHARD]
+            shard_list = ([s.shard_id for s in await list_shards(pool) if s.role == "knowledge"]
+                          if await multi_shard(pool) else [HOME_SHARD])
             for sid in shard_list:
                 try:
                     spool = pool if sid == HOME_SHARD else await pools_for(pool).get(sid)
@@ -1299,6 +1329,8 @@ async def _merge_goal_sharded(pool: asyncpg.Pool, loser_id: str, survivor_id: st
         return {"procedures": 0, "already_merged": 1}
     moved = 0
     for shard in await list_shards(pool):
+        if shard.role != "knowledge":
+            continue
         try:
             spool = pool if shard.shard_id == HOME_SHARD else await sp.get(shard.shard_id)
         except Exception:  # noqa: BLE001 -- an unreachable shard: procedures there are repaired by the relink sweep

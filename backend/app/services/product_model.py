@@ -539,12 +539,28 @@ async def find_goal(
     sql, params, idx = scope_predicates(scope, tenant, alias="g", param_index=2)
     page_size = min(max(int(limit), 1), 50)
     limit_idx, offset_idx = idx, idx + 1
-    page = await pool.fetch(
-        f"SELECT g.goal_id, g.home_shard_id, ts_rank(g.search_tsv, to_tsquery('english', $1)) AS _rank "
-        f"FROM goal_search_index g WHERE {' AND '.join([*clauses, sql])} "
-        f"ORDER BY _rank DESC, g.goal_id LIMIT ${limit_idx} OFFSET ${offset_idx}",
-        tsq, *params, page_size + 1, max(int(offset), 0),
-    )
+    from app.services import search_group
+
+    if await search_group.grouped(pool):
+        # storage layout v2 (migration 132): the Goals' text is in goal_search_docs on the search members (with the
+        # same filter columns). Each member returns its first offset+page+1 rows in the page order; merged in that
+        # order they give exactly the page one database gives.
+        start = max(int(offset), 0)
+        merged = await search_group.fetch_merged(
+            pool,
+            f"SELECT g.goal_id, g.home_shard_id, ts_rank(g.search_tsv, to_tsquery('english', $1)) AS _rank "
+            f"FROM goal_search_docs g WHERE {' AND '.join([*clauses, sql])} "
+            f"ORDER BY _rank DESC, g.goal_id LIMIT ${limit_idx} OFFSET ${offset_idx}",
+            tsq, *params, start + page_size + 1, 0,
+            key=lambda r: (-r["_rank"], r["goal_id"]), limit=start + page_size + 1, strict=False)
+        page = merged[start:]
+    else:
+        page = await pool.fetch(
+            f"SELECT g.goal_id, g.home_shard_id, ts_rank(g.search_tsv, to_tsquery('english', $1)) AS _rank "
+            f"FROM goal_search_index g WHERE {' AND '.join([*clauses, sql])} "
+            f"ORDER BY _rank DESC, g.goal_id LIMIT ${limit_idx} OFFSET ${offset_idx}",
+            tsq, *params, page_size + 1, max(int(offset), 0),
+        )
     rows = [canonical for canonical, _ in await _hydrate_goal_page(
         pool, page[:page_size], scope=scope, tenant_scope=tenant)]
     ranked = _rank_goal_rows(await _with_demand(pool, rows, scope=scope), resolved=resolved)

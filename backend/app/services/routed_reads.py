@@ -118,8 +118,10 @@ async def fetch_goal_procedures(
         f"SELECT {columns} FROM procedures WHERE achieves_goal_id = ANY($1::uuid[]) AND {where}", ids)]
     if not await multi_shard(pool):
         return rows
-    refs = await (await search_pool(pool)).fetch(
-        "SELECT procedure_row_id::text AS id, home_shard_id FROM procedure_search_index "
+    from app.services import search_group
+
+    refs = await search_group.fetch_all(
+        pool, "SELECT procedure_row_id::text AS id, home_shard_id FROM procedure_search_index "
         "WHERE goal_id = ANY($1::uuid[]) AND home_shard_id <> $2", ids, HOME_SHARD)
     if not refs:
         return rows

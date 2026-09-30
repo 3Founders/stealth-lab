@@ -39,6 +39,10 @@ async def pool():
     p = await create_pool()
     yield p
     await p.execute("DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{T}%")
+    from app.services import search_group      # the same log rows on the members of a search group (migration 132)
+
+    if await search_group.grouped(p):
+        await search_group.execute_all(p, "DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{T}%")
     await p.execute("DELETE FROM procedures WHERE name LIKE $1", f"{T}%")
     await p.execute("DELETE FROM goals WHERE canonical_name LIKE $1", f"{T}%")
     await p.close()

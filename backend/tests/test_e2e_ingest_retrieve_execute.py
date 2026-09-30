@@ -12,6 +12,8 @@ from dataclasses import replace
 from uuid import UUID
 
 import pytest
+
+from app.services import search_group   # B tables: every member of a search group (migration 132)
 import pytest_asyncio
 
 from app.db.session import create_pool
@@ -104,6 +106,10 @@ async def pool():
     await p.execute("UPDATE goals SET t_invalid = now() WHERE canonical_name LIKE 'e2e%' AND t_invalid IS NULL")
     await p.execute("DELETE FROM goal_search_index WHERE canonical_name LIKE 'e2e%'")
     await p.execute("DELETE FROM procedure_search_index WHERE name LIKE 'e2e%'")
+    if await search_group.grouped(p):    # the same projection/log rows on the search members (bypassing the projection)
+        await search_group.execute_all(p, "DELETE FROM goal_search_docs WHERE canonical_name LIKE 'e2e%'")
+        await search_group.execute_all(p, "DELETE FROM procedure_search_index WHERE name LIKE 'e2e%'")
+        await search_group.execute_all(p, "DELETE FROM identity_decisions WHERE candidate_text LIKE 'e2e%'")
     await p.close()
 
 
@@ -146,13 +152,14 @@ async def test_full_pipeline_from_enqueue_to_plan(pool):
     assert await pool.fetchval("SELECT count(*) FROM ingestion_contexts WHERE source_uri LIKE $1", f"https://example.test/{T}/%") == 5
     rel = await pool.fetchrow("SELECT * FROM goal_relations WHERE specific_goal_id=$1::uuid", by_name[GOAL_NARROW])
     assert str(rel["abstract_goal_id"]) == caller_goal and rel["status"] == "proposed"      # hierarchy stored separately, optional
-    dec = await pool.fetch("SELECT decision FROM identity_decisions WHERE object_type='goal' AND candidate_text LIKE $1", f"{T} %")
+    from app.services import search_group      # identity_decisions: the log database (every member of a group)
+    dec = await search_group.fetch_all(pool, "SELECT decision FROM identity_decisions WHERE object_type='goal' AND candidate_text LIKE $1", f"{T} %")
     assert "same" in {d["decision"] for d in dec}                                           # the dedup decision is auditable
 
     # 4. projections were updated by the workers and agree with canonical rows
     assert (await sp.verify_projection(pool))["ok"]
     assert await pool.fetchval("SELECT count(*) FROM goal_search_index WHERE canonical_name LIKE $1", f"{T} %") == 3   # merged goals leave the index
-    assert await pool.fetchval("SELECT count(*) FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == 5
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM procedure_search_index WHERE name LIKE $1", f"{T} %") == 5
 
     # 5. real execution evidence (production writer): bazel is the best-proven method
     outcomes = {f"{T} bazel query rdeps": [True] * 9 + [False], f"{T} grep callers": [True, False] * 5,
@@ -178,7 +185,9 @@ async def test_full_pipeline_from_enqueue_to_plan(pool):
                                                "local_claims": [{"id": "lc-1", "statement": "this repo builds with gradle"}]})
     assert res2["recommendation"]["name"] == f"{T} grep callers"                           # local claim ruled bazel out
     assert res2["query_context"]["local_claim_ids"] == ["lc-1"]
-    logged = await pool.fetchrow("SELECT local_claim_ids, mode, selected_procedure_id::text AS sel FROM retrieval_decisions ORDER BY created_at DESC LIMIT 1")
+    logged = max(await search_group.fetch_all(       # the newest decision on any member of the log database
+        pool, "SELECT local_claim_ids, mode, selected_procedure_id::text AS sel, created_at FROM retrieval_decisions "
+              "ORDER BY created_at DESC LIMIT 1"), key=lambda r: r["created_at"])
     assert logged["local_claim_ids"] == ["lc-1"] and logged["sel"] == res2["recommendation"]["procedure_id"]
 
     # 7. hydrated canonical row feeds the EXISTING plan compiler + durable plan store

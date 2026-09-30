@@ -26,7 +26,8 @@ def ingest_embedder(pool: Any) -> Any:
 
 async def embed_written(pool: Any, *, goal_ids: Iterable[str] = (), procedure_row_ids: Iterable[str] = (),
                         procedure_ids: Iterable[str] = ()) -> dict:
-    from app.services.embedding_sweep import embed_goals, embed_procedures
+    from app.services.embedding_sweep import embed_everywhere
+    from app.services.shards import all_pools
 
     emb = ingest_embedder(pool)
     out = {"goals": 0, "procedures": 0}
@@ -35,12 +36,12 @@ async def embed_written(pool: Any, *, goal_ids: Iterable[str] = (), procedure_ro
     lineages = sorted({str(p) for p in procedure_ids if p})
     try:
         if lineages:
-            rows = sorted(set(rows) | {str(r["id"]) for r in await pool.fetch(
-                "SELECT id FROM procedures WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL", lineages)})
-        if goals:
-            out["goals"] = await embed_goals(pool, emb, ids=goals)
-        if rows:
-            out["procedures"] = await embed_procedures(pool, emb, ids=rows)
+            for _shard, p in await all_pools(pool):       # a lineage's rows are on its home shard
+                rows = sorted(set(rows) | {str(r["id"]) for r in await p.fetch(
+                    "SELECT id FROM procedures WHERE procedure_id = ANY($1::uuid[]) AND t_invalid IS NULL", lineages)})
+        if goals or rows:
+            done = await embed_everywhere(pool, emb, goal_ids=goals, procedure_row_ids=rows)
+            out["goals"], out["procedures"] = done["goals"], done["procedures"]
     except Exception:  # noqa: BLE001 -- the worker's sweep embeds whatever is left
         log.warning("embedding the item's Goals/Procedures failed; the worker sweep will retry", exc_info=True)
         out["error"] = True

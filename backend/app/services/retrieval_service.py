@@ -249,7 +249,13 @@ async def _legs(
     where_extra: str, extra_params: list, cfg: RetrievalConfig,
 ) -> tuple[list[Hit], int, int]:
     """FTS + ANN legs over one projection table, RRF-fused. ``where_extra`` may
-    reference $1.. for ``extra_params`` (bound first)."""
+    reference $1.. for ``extra_params`` (bound first).
+
+    Storage layout v2 (migration 132): with a search group, the projection is spread over search members (a Goal's
+    searchable text and vectors in goal_search_docs). Each leg then runs the SAME query on every member concurrently
+    and the rows are merged by the leg's own score -- ts_rank_cd (no corpus statistics) and cosine distance are
+    comparable across members, so the merged top-k equals the single-database top-k."""
+    targets = await _leg_targets(pool, table)
     base_params = list(extra_params)
     vis_sql, vis_params = visibility_predicate(scope, param_index=len(base_params) + 1)
     params = base_params + vis_params
@@ -262,21 +268,25 @@ async def _legs(
     q = fts_or_query(ctx_text)
     if q:
         n = len(params) + 1
-        rows = await pool.fetch(
-            f"SELECT {cols}, ts_rank_cd(search_tsv, to_tsquery('english', ${n})) AS r FROM {table} "
-            f"WHERE {where} AND search_tsv @@ to_tsquery('english', ${n}) ORDER BY r DESC, {id_col} LIMIT {cfg.search_top_k}",
-            *params, q)
+        rows = await _leg_rows(
+            targets,
+            lambda t: f"SELECT {cols}, ts_rank_cd(search_tsv, to_tsquery('english', ${n})) AS r FROM {t} "
+                      f"WHERE {where} AND search_tsv @@ to_tsquery('english', ${n}) ORDER BY r DESC, {id_col} "
+                      f"LIMIT {cfg.search_top_k}",
+            (*params, q), key=lambda r: (-r["r"], r["id"]), limit=cfg.search_top_k)
         for rank, r in enumerate(rows, 1):
             h = by_id.setdefault(r["id"], Hit(r["id"], r["name"], r["text"], r["home_shard_id"], extra=_extra(r)))
             h.fts_rank = rank
             fts_ids.append(r["id"])
     if embedding is not None and embedding_model:
         n = len(params) + 1
-        rows = await pool.fetch(
-            f"SELECT {cols}, embedding <=> ${n}::vector AS dist FROM {table} "
-            f"WHERE {where} AND embedding IS NOT NULL AND embedding_model = ${n + 1} "
-            f"ORDER BY dist ASC, {id_col} LIMIT {cfg.search_top_k}",
-            *params, to_pgvector(embedding), embedding_model)
+        rows = await _leg_rows(
+            targets,
+            lambda t: f"SELECT {cols}, embedding <=> ${n}::vector AS dist FROM {t} "
+                      f"WHERE {where} AND embedding IS NOT NULL AND embedding_model = ${n + 1} "
+                      f"ORDER BY dist ASC, {id_col} LIMIT {cfg.search_top_k}",
+            (*params, to_pgvector(embedding), embedding_model), key=lambda r: (r["dist"], r["id"]),
+            limit=cfg.search_top_k)
         for rank, r in enumerate(rows, 1):
             h = by_id.setdefault(r["id"], Hit(r["id"], r["name"], r["text"], r["home_shard_id"], extra=_extra(r)))
             h.vec_rank, h.vec_distance = rank, float(r["dist"])
@@ -284,6 +294,32 @@ async def _legs(
     for oid, sc in rrf_fuse(fts_ids, vec_ids).items():
         by_id[oid].rrf = sc
     return sorted(by_id.values(), key=lambda h: (-h.rrf, h.id)), len(fts_ids), len(vec_ids)
+
+
+_GROUPED_TABLES = {"goal_search_index": "goal_search_docs", "procedure_search_index": "procedure_search_index",
+                   "claim_search_index": "claim_search_index"}
+
+
+async def _leg_targets(pool: Any, table: str) -> list[tuple[Any, str]]:
+    """[(pool, table)] a leg reads: the given pool and table, or -- with a search group -- every member and the
+    member-side table (a Goal's searchable doc is goal_search_docs on the members)."""
+    from app.services import search_group
+
+    if table in _GROUPED_TABLES and await search_group.grouped(pool):
+        # read-only retrieval prefers a partial answer to none when a member is down (the others still answer)
+        return [(p, _GROUPED_TABLES[table]) for _mid, p in await search_group.member_pools(pool, strict=False)]
+    if table in ("procedure_search_index", "claim_search_index"):
+        return [(await search_pool(pool), table)]      # the single project B (or the control database)
+    return [(pool, table)]
+
+
+async def _leg_rows(targets: list[tuple[Any, str]], sql_for: Any, args: tuple, *, key: Any, limit: int) -> list:
+    """One leg's top `limit` rows over its targets (concurrent; merged by the leg's own ordering)."""
+    if len(targets) == 1:
+        p, t = targets[0]
+        return list(await p.fetch(sql_for(t), *args))
+    parts = await asyncio.gather(*[p.fetch(sql_for(t), *args) for p, t in targets])
+    return sorted((r for part in parts for r in part), key=key)[:limit]
 
 
 def _extra(r) -> dict:
@@ -526,12 +562,31 @@ async def _fetch_hierarchy_edges(
     q_i, e_i, m_i, f_i = index, index + 1, index + 2, index + 3
     embedding = ctx.query_embedding if ctx is not None else None
     model = ctx.embedding_model if ctx is not None else None
+    from app.services import search_group
+
+    # Storage layout v2 (migration 132): with a search group the Goals' vectors and text are in goal_search_docs on
+    # the members, not in the control row. The edges and the name tie-break then still come from this query, the two
+    # scores from the members (the same expressions), and the per-side ranking and fan-out cut below are the SQL
+    # ones applied in Python -- the same rows in the same order as one database gives.
+    grouped = await search_group.grouped(pool)
 
     def semantic(alias: str) -> str:
+        if grouped:
+            return "0::float8"
         return (f"CASE WHEN ${e_i}::vector IS NOT NULL AND {alias}.embedding IS NOT NULL "
                 f"AND {alias}.embedding_model = ${m_i}::text THEN 1 - ({alias}.embedding <=> ${e_i}::vector) ELSE 0 END")
 
-    return await pool.fetch(
+    def lexical(alias: str) -> str:
+        if grouped:
+            return "0::float4"
+        return f"COALESCE(ts_rank_cd({alias}.search_tsv, to_tsquery('english', ${q_i}::text)), 0)"
+
+    ranked_filter = (f"SELECT *, row_number() OVER (PARTITION BY node_id, side ORDER BY neighbour_name NULLS LAST, "
+                     f"neighbour_id) AS name_rank, dense_rank() OVER (ORDER BY node_id, side) AS group_rank "
+                     f"FROM ranked WHERE ${f_i}::int IS NOT NULL AND (${q_i}::text, ${e_i}::vector, "
+                     f"${m_i}::text) IS NOT NULL OR TRUE" if grouped else
+                     f"SELECT * FROM ranked WHERE side_rank <= ${f_i}")
+    rows = await pool.fetch(
         f"""
         WITH edge_rows AS (
         SELECT r.specific_goal_id::text AS specific_goal_id,
@@ -560,8 +615,8 @@ async def _fetch_hierarchy_edges(
                n.home_shard_id AS abstract_home_shard_id,
                {semantic("s")} AS specific_semantic,
                {semantic("n")} AS abstract_semantic,
-               COALESCE(ts_rank_cd(s.search_tsv, to_tsquery('english', ${q_i}::text)), 0) AS specific_lexical,
-               COALESCE(ts_rank_cd(n.search_tsv, to_tsquery('english', ${q_i}::text)), 0) AS abstract_lexical
+               {lexical("s")} AS specific_lexical,
+               {lexical("n")} AS abstract_lexical
         FROM goal_relations r
         JOIN goal_search_index s ON s.goal_id = r.specific_goal_id
         JOIN goal_search_index n ON n.goal_id = r.abstract_goal_id
@@ -595,8 +650,7 @@ async def _fetch_hierarchy_edges(
                    count(*) OVER (PARTITION BY node_id, side) AS side_total
               FROM sides
         )
-        SELECT * FROM ranked
-         WHERE side_rank <= ${f_i}
+        {ranked_filter}
          ORDER BY node_id, side, side_rank
         """,
         list(up_ids),
@@ -609,6 +663,53 @@ async def _fetch_hierarchy_edges(
         model,
         fanout,
     )
+    if not grouped:
+        return rows
+    return await _rank_hierarchy_edges_from_members(
+        pool, rows, query=fts_or_query(ctx.query) if ctx is not None else None,
+        embedding=to_pgvector(embedding) if embedding is not None and model else None, model=model, fanout=fanout)
+
+
+async def _rank_hierarchy_edges_from_members(
+    pool: Any, rows: Sequence[Any], *, query: Optional[str], embedding: Optional[str], model: Optional[str], fanout: int,
+) -> list[dict[str, Any]]:
+    """The search-group half of `_fetch_hierarchy_edges`: each Goal's semantic and lexical score from its
+    goal_search_docs row (whichever member holds it; the SQL expressions of the single-database query), then the
+    per-side order (semantic desc, lexical desc, name, id -- `name_rank` carries the name/id order from SQL) and the
+    fan-out cut."""
+    from app.services import search_group
+
+    ids = sorted({str(r["specific_goal_id"]) for r in rows} | {str(r["abstract_goal_id"]) for r in rows})
+    scores: dict[str, tuple[float, float]] = {}
+    if ids:
+        for r in await search_group.fetch_all(
+                pool,
+                "SELECT goal_id::text AS id, "
+                "CASE WHEN $2::vector IS NOT NULL AND embedding IS NOT NULL AND embedding_model = $3::text "
+                "THEN 1 - (embedding <=> $2::vector) ELSE 0 END AS semantic, "
+                "COALESCE(ts_rank_cd(search_tsv, to_tsquery('english', $4::text)), 0) AS lexical "
+                "FROM goal_search_docs WHERE goal_id = ANY($1::uuid[])",
+                ids, embedding, model, query, strict=True):
+            scores[r["id"]] = (float(r["semantic"] or 0.0), float(r["lexical"] or 0.0))
+    by_side: dict[int, list[dict[str, Any]]] = {}
+    for raw in rows:
+        row = dict(raw)
+        spec, abst = scores.get(str(row["specific_goal_id"]), (0.0, 0.0)), scores.get(str(row["abstract_goal_id"]), (0.0, 0.0))
+        row["specific_semantic"], row["specific_lexical"] = spec
+        row["abstract_semantic"], row["abstract_lexical"] = abst
+        row["neighbour_semantic"], row["neighbour_lexical"] = abst if row["side"] == "parents" else spec
+        by_side.setdefault(int(row["group_rank"]), []).append(row)     # (node, side) in the SQL's own order
+    out: list[dict[str, Any]] = []
+    for key in sorted(by_side):
+        side_rows = sorted(by_side[key], key=lambda r: (-r["neighbour_semantic"], -r["neighbour_lexical"], r["name_rank"]))
+        for rank, row in enumerate(side_rows, 1):
+            if rank > fanout:
+                break
+            row["side_rank"] = rank
+            row.pop("name_rank", None)
+            row.pop("group_rank", None)
+            out.append(row)
+    return out
 
 
 async def _route_goal_candidates(
@@ -953,7 +1054,7 @@ async def retrieve_procedures(
     t0 = time.monotonic()
     with _tel.span("retrieval.procedure_search", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR) as sp:
         cands, n_fts, n_vec = await _legs(
-            await search_pool(pool), table="procedure_search_index", id_col="procedure_id", name_col="name",
+            pool, table="procedure_search_index", id_col="procedure_id", name_col="name",
             text_expr="name || COALESCE(': ' || summary, '') || COALESCE(' preconditions: ' || preconditions_summary, '')",
             extra_cols=", procedure_row_id::text AS procedure_row_id, goal_id::text AS goal_id",
             ctx_text=ctx.query, embedding=emb, embedding_model=model, scope=scope,
@@ -1122,12 +1223,29 @@ async def _attach_source_support(pool: asyncpg.Pool, items: list[dict], meta: Re
         i["tested_by_source"] = False
     if not items:
         return
+    sql = ("SELECT target_id::text AS rid, count(DISTINCT coalesce(independence_group, id::text)) AS n "
+           "FROM evidence WHERE target_type = 'procedure' AND evidence_type = 'benchmark' "
+           "AND direction = 'supports' AND t_invalid IS NULL AND target_id = ANY($1::uuid[]) GROUP BY 1")
+    ids = [str(i["id"]) for i in items]
     try:
-        rows = await pool.fetch(
-            "SELECT target_id::text AS rid, count(DISTINCT coalesce(independence_group, id::text)) AS n "
-            "FROM evidence WHERE target_type = 'procedure' AND evidence_type = 'benchmark' "
-            "AND direction = 'supports' AND t_invalid IS NULL AND target_id = ANY($1::uuid[]) GROUP BY 1",
-            [str(i["id"]) for i in items])
+        from app.services.shards import HOME_SHARD, multi_shard
+
+        if not await multi_shard(pool):
+            rows = await pool.fetch(sql, ids)
+        else:
+            # evidence lives with its Procedure on the Procedure's home shard (storage layout v2)
+            routes = {r["rid"]: r["home_shard_id"] for r in await pool.fetch(
+                "SELECT row_id::text AS rid, home_shard_id FROM procedure_row_routes WHERE row_id = ANY($1::uuid[])", ids)}
+            by_shard: dict[str, list[str]] = {}
+            for rid in ids:
+                by_shard.setdefault(routes.get(rid, HOME_SHARD), []).append(rid)
+            sp = pools_for(pool)
+
+            async def one(shard: str, rids: list[str]):
+                return await (pool if shard == HOME_SHARD else await sp.get(shard)).fetch(sql, rids)
+
+            parts = await asyncio.gather(*[one(sh, r) for sh, r in by_shard.items()])
+            rows = [r for part in parts for r in part]
     except Exception:  # noqa: BLE001 -- ordering enrichment is best-effort, like the linked-claim lookup
         meta.degrade("source-support lookup failed")
         return
@@ -1222,7 +1340,9 @@ async def find_best_way(
 
 async def _record(pool, query, scope, g: GoalSearchResult, p: ProcedureSearchResult, meta: RetrievalMeta) -> None:
     try:
-        await (await search_pool(pool)).execute(
+        from app.services import search_group
+
+        await (await search_group.pool_for_log(pool, query)).execute(
             "INSERT INTO retrieval_decisions (query_sha256, viewer_id, goal_ids, procedure_ids, selected_procedure_id, "
             "local_claim_ids, mode, degraded, detail) VALUES ($1, $2, $3::uuid[], $4::uuid[], $5::uuid, $6, $7, $8, $9::jsonb)",
             hashlib.sha256(query.encode()).hexdigest(), getattr(scope, "viewer_id", None), [h.id for h in g.resolved],

@@ -366,7 +366,9 @@ async def _amain(a: argparse.Namespace) -> int:
             merged_ids = [str(r["id"]) for r in await sh.fanout_fetch(pool, "SELECT id FROM goals WHERE status = 'merged'", strict=True)]
             dangling = await sh.fanout_fetchval_sum(
                 pool, "SELECT count(*) FROM procedures WHERE t_invalid IS NULL AND achieves_goal_id = ANY($1::uuid[])", merged_ids, strict=True) if merged_ids else 0
-            unjudged = await (await sh.search_pool(pool)).fetchval("SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND resolved_id IS NULL")
+            from app.services import search_group
+
+            unjudged = await search_group.fetchval_sum(pool, "SELECT count(*) FROM identity_decisions WHERE decision = 'judge_unavailable' AND resolved_id IS NULL")
             rep = {"duplicate_goal_names": dup, "live_procedures_without_goal_link": unlinked,
                    "live_procedures_linked_to_merged_goals": dangling, "goals_created_while_judge_unavailable": unjudged}
             print(json.dumps(rep, default=str, indent=2))

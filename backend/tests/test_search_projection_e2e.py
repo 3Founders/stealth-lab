@@ -63,11 +63,16 @@ async def test_drain_projects_goal_procedure_claim_and_replay_is_idempotent(pool
         "INSERT INTO knowledge_nodes (node_type, name, scope_type, claim_status) "
         "VALUES ('claim', $1, 'global', 'supported') RETURNING id", f"{TAG} claim statement"))
     await sp.drain_outbox(pool)
-    g = await pool.fetchrow("SELECT * FROM goal_search_index WHERE goal_id=$1::uuid", gid)
-    p = await pool.fetchrow("SELECT * FROM procedure_search_index WHERE procedure_id=$1::uuid", pid)
+    from app.services import search_group
+
+    # the searchable Goal text is goal_search_index itself, or goal_search_docs on a member of a search group
+    # (migration 132; the control row then only carries the Goal's routing and filter columns)
+    doc_table = "goal_search_docs" if await search_group.grouped(pool) else "goal_search_index"
+    g = await search_group.fetchrow_any(pool, f"SELECT * FROM {doc_table} WHERE goal_id=$1::uuid", gid)
+    p = await search_group.fetchrow_any(pool, "SELECT * FROM procedure_search_index WHERE procedure_id=$1::uuid", pid)
     assert g["home_shard_id"] == HOME_SHARD and "callers" in g["search_text"]
     assert str(p["goal_id"]) == gid
-    assert await pool.fetchval("SELECT count(*) FROM claim_search_index WHERE claim_id=$1::uuid", cid) == 1
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM claim_search_index WHERE claim_id=$1::uuid", cid) == 1
     await sp.reindex(pool, "goal")
     await sp.reindex(pool, "goal")
     assert await pool.fetchval("SELECT count(*) FROM goal_search_index WHERE goal_id=$1::uuid", gid) == 1

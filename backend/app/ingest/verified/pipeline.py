@@ -98,7 +98,7 @@ def _source_key(task: Task, result: Any) -> str:
 
 async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str, client: Any, model: str,
                      run_id: str) -> tuple[str, str, dict, dict]:
-    from app.services.claims import capture_claim
+    from app.services.claim_placement import capture_claim_placed
     from app.services.ingestion_context import complete_ingestion_context, open_ingestion_context
     from app.services.procedure_claim_refs import add_procedure_claim_ref
     from app.services.procedures import capture_procedure
@@ -135,7 +135,11 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
             goal_embedder=emb)
         proc_row, proc_id = str(proc["id"]), str(proc["procedure_id"])
         objects.update({"procedure_id": proc_id, "procedure_row_id": proc_row, "reused": bool(proc.get("reused"))})
-        version = int(await pool.fetchval("SELECT version FROM procedures WHERE id = $1::uuid", proc_row) or 1)
+        from app.services.shards import home_pool
+
+        # the row is on the Procedure's home shard (the control database when there is no other shard)
+        proc_pool = await home_pool(pool, "procedure", proc_row, by_row_id=True)
+        version = int(await proc_pool.fetchval("SELECT version FROM procedures WHERE id = $1::uuid", proc_row) or 1)
 
         verified_by = "FAIL_TO_PASS: " + ", ".join(task.fail_to_pass[:20])
         ref = await preserve(pool, procedure_row_id=proc_row, code=task.patch, task=task.problem_statement,
@@ -155,8 +159,8 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
         claim_ids = []
         for statement, claim_type, role in ([(f, "verified_solution_fact", "RATIONALE") for f in result.facts]
                                             + [(p, "failure_mode", "FAILURE_MODE") for p in result.pitfalls]):
-            cid = await capture_claim(
-                pool, statement=statement, task_ids=[], claim_type=claim_type, epistemic_status="inferred",
+            cid = await capture_claim_placed(       # with its Goal on the Goal's shard (storage layout v2)
+                pool, goal_id=goal.goal_id, statement=statement, task_ids=[], claim_type=claim_type, epistemic_status="inferred",
                 extraction_version=f"{EXTRACTOR}:{model}", created_by=EXTRACTOR,
                 properties={"provenance": "third_party", "source": src.source_id, "task_key": key,
                             "goal_id": goal.goal_id},

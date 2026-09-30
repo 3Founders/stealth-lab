@@ -98,6 +98,17 @@ async def pool():
     await p.execute("DELETE FROM goal_search_index WHERE canonical_name LIKE $1", f"{P} %")
     await p.execute("DELETE FROM procedure_search_index WHERE name LIKE $1", f"{P} %")
     await p.execute("DELETE FROM object_routes WHERE object_type='procedure' AND object_id NOT IN (SELECT procedure_id FROM procedures)")
+    # storage layout v2: with search members registered, the same rows live on the members (this cleanup bypasses
+    # the projection, so it must clear them there too)
+    from app.services import search_group
+
+    if await search_group.grouped(p):
+        await search_group.execute_all(p, "DELETE FROM goal_search_docs WHERE canonical_name LIKE $1", f"{P} %")
+        await search_group.execute_all(p, "DELETE FROM procedure_search_index WHERE name LIKE $1", f"{P} %")
+        await search_group.execute_all(p, "DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{P} %")
+        await search_group.execute_all(
+            p, "DELETE FROM retrieval_decisions WHERE query_sha256 IS NOT NULL AND created_at > now() - interval '1 hour'")
+        await p.execute("DELETE FROM search_routes")
     await p.close()
 
 
@@ -185,7 +196,10 @@ async def test_local_claims_change_the_resolved_goal(pool):
     my = await query(pool, "migrate the database schema", claims=[{"id": "c-my", "statement": "the project database is mysql"}])
     assert goal_names(pg) == [n(G_MIG_PG)] and goal_names(my) == [n(G_MIG_MY)]
     assert pg["query_context"]["local_claim_ids"] == ["c-pg"]
-    row = await pool.fetchrow("SELECT local_claim_ids, mode FROM retrieval_decisions ORDER BY created_at DESC LIMIT 1")
+    from app.services import search_group   # the log lives on a search member when B is a group
+
+    row = max(await search_group.fetch_all(pool, "SELECT local_claim_ids, mode, created_at FROM retrieval_decisions"),
+              key=lambda r: r["created_at"])
     assert row["local_claim_ids"] == ["c-my"] and row["mode"] == "jev"                       # auditable
 
 
@@ -211,7 +225,7 @@ async def test_jev_unavailable_falls_back_to_the_nli_model_not_a_heuristic(pool)
 
 @pytest.mark.asyncio
 async def test_nli_unavailable_uses_jev_alone(pool):
-    await build(pool)
+    await build(pool, with_ways=True)       # only Goals with a way are candidates (migration 130)
     res = await query(pool, G_CALLERS, judge=make_judge(jev(), nli(fail=down)))
     assert res["retrieval"]["mode"] == "jev"
 
@@ -361,7 +375,11 @@ async def _move_procedure_to(pool, pools, pid_row, sid):
     await pool.execute("DELETE FROM procedures WHERE id=$1::uuid", pid_row)
     await pool.execute("INSERT INTO object_routes (object_type, object_id, home_shard_id) VALUES ('procedure', $1::uuid, $2) "
                        "ON CONFLICT (object_type, object_id) DO UPDATE SET home_shard_id = EXCLUDED.home_shard_id", str(row["procedure_id"]), sid)
-    await pool.execute("INSERT INTO procedure_search_index (procedure_id, procedure_row_id, name, summary, goal_id, search_text, search_tsv, "
+    from app.services import search_group   # where the projection lives (a search member when B is a group)
+
+    index = await search_group.pool_for_object(pool, "procedure", str(row["procedure_id"]),
+                                               placement_key=f"goal:{row['achieves_goal_id']}")
+    await index.execute("INSERT INTO procedure_search_index (procedure_id, procedure_row_id, name, summary, goal_id, search_text, search_tsv, "
                        "home_shard_id, status, version, visibility, updated_at) VALUES ($1::uuid,$2::uuid,$3,$4,$5::uuid,$6,to_tsvector('english',$6),$7,'active',1,'public',now()) "
                        "ON CONFLICT (procedure_id) DO UPDATE SET home_shard_id=EXCLUDED.home_shard_id, procedure_row_id=EXCLUDED.procedure_row_id, "
                        "search_text=EXCLUDED.search_text, search_tsv=EXCLUDED.search_tsv", str(row["procedure_id"]), str(row["id"]),
@@ -391,6 +409,10 @@ async def test_candidates_on_multiple_shards_are_hydrated_in_one_batch_per_shard
     assert res["retrieval"]["shards_touched"] == ["K000", "K901"]
     assert not res["retrieval"]["degraded"]
     await pool.execute("DELETE FROM procedure_search_index WHERE name LIKE $1", f"{P} %")
+    from app.services import search_group
+
+    if await search_group.grouped(pool):
+        await search_group.execute_all(pool, "DELETE FROM procedure_search_index WHERE name LIKE $1", f"{P} %")
     await pool.execute("DELETE FROM object_routes WHERE home_shard_id IN ('K901','K903')")
     await pools.close()
     for s in ("k901", "k903"):
@@ -409,7 +431,9 @@ async def test_unavailable_shard_is_reported_as_partial_not_silently_absent(pool
     pools = ShardPools(pool, backoff_s=60)
     # re-home b's route/projection to the dead shard (its canonical row stays; the shard cannot be reached)
     await pool.execute("UPDATE object_routes SET home_shard_id='K902' WHERE object_type='procedure' AND object_id=(SELECT procedure_id FROM procedures WHERE id=$1::uuid)", b["id"])
-    await pool.execute("UPDATE procedure_search_index SET home_shard_id='K902' WHERE procedure_row_id=$1::uuid", b["id"])
+    from app.services import search_group   # the projection is on the search members when B is a group
+
+    await search_group.execute_all(pool, "UPDATE procedure_search_index SET home_shard_id='K902' WHERE procedure_row_id=$1::uuid", b["id"])
     res = await query(pool, G_CALLERS, pools=pools)
     r = res["retrieval"]
     assert "K902" in r["unavailable_shards"] and r["degraded"]
@@ -417,5 +441,5 @@ async def test_unavailable_shard_is_reported_as_partial_not_silently_absent(pool
     assert r["missing_ids"] == []                                    # an outage is not "doesn't exist"
     assert [p["name"] for p in res["procedures"]] == [n("local grep")]
     await pool.execute("UPDATE object_routes SET home_shard_id='K000' WHERE home_shard_id='K902'")
-    await pool.execute("UPDATE procedure_search_index SET home_shard_id='K000' WHERE home_shard_id='K902'")
+    await search_group.execute_all(pool, "UPDATE procedure_search_index SET home_shard_id='K000' WHERE home_shard_id='K902'")
     await pool.execute("DELETE FROM knowledge_shards WHERE shard_id='K902'")

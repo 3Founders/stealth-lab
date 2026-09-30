@@ -304,6 +304,12 @@ class Worker:
         try:   # storage guard: full shards stop taking NEW objects before the provider refuses writes
             capacity = await enforce_shard_capacity(self.pool, apply=True)
             self.counts['shards_marked_full'] = sum(1 for row in capacity if row.get("action") == "marked_full")
+            if os.environ.get("STEALTH_STORAGE_AUTOSCALE", "1") not in ("0", "false", "False"):
+                # dynamic allocation: keep enough writable databases per role, adding them only when needed
+                from app.services.storage_autoscale import autoscale
+
+                scaled = await autoscale(self.pool, capacity=capacity)
+                self.counts['storage_scaled'] = sum(1 for a in scaled if a["action"] in ("promote", "provision"))
         except Exception:  # noqa: BLE001 -- retried next run; never fails the batch
             log.warning('shard capacity check failed; will retry next run', exc_info=True)
         if self.cfg.reconcile_claims:
@@ -328,7 +334,10 @@ class Worker:
         from datetime import datetime, timezone
 
         try:
-            has_obs = await self.pool.fetchval("SELECT EXISTS (SELECT 1 FROM routing_observations)")
+            from app.services import search_group
+
+            # routing_observations is a log on the search database (every member of a search group, migration 132)
+            has_obs = bool(await search_group.fetch_all(self.pool, "SELECT 1 FROM routing_observations LIMIT 1"))
         except Exception:  # noqa: BLE001 -- no routing tables on this database
             return
         if not has_obs:

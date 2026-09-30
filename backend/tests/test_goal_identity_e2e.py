@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from app.db.session import create_pool
+from app.services import search_group
 from app.services.goals import find_or_create_goal
 from app.services.procedures import capture_procedure, supersede_procedure
 from app.services.semantic.errors import ErrorKind, ProviderError, SemanticJudgmentUnavailable
@@ -22,11 +23,16 @@ def n(name: str) -> str:
     return f"{P} {name}"
 
 
+async def _decision(pool, sql: str, *args):
+    """identity_decisions is a log on the search database (every member of a search group, migration 132)."""
+    return await search_group.fetchrow_any(pool, sql, *args)
+
+
 @pytest_asyncio.fixture
 async def pool():
     p = await create_pool()
     yield p
-    await p.execute("DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{P} %")
+    await search_group.execute_all(p, "DELETE FROM identity_decisions WHERE candidate_text LIKE $1", f"{P} %")
     await p.execute("DELETE FROM procedures WHERE name LIKE $1", f"{P} %")
     await p.execute("DELETE FROM goal_relations WHERE specific_goal_id IN (SELECT id FROM goals WHERE canonical_name LIKE $1)", f"{P} %")
     await p.execute("DELETE FROM goals WHERE canonical_name LIKE $1", f"{P} %")
@@ -55,7 +61,7 @@ async def test_paraphrase_is_merged_only_because_the_judge_said_same(pool):
     b = await _goal(pool, "locate every call site of a function", j, e)
     assert not b["created"] and b["id"] == a["id"] and b["decision"] == "same"
     assert len(prov.calls) == 1                                     # the model decided, once
-    row = await pool.fetchrow("SELECT * FROM identity_decisions WHERE resolved_id=$1::uuid", a["id"])
+    row = await _decision(pool, "SELECT * FROM identity_decisions WHERE resolved_id=$1::uuid", a["id"])
     assert row["decision"] == "same" and row["judge_provider"] == "frozen-jev" and row["fts_candidates"] + row["vector_candidates"] >= 1
     assert row["prompt_version"] == "identity@v2" and row["candidates"]
     assert n("locate every call site of a function") in await pool.fetchval("SELECT aliases FROM goals WHERE id=$1::uuid", a["id"])
@@ -68,7 +74,7 @@ async def test_lexically_similar_but_distinct_goal_is_not_merged(pool):
     a = await _goal(pool, "find callers of a function", j, e)
     b = await _goal(pool, "find callers and delete them", j, e)
     assert b["created"] and b["id"] != a["id"]
-    assert (await pool.fetchval("SELECT decision FROM identity_decisions WHERE object_type='goal' AND candidate_text LIKE $1", f"{n('find callers and delete')}%")) == "distinct"
+    assert (await _decision(pool, "SELECT decision FROM identity_decisions WHERE object_type='goal' AND candidate_text LIKE $1", f"{n('find callers and delete')}%"))["decision"] == "distinct"
 
 
 @pytest.mark.asyncio
@@ -116,7 +122,7 @@ async def test_judge_outage_with_candidates_fails_closed_then_dev_mode_creates_a
     assert await pool.fetchval("SELECT count(*) FROM goals WHERE canonical_name LIKE $1", f"{P} %") == before   # nothing written
     created = await _goal(pool, "discover callers", j_down, e, on_unavailable="create")
     assert created["created"]
-    assert await pool.fetchval("SELECT decision FROM identity_decisions WHERE resolved_id IS NULL AND candidate_text LIKE $1", f"{n('discover callers')}%") == "judge_unavailable"
+    assert (await _decision(pool, "SELECT decision FROM identity_decisions WHERE resolved_id IS NULL AND candidate_text LIKE $1", f"{n('discover callers')}%"))["decision"] == "judge_unavailable"
 
 
 @pytest.mark.asyncio
@@ -138,7 +144,7 @@ async def test_replayed_job_reuses_its_earlier_same_decision_without_rejudging(p
     await pool.execute("UPDATE goals SET aliases='{}' WHERE id=$1::uuid", a["id"])
     r2 = await _goal(pool, "locate callers of a function", j, e, idempotency_key="job-1:g")
     assert r1["id"] == r2["id"] == a["id"] and len(prov.calls) == calls
-    assert await pool.fetchval("SELECT count(*) FROM identity_decisions WHERE idempotency_key='job-1:g'") == 1
+    assert await search_group.fetchval_sum(pool, "SELECT count(*) FROM identity_decisions WHERE idempotency_key='job-1:g'") == 1
 
 
 @pytest.mark.asyncio

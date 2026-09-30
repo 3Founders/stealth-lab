@@ -58,24 +58,29 @@ async def _candidates(pool, statement: str, *, scope_type, scope_entity_id, visi
     base = ("status NOT IN ('retracted', 'invalid', 'superseded') AND COALESCE(scope_type, 'global') = $1 "
             "AND COALESCE(scope_entity_id, '') = $2 AND visibility = $3::visibility_level AND COALESCE(owner_id, '') = $4")
     params = [scope_type or "global", scope_entity_id or "", visibility, owner_id or ""]
-    pool = await search_pool(pool)   # claim_search_index lives on the search database when configured
+    # claim_search_index lives on the search database when configured -- every member of a search group (merged)
+    from app.services import search_group
+
     by: dict[str, Candidate] = {}
     fts_ids: list[str] = []
     vec_ids: list[str] = []
     q = fts_or_query(statement)
     if q:
-        for rank, r in enumerate(await pool.fetch(
-                f"SELECT claim_id::text AS id, statement, home_shard_id FROM claim_search_index WHERE {base} "
-                f"AND search_tsv @@ to_tsquery('english', $5) ORDER BY ts_rank_cd(search_tsv, to_tsquery('english', $5)) DESC, claim_id LIMIT 20",
-                *params, q), 1):
+        for rank, r in enumerate(await search_group.fetch_merged(
+                pool,
+                f"SELECT claim_id::text AS id, statement, home_shard_id, ts_rank_cd(search_tsv, to_tsquery('english', $5)) AS r "
+                f"FROM claim_search_index WHERE {base} "
+                f"AND search_tsv @@ to_tsquery('english', $5) ORDER BY r DESC, claim_id LIMIT 20",
+                *params, q, key=lambda x: (-x["r"], x["id"]), limit=20), 1):
             c = by.setdefault(r["id"], Candidate(r["id"], r["statement"][:200], r["statement"], home_shard_id=r["home_shard_id"]))
             c.fts_rank = rank
             fts_ids.append(r["id"])
     if embedding is not None and embedding_model:
-        for rank, r in enumerate(await pool.fetch(
+        for rank, r in enumerate(await search_group.fetch_merged(
+                pool,
                 f"SELECT claim_id::text AS id, statement, home_shard_id, embedding <=> $5::vector AS dist FROM claim_search_index "
                 f"WHERE {base} AND embedding IS NOT NULL AND embedding_model = $6 ORDER BY dist, claim_id LIMIT 20",
-                *params, to_pgvector(embedding), embedding_model), 1):
+                *params, to_pgvector(embedding), embedding_model, key=lambda x: (x["dist"], x["id"]), limit=20), 1):
             c = by.setdefault(r["id"], Candidate(r["id"], r["statement"][:200], r["statement"], home_shard_id=r["home_shard_id"]))
             c.vec_rank, c.vec_distance = rank, float(r["dist"])
             vec_ids.append(r["id"])
@@ -119,8 +124,11 @@ async def ingest_claim(
             await lock.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"claim-identity:{scope_key}")
 
             # 0. replay: this exact source+statement already resolved
-            sdb = await search_pool(pool)   # identity_decisions + claim_search_index (project B when configured)
-            prior = await sdb.fetchrow("SELECT decision, resolved_id::text AS rid FROM identity_decisions WHERE object_type='claim' AND idempotency_key=$1", idem)
+            from app.services import search_group
+
+            # identity_decisions live on the search database -- every member of a search group
+            prior = await search_group.fetchrow_any(
+                pool, "SELECT decision, resolved_id::text AS rid FROM identity_decisions WHERE object_type='claim' AND idempotency_key=$1", idem)
             if prior and prior["rid"]:
                 await _attach_provenance(pool, prior["rid"], source_key, source_ref, ingestion_context_id)
                 return {"action": "reused", "claim_id": prior["rid"], "decision": prior["decision"], "related": []}
@@ -132,11 +140,12 @@ async def ingest_claim(
                 "AND scope_entity_id IS NOT DISTINCT FROM $3 AND visibility = $4::visibility_level AND owner_id IS NOT DISTINCT FROM $5",
                 norm, scope_type, scope_entity_id, visibility, owner_id)
             if exact is None:   # ... and on other shards, via the global projection
-                exact = await sdb.fetchval(
-                    "SELECT claim_id::text FROM claim_search_index WHERE lower(regexp_replace(statement, '\\s+', ' ', 'g')) = $1 "
+                exact_row = await search_group.fetchrow_any(
+                    pool, "SELECT claim_id::text FROM claim_search_index WHERE lower(regexp_replace(statement, '\\s+', ' ', 'g')) = $1 "
                     "AND COALESCE(scope_type, 'global') = $2 AND COALESCE(scope_entity_id, '') = $3 AND visibility = $4::visibility_level "
                     "AND COALESCE(owner_id, '') = $5 AND status NOT IN ('retracted', 'invalid', 'superseded') LIMIT 1",
                     norm, scope_type or "global", scope_entity_id or "", visibility, owner_id or "")
+                exact = exact_row[0] if exact_row else None
             if exact:
                 await _attach_provenance(pool, exact, source_key, source_ref, ingestion_context_id)
                 return {"action": "reused", "claim_id": exact, "decision": "exact_match", "related": []}
@@ -200,8 +209,8 @@ async def ingest_claim(
             cid = str(cid)
             if decision == "judge_unavailable":
                 # remember which claim this outage created, so `reconcile_claims` can judge it once the judge is back
-                await sdb.execute(
-                    "UPDATE identity_decisions SET detail = COALESCE(detail, '{}'::jsonb) || $2::jsonb "
+                await search_group.execute_all(
+                    pool, "UPDATE identity_decisions SET detail = COALESCE(detail, '{}'::jsonb) || $2::jsonb "
                     "WHERE object_type = 'claim' AND idempotency_key = $1", idem, {"created_claim_id": cid})
             if claim_home != HOME_SHARD:
                 await record_route(pool, "claim", cid, claim_home)
@@ -255,14 +264,16 @@ async def reconcile_claims(
 
     judge = judge if judge is not None else default_judge()
     out = {"checked": 0, "merged": 0, "flagged": 0, "distinct": 0, "deferred": 0, "gone": 0}
-    sdb = await search_pool(pool)
-    rows = await sdb.fetch(
-        "SELECT id::text AS id, detail->>'created_claim_id' AS claim_id FROM identity_decisions "
+    from app.services import search_group
+
+    rows = sorted(await search_group.fetch_all(
+        pool, "SELECT id::text AS id, detail->>'created_claim_id' AS claim_id FROM identity_decisions "
         "WHERE object_type = 'claim' AND decision = 'judge_unavailable' AND resolved_id IS NULL "
-        "AND detail ? 'created_claim_id' AND NOT (detail ? 'reconciled') ORDER BY id LIMIT $1", batch)
+        "AND detail ? 'created_claim_id' AND NOT (detail ? 'reconciled') ORDER BY id LIMIT $1", batch),
+        key=lambda r: r["id"])[:batch]
 
     async def stamp(decision_id: str, outcome: str, resolved: Optional[str] = None) -> None:
-        await sdb.execute(
+        await search_group.execute_all(pool, 
             "UPDATE identity_decisions SET detail = detail || $2::jsonb, resolved_id = COALESCE($3::uuid, resolved_id) "
             "WHERE id = $1::uuid", decision_id, {"reconciled": outcome}, resolved)
 
