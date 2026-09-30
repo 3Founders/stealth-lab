@@ -18,6 +18,7 @@ repository, and one REST call reads its license.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 from collections import defaultdict
@@ -29,6 +30,7 @@ from urllib.parse import urlparse
 from app.ingest.common import neardup
 from app.ingest.common.github import GitHub, GitHubUnavailable, RepoGone, git_blob_id
 from app.ingest.common.hf import PinnedFile
+from app.ingest.common.parallel import DEFAULT_CONCURRENCY, Stop, run_units
 from app.ingest.common.ledger import FAILED, REJECTED, WRITTEN, ItemRef, Ledger
 from app.ingest.common.licenses import decide
 
@@ -214,7 +216,7 @@ def classify_outcome(outcome: Any) -> tuple[str, str]:
     return REJECTED, "compile_rejected"
 
 
-async def run(pool: Any, *, ledger: Ledger, limit: Optional[int]) -> dict:
+async def run(pool: Any, *, ledger: Ledger, limit: Optional[int], concurrency: int = DEFAULT_CONCURRENCY) -> dict:
     from app.config import settings
     from app.ingest.common.llm import extraction_client
     from app.services.ingest_budget import BudgetExceeded
@@ -229,82 +231,110 @@ async def run(pool: Any, *, ledger: Ledger, limit: Optional[int]) -> dict:
     client = extraction_client()
     stats: dict[str, int] = defaultdict(int)
 
+    settled = await ledger.settled_keys()
     todo: list[Row] = []
     for row in rows:
-        go, _why = await ledger.should_process(row.item_key)
-        if go:
-            todo.append(row)
-        else:
+        if row.item_key in settled:
             stats["skipped_already_decided"] += 1
+            continue
+        todo.append(row)
         if limit is not None and len(todo) >= limit:
             break
     by_repo: dict[str, list[Row]] = defaultdict(list)
     for row in todo:
         by_repo[row.repo].append(row)
 
-    stopped: Optional[str] = None
+    stop = Stop()
+    # Near-duplicates across repositories running at the same moment: a skill reserves its signature while it is
+    # being written, so a near-identical one in a parallel unit sees it (checked and reserved under one lock).
+    in_flight: dict[str, list[int]] = {}
+    near_lock = asyncio.Lock()
+    resolutions: dict[str, Optional[RepoResolution]] = {}
+
     async with GitHub(token) as gh:
-        for repo in sorted(by_repo, key=str.lower):
-            group = by_repo[repo]
-            res: Optional[RepoResolution] = None
-            for row in group:
-                ref = _ref(row)
-                content = str(table.column("content")[row.index].as_py() or "")
-                if hashlib.sha256(content.encode("utf-8")).hexdigest() != row.content_hash:
-                    await ledger.record(ref, REJECTED, "content_hash_mismatch")
-                    stats["rejected:content_hash_mismatch"] += 1
-                    continue
-                owner = await ledger.identity_owner(row.dedup_key)
-                if owner is not None:
-                    await ledger.record(ref, REJECTED, "duplicate_identity", detail={"identity_owner": owner})
-                    stats["rejected:duplicate_identity"] += 1
-                    continue
-                sig = await run_blocking(neardup.signature, content)
+
+        async def one(row: Row) -> None:
+            repo = row.repo
+            ref = _ref(row)
+            content = str(table.column("content")[row.index].as_py() or "")
+            if hashlib.sha256(content.encode("utf-8")).hexdigest() != row.content_hash:
+                await ledger.record(ref, REJECTED, "content_hash_mismatch")
+                stats["rejected:content_hash_mismatch"] += 1
+                return
+            owner = await ledger.identity_owner(row.dedup_key)
+            if owner is not None:
+                await ledger.record(ref, REJECTED, "duplicate_identity", detail={"identity_owner": owner})
+                stats["rejected:duplicate_identity"] += 1
+                return
+            sig = await run_blocking(neardup.signature, content)
+            async with near_lock:
                 near = await neardup.nearest_written(pool, PIPELINE, sig)
-                if near is not None:
-                    await ledger.record(ref, REJECTED, "near_duplicate",
-                                        detail={"of": near[0], "similarity": round(near[1], 3)})
-                    stats["rejected:near_duplicate"] += 1
-                    continue
-                try:
-                    if res is None:
-                        res = await resolve_repo(gh, repo, group)
-                    blob = git_blob_id(content)
-                    commit, how = await provenance(gh, res, row, blob)
-                    if commit is None:
-                        await ledger.record(ref, REJECTED, how, detail={"repo": repo, "path": row.path,
-                                                                         "blob": blob, "gone": res.gone})
-                        stats[f"rejected:{how}"] += 1
-                        continue
-                    spdx = await license_at(gh, res, row, commit)
-                except GitHubUnavailable as exc:
-                    await ledger.record(ref, FAILED, "github_unavailable", detail={"error": str(exc)[:1000]})
-                    stats["failed:github_unavailable"] += 1
-                    continue
-                verdict = decide(spdx, records_attribution=True)
-                if not verdict.allowed:
-                    reason = "license_missing" if spdx is None else f"license_{verdict.decision.lower()}"
-                    await ledger.record(ref, REJECTED, reason, detail={"commit": commit, "license": spdx,
-                                                                        "why": verdict.reason})
-                    stats[f"rejected:{reason}"] += 1
-                    continue
-                try:
-                    status, why, detail, objects = await compile_item(
-                        pool, row, content, commit, verdict.used_under or spdx, how, client, ledger.run_id)
-                except BudgetExceeded as exc:
-                    stopped = f"budget: {exc}"
-                    break
-                except Exception as exc:  # noqa: BLE001 -- infrastructure: retried by the next run
-                    log.exception("skills item %s failed", row.item_key)
-                    await ledger.record(ref, FAILED, type(exc).__name__, detail={"commit": commit,
-                                                                                  "error": str(exc)[:2000]})
-                    stats[f"failed:{type(exc).__name__}"] += 1
-                    continue
-                stored = await ledger.record(ref, status, why, detail={**detail, "minhash": sig}, objects=objects)
-                if stored == WRITTEN:
-                    await neardup.remember(pool, PIPELINE, row.item_key, sig)
-                stats[f"{stored}:{why if stored == status else 'duplicate_identity'}"] += 1
-            if stopped:
-                break
-    return {"dataset_rows": len(rows), "attempted": len(todo), "stopped": stopped, "github": gh.stats.as_dict(),
-            "stats": dict(stats)}
+                if near is None:
+                    near = next(((k, round(neardup.similarity(sig, other), 3)) for k, other in in_flight.items()
+                                 if neardup.similarity(sig, other) >= neardup.THRESHOLD), None)
+                if near is None:
+                    in_flight[row.item_key] = sig
+            if near is not None:
+                await ledger.record(ref, REJECTED, "near_duplicate",
+                                    detail={"of": near[0], "similarity": round(near[1], 3)})
+                stats["rejected:near_duplicate"] += 1
+                return
+            try:
+                await _write_one(row, repo, ref, content, sig)
+            finally:
+                in_flight.pop(row.item_key, None)
+
+        async def _write_one(row: Row, repo: str, ref: Any, content: str, sig: list[int]) -> None:
+            try:
+                if resolutions.get(repo) is None:
+                    resolutions[repo] = await resolve_repo(gh, repo, by_repo[repo])
+                res = resolutions[repo]
+                blob = git_blob_id(content)
+                commit, how = await provenance(gh, res, row, blob)
+                if commit is None:
+                    await ledger.record(ref, REJECTED, how, detail={"repo": repo, "path": row.path,
+                                                                     "blob": blob, "gone": res.gone})
+                    stats[f"rejected:{how}"] += 1
+                    return
+                spdx = await license_at(gh, res, row, commit)
+            except GitHubUnavailable as exc:
+                await ledger.record(ref, FAILED, "github_unavailable", detail={"error": str(exc)[:1000]})
+                stats["failed:github_unavailable"] += 1
+                return
+            verdict = decide(spdx, records_attribution=True)
+            if not verdict.allowed:
+                reason = "license_missing" if spdx is None else f"license_{verdict.decision.lower()}"
+                await ledger.record(ref, REJECTED, reason, detail={"commit": commit, "license": spdx,
+                                                                    "why": verdict.reason})
+                stats[f"rejected:{reason}"] += 1
+                return
+            try:
+                status, why, detail, objects = await compile_item(
+                    pool, row, content, commit, verdict.used_under or spdx, how, client, ledger.run_id)
+            except BudgetExceeded as exc:
+                stop.set(f"budget: {exc}")
+                return
+            except Exception as exc:  # noqa: BLE001 -- infrastructure: retried by the next run
+                if _connection_lost(exc):
+                    raise                     # the CLI reconnects and resumes the run
+                log.exception("skills item %s failed", row.item_key)
+                await ledger.record(ref, FAILED, type(exc).__name__, detail={"commit": commit,
+                                                                              "error": str(exc)[:2000]})
+                stats[f"failed:{type(exc).__name__}"] += 1
+                return
+            stored = await ledger.record(ref, status, why, detail={**detail, "minhash": sig}, objects=objects)
+            if stored == WRITTEN:
+                await neardup.remember(pool, PIPELINE, row.item_key, sig)
+            stats[f"{stored}:{why if stored == status else 'duplicate_identity'}"] += 1
+
+        units = [by_repo[repo] for repo in sorted(by_repo, key=str.lower)]
+        await run_units(units, one, concurrency=concurrency, stop=stop)
+    return {"dataset_rows": len(rows), "attempted": len(todo), "stopped": stop.reason, "github": gh.stats.as_dict(),
+            "stats": dict(stats), "concurrency": concurrency}
+
+
+def _connection_lost(exc: BaseException) -> bool:
+    """A dropped database/network connection is not this item's fault: let the run resume instead of marking it."""
+    import asyncpg
+
+    return isinstance(exc, (ConnectionError, asyncpg.InterfaceError, asyncpg.PostgresConnectionError))

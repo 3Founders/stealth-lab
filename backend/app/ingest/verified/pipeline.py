@@ -23,6 +23,7 @@ from app.ingest.common.benchmarks import TaskTests, ensure_task_benchmark
 from app.ingest.common.evidence import record_benchmark_support
 from app.ingest.common.github import GitHub, GitHubUnavailable, RepoGone
 from app.ingest.common.hf import iter_rows
+from app.ingest.common.parallel import DEFAULT_CONCURRENCY, Stop, run_units
 from app.ingest.common.ledger import FAILED, REJECTED, WRITTEN, ItemRef, Ledger
 from app.ingest.common.licenses import decide, spdx_for_github_name
 from app.ingest.common.tasks import TaskGoalUnavailable, ensure_task_goal, task_key
@@ -161,7 +162,9 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
 
 
 async def run(pool: Any, *, ledger: Ledger, limit: Optional[int], sources: tuple[str, ...] = ORDER,
-              instances: Optional[set[str]] = None) -> dict:
+              instances: Optional[set[str]] = None, concurrency: int = DEFAULT_CONCURRENCY) -> dict:
+    """Sources in ORDER, one after another (the first source to reach a task writes it, so a source finishes before
+    the next starts); the tasks of one source in parallel, up to `concurrency` at once (app/ingest/common/parallel)."""
     from app.config import settings
     from app.ingest.common.llm import extraction_client
     from app.services.ingest_budget import BudgetExceeded
@@ -176,78 +179,95 @@ async def run(pool: Any, *, ledger: Ledger, limit: Optional[int], sources: tuple
     token = settings.github_token or settings.personal_github_token
     stats: dict[str, int] = defaultdict(int)
     attempted = 0
-    stopped: Optional[str] = None
+    stop = Stop()
+    settled = await ledger.settled_keys()
+
     async with GitHub(token or "") as gh:
+
+        async def one(item: tuple[Task, Source, Any]) -> None:
+            task, src, pinned = item
+            ref = ItemRef(task.item_key, src.source_id, pinned.revision, task.instance_id, task.dedup_key)
+            rejected = gate_row(task, held)
+            if rejected is None:
+                owner = await ledger.identity_owner(task.dedup_key)
+                if owner is not None:
+                    rejected = ("duplicate_identity", {"identity_owner": owner})
+            if rejected is not None:
+                await ledger.record(ref, REJECTED, rejected[0], detail=rejected[1])
+                stats[f"rejected:{rejected[0]}"] += 1
+                return
+            expression, how = license_expression(task, src)
+            try:
+                if expression is None and how == "github":
+                    if not token:
+                        raise GitHubUnavailable("no GitHub token: cannot read the license at the base commit")
+                    owner_name = task.repo.split("/", 1)
+                    expression = await gh.license_at(owner_name[0], owner_name[1], task.base_commit)
+            except RepoGone:
+                expression = None
+            except GitHubUnavailable as exc:
+                await ledger.record(ref, FAILED, "github_unavailable", detail={"error": str(exc)[:500]})
+                stats["failed:github_unavailable"] += 1
+                return
+            verdict = decide(expression, records_attribution=True)
+            if not verdict.allowed:
+                reason = ("license_unmappable" if verdict.decision == "UNMAPPABLE"
+                          else f"license_{verdict.decision.lower()}")
+                await ledger.record(ref, REJECTED, reason, detail={"license_raw": task.license_raw,
+                                                                    "expression": expression, "read": how,
+                                                                    "why": verdict.reason})
+                stats[f"rejected:{reason}"] += 1
+                return
+            try:
+                status, why, detail, objects = await write_task(
+                    pool, task=task, src=src, spdx=verdict.used_under or expression, how=how,
+                    client=client, model=model, run_id=ledger.run_id)
+            except BudgetExceeded as exc:
+                stop.set(f"budget: {exc}")
+                return
+            except (ex.ExtractionFailed, TaskGoalUnavailable) as exc:
+                await ledger.record(ref, FAILED, type(exc).__name__, detail={"error": str(exc)[:1500]})
+                stats[f"failed:{type(exc).__name__}"] += 1
+                return
+            except Exception as exc:  # noqa: BLE001 -- infrastructure: retried next run
+                if _connection_lost(exc):
+                    raise                     # the CLI reconnects and resumes the run
+                log.exception("verified item %s failed", task.item_key)
+                await ledger.record(ref, FAILED, type(exc).__name__, detail={"error": str(exc)[:1500]})
+                stats[f"failed:{type(exc).__name__}"] += 1
+                return
+            stored = await ledger.record(ref, status, why, detail=detail, objects=objects)
+            stats[f"{stored}:{why if stored == status else 'duplicate_identity'}"] += 1
+
         for key in [s for s in ORDER if s in sources]:
             src = SOURCES[key]
             for pinned in src.files:
+                if stop or (limit is not None and attempted >= limit):
+                    break
                 path = await run_blocking(pinned.local_path)
                 cols = await run_blocking(columns_for, path)
                 rows = await run_blocking(lambda: list(iter_rows(path, cols)))
+                todo: list[tuple[Task, Source, Any]] = []
                 for row in rows:
                     task = to_task(src, row)
                     if instances is not None and task.instance_id not in instances:
                         continue
-                    if limit is not None and attempted >= limit:
-                        break
-                    go, _why = await ledger.should_process(task.item_key)
-                    if not go:
+                    if task.item_key in settled:
                         stats["skipped_already_decided"] += 1
                         continue
-                    attempted += 1
-                    ref = ItemRef(task.item_key, src.source_id, pinned.revision, task.instance_id, task.dedup_key)
-                    rejected = gate_row(task, held)
-                    if rejected is None:
-                        owner = await ledger.identity_owner(task.dedup_key)
-                        if owner is not None:
-                            rejected = ("duplicate_identity", {"identity_owner": owner})
-                    if rejected is not None:
-                        await ledger.record(ref, REJECTED, rejected[0], detail=rejected[1])
-                        stats[f"rejected:{rejected[0]}"] += 1
-                        continue
-                    expression, how = license_expression(task, src)
-                    try:
-                        if expression is None and how == "github":
-                            if not token:
-                                raise GitHubUnavailable("no GitHub token: cannot read the license at the base commit")
-                            owner_name = task.repo.split("/", 1)
-                            expression = await gh.license_at(owner_name[0], owner_name[1], task.base_commit)
-                    except RepoGone:
-                        expression = None
-                    except GitHubUnavailable as exc:
-                        await ledger.record(ref, FAILED, "github_unavailable", detail={"error": str(exc)[:500]})
-                        stats["failed:github_unavailable"] += 1
-                        continue
-                    verdict = decide(expression, records_attribution=True)
-                    if not verdict.allowed:
-                        reason = ("license_unmappable" if verdict.decision == "UNMAPPABLE"
-                                  else f"license_{verdict.decision.lower()}")
-                        await ledger.record(ref, REJECTED, reason, detail={"license_raw": task.license_raw,
-                                                                            "expression": expression, "read": how,
-                                                                            "why": verdict.reason})
-                        stats[f"rejected:{reason}"] += 1
-                        continue
-                    try:
-                        status, why, detail, objects = await write_task(
-                            pool, task=task, src=src, spdx=verdict.used_under or expression, how=how,
-                            client=client, model=model, run_id=ledger.run_id)
-                    except BudgetExceeded as exc:
-                        stopped = f"budget: {exc}"
+                    if limit is not None and attempted + len(todo) >= limit:
                         break
-                    except (ex.ExtractionFailed, TaskGoalUnavailable) as exc:
-                        await ledger.record(ref, FAILED, type(exc).__name__, detail={"error": str(exc)[:1500]})
-                        stats[f"failed:{type(exc).__name__}"] += 1
-                        continue
-                    except Exception as exc:  # noqa: BLE001 -- infrastructure: retried next run
-                        log.exception("verified item %s failed", task.item_key)
-                        await ledger.record(ref, FAILED, type(exc).__name__, detail={"error": str(exc)[:1500]})
-                        stats[f"failed:{type(exc).__name__}"] += 1
-                        continue
-                    stored = await ledger.record(ref, status, why, detail=detail, objects=objects)
-                    stats[f"{stored}:{why if stored == status else 'duplicate_identity'}"] += 1
-                if stopped or (limit is not None and attempted >= limit):
-                    break
-            if stopped or (limit is not None and attempted >= limit):
+                    todo.append((task, src, pinned))
+                attempted += len(todo)
+                await run_units([[t] for t in todo], one, concurrency=concurrency, stop=stop)
+            if stop or (limit is not None and attempted >= limit):
                 break
-    return {"attempted": attempted, "stopped": stopped, "sources": list(sources), "held_out": held.as_dict(),
-            "github": gh.stats.as_dict(), "stats": dict(stats)}
+    return {"attempted": attempted, "stopped": stop.reason, "sources": list(sources), "held_out": held.as_dict(),
+            "github": gh.stats.as_dict(), "stats": dict(stats), "concurrency": concurrency}
+
+
+def _connection_lost(exc: BaseException) -> bool:
+    """A dropped database/network connection is not this item's fault: let the run resume instead of marking it."""
+    import asyncpg
+
+    return isinstance(exc, (ConnectionError, asyncpg.InterfaceError, asyncpg.PostgresConnectionError))

@@ -21,6 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.ingest.common.parallel import DEFAULT_CONCURRENCY
+
 PIPELINES = ("openhands", "skills", "verified")
 
 
@@ -36,6 +38,8 @@ def _parse(argv: Optional[list[str]]) -> argparse.Namespace:
     p.add_argument("--outcomes", default="resolved,failed", help="openhands: resolved,failed")
     p.add_argument("--sources", default=None,
                    help="verified: comma-separated subset of swe-rebench,swe-rebench-v2,swe-bench-extra,swe-gym")
+    p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
+                   help="items (tasks / repositories) processed at once; runs of one task stay in order")
     return p.parse_args(argv)
 
 
@@ -52,6 +56,11 @@ async def _spend_since(pool: Any, since: datetime) -> Optional[float]:
 
 
 async def _amain(a: argparse.Namespace) -> int:
+    # Every blocking model call runs in the default thread pool, which Python sizes to cpu_count + 4 (8 on a
+    # 4-core laptop) -- a hidden cap below --concurrency, since each unit can hold several calls at once.
+    from concurrent.futures import ThreadPoolExecutor
+
+    asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=max(32, 4 * a.concurrency)))
     from app.db.session import create_pool
     from app.ingest.common import preflight
     from app.ingest.common.ledger import Ledger
@@ -71,7 +80,8 @@ async def _amain(a: argparse.Namespace) -> int:
         print("REFUSED: --max-usd must be positive", file=sys.stderr)
         return 2
 
-    pool = await create_pool(target.dsn, min_size=1, max_size=8)
+    # Every parallel unit holds a connection at times; a few spare for the ledger, the budget and the preflight.
+    pool = await create_pool(target.dsn, min_size=1, max_size=a.concurrency + 4)
     lock = None
     try:
         try:
@@ -128,20 +138,20 @@ async def _dispatch(pool: Any, ledger: Any, a: Any, limit: Optional[int]) -> dic
     if a.pipeline == "openhands":
         from app.ingest.openhands import pipeline as oh
 
-        return await oh.run(pool, ledger=ledger, limit=limit,
+        return await oh.run(pool, ledger=ledger, limit=limit, concurrency=a.concurrency,
                           instances=set(a.instances.split(",")) if a.instances else None,
                           outcomes=tuple(o.strip() for o in a.outcomes.split(",") if o.strip()))
     elif a.pipeline == "verified":
         from app.ingest.verified import pipeline as vf
         from app.ingest.verified.sources import ORDER
 
-        return await vf.run(pool, ledger=ledger, limit=limit,
+        return await vf.run(pool, ledger=ledger, limit=limit, concurrency=a.concurrency,
                           sources=tuple(a.sources.split(",")) if a.sources else ORDER,
                           instances=set(a.instances.split(",")) if a.instances else None)
     else:
         from app.ingest.skills import pipeline as sk
 
-        return await sk.run(pool, ledger=ledger, limit=limit)
+        return await sk.run(pool, ledger=ledger, limit=limit, concurrency=a.concurrency)
 
 
 # Transient failures of the connection to the database or the network (2026-09-30: a production run died on

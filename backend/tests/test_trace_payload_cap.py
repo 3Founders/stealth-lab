@@ -302,3 +302,27 @@ def test_process_collector_file_caps_oversized_payload_end_to_end(tmp_path):
     assert ref_path.exists()
     assert ref_path.is_relative_to(raw_dir)
     assert tw.read_overflow_payload(by_seq[1]["raw_payload_ref"]) == {"tool_output": big}
+
+
+def test_an_oversized_payload_goes_to_the_object_store_when_one_is_configured():
+    """A local file on the machine that ran ingestion is unreadable from anywhere else (2026-09-30)."""
+    import asyncio
+
+    from app.services import object_storage, trace_worker
+
+    store = object_storage.MemoryStore()
+    object_storage.set_store(store)
+    try:
+        ref = asyncio.run(trace_worker._store_overflow({"tool_output": "x" * 10}))
+        assert ref.startswith(trace_worker.OBJECT_REF_PREFIX)
+        assert asyncio.run(trace_worker.read_overflow_payload_async(ref)) == {"tool_output": "x" * 10}
+    finally:
+        object_storage.set_store(None)
+
+
+def test_a_local_overflow_file_name_is_valid_on_windows(tmp_path):
+    from app.services.trace_worker import _prepare_payload_columns
+
+    _, out, ref = _prepare_payload_columns({"tool_output": "y" * 50}, "swe-rebench-openhands:chatcmpl-1:54",
+                                           max_inline_bytes=10, raw_payload_dir=tmp_path)
+    assert ":" not in ref.split("\\")[-1].split("/")[-1] and '"_overflow": true' in out

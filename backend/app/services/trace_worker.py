@@ -153,9 +153,21 @@ def _prepare_payload_columns(
     tool_input/tool_output directly sees a real signal instead of
     silently-truncated data with no indication anything was cut.
     """
-    max_bytes = MAX_INLINE_PAYLOAD_BYTES if max_inline_bytes is None else max_inline_bytes
     payload_dir = RAW_PAYLOAD_DIR if raw_payload_dir is None else raw_payload_dir
+    tool_input, tool_output, overflow = _split_payload(event, max_inline_bytes)
+    raw_payload_ref = None
+    if overflow:
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        file_path = payload_dir / f"{_safe_file_stem(dedup_key)}.json"
+        file_path.write_text(json.dumps(overflow), encoding="utf-8")
+        raw_payload_ref = str(file_path)
+    return tool_input, tool_output, raw_payload_ref
 
+
+def _split_payload(event: Mapping[str, Any], max_inline_bytes: Optional[int] = None
+                   ) -> tuple[Optional[str], Optional[str], dict[str, Any]]:
+    """(tool_input column, tool_output column, {field: full value} for the fields over the inline cap)."""
+    max_bytes = MAX_INLINE_PAYLOAD_BYTES if max_inline_bytes is None else max_inline_bytes
     columns: dict[str, Optional[str]] = {}
     overflow: dict[str, Any] = {}
     for field_name in ("tool_input", "tool_output"):
@@ -170,15 +182,31 @@ def _prepare_payload_columns(
         else:
             columns[field_name] = json.dumps({"_overflow": True, "size_bytes": size_bytes})
             overflow[field_name] = value
+    return columns["tool_input"], columns["tool_output"], overflow
 
-    raw_payload_ref = None
-    if overflow:
-        payload_dir.mkdir(parents=True, exist_ok=True)
-        file_path = payload_dir / f"{dedup_key}.json"
-        file_path.write_text(json.dumps(overflow), encoding="utf-8")
-        raw_payload_ref = str(file_path)
 
-    return columns["tool_input"], columns["tool_output"], raw_payload_ref
+def _safe_file_stem(dedup_key: str) -> str:
+    """A dedup key as a file name on every OS (OpenHands keys contain ':', which Windows rejects -- 2026-09-30)."""
+    import re as _re
+
+    return _re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", dedup_key)
+
+
+#: `raw_payload_ref` prefix for a payload kept in the object store (the ref is otherwise a local file path).
+OBJECT_REF_PREFIX = "object:"
+
+
+async def _store_overflow(overflow: dict[str, Any]) -> Optional[str]:
+    """Put an oversized payload in the configured object store and return its ref, or None when none is configured.
+    A payload written to the local disk of the machine that ran ingestion is unreadable from anywhere else (a
+    production run from a laptop left them there -- 2026-09-30)."""
+    from app.services.object_storage import get_store
+
+    store = get_store()
+    if store is None:
+        return None
+    _sha, locator = await store.put(json.dumps(overflow).encode("utf-8"), content_type="application/json")
+    return OBJECT_REF_PREFIX + locator
 
 
 def read_overflow_payload(raw_payload_ref: str) -> dict:
@@ -190,7 +218,21 @@ def read_overflow_payload(raw_payload_ref: str) -> dict:
     already have that string from their own row read, so this stays a
     small, direct file read rather than a general ref-resolution API.
     """
+    if raw_payload_ref.startswith(OBJECT_REF_PREFIX):
+        raise ValueError("an object-store payload: use read_overflow_payload_async")
     return json.loads(Path(raw_payload_ref).read_text(encoding="utf-8"))
+
+
+async def read_overflow_payload_async(raw_payload_ref: str) -> dict:
+    """read_overflow_payload for either kind of ref (object store or local file)."""
+    if raw_payload_ref.startswith(OBJECT_REF_PREFIX):
+        from app.services.object_storage import get_store
+
+        store = get_store()
+        if store is None:
+            raise RuntimeError("payload is in the object store but OBJECT_STORAGE_URL is not configured")
+        return json.loads((await store.get(raw_payload_ref[len(OBJECT_REF_PREFIX):])).decode("utf-8"))
+    return read_overflow_payload(raw_payload_ref)
 
 
 async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_id: str,
@@ -250,7 +292,7 @@ async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_
     )
 
 
-def _prepare_event_row(record: dict, owner_id: str | None = None,
+async def _prepare_event_row(record: dict, owner_id: str | None = None,
                        visibility: str = "public", *,
                        max_inline_bytes: Optional[int] = None,
                        raw_payload_dir: Optional[Path] = None) -> dict:
@@ -287,10 +329,18 @@ def _prepare_event_row(record: dict, owner_id: str | None = None,
     """
     event = redact_event(record["event"])
     timestamp = _parse_timestamp(event.get("timestamp"))
-    tool_input_col, tool_output_col, raw_payload_ref = _prepare_payload_columns(
-        event, record["dedup_key"],
-        max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
-    )
+    tool_input_col, tool_output_col, raw_payload_ref = None, None, None
+    if raw_payload_dir is None:
+        tool_input_col, tool_output_col, overflow = _split_payload(event, max_inline_bytes)
+        raw_payload_ref = await _store_overflow(overflow) if overflow else None
+        if overflow and raw_payload_ref is None:          # no object store configured: the local file, as before
+            tool_input_col, tool_output_col, raw_payload_ref = _prepare_payload_columns(
+                event, record["dedup_key"], max_inline_bytes=max_inline_bytes)
+    else:
+        tool_input_col, tool_output_col, raw_payload_ref = _prepare_payload_columns(
+            event, record["dedup_key"],
+            max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
+        )
 
     # trajectory-ingestion-hardening task: canonical_event_type/raw_event
     # (migration 88). Absent for the Claude Code collector path (its
@@ -350,7 +400,7 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
     be folded into the collector's batched statement without first proving
     the redaction pass is still applied per row.
     """
-    row = _prepare_event_row(
+    row = await _prepare_event_row(
         record, owner_id, visibility,
         max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
     )
@@ -473,7 +523,7 @@ async def _insert_events_batched(conn: asyncpg.Connection, rows: list[dict]) -> 
     if inserted:
         await conn.execute(
             _BATCH_JOB_SQL,
-            json.dumps([{"id": i, "dedup_key": k} for i, k in inserted]),
+            json.dumps([{"id": str(i), "dedup_key": k} for i, k in inserted]),   # asyncpg returns uuid.UUID
         )
     return inserted
 
@@ -555,7 +605,7 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
                     headers_ensured.add(trace_id)
 
                 rows = [
-                    _prepare_event_row(
+                    await _prepare_event_row(
                         record, owner_id, visibility,
                         max_inline_bytes=max_inline_bytes,
                         raw_payload_dir=raw_payload_dir,

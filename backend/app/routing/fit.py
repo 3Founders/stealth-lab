@@ -13,6 +13,7 @@ simulation_based_calibration   Talts et al. (2018): simulate from the prior, ref
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -317,7 +318,9 @@ async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int
     goal_meta = {g: r for g, r in rows.items() if r["visibility"] == "public"}
     registry = await store.model_registry(pool)
     data, meta = build_joint_data(observations, goal_meta, parents, registry, cfg)
-    samples, used, diag = run_joint(data, cfg, seed=seed, method=method)
+    # Minutes of CPU (NUTS): off the event loop, or every other job of the worker stalls with it (2026-09-30: a
+    # 405 s refit froze the worker and left another job's transaction idle for 250 s).
+    samples, used, diag = await asyncio.to_thread(run_joint, data, cfg, seed=seed, method=method)
     arrays = global_arrays(samples, meta)
     from app.routing.service import token_summary
 
@@ -426,7 +429,8 @@ async def local_refit(pool: Any, goal_id: str, cfg: RoutingDefaults = DEFAULTS, 
                                             "draws": pack({"x": x}), "n_observations": 0}])
         return {"goal_id": goal_id, "observations": 0}
     local = _local_data(g, observations, rng)
-    xi_goal, xi_proc, steps_out, ess = _local_posterior(g, mu, local, cfg, seed)
+    # ~45 s of CPU per Goal: off the event loop (see nightly_refit).
+    xi_goal, xi_proc, steps_out, ess = await asyncio.to_thread(_local_posterior, g, mu, local, cfg, seed)
     x = mu + g.arrays["tau"] * xi_goal
     rows = [{"kind": "goal", "id": goal_id, "version": g.version, "method": "local_nuts", "draws": pack({"x": x}),
              "n_observations": len(observations), "last_observation_at": observations[-1]["occurred_at"]}]

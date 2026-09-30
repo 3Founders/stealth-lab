@@ -405,7 +405,8 @@ def test_prompt_is_derived_from_the_schema_so_it_cannot_drift_again():
     assert "OBSERVED =" not in ts._SYSTEM_PROMPT
     assert "INFERRED =" not in ts._SYSTEM_PROMPT
     assert ts._SYSTEM_PROMPT.count("primary_goal") >= 1
-    assert ts.PROMPT_VERSION == "v2", (
+    # v3 (2026-09-29): step role/check and the plain-language claim rules.
+    assert ts.PROMPT_VERSION == "v3", (
         "the prompt changed; a prompt is a versioned artifact, so the version "
         "moves with it"
     )

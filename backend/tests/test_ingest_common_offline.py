@@ -231,3 +231,43 @@ def test_a_worker_stops_itself_before_its_credential_expires():
     loop.fn()
     assert stop.is_set()
     assert w._stop_before_expiry(loop, NS(stop=asyncio.Event()), None) is None
+
+
+def test_units_run_in_parallel_but_items_of_a_unit_stay_in_order():
+    from app.ingest.common.parallel import Stop, run_units
+
+    log, live, peak = [], [0], [0]
+
+    async def handle(item):
+        live[0] += 1
+        peak[0] = max(peak[0], live[0])
+        await asyncio.sleep(0.01)
+        log.append(item)
+        live[0] -= 1
+
+    units = [[(u, i) for i in range(3)] for u in range(6)]
+    asyncio.run(run_units(units, handle, concurrency=4, stop=Stop()))
+    assert peak[0] == 4 and len(log) == 18
+    for u in range(6):
+        assert [i for (uu, i) in log if uu == u] == [0, 1, 2]
+
+
+def test_a_stop_starts_nothing_new_and_a_failure_cancels_the_rest():
+    from app.ingest.common.parallel import Stop, run_units
+
+    stop, seen = Stop(), []
+
+    async def handle(item):
+        seen.append(item)
+        stop.set("budget")
+
+    asyncio.run(run_units([[1, 2], [3, 4]], handle, concurrency=1, stop=stop))
+    assert seen == [1] and stop.reason == "budget"
+
+    async def boom(item):
+        if item == "bad":
+            raise ConnectionResetError("dropped")
+        await asyncio.sleep(10)
+
+    with pytest.raises(ConnectionResetError):
+        asyncio.run(asyncio.wait_for(run_units([["bad"], ["slow"]], boom, concurrency=2, stop=Stop()), 5))

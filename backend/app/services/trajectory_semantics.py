@@ -39,6 +39,7 @@ registry" reading of the plan.
 """
 from __future__ import annotations
 
+import time
 import hashlib
 import json
 import logging
@@ -571,6 +572,7 @@ async def extract_trajectory_semantics(
         from app.services import ingest_budget
 
         await ingest_budget.guard(SEMANTICS_OP)
+        _llm_t0 = time.monotonic()
         response = await run_blocking(
             client.chat.completions.create,
             model=model,
@@ -585,6 +587,7 @@ async def extract_trajectory_semantics(
             model, SEMANTICS_OP, getattr(response, "usage", None)
         )
         raw_text = response.choices[0].message.content.strip()
+        llm_seconds = round(time.monotonic() - _llm_t0, 1)
     except BudgetExceeded:
         # A cost stop, not a provider failure. It is deliberately NOT wrapped in
         # ExtractionTransientFailure: a caller that retries transient failures
@@ -864,7 +867,11 @@ async def extract_trajectory_semantics(
         }
 
     try:
-        return await _persist()
+        _persist_t0 = time.monotonic()
+        out = await _persist()
+        # Where an extraction spends its time (throughput diagnosis, 2026-09-30).
+        out["timings_s"] = {"llm": llm_seconds, "persist": round(time.monotonic() - _persist_t0, 1)}
+        return out
     except Exception as exc:  # noqa: BLE001 -- any persistence failure is real
         await pool.execute(
             "UPDATE trajectory_extractions SET status='failed', error=$2, completed_at=now() "

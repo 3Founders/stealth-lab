@@ -414,6 +414,11 @@ async def _amain(args: argparse.Namespace) -> int:
     worker = Worker(pool, cfg, worker_id=worker_id, pools=ShardPools(pool), service=service,
                     job_types=[t.strip() for t in args.job_types.split(",")] if args.job_types else None)
     loop = asyncio.get_running_loop()
+    # Blocking model calls and CPU work run in the default thread pool, sized by Python to cpu_count + 4 (8 on a
+    # laptop): below the lane count, so lanes queued for threads (2026-09-30).
+    from concurrent.futures import ThreadPoolExecutor
+
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=max(32, 4 * cfg.concurrency)))
     _stop_before_expiry(loop, worker, service)
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:

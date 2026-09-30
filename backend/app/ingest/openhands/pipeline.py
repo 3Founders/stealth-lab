@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.ingest.common.hf import PinnedFile, read_columns
+from app.ingest.common.parallel import DEFAULT_CONCURRENCY, Stop, run_units
 from app.ingest.common.ledger import FAILED, REJECTED, WRITTEN, ItemRef, Ledger
 from app.ingest.common.licenses import decide, spdx_for_github_name
 from app.ingest.openhands import normalize as nz
@@ -213,6 +214,16 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
         extractor_version=EXTRACTOR_VERSION, actor_id=EXTRACTOR, scope_type="global",
         license_spdx=DATASET_LICENSE, attribution=attribution)
     objects: dict[str, Any] = {"ingestion_context_id": context_id, "trace_id": trajectory.trace_id}
+    import time as _time
+
+    timings: dict[str, float] = {}      # seconds per stage, kept in the ledger (throughput diagnosis)
+    mark = [_time.monotonic()]
+
+    def lap(stage: str) -> None:
+        now = _time.monotonic()
+        timings[stage] = round(now - mark[0], 1)
+        mark[0] = now
+
     try:
         written = await write_normalized_trajectory(pool, trajectory)
         await write_trajectory_episodes(pool, session_id=trajectory.session_id, trajectory=trajectory)
@@ -237,6 +248,7 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
         goal = await ensure_task_goal(pool, key=key, issue=parent.problem_statement or trajectory.metadata["declared_goal"],
                                       client=state.client, model=model, named_by=EXTRACTOR, source=DATASET.source_id)
         objects["task_goal_id"] = goal.goal_id
+        lap("store_and_task_goal")
 
         result = await _prior_extraction(pool, episode_id)
         if result is None:
@@ -255,6 +267,8 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
                         "procedure_ids": [p["procedure_id"] for p in procedure_rows]})
         if not resolved and procedure_rows:
             raise RuntimeError("a failed run produced Procedures; the extractor ignored write_procedures=False")
+        lap("extraction")
+        timings.update({f"extraction_{k}": v for k, v in (result.get("timings_s") or {}).items()})
 
         # The task's tests as its frozen Benchmark (idempotent per task), and the benchmark grade as testimony.
         from app.ingest.common.benchmarks import TaskTests, ensure_task_benchmark
@@ -294,7 +308,8 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
             "check_kind": "benchmark", "accepted": resolved, "gold_correct": resolved, "visibility": "public",
         })
         await complete_ingestion_context(pool, context_id, status="completed")
-        detail = {"events": len(trajectory.events), "events_inserted": written.get("inserted"),
+        lap("benchmark_solution_claim_routing")
+        detail = {"events": len(trajectory.events), "events_inserted": written.get("inserted"), "timings_s": timings,
                   "model": model, "extraction_policy": EXTRACTION_POLICY,
                   "counts": {k: result.get(k) for k in ("goals", "claims", "failure_claims", "procedures",
                                                           "procedures_withheld") if k in result},
@@ -306,8 +321,9 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
 
 
 async def run(pool: Any, *, ledger: Ledger, limit: Optional[int], instances: Optional[set[str]] = None,
-              outcomes: tuple[str, ...] = ("resolved", "failed")) -> dict:
-    """Process selected items in file order (row group by row group, each read once)."""
+              outcomes: tuple[str, ...] = ("resolved", "failed"), concurrency: int = DEFAULT_CONCURRENCY) -> dict:
+    """Process selected items row group by row group (each read once). Within a row group, the runs of one task stay
+    in order (they share its Goal and Procedures) and different tasks run in parallel, up to `concurrency` at once."""
     from app.ingest.common.llm import extraction_client
     from app.services.ingest_budget import BudgetExceeded
     from app.services.ingestion_sources.held_out import load_held_out
@@ -320,13 +336,15 @@ async def run(pool: Any, *, ledger: Ledger, limit: Optional[int], instances: Opt
     parents = await run_blocking(load_parents)
     state = RunState(ledger=ledger, held=held, parents=parents, client=extraction_client())
 
+    settled = await ledger.settled_keys()
     todo: list[Selected] = []
-    for item in items:
-        go, _why = await ledger.should_process(item.item_key)
-        if go:
-            todo.append(item)
-        else:
+    # File order: a limited run then takes whole row groups, whose items run in parallel -- in selection order the
+    # first 48 items were spread over 15 row groups (1-7 each) and barely overlapped (2026-09-30 test).
+    for item in sorted(items, key=lambda i: (i.row_group, i.row_index)):
+        if item.item_key in settled:
             state.stats["skipped_already_decided"] += 1
+            continue
+        todo.append(item)
         if limit is not None and len(todo) >= limit:
             break
 
@@ -336,33 +354,49 @@ async def run(pool: Any, *, ledger: Ledger, limit: Optional[int], instances: Opt
 
     import pyarrow.parquet as pq
 
-    stopped: Optional[str] = None
+    stop = Stop()
     handle = await run_blocking(lambda: pq.ParquetFile(str(path)))
     for rg in sorted(by_group):
+        if stop:
+            break
         table = await run_blocking(handle.read_row_group, rg)
-        for item in sorted(by_group[rg], key=lambda i: i.row_index):
+
+        async def one(item: Selected, table: Any = table, rg: int = rg) -> None:
             ref = _ref(item)
             reason, detail = await gate(state, item)
             if reason is not None:
                 await ledger.record(ref, REJECTED, reason, detail=detail)
                 state.stats[f"rejected:{reason}"] += 1
-                continue
+                return
             row = table.slice(item.row_index, 1).to_pylist()[0]
             if row.get("trajectory_id") != item.trajectory_id:
                 raise RuntimeError(f"selection cache does not match the pinned file at {rg}/{item.row_index}")
             try:
                 status, why, more, objects = await process(state, item, row, detail)
             except BudgetExceeded as exc:
-                stopped = f"budget: {exc}"
-                break
+                stop.set(f"budget: {exc}")
+                return
             except Exception as exc:  # noqa: BLE001 -- infrastructure: retried by the next run
+                if _connection_lost(exc):
+                    raise                     # the CLI reconnects and resumes the run
                 log.exception("openhands item %s failed", item.item_key)
                 await ledger.record(ref, FAILED, type(exc).__name__, detail={**detail, "error": str(exc)[:2000]})
                 state.stats[f"failed:{type(exc).__name__}"] += 1
-                continue
+                return
             stored = await ledger.record(ref, status, why, detail={**detail, **more}, objects=objects)
             state.stats[f"{stored}:{why if stored == status else 'duplicate_identity'}"] += 1
-        if stopped:
-            break
-    return {"selected_items": len(items), "attempted": len(todo), "stopped": stopped,
-            "held_out": held.as_dict(), "stats": dict(state.stats)}
+
+        units: dict[str, list[Selected]] = defaultdict(list)
+        for item in sorted(by_group[rg], key=lambda i: i.row_index):
+            units[item.instance_id].append(item)
+        await run_units(list(units.values()), one, concurrency=concurrency, stop=stop)
+        del table
+    return {"selected_items": len(items), "attempted": len(todo), "stopped": stop.reason,
+            "held_out": held.as_dict(), "stats": dict(state.stats), "concurrency": concurrency}
+
+
+def _connection_lost(exc: BaseException) -> bool:
+    """A dropped database/network connection is not this item's fault: let the run resume instead of marking it."""
+    import asyncpg
+
+    return isinstance(exc, (ConnectionError, asyncpg.InterfaceError, asyncpg.PostgresConnectionError))

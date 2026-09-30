@@ -47,6 +47,15 @@ class Ledger:
             self.pipeline, item_key)
         return dict(row) if row else None
 
+    async def settled_keys(self) -> set[str]:
+        """Every item this pipeline must NOT process again (written, rejected, or failed max_attempts times), in ONE
+        query. Checking item by item cost one database round trip per dataset row (21,000 for SWE-rebench alone),
+        which dominated a run from a machine far from the database."""
+        rows = await self.pool.fetch(
+            "SELECT item_key FROM ingest_ledger WHERE pipeline = $1 AND (status IN ($2, $3) OR attempts >= $4)",
+            self.pipeline, WRITTEN, REJECTED, self.max_attempts)
+        return {r["item_key"] for r in rows}
+
     async def should_process(self, item_key: str) -> tuple[bool, Optional[str]]:
         """(process?, why not). Terminal rows are never redone; failed rows are retried until max_attempts."""
         prior = await self.prior(item_key)
