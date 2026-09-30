@@ -442,6 +442,7 @@ async def extract_trajectory_semantics(
     compaction_judge: Any = None,
     write_procedures: bool = True,
     task_goal: Optional[dict] = None,
+    embedder: Any = None,
 ) -> dict:
     """
     `task_goal` ({"id", "canonical_name"}, 2026-09-29): the caller already knows which Goal this run attempted (a
@@ -654,6 +655,9 @@ async def extract_trajectory_semantics(
             owner_id=resolved_owner_id,
             visibility=resolved_visibility,
             created_by=created_by,
+            # With an embedder, a new Goal gets its vector at creation, so identity resolution also finds
+            # candidates by meaning (not only by keywords). Ingestion passes one (2026-09-30).
+            **({"embedder": embedder} if embedder is not None else {}),
         )
 
         async def _goal_or_none(text: str) -> Optional[dict]:
@@ -796,6 +800,7 @@ async def extract_trajectory_semantics(
                 visibility=resolved_visibility,
                 scope_type=resolved_scope_type,
                 scope_entity_id=resolved_scope_entity_id,
+                **({"goal_embedder": embedder} if embedder is not None else {}),
                 **capture_kwargs,
             )
             if ingestion_context_id and not procedure_row.get("reused"):

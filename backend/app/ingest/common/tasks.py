@@ -73,7 +73,7 @@ async def _registered(conn: Any, key: str) -> Optional[TaskGoal]:
 
 
 async def ensure_task_goal(pool: Any, *, key: str, issue: str, client: Any, model: str, named_by: str,
-                           source: str, provenance: str = "system_pending_review") -> TaskGoal:
+                           source: str, provenance: str = "system_pending_review", embedder: Any = None) -> TaskGoal:
     from app.services.goals import describe_goal_quality_issue, find_or_create_goal
 
     existing = await _registered(pool, key)
@@ -98,7 +98,9 @@ async def ensure_task_goal(pool: Any, *, key: str, issue: str, client: Any, mode
             goal = await find_or_create_goal(
                 pool, canonical_name=name, scope_type="global", provenance=provenance,
                 description=issue[:2000], created_from="benchmark_task", created_by=named_by,
-                metadata={"task_key": key, "source": source})
+                metadata={"task_key": key, "source": source},
+                # the Goal's vector at creation: identity resolution then finds candidates by meaning too
+                **({"embedder": embedder} if embedder is not None else {}))
             await conn.execute(
                 "INSERT INTO ingest_task_goals (task_key, goal_id, canonical_name, named_by, source) "
                 "VALUES ($1, $2::uuid, $3, $4, $5) ON CONFLICT (task_key) DO NOTHING",

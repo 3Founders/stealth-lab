@@ -91,9 +91,12 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
     from app.services.procedures import capture_procedure
     from app.services.verified_solutions import preserve
 
+    from app.ingest.common.embedding import embed_written, ingest_embedder
+
+    emb = ingest_embedder(pool)
     key = task_key(task.instance_id)
     goal = await ensure_task_goal(pool, key=key, issue=task.problem_statement, client=client, model=model,
-                                  named_by=EXTRACTOR, source=src.source_id)
+                                  named_by=EXTRACTOR, source=src.source_id, embedder=emb)
     result = await ex.extract(client, model, goal=goal.canonical_name, repo=task.repo, language=task.language,
                               issue=task.problem_statement, hints=task.hints, patch=task.patch,
                               tests=task.fail_to_pass)
@@ -115,7 +118,8 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
             preconditions=[{"source": "verified_solution", "description": p} for p in result.preconditions],
             failure_conditions=[{"source": "verified_solution", "description": p} for p in result.pitfalls],
             provenance="public_generated", created_by=EXTRACTOR, scope_type="global", source_locator=locator,
-            ingestion_context_id=context_id, procedure_dedup=True, source_key=f"swe-solution:{task.instance_id}")
+            ingestion_context_id=context_id, procedure_dedup=True, source_key=f"swe-solution:{task.instance_id}",
+            goal_embedder=emb)
         proc_row, proc_id = str(proc["id"]), str(proc["procedure_id"])
         objects.update({"procedure_id": proc_id, "procedure_row_id": proc_row, "reused": bool(proc.get("reused"))})
         version = int(await pool.fetchval("SELECT version FROM procedures WHERE id = $1::uuid", proc_row) or 1)
@@ -150,6 +154,7 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
                                               ingestion_context_id=context_id, created_by=EXTRACTOR)
                 claim_ids.append(str(cid))
         objects["claim_ids"] = claim_ids
+        objects["embedded"] = await embed_written(pool, goal_ids=[goal.goal_id], procedure_row_ids=[proc_row])
         await complete_ingestion_context(pool, context_id, status="completed")
     except Exception:
         await complete_ingestion_context(pool, context_id, status="failed")

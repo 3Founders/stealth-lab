@@ -245,8 +245,12 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
         model = extraction_model()
         parent = state.parents[item.instance_id]
         key = task_key(item.instance_id)
+        from app.ingest.common.embedding import embed_written, ingest_embedder
+
+        emb = ingest_embedder(pool)
         goal = await ensure_task_goal(pool, key=key, issue=parent.problem_statement or trajectory.metadata["declared_goal"],
-                                      client=state.client, model=model, named_by=EXTRACTOR, source=DATASET.source_id)
+                                      client=state.client, model=model, named_by=EXTRACTOR, source=DATASET.source_id,
+                                      embedder=emb)
         objects["task_goal_id"] = goal.goal_id
         lap("store_and_task_goal")
 
@@ -256,7 +260,7 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
                 pool, episode_id, client=state.client, model=model, escalated=True,
                 escalation_reason=EXTRACTION_POLICY, ingestion_context_id=context_id,
                 created_by=EXTRACTOR, write_procedures=resolved,
-                task_goal={"id": goal.goal_id, "canonical_name": goal.canonical_name})
+                task_goal={"id": goal.goal_id, "canonical_name": goal.canonical_name}, embedder=emb)
             procedure_rows = result.get("procedure_rows") or []
         else:
             procedure_rows = [dict(r) for r in await pool.fetch(
@@ -307,6 +311,9 @@ async def process(state: RunState, item: Selected, row: dict[str, Any],
             "model_key": nz.MODEL, "scaffold": nz.PROVIDER_VERSION, "instance_key": item.instance_id,
             "check_kind": "benchmark", "accepted": resolved, "gold_correct": resolved, "visibility": "public",
         })
+        objects["embedded"] = await embed_written(
+            pool, goal_ids=[goal.goal_id, *(objects.get("goal_ids") or [])],
+            procedure_ids=objects.get("procedure_ids") or [])
         await complete_ingestion_context(pool, context_id, status="completed")
         lap("benchmark_solution_claim_routing")
         detail = {"events": len(trajectory.events), "events_inserted": written.get("inserted"), "timings_s": timings,

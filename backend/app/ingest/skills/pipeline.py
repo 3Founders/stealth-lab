@@ -178,14 +178,19 @@ async def compile_item(pool: Any, row: Row, content: str, commit: str, spdx: str
     from app.ingest.common.llm import ingest_model
 
     model = ingest_model()
+    from app.ingest.common.embedding import embed_written, ingest_embedder
+
     outcome = await compile_skill_artifact(
-        pool, artifact, embedder=Embedder(rate_limit_pool=pool), client=client, run_id=run_id,
+        pool, artifact, embedder=ingest_embedder(pool), client=client, run_id=run_id,
         created_by=EXTRACTOR, admission_llm_model=model, extraction_llm_model=model,
         fallback_extraction_llm_model=None, claim_extraction_llm_model=model)
     objects = {k: getattr(outcome, k, None) for k in (
         "procedure_id", "version_row_id", "artifact_id", "source_id", "ingestion_context_id")}
     objects.update({k: list(getattr(outcome, k, None) or []) for k in (
         "script_procedure_ids", "reference_procedure_ids", "independent_step_procedure_ids", "task_node_ids")})
+    objects["embedded"] = await embed_written(pool, procedure_ids=[
+        objects.get("procedure_id"), *objects["script_procedure_ids"], *objects["reference_procedure_ids"],
+        *objects["independent_step_procedure_ids"]])
     detail = {"commit": commit, "provenance_match": how, "license": spdx, "status": outcome.status,
               "extraction_model": outcome.extraction_model, "admission": outcome.admission_decision,
               "quarantined": outcome.quarantined, "injection_screened": outcome.injection_screened,

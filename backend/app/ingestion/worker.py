@@ -270,6 +270,15 @@ class Worker:
     async def _maintenance(self) -> None:
         """Periodic upkeep. Projections are drained FIRST: Goal.has_procedures (migration 130) is maintained by the
         projection, and placement repair places exactly the Goals whose flag just flipped."""
+        # Goals and Procedures written without a vector get one here (before the projections are drained, so the
+        # search index picks them up this tick). 2026-09-30: production Goals and Procedures had no vectors.
+        try:
+            from app.ingestion.handlers import Dependencies
+            from app.services.embedding_sweep import sweep
+
+            self.counts["embedded"] = await sweep(self.pool, Dependencies.get_embedder(self.pool))
+        except Exception:  # noqa: BLE001 -- retried next tick; never kills maintenance
+            log.warning("embedding sweep failed; will retry", exc_info=True)
         if self.cfg.drain_projections:
             from app.services.search_projection import drain_outbox
 
