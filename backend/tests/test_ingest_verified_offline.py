@@ -129,3 +129,15 @@ def test_a_verify_step_may_name_many_tests():
     long_check = "pytest " + " ".join(f"tests/test_mod.py::test_case_{i}" for i in range(20))
     reply = {**GOOD, "steps": [*GOOD["steps"][:2], {"do": "Run the failing tests", "role": "verify", "check": long_check}]}
     assert _run(json.dumps(reply)).steps[-1].check == long_check
+
+
+def test_the_procedure_identity_key_changes_with_the_extracted_content():
+    """A retried item that extracted different text must not replay the first attempt's identity decision."""
+    from app.ingest.verified.pipeline import _source_key
+
+    task = to_task(SOURCES["swe-rebench"], _row())
+    a = _run(json.dumps(GOOD))
+    b = _run(json.dumps({**GOOD, "name": "Make relative paths use forward slashes everywhere"}))
+    assert _source_key(task, a) == _source_key(task, _run(json.dumps(GOOD)))
+    assert _source_key(task, a) != _source_key(task, b)
+    assert _source_key(task, a).startswith("swe-solution:o__r-1:")

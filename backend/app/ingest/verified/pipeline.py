@@ -14,6 +14,7 @@ Per task, in order; the first gate that says no decides and the ledger records w
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -83,6 +84,18 @@ def credit(task: Task, src: Source, spdx: str) -> dict:
     }
 
 
+def _source_key(task: Task, result: Any) -> str:
+    """The Procedure identity decision's idempotency key: the task AND a fingerprint of what was extracted. With the
+    task alone, a retry of an item interrupted mid-write (its first Procedure already stored) that extracted slightly
+    different text raised PermanentIdentityConflict forever (production, 2026-09-30); now the retry gets its own
+    decision and the identity judge reuses the earlier Procedure when it is the same way."""
+    import hashlib
+
+    content = json.dumps({"name": result.name, "steps": [[s.do, s.role, s.check] for s in result.steps]},
+                         sort_keys=True)
+    return f"swe-solution:{task.instance_id}:{hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]}"
+
+
 async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str, client: Any, model: str,
                      run_id: str) -> tuple[str, str, dict, dict]:
     from app.services.claims import capture_claim
@@ -118,7 +131,7 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
             preconditions=[{"source": "verified_solution", "description": p} for p in result.preconditions],
             failure_conditions=[{"source": "verified_solution", "description": p} for p in result.pitfalls],
             provenance="public_generated", created_by=EXTRACTOR, scope_type="global", source_locator=locator,
-            ingestion_context_id=context_id, procedure_dedup=True, source_key=f"swe-solution:{task.instance_id}",
+            ingestion_context_id=context_id, procedure_dedup=True, source_key=_source_key(task, result),
             goal_embedder=emb)
         proc_row, proc_id = str(proc["id"]), str(proc["procedure_id"])
         objects.update({"procedure_id": proc_id, "procedure_row_id": proc_row, "reused": bool(proc.get("reused"))})
