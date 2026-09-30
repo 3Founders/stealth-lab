@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from app.api.admin import get_pool
 from app.api.deps import require_admin_api_key
 from app.services.extraction_routing import choose_extraction_model
+from app.services.governance import BudgetExceeded
 from app.services.ingestion_jobs import _extraction_client
 from app.services.ingestion_sources.dispatch import ingest_openhands_trajectories
 from app.services.procedure_extraction.schema import ExtractionTransientFailure
@@ -232,6 +233,10 @@ async def run_semantic_extraction(
         )
     except ExtractionTransientFailure as exc:
         raise HTTPException(status_code=502, detail=f"semantic extraction failed: {exc}") from exc
+    except BudgetExceeded as exc:
+        # 503, not 502: nothing failed, the pass was refused before it spent
+        # anything because an ingestion worker had the daily cap installed.
+        raise HTTPException(status_code=503, detail=f"extraction budget: {exc}") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ExtractionResponse(
@@ -361,6 +366,8 @@ async def reextract_trajectory(extraction_id: str, pool=Depends(get_pool)) -> Ex
         )
     except ExtractionTransientFailure as exc:
         raise HTTPException(status_code=502, detail=f"re-extraction failed: {exc}") from exc
+    except BudgetExceeded as exc:
+        raise HTTPException(status_code=503, detail=f"extraction budget: {exc}") from exc
     return ExtractionResponse(
         model=strong_choice.model, escalated=True,
         escalation_reason="explicit_reextraction_request", **result,

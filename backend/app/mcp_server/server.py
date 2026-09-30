@@ -5681,6 +5681,7 @@ async def run_semantic_extraction(episode_id: str, ctx: Context, force_strong_mo
     produces useful knowledge.
     """
     from app.services.extraction_routing import choose_extraction_model
+    from app.services.governance import BudgetExceeded
     from app.services.ingestion_jobs import _extraction_client
     from app.services.procedure_extraction.schema import ExtractionTransientFailure
     from app.services.trajectory_semantics import extract_trajectory_semantics
@@ -5710,6 +5711,11 @@ async def run_semantic_extraction(episode_id: str, ctx: Context, force_strong_mo
         )
     except ExtractionTransientFailure as exc:
         return f"REFUSED: semantic extraction failed -- {exc}"
+    except BudgetExceeded as exc:
+        # A cost stop, not a failure: the ingestion daily cap refused the call
+        # before it spent anything. It is deliberately not wrapped in
+        # ExtractionTransientFailure upstream, so it needs its own refusal here.
+        return f"REFUSED: extraction budget -- {exc}"
     except ValueError as exc:
         return f"REFUSED: {exc}"
     return json.dumps({"model": choice.model, "escalated": choice.escalated, **result}, default=str)
@@ -5791,6 +5797,7 @@ async def reextract_trajectory(extraction_id: str, ctx: Context) -> str:
     trajectory_extractions row that coexists with every prior one;
     nothing is overwritten."""
     from app.services.extraction_routing import choose_extraction_model
+    from app.services.governance import BudgetExceeded
     from app.services.ingestion_jobs import _extraction_client
     from app.services.procedure_extraction.schema import ExtractionTransientFailure
     from app.services.trajectory_semantics import extract_trajectory_semantics
@@ -5814,6 +5821,8 @@ async def reextract_trajectory(extraction_id: str, ctx: Context) -> str:
         )
     except ExtractionTransientFailure as exc:
         return f"REFUSED: re-extraction failed -- {exc}"
+    except BudgetExceeded as exc:
+        return f"REFUSED: extraction budget -- {exc}"
     return json.dumps({"model": strong_choice.model, "escalated": True, **result}, default=str)
 
 

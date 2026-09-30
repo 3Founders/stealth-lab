@@ -128,6 +128,7 @@ async def run_skillmd_pilot(
     star_prior: Optional[int] = None,
     reader: Any = None,
     license_resolver: Any = None,
+    raw_fetcher: Any = None,
     fetch_workers: int = 6,
     embed: bool = False,
     created_by: str = "skillmd_138k_pilot",
@@ -141,6 +142,12 @@ async def run_skillmd_pilot(
     lookups, and stops before `run_skill_ingestion`. That is what makes the
     first run safe to do at full width -- the license and dedup numbers do not
     depend on any write.
+
+    `raw_fetcher` is the same seam `SkillMD138KSource` already takes, exposed
+    here so this orchestration is testable without a network. Without it the
+    only way to exercise `run_skillmd_pilot` was to let it fetch
+    raw.githubusercontent.com for real, which is why the async wrapper around
+    the blocking discover pass had no proving test.
     """
     if shard_dsn:
         assert_not_experiment_database(shard_dsn)
@@ -153,6 +160,7 @@ async def run_skillmd_pilot(
         license_resolver=license_resolver,
         enforce_license=enforce_license,
         star_prior=star_prior,
+        raw_fetcher=raw_fetcher,
         fetch_workers=fetch_workers,
     )
 

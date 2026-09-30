@@ -74,7 +74,7 @@ def _hosted_app(env):
     mcp = MCPServer(name="t", token_verifier=_Verifier(), auth=AuthSettings(
         issuer_url=AnyHttpUrl(oa.authorization_server_url(SUPA, ORIGIN)),
         resource_server_url=AnyHttpUrl(oa.resource_url(ORIGIN)), required_scopes=["stealthlab:tools"]))
-    app = oa.wrap_app(mcp.streamable_http_app(stateless_http=True), SUPA, server_origin=ORIGIN,
+    app = oa.wrap_app(mcp.streamable_http_app(stateless_http=True, json_response=True), SUPA, server_origin=ORIGIN,
                       public_origin=ORIGIN, env=env)
     return app, mcp
 

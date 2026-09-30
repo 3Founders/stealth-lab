@@ -627,12 +627,16 @@ class BotDependencyPrSource:
         since: str = DEFAULT_SINCE,
         per_page: int = DEFAULT_SEARCH_RESULTS,
         max_pages: int = 1,
+        repos: "tuple[str, ...]" = (),
     ) -> None:
         self._client = client or _GitHubApiClient()
         self._authors = authors
         self._since = since
         self._per_page = min(per_page, 100)
         self._max_pages = max_pages
+        #: Optional repository scoping. See `discover()` for why a run that needs
+        #: more than ~1,000 PRs MUST set this.
+        self._repos = tuple(repos)
         self._snapshots: dict[str, BotPrArtifact] = {}
         #: Cursors seen by `discover()`, so `fetch()` can resolve a ref the
         #: caller built from one. Registered on discovery, not on fetch -- the
@@ -653,26 +657,40 @@ class BotDependencyPrSource:
         Resumability is the point: the caller persists the last `cursor` and
         passes it back, so a run killed by a secondary rate limit costs nothing
         on restart.
-        """
-        for author in self._authors:
-            page = 1
-            while page <= self._max_pages:
-                body = self._client.get(self._search_url(author, page), is_search=True)
-                items = (body or {}).get("items") or []
-                if not items:
-                    break
-                for item in items:
-                    cursor = self._to_cursor(item, author)
-                    if cursor is None or cursor.cursor <= after:
-                        continue
-                    self._cursors[self._cursor_key(cursor.repo, cursor.pr_number)] = cursor
-                    yield cursor
-                if len(items) < self._per_page:
-                    break
-                page += 1
 
-    def _search_url(self, author: str, page: int) -> str:
-        query = f"is:pr is:merged author:{author} merged:>={self._since}"
+        REPOSITORY SCOPING IS NOT AN OPTIMISATION. GitHub's search endpoint caps
+        every query at 1,000 results, and a global `author:app/dependabot
+        is:merged` query reports ~26.6M matches -- so the global form is
+        permanently truncated and cannot enumerate a corpus. Measured on
+        2026-09-28. Any run that needs more than ~1,000 PRs must pass `repos=`;
+        with `repos` empty this method keeps its original global behaviour,
+        which is correct for a bounded probe and wrong for a census.
+        """
+        scopes: "tuple[str, ...]" = self._repos or ("",)
+        for author in self._authors:
+            for scope in scopes:
+                page = 1
+                while page <= self._max_pages:
+                    body = self._client.get(
+                        self._search_url(author, page, repo=scope), is_search=True)
+                    items = (body or {}).get("items") or []
+                    if not items:
+                        break
+                    for item in items:
+                        cursor = self._to_cursor(item, author)
+                        if cursor is None or cursor.cursor <= after:
+                            continue
+                        self._cursors[self._cursor_key(cursor.repo, cursor.pr_number)] = cursor
+                        yield cursor
+                    if len(items) < self._per_page:
+                        break
+                    page += 1
+
+    def _search_url(self, author: str, page: int, *, repo: str = "") -> str:
+        parts = ["is:pr", "is:merged", f"author:{author}", f"merged:>={self._since}"]
+        if repo:
+            parts.append(f"repo:{repo}")
+        query = " ".join(parts)
         return (
             "https://api.github.com/search/issues"
             f"?q={_quote(query)}&sort=updated&order=asc&per_page={self._per_page}&page={page}"

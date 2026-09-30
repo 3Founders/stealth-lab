@@ -14,11 +14,18 @@ there is a test per ordering claim, not just per function.
 """
 from __future__ import annotations
 
+import asyncio
+import json
+import threading
+
 import pytest
 
+from app.ingestion import skillmd_cli
+from app.services.ingestion_sources import skillmd_pilot
 from app.services.ingestion_sources.skillmd_dataset import (
     DATASET_REPO,
     DATASET_REVISION,
+    FETCH_OVERSAMPLE,
     METADATA_COLUMNS,
     GitHubLicenseResolver,
     SkillMD138KSource,
@@ -46,12 +53,15 @@ from app.services.ingestion_sources.skillmd_gate import (
 from app.services.ingestion_sources.skillmd_offline import (
     FIXTURES,
     OfflineLicenseResolver,
+    OfflineRawStore,
+    OfflineSkillMDReader,
     build_offline_source,
 )
 from app.services.ingestion_sources.skillmd_pilot import (
     FORBIDDEN_DSN_MARKERS,
     assert_not_experiment_database,
     project_to_full_corpus,
+    run_skillmd_pilot,
 )
 
 
@@ -707,3 +717,476 @@ def test_offline_reader_reports_the_fixture_count():
     from app.services.ingestion_sources.skillmd_offline import build_offline_reader
 
     assert build_offline_reader().count() == len(FIXTURES)
+
+
+# ---------------------------------------------------------------------------
+# Hard rule: no blocking call inside an `async def`.
+# (review_step_3 §2 HIGH; the write half was found by this change, not a review)
+# ---------------------------------------------------------------------------
+#
+# Asserting this rule with a sleep is a timing test: it passes on an idle box,
+# flakes on a loaded one, and cannot tell "dispatched to a worker thread" from
+# "was fast enough that nobody noticed". The tests below assert on the dispatch
+# itself and record `threading.get_ident()` from INSIDE the dispatched callable,
+# which proves the half that matters -- the work happened on a thread that is
+# not the event loop's -- with no clock involved.
+
+
+class _OffLoopSpy:
+    """Records every `run_blocking` dispatch and the thread each ran on.
+
+    Patched onto the MODULE UNDER TEST rather than onto `app.utils.aio`, so it
+    records what that module chose to route through the helper. Move a blocking
+    call back inline and the dispatch list simply stops containing it, so the
+    test fails on a missing entry instead of on a timing artefact.
+    """
+
+    def __init__(self, monkeypatch, module) -> None:
+        self.dispatched: list[tuple[str, dict]] = []
+        real = module.run_blocking
+
+        async def spy(fn, /, *args, **kwargs):
+            label = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
+            record: dict = {"thread": None}
+            self.dispatched.append((label, record))
+
+            def probe():
+                record["thread"] = threading.get_ident()
+                return fn(*args, **kwargs)
+
+            return await real(probe)
+
+        monkeypatch.setattr(module, "run_blocking", spy)
+
+    @property
+    def labels(self) -> list[str]:
+        return [label for label, _ in self.dispatched]
+
+    def thread_of(self, label: str) -> int:
+        for name, record in self.dispatched:
+            if name == label:
+                return record["thread"]
+        raise AssertionError(
+            f"{label!r} was never dispatched through run_blocking; got {self.labels}"
+        )
+
+
+def _assert_ran_off_loop(spy: _OffLoopSpy, loop_thread: int) -> None:
+    assert spy.dispatched, "nothing was dispatched through run_blocking at all"
+    for label, record in spy.dispatched:
+        assert record["thread"] is not None, f"{label!r} was dispatched but never ran"
+        assert record["thread"] != loop_thread, (
+            f"{label!r} ran on the event loop thread -- a blocking call is on the loop"
+        )
+
+
+class _ThreadRecordingReader(OfflineSkillMDReader):
+    """An offline reader that records the thread each row was served on.
+
+    `run_skillmd_pilot` constructs its own `SkillMD138KSource`, so the reader
+    is the only injection seam available for observing where the gate/fetch
+    stage ran. `iter_rows` is called from `_candidates()` inside `discover()`,
+    so its thread id is the thread the whole blocking stage ran on.
+    """
+
+    def __init__(self, rows=None) -> None:
+        super().__init__(rows)
+        self.thread_ids: list[int] = []
+
+    def iter_rows(self, limit=None):
+        self.thread_ids.append(threading.get_ident())
+        yield from super().iter_rows(limit=limit)
+
+
+class _StubArgs:
+    """A `argparse.Namespace` stand-in for `skillmd-import`.
+
+    Attribute access only -- the CLI reads `a.<flag>` and never introspects --
+    so a plain object is enough and the test does not depend on the parser.
+    """
+
+    def __init__(self, **fields):
+        for name, value in fields.items():
+            setattr(self, name, value)
+
+
+def _cli_args(**overrides):
+    defaults = dict(
+        limit=2,
+        dry_run=True,
+        no_license_gate=True,   # never touch api.github.com from an offline test
+        star_prior=None,
+        fetch_workers=1,
+        shard_dsn_env=None,
+        cache_path=None,
+        embed=False,
+        max_usd=None,
+        json=None,
+        markdown=None,
+        offline_adapter=True,
+    )
+    defaults.update(overrides)
+    return _StubArgs(**defaults)
+
+
+def test_run_skillmd_pilot_does_the_gate_and_fetch_stage_off_the_event_loop(monkeypatch):
+    """review_step_3 §2 HIGH.
+
+    `run_skillmd_pilot` is an `async def` that called `list(source.discover())`
+    inline, and `discover()` is where the ThreadPoolExecutor, every
+    raw.githubusercontent.com fetch and every `time.sleep` backoff actually
+    live. On a standalone CLI process nothing else shares the loop, so it had
+    never been observed failing; the moment this is called from a dispatcher
+    entry alongside other admin commands it stalls every coroutine on the
+    process for the full gate wall time.
+    """
+    spy = _OffLoopSpy(monkeypatch, skillmd_pilot)
+    reader = _ThreadRecordingReader()
+    loop_thread = threading.get_ident()
+
+    summary = asyncio.run(
+        run_skillmd_pilot(
+            None,  # dry-run returns before the pool is ever touched
+            limit=2,
+            reader=reader,
+            raw_fetcher=OfflineRawStore(),   # no network: fixture-backed raw fetch
+            enforce_license=False,
+            license_resolver=None,
+            dry_run=True,
+        )
+    )
+
+    assert summary["dry_run"] is True
+    assert summary["gate"]["admitted"] == 2
+    # The candidate scan never touched the loop's thread.
+    assert reader.thread_ids, "discover() never reached the reader"
+    assert all(tid != loop_thread for tid in reader.thread_ids)
+    _assert_ran_off_loop(spy, loop_thread)
+
+
+def test_run_skillmd_pilot_dispatches_discover_and_the_fetch_fanout(monkeypatch):
+    """Both halves of the stage, named, rather than "something was dispatched".
+
+    `discover()` is the network stage and the `source.fetch(ref)` fan-out is
+    the cache lookup that follows it. Either one called inline puts blocking
+    work on the loop, and the fetch fan-out is the one that scales with
+    `limit` -- a 2,000-row pilot does 2,000 of them.
+    """
+    spy = _OffLoopSpy(monkeypatch, skillmd_pilot)
+    loop_thread = threading.get_ident()
+
+    summary = asyncio.run(
+        run_skillmd_pilot(
+            None, limit=2, reader=_ThreadRecordingReader(),
+            raw_fetcher=OfflineRawStore(), enforce_license=False,
+            license_resolver=None, dry_run=True,
+        )
+    )
+
+    assert summary["gate"]["admitted"] == 2
+    # `run_skillmd_pilot` passes a lambda for each half, so the recorded labels
+    # are `run_skillmd_pilot.<locals>.<lambda>`. What matters is that exactly
+    # TWO dispatches happened and both left the loop -- rather than one inline
+    # call plus one dispatched, which is what the original code did.
+    assert len(spy.labels) == 2
+    assert all(label.endswith("<lambda>") for label in spy.labels)
+    _assert_ran_off_loop(spy, loop_thread)
+
+
+def test_skillmd_cli_writes_its_reports_off_the_event_loop(monkeypatch, tmp_path):
+    """The write half of the rule, which NEITHER review covered.
+
+    `open(...)/write(...)` is a blocking filesystem call and `skillmd_cli.run`
+    is an `async def`. This is not a token write: the report for a 2,000-row
+    pilot serialises every disposition reason plus the full projection, and
+    `--json`/`--markdown` are how a pilot's numbers reach a human at all.
+    `skillmd-import` is dispatched from `admin.py` alongside other admin
+    commands -- exactly the shared-loop case the rule exists for.
+    """
+    spy = _OffLoopSpy(monkeypatch, skillmd_cli)
+    loop_thread = threading.get_ident()
+    json_path = tmp_path / "summary.json"
+    md_path = tmp_path / "summary.md"
+
+    rc = asyncio.run(
+        skillmd_cli.run(None, _cli_args(json=str(json_path), markdown=str(md_path)))
+    )
+    assert rc == 0
+
+    # Dispatched by name, and on a thread that is not the loop's.
+    assert "_write_reports" in spy.labels
+    assert spy.thread_of("_write_reports") != loop_thread
+    _assert_ran_off_loop(spy, loop_thread)
+
+    # ...and it was the write, not a scheduled no-op.
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["dry_run"] is True
+    assert payload["gate"]["admitted"] == 2
+    assert "rows seen" in md_path.read_text(encoding="utf-8")
+
+
+def test_skillmd_cli_with_no_report_paths_still_dispatches_once(monkeypatch, capsys):
+    """Both report writes share one `run_blocking`, so there is a single seam to
+    assert on. With neither flag set the call is still dispatched (and is a
+    no-op inside) -- that is the price of the single seam, and it is paid
+    once, at the very end of a run that has already done minutes of network
+    work."""
+    spy = _OffLoopSpy(monkeypatch, skillmd_cli)
+
+    rc = asyncio.run(skillmd_cli.run(None, _cli_args()))
+    assert rc == 0
+    assert spy.labels.count("_write_reports") == 1
+    assert '"dry_run": true' in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# The fetch stage must respect the admission limit  (review_step_3 §2 MEDIUM)
+# ---------------------------------------------------------------------------
+
+
+def _synthetic_row(index: int) -> dict:
+    """A row shaped like the parquet schema, distinct from every other row."""
+    return {
+        "content_hash": f"{index:064x}",
+        "repo": "probe-org/probe-skills",
+        "path": f"skills/gate-probe-{index}/SKILL.md",
+        "stars": 50,
+        "source": "registry",
+        "html_url": (
+            "https://github.com/probe-org/probe-skills/blob/main/"
+            f"skills/gate-probe-{index}/SKILL.md"
+        ),
+        "lines": 200,
+        "words": 800,
+    }
+
+
+def _synthetic_text(index: int) -> str:
+    """Distinct-by-construction body, so the batch yields at a known rate.
+
+    Near-dup detection is a 64-bit simhash compared at Hamming <= 6. Two rows
+    sharing a body vocabulary can land inside that threshold, the admitted
+    count then never reaches `limit`, and the wave stays at `2 * limit` for the
+    whole run -- which would make a fetch-bound test pass or fail for the wrong
+    reason. Every shingle here is unique to its row, so the batch admits at
+    100%. Realistic content is `skillmd_offline`'s job; this helper's only job
+    is a known yield.
+    """
+    body = " ".join(f"tok{index}-{step}" for step in range(150))
+    return (
+        "---\n"
+        f"name: gate-probe-{index}\n"
+        f"description: Deterministic fetch-bound probe number {index}. Use when\n"
+        f"measuring how many raw rows the admission limit actually costs.\n"
+        "---\n\n"
+        f"# Probe {index}\n\n"
+        f"{body}\n"
+    )
+
+
+def _counting_source(rows, *, limit, fetch_workers=1):
+    """A source whose raw fetcher counts every invocation.
+
+    The counter is on FETCHER INVOCATIONS, not on `stats.fetched`. `fetched`
+    counts rows that returned text, so a fetcher that 404'd, was deduplicated
+    or was skipped would hide an over-fetch entirely -- and the over-fetch is
+    the whole finding, because the network bill is proportional to requests
+    ISSUED, not to requests that happened to succeed.
+    """
+    calls: list[str] = []
+
+    def fetcher(row):
+        calls.append(row.content_hash)
+        return _synthetic_text(int(row.content_hash, 16)), None
+
+    source = SkillMD138KSource(
+        reader=OfflineSkillMDReader(rows=tuple(rows)),
+        license_resolver=None,
+        enforce_license=False,
+        limit=limit,
+        fetch_workers=fetch_workers,
+        raw_fetcher=fetcher,
+    )
+    return source, calls
+
+
+@pytest.mark.parametrize("fetch_workers", [1, 8])
+def test_the_fetch_stage_stops_at_the_limit_instead_of_fetching_the_whole_oversample(fetch_workers):
+    """review_step_3 §2 MEDIUM.
+
+    The old shape materialised the ENTIRE oversampled candidate list
+    (`limit * FETCH_OVERSAMPLE + 1` -- 24,001 rows for the documented
+    2,000-skill pilot) and submitted every one of them to the thread pool
+    before PHASE C ever compared `admitted` to `limit`. The accounting was
+    correct and the cost was not: with the target reached at candidate #300,
+    the other ~23,700 raw GETs were spent anyway. At the ~45% yield the
+    oversample comment measured, that is roughly 5x the necessary network.
+
+    The oversample is now a wave size, not a work order.
+    """
+    limit = 10
+    # Exactly the candidate count the old shape would have fetched.
+    rows = [_synthetic_row(i) for i in range(limit * FETCH_OVERSAMPLE + 1)]
+    source, calls = _counting_source(rows, limit=limit, fetch_workers=fetch_workers)
+
+    refs = list(source.discover())
+
+    assert len(refs) == limit
+    assert source.stats.admitted == limit
+    assert len(rows) == limit * FETCH_OVERSAMPLE + 1, "the old shape would fetch every row"
+    # The bound is a function of the limit, not of the oversample. The wave is
+    # `max(fetch_workers, 2 * remaining)`; the serial path fetches one row ahead
+    # of the stop because a `for` loop pulls the item before the body can break.
+    assert len(calls) <= max(fetch_workers, 2 * limit), (
+        f"fetched {len(calls)} rows for a limit of {limit} with {fetch_workers} workers"
+    )
+    assert len(calls) < len(rows)
+    # And the limit really was the reason it stopped.
+    assert "limit_reached" in source.stats.reasons
+
+
+@pytest.mark.parametrize("fetch_workers", [1, 8], ids=["serial-lazy", "parallel-eager"])
+def test_the_fetch_wave_is_sized_from_what_phase_c_still_needs(fetch_workers):
+    """The wave rule itself: fetches are bounded by the LIMIT, not the oversample.
+
+    Each wave fetches `2 * remaining`, where `remaining` is read AFTER PHASE C
+    has counted the previous wave -- not the limit as it was when the run
+    started. That re-read is what keeps the bound holding as yield drops, which
+    is the case that matters.
+
+    A BOUND, not an exact count, and the distinction is the finding
+        `Executor.map` returns a generator whose `finally` CANCELS futures that
+        have not started, so when PHASE C stops pulling at the limit the
+        in-flight wave finishes partially: measured 14, 15 and 16 fetches for
+        the same run, depending on how many of the eight workers had already
+        picked up work. Asserting an exact number here would be asserting a
+        scheduling detail. The cancellation is a feature -- it is part of why
+        the parallel path does not over-fetch -- but it makes the count
+        non-deterministic, and a test that pins it would flake.
+
+        The serial path is exactly `limit + 1`: a lazily pulled generator, one
+        fetch per admitted row plus the pull that triggers the limit check.
+
+    WHY THIS IS NOT REDUNDANT WITH THE OVERSAMPLE TEST
+        Reverting the wave size to "everything that is left" (the pre-fix
+        shape) makes the PARALLEL case fetch all 96 candidates and fails this
+        bound, while the SERIAL case still passes at `limit + 1` because the
+        lazy generator masks it. Verified by mutation: the serial case alone
+        would not have caught the regression.
+    """
+    limit = 8
+    rows = [_synthetic_row(i) for i in range(400)]
+    source, calls = _counting_source(rows, limit=limit, fetch_workers=fetch_workers)
+
+    list(source.discover())
+
+    assert source.stats.admitted == limit
+    if fetch_workers == 1:
+        assert len(calls) == limit + 1
+    else:
+        assert limit + 1 <= len(calls) <= 2 * limit, (
+            f"{len(calls)} fetches for a wave of {2 * limit}"
+        )
+    # Against 400 available candidates and a 96-row oversample cap.
+    assert len(calls) < limit * FETCH_OVERSAMPLE
+    assert "limit_reached" in source.stats.reasons
+
+
+def test_discover_closes_the_fetch_wave_generator_before_returning(monkeypatch):
+    """`_discover_once` must close the waves generator, not leave it to refcounting.
+
+    `_fetch_in_waves` shuts its `ThreadPoolExecutor` down in a `finally`, and a
+    generator's `finally` only runs when the generator is CLOSED. Breaking out
+    of a `for` loop does not close it -- so without the explicit
+    `waves.close()`, the pool drains whenever CPython happens to collect the
+    generator: fine on this runtime, deferred indefinitely under a
+    non-refcounting GC or a traceback still holding the frame. A pilot would
+    then read its wall time with raw GETs still in flight.
+
+    Pinned by observing `close()` itself rather than thread liveness. A
+    liveness assertion does NOT work here: under CPython the refcount drops at
+    almost exactly the moment `discover()` returns, so the two paths look
+    identical and the test passes with the `close()` deleted. Verified by
+    mutation.
+    """
+    closes: list[bool] = []
+    real = SkillMD138KSource._fetch_in_waves
+
+    class _Tracked:
+        def __init__(self, gen):
+            self._gen = gen
+
+        def __iter__(self):
+            return self._gen
+
+        def close(self):
+            closes.append(True)
+            self._gen.close()
+
+    def patched(self, candidates):
+        return _Tracked(real(self, candidates))
+
+    monkeypatch.setattr(SkillMD138KSource, "_fetch_in_waves", patched)
+
+    limit = 8
+    source, _ = _counting_source(
+        [_synthetic_row(i) for i in range(400)], limit=limit, fetch_workers=8
+    )
+    list(source.discover())
+
+    assert source.stats.admitted == limit
+    assert closes, "discover() returned without closing the fetch-wave generator"
+
+
+def test_discover_returns_with_no_fetch_thread_still_running():
+    """The consequence of the above, stated as the property a pilot depends on.
+
+    Separate from the test above because it is the thing that would actually
+    corrupt a measurement: `discover()` handing back refs while a worker is
+    still doing a raw GET means `gate_seconds` is not the time the fetches took.
+    Asserted by thread liveness -- a fact about the instant the call returns,
+    so nothing has to be waited on for it to become true.
+    """
+    limit = 8
+    fetch_threads: set[int] = set()
+
+    def fetcher(row):
+        fetch_threads.add(threading.get_ident())
+        return _synthetic_text(int(row.content_hash, 16)), None
+
+    source = SkillMD138KSource(
+        reader=OfflineSkillMDReader(rows=tuple(_synthetic_row(i) for i in range(400))),
+        license_resolver=None,
+        enforce_license=False,
+        limit=limit,
+        fetch_workers=8,
+        raw_fetcher=fetcher,
+    )
+
+    list(source.discover())
+
+    assert fetch_threads, "no fetch thread ran; the test proved nothing"
+    # A worker really did the fetching...
+    assert fetch_threads != {threading.get_ident()}, "the fetcher never left this thread"
+    # ...and by the time the call returned, every one of them was finished.
+    still_running = [
+        t.name for t in threading.enumerate()
+        if t.ident in fetch_threads and t.is_alive()
+    ]
+    assert not still_running, f"fetch threads still running after discover(): {still_running}"
+    assert source.stats.admitted == limit
+
+
+def test_no_limit_still_fetches_every_candidate():
+    """The bound must not silently cap an unlimited run. With `limit=None`
+    every candidate is still fetched, which is what keeps the adapter usable
+    for a full-corpus pass and is the property a too-clever optimisation would
+    break.
+    """
+    rows = [_synthetic_row(i) for i in range(37)]
+    source, calls = _counting_source(rows, limit=None)
+
+    refs = list(source.discover())
+
+    assert len(refs) == 37
+    assert len(calls) == 37

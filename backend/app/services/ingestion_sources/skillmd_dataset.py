@@ -625,72 +625,87 @@ class SkillMD138KSource:
         # PHASE C -- sequential, in row order. The admitted limit is enforced
         # HERE, because this is where `admitted` is counted; see
         # FETCH_OVERSAMPLE for why it cannot be enforced in PHASE A.
-        for row, exact, text, fetch_reason, verdict in self._fetch_in_waves(candidates):
-            if self._limit is not None and self.stats.admitted >= self._limit:
-                self.stats.bump("limit_reached")
-                break
-            if fetch_reason is not None:
-                self.stats.bump(fetch_reason)
-                continue
-            self.stats.fetched += 1
-
-            assert verdict is not None
-            if verdict.disposition in ("reject", "quarantine"):
-                self.stats.bump(verdict.reason)
-                self.verdicts.append(verdict)
-                continue
-
-            near = self._near_dup.check_and_add(text, verdict.name)
-            if near is not None:
-                self.stats.near_duplicates += 1
-                self.stats.bump("near_duplicate_of_" + near)
-                continue
-
-            origin_spdx = None
-            if self._enforce_license:
-                decision = self._decide_license(row)
-                if decision != "ALLOW":
-                    self.stats.bump(f"license_{decision.lower()}")
+        #
+        # `waves` is closed explicitly, and that is load-bearing rather than
+        # tidy. `_fetch_in_waves` shuts its ThreadPoolExecutor down in a
+        # `finally`, but a generator's `finally` only runs when the generator
+        # is CLOSED -- and breaking out of a `for` loop does not close it.
+        # Left to reference counting, the pool would keep draining after
+        # `discover()` had already returned, so a run that stops at its limit
+        # could still have raw GETs in flight when the caller reads the
+        # duration, and the wave bound would be approximate instead of exact.
+        # `break` falls out of the loop into this `finally` synchronously, so
+        # the pool is drained before `discover()` returns.
+        waves = self._fetch_in_waves(candidates)
+        try:
+            for row, exact, text, fetch_reason, verdict in waves:
+                if self._limit is not None and self.stats.admitted >= self._limit:
+                    self.stats.bump("limit_reached")
+                    break
+                if fetch_reason is not None:
+                    self.stats.bump(fetch_reason)
                     continue
-                # carried on the artifact: an attribution license (CC-BY-4.0) is recorded on the IngestionContext
-                # from it (skill_ingestion._open_ingestion_provenance), for the credit and for license-takedown
-                spdx_for = getattr(self._license_resolver, "spdx_for", None)
-                origin_spdx = spdx_for(row.origin_repo) if callable(spdx_for) else None
+                self.stats.fetched += 1
 
-            self.stats.admitted += 1
-            parts = html_url_parts(row.html_url)
-            ref = parts[1] if parts else "HEAD"
-            self._cache[exact] = SourceArtifact(
-                source_type=self.source_type,
-                uri=row.html_url,
-                content=text,
-                content_hash=compute_content_hash(text),
-                repository=row.origin_repo,
-                path=row.origin_path,
-                commit=ref,
-                source_id=DATASET_REPO,
-                license_metadata={
-                    "dataset": DATASET_REPO,
-                    "dataset_revision": DATASET_REVISION,
-                    "row_content_hash": row.content_hash,
-                    "row_source": row.source,
-                    "row_stars": row.stars,
-                    "dataset_repo": row.repo,
-                    "dataset_path": row.path,
-                    "origin_repo": row.origin_repo,
-                    "origin_recoverable": row.origin_recoverable,
-                    "is_mirror": row.is_mirror,
-                    "gate_version": GATE_VERSION,
-                    **({"spdx_id": origin_spdx} if origin_spdx else {}),
-                },
-            )
-            yield SourceRef(
-                uri=row.html_url,
-                repository=row.origin_repo,
-                path=row.origin_path,
-                commit=ref,
-                source_id=DATASET_REPO,
-            )
+                assert verdict is not None
+                if verdict.disposition in ("reject", "quarantine"):
+                    self.stats.bump(verdict.reason)
+                    self.verdicts.append(verdict)
+                    continue
+
+                near = self._near_dup.check_and_add(text, verdict.name)
+                if near is not None:
+                    self.stats.near_duplicates += 1
+                    self.stats.bump("near_duplicate_of_" + near)
+                    continue
+
+                origin_spdx = None
+                if self._enforce_license:
+                    decision = self._decide_license(row)
+                    if decision != "ALLOW":
+                        self.stats.bump(f"license_{decision.lower()}")
+                        continue
+                    # carried on the artifact: an attribution license (CC-BY-4.0) is recorded on the IngestionContext
+                    # from it (skill_ingestion._open_ingestion_provenance), for the credit and for license-takedown
+                    spdx_for = getattr(self._license_resolver, "spdx_for", None)
+                    origin_spdx = spdx_for(row.origin_repo) if callable(spdx_for) else None
+
+                self.stats.admitted += 1
+                parts = html_url_parts(row.html_url)
+                ref = parts[1] if parts else "HEAD"
+                self._cache[exact] = SourceArtifact(
+                    source_type=self.source_type,
+                    uri=row.html_url,
+                    content=text,
+                    content_hash=compute_content_hash(text),
+                    repository=row.origin_repo,
+                    path=row.origin_path,
+                    commit=ref,
+                    source_id=DATASET_REPO,
+                    license_metadata={
+                        "dataset": DATASET_REPO,
+                        "dataset_revision": DATASET_REVISION,
+                        "row_content_hash": row.content_hash,
+                        "row_source": row.source,
+                        "row_stars": row.stars,
+                        "dataset_repo": row.repo,
+                        "dataset_path": row.path,
+                        "origin_repo": row.origin_repo,
+                        "origin_recoverable": row.origin_recoverable,
+                        "is_mirror": row.is_mirror,
+                        "gate_version": GATE_VERSION,
+                        **({"spdx_id": origin_spdx} if origin_spdx else {}),
+                    },
+                )
+                yield SourceRef(
+                    uri=row.html_url,
+                    repository=row.origin_repo,
+                    path=row.origin_path,
+                    commit=ref,
+                    source_id=DATASET_REPO,
+                )
+        finally:
+            waves.close()
 
     def _decide_license(self, row: SkillRow) -> str:
         if self._license_resolver is None:

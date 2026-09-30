@@ -66,6 +66,7 @@ async def _run_once(
     extract_limit: int,
 ) -> dict:
     from app.services.extraction_routing import choose_extraction_model
+    from app.services.governance import BudgetExceeded
     from app.services.ingestion_jobs import _extraction_client
     from app.services.ingestion_sources.dispatch import ingest_openhands_trajectories
     from app.services.procedure_extraction.schema import ExtractionTransientFailure
@@ -122,6 +123,7 @@ async def _run_once(
                 attempted = 0
                 succeeded = 0
                 failed = 0
+                budget_stopped = False
                 errors: list[str] = []
                 for row in pending:
                     event_count = await pool.fetchval(
@@ -132,6 +134,10 @@ async def _run_once(
                         row["id"], row["start_ts"], row["end_ts"],
                     )
                     choice = choose_extraction_model(event_count=event_count or 0)
+                    if budget_stopped:
+                        # The cap is spent; the remaining episodes are left for
+                        # the next run rather than each raising its own refusal.
+                        break
                     attempted += 1
                     try:
                         await extract_trajectory_semantics(
@@ -141,12 +147,19 @@ async def _run_once(
                             scope_type=scope_type, scope_entity_id=scope_entity_id,
                         )
                         succeeded += 1
+                    except BudgetExceeded as exc:
+                        # A cost stop, not a retryable rejection: break rather
+                        # than let every remaining episode burn an attempt.
+                        budget_stopped = True
+                        errors.append(f"{row['id']}: budget stop -- {exc}")
+                        log.warning("trajectory extraction stopped on episode %s: %s", row["id"], exc)
                     except ExtractionTransientFailure as exc:
                         failed += 1
                         errors.append(f"{row['id']}: {exc}")
                         log.warning("trajectory extraction failed for episode %s: %s", row["id"], exc)
                 summary["extraction"] = {
                     "attempted": attempted, "succeeded": succeeded, "failed": failed,
+                    "budget_stopped": budget_stopped,
                     "errors": errors,
                 }
 

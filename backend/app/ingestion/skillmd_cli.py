@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.utils.aio import run_blocking
+
 COMMANDS = ("skillmd-import",)
 
 
@@ -74,12 +76,23 @@ async def run(pool: Any, a: Any) -> int:
             return 1
 
     reader: Any = None
+    raw_fetcher: Any = None
     if not a.offline_adapter:
         reader = SkillMD138KReader(cache_path=a.cache_path)
     else:
-        from app.services.ingestion_sources.skillmd_offline import build_offline_reader
+        # BOTH the reader and the raw fetcher, not just the reader. The gate
+        # lives inside `discover()` -- the content is fetched there because
+        # `fetch()` has no rejection channel -- so leaving the fetcher live meant
+        # `--offline-adapter` still made one raw.githubusercontent.com request
+        # per candidate row while advertising "no network, no dataset". An
+        # offline flag that reaches the network is worse than no flag.
+        from app.services.ingestion_sources.skillmd_offline import (
+            OfflineRawStore,
+            build_offline_reader,
+        )
 
         reader = build_offline_reader()
+        raw_fetcher = OfflineRawStore()
 
     summary = await run_skillmd_pilot(
         pool,
@@ -88,6 +101,7 @@ async def run(pool: Any, a: Any) -> int:
         enforce_license=not a.no_license_gate,
         star_prior=a.star_prior,
         reader=reader,
+        raw_fetcher=raw_fetcher,
         fetch_workers=a.fetch_workers,
         embed=a.embed,
         dry_run=a.dry_run,
@@ -97,10 +111,35 @@ async def run(pool: Any, a: Any) -> int:
     summary["projection"] = projection
 
     print(json.dumps(summary, indent=2, default=str))
+    await run_blocking(_write_reports, a, summary, projection)
+    return 0
+
+
+def _write_reports(a: Any, summary: dict[str, Any], projection: dict[str, Any]) -> None:
+    """Write the summary JSON and the markdown table.
+
+    OFF THE EVENT LOOP, and called only through `run_blocking`
+        `open(...)/write(...)` is a blocking filesystem call, and `run()` is
+        an `async def`, so the hard rule applies to the write exactly as it
+        applies to the fetch. This is not a theoretical size: the report for a
+        2,000-row pilot serialises every disposition reason plus the full
+        projection, and `--json`/`--markdown` are how a pilot's numbers reach
+        a human at all.
+
+        Both writes go through one `run_blocking` so there is a single seam
+        for a test to assert on rather than two.
+
+    WHY A MODULE-LEVEL DEF AND NOT A CLOSURE
+        A closure is untestable by identity -- a test can only reach it by
+        monkeypatching `open` globally, which would also catch the reads it
+        does not care about. A named module-level function is the thing a test
+        can assert was dispatched off the calling thread.
+    """
     if a.json:
         with open(a.json, "w", encoding="utf-8") as handle:
             json.dump(summary, handle, indent=2, default=str)
     if a.markdown:
+        from app.services.ingestion_sources.skillmd_pilot import render_markdown
+
         with open(a.markdown, "w", encoding="utf-8") as handle:
             handle.write(render_markdown(summary, projection))
-    return 0

@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"stealthlab-mcp-server: importing app.mcp_server.server failed: {exc!r}\n"
               f"  check that backend dependencies are installed "
-              f"(pip install -e {backend_root}) and experiments/swebench_pro exists",
+              f"(pip install -e {backend_root})",
               file=sys.stderr)
         return 1
 

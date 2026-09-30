@@ -121,13 +121,29 @@ def test_read_overflow_payload_reconstructs_full_content(tmp_path):
 
 
 class FakeConn:
-    """Records every statement; INSERT ... RETURNING id always succeeds
-    with a fresh fake id (no real ON CONFLICT semantics needed -- these
-    tests never insert the same dedup_key twice)."""
+    """Records every statement.
+
+    Two shapes, because trace_worker has two insert primitives and this
+    file pins the payload-cap invariant on BOTH:
+
+      * `fetchval` -- the single-row `_insert_event` path, still used by
+        write_normalized_trajectory() for adapter-built (never
+        upstream-redacted) events.
+      * `fetch` -- the batched `_insert_events_batched` path the
+        collector now uses, which returns (id, dedup_key) for the rows
+        that really got created so the caller can count duplicates from
+        RETURNING exactly as the old per-event loop did.
+
+    ON CONFLICT semantics are not emulated: no test here inserts the same
+    dedup_key twice. test_trace_ingestion_batching_offline.py is the file
+    that covers duplicate accounting.
+    """
 
     def __init__(self):
         self.inserts: list[tuple[str, tuple]] = []
         self.executes: list[tuple[str, tuple]] = []
+        self.fetches: list[tuple[str, tuple]] = []
+        self._seq = 0
 
     def transaction(self):
         @asynccontextmanager
@@ -138,6 +154,17 @@ class FakeConn:
     async def fetchval(self, sql, *args):
         self.inserts.append((" ".join(sql.split()), args))
         return f"row-{len(self.inserts)}"
+
+    async def fetch(self, sql, *args):
+        flat = " ".join(sql.split())
+        self.fetches.append((flat, args))
+        if "INSERT INTO trace_events" not in flat:
+            return []
+        created = []
+        for r in json.loads(args[0]):
+            self._seq += 1
+            created.append({"id": f"batch-{self._seq}", "dedup_key": r["dedup_key"]})
+        return created
 
     async def execute(self, sql, *args):
         self.executes.append((" ".join(sql.split()), args))
@@ -157,6 +184,7 @@ class FakePool:
 
 
 TRACE_EVENTS_INSERT_FRAGMENT = "INSERT INTO trace_events"
+BATCHED_JOB_FRAGMENT = "INSERT INTO ingestion_jobs"
 
 
 def _record(dedup_key: str, tool_output=None, tool_input=None, sequence=0) -> dict:
@@ -221,9 +249,16 @@ def test_insert_event_over_cap_carries_marker_not_full_payload(tmp_path):
 
 def test_process_collector_file_caps_oversized_payload_end_to_end(tmp_path):
     """Full pipeline: a JSONL line with an oversized tool_output produces
-    a row insert whose tool_output column is the marker (not the full
-    payload) and whose raw_payload_ref names a real pointer file -- and a
-    sibling small payload round-trips unchanged."""
+    a row whose tool_output column is the marker (not the full payload)
+    and whose raw_payload_ref names a real pointer file -- and a sibling
+    small payload round-trips unchanged.
+
+    Batched path. Strengthened relative to the pre-batching version of
+    this test: it now asserts over EVERY row the batch actually bound,
+    not over one chosen statement. Checking a single statement is what
+    let a per-event redaction or cap regression hide behind the other
+    999 rows in a 1,000-row batch.
+    """
     big = _big_value(40_000)
     small = {"content": "ok"}
     events_file = tmp_path / "events.jsonl"
@@ -240,22 +275,30 @@ def test_process_collector_file_caps_oversized_payload_end_to_end(tmp_path):
         max_inline_bytes=32 * 1024, raw_payload_dir=raw_dir,
     ))
     assert result["inserted"] == 2
+    assert result["skipped_duplicate"] == 0
 
-    trace_inserts = [
-        (sql, args) for sql, args in conn.inserts if TRACE_EVENTS_INSERT_FRAGMENT in sql
-    ]
-    assert len(trace_inserts) == 2
+    # One batched event insert + one batched job insert, for two events.
+    event_inserts = [(s, a) for s, a in conn.fetches if TRACE_EVENTS_INSERT_FRAGMENT in s]
+    assert len(event_inserts) == 1
+    job_inserts = [(s, a) for s, a in conn.executes if BATCHED_JOB_FRAGMENT in s]
+    assert len(job_inserts) == 1
 
-    small_args = next(a for _, a in trace_inserts if a[2] == 0)  # sequence
-    big_args = next(a for _, a in trace_inserts if a[2] == 1)
+    sql, args = event_inserts[0]
+    rows = json.loads(args[0])
+    assert [r["sequence"] for r in rows] == [0, 1]
+    assert [r["dedup_key"] for r in rows] == ["dedup-e2e-small", "dedup-e2e-big"]
 
-    assert small_args[9] == json.dumps(small)
-    assert small_args[15] is None
+    # The oversized value must not reach ANY bound row.
+    assert "x" * 100 not in args[0], "full content must never reach the INSERT row"
 
-    marker = json.loads(big_args[9])
+    by_seq = {r["sequence"]: r for r in rows}
+    assert by_seq[0]["tool_output"] == json.dumps(small)
+    assert by_seq[0]["raw_payload_ref"] is None
+
+    marker = json.loads(by_seq[1]["tool_output"])
     assert marker["_overflow"] is True
-    assert big_args[15] is not None
-    ref_path = Path(big_args[15])
+
+    ref_path = Path(by_seq[1]["raw_payload_ref"])
     assert ref_path.exists()
     assert ref_path.is_relative_to(raw_dir)
-    assert tw.read_overflow_payload(big_args[15]) == {"tool_output": big}
+    assert tw.read_overflow_payload(by_seq[1]["raw_payload_ref"]) == {"tool_output": big}

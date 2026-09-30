@@ -250,19 +250,40 @@ async def _ensure_trace_header(conn: asyncpg.Connection, trace_id: str, session_
     )
 
 
-async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | None = None,
-                         visibility: str = "public", *,
-                         max_inline_bytes: Optional[int] = None,
-                         raw_payload_dir: Optional[Path] = None) -> str | None:
-    """Returns the real inserted trace_events.id, or None if this
-    dedup_key was already present (a real, confirmed no-op, not assumed).
+def _prepare_event_row(record: dict, owner_id: str | None = None,
+                       visibility: str = "public", *,
+                       max_inline_bytes: Optional[int] = None,
+                       raw_payload_dir: Optional[Path] = None) -> dict:
+    """Redact + payload-cap one record into its trace_events column values.
 
-    A7 real bug fixed: agent_traces/trace_events both carry real
-    owner_id/visibility columns (12_trace_ingestion_pipeline.sql), but
-    this INSERT never populated either -- every trace row silently
-    landed as visibility='public', owner_id=NULL regardless of who
-    produced it, the exact tenant_id cautionary case 03_access.sql's own
-    docstring warns about. Now real parameters, not decorative columns.
+    THIS is the redaction chokepoint for trace ingestion, and it is
+    deliberately the only place it happens. Two callers share it:
+
+      * `_insert_event` (single row) -- the OpenHands/trajectory path,
+        whose events are built by an adapter from a foreign trajectory
+        export and were therefore NEVER redacted upstream. That pass is
+        load-bearing, not redundant.
+      * `_insert_events_batched` (this run's collector path) -- whose
+        records were redacted once already, at `trace_collector.append_event`,
+        before they ever touched disk.
+
+    Keeping one function means the second caller cannot drift into
+    skipping the scrub, and the first cannot lose it. Splitting the two
+    so the collector path could "skip" its second pass would trade a
+    measurable CPU win for a silent secret-leak path, which is not a
+    trade worth making; if that pass is ever removed it has to be by
+    stamping the collector record and proving the marker, not by
+    inference.
+
+    Returns a dict of column name -> value, ready for the single-row
+    INSERT. The three jsonb columns (tool_input, tool_output, raw_event)
+    are returned as *text* holding JSON, because the batched statement
+    casts them (r.tool_input::jsonb). Passing a pre-dumped string through
+    asyncpg's jsonb codec instead would double-encode it into a JSON
+    string literal -- the bug class documented at RUNBOOK.md line 53.
+    `timestamp` stays a real datetime so the single-row path passes
+    asyncpg a native value; the batched payload builder is the one place
+    that serialises it.
     """
     event = redact_event(record["event"])
     timestamp = _parse_timestamp(event.get("timestamp"))
@@ -287,6 +308,52 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
         matched: list[str] = []
         raw_event_col = json.dumps(redact_value(raw_event, matched))
 
+    return {
+        "trace_id": record.get("trace_id") or record["session_id"],
+        "session_id": record["session_id"],
+        "sequence": record["sequence"],
+        "event_type": record["event_type"],
+        "timestamp": timestamp,
+        "actor_id": event.get("actor_id"),
+        "tool_name": event.get("tool_name"),
+        "tool_call_id": event.get("tool_call_id"),
+        "tool_input": tool_input_col,
+        "tool_output": tool_output_col,
+        "success": event.get("success"),
+        "dedup_key": record["dedup_key"],
+        "schema_version": SCHEMA_VERSION,
+        "owner_id": owner_id,
+        "visibility": visibility,
+        "raw_payload_ref": raw_payload_ref,
+        "canonical_event_type": canonical_event_type,
+        "raw_event": raw_event_col,
+    }
+
+
+async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | None = None,
+                         visibility: str = "public", *,
+                         max_inline_bytes: Optional[int] = None,
+                         raw_payload_dir: Optional[Path] = None) -> str | None:
+    """Returns the real inserted trace_events.id, or None if this
+    dedup_key was already present (a real, confirmed no-op, not assumed).
+
+    A7 real bug fixed: agent_traces/trace_events both carry real
+    owner_id/visibility columns (12_trace_ingestion_pipeline.sql), but
+    this INSERT never populated either -- every trace row silently
+    landed as visibility='public', owner_id=NULL regardless of who
+    produced it, the exact tenant_id cautionary case 03_access.sql's own
+    docstring warns about. Now real parameters, not decorative columns.
+
+    Kept as the single-row primitive because write_normalized_trajectory()
+    (below) needs it one row at a time: its events come from an external
+    trajectory adapter and have never been redacted, so that path must not
+    be folded into the collector's batched statement without first proving
+    the redaction pass is still applied per row.
+    """
+    row = _prepare_event_row(
+        record, owner_id, visibility,
+        max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
+    )
     return await conn.fetchval(
         """
         INSERT INTO trace_events (
@@ -299,25 +366,116 @@ async def _insert_event(conn: asyncpg.Connection, record: dict, owner_id: str | 
         ON CONFLICT (dedup_key) DO NOTHING
         RETURNING id
         """,
-        record.get("trace_id") or record["session_id"],
-        record["session_id"],
-        record["sequence"],
-        record["event_type"],
-        timestamp,
-        event.get("actor_id"),
-        event.get("tool_name"),
-        event.get("tool_call_id"),
-        tool_input_col,
-        tool_output_col,
-        event.get("success"),
-        record["dedup_key"],
-        SCHEMA_VERSION,
-        owner_id,
-        visibility,
-        raw_payload_ref,
-        canonical_event_type,
-        raw_event_col,
+        row["trace_id"],
+        row["session_id"],
+        row["sequence"],
+        row["event_type"],
+        row["timestamp"],
+        row["actor_id"],
+        row["tool_name"],
+        row["tool_call_id"],
+        row["tool_input"],
+        row["tool_output"],
+        row["success"],
+        row["dedup_key"],
+        row["schema_version"],
+        row["owner_id"],
+        row["visibility"],
+        row["raw_payload_ref"],
+        row["canonical_event_type"],
+        row["raw_event"],
     )
+
+
+# Records per batched INSERT. Sized so a 50k-line collector file -- the
+# module's own documented default worst case -- costs ~100 round trips
+# instead of ~200,000, while keeping any single statement well inside
+# Postgres's parameter and tuple limits.
+INSERT_CHUNK_SIZE = 500
+
+_BATCH_EVENT_COLUMNS = (
+    "trace_id", "session_id", "sequence", "event_type", "timestamp",
+    "actor_id", "tool_name", "tool_call_id", "tool_input", "tool_output",
+    "success", "dedup_key", "schema_version", "owner_id", "visibility",
+    "raw_payload_ref", "canonical_event_type", "raw_event",
+)
+
+# jsonb_to_recordset rather than a wide unnest() for two reasons. A
+# recordset takes ONE parameter, so the statement cannot drift out of
+# sync with the column list the way an 18-argument unnest does, and it
+# carries JSON nulls and mixed types natively -- `sequence` is BIGINT
+# while `tool_name` is TEXT, and the nullable half of the row would
+# otherwise need a sentinel or a per-column type array.
+#
+# tool_input/tool_output/raw_event are declared `text` and cast in the
+# SELECT, NOT declared jsonb: _prepare_event_row already holds them as
+# JSON text, and handing a Python str to a jsonb column would encode it
+# as a JSON *string* (double-encoding).
+_BATCH_INSERT_SQL = f"""
+    INSERT INTO trace_events ({", ".join(_BATCH_EVENT_COLUMNS)})
+    SELECT r.trace_id, r.session_id, r.sequence, r.event_type, r."timestamp",
+           r.actor_id, r.tool_name, r.tool_call_id,
+           r.tool_input::jsonb, r.tool_output::jsonb,
+           r.success, r.dedup_key, r.schema_version, r.owner_id,
+           r.visibility::visibility_level, r.raw_payload_ref,
+           r.canonical_event_type, r.raw_event::jsonb
+    FROM jsonb_to_recordset($1::jsonb) AS r(
+        trace_id text, session_id text, sequence bigint, event_type text,
+        "timestamp" timestamptz, actor_id text, tool_name text,
+        tool_call_id text, tool_input text, tool_output text,
+        success boolean, dedup_key text, schema_version text, owner_id text,
+        visibility text, raw_payload_ref text, canonical_event_type text,
+        raw_event text
+    )
+    ON CONFLICT (dedup_key) DO NOTHING
+    RETURNING id, dedup_key
+"""
+
+# One statement for the whole chunk's downstream jobs, fed from the rows
+# the INSERT above actually created. Deriving the payloads from RETURNING
+# (rather than from the input batch) is what keeps `inserted` honest: a
+# dedup_key that lost the ON CONFLICT race simply is not in this set, so
+# it is counted as a duplicate and gets no job -- exactly what the
+# per-record loop did, where a None RETURNING id meant the same thing.
+_BATCH_JOB_SQL = """
+    INSERT INTO ingestion_jobs (job_type, payload)
+    SELECT 'normalize_trace_event',
+           jsonb_build_object('trace_event_id', t.id::text, 'dedup_key', t.dedup_key)
+    FROM jsonb_to_recordset($1::jsonb) AS t(id uuid, dedup_key text)
+"""
+
+
+def _batch_payload(rows: list[dict]) -> str:
+    """Serialize prepared rows for jsonb_to_recordset.
+
+    `timestamp` is a datetime here (see _prepare_event_row) and JSON has
+    no such type, so it is converted here -- the single place the batched
+    path serialises a value the single-row path hands to asyncpg native.
+    """
+    return json.dumps([
+        {k: (r[k].isoformat() if k == "timestamp" else r[k]) for k in _BATCH_EVENT_COLUMNS}
+        for r in rows
+    ])
+
+
+async def _insert_events_batched(conn: asyncpg.Connection, rows: list[dict]) -> list[tuple[str, str]]:
+    """Insert a chunk of prepared rows in ONE round trip.
+
+    Returns [(id, dedup_key), ...] for the rows that were really created
+    (ON CONFLICT losers are absent, by design -- the caller counts them as
+    duplicates). Ordering is not preserved and is not relied on: the
+    caller only ever aggregates the set.
+    """
+    if not rows:
+        return []
+    created = await conn.fetch(_BATCH_INSERT_SQL, _batch_payload(rows))
+    inserted = [(r["id"], r["dedup_key"]) for r in created]
+    if inserted:
+        await conn.execute(
+            _BATCH_JOB_SQL,
+            json.dumps([{"id": i, "dedup_key": k} for i, k in inserted]),
+        )
+    return inserted
 
 
 async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
@@ -337,11 +495,37 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
     one session's trace_id) ~50k redundant header upserts for what is
     really one distinct trace per run in the common case. Now one
     connection is acquired for the whole run, and the header is only
-    upserted once per distinct trace_id actually seen. Per-event INSERTs
-    are still individual round trips (real bulk/executemany batching
-    with per-row ON CONFLICT...RETURNING is a further optimization, not
-    attempted here -- flagging that honestly rather than claiming this
-    is fully batched).
+    upserted once per distinct trace_id actually seen.
+
+    A4 real fix (this pass): the remaining per-event INSERTs were still
+    one round trip each -- BEGIN + INSERT...RETURNING + INSERT job +
+    COMMIT, four per event, strictly serial, so a 50k-line file cost
+    ~200,000 sequential round trips. That was flagged in the previous
+    pass's own docstring as "a further optimization, not attempted here";
+    this is that optimization. Events are now prepared per record in
+    Python (redaction, payload capping, overflow files -- all unchanged,
+    all still per record) and written in chunks of INSERT_CHUNK_SIZE via
+    one INSERT...RETURNING plus one job INSERT per chunk.
+
+    What deliberately did NOT change, because each is load-bearing:
+
+      * Redaction still runs once per record, inside
+        `_prepare_event_row`, before any value is bound. Batching the
+        SQL did not batch or skip the scrub.
+      * `ON CONFLICT (dedup_key) DO NOTHING` is still the idempotency
+        guard, and the duplicate accounting is still derived from
+        RETURNING, so a replayed collector file inserts nothing and
+        queues nothing.
+      * Transaction granularity is per chunk, not per event. That is a
+        real change: a crash mid-file now leaves a committed *chunk*
+        prefix rather than a committed *event* prefix. Both are
+        at-least-once and re-running the file is safe, because
+        dedup_key suppresses everything already committed. The
+        per-chunk unit exists precisely so that property is preserved
+        rather than relying on a single giant transaction.
+      * Header upserts are still once per distinct trace_id per file,
+        still in file order, so a trace's `started_at` is still the
+        timestamp of its first event.
     """
     good_records, quarantined = _read_records(file_path)
     _write_quarantine(file_path, quarantined)
@@ -351,33 +535,36 @@ async def process_collector_file(pool: asyncpg.Pool, file_path: Path, *,
     headers_ensured: set[str] = set()
 
     async with pool.acquire() as conn:
-        for record in good_records:
-            trace_id = record.get("trace_id") or record["session_id"]
-            session_id = record["session_id"]
-            event = record["event"]
-            started_at = _parse_timestamp(event.get("timestamp"))
+        for start in range(0, len(good_records), INSERT_CHUNK_SIZE):
+            chunk = good_records[start:start + INSERT_CHUNK_SIZE]
 
             async with conn.transaction():
-                if trace_id not in headers_ensured:
+                # Header first, in file order, exactly as the per-record
+                # loop did: the first record of an unseen trace_id still
+                # decides that trace's started_at.
+                for record in chunk:
+                    trace_id = record.get("trace_id") or record["session_id"]
+                    if trace_id in headers_ensured:
+                        continue
                     await _ensure_trace_header(
-                        conn, trace_id, session_id, started_at,
+                        conn, trace_id, record["session_id"],
+                        _parse_timestamp(record["event"].get("timestamp")),
                         owner_id=owner_id, visibility=visibility,
                         project_id=record.get("project_id"),
                     )
                     headers_ensured.add(trace_id)
-                new_id = await _insert_event(
-                    conn, record, owner_id=owner_id, visibility=visibility,
-                    max_inline_bytes=max_inline_bytes, raw_payload_dir=raw_payload_dir,
-                )
-                if new_id is not None:
-                    inserted += 1
-                    await conn.execute(
-                        "INSERT INTO ingestion_jobs (job_type, payload) VALUES ($1, $2)",
-                        "normalize_trace_event",
-                        json.dumps({"trace_event_id": str(new_id), "dedup_key": record["dedup_key"]}),
+
+                rows = [
+                    _prepare_event_row(
+                        record, owner_id, visibility,
+                        max_inline_bytes=max_inline_bytes,
+                        raw_payload_dir=raw_payload_dir,
                     )
-                else:
-                    skipped_duplicate += 1
+                    for record in chunk
+                ]
+                created = await _insert_events_batched(conn, rows)
+                inserted += len(created)
+                skipped_duplicate += len(chunk) - len(created)
 
     # A2 real fix: mark every currently-read line as seen, so the
     # collector's compaction (see trace_collector.py's mark_worker_seen())

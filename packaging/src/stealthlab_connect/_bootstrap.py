@@ -95,13 +95,18 @@ def load_trace_collector_module():
 
 
 def load_mcp_server_module():
-    root = get_backend_root()
-    if not (root.parent / "experiments" / "swebench_pro" / "agent.py").is_file():
-        raise BackendRootNotFound(
-            f"find_best_way needs {root.parent / 'experiments' / 'swebench_pro' / 'agent.py'} "
-            f"(experiments/swebench_pro must be a sibling of backend/) -- see "
-            f"backend/README_MCP_SERVER.md setup step 3"
-        )
+    """Import the MCP server from the backend checkout.
+
+    This package depends on `backend/` and NOTHING else. An earlier version also
+    required `experiments/swebench_pro/agent.py` to exist as a sibling of `backend/`;
+    that guard was a leftover from before `RepoSandbox`/`Agent`/`TOOLS` were moved into
+    `backend/app/execution/coding_agent.py`. `backend/app/mcp_server/server.py:96-99`
+    records the reason the move happened: the old `sys.path` + bare-import shim caused a
+    real incident. The guard outlived the code it was protecting, and while it was there
+    it broke the shipped package -- `find_best_way` could not be reached at all because
+    the directory it demanded had been deleted.
+    """
+    get_backend_root()
     import app.mcp_server.server as module
 
     return module
