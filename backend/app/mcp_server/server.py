@@ -4530,8 +4530,8 @@ async def submit_way(
       {"outcome": "rejected_by_screen", "screen": {...}}    -- nothing written
       {"outcome": "goal_ambiguous", "candidates": [...]}   -- nothing written
       {"outcome": "duplicate_way", "existing": {...}}      -- nothing written
-    Limits: 10 submissions per hour per user; secrets are redacted before
-    storage.
+    Limits: 10 submissions per hour and 30 per day per user, and a cap across
+    all users; secrets are redacted before storage.
     """
     from app.economy import constants as econ
     from app.economy import submissions as submissions_service
@@ -4581,10 +4581,17 @@ async def submit_way(
     pool = ctx.request_context.lifespan_context["pool"]
     # Rate limit before anything is looked up or written: a refused call must
     # not leave a new Goal behind.
-    limit = RateLimit(max_requests=econ.SUBMISSION_RATE_LIMIT_MAX,
-                      window=timedelta(hours=econ.SUBMISSION_RATE_LIMIT_WINDOW_HOURS))
+    limiter = RateLimiter(pool, limits={
+        _WAY_PATH: RateLimit(max_requests=econ.SUBMISSION_RATE_LIMIT_MAX,
+                             window=timedelta(hours=econ.SUBMISSION_RATE_LIMIT_WINDOW_HOURS)),
+        _WAY_PATH + "/day": RateLimit(max_requests=econ.SUBMISSION_DAILY_MAX, window=timedelta(days=1)),
+        _WAY_PATH + "/all": RateLimit(max_requests=econ.SUBMISSION_GLOBAL_HOURLY_MAX, window=timedelta(hours=1)),
+    })
     try:
-        await RateLimiter(pool, limits={_WAY_PATH: limit}).check_and_record(f"user:{scope.viewer_id}", _WAY_PATH)
+        await limiter.check_and_record(f"user:{scope.viewer_id}", _WAY_PATH)
+        await limiter.check_and_record(f"user:{scope.viewer_id}", _WAY_PATH + "/day")
+        # one bucket for everyone: bounds screening spend however many accounts exist
+        await limiter.check_and_record("global:submit_way", _WAY_PATH + "/all")
     except RateLimitExceeded as exc:
         return f"REFUSED: rate limit -- retry in {exc.retry_after_seconds}s ({exc})"
 

@@ -1,10 +1,11 @@
 "use client";
-import { Suspense, useState } from "react";
+import { Suspense, useCallback, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import InteractiveLogo from "@/components/interactive-logo/InteractiveLogo";
 import { getSupabase, supabaseConfigured } from "@/lib/supabase";
 import { isSafeRedirectPath } from "@/lib/session";
+import Turnstile, { TURNSTILE_SITE_KEY, type TurnstileHandle } from "@/components/Turnstile";
 
 type Mode = "signin" | "signup";
 type Status = "idle" | "loading" | "check-email" | "error";
@@ -46,6 +47,12 @@ function SignInInner() {
   const [message, setMessage] = useState("");
 
   const destination = destinationFrom(searchParams);
+  // Email sign-up / sign-in carry a CAPTCHA token when Turnstile is configured
+  // (Supabase rejects them without one once its CAPTCHA protection is on).
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captcha = useRef<TurnstileHandle>(null);
+  const onCaptcha = useCallback((t: string | null) => setCaptchaToken(t), []);
+  const captchaOptions = captchaToken ? { captchaToken } : {};
 
   async function oauth(provider: "google" | "github") {
     const client = getSupabase();
@@ -66,6 +73,11 @@ function SignInInner() {
     e.preventDefault();
     const client = getSupabase();
     if (!client) return;
+    if (TURNSTILE_SITE_KEY && !captchaToken) {
+      setStatus("error");
+      setMessage("Please complete the check below first.");
+      return;
+    }
     setStatus("loading");
     setMessage("");
 
@@ -75,7 +87,8 @@ function SignInInner() {
         setMessage("Those passwords don't match.");
         return;
       }
-      const { data, error } = await client.auth.signUp({ email, password });
+      const { data, error } = await client.auth.signUp({ email, password, options: { ...captchaOptions } });
+      captcha.current?.reset();
       if (error) {
         setStatus("error");
         setMessage(/already registered|already exists/i.test(error.message) ? "An account with that email already exists. Sign in instead." : "Could not create an account with those details.");
@@ -89,7 +102,8 @@ function SignInInner() {
       return;
     }
 
-    const { error } = await client.auth.signInWithPassword({ email, password });
+    const { error } = await client.auth.signInWithPassword({ email, password, options: { ...captchaOptions } });
+    captcha.current?.reset();
     if (error) {
       setStatus("error");
       setMessage("That email and password don't match an account.");
@@ -151,6 +165,7 @@ function SignInInner() {
             <input id="confirm" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
           </div>
         )}
+        <Turnstile ref={captcha} onToken={onCaptcha} />
         <div className="cform-submit">
           <button className="btn-ink" type="submit" disabled={status === "loading"}>
             <span>{status === "loading" ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}</span>

@@ -117,6 +117,11 @@ jobs:
         working-directory: backend
       - run: pytest tests/test_goal_abstraction_e2e.py -q
         working-directory: backend
+      # Tenant isolation: one user's private rows never reach another user or an
+      # anonymous caller -- through the MCP v1 surface, the REST routers, and search.
+      - name: Tenant isolation e2e
+        run: pytest tests/test_mcp_tenant_isolation_e2e.py tests/test_cross_user_isolation_e2e.py tests/test_search_privacy_leak_e2e.py -q
+        working-directory: backend
 
   mcp-server-image:
     # The hosted MCP server image (backend/Dockerfile.mcp-server) must build;

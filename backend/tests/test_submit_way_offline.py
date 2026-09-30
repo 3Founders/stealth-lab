@@ -51,8 +51,12 @@ def world(monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        async def check_and_record(self, *a, **k):
+        async def check_and_record(self, key, endpoint):
             calls["rate_checked"] += 1
+            calls.setdefault("rate_keys", []).append((key, endpoint))
+            if endpoint in calls.get("deny", ()):
+                from app.services.governance import RateLimitExceeded
+                raise RateLimitExceeded("over", retry_after_seconds=60)
 
     monkeypatch.setattr("app.services.governance.RateLimiter", _Limiter)
     monkeypatch.setattr("app.services.embeddings.Embedder", lambda *a, **k: object())
@@ -277,3 +281,17 @@ def test_model_verdicts_and_fail_closed():
     for providers in ([], [_Prov("not json")], [_Prov('{"allowed": "yes"}')], [_Prov(exc=RuntimeError("down"))]):
         v = _run(cs.screen_contribution(SUB, providers=providers))
         assert not v.allowed and v.categories == ["unscreened"]
+
+
+def test_three_caps_per_user_hour_per_user_day_and_everyone(world):
+    _submit(goal_id="G-1")
+    assert world["rate_keys"] == [("user:user-1", "mcp/submit_way"), ("user:user-1", "mcp/submit_way/day"),
+                                  ("global:submit_way", "mcp/submit_way/all")]
+
+
+def test_the_global_cap_refuses_before_the_screen_or_any_write(world):
+    world["deny"] = {"mcp/submit_way/all"}
+    world["set_resolution"]("no_match")
+    out = _submit(goal="Export a Word document", goal_objective="a .docx opens")
+    assert out.startswith("REFUSED: rate limit")
+    assert world["screened"] == [] and world["goal_created"] == [] and world["submitted"] == []

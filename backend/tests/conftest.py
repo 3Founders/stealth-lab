@@ -123,6 +123,15 @@ def pytest_configure(config):
                     setattr(_cfg.settings, _attr, None)
                 except Exception:  # noqa: BLE001 - frozen model: leave it
                     pass
+        # With the identity provider nulled above, a DEPLOYMENT_MODE=shared from a
+        # developer's backend/.env (set so the local MCP server refuses the shared
+        # token) would make the MCP module refuse to import. The offline posture
+        # is single_user, like the auth settings; an exported value is left alone.
+        if "DEPLOYMENT_MODE" not in os.environ and hasattr(_cfg.settings, "deployment_mode"):
+            try:
+                _cfg.settings.deployment_mode = "single_user"
+            except Exception:  # noqa: BLE001 - frozen model: leave it
+                pass
     except Exception:  # noqa: BLE001 - config import failure surfaces elsewhere
         pass
 

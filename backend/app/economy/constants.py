@@ -84,5 +84,10 @@ WILSON_Z = _f("KEL_WILSON_Z", 1.96)  # 95% confidence, matches the existing
 # identity string.
 SUBMISSION_RATE_LIMIT_MAX = _i("KEL_SUBMISSION_RATE_LIMIT_MAX", 10)
 SUBMISSION_RATE_LIMIT_WINDOW_HOURS = _i("KEL_SUBMISSION_RATE_LIMIT_WINDOW_HOURS", 1)
+# Contributions are accepted by an automated screen (one model call each), so two more
+# caps bound abuse that the per-user hourly limit alone does not: a per-user daily cap,
+# and one cap across ALL users (many throwaway accounts share it).
+SUBMISSION_DAILY_MAX = _i("KEL_SUBMISSION_DAILY_MAX", 30)
+SUBMISSION_GLOBAL_HOURLY_MAX = _i("KEL_SUBMISSION_GLOBAL_HOURLY_MAX", 300)
 USAGE_EVENT_RATE_LIMIT_MAX = _i("KEL_USAGE_EVENT_RATE_LIMIT_MAX", 60)
 USAGE_EVENT_RATE_LIMIT_WINDOW_HOURS = _i("KEL_USAGE_EVENT_RATE_LIMIT_WINDOW_HOURS", 1)
