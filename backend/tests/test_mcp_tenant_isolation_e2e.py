@@ -176,6 +176,13 @@ def test_a_private_goal_is_not_offered_to_another_user(srv):
                 embedder=Embedder(),
             )
             gid = str(made["id"])
+            # The search index is filled from the projection outbox; the MCP/API
+            # process drains it every few seconds (start_background_drain). Drain
+            # once here, as that loop would.
+            from app.services.search_projection import drain_outbox
+            from app.services.shards import pools_for
+
+            await drain_outbox(pool, batch=200, pools=pools_for(pool), max_batches=5)
             vec = _hash_vector(name)
 
             async def ids(scope):
