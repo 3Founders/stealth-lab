@@ -45,6 +45,9 @@ __pycache__/
 
 # env files (any location)
 .env
+# backups of env files (they hold the same live keys)
+.env.bak*
+.env.*.bak
 
 # Fundraising / investor material - LOCAL ONLY, never push to this repo.
 # Lives in the private repo 3Founders/stealth-lab-funding.
@@ -124,3 +127,6 @@ experiments/swebench/__pycache__/
 experiments/swebench_rebench/cache/
 experiments/swebench_rebench/runs/
 experiments/swebench_rebench/__pycache__/
+
+# step-0 pilot: per-instance license join cache, rebuilt from the pinned parent revision
+backend/data/license_maps/
