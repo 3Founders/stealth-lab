@@ -389,6 +389,7 @@ async def cached_shards(pool: asyncpg.Pool, *, ttl_s: float = SHARD_CACHE_TTL_S)
 
 def invalidate_shard_cache() -> None:
     _SHARD_CACHE.clear()
+    _HOLDING_CACHE.clear()
 
 
 async def register_shard(
@@ -478,7 +479,10 @@ class ShardPools:
             from app.db.session import _init_connection
 
             def pool_factory(dsn: str):  # noqa: E306 -- same JSONB codec as the control pool
-                return asyncpg.create_pool(dsn, min_size=0, max_size=max_size, init=_init_connection)
+                # connect timeout: a hosted compute waking from suspend can stall a TLS handshake indefinitely
+                # (production 2026-10-01: a run hung 15 minutes in preflight); fail fast, the caller retries
+                return asyncpg.create_pool(dsn, min_size=0, max_size=max_size, init=_init_connection,
+                                           timeout=float(os.environ.get("STEALTH_SHARD_CONNECT_TIMEOUT", "30")))
         self._factory = pool_factory
         self._backoff_s = backoff_s
         self._locks: dict[str, asyncio.Lock] = {}
@@ -648,6 +652,25 @@ async def verify_routes(pool: Any, *, limit_per_shard: int = 100000) -> dict[str
 # counts, "which procedures use X"): they run the same SQL on the control database and on every readable remote shard.
 # With no remote shard registered (or a non-database test double) they are a plain call on ``pool`` -- zero overhead.
 
+_HOLDING_CACHE: dict[int, tuple[float, frozenset[str]]] = {}
+HOLDING_CACHE_TTL_S = 15.0
+
+
+async def _shards_holding_rows(pool: Any) -> frozenset[str]:
+    """Shards some object is routed to (cached like the registry). With `writable`, the exact set of shards that can
+    hold rows: placement only ever chooses a writable shard and records the route in the same transaction."""
+    key = id(pool)
+    hit = _HOLDING_CACHE.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < HOLDING_CACHE_TTL_S:
+        return hit[1]
+    rows = await pool.fetch("SELECT DISTINCT home_shard_id FROM object_routes "
+                            "UNION SELECT DISTINCT home_shard_id FROM procedure_row_routes")
+    found = frozenset(r[0] for r in rows if r[0])
+    _HOLDING_CACHE[key] = (now, found)
+    return found
+
+
 async def all_pools(pool: Any, *, strict: bool = False) -> list[tuple[str, Any]]:
     """[(shard_id, pool)] for the control database and every readable remote shard. An unreachable shard is skipped
     (logged) unless ``strict``, in which case ShardUnavailable propagates -- writers and verifiers that must not
@@ -657,8 +680,14 @@ async def all_pools(pool: Any, *, strict: bool = False) -> list[tuple[str, Any]]
         _note_shard(HOME_SHARD)
         return out
     sp = pools_for(pool)
+    holding = await _shards_holding_rows(pool)
     for info in await cached_shards(pool):
         if info.shard_id == HOME_SHARD or info.status not in READABLE_STATUSES or info.role != ROLE_KNOWLEDGE:
+            continue
+        if not info.writable and info.shard_id not in holding:
+            # never written to (a shard only receives objects while writable, and every object is routed): it holds
+            # no rows, and connecting would only wake an idle hosted compute -- with 84 registered shards, a scan
+            # of all of them is slow and keeps every free project's compute running (2026-10-01)
             continue
         try:
             out.append((info.shard_id, await sp.get(info.shard_id)))

@@ -96,7 +96,8 @@ async def _member(pool: Any, member_id: str) -> Any:
 
             try:
                 existing = shards._SEARCH_POOLS[key] = await create_pool(
-                    dsn, min_size=0, max_size=int(os.environ.get("SEARCH_MEMBER_POOL_MAX", "8")))
+                    dsn, min_size=0, max_size=int(os.environ.get("SEARCH_MEMBER_POOL_MAX", "8")),
+                    timeout=float(os.environ.get("STEALTH_SHARD_CONNECT_TIMEOUT", "30")))
             except Exception as exc:  # noqa: BLE001 -- surfaced like any unavailable shard
                 raise shards.ShardUnavailable(member_id, f"connect failed: {type(exc).__name__}") from exc
         return existing

@@ -59,11 +59,16 @@ async def stored_embedding_models(pool: Any) -> dict[str, dict[str, int]]:
     """{table: {model: rows with a vector}}; a vector with no recorded model is reported as '(unrecorded)'.
     Storage layout v2: canonical tables are counted on every knowledge shard and search tables on every search member
     (goal_search_index stays on the control database), so vectors spread over many databases are still one space."""
+    import asyncio
+
     from app.services import search_group
     from app.services.shards import all_pools
 
+    # all_pools: the control database and every shard that can hold rows (never-written shards are not woken)
     canonical_dbs = [p for _sid, p in await all_pools(pool, strict=True)]
     search_dbs = [p for _mid, p in await search_group.member_pools(pool, strict=True)]
+    for db in canonical_dbs + search_dbs:          # every database answers within a bound, or the preflight fails
+        await asyncio.wait_for(db.fetchval("SELECT 1"), timeout=60)
     out: dict[str, dict[str, int]] = {}
     for table, model_col, vec_col in _VECTOR_TABLES:
         dbs = canonical_dbs if table in _CANONICAL else [pool] if table == "goal_search_index" else search_dbs
