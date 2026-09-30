@@ -107,6 +107,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from app.mcp_server.tasks_extension import TasksExtension
+from app.mcp_server import oauth_resource as _oauth
 from app.mcp_server.anonymous_read import _ANONYMOUS_READ_TOKEN, AnonymousReadInjectorMiddleware
 from app.mcp_server.claim_graph_page import CLAIM_GRAPH_HTML, FORCE_GRAPH_JS
 from app.mcp_server.procedure_graph_page import PROCEDURE_GRAPH_HTML
@@ -364,12 +365,14 @@ def _build_token_verifier(shared_token: str) -> OidcAwareTokenVerifier:
     deployment -- so require OIDC_ISSUER + OIDC_AUDIENCE. The default
     DEPLOYMENT_MODE=single_user never raises here (existing dev setups
     unaffected)."""
+    oidc_config = OidcConfig.from_settings(settings)
+    # The Supabase Auth preset is real per-user identity too: count it, or a
+    # Supabase-only shared deployment would be refused for "no OIDC".
     assert_deployment_mode_posture(
         deployment_mode=settings.deployment_mode,
-        oidc_issuer=settings.oidc_issuer,
-        oidc_audience=settings.oidc_audience,
+        oidc_issuer=oidc_config.issuer if oidc_config else settings.oidc_issuer,
+        oidc_audience=oidc_config.audience if oidc_config else settings.oidc_audience,
     )
-    oidc_config = OidcConfig.from_settings(settings)
     jwks_provider = FetchingJwks(oidc_config.jwks_url) if oidc_config is not None else None
     from app.services.service_identity import PgServiceRegistry, ServiceTokenConfig
 
@@ -455,7 +458,7 @@ _V1_INSTRUCTIONS = (
     "will pass: recommend_models(procedure_id, candidates=[\"model|scaffold\", ...]) "
     "returns a ladder (try A; if its check fails, B); after each attempt call "
     "report_model_run(...) with the returned instance_key so the per-goal model "
-    "scores learn. Reads need no token; report_discovery, submit_way and "
+    "scores learn. On a local server reads need no token (a hosted one asks you to sign in); report_discovery, submit_way and "
     "report_model_run need a signed-in user or write token."
 )
 _V2_INSTRUCTIONS = (
@@ -480,8 +483,12 @@ server = MCPServer(
     # Inspector quickstart in README_MCP_SERVER.md) bypasses it entirely,
     # by protocol design, not by an oversight here.
     token_verifier=_TOKEN_VERIFIER,
+    # The authorization server clients are sent to: Supabase's OAuth 2.1
+    # server when the Supabase Auth preset is configured (see
+    # oauth_resource.py for the whole sign-in flow), else this server.
+    # required_scopes stays: every accepted token is granted it server-side.
     auth=AuthSettings(
-        issuer_url=AnyHttpUrl(_ISSUER_URL),
+        issuer_url=AnyHttpUrl(_oauth.authorization_server_url(settings, _ISSUER_URL)),
         resource_server_url=AnyHttpUrl(f"{_ISSUER_URL}/mcp"),
         required_scopes=["stealthlab:tools"],
     ),
@@ -638,7 +645,7 @@ async def _route_gate(request: Request) -> Optional[JSONResponse]:
     if await _route_token(request) is not None or _is_local_request(request):
         return None
     return JSONResponse({"error": "authentication required"}, status_code=401,
-                        headers={"WWW-Authenticate": "Bearer"})
+                        headers={"WWW-Authenticate": _oauth.www_authenticate(_ISSUER_URL, error="invalid_token")})
 
 
 @server.custom_route("/claim-graph", methods=["GET"], include_in_schema=False)
@@ -811,8 +818,9 @@ async def local_sync_preflight(request: Request) -> Response:
 # TasksExtension's in-process store. STEALTHLAB_MCP_STATELESS=1/0 overrides either default.
 MCP_STATELESS = os.environ.get("STEALTHLAB_MCP_STATELESS", "1" if MCP_SURFACE == "v1" else "0").strip() in (
     "1", "true", "yes")
-app = AnonymousReadInjectorMiddleware(server.streamable_http_app(
-    transport_security=_transport_security(), stateless_http=MCP_STATELESS))
+app = _oauth.wrap_app(
+    server.streamable_http_app(transport_security=_transport_security(), stateless_http=MCP_STATELESS),
+    settings, server_origin=_ISSUER_URL, public_origin=_PUBLIC_ORIGIN)
 
 
 def _resolve_caller_identity(fallback: str) -> str:

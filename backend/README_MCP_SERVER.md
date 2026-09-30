@@ -357,6 +357,53 @@ validation code (`app.services.authn.validate_token_async`/`OidcConfig`/
 `FetchingJwks`) the REST app already uses, reused here rather than
 reimplemented.
 
+**Remote sign-in (OAuth 2.1 via Supabase Auth).** With the Supabase Auth
+preset set (`SUPABASE_PROJECT_URL` + `SUPABASE_JWT_AUDIENCE`, the same
+project prod_frontend signs users in with), remote MCP clients (Claude,
+Cursor, VS Code, MCP Inspector) sign in on their own:
+
+1. A call with no token gets `401` with
+   `WWW-Authenticate: Bearer ..., resource_metadata=".../.well-known/oauth-protected-resource/mcp"`.
+2. That document (RFC 9728) names `https://<ref>.supabase.co/auth/v1` as
+   the authorization server and advertises `openid email profile`.
+3. The client registers itself (dynamic client registration) and opens the
+   browser at Supabase's `/authorize` (PKCE S256).
+4. Supabase sends the user to prod_frontend's `/oauth/consent`; they sign in
+   if needed and click Allow or Deny. Allowed apps are listed, and can be
+   removed, at `/account/connections`.
+5. The client exchanges the code for a Supabase access + refresh token and
+   sends the access token on every call; this server validates it against
+   the project's JWKS.
+
+Code: `app/mcp_server/oauth_resource.py` (flow, metadata, the anonymous-read
+default), `prod_frontend/app/oauth/consent/`, `prod_frontend/lib/oauth-consent.ts`.
+Tests: `tests/test_mcp_oauth_resource_offline.py` (drives the 401 →
+metadata → authenticated call through a real SDK app) and
+`prod_frontend/tests/oauth-consent.test.ts`.
+
+To turn it on:
+
+- Set `STEALTHLAB_MCP_PUBLIC_URL` to the server's public origin (for example
+  `https://mcp.example.com`) and the Supabase preset in `backend/.env`.
+- In the Supabase dashboard, open **Authentication → OAuth Server**: enable
+  the OAuth 2.1 server, enable dynamic client registration, and set the
+  authorization path to `/oauth/consent` (Site URL = prod_frontend's origin).
+
+Anonymous reads: a token-less client never sees a 401, so it would never
+start sign-in. On a hosted server with the Supabase preset they are
+therefore **off** by default, and every caller signs in. The local loopback
+server keeps them on. `STEALTHLAB_MCP_ANONYMOUS_READS=1` or `0` overrides.
+
+Limits, stated plainly: Supabase supports only the standard scopes, so
+there is no per-tool scope step-up (a 403 asking for more); `stealthlab:tools`
+is granted server-side to every validated token and per-tool scopes are
+enforced as before. Supabase does not document RFC 8707 resource binding and
+its tokens carry `aud="authenticated"`, so a token is bound to the Supabase
+project, not to this server: any access token of the project (including a
+prod_frontend browser session) is accepted, the same trust the REST API
+already extends. Removing an app stops refreshes at once; a token it already
+holds stays valid until it expires (one hour by default).
+
 ### 1. Generate a token and set it
 
 ```bash
