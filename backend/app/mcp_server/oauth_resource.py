@@ -107,17 +107,21 @@ def anonymous_reads_enabled(env: Mapping[str, str], *, public_origin: Optional[s
     """Whether a request with no token is served as the anonymous reader.
 
     With anonymous reads on, a token-less client never sees a 401, so it
-    never starts sign-in (step 1 of the flow above). Default: OFF for a
-    hosted server with Supabase sign-in (public URL + preset), so remote
-    clients are challenged and sign in; ON otherwise, so the local loopback
-    server and the stealthlab-connect package keep working with no token.
-    STEALTHLAB_MCP_ANONYMOUS_READS=1/0 overrides either default."""
+    never starts sign-in (step 1 of the flow above). Default: OFF whenever
+    Supabase sign-in is configured -- hosted or on this machine -- so a
+    client (Claude Code, opencode, Cursor) with no token is challenged and
+    the person signs in in the browser; the client then keeps and refreshes
+    the Supabase token itself, and no static token is copied into its
+    config. ON when Supabase is not configured, so the stealthlab-connect
+    package and a bare local checkout keep working with no token.
+    `public_origin` does not change the default; it stays in the signature
+    for callers. STEALTHLAB_MCP_ANONYMOUS_READS=1/0 overrides either way."""
     raw = env.get("STEALTHLAB_MCP_ANONYMOUS_READS", "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    return not (public_origin and supabase_configured)
+    return not supabase_configured
 
 
 class ProtectedResourceMetadataMiddleware:

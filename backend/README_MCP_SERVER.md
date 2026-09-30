@@ -390,9 +390,13 @@ To turn it on:
   authorization path to `/oauth/consent` (Site URL = prod_frontend's origin).
 
 Anonymous reads: a token-less client never sees a 401, so it would never
-start sign-in. On a hosted server with the Supabase preset they are
-therefore **off** by default, and every caller signs in. The local loopback
-server keeps them on. `STEALTHLAB_MCP_ANONYMOUS_READS=1` or `0` overrides.
+start sign-in. Whenever the Supabase preset is configured -- hosted or on
+this machine -- they are therefore **off** by default: a client connects
+with no token, gets the 401, and the person signs in in the browser. The
+client stores the Supabase access + refresh token and refreshes it itself,
+so no static token belongs in its config. Without the preset (the
+stealthlab-connect package, a bare checkout) anonymous reads stay on.
+`STEALTHLAB_MCP_ANONYMOUS_READS=1` or `0` overrides.
 
 Limits, stated plainly: Supabase supports only the standard scopes, so
 there is no per-tool scope step-up (a 403 asking for more); `stealthlab:tools`

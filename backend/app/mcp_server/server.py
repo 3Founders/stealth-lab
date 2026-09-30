@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import logging
 import os
 import secrets
 import subprocess
@@ -818,6 +819,11 @@ async def local_sync_preflight(request: Request) -> Response:
 # TasksExtension's in-process store. STEALTHLAB_MCP_STATELESS=1/0 overrides either default.
 MCP_STATELESS = os.environ.get("STEALTHLAB_MCP_STATELESS", "1" if MCP_SURFACE == "v1" else "0").strip() in (
     "1", "true", "yes")
+# Stateless transport opens and closes a transport per request, and the SDK logs
+# "Terminating session: None" at INFO for every one of them -- noise, not an
+# event. Its warnings and errors still show.
+logging.getLogger("mcp.server.streamable_http").setLevel(logging.WARNING)
+
 app = _oauth.wrap_app(
     server.streamable_http_app(transport_security=_transport_security(), stateless_http=MCP_STATELESS),
     settings, server_origin=_ISSUER_URL, public_origin=_PUBLIC_ORIGIN)

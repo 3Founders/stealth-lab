@@ -52,9 +52,11 @@ def test_challenge_points_at_the_same_document_the_sdk_names():
         f'Bearer error="invalid_token", resource_metadata="{sdk}"')
 
 
-def test_anonymous_reads_default_off_only_for_a_hosted_supabase_server():
+def test_anonymous_reads_default_off_whenever_supabase_is_configured():
     assert oa.anonymous_reads_enabled({}, public_origin=ORIGIN, supabase_configured=True) is False
-    assert oa.anonymous_reads_enabled({}, public_origin=None, supabase_configured=True) is True
+    # Local too: with Supabase configured, a token-less local client is challenged and signs in.
+    assert oa.anonymous_reads_enabled({}, public_origin=None, supabase_configured=True) is False
+    assert oa.anonymous_reads_enabled({}, public_origin=None, supabase_configured=False) is True
     assert oa.anonymous_reads_enabled({}, public_origin=ORIGIN, supabase_configured=False) is True
     on = {"STEALTHLAB_MCP_ANONYMOUS_READS": "1"}
     off = {"STEALTHLAB_MCP_ANONYMOUS_READS": "0"}
