@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Optional
 
 from app.services.semantic import prompts
@@ -277,8 +278,15 @@ class _VertexRefreshingCompletions:
 
         if not self._credentials.valid:   # synchronous token fetch: keep it off the event loop
             await asyncio.to_thread(self._credentials.refresh, google.auth.transport.requests.Request())
+        from app.services.vertex_chat import shape_chat_kwargs
+
         kwargs = dict(kwargs)
         kwargs["model"] = self._model
+        # Gemini 3.x: a short verdict needs low reasoning effort, as extraction's calls already get -- at the default
+        # effort each judge call spent ~2,000 hidden "thinking" tokens on a same/different answer (2026-10-01: the
+        # identity judge was ~85% of a $600 day).
+        if os.environ.get("JUDGE_LOW_REASONING", "1") not in ("0", "false", "False"):
+            kwargs = shape_chat_kwargs(self._model, kwargs)
         headers = dict(kwargs.pop("extra_headers", None) or {})
         headers["Authorization"] = f"Bearer {self._credentials.token}"
         kwargs["extra_headers"] = headers

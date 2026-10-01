@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from typing import Any
 
@@ -283,19 +284,32 @@ def _identity_candidate_text(candidate: Any) -> str:
     return str(getattr(candidate, "text", candidate))
 
 
+# What the identity judge reads of each side: the name and the start of its description. A Goal's description is the
+# whole issue text (up to 2,000 characters), sent for the new Goal and every candidate on every call -- the identity
+# judge read ~7,000 tokens per call (2026-10-01). JUDGE_TEXT_MAX_CHARS bounds it; 0 turns clipping off.
+JUDGE_TEXT_MAX_CHARS = int(os.environ.get("JUDGE_TEXT_MAX_CHARS", "700"))
+
+
+def _clip(text: str) -> str:
+    text = text or ""
+    if JUDGE_TEXT_MAX_CHARS <= 0 or len(text) <= JUDGE_TEXT_MAX_CHARS:
+        return text
+    return text[:JUDGE_TEXT_MAX_CHARS].rstrip() + " ..."
+
+
 def build_identity_batch_user(kind: str, a: str, candidates: list) -> str:
     return json.dumps({
         "kind": kind,
-        "a": a,
+        "a": _clip(a),
         "candidates": [
-            {"index": index, "text": _identity_candidate_text(candidate)}
+            {"index": index, "text": _clip(_identity_candidate_text(candidate))}
             for index, candidate in enumerate(candidates)
         ],
     }, ensure_ascii=False)
 
 
 def build_identity_user(kind: str, a: str, b: str) -> str:
-    return "A (new): " + a + "\nB (existing): " + b
+    return "A (new): " + _clip(a) + "\nB (existing): " + _clip(b)
 
 
 def parse_identity(kind: str, body: dict) -> dict:
