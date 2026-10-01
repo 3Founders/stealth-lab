@@ -42,6 +42,21 @@ from app.services.semantic.providers import (
 log = logging.getLogger(__name__)
 
 
+def _unbilled(exc: BaseException) -> bool:
+    """True for a call the provider never served: refused for capacity/rate, timed out, or unreachable."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        name = type(exc).__name__
+        if name in ("RateLimitError", "APITimeoutError", "APIConnectionError", "TimeoutError", "ConnectError",
+                    "ConnectTimeout", "ReadTimeout"):
+            return True
+        if "429" in str(exc)[:200] or "Resource exhausted" in str(exc)[:300]:
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 @dataclass
 class Attempt:
     provider: str
@@ -165,9 +180,11 @@ class SemanticJudge:
                     break
                 await ingest_budget.guard(op)   # ingestion workers only: BudgetExceeded propagates (never a chain failure)
                 t0 = self._mono()
+                billed = True     # a call the provider answered is billed -- even when its reply was unusable
                 try:
                     value = await asyncio.wait_for(call(p), timeout=pol.timeout_s)
                 except Exception as exc:  # noqa: BLE001 -- classified below; never swallowed silently
+                    billed = not _unbilled(exc)
                     kind = classify_exception(exc)
                     dt = (self._mono() - t0) * 1000
                     attempts.append(Attempt(p.name, n, False, kind.value, str(exc)[:300], dt))
@@ -197,7 +214,9 @@ class SemanticJudge:
                     m.event("provider_selected", op=op, provider=p.name, fallback=fallback)
                     return ChainResult(True, value, p.name, p.model, fallback, attempts, (self._mono() - start) * 1000)
                 finally:
-                    if token_estimate is not None:
+                    # Refused (429), timed-out and unreachable calls are not billed: charging them estimated whole calls
+                    # booked ~$400 of phantom spend in 90 minutes while two models were saturated (2026-10-01).
+                    if token_estimate is not None and billed:
                         tokens_in, tokens_out = token_estimate()
                         await ingest_budget.record_judge(
                             p.name, p.model, op, tokens_in=tokens_in, tokens_out=tokens_out)

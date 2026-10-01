@@ -98,3 +98,15 @@ def test_without_fallbacks_a_refusal_still_reaches_the_caller_after_the_wait(mon
     with pytest.raises(RateLimitError):
         comp.create(messages=[])
     assert client.calls == [(A, "default")]               # the client's own retries, as before
+
+
+def test_refused_and_timed_out_judge_calls_are_not_charged_but_answered_ones_are():
+    import asyncio
+
+    from app.services.semantic.chain import _unbilled
+    from app.services.semantic.errors import ErrorKind, ProviderError
+
+    refused = ProviderError(ErrorKind.TRANSIENT, "vertex: transient: RateLimitError('Error code: 429 ...')")
+    assert _unbilled(_429()) and _unbilled(refused) and _unbilled(asyncio.TimeoutError())
+    unusable = ProviderError(ErrorKind.TRANSIENT, "invalid identity reply: relation missing")   # the model answered
+    assert not _unbilled(unusable)
