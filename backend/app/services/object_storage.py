@@ -10,6 +10,10 @@ Configuration (environment; no credentials in the repo):
                                     file:///abs/path              (a directory; a shared disk / dev)
                                     memory://                     (TESTS ONLY -- refused when STEALTHLAB_ENV=PRODUCTION)
     OBJECT_STORAGE_ENDPOINT_URL     custom S3 endpoint (R2/MinIO/OCI); standard AWS_* variables carry credentials
+    OBJECT_STORAGE_ACCESS_KEY_ID / OBJECT_STORAGE_SECRET_ACCESS_KEY / OBJECT_STORAGE_REGION
+                                    the store's own credentials, preferred over AWS_*: on an AWS machine the AWS_*
+                                    names belong to the machine (Google's workload identity federation reads them),
+                                    not to an R2 bucket
     RAW_PAYLOAD_INLINE_MAX_BYTES    strings larger than this are offloaded from job payloads (default 65536)
     RAW_PAYLOAD_HARD_MAX_BYTES      without an object store, a payload above this is REFUSED (default 1048576)
 
@@ -143,7 +147,10 @@ class S3Store(ObjectStore):
                 import boto3
             except ImportError as exc:  # pragma: no cover
                 raise RuntimeError("OBJECT_STORAGE_URL is s3:// but boto3 is not installed (pip install -r requirements-objectstore.txt)") from exc
-            client = boto3.client("s3", endpoint_url=endpoint_url)
+            own = {k: os.environ.get(v) for k, v in (("aws_access_key_id", "OBJECT_STORAGE_ACCESS_KEY_ID"),
+                                                       ("aws_secret_access_key", "OBJECT_STORAGE_SECRET_ACCESS_KEY"),
+                                                       ("region_name", "OBJECT_STORAGE_REGION"))}
+            client = boto3.client("s3", endpoint_url=endpoint_url, **{k: v for k, v in own.items() if v})
         self.client = client
 
     def _k(self, sha: str) -> str:
