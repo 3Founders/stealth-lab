@@ -236,17 +236,27 @@ class Worker:
             self.budget = ingest_budget.install(self.pool)   # same ledger + cap as the API's CostGovernor
         await q.reap_exhausted(self.pool)
         maintenance = None
+        drain = None
         if loop:
             # A looping worker's lanes never return, so maintenance that only ran after them never ran at all while
             # the worker was up (found 2026-09-29: 1,263 placement jobs unclaimed, projections undrained).
             maintenance = asyncio.create_task(self._maintenance_loop())
+            if self.cfg.drain_projections:
+                # The search projections drained continuously (every PROJECTION_DRAIN_INTERVAL_SECONDS, default 5),
+                # the same loop the API/MCP servers run -- not only once per maintenance pass: an ingestion run
+                # enqueues ~10,000 projection entries an hour, a 5-minute pass fell behind (2026-10-01).
+                from app.services.search_projection import start_background_drain
+
+                drain = start_background_drain(self.pool)
         try:
             await asyncio.gather(*[self._lane(i, budget) for i in range(self.cfg.concurrency)])
         finally:
-            if maintenance is not None:
-                maintenance.cancel()
+            for task in (maintenance, drain):
+                if task is None:
+                    continue
+                task.cancel()
                 try:
-                    await maintenance
+                    await task
                 except asyncio.CancelledError:
                     pass
         await q.reap_exhausted(self.pool)
