@@ -13,6 +13,8 @@ from the command line.
 """
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -112,11 +114,20 @@ async def acquire_run_lock(dsn: str) -> RunLock:
     return RunLock(conn)
 
 
+def paused_job_types() -> list[str]:
+    """Job types deliberately held back (QUEUE_PAUSED_JOB_TYPES, comma-separated): no worker claims them on purpose,
+    so their backlog is not a dead queue. 2026-10-01: goal placement was paused for cost, and every verified run
+    after 17:04 was refused over its 8,830 waiting jobs."""
+    return [t.strip() for t in os.environ.get("QUEUE_PAUSED_JOB_TYPES", "").split(",") if t.strip()]
+
+
 async def check_queue_alive(pool: Any, *, stale_minutes: int = QUEUE_STALE_MINUTES) -> dict:
+    paused = paused_job_types()
     row = await pool.fetchrow(
         "SELECT count(*) FILTER (WHERE created_at < now() - make_interval(mins => $1)) AS stale, "
         "       count(*) AS pending, min(created_at) AS oldest "
-        "FROM ingestion_jobs WHERE status = 'pending' AND claimed_at IS NULL", stale_minutes)
+        "FROM ingestion_jobs WHERE status = 'pending' AND claimed_at IS NULL AND job_type <> ALL($2::text[])",
+        stale_minutes, paused)
     if row and int(row["stale"] or 0) > 0:
         # A backlog behind a working worker is not a dead queue (2026-09-30: goal placement takes ~100 s a job, so
         # a busy worker always has jobs older than 10 minutes). Refuse only when nothing has been claimed lately.
@@ -127,12 +138,13 @@ async def check_queue_alive(pool: Any, *, stale_minutes: int = QUEUE_STALE_MINUT
                     "claimed_recently": int(recent)}
         by_type = await pool.fetch(
             "SELECT job_type, count(*) AS n FROM ingestion_jobs WHERE status = 'pending' AND claimed_at IS NULL "
-            "AND created_at < now() - make_interval(mins => $1) GROUP BY 1 ORDER BY 2 DESC", stale_minutes)
+            "AND created_at < now() - make_interval(mins => $1) AND job_type <> ALL($2::text[]) "
+            "GROUP BY 1 ORDER BY 2 DESC", stale_minutes, paused)
         raise PreflightFailed(
             f"{row['stale']} queued job(s) have waited over {stale_minutes} minutes unclaimed "
             f"({ {r['job_type']: int(r['n']) for r in by_type} }, oldest {row['oldest']}): no job worker is draining "
             "the queue. Start `python -m app.ingestion.worker` first.")
-    return {"pending": int(row["pending"] or 0) if row else 0}
+    return {"pending": int(row["pending"] or 0) if row else 0, **({"paused_job_types": paused} if paused else {})}
 
 
 async def run_all(pool: Any, *, dsn: str, command: str, configured_model: str) -> tuple[RunLock, dict]:

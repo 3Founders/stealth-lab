@@ -146,6 +146,30 @@ def test_an_undrained_queue_refuses_the_run():
     assert asyncio.run(check_queue_alive(busy))["claimed_recently"] == 40
 
 
+def test_a_deliberately_paused_job_type_is_not_a_dead_queue(monkeypatch):
+    """Placement paused for cost (QUEUE_PAUSED_JOB_TYPES): its backlog must not refuse every run (2026-10-01)."""
+    seen = []
+
+    class Pool:
+        async def fetchrow(self, sql, *a):
+            seen.append(a)
+            paused = a[1]
+            return {"stale": 0 if "goal_abstraction_placement" in paused else 8830, "pending": 0, "oldest": None}
+
+        async def fetchval(self, sql, *a):
+            return 0
+
+        async def fetch(self, sql, *a):
+            return [{"job_type": "goal_abstraction_placement", "n": 8830}]
+
+    monkeypatch.delenv("QUEUE_PAUSED_JOB_TYPES", raising=False)
+    with pytest.raises(PreflightFailed, match="no job worker"):
+        asyncio.run(check_queue_alive(Pool()))
+    monkeypatch.setenv("QUEUE_PAUSED_JOB_TYPES", "goal_abstraction_placement, goal_abstraction_audit")
+    report = asyncio.run(check_queue_alive(Pool()))
+    assert report["paused_job_types"] == ["goal_abstraction_placement", "goal_abstraction_audit"]
+
+
 def test_ingest_model_is_read_from_settings_not_only_the_process_environment(monkeypatch):
     """A value in backend/.env reaches `settings`, not os.environ; it was silently ignored before."""
     from app.config import settings
