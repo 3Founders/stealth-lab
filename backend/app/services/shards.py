@@ -470,7 +470,7 @@ class ShardPools:
 
     def __init__(
         self, control_pool: asyncpg.Pool, *, pool_factory: Optional[Callable[[str], Awaitable[Any]]] = None,
-        backoff_s: float = 10.0, max_size: int = 4,
+        backoff_s: float = 10.0, max_size: int = int(os.environ.get("STEALTH_SHARD_POOL_MAX", "4")),
     ):
         self._control = control_pool
         self._pools: dict[str, Any] = {HOME_SHARD: control_pool}

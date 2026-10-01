@@ -572,17 +572,25 @@ def start_background_drain(pool: asyncpg.Pool, *, interval_s: Optional[float] = 
     if _os.environ.get("PROJECTION_DRAIN_ENABLED", "1") in ("0", "false", "False"):
         return None
     every = interval_s if interval_s is not None else float(_os.environ.get("PROJECTION_DRAIN_INTERVAL_SECONDS", "5"))
+    # Concurrent drainers (SKIP LOCKED makes them share the outbox without overlap) and small batches (a batch is one
+    # transaction: its entries show as applied only at its commit). One drainer far from its databases applies an
+    # entry in seconds -- 7.5 s each over ~0.8 s round trips (2026-10-01) -- far below what ingestion enqueues.
+    concurrency = max(1, int(_os.environ.get("PROJECTION_DRAIN_CONCURRENCY", "1")))
+    batch = max(1, int(_os.environ.get("PROJECTION_DRAIN_BATCH", "200")))
 
     async def loop() -> None:
         from app.services.shards import pools_for
 
         while True:
             try:
-                await drain_outbox(pool, batch=200, pools=pools_for(pool), max_batches=20)
+                await drain_outbox(pool, batch=batch, pools=pools_for(pool), max_batches=20)
             except _asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
                 log.warning("projection drain failed; retrying", exc_info=True)
             await _asyncio.sleep(every)
 
-    return _asyncio.get_running_loop().create_task(loop(), name="projection-drain")
+    async def loops() -> None:
+        await _asyncio.gather(*[loop() for _ in range(concurrency)])
+
+    return _asyncio.get_running_loop().create_task(loops(), name="projection-drain")
