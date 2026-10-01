@@ -176,6 +176,26 @@ class OidcConfig:
         return cls(issuer=issuer, audience=audience, jwks_url=jwks_url)
 
 
+def supabase_token_allowed(actor: "Actor", config: Optional[OidcConfig], *, surface: str,
+                           split: bool = True) -> Optional[str]:
+    """None when this validated token may be used on `surface` ("mcp" or "api"), else the reason it may not.
+
+    Supabase gives every access token aud="authenticated", so audience can't tell services apart. What does:
+    tokens minted through Supabase's OAuth 2.1 server -- the flow ChatGPT, Claude Code and opencode use for the
+    MCP server -- carry the OAuth app's `client_id`; a website session (sign-in on the frontend) does not. The
+    MCP server takes only the former and the REST API only the latter, so a token leaked from an MCP client
+    can't drive the website API, and a website session can't be replayed against the MCP server. Applies only to
+    the Supabase preset (issuer {project}/auth/v1); generic OIDC and `split=False` allow everything."""
+    if not split or config is None or not config.issuer.endswith("/auth/v1"):
+        return None
+    oauth_app = bool((actor.claims or {}).get("client_id"))
+    if surface == "mcp" and not oauth_app:
+        return "this is a website session token; MCP clients must sign in through the MCP login (OAuth)"
+    if surface == "api" and oauth_app:
+        return "this token was issued to a connected MCP app; it can't be used on the website API"
+    return None
+
+
 def oidc_configured(settings: Any) -> bool:
     return OidcConfig.from_settings(settings) is not None
 
@@ -561,6 +581,7 @@ def make_actor_middleware(
     *,
     private_visibility_enabled: bool,
     service_verifier: Optional[Callable[[str], Any]] = None,
+    split_supabase_tokens: bool = True,
 ):
     """Pure-ASGI middleware factory: validates a presented bearer against
     config (human) or a service credential header (worker), publishes the
@@ -616,6 +637,10 @@ def make_actor_middleware(
                     except TokenRejected as exc:
                         await _reject(send, 401, f"invalid token: {exc}")
                         return
+                    refused = supabase_token_allowed(actor, config, surface="api", split=split_supabase_tokens)
+                    if refused:
+                        await _reject(send, 401, refused)
+                        return
                 elif private_visibility_enabled and not _is_exempt_path(scope.get("path") or ""):
                     await _reject(send, 401, "authentication required")
                     return
@@ -648,6 +673,7 @@ def install_actor_middleware(app: Any, settings: Any, jwks_provider: Any = None,
             provider,
             private_visibility_enabled=bool(getattr(settings, "private_visibility_enabled", False)),
             service_verifier=service_verifier,
+            split_supabase_tokens=bool(getattr(settings, "split_supabase_tokens", True)),
         )
     )
     app.state.actor_middleware_installed = True

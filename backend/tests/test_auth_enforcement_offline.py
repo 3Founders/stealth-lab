@@ -407,7 +407,9 @@ def test_mcp_human_token_carries_the_same_scopes_and_orgs_as_rest(mcp, jwks, pem
     pool = FakePool()
     pool.add_user("alice", orgs=[(TA, "member")], platform=["reviewer"])
     try:
-        at = asyncio.run(_verifier(mcp, jwks, pool=pool).verify_token(jwt_for(pem, "alice")))
+        # an MCP client's token comes from the OAuth flow, so it carries the app's client_id
+        at = asyncio.run(_verifier(mcp, jwks, pool=pool).verify_token(
+            jwt_for(pem, "alice", extra={"client_id": "mcp-app"})))
         assert at.subject == "alice" and f"org:{TA}" in at.scopes and ac.KNOWLEDGE_PUBLISH in at.scopes
         scope = mcp._scope_from_token(at)
         assert scope.viewer_id == "alice" and scope.org_ids == (TA,)      # identical to REST get_scope
@@ -420,7 +422,7 @@ def test_mcp_rejects_deactivated_users_and_bad_tokens(mcp, jwks, pem):
     pool.add_user("gone", active=False)
     try:
         v = _verifier(mcp, jwks, pool=pool)
-        assert asyncio.run(v.verify_token(jwt_for(pem, "gone"))) is None
+        assert asyncio.run(v.verify_token(jwt_for(pem, "gone", extra={"client_id": "mcp-app"}))) is None
         assert asyncio.run(v.verify_token(jwt_for(pem, "gone", iss="https://evil/auth/v1"))) is None
         assert asyncio.run(v.verify_token("garbage")) is None
     finally:
@@ -465,7 +467,7 @@ def test_every_registered_mcp_tool_is_classified(mcp):
 
     src = open(mcp.__file__, encoding="utf-8").read()
     names = set(re.findall(r"@server\.tool\([^)]*\)\s*\nasync def (\w+)\(", src))
-    assert len(names) > 40
+    assert names == {"find_ways", "submit_way", "report_discovery", "recommend_models", "report_model_run"}
     unclassified = sorted(n for n in names if n not in mcp._TOOL_SCOPES)
     assert not unclassified, f"classify these MCP tools in _TOOL_SCOPES (default is deny-to-readers): {unclassified}"
 

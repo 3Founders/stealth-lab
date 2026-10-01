@@ -402,10 +402,11 @@ Limits, stated plainly: Supabase supports only the standard scopes, so
 there is no per-tool scope step-up (a 403 asking for more); `stealthlab:tools`
 is granted server-side to every validated token and per-tool scopes are
 enforced as before. Supabase does not document RFC 8707 resource binding and
-its tokens carry `aud="authenticated"`, so a token is bound to the Supabase
-project, not to this server: any access token of the project (including a
-prod_frontend browser session) is accepted, the same trust the REST API
-already extends. Removing an app stops refreshes at once; a token it already
+its tokens carry `aud="authenticated"`, so audience can't tell services apart.
+Instead tokens are split by origin (`SPLIT_SUPABASE_TOKENS`, on by default):
+this server accepts only tokens from the OAuth flow (they carry the app's
+`client_id`), the REST API only website sessions (no `client_id`). A token
+leaked from one side can't act on the other. Removing an app stops refreshes at once; a token it already
 holds stays valid until it expires (one hour by default).
 
 ### 1. Generate a token and set it

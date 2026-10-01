@@ -35,9 +35,9 @@ about enforcement changes here.
 Honest limits:
   * RFC 8707 resource binding: Supabase does not document support for the
     `resource` parameter, and its access tokens carry `aud="authenticated"`.
-    A token is bound to the Supabase project, not to this server, so any
-    access token of the project (including a prod_frontend browser session)
-    is accepted here. That is the same trust the REST API already extends.
+    Audience can't separate services, so tokens are split by origin instead
+    (authn.supabase_token_allowed): this server takes only OAuth-flow tokens
+    (they carry the app's `client_id`), the REST API only website sessions.
   * Scope step-up (403 + new scope demand) is not offered: Supabase has no
     custom scopes to step up to. A signed-in user already holds the write
     scopes their account allows; a denied tool says why in its result.

@@ -270,6 +270,11 @@ class OidcAwareTokenVerifier(TokenVerifier):
             except TokenRejected:
                 pass  # not a valid OIDC token for this issuer/audience -- try service / shared-secret below
             if actor is not None:
+                from app.services.authn import supabase_token_allowed
+
+                if supabase_token_allowed(actor, self._oidc_config, surface="mcp",
+                                          split=bool(getattr(settings, "split_supabase_tokens", True))):
+                    return None   # a website session token: MCP clients sign in through OAuth
                 return await self._human_token(token, actor)
         svc = await self._service_token(token)
         if svc is not None:

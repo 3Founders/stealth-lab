@@ -395,6 +395,11 @@ class Settings(BaseSettings):
     # preset; projects still on it must rotate to asymmetric keys first.
     supabase_project_url: Optional[str] = None
     supabase_jwt_audience: Optional[str] = None
+    # Supabase issues every token with aud="authenticated", so one token would work on every service that trusts
+    # the project. Tokens from the OAuth flow MCP clients use carry the app's `client_id`; website sessions don't.
+    # With this on, the MCP server accepts only client_id tokens and the REST API only tokens without one, so a
+    # token leaked from one side can't act on the other. (services/authn.py: supabase_token_allowed)
+    split_supabase_tokens: bool = True
 
     # --- V2 access control ---
     # Private visibility is off until real authentication exists. These
