@@ -543,7 +543,13 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
         # failed ~500 items in 15 minutes while 3.8 was saturated (2026-10-01).
         import os as _os
 
-        models = [settings.vertex_model] + [m.strip() for m in _os.environ.get("VERTEX_MODEL_FALLBACKS", "").split(",")
+        # JUDGE_VERTEX_MODEL_FALLBACKS, when set, is the judge's own chain: extraction may fail over to a model that
+        # extracts well but judges identity worse (2026-10-01 replay of 325 recorded verdicts: gemini-2.5-flash made 2
+        # wrong merges, 2.5-pro 6, against 0 for 3.6).
+        chain = _os.environ.get("JUDGE_VERTEX_MODEL_FALLBACKS")
+        if chain is None:
+            chain = _os.environ.get("VERTEX_MODEL_FALLBACKS", "")
+        models = [settings.vertex_model] + [m.strip() for m in chain.split(",")
                                             if m.strip() and m.strip() != settings.vertex_model]
         # an entry `model@location` calls that model in its own location (vertex_endpoints.model_slot)
         from app.services.vertex_endpoints import model_slot

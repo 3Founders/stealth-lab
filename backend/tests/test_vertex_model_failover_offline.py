@@ -147,3 +147,23 @@ def test_model_slot_parses_entries():
 
     assert model_slot(" google/gemini-3.6-flash ") == ("google/gemini-3.6-flash", "")
     assert model_slot("google/gemini-3.5-flash@europe-west3") == ("google/gemini-3.5-flash", "europe-west3")
+
+
+def test_the_judge_can_have_its_own_vertex_chain(monkeypatch):
+    """Extraction may fail over to gemini-2.5 (it extracts well); the judge must not (it judges identity worse)."""
+    import google.auth
+    from types import SimpleNamespace as NS
+
+    from app.services.semantic import providers
+
+    monkeypatch.setattr(google.auth, "default", lambda scopes=None: (NS(refresh=lambda req: None, valid=True, token="t"), "p"))
+    settings = NS(vertex_project="proj", vertex_region="us-central1", vertex_llm_location="global",
+                  vertex_model="google/gemini-3.8-flash")
+    monkeypatch.setenv("VERTEX_MODEL_FALLBACKS", "google/gemini-3.6-flash,google/gemini-2.5-flash@europe-west3")
+    monkeypatch.delenv("JUDGE_VERTEX_MODEL_FALLBACKS", raising=False)
+    shared = providers.build_provider("vertex", settings, timeout_s=10)
+    assert [c.chat.completions._model for c in shared._clients] == [
+        "google/gemini-3.8-flash", "google/gemini-3.6-flash", "google/gemini-2.5-flash"]
+    monkeypatch.setenv("JUDGE_VERTEX_MODEL_FALLBACKS", "google/gemini-3.6-flash")
+    own = providers.build_provider("vertex", settings, timeout_s=10)
+    assert [c.chat.completions._model for c in own._clients] == ["google/gemini-3.8-flash", "google/gemini-3.6-flash"]
