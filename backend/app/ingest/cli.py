@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import json
 import sys
 import time
@@ -41,6 +42,21 @@ def _parse(argv: Optional[list[str]]) -> argparse.Namespace:
     p.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY,
                    help="items (tasks / repositories) processed at once; runs of one task stay in order")
     return p.parse_args(argv)
+
+
+async def _stall_watchdog(ledger: Any) -> None:
+    """A run that records nothing for INGEST_STALL_MINUTES (default 20) is stuck -- a connection that died without
+    an error, a hung handshake -- not slow: every item records an outcome within minutes. Exit with 75 so the
+    supervisor (stealth-ingest-logs/run_prod.sh retry) starts a fresh run; the ledger resumes exactly where this one
+    was. Production 2026-10-01: a run froze for 2 hours after a network blip."""
+    limit = float(os.environ.get("INGEST_STALL_MINUTES", "20")) * 60
+    while True:
+        await asyncio.sleep(60)
+        idle = time.monotonic() - ledger.last_activity
+        if idle > limit:
+            print(f"STALLED: nothing recorded for {idle / 60:.0f} minutes; exiting so the run restarts", file=sys.stderr,
+                  flush=True)
+            os._exit(75)
 
 
 async def _spend_since(pool: Any, since: datetime) -> Optional[float]:
@@ -106,9 +122,11 @@ async def _amain(a: argparse.Namespace) -> int:
                            "VALUES ($1::uuid, $2, $3::jsonb, $4)", run_id, started, spec, f"ingest:{a.pipeline}")
         ingest_budget.install(pool, cap_usd=a.max_usd)
         ledger = Ledger(pool, pipeline=a.pipeline, run_id=run_id, target=target.name)
+        watchdog = asyncio.create_task(_stall_watchdog(ledger))
         try:
             result = await _resuming(pool, run_id, a, lambda limit: _dispatch(pool, ledger, a, limit))
         finally:
+            watchdog.cancel()
             ingest_budget.uninstall()
 
         pending = await pool.fetch(

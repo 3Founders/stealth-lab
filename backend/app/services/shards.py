@@ -476,13 +476,14 @@ class ShardPools:
         self._pools: dict[str, Any] = {HOME_SHARD: control_pool}
         self._failed_until: dict[str, float] = {}
         if pool_factory is None:
-            from app.db.session import _init_connection
+            from app.db.session import _init_connection, bounded_pool_kwargs
 
             def pool_factory(dsn: str):  # noqa: E306 -- same JSONB codec as the control pool
                 # connect timeout: a hosted compute waking from suspend can stall a TLS handshake indefinitely
                 # (production 2026-10-01: a run hung 15 minutes in preflight); fail fast, the caller retries
                 return asyncpg.create_pool(dsn, min_size=0, max_size=max_size, init=_init_connection,
-                                           timeout=float(os.environ.get("STEALTH_SHARD_CONNECT_TIMEOUT", "30")))
+                                           timeout=float(os.environ.get("STEALTH_SHARD_CONNECT_TIMEOUT", "30")),
+                                           **bounded_pool_kwargs({}))
         self._factory = pool_factory
         self._backoff_s = backoff_s
         self._locks: dict[str, asyncio.Lock] = {}

@@ -40,6 +40,9 @@ class Ledger:
         self.run_id = run_id
         self.target = target
         self.max_attempts = max_attempts
+        import time as _time
+
+        self.last_activity = _time.monotonic()      # the CLI's stall watchdog reads this (app/ingest/cli.py)
 
     async def prior(self, item_key: str) -> Optional[dict]:
         row = await self.pool.fetchrow(
@@ -78,6 +81,9 @@ class Ledger:
     async def record(self, ref: ItemRef, status: str, reason: str, *, detail: Optional[dict] = None,
                      objects: Optional[dict] = None) -> str:
         """Upsert the item's outcome. Returns the status actually stored (a lost identity race becomes rejected)."""
+        import time as _time
+
+        self.last_activity = _time.monotonic()
         if status not in (WRITTEN, REJECTED, FAILED):
             raise ValueError(f"unknown ledger status {status!r}")
         args = (self.pipeline, ref.item_key, ref.source, ref.revision, ref.row_ref, ref.dedup_key, status, reason,

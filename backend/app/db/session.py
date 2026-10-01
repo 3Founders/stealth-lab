@@ -10,6 +10,7 @@ the only place this needs handling.
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 
 import asyncpg
@@ -26,6 +27,28 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
     await conn.set_type_codec(
         "json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
     )
+
+
+RESET_TIMEOUT_S = float(os.environ.get("DB_RESET_TIMEOUT_SECONDS", "30"))
+COMMAND_TIMEOUT_S = float(os.environ.get("DB_COMMAND_TIMEOUT_SECONDS", "300"))
+
+
+class BoundedConnection(asyncpg.Connection):
+    """asyncpg resets a connection when it goes back to its pool, with NO timeout. A connection that died silently
+    (a network blip; a hosted compute restarted, e.g. on a compute-size change) never answers, so the reset -- and the
+    task returning it -- waited forever: production 2026-10-01, a whole ingestion run froze in Pool.release. With a
+    bound, a reset that does not answer fails, and asyncpg then terminates that connection and opens a new one."""
+
+    async def reset(self, *, timeout=None):
+        return await super().reset(timeout=timeout if timeout is not None else RESET_TIMEOUT_S)
+
+
+def bounded_pool_kwargs(kwargs: dict) -> dict:
+    """Defaults every pool in this codebase uses: the bounded reset above, and a command timeout so that no query
+    waits forever on a dead connection (generous: 5 minutes; DB_COMMAND_TIMEOUT_SECONDS)."""
+    kwargs.setdefault("connection_class", BoundedConnection)
+    kwargs.setdefault("command_timeout", COMMAND_TIMEOUT_S)
+    return kwargs
 
 
 async def create_pool(dsn: Optional[str] = None, **kwargs) -> asyncpg.Pool:
@@ -58,7 +81,7 @@ async def create_pool(dsn: Optional[str] = None, **kwargs) -> asyncpg.Pool:
         init=_init_connection,
         min_size=kwargs.pop("min_size", settings.db_pool_min_size),
         max_size=kwargs.pop("max_size", settings.db_pool_max_size),
-        **kwargs,
+        **bounded_pool_kwargs(kwargs),
     )
 
 
