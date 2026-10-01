@@ -28,7 +28,10 @@ _TOKEN_KEYS = ("max_tokens", "max_completion_tokens")
 
 
 def is_thinking_model(model: str) -> bool:
-    return "gemini-3" in (model or "").lower()
+    # gemini-2.5 thinks too: measured 2026-10-01, ~900 hidden reasoning tokens on one verified extraction, so its
+    # 2,500-token extraction cap cut real replies off mid-JSON ("reply was not JSON").
+    m = (model or "").lower()
+    return "gemini-3" in m or "gemini-2.5" in m
 
 
 def shape_chat_kwargs(model: str, kwargs: dict[str, Any]) -> dict[str, Any]:

@@ -36,7 +36,7 @@ def test_max_completion_tokens_is_handled_too():
     assert out["max_completion_tokens"] == 100 + THINKING_HEADROOM_TOKENS and out["reasoning_effort"] == "low"
 
 
-@pytest.mark.parametrize("model", ["google/gemini-2.5-flash", "gemma-4-31B-it", "", None])
+@pytest.mark.parametrize("model", ["google/gemini-2.0-flash", "gemma-4-31B-it", "", None])
 def test_other_models_are_untouched(model):
     kwargs = {"max_tokens": 60}
     assert shape_chat_kwargs(model, kwargs) == kwargs
@@ -54,7 +54,8 @@ def test_the_callers_dict_is_never_mutated():
 
 def test_is_thinking_model():
     assert is_thinking_model("google/gemini-3.8-flash") and is_thinking_model("gemini-3.1-pro")
-    assert not is_thinking_model("google/gemini-2.5-flash")
+    assert is_thinking_model("google/gemini-2.5-flash")       # it reasons as well (2026-10-01)
+    assert not is_thinking_model("google/gemini-2.0-flash") and not is_thinking_model("gpt-oss-120b")
 
 
 def test_the_vertex_client_applies_it_and_still_swaps_in_our_model_name():
