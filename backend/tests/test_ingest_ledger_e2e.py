@@ -36,6 +36,13 @@ def test_outcomes_resume_and_one_identity_across_pipelines():
             await a.record(ref_a, FAILED, "network")
             assert await a.should_process("i1") == (False, "failed_max_attempts")
 
+            # an infrastructure failure (model capacity, network) never uses up the item's attempts
+            ref_rl = ItemRef("i2", "hf:x", "0" * 40, "r2", f"identity2:{tag}")
+            for _ in range(3):
+                await a.record(ref_rl, FAILED, "RateLimitError", detail={"error": "429"})
+            assert await a.should_process("i2") == (True, None)
+            assert "i2" not in await a.settled_keys() and "i1" in await a.settled_keys()
+
             # written is terminal and owns the identity in every pipeline
             await a.record(ref_a, WRITTEN, "written", detail={"n": 1}, objects={"procedure_ids": ["p"]})
             assert await a.should_process("i1") == (False, "already_written")

@@ -15,6 +15,14 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 WRITTEN, REJECTED, FAILED = "written", "rejected", "failed"
+# Failures of the infrastructure, not of the item: a model refusing for capacity, a network drop, a timeout. They never
+# count toward max_attempts -- an item is given up only when IT keeps failing (2026-10-01: a model outage burned up to
+# three attempts of thousands of good items through rapid restarts).
+INFRASTRUCTURE_FAILURES = (
+    "RateLimitError", "APIConnectionError", "APITimeoutError", "InternalServerError", "ServiceUnavailableError",
+    "ConnectionDoesNotExistError", "InterfaceError", "ConnectionError", "TimeoutError", "OSError",
+    "ShardUnavailable", "github_unavailable", "PostgresConnectionError", "TooManyConnectionsError",
+)
 
 
 def _jsonable(value: Optional[dict]) -> dict:
@@ -55,8 +63,9 @@ class Ledger:
         query. Checking item by item cost one database round trip per dataset row (21,000 for SWE-rebench alone),
         which dominated a run from a machine far from the database."""
         rows = await self.pool.fetch(
-            "SELECT item_key FROM ingest_ledger WHERE pipeline = $1 AND (status IN ($2, $3) OR attempts >= $4)",
-            self.pipeline, WRITTEN, REJECTED, self.max_attempts)
+            "SELECT item_key FROM ingest_ledger WHERE pipeline = $1 AND (status IN ($2, $3) "
+            "OR (attempts >= $4 AND NOT (reason = ANY($5::text[]))))",
+            self.pipeline, WRITTEN, REJECTED, self.max_attempts, list(INFRASTRUCTURE_FAILURES))
         return {r["item_key"] for r in rows}
 
     async def should_process(self, item_key: str) -> tuple[bool, Optional[str]]:
@@ -66,7 +75,7 @@ class Ledger:
             return True, None
         if prior["status"] in (WRITTEN, REJECTED):
             return False, f"already_{prior['status']}"
-        if prior["attempts"] >= self.max_attempts:
+        if prior["attempts"] >= self.max_attempts and prior["reason"] not in INFRASTRUCTURE_FAILURES:
             return False, "failed_max_attempts"
         return True, None
 
