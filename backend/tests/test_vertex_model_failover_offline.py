@@ -70,14 +70,31 @@ def test_a_model_refusing_repeatedly_is_skipped_then_tried_again_after_the_coold
     assert comp.create(messages=[]).model == A            # after the cooldown the primary is first again
 
 
-def test_every_model_refusing_raises_the_rate_limit():
+def test_every_model_refusing_waits_then_raises_the_rate_limit(monkeypatch):
+    slept = []
+    monkeypatch.setattr(ij.time, "sleep", lambda s: slept.append(s))
     client = FakeClient(down={A, B})
+    comp = _completions(client)
+    comp._RATE_LIMIT_WAIT_S = 30.0
     with pytest.raises(RateLimitError):
-        _completions(client).create(messages=[])
+        comp.create(messages=[])
+    assert slept and sum(slept) <= 30.0 + 1e-6                    # waited (growing pauses), bounded, then gave up
 
 
-def test_without_fallbacks_behaviour_is_unchanged():
+def test_a_call_waiting_out_the_limit_succeeds_when_a_model_comes_back(monkeypatch):
+    client = FakeClient(down={A, B})
+
+    def recover(_s):
+        client.down = set()                                          # capacity returns during the pause
+    monkeypatch.setattr(ij.time, "sleep", recover)
+    assert _completions(client).create(messages=[]).model == A
+
+
+def test_without_fallbacks_a_refusal_still_reaches_the_caller_after_the_wait(monkeypatch):
+    monkeypatch.setattr(ij.time, "sleep", lambda s: None)
     client = FakeClient(down={A})
+    comp = _completions(client, fallbacks=())
+    comp._RATE_LIMIT_WAIT_S = 0.0
     with pytest.raises(RateLimitError):
-        _completions(client, fallbacks=()).create(messages=[])
+        comp.create(messages=[])
     assert client.calls == [(A, "default")]               # the client's own retries, as before

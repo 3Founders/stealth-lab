@@ -235,7 +235,30 @@ class _VertexOAuthCompletions:
         up = [m for m in self._models if self._down_until.get(m, 0) <= now]
         return up or list(self._models)          # all cooling down: try them anyway, in order
 
+    _RATE_LIMIT_WAIT_S = float(os.environ.get("VERTEX_RATE_LIMIT_WAIT_SECONDS", "180"))
+
     def create(self, **kwargs):
+        """One call over the model chain; when EVERY model refuses for capacity (429), wait and try the chain again
+        with growing pauses (up to VERTEX_RATE_LIMIT_WAIT_SECONDS in all) instead of failing at once: a caller then
+        queues behind Google's limit rather than failing its item and racing on to the next (2026-10-01, EC2: close to
+        the database, items failed by the thousand within minutes)."""
+        import random
+
+        from openai import RateLimitError
+
+        waited, pause = 0.0, 2.0
+        while True:
+            try:
+                return self._create_once(**kwargs)
+            except RateLimitError:
+                if waited >= self._RATE_LIMIT_WAIT_S:
+                    raise
+                sleep_s = min(pause * random.uniform(0.7, 1.3), self._RATE_LIMIT_WAIT_S - waited)
+                time.sleep(sleep_s)
+                waited += sleep_s
+                pause = min(pause * 2, 60.0)
+
+    def _create_once(self, **kwargs):
         from openai import RateLimitError
 
         from app.services.vertex_chat import shape_chat_kwargs
