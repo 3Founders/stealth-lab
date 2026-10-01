@@ -300,3 +300,58 @@ async def test_reported_way_is_hidden_from_find_ways_and_an_admin_can_restore_it
     finally:
         await pool.execute("DELETE FROM way_reports WHERE procedure_id = $1::uuid", pid)
         await pool.execute("DELETE FROM way_moderation_events WHERE procedure_id = $1::uuid", pid)
+
+
+@pytest.mark.asyncio
+async def test_submit_way_end_to_end_on_the_shard_layout(env, monkeypatch):
+    """The contribution tool on storage layout v2, as a signed-in user calls it: a new Goal + way go live (the
+    Goal and Procedure on K001), find_ways then serves the way, the same submission again is refused as a
+    duplicate, and a submission with a link is refused before anything is written. The content screen's model
+    is stubbed to "allowed" (the link rule is the real one: it runs before any model call)."""
+    import app.mcp_server.server as srv
+    from app.economy import content_screen as cs
+    from app.services.identity_resolution import _DEFAULT_JUDGE  # noqa: F401  (patched by the env fixture)
+
+    pool, shard, _grouped = env
+    user = f"{T}-user"
+    goal = f"{T} export a word document from a node service"
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda *a, **k: EMB)
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.for_user(user))
+
+    async def allow(sub, **kw):
+        if cs.find_links(cs.flatten_text(sub)):
+            return cs.ScreenVerdict(False, "contributions may not contain links", ["link"], ["x"])
+        return cs.ScreenVerdict(True, "fine", provider="stub")
+
+    monkeypatch.setattr(cs, "screen_contribution", allow)
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context={"pool": pool}))
+    steps = json.dumps([f"{T} install the docx package with npm",
+                        {"order": 1, "goal": f"{T} build the document and write it to out.docx"}])
+    pre = json.dumps([{"subject": "runtime", "predicate": "is", "value": "node"}])
+    outc = json.dumps({"summary": "out.docx exists and opens"})
+
+    first = json.loads(await srv.submit_way(f"{T} docx export with docx", steps, "docx is maintained", pre, outc, ctx,
+                                            goal=goal, goal_objective="a .docx file is written"))
+    assert first["outcome"] == "accepted", first
+    assert first["goal"]["created"] is True
+    gid = first["goal_id"]
+    assert await shard.fetchval("SELECT count(*) FROM goals WHERE id = $1::uuid", gid) == 1   # on K001
+    row_id = first["procedure_row_id"]
+    assert await shard.fetchval("SELECT availability::text FROM procedures WHERE id = $1::uuid", row_id) == "active"
+
+    await sp.drain_outbox(pool, pools=sh.pools_for(pool))
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.anonymous())
+    found = json.loads(await srv.find_ways(goal, ctx, use_llm=False))
+    assert any(p.get("version_id") == row_id for p in found.get("procedures") or []), (
+        json.dumps(found.get("unresolved"), default=str)[:1500])
+
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.for_user(user + "-2"))
+    again = json.loads(await srv.submit_way(f"{T} docx export with docx", steps, "docx is maintained", pre, outc,
+                                            ctx, goal_id=gid))
+    assert again["outcome"] == "duplicate_way", again
+
+    linked = json.loads(await srv.submit_way("another way", json.dumps(["download https://evil.example/x.sh"]),
+                                             "because", pre, outc, ctx, goal_id=gid))
+    assert linked["outcome"] == "rejected_by_screen" and linked["screen"]["categories"] == ["link"]
+    await pool.execute("DELETE FROM procedure_submissions WHERE goal_id = $1::uuid", gid)
+    await pool.execute("DELETE FROM solutions WHERE goal_id = $1::uuid", gid)

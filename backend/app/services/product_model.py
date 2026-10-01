@@ -662,6 +662,10 @@ async def associate_solution(
             f"SELECT 1 FROM {target_table} WHERE {id_col}=$1 LIMIT 1",  # noqa: S608 -- table+col from fixed whitelists
             target_id,
         )
+        if not exists and solution_type == "procedure":
+            # storage layout v2: the Procedure may be homed on a knowledge shard; its route is on this database
+            exists = await conn.fetchval(
+                "SELECT 1 FROM object_routes WHERE object_type = 'procedure' AND object_id = $1::uuid", target_id)
         if not exists:
             raise ValueError(
                 f"{solution_type} target {target_id} does not exist "

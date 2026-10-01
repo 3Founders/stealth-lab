@@ -180,8 +180,11 @@ def _project(row: Any, columns: tuple[str, ...]) -> Optional[dict[str, Any]]:
         return None
     values = dict(row)
     result: dict[str, Any] = {}
-    for column in columns:
-        key = column.rsplit(".", 1)[-1]
+    # The *_COLUMNS constants are one comma-separated SQL string; iterating it directly walked characters,
+    # so every projection came back empty (submission reads, review and auto-acceptance saw no row data).
+    names = columns.split(",") if isinstance(columns, str) else columns
+    for column in names:
+        key = column.strip().rsplit(".", 1)[-1]
         if key in values:
             value = values[key]
             if key in _JSON_FIELDS and isinstance(value, str):
@@ -199,6 +202,21 @@ def _detail_projection(row: Any, columns: tuple[str, ...]) -> Optional[dict[str,
 
 def _list_projection(row: Any, columns: tuple[str, ...]) -> dict[str, Any]:
     return _project(row, columns) or {}
+
+
+def _submission_visibility(scope: AccessScope, *, first_index: int) -> tuple[str, list[Any]]:
+    sql, params, _ = scope_predicates(scope, TenantScope.unrestricted(), alias="s", param_index=first_index)
+    return sql, params
+
+
+async def _visible_goals(pool: Any, goal_ids: Any, scope: AccessScope) -> set[str]:
+    """The ids among `goal_ids` that are live and visible to `scope`, each read from its home shard
+    (storage layout v2: Goals live on knowledge shards, so a JOIN to this database's `goals` finds nothing)."""
+    out: set[str] = set()
+    for gid in {str(g) for g in goal_ids if g}:
+        if await get_goal_for_product(pool, gid, scope=scope) is not None:
+            out.add(gid)
+    return out
 
 
 def _visibility_pair(scope: AccessScope, *, first_index: int) -> tuple[str, str, list[Any]]:
@@ -388,8 +406,18 @@ async def create_procedure_submission(
             pool,
             name=name,
             goal=goal.get("canonical_name") or goal.get("title") or name,
-            steps=steps,
-            preconditions=preconditions,
+            # Every step as {"order", "goal", ...}: submit_way and the form accept plain strings, and readers
+            # (goal resolution, find_ways) expect step objects -- a string step crashed find_ways.
+            steps=[({"order": i, "goal": st} if isinstance(st, str)
+                    else {**st, "order": st.get("order", i)}) for i, st in enumerate(steps)],
+            # Stored as sentences, like ingested ways: a structured {subject, predicate, object} precondition is
+            # checked against the shared claim graph and fails closed when no claim states it, so a submitted
+            # way ("runtime is node") was never served. As a sentence it is judged against the caller's own
+            # repo facts by find_ways' applicability judge, which rejects it only when a fact contradicts it.
+            preconditions=[{"source": "submission",
+                            "description": " ".join(str(p.get(k, "")).strip() for k in ("subject", "predicate", "value")
+                                                    if str(p.get(k, "")).strip())}
+                           for p in preconditions],
             expected_effects=expected_effects or [],
             postconditions=postconditions or [],
             invariants=constraints or [],
@@ -517,17 +545,18 @@ async def get_procedure_submission(
 ) -> Optional[dict[str, Any]]:
     del tenant_scope
     scope = _scope(scope)
-    submission_sql, goal_sql, params = _visibility_pair(scope, first_index=2)
+    submission_sql, params = _submission_visibility(scope, first_index=2)
     row = await pool.fetchrow(
         f"""
         SELECT {_PROCEDURE_DETAIL_COLUMNS}
         FROM procedure_submissions s
-        JOIN goals g ON g.id = s.goal_id
-        WHERE s.id = $1 AND g.t_invalid IS NULL AND {submission_sql} AND {goal_sql}
+        WHERE s.id = $1 AND {submission_sql}
         """,
         submission_id,
         *params,
     )
+    if row is not None and not await _visible_goals(pool, [row["goal_id"]], scope):
+        row = None
     return _detail_projection(row, _PROCEDURE_DETAIL_COLUMNS)
 
 
@@ -550,22 +579,22 @@ async def list_procedure_submissions(
             params.append(value)
             clauses.append(f"{column} = ${len(params)}")
     first_index = len(params) + 1
-    submission_sql, goal_sql, visibility_params = _visibility_pair(scope, first_index=first_index)
+    submission_sql, visibility_params = _submission_visibility(scope, first_index=first_index)
     params.extend(visibility_params)
     limit_index = len(params) + 1
     params.append(min(int(limit), 200))
-    where = " AND ".join([*clauses, "g.t_invalid IS NULL", submission_sql, goal_sql])
+    where = " AND ".join([*clauses, submission_sql])
     rows = await pool.fetch(
         f"""
         SELECT {_PROCEDURE_LIST_COLUMNS}
         FROM procedure_submissions s
-        JOIN goals g ON g.id = s.goal_id
         WHERE {where}
         ORDER BY s.created_at DESC LIMIT ${limit_index}
         """,
         *params,
     )
-    return [_list_projection(row, _PROCEDURE_LIST_COLUMNS) for row in rows]
+    visible = await _visible_goals(pool, [r["goal_id"] for r in rows], scope)
+    return [_list_projection(row, _PROCEDURE_LIST_COLUMNS) for row in rows if str(row["goal_id"]) in visible]
 
 
 async def list_procedure_usage_events(
@@ -577,26 +606,16 @@ async def list_procedure_usage_events(
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     scope = _scope(scope)
-    procedure_sql, procedure_params, next_index = scope_predicates(
-        scope, tenant_scope or TenantScope.unrestricted(), alias="p", param_index=2
-    )
-    goal_sql, goal_params, _ = scope_predicates(
-        scope, TenantScope.unrestricted(), alias="g", param_index=next_index
-    )
-    visibility_params = [*procedure_params, *goal_params]
+    proc = await get_procedure(pool, procedure_row_id)          # read on the Procedure's home shard
+    if proc is None or proc.get("t_invalid") is not None or not _row_visible(proc, scope):
+        return []
+    goal_id = proc.get("achieves_goal_id")
+    if goal_id and not await _visible_goals(pool, [goal_id], scope):
+        return []
     rows = await pool.fetch(
-        f"""
-        SELECT {_USAGE_COLUMNS}
-        FROM procedure_usage_events u
-        JOIN procedures p ON p.id = u.procedure_row_id
-        JOIN goals g ON g.id = COALESCE(p.achieves_goal_id, u.goal_id)
-        WHERE u.procedure_row_id = $1 AND p.t_invalid IS NULL AND g.t_invalid IS NULL
-          AND {procedure_sql} AND {goal_sql}
-        ORDER BY u.created_at DESC LIMIT ${2 + len(visibility_params)}
-        """,
-        procedure_row_id,
-        *visibility_params,
-        min(int(limit), 200),
+        f"SELECT {_USAGE_COLUMNS} FROM procedure_usage_events u WHERE u.procedure_row_id = $1 "
+        "ORDER BY u.created_at DESC LIMIT $2",
+        procedure_row_id, min(int(limit), 200),
     )
     allowed = (
         "id", "procedure_row_id", "procedure_id", "goal_id", "benchmark_id", "is_self_use",
@@ -848,17 +867,18 @@ async def get_benchmark_submission(
 ) -> Optional[dict[str, Any]]:
     del tenant_scope
     scope = _scope(scope)
-    submission_sql, goal_sql, params = _visibility_pair(scope, first_index=2)
+    submission_sql, params = _submission_visibility(scope, first_index=2)
     row = await pool.fetchrow(
         f"""
         SELECT {_BENCHMARK_DETAIL_COLUMNS}
         FROM benchmark_submissions s
-        JOIN goals g ON g.id = s.goal_id
-        WHERE s.id = $1 AND g.t_invalid IS NULL AND {submission_sql} AND {goal_sql}
+        WHERE s.id = $1 AND {submission_sql}
         """,
         submission_id,
         *params,
     )
+    if row is not None and not await _visible_goals(pool, [row["goal_id"]], scope):
+        row = None
     submission = _detail_projection(row, _BENCHMARK_DETAIL_COLUMNS)
     if submission is None:
         return None
@@ -889,19 +909,19 @@ async def list_benchmark_submissions(
             params.append(value)
             clauses.append(f"{column} = ${len(params)}")
     first_index = len(params) + 1
-    submission_sql, goal_sql, visibility_params = _visibility_pair(scope, first_index=first_index)
+    submission_sql, visibility_params = _submission_visibility(scope, first_index=first_index)
     params.extend(visibility_params)
     limit_index = len(params) + 1
     params.append(min(int(limit), 200))
-    where = " AND ".join([*clauses, "g.t_invalid IS NULL", submission_sql, goal_sql])
+    where = " AND ".join([*clauses, submission_sql])
     rows = await pool.fetch(
         f"""
         SELECT {_BENCHMARK_LIST_COLUMNS}
         FROM benchmark_submissions s
-        JOIN goals g ON g.id = s.goal_id
         WHERE {where}
         ORDER BY s.created_at DESC LIMIT ${limit_index}
         """,
         *params,
     )
-    return [_list_projection(row, _BENCHMARK_LIST_COLUMNS) for row in rows]
+    visible = await _visible_goals(pool, [r["goal_id"] for r in rows], scope)
+    return [_list_projection(row, _BENCHMARK_LIST_COLUMNS) for row in rows if str(row["goal_id"]) in visible]

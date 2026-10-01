@@ -231,7 +231,10 @@ def test_procedure_submission_uses_exact_goal_and_propagates_quality_fields(monk
     assert captured["scope_entity_id"] is None
     assert captured["visibility"] == "public"
     assert captured["provenance"] == service.SUBMISSION_PROVENANCE
-    assert captured["preconditions"] == payload["preconditions"]
+    # stored as sentences (judged against the caller's repo facts), not as closed-world claim-graph checks
+    assert captured["preconditions"] == [
+        {"source": "submission", "description": " ".join(str(p[k]) for k in ("subject", "predicate", "value"))}
+        for p in payload["preconditions"]]
     assert captured["expected_effects"] == payload["expected_effects"]
     assert captured["postconditions"] == payload["postconditions"]
     assert captured["failure_conditions"] == payload["failure_conditions"]
@@ -417,8 +420,7 @@ def test_procedure_review_refuses_cross_user_before_state_or_reward_changes():
         ))
 
     sql, args = pool.queries[0]
-    assert "JOIN goals g" in sql
-    assert "g.visibility = 'public'" in sql
+    assert "s.visibility = 'public'" in sql       # the Goal's visibility is checked on its home shard
     assert "other-user" in args
 
 
@@ -441,12 +443,20 @@ def test_benchmark_review_refuses_cross_user_before_state_changes():
         ))
 
     sql, args = pool.queries[0]
-    assert "JOIN goals g" in sql
-    assert "g.visibility = 'public'" in sql
+    assert "s.visibility = 'public'" in sql       # the Goal's visibility is checked on its home shard
     assert "other-user" in args
 
 
-def test_submission_reads_are_scoped_and_use_safe_projections():
+def test_submission_reads_are_scoped_and_use_safe_projections(monkeypatch):
+    async def visible_goal(pool, goal_id, *, scope, tenant_scope=None):
+        return {"id": goal_id}
+
+    async def visible_proc(pool, row_id):
+        return {"id": row_id, "procedure_id": row_id, "achieves_goal_id": GOAL_ID, "t_invalid": None,
+                "visibility": "public", "owner_id": None, "tenant_id": None}
+
+    monkeypatch.setattr(service, "get_goal_for_product", visible_goal)
+    monkeypatch.setattr(service, "get_procedure", visible_proc)
     pool = ReadPool()
     scope = AccessScope.for_user(ACTOR)
     detail = asyncio.run(service.get_procedure_submission(pool, "submission-1", scope=scope))
@@ -465,11 +475,9 @@ def test_submission_reads_are_scoped_and_use_safe_projections():
     list_sql, list_args = pool.fetch_queries[0]
     usage_sql, _usage_args = pool.fetch_queries[1]
     assert "s.visibility = 'public'" in detail_sql
-    assert "g.visibility = 'public'" in detail_sql
-    assert detail_args == ("submission-1", ACTOR, ACTOR)
-    assert list_args == (ACTOR, ACTOR, 50)
+    assert detail_args == ("submission-1", ACTOR)
+    assert list_args == (ACTOR, 50)
     assert "s.visibility = 'public'" in list_sql
-    assert "g.visibility = 'public'" in list_sql
     assert "embedding" not in detail_sql
     assert "content" not in list_sql
     assert "embedding" not in list_sql
@@ -489,10 +497,8 @@ def test_submission_reads_are_scoped_and_use_safe_projections():
     benchmark_detail_sql, benchmark_detail_args = pool.fetchrow_queries[1]
     benchmark_list_sql, _benchmark_list_args = pool.fetch_queries[2]
     assert "s.visibility = 'public'" in benchmark_detail_sql
-    assert "g.visibility = 'public'" in benchmark_detail_sql
-    assert benchmark_detail_args == ("benchmark-submission-1", ACTOR, ACTOR)
+    assert benchmark_detail_args == ("benchmark-submission-1", ACTOR)
     assert "s.visibility = 'public'" in benchmark_list_sql
-    assert "g.visibility = 'public'" in benchmark_list_sql
     assert "embedding" not in benchmark_detail_sql
     assert "embedding" not in benchmark_list_sql
     assert "embedding" not in benchmark_detail

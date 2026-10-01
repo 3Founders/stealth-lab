@@ -28,6 +28,11 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 SCREEN_MAX_TOKENS = 400
+# The screen is the only gate before a way goes live, so it waits longer than the semantic judges' default
+# (15 s) and retries once after a short pause when every model failed transiently (timeout, 429) -- seen in
+# a local run where gemma was slow and Vertex was out of quota at the same moment.
+SCREEN_TIMEOUT_S = 45.0
+SCREEN_RETRY_PAUSE_S = 3.0
 
 # scheme URLs (http, https, ftp, file, data, javascript, ...), protocol-relative //host,
 # www.<host>, markdown links, and bare hosts with a common public suffix and a path or port.
@@ -101,7 +106,7 @@ def _completion_providers() -> list:
     from app.services.semantic.providers import build_provider_chain
 
     try:
-        chain = build_provider_chain()
+        chain = build_provider_chain(timeout_s=SCREEN_TIMEOUT_S)
     except Exception:  # noqa: BLE001 -- misconfigured chain: no screener, which refuses below
         return []
     return [p for p in chain if p.supports("completion")]
@@ -122,19 +127,24 @@ async def screen_contribution(submission: dict[str, Any], *, providers: Optional
     providers = _completion_providers() if providers is None else providers
     if not providers:
         return ScreenVerdict(False, "content screening is unavailable right now; nothing was stored", ["unscreened"])
+    import asyncio
+
     user = _render(submission)
-    for provider in providers:
-        try:
-            text = await provider.complete(SYSTEM_PROMPT, user, SCREEN_MAX_TOKENS)
-            body = parse_json_object(text)
-        except Exception:  # noqa: BLE001 -- try the next provider
-            continue
-        if not isinstance(body, dict) or not isinstance(body.get("allowed"), bool):
-            continue
-        cats = [c for c in (body.get("categories") or []) if c in ("malicious", "nsfw")]
-        name = f"{getattr(provider, 'name', '?')}:{getattr(provider, 'model', '?')}"
-        reason = str(body.get("reason") or "")[:300]
-        if body["allowed"]:
-            return ScreenVerdict(True, reason or "no malicious or NSFW content found", [], [], name)
-        return ScreenVerdict(False, reason or "flagged by the content screen", cats or ["flagged"], [], name)
+    for attempt in range(2):
+        if attempt:
+            await asyncio.sleep(SCREEN_RETRY_PAUSE_S)
+        for provider in providers:
+            try:
+                text = await provider.complete(SYSTEM_PROMPT, user, SCREEN_MAX_TOKENS)
+                body = parse_json_object(text)
+            except Exception:  # noqa: BLE001 -- try the next provider
+                continue
+            if not isinstance(body, dict) or not isinstance(body.get("allowed"), bool):
+                continue
+            cats = [c for c in (body.get("categories") or []) if c in ("malicious", "nsfw")]
+            name = f"{getattr(provider, 'name', '?')}:{getattr(provider, 'model', '?')}"
+            reason = str(body.get("reason") or "")[:300]
+            if body["allowed"]:
+                return ScreenVerdict(True, reason or "no malicious or NSFW content found", [], [], name)
+            return ScreenVerdict(False, reason or "flagged by the content screen", cats or ["flagged"], [], name)
     return ScreenVerdict(False, "content screening failed; nothing was stored -- try again", ["unscreened"])

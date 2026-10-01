@@ -65,52 +65,39 @@ async def score_procedure_duplicate(
         return _empty_result("skipped_no_embedding")
     scope = scope or AccessScope.anonymous()
     vector = to_pgvector(embedding)
+    from app.services.shards import home_pool
+
+    # Storage layout v2: the caller has already checked the Goal is live and visible (create_procedure_submission
+    # reads it from its home shard); a JOIN to this database's `goals` would find nothing for a sharded Goal.
     submission_sql, submission_params, next_index = _predicates(scope, "s", 3)
-    submission_goal_sql, submission_goal_params, next_index = _predicates(
-        scope, "sg", next_index
-    )
-    procedure_sql, procedure_params, next_index = _predicates(
-        scope, "p", next_index, tenant_scope
-    )
-    procedure_goal_sql, procedure_goal_params, next_index = _predicates(
-        scope, "pg", next_index
-    )
-    params = [
-        vector,
-        goal_id,
-        *submission_params,
-        *submission_goal_params,
-        *procedure_params,
-        *procedure_goal_params,
-    ]
-    limit_index = next_index
-    rows = await pool.fetch(
+    sub_rows = await pool.fetch(
         f"""
         SELECT s.id, 'submission' AS kind, 1 - (s.embedding <=> $1::vector) AS similarity
         FROM procedure_submissions s
-        JOIN goals sg ON sg.id = s.goal_id
-        WHERE s.goal_id = $2 AND s.embedding IS NOT NULL AND s.status <> 'rejected'
-          AND sg.t_invalid IS NULL AND {submission_sql} AND {submission_goal_sql}
-        UNION ALL
+        WHERE s.goal_id = $2 AND s.embedding IS NOT NULL AND s.status <> 'rejected' AND {submission_sql}
+        ORDER BY similarity DESC LIMIT ${next_index}
+        """,
+        vector, goal_id, *submission_params, top_k,
+    )
+    # A way belongs to the Goal through achieves_goal_id (ingested, extracted and submitted ways -- homed with
+    # their Goal) or through an accepted Solution (whose target may be any Procedure version).
+    solution_targets = [str(r["target_id"]) for r in await pool.fetch(
+        "SELECT target_id FROM solutions WHERE goal_id = $1 AND target_table = 'procedures' AND status = 'active'",
+        goal_id)]
+    procedure_sql, procedure_params, next_index = _predicates(scope, "p", 4, tenant_scope)
+    owner = await home_pool(pool, "goal", str(goal_id))
+    proc_rows = await owner.fetch(
+        f"""
         SELECT p.id, 'procedure' AS kind, 1 - (p.embedding <=> $1::vector) AS similarity
         FROM procedures p
-        JOIN goals pg ON pg.id = $2
-        WHERE p.embedding IS NOT NULL AND p.t_invalid IS NULL AND pg.t_invalid IS NULL
-          -- a way belongs to the Goal either through an accepted Solution or, for
-          -- ingested and extracted Procedures, through achieves_goal_id; checking
-          -- only Solutions let a submission duplicate every ingested way unseen
-          AND (p.achieves_goal_id = $2
-               OR EXISTS (SELECT 1 FROM solutions sol
-                          WHERE sol.target_table = 'procedures' AND sol.status = 'active'
-                            AND sol.goal_id = $2
-                            AND (sol.target_id = p.id OR sol.target_id = p.procedure_id)))
-          AND {procedure_sql} AND {procedure_goal_sql}
-        ORDER BY similarity DESC
-        LIMIT ${limit_index}
+        WHERE p.embedding IS NOT NULL AND p.t_invalid IS NULL
+          AND (p.achieves_goal_id = $2 OR p.id = ANY($3::uuid[]) OR p.procedure_id = ANY($3::uuid[]))
+          AND {procedure_sql}
+        ORDER BY similarity DESC LIMIT ${next_index}
         """,
-        *params,
-        top_k,
+        vector, goal_id, solution_targets, *procedure_params, top_k,
     )
+    rows = sorted([*sub_rows, *proc_rows], key=lambda r: float(r["similarity"]), reverse=True)[:top_k]
     if not rows:
         return _empty_result("cosine")
     best = rows[0]
@@ -165,16 +152,14 @@ async def score_benchmark_duplicate(
         return _empty_result("skipped_no_embedding")
     scope = scope or AccessScope.anonymous()
     submission_sql, submission_params, next_index = _predicates(scope, "s", 3)
-    goal_sql, goal_params, next_index = _predicates(scope, "g", next_index)
-    params = [to_pgvector(embedding), goal_id, *submission_params, *goal_params]
+    params = [to_pgvector(embedding), goal_id, *submission_params]
     limit_index = next_index
     rows = await pool.fetch(
         f"""
         SELECT s.id, 'submission' AS kind, 1 - (s.embedding <=> $1::vector) AS similarity
         FROM benchmark_submissions s
-        JOIN goals g ON g.id = s.goal_id
         WHERE s.goal_id = $2 AND s.embedding IS NOT NULL AND s.status <> 'rejected'
-          AND g.t_invalid IS NULL AND {submission_sql} AND {goal_sql}
+          AND {submission_sql}
         ORDER BY similarity DESC
         LIMIT ${limit_index}
         """,

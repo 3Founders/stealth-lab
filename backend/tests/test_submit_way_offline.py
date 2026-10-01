@@ -268,7 +268,8 @@ def test_ordinary_text_is_not_a_link():
     assert cs.find_links(["run npm test in app/main.py", "set node.js to 20.11", "edit package.json"]) == []
 
 
-def test_model_verdicts_and_fail_closed():
+def test_model_verdicts_and_fail_closed(monkeypatch):
+    monkeypatch.setattr(cs, "SCREEN_RETRY_PAUSE_S", 0)
     ok = _run(cs.screen_contribution(SUB, providers=[_Prov('{"allowed": true, "categories": [], "reason": "fine"}')]))
     assert ok.allowed and ok.provider == "gemma:m"
     fenced = '```json\n{"allowed": false, "categories": ["nsfw"], "reason": "sexual content"}\n```'
@@ -295,3 +296,18 @@ def test_the_global_cap_refuses_before_the_screen_or_any_write(world):
     out = _submit(goal="Export a Word document", goal_objective="a .docx opens")
     assert out.startswith("REFUSED: rate limit")
     assert world["screened"] == [] and world["goal_created"] == [] and world["submitted"] == []
+
+
+def test_a_transient_failure_everywhere_is_retried_once(monkeypatch):
+    monkeypatch.setattr(cs, "SCREEN_RETRY_PAUSE_S", 0)
+
+    class Flaky(_Prov):
+        async def complete(self, system, user, max_tokens):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("429")
+            return '{"allowed": true}'
+
+    flaky = Flaky()
+    v = _run(cs.screen_contribution(SUB, providers=[flaky]))
+    assert v.allowed and flaky.calls == 2
