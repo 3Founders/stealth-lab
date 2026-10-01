@@ -25,7 +25,9 @@ should not retry forever unattended).
 """
 from __future__ import annotations
 
+import os
 import threading
+import time
 import hashlib
 import json
 import logging
@@ -194,11 +196,18 @@ class _VertexOAuthCompletions:
     model here, rather than requiring every caller to know Vertex's naming,
     keeps this a drop-in rotation member."""
 
-    def __init__(self, client: Any, model: str, credentials: Any = None):
+    def __init__(self, client: Any, model: str, credentials: Any = None, fallbacks: Optional[list[str]] = None):
         self._client = client
         self._model = model
         self._credentials = credentials
         self._lock = threading.Lock()
+        # Failover between models (VERTEX_MODEL_FALLBACKS, e.g. "google/gemini-3.7-flash"): Google's shared capacity
+        # for one Gemini model can be exhausted for hours while another answers (2026-10-01: 3.8 refused every call
+        # for 3 hours, then 3.7 did while 3.8 recovered). A call that gets 429 from a model is retried at once on the
+        # next one; a model refusing `_TRIP` calls in a row is skipped for `_COOLDOWN_S`, then tried first again.
+        self._models = [model] + [m for m in (fallbacks or []) if m and m != model]
+        self._streak: dict[str, int] = {}
+        self._down_until: dict[str, float] = {}
 
     def _fresh_token(self) -> None:
         """An ADC access token lives about an hour and the OpenAI client holds it as a fixed api_key, so every
@@ -218,20 +227,56 @@ class _VertexOAuthCompletions:
             creds.refresh(google.auth.transport.requests.Request())
             self._client.api_key = creds.token
 
+    _TRIP = int(os.environ.get("VERTEX_MODEL_TRIP_429S", "5"))
+    _COOLDOWN_S = float(os.environ.get("VERTEX_MODEL_COOLDOWN_SECONDS", "300"))
+
+    def _order(self) -> list[str]:
+        now = time.monotonic()
+        up = [m for m in self._models if self._down_until.get(m, 0) <= now]
+        return up or list(self._models)          # all cooling down: try them anyway, in order
+
     def create(self, **kwargs):
+        from openai import RateLimitError
+
         from app.services.vertex_chat import shape_chat_kwargs
 
         self._fresh_token()
-        kwargs = dict(kwargs)
-        kwargs["model"] = self._model
-        # Gemini 3.x: max_tokens counts hidden reasoning, so a small cap came back with content=None.
-        kwargs = shape_chat_kwargs(self._model, kwargs)
-        return self._client.chat.completions.create(**kwargs)
+        order = self._order()
+        for i, model in enumerate(order):
+            last = i == len(order) - 1
+            call = dict(kwargs)
+            call["model"] = model
+            # Gemini 3.x: max_tokens counts hidden reasoning, so a small cap came back with content=None.
+            call = shape_chat_kwargs(model, call)
+            # with a model left to fail over to, no client-side retries: the next model is the retry
+            client = self._client if last or len(order) == 1 else self._client.with_options(max_retries=0)
+            try:
+                resp = client.chat.completions.create(**call)
+            except RateLimitError:
+                with self._lock:
+                    self._streak[model] = self._streak.get(model, 0) + 1
+                    if self._streak[model] >= self._TRIP and len(self._models) > 1:
+                        self._down_until[model] = time.monotonic() + self._COOLDOWN_S
+                        self._streak[model] = 0
+                        log.warning("vertex: %s refused %d calls in a row; using %s for %ds", model, self._TRIP,
+                                    [m for m in self._models if m != model], int(self._COOLDOWN_S))
+                if last:
+                    raise
+                continue
+            with self._lock:
+                self._streak[model] = 0
+                self._down_until.pop(model, None)
+            try:
+                resp.model = model             # the model that actually answered (the item records it)
+            except Exception:  # noqa: BLE001 -- a response type that does not take the attribute
+                pass
+            return resp
+        raise RuntimeError("unreachable")
 
 
 class _VertexOAuthClient:
-    def __init__(self, client: Any, model: str, credentials: Any = None):
-        self.chat = _SimpleNamespace(completions=_VertexOAuthCompletions(client, model, credentials))
+    def __init__(self, client: Any, model: str, credentials: Any = None, fallbacks: Optional[list[str]] = None):
+        self.chat = _SimpleNamespace(completions=_VertexOAuthCompletions(client, model, credentials, fallbacks))
 
 
 def _vertex_oauth_client() -> Optional[Any]:
@@ -267,7 +312,8 @@ def _vertex_oauth_client() -> Optional[Any]:
 
     base_url = openapi_base(settings.vertex_project, llm_location(settings.vertex_region, settings.vertex_llm_location))
     client = OpenAI(api_key=credentials.token, base_url=base_url)
-    return _VertexOAuthClient(client, settings.vertex_model, credentials)
+    fallbacks = [m.strip() for m in os.environ.get("VERTEX_MODEL_FALLBACKS", "").split(",") if m.strip()]
+    return _VertexOAuthClient(client, settings.vertex_model, credentials, fallbacks)
 
 
 def _general_compute_client() -> Optional[Any]:

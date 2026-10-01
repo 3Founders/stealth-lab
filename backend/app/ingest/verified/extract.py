@@ -34,6 +34,7 @@ class Extraction(BaseModel):
     preconditions: list[str] = Field(default_factory=list, max_length=6)
     pitfalls: list[str] = Field(default_factory=list, max_length=6)
     facts: list[str] = Field(default_factory=list, max_length=5)
+    model_used: Optional[str] = None      # set from the response: the model that answered (Vertex failover)
 
 
 _PROMPT = """You turn a solved software task into reusable knowledge for coding agents.
@@ -82,7 +83,8 @@ async def extract(client: Any, model: str, *, goal: str, repo: str, language: Op
         client.chat.completions.create, model=model, temperature=0, max_tokens=2500,
         messages=[{"role": "system", "content": _PROMPT},
                   {"role": "user", "content": _user(goal, repo, language, issue, hints, patch, tests)}])
-    await ingest_budget.record_completion(model, EXTRACT_OP, getattr(resp, "usage", None))
+    used = getattr(resp, "model", None) or model
+    await ingest_budget.record_completion(used, EXTRACT_OP, getattr(resp, "usage", None))
     raw = (resp.choices[0].message.content or "").strip()
     payload = parse_json_object(raw)
     if payload is None:
@@ -93,4 +95,5 @@ async def extract(client: Any, model: str, *, goal: str, repo: str, language: Op
         raise ExtractionFailed(f"reply did not match the schema: {exc.errors()[:3]}") from exc
     if result.steps[-1].role != "verify":
         raise ExtractionFailed("the last step is not the verification")
+    result.model_used = used
     return result

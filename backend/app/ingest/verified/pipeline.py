@@ -161,7 +161,7 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
                                             + [(p, "failure_mode", "FAILURE_MODE") for p in result.pitfalls]):
             cid = await capture_claim_placed(       # with its Goal on the Goal's shard (storage layout v2)
                 pool, goal_id=goal.goal_id, statement=statement, task_ids=[], claim_type=claim_type, epistemic_status="inferred",
-                extraction_version=f"{EXTRACTOR}:{model}", created_by=EXTRACTOR,
+                extraction_version=f"{EXTRACTOR}:{result.model_used or model}", created_by=EXTRACTOR,
                 properties={"provenance": "third_party", "source": src.source_id, "task_key": key,
                             "goal_id": goal.goal_id},
                 ingestion_context_id=context_id)
@@ -178,7 +178,7 @@ async def write_task(pool: Any, *, task: Task, src: Source, spdx: str, how: str,
         raise
     detail = {"license": spdx, "license_read": how, "steps": len(result.steps), "facts": len(result.facts),
               "pitfalls": len(result.pitfalls), "runnable_benchmark": bool(objects.get("benchmark_id")),
-              "quality": task.quality, "language": task.language, "model": model}
+              "quality": task.quality, "language": task.language, "model": result.model_used or model}
     reason = "written" if objects.get("benchmark_id") else "written_no_runnable_benchmark"
     return WRITTEN, reason, detail, objects
 
