@@ -530,8 +530,15 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
         # whole lifetime (identity_resolution.py's default_judge()), so the
         # token must be refreshed per call, not frozen here -- see
         # _VertexRefreshingCompletions.
-        client = _VertexRefreshingClient(raw_client, credentials, settings.vertex_model)
-        return OpenAICompatProvider("vertex", [client], settings.vertex_model, min_max_tokens=2000)
+        # One client per model of the failover chain (VERTEX_MODEL_FALLBACKS, as for extraction): a model refusing
+        # for capacity rotates to the next before the judge reports unavailable -- the judge on VERTEX_MODEL alone
+        # failed ~500 items in 15 minutes while 3.8 was saturated (2026-10-01).
+        import os as _os
+
+        models = [settings.vertex_model] + [m.strip() for m in _os.environ.get("VERTEX_MODEL_FALLBACKS", "").split(",")
+                                            if m.strip() and m.strip() != settings.vertex_model]
+        clients = [_VertexRefreshingClient(raw_client, credentials, m) for m in models]
+        return OpenAICompatProvider("vertex", clients, settings.vertex_model, min_max_tokens=2000)
     if name == "gemini":
         keys = _gemini_keys(settings)
         if not keys:

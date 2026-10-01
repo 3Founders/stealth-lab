@@ -22,6 +22,7 @@ INFRASTRUCTURE_FAILURES = (
     "RateLimitError", "APIConnectionError", "APITimeoutError", "InternalServerError", "ServiceUnavailableError",
     "ConnectionDoesNotExistError", "InterfaceError", "ConnectionError", "TimeoutError", "OSError",
     "ShardUnavailable", "github_unavailable", "PostgresConnectionError", "TooManyConnectionsError",
+    "SemanticJudgmentUnavailable",    # every judge model refused (capacity): identity fails closed, the item waits
 )
 
 
