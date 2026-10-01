@@ -209,7 +209,7 @@ def _procedure_line_from_row(procedure: dict, *, procedure_id: str, version: int
         deps = s.get("deps")
         if not deps:
             deps = [prev_step_id] if prev_step_id else []
-        goal_type = s.get("goal") or s.get("action") or "-"
+        goal_type = s.get("goal") or s.get("do") or s.get("action") or "-"
         steps.append(StepLine(
             step_id=step_id, order=order, goal_type=goal_type,
             description=s.get("action") or s.get("goal") or "-", deps=list(deps),

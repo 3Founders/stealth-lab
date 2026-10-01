@@ -160,3 +160,9 @@ def test_dependencies_from_explicit_arg_take_precedence():
 
 def test_version_constant_is_stable_string():
     assert isinstance(RETRIEVAL_DOCUMENT_VERSION, str) and RETRIEVAL_DOCUMENT_VERSION
+
+
+def test_step_text_written_as_do_is_searchable():
+    """Verified-pipeline steps carry their text under `do`; the search document dropped it."""
+    proc = _rich_procedure() | {"steps": [{"order": 0, "kind": "action", "do": "Key the session cache by thread id"}]}
+    assert "Key the session cache by thread id" in build_procedure_retrieval_document(proc)

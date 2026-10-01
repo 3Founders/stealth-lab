@@ -181,7 +181,7 @@ async def ground_step(
     `procedure_graph.py::_step_goal()` already produces today, so a
     caller that ignores grounding entirely (or whose grounding attempt
     fails) sees byte-identical behavior to before grounding existed."""
-    raw_goal = (step.get("goal") or step.get("action") or "").strip()
+    raw_goal = (step.get("goal") or step.get("do") or step.get("action") or "").strip()
     if not raw_goal:
         return GroundedStep(goal=str(step), used_fallback=True, rationale="step has no goal/action text to ground")
     if client is None:

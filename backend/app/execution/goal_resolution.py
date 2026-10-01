@@ -270,7 +270,7 @@ async def _resolve_procedure_children(
     for step in steps:
         if isinstance(step, dict) and step.get("binding"):
             children.append(ResolvedGoalNode(
-                goal_id=f"{goal['id']}#s{step.get('order')}", goal_name=str(step.get("goal") or step.get("description") or step.get("action") or "(unnamed step)"),
+                goal_id=f"{goal['id']}#s{step.get('order')}", goal_name=str(step.get("goal") or step.get("do") or step.get("description") or step.get("action") or "(unnamed step)"),
                 depth=depth + 1, chosen="step", step={**step, "procedure_id": str(proc.get("procedure_id") or proc.get("id"))},
                 verification_requirement=step.get("verifier") or (step["binding"].get("verifier") or {}),
                 rationale=f"step {step.get('order')} carries a binding ({step['binding'].get('kind')})",
@@ -282,12 +282,12 @@ async def _resolve_procedure_children(
             step_goal_row = await fetch_goal(pool, str(step_goal_id), columns="id")
         if step_goal_row is None:
             step_goal_row = await resolve_goal_id_for_text(
-                pool, step.get("goal") or step.get("action") or "",
+                pool, step.get("goal") or step.get("do") or step.get("action") or "",
                 scope_type=goal.get("scope_type"), scope_entity_id=goal.get("scope_entity_id"),
             )
         if step_goal_row is None:
             children.append(ResolvedGoalNode(
-                goal_id="-", goal_name=step.get("goal") or step.get("action") or "(unnamed step)",
+                goal_id="-", goal_name=step.get("goal") or step.get("do") or step.get("action") or "(unnamed step)",
                 depth=depth + 1, chosen="unresolved",
                 unresolved_reason="step's goal text does not match any canonical Goal",
             ))

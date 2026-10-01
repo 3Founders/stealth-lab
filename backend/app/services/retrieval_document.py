@@ -172,7 +172,7 @@ def _as_list(value: Any) -> list:
 
 def _step_text(step: Any) -> str:
     if isinstance(step, Mapping):
-        for key in ("goal", "description", "action", "name", "title", "text"):
+        for key in ("goal", "do", "description", "action", "name", "title", "text"):
             if step.get(key):
                 return _norm(step[key])
         return ""

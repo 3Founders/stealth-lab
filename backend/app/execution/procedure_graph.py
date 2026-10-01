@@ -109,7 +109,7 @@ def _step_goal(step: dict) -> str:
     older-shaped procedure and raised a bare KeyError). Falls back to a
     stringified step rather than crashing on a shape this substrate has
     always tolerated elsewhere."""
-    return step.get("goal") or step.get("action") or str(step)
+    return step.get("goal") or step.get("do") or step.get("action") or str(step)
 
 
 def _step_ref(step: dict) -> Optional[ProcedureRef]:

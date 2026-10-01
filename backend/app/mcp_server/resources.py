@@ -88,7 +88,7 @@ def _numbered_steps(steps: Any) -> str:
     out = []
     for i, s in enumerate(steps or [], 1):
         if isinstance(s, dict):
-            txt = s.get("goal") or s.get("description") or s.get("action") or s.get("name") or ""
+            txt = s.get("goal") or s.get("do") or s.get("description") or s.get("action") or s.get("name") or ""
         else:
             txt = str(s)
         if txt:

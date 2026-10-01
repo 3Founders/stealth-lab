@@ -100,7 +100,7 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             child = children[i] if i < len(children) else None
             out = {
                 "order": step.get("order"),
-                "do": step.get("goal") or step.get("description") or step.get("action"),
+                "do": step.get("goal") or step.get("do") or step.get("description") or step.get("action"),
                 "description": step.get("description"),
                 "source_locator": step.get("source_locator"),
                 "binding": step.get("binding"),

@@ -134,3 +134,17 @@ def test_selector_sends_binding_needs_and_only_demotes_on_them():
     assert seen["py"] == [("The repository can run python code", "IMPLEMENTATION_BINDING")]
     # a contradicted runtime need moves it to the back; it is not disqualified
     assert [p["id"] for p in kept] == ["js", "py"] and rejected == []
+
+
+def test_a_step_written_as_do_reaches_the_agent():
+    """The verified pipeline stores a step's text under `do` (app/ingest/verified/pipeline.py); find_ways returned
+    every such step with do=None until 2026-10-01 -- the steps of every newly ingested Procedure were blank."""
+    step = {"order": 0, "kind": "action", "do": "Key the session cache by thread id as well as the URI", "role": "plan"}
+    node = ResolvedGoalNode(
+        goal_id="G-1", goal_name="Cache sessions per thread", depth=0, chosen="procedure",
+        procedure={"id": "V-1", "procedure_id": "P-1", "name": "thread-scoped cache", "version": 1, "steps": [step]},
+        children=[ResolvedGoalNode(goal_id="-", goal_name=step["do"], depth=1, chosen="unresolved",
+                                   unresolved_reason="step's goal text does not match any canonical Goal")],
+    )
+    out = goal_tree_to_knowledge(node)
+    assert out["procedures"][0]["steps"][0]["do"] == "Key the session cache by thread id as well as the URI"

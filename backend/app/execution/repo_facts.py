@@ -109,7 +109,7 @@ def _procedure_text(proc: dict) -> str:
             parts.append(" ".join(str(p.get(k) or "") for k in ("subject", "predicate", "object")))
     for s in proc.get("steps") or []:
         if isinstance(s, dict):
-            parts.append(str(s.get("goal") or s.get("description") or ""))
+            parts.append(str(s.get("goal") or s.get("do") or s.get("description") or ""))
     return " ".join(parts)
 
 

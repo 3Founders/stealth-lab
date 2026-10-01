@@ -1204,7 +1204,7 @@ def _render_step(step) -> str:
     """
     if not isinstance(step, dict):
         return str(step)
-    text = step.get("goal") or step.get("action") or str(step)
+    text = step.get("goal") or step.get("do") or step.get("action") or str(step)
     tools = [
         impl.get("name") for impl in (step.get("allowed_implementations") or [])
         if isinstance(impl, dict) and impl.get("name")
