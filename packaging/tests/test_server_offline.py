@@ -24,48 +24,7 @@ def test_server_module_imports_without_a_database():
 def test_all_registered_tools():
     module = slc.load_mcp_server_module()
     names = sorted(tool.name for tool in module.server._tool_manager.list_tools())
-    assert names == [
-        "check_applicability",
-        "check_procedure",
-        "close_exploration",          # G12: exploration resolution -> private Claim
-        "compare_solutions",          # Final-V1 product model (§37)
-        "continue_run",               # MCP hardening (B3/B9-B14): ProcedureRun resume/inspect
-        "decide_decomposition",
-        "decide_procedure",
-        "declare_file_intent",        # MCP hardening: multi-agent file-intent coordination
-        "decompose_task",
-        "detect_conflict_trigger",
-        "find_best_solution",         # Final-V1 product model (§37)
-        "find_best_way",
-        "find_problem",               # Final-V1 product model (§37)
-        "generate_review_packet",     # MCP hardening (B34): bounded human-review packet
-        "get_claim_graph",            # claim-graph viewer
-        "get_implementation_capability",
-        "get_procedure",
-        "get_relevant_claims",        # MCP hardening (B30): relevant-claims retrieval
-        "get_route_decision",         # MCP hardening (B1/B2): persisted RouteDecision readback
-        "inspect_evaluation",         # Final-V1 product model (§37)
-        "inspect_implementation",
-        "inspect_problem",            # Final-V1 product model (§37)
-        "inspect_run",                # Final-V1 durable retry/resume surface (§2)
-        "list_problem_solutions",     # Final-V1 product model (§37)
-        "list_task_implementations",
-        "open_exploration",           # G12: .stealth/ active-unknown tracking
-        "project_knowledge",          # G13 P3: .stealth/ knowledge page-fault
-        "propose_synthesis",
-        "report_execution",
-        "report_node_progress",       # MCP hardening (B6): host-executed lease progress reporting
-        "reproduce_procedure",
-        "resolve_implementation",
-        "resume_execution_run",       # Final-V1 durable retry/resume surface (§2)
-        "retrieve_precedent",
-        "retry_run_node",             # Final-V1 durable retry/resume surface (§2)
-        "search_procedures",
-        "submit_approval",
-        "submit_implementation",      # MCP hardening (B23/B24): Procedure<->Implementation binding
-        "submit_procedure",
-        "verify_completion",          # MCP hardening (B31/B34): verification ladder
-    ]
+    assert names == ["find_ways", "recommend_models", "report_discovery", "report_model_run", "submit_way"]
 
 
 def test_token_verifier_accepts_only_the_configured_token():

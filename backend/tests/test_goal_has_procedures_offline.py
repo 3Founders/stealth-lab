@@ -83,16 +83,6 @@ def test_agent_goal_search_filters_and_identity_search_does_not():
     assert inspect.signature(rs.search_goal_candidates).parameters["require_procedures"].default is False
 
 
-def test_agent_facing_callers_ask_for_procedures():
-    import inspect
-
-    from app.execution import intent_resolution
-    from app.mcp_server import server
-
-    assert "require_procedures=True" in inspect.getsource(intent_resolution)
-    assert "require_procedures=True" in inspect.getsource(server.search_goals)
-
-
 def test_only_person_created_goals_are_placed_at_creation():
     import inspect
 

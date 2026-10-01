@@ -399,58 +399,6 @@ class _actor_on_cv:
         reset_current_actor(self._tok)
 
 
-def test_unsync_local_project_tool_refuses_without_identity(tmp_path):
-    import app.mcp_server.server as srv
-
-    pool = FakePool()
-    with _actor_on_cv(None):
-        result = _run(srv.unsync_local_project(str(tmp_path), True, _FakeContext(pool)))
-    assert result.startswith("REFUSED")
-    assert "identity" in result
-
-
-def test_unsync_local_project_tool_refuses_without_confirm(tmp_path):
-    import app.mcp_server.server as srv
-
-    pool = FakePool()
-    with _actor_on_cv(ME):
-        result = _run(srv.unsync_local_project(str(tmp_path), False, _FakeContext(pool)))
-    assert result.startswith("REFUSED")
-    assert "confirm" in result
-
-
-def test_unsync_local_project_tool_end_to_end(tmp_path, monkeypatch):
-    import app.mcp_server.server as srv
-
-    store = {}
-    monkeypatch.setattr("app.stealth.local_key_store.delete_p_dek", lambda pid: store.setdefault("p_dek_deleted", pid))
-    monkeypatch.setattr("app.stealth.local_key_store.delete_device_token", lambda pid: store.setdefault("token_deleted", pid))
-
-    pool = FakePool()
-    with _actor_on_cv(ME):
-        stable_id = ensure_stable_project_id(str(tmp_path))
-        _run(sync_project(pool, project_id=stable_id, owner_subject=ME))
-
-        result = json.loads(_run(srv.unsync_local_project(str(tmp_path), True, _FakeContext(pool))))
-        assert result["unsynced"] is True
-        assert result["project_id"] == stable_id
-        assert stable_id not in pool.synced
-        assert store["p_dek_deleted"] == stable_id
-        assert store["token_deleted"] == stable_id
-
-        # local files were never touched by this tool at all
-        assert os.path.isdir(tmp_path)
-
-
-def test_unsync_local_project_tool_refused_for_unsynced_project(tmp_path):
-    import app.mcp_server.server as srv
-
-    pool = FakePool()
-    with _actor_on_cv(ME):
-        result = _run(srv.unsync_local_project(str(tmp_path), True, _FakeContext(pool)))
-    assert result.startswith("REFUSED")
-
-
 # ------------------------------------------------------------------ router
 
 

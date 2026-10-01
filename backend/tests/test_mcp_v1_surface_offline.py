@@ -2,10 +2,8 @@
 MCP v1 surface (final_thing.md): five tools (find_ways, report_discovery,
 submit_way, plus the model recommender's recommend_models and report_model_run),
 the three related-claims resources, and the two client-side
-prompts (survey_repo, plan_and_run). The rest
-of the suite runs with STEALTHLAB_MCP_SURFACE=v2 (conftest) because tool
-registration happens once at import -- so the real v1 surface is imported in a
-fresh subprocess here, not in this process.
+prompts (survey_repo, plan_and_run). The older v2
+tools were removed; the surface is probed in a fresh subprocess.
 """
 from __future__ import annotations
 
@@ -35,7 +33,6 @@ print(json.dumps({
 
 def _surface(value: str) -> dict:
     env = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
-    env["STEALTHLAB_MCP_SURFACE"] = value
     out = subprocess.run(
         [sys.executable, "-c", _PROBE], cwd=BACKEND, env=env,
         capture_output=True, text=True, timeout=180, check=True,
@@ -56,20 +53,7 @@ def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
     assert s["static_resources"] == ["stealth://prompts/plan_and_run", "stealth://prompts/survey_repo"]
 
 
-def test_v2_still_exposes_the_legacy_surface():
-    s = _surface("v2")
-    assert {"find_ways", "report_discovery", "find_best_way", "search_goals"} <= set(s["tools"])
-    assert "stealth://runs/{run_id}" in s["resources"]
-    assert {"solve_with_stealth", "survey_repo", "plan_and_run"} <= set(s["prompts"])
-
-
-def test_surface_includes_pure_rule():
-    assert srv.surface_includes("find_ways", "v1")
-    assert srv.surface_includes("report_discovery", "v1")
-    assert not srv.surface_includes("find_best_way", "v1")
-    assert srv.surface_includes("find_best_way", "v2")
-
-
-def test_v2_tools_stay_callable_in_process_even_when_unregistered():
-    # v2 means "not exposed over MCP", not "deleted": the plain functions remain.
-    assert callable(srv.find_best_way) and callable(srv.search_goals)
+def test_the_v2_tools_are_gone():
+    for name in ("find_best_way", "search_procedures", "init_workspace", "report_execution", "create_goal"):
+        assert not hasattr(srv, name), name
+    assert not hasattr(srv, "MCP_SURFACE") and not hasattr(srv, "surface_includes")

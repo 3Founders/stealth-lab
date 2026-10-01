@@ -137,24 +137,3 @@ def test_B3_freeze_benchmark_proceeds_and_audits_when_accepted(monkeypatch):
 # the e2e suite against a real record_execution_outcome/evidence_trust).
 # ---------------------------------------------------------------------------
 
-def test_B2_report_execution_calls_record_execution_outcome_unverified(monkeypatch):
-    import app.mcp_server.server as srv
-
-    captured = {}
-
-    async def fake_record(pool, **kw):
-        captured.update(kw)
-        return {"verification_state": "candidate", "availability": "active", "verification_stats": {}}
-
-    async def fake_resolve(pool, procedure_id, scope):
-        return {"id": procedure_id}
-
-    monkeypatch.setattr("app.services.procedures.record_execution_outcome", fake_record)
-    monkeypatch.setattr(srv, "_resolve_live_procedure", fake_resolve)
-    monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.unrestricted())
-
-    class FakeCtx:
-        request_context = type("RC", (), {"lifespan_context": {"pool": object()}})()
-
-    _run(srv.report_execution(procedure_id="proc-1", success=True, context_key="ctx-a", ctx=FakeCtx()))
-    assert captured.get("execution_verified") is False, "report_execution must never report a self-report as execution_verified"

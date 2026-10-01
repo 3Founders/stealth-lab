@@ -409,46 +409,12 @@ _V1_RESOURCES = [
      "learned. Same text as the MCP prompt.", plan_and_run_prompt_resource),
 ]
 
-_RESOURCES = [
-    ("stealth://procedures/{procedure_id}", "procedure", "Procedure",
-     "One procedure's canonical detail: capability, applicability, steps, "
-     "preconditions, constraints, failure modes, evidence summary, "
-     "verification/approval state, provenance. Accepts the stable procedure_id "
-     "handle or a version row id.", procedure_resource),
-    ("stealth://goals/{goal_id}", "goal-product", "Goal (product layer)",
-     "One Goal with its benchmarks, associated Solutions and the "
-     "evidence-derived leaderboard (current best VERIFIED solution, or none yet).",
-     goal_product_resource),
-    ("stealth://goals/{goal_id}/solutions", "goal-solutions", "Goal solutions",
-     "Every Solution associated with a Goal (association rows; target objects "
-     "are read via their own resources).", goal_solutions_resource),
-    ("stealth://claims/{claim_id}", "claim", "Claim",
-     "One structured epistemic claim: subject/predicate/object, truth state, "
-     "epistemic status, and its live evidence.", claim_resource),
-    ("stealth://evaluations/{evaluation_id}", "evaluation", "Evaluation",
-     "One Evaluation: version-pinned procedure, recomputed metrics, "
-     "verification summary, status, linked execution ids.", evaluation_resource),
-    ("stealth://runs/{run_id}", "run", "Execution run",
-     "A durable execution run: overall status, per-node status / attempt counts / "
-     "error class, step bindings, and the full per-node attempt "
-     "history. Read-only.", run_resource),
-]
-
-
-def resources_for_surface(surface: str) -> list:
-    """v1: claim resources only. v2: the full legacy set plus the v1 ones."""
-    if surface == "v1":
-        return list(_V1_RESOURCES)
-    uris = {r[0] for r in _RESOURCES}
-    return list(_RESOURCES) + [r for r in _V1_RESOURCES if r[0] not in uris]
-
-
-def register_resources(server, surface: str = "v2") -> None:
+def register_resources(server) -> None:
     """Bind the read-only Resource surface to `server`.
 
     Called once from server.py after the @server.tool() definitions.
     """
-    for uri, name, title, description, fn in resources_for_surface(surface):
+    for uri, name, title, description, fn in _V1_RESOURCES:
         server.resource(uri, name=name, title=title, description=description,
                         mime_type="text/markdown")(fn)
 
