@@ -326,6 +326,11 @@ def _require_mcp_token() -> str:
     authenticating against the wrong secret.
     """
     token = os.environ.get("STEALTHLAB_MCP_TOKEN")
+    if settings.deployment_mode == "shared":
+        # Sign-in is the identity provider's (Supabase/OIDC) and the verifier
+        # never accepts a shared secret in this mode (allow_shared_token=False),
+        # so there is nothing to require. An empty value can match no bearer.
+        return token or ""
     if not token:
         raise RuntimeError(
             "STEALTHLAB_MCP_TOKEN not set -- generate one with "

@@ -167,3 +167,30 @@ def test_a_supabase_only_shared_deployment_is_not_refused_for_missing_oidc(monke
 
     with pytest.raises(RuntimeError):
         srv._build_token_verifier("shared-secret")
+
+
+def test_shared_mode_needs_no_shared_token_and_accepts_none(monkeypatch):
+    """With Supabase/OIDC doing sign-in (DEPLOYMENT_MODE=shared) the server starts
+    without STEALTHLAB_MCP_TOKEN, and no bearer -- empty, or the old shared value --
+    authenticates through the shared-secret path."""
+    import app.mcp_server.server as srv
+
+    monkeypatch.setattr(srv.settings, "deployment_mode", "shared")
+    monkeypatch.setattr(srv.settings, "supabase_project_url", "https://abc.supabase.co")
+    monkeypatch.setattr(srv.settings, "supabase_jwt_audience", "authenticated")
+    monkeypatch.delenv("STEALTHLAB_MCP_TOKEN", raising=False)
+    assert srv._require_mcp_token() == ""
+    verifier = srv._build_token_verifier(srv._require_mcp_token())
+    for bearer in ("", "anything", "test-token"):
+        assert _run(verifier.verify_token(bearer)) is None
+
+
+def test_single_user_mode_still_requires_the_token(monkeypatch):
+    import pytest
+
+    import app.mcp_server.server as srv
+
+    monkeypatch.setattr(srv.settings, "deployment_mode", "single_user")
+    monkeypatch.delenv("STEALTHLAB_MCP_TOKEN", raising=False)
+    with pytest.raises(RuntimeError, match="STEALTHLAB_MCP_TOKEN not set"):
+        srv._require_mcp_token()
