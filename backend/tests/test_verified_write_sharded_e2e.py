@@ -237,3 +237,66 @@ async def test_mcp_find_ways_serves_the_way_from_the_shard_layout(env, monkeypat
     assert way["steps"][2]["check"] == "pytest t.py::test_a"
     assert elapsed < 30, f"find_ways took {elapsed:.1f}s on the shard layout"
     print(f"find_ways on the v2 layout ({'search group' if _grouped else 'one search db'}): {elapsed:.2f}s")
+
+
+@pytest.mark.asyncio
+async def test_reported_way_is_hidden_from_find_ways_and_an_admin_can_restore_it(env, monkeypatch):
+    """Moderation on storage layout v2 (economy/moderation.py): reports against a way on K001 -- one per person --
+    hide it after the threshold (availability flips on the shard, the projection is re-queued), find_ways stops
+    offering it, and an admin restore brings it back. A malicious report the re-screen agrees with hides at once."""
+    import app.mcp_server.server as srv
+    from app.economy import moderation
+    from app.economy.content_screen import ScreenVerdict
+    from app.ingest.verified.pipeline import write_task
+    from app.services.procedures import get_procedure
+
+    pool, shard, _grouped = env
+    task, src = _task()
+    _s, _w, _d, objects = await write_task(pool, task=task, src=src, spdx="MIT", how="row_github_name",
+                                           client=FakeClient(), model="m", run_id=str(uuid.uuid4()))
+    row_id, pid = objects["procedure_row_id"], objects["procedure_id"]
+    drain = lambda: sp.drain_outbox(pool, pools=sh.pools_for(pool))   # noqa: E731
+    await drain()
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda *a, **k: EMB)
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.anonymous())
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context={"pool": pool}))
+
+    async def offered() -> bool:
+        out = json.loads(await srv.find_ways("relative paths return posix style separators", ctx, use_llm=False))
+        return any(p.get("procedure_id") == pid for p in out.get("procedures") or [])
+
+    async def allow(sub, **kw):
+        return ScreenVerdict(True, "fine", provider="t")
+
+    try:
+        assert await offered()
+        proc = await get_procedure(pool, row_id)
+        monkeypatch.setattr(moderation, "HIDE_AFTER_REPORTS", 2)
+        r1 = await moderation.report_way(pool, proc=proc, reporter="u1", category="broken", detail="does nothing")
+        again = await moderation.report_way(pool, proc=proc, reporter="u1", category="broken", detail="again")
+        assert r1["reported"] and not r1["hidden"] and not again["reported"]          # one report per person
+        r2 = await moderation.report_way(pool, proc=proc, reporter="u2", category="spam", detail="spam", screen=allow)
+        assert r2["hidden"] and r2["reports"] == 2
+        assert await shard.fetchval("SELECT availability::text FROM procedures WHERE id = $1::uuid", row_id) == "quarantined"
+        await drain()
+        assert not await offered(), "a hidden way is still offered by find_ways"
+
+        await moderation.moderate_way(pool, procedure_row_id=row_id, action="restore", actor="admin", reason="false alarm")
+        await drain()
+        assert await offered()
+        events = await pool.fetch("SELECT action, actor FROM way_moderation_events WHERE procedure_id = $1::uuid "
+                                  "ORDER BY created_at", pid)
+        assert [(e["action"], e["actor"]) for e in events] == [("hidden", "system:reports"), ("restored", "admin")]
+
+        # a malicious report the re-screen agrees with hides at once (threshold not reached)
+        async def flag(sub, **kw):
+            return ScreenVerdict(False, "exfiltrates keys", ["malicious"], provider="t")
+
+        monkeypatch.setattr(moderation, "HIDE_AFTER_REPORTS", 99)
+        proc = await get_procedure(pool, row_id)
+        r3 = await moderation.report_way(pool, proc=proc, reporter="u3", category="malicious", detail="sends keys",
+                                         screen=flag)
+        assert r3["hidden"] and "re-check" in r3["why"]
+    finally:
+        await pool.execute("DELETE FROM way_reports WHERE procedure_id = $1::uuid", pid)
+        await pool.execute("DELETE FROM way_moderation_events WHERE procedure_id = $1::uuid", pid)

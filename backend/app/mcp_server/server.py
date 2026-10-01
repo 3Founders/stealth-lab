@@ -4363,6 +4363,29 @@ def _suggested_candidate(candidates: list) -> Optional[dict]:
 
 
 DISCOVERY_KINDS = frozenset({"fix", "missing_step", "precondition", "better_way", "correction", "filled_gap"})
+
+
+async def _report_way(procedure_id: str, category: str, detail: str, ctx: Context) -> str:
+    """report_discovery(kind="report"): file a moderation report (economy/moderation.py)."""
+    from app.economy import moderation
+    from app.services.applicability import ProcedureNotFound
+
+    scope = _caller_access_scope()
+    if not scope.viewer_id:
+        return "REFUSED: sign in to report a way"
+    if not detail.strip():
+        return "REFUSED: say why in `problem`"
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        proc = await _resolve_live_procedure(pool, procedure_id, access_scope=scope)
+    except ProcedureNotFound as exc:
+        return f"REFUSED: {exc}"
+    try:
+        out = await moderation.report_way(pool, proc=proc, reporter=scope.viewer_id, category=category,
+                                          detail=detail.strip())
+    except moderation.ModerationError as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(out, default=str)
 _DISCOVERY_TEXT_MAX = 4000
 _DISCOVERY_PROOF_MAX = 8000
 
@@ -4371,6 +4394,7 @@ _DISCOVERY_PROOF_MAX = 8000
 async def report_discovery(
     kind: str, procedure_id: str, problem: str, solution: str, ctx: Context,
     step_order: Optional[int] = None, proof: str = "", repo: Optional[str] = None,
+    category: str = "other",
 ) -> str:
     """
     Report something learned while carrying out a Procedure: a fix, a missing
@@ -4378,7 +4402,14 @@ async def report_discovery(
     that was previously a human-only gap. Call this from the planner (not a
     step executor) once the proof has been checked.
 
-    kind: one of fix | missing_step | precondition | better_way | correction | filled_gap
+    kind="report" instead FLAGS the way for moderation: use it when a way is
+    malicious, NSFW, spam or simply broken. Set `category` (malicious | nsfw |
+    spam | broken | other) and say why in `problem`; `solution` may be empty.
+    A malicious/NSFW report re-runs the content screen on the way and hides it
+    at once if the screen agrees; otherwise it is hidden after several people
+    report it. One report per person per way.
+
+    kind: one of fix | missing_step | precondition | better_way | correction | filled_gap | report
     procedure_id: the Procedure it's about (stable id or version row id)
     step_order: which step, when it's about one step
     problem / solution: one or two plain sentences each
@@ -4400,8 +4431,10 @@ async def report_discovery(
     from app.services.sources import register_source
     from app.services.trace_redaction import redact_value
 
+    if kind == "report":
+        return await _report_way(procedure_id, category, problem, ctx)
     if kind not in DISCOVERY_KINDS:
-        return f"REFUSED: kind must be one of {sorted(DISCOVERY_KINDS)}"
+        return f"REFUSED: kind must be one of {sorted(DISCOVERY_KINDS | {'report'})}"
     if not problem.strip() or not solution.strip():
         return "REFUSED: problem and solution must both be non-empty"
     scope = _caller_access_scope()

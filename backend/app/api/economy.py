@@ -222,6 +222,66 @@ async def review_procedure_submission(
         raise HTTPException(status_code=422, detail=str(e))
 
 
+# ---- Reports and moderation of published ways (economy/moderation.py) ----------------------------------------
+# submit_way puts a way live through an automated screen with no human review; these routes are what stands
+# behind it: anyone signed in can report a way, a submitter can withdraw their own, an admin can hide/restore/remove.
+
+
+class WayReportIn(BaseModel):
+    category: str = Field(..., description="malicious | nsfw | spam | broken | other")
+    detail: str = Field("", max_length=2000)
+
+
+class WayModerationIn(BaseModel):
+    action: str = Field(..., description="hide | restore | remove")
+    reason: str = Field(..., min_length=1, max_length=2000)
+
+
+@router.post("/ways/{procedure_row_id}/report")
+async def report_way(
+    procedure_row_id: str, body: WayReportIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(_authenticated_and_rate_limited),
+) -> dict[str, Any]:
+    from app.economy import moderation
+    from app.services.procedures import get_procedure
+
+    proc = await get_procedure(pool, procedure_row_id)
+    if proc is None or proc.get("t_invalid") is not None:
+        raise HTTPException(status_code=404, detail="way not found")
+    try:
+        return await moderation.report_way(pool, proc=proc, reporter=principal.subject,
+                                           category=body.category, detail=body.detail)
+    except moderation.ModerationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/procedure-submissions/{submission_id}/withdraw")
+async def withdraw_procedure_submission(
+    submission_id: str, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    from app.economy import moderation
+
+    try:
+        return await moderation.withdraw_way(pool, submission_id=submission_id, actor=principal.subject)
+    except moderation.ModerationError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/ways/{procedure_row_id}/moderate", dependencies=[Depends(require_scopes(_ac.ADMIN_OPS))])
+async def moderate_way(
+    procedure_row_id: str, body: WayModerationIn, pool=Depends(get_pool),
+    principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
+) -> dict[str, Any]:
+    from app.economy import moderation
+
+    try:
+        return await moderation.moderate_way(pool, procedure_row_id=procedure_row_id, action=body.action,
+                                             actor=principal.subject, reason=body.reason)
+    except moderation.ModerationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 # ---- Benchmark submissions (§2, §11) ---------------------------------------
 @router.post("/benchmark-submissions", dependencies=[Depends(require_scopes(_ac.KNOWLEDGE_WRITE))])
 async def create_benchmark_submission(
