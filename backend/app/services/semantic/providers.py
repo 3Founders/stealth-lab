@@ -545,7 +545,14 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
 
         models = [settings.vertex_model] + [m.strip() for m in _os.environ.get("VERTEX_MODEL_FALLBACKS", "").split(",")
                                             if m.strip() and m.strip() != settings.vertex_model]
-        clients = [_VertexRefreshingClient(raw_client, credentials, m) for m in models]
+        # an entry `model@location` calls that model in its own location (vertex_endpoints.model_slot)
+        from app.services.vertex_endpoints import model_slot
+
+        clients = []
+        for entry in models:
+            m, loc = model_slot(entry)
+            client = raw_client.with_options(base_url=openapi_base(settings.vertex_project, loc)) if loc else raw_client
+            clients.append(_VertexRefreshingClient(client, credentials, m))
         return OpenAICompatProvider("vertex", clients, settings.vertex_model, min_max_tokens=2000)
     if name == "gemini":
         keys = _gemini_keys(settings)

@@ -110,3 +110,40 @@ def test_refused_and_timed_out_judge_calls_are_not_charged_but_answered_ones_are
     assert _unbilled(_429()) and _unbilled(refused) and _unbilled(asyncio.TimeoutError())
     unusable = ProviderError(ErrorKind.TRANSIENT, "invalid identity reply: relation missing")   # the model answered
     assert not _unbilled(unusable)
+
+
+class LocatedClient:
+    """Refuses by (model, base_url): models served only on global, and an older model with capacity per region."""
+
+    def __init__(self, refuse, base_url="https://aiplatform.googleapis.com/global", calls=None):
+        self.refuse, self.base_url = refuse, base_url
+        self.calls = calls if calls is not None else []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    def with_options(self, **kw):
+        return LocatedClient(self.refuse, kw.get("base_url", self.base_url), self.calls)
+
+    def _create(self, **kw):
+        self.calls.append((kw["model"], self.base_url))
+        if self.refuse(kw["model"], self.base_url):
+            raise _429()
+        return SimpleNamespace(model="raw", choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
+
+
+def test_an_entry_with_a_location_is_called_in_that_location_and_records_the_bare_model():
+    C = "google/gemini-3.5-flash"
+    client = LocatedClient(lambda m, url: "/global" in url or "europe-west2" in url)
+    comp = ij._VertexOAuthCompletions(client, A, None, [f"{C}@europe-west2", f"{C}@europe-west3"], "proj")
+    resp = comp.create(messages=[])
+    assert resp.model == C                               # the item records the model, not model@location
+    assert [m for m, _ in client.calls] == [A, C, C]
+    assert client.calls[0][1].endswith("/global")        # the primary keeps the default location
+    assert "europe-west2-aiplatform.googleapis.com/v1/projects/proj/locations/europe-west2/" in client.calls[1][1]
+    assert "locations/europe-west3/" in client.calls[2][1]
+
+
+def test_model_slot_parses_entries():
+    from app.services.vertex_endpoints import model_slot
+
+    assert model_slot(" google/gemini-3.6-flash ") == ("google/gemini-3.6-flash", "")
+    assert model_slot("google/gemini-3.5-flash@europe-west3") == ("google/gemini-3.5-flash", "europe-west3")

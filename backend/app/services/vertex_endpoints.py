@@ -16,3 +16,11 @@ def llm_location(vertex_region: str, vertex_llm_location: str = "") -> str:
 def openapi_base(project: str, location: str) -> str:
     host = "aiplatform.googleapis.com" if location == "global" else f"{location}-aiplatform.googleapis.com"
     return f"https://{host}/v1/projects/{project}/locations/{location}/endpoints/openapi"
+
+
+def model_slot(entry: str) -> tuple[str, str]:
+    """A failover-chain entry is `model` or `model@location`. The location, when given, overrides the LLM location
+    for that entry: on 2026-10-01 `global` refused every Gemini model for hours while `gemini-3.5-flash` answered
+    every call in northamerica-northeast1, europe-west2 and europe-west3 (the 3.6+ models are served on global only)."""
+    model, _, location = entry.strip().partition("@")
+    return model.strip(), location.strip()
