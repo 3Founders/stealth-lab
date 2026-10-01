@@ -120,6 +120,19 @@ jobs:
       # Tenant isolation: one user's private rows never reach another user or an
       # anonymous caller -- through the MCP v1 surface and the REST routers.
       # (test_search_privacy_leak_e2e needs a real embedding key, which CI does not have.)
+      # Storage layout v2: a knowledge shard and a search member as extra databases on the same server, then the
+      # production-layout write path and the MCP find_ways tool on top of it.
+      - name: Shard layout e2e (write path + MCP find_ways)
+        env:
+          STEALTHLAB_MCP_TOKEN: ci-token
+          TEST_SHARD_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sl_k001
+          SEARCH_GROUP_TEST_DSN: postgresql://postgres:postgres@localhost:5432/sl_s901
+        run: |
+          psql "$DATABASE_URL" -c "CREATE DATABASE sl_k001" -c "CREATE DATABASE sl_s901"
+          python scripts/migrate.py --dsn "$TEST_SHARD_DATABASE_URL"
+          python scripts/migrate.py --dsn "$SEARCH_GROUP_TEST_DSN"
+          pytest tests/test_verified_write_sharded_e2e.py -q
+        working-directory: backend
       - name: Tenant isolation e2e
         run: pytest tests/test_mcp_tenant_isolation_e2e.py tests/test_cross_user_isolation_e2e.py -q
         working-directory: backend

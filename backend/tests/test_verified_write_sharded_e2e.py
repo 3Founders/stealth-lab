@@ -202,3 +202,38 @@ async def test_a_verified_task_is_written_where_its_readers_look(env):
                                                      client=client, model="m", run_id=str(uuid.uuid4()))
     assert status2 == "written" and objects2["goal_id"] == gid and client.naming_calls == calls
     assert await shard.fetchval("SELECT count(*) FROM goals WHERE canonical_name = $1", GOAL_NAME) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_find_ways_serves_the_way_from_the_shard_layout(env, monkeypatch):
+    """The v1 MCP tool an agent calls (`find_ways`) on storage layout v2: the Goal and its Procedure live on K001,
+    the search text on the control database or a search member. find_ways must resolve the Goal and return the
+    way with every step -- the same answer an agent got on one database. Timed, so a fan-out regression shows."""
+    import time
+
+    import app.mcp_server.server as srv
+    from app.ingest.verified.pipeline import write_task
+
+    pool, _shard, _grouped = env
+    task, src = _task()
+    status, _why, _detail, objects = await write_task(pool, task=task, src=src, spdx="MIT", how="row_github_name",
+                                                      client=FakeClient(), model="m", run_id=str(uuid.uuid4()))
+    assert status == "written"
+    await sp.drain_outbox(pool, pools=sh.pools_for(pool))
+
+    monkeypatch.setattr("app.services.embeddings.Embedder", lambda *a, **k: EMB)
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: AccessScope.anonymous())
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context={"pool": pool}))
+    t0 = time.perf_counter()
+    out = json.loads(await srv.find_ways("relative paths return posix style separators", ctx, use_llm=False))
+    elapsed = time.perf_counter() - t0
+    blob = json.dumps(out)
+    assert objects["procedure_id"] in blob or EXTRACTED["name"] in blob, (
+        f"find_ways did not return the way written on K001: {blob[:1500]}")
+    way = next(p for p in out["procedures"] if p["procedure_id"] == objects["procedure_id"])
+    # the steps in full: ingested steps are {"do", "role", "check"}, and every one used to come back null
+    assert [s["do"] for s in way["steps"]] == [s["do"] for s in EXTRACTED["steps"]]
+    assert [s.get("role") for s in way["steps"]] == [s["role"] for s in EXTRACTED["steps"]]
+    assert way["steps"][2]["check"] == "pytest t.py::test_a"
+    assert elapsed < 30, f"find_ways took {elapsed:.1f}s on the shard layout"
+    print(f"find_ways on the v2 layout ({'search group' if _grouped else 'one search db'}): {elapsed:.2f}s")

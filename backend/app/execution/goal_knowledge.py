@@ -49,7 +49,9 @@ def step_check(step: dict) -> Optional[Any]:
     if not isinstance(step, dict):
         return None
     binding = step.get("binding") if isinstance(step.get("binding"), dict) else {}
-    return step.get("expected_outcome") or step.get("verifier") or binding.get("verifier") or None
+    # `check` is the ingestion pipelines' field (app/ingest/verified: {"do", "role", "check"}).
+    return (step.get("expected_outcome") or step.get("check") or step.get("verifier")
+            or binding.get("verifier") or None)
 
 
 def _alt(row: dict) -> dict:
@@ -100,8 +102,11 @@ def goal_tree_to_knowledge(tree: Any) -> dict:
             child = children[i] if i < len(children) else None
             out = {
                 "order": step.get("order"),
+                # `do` is the ingestion pipelines' step text (app/ingest/verified); reading only
+                # goal/description/action returned every ingested step as null.
                 "do": step.get("goal") or step.get("do") or step.get("description") or step.get("action"),
                 "description": step.get("description"),
+                **({"role": step["role"]} if step.get("role") else {}),
                 "source_locator": step.get("source_locator"),
                 "binding": step.get("binding"),
                 "needs": step_needs(step),
