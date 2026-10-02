@@ -167,3 +167,28 @@ def test_the_judge_can_have_its_own_vertex_chain(monkeypatch):
     monkeypatch.setenv("JUDGE_VERTEX_MODEL_FALLBACKS", "google/gemini-3.6-flash")
     own = providers.build_provider("vertex", settings, timeout_s=10)
     assert [c.chat.completions._model for c in own._clients] == ["google/gemini-3.8-flash", "google/gemini-3.6-flash"]
+
+
+def test_the_judge_can_lead_with_its_own_model(monkeypatch):
+    """Extraction leads with gemini-2.5-flash; the judge must still lead with a model that passed its replay."""
+    import google.auth
+    from types import SimpleNamespace as NS
+
+    from app.services.semantic import providers
+
+    monkeypatch.setattr(google.auth, "default", lambda scopes=None: (NS(refresh=lambda req: None, valid=True, token="t"), "p"))
+    settings = NS(vertex_project="proj", vertex_region="us-central1", vertex_llm_location="global",
+                  vertex_model="google/gemini-2.5-flash")
+    monkeypatch.setenv("JUDGE_VERTEX_MODEL", "google/gemini-3.6-flash")
+    monkeypatch.setenv("JUDGE_VERTEX_MODEL_FALLBACKS", "google/gemini-3.7-flash,google/gemini-3.6-flash")
+    p = providers.build_provider("vertex", settings, timeout_s=10)
+    assert [c.chat.completions._model for c in p._clients] == ["google/gemini-3.6-flash", "google/gemini-3.7-flash"]
+    assert p.model == "google/gemini-3.6-flash"
+
+
+def test_a_caller_can_ask_for_another_model_of_the_chain():
+    client = FakeClient(down=set())
+    resp = _completions(client).create(model=B, messages=[])
+    assert resp.model == B and [m for m, _ in client.calls] == [B]
+    resp = _completions(client).create(model="not-in-chain", messages=[])
+    assert resp.model == A

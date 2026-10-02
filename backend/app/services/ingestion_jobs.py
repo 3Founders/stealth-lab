@@ -268,6 +268,10 @@ class _VertexOAuthCompletions:
 
         self._fresh_token()
         order = self._order()
+        # a caller naming another model of the chain (extraction's EXTRACT_RETRY_MODEL) starts there
+        asked = kwargs.get("model")
+        if asked and asked != order[0] and asked in self._models:
+            order = [asked] + [m for m in order if m != asked]
         from app.services.vertex_endpoints import model_slot, openapi_base
 
         for i, slot in enumerate(order):
