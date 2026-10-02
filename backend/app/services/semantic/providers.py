@@ -549,8 +549,10 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
         chain = _os.environ.get("JUDGE_VERTEX_MODEL_FALLBACKS")
         if chain is None:
             chain = _os.environ.get("VERTEX_MODEL_FALLBACKS", "")
-        models = [settings.vertex_model] + [m.strip() for m in chain.split(",")
-                                            if m.strip() and m.strip() != settings.vertex_model]
+        # JUDGE_VERTEX_MODEL: the judge's own first model, so extraction can lead with a cheaper model that judges
+        # identity worse (gemini-2.5-flash) while the judge keeps one that passed the 325-verdict replay.
+        primary = (_os.environ.get("JUDGE_VERTEX_MODEL") or "").strip() or settings.vertex_model
+        models = [primary] + [m.strip() for m in chain.split(",") if m.strip() and m.strip() != primary]
         # an entry `model@location` calls that model in its own location (vertex_endpoints.model_slot)
         from app.services.vertex_endpoints import model_slot
 
@@ -559,7 +561,7 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
             m, loc = model_slot(entry)
             client = raw_client.with_options(base_url=openapi_base(settings.vertex_project, loc)) if loc else raw_client
             clients.append(_VertexRefreshingClient(client, credentials, m))
-        return OpenAICompatProvider("vertex", clients, settings.vertex_model, min_max_tokens=2000)
+        return OpenAICompatProvider("vertex", clients, primary, min_max_tokens=2000)
     if name == "gemini":
         keys = _gemini_keys(settings)
         if not keys:
