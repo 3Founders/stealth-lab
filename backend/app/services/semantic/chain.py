@@ -57,6 +57,33 @@ def _unbilled(exc: BaseException) -> bool:
     return False
 
 
+import os as _os
+import re as _re
+
+# A provider that refuses at the ACCOUNT level (401 unauthorized, 402 payment required, 403 forbidden) will refuse
+# every call until someone fixes the account; retrying it first on every judgment wasted ~0.25 s per call and ~1 s per
+# find_ways (JEV answered 402 to every call, measured 2026-10-02). It is skipped for SUSPEND_S, then tried again.
+# Process-wide and keyed by provider+model; never applies when it is the only provider left (it is then still tried).
+SUSPEND_S = float(_os.environ.get("SEMANTIC_PROVIDER_SUSPEND_S", "300"))
+_SUSPENDED: dict[str, float] = {}
+_ACCOUNT_STATUS = _re.compile(r"\b(401|402|403)\b|Payment Required|Unauthorized|Forbidden")
+
+
+def _provider_key(p: Any) -> str:
+    return f"{getattr(p, 'name', '?')}:{getattr(p, 'model', '?')}"
+
+
+def _account_refusal(exc: BaseException) -> bool:
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 402, 403) or _ACCOUNT_STATUS.search(str(exc)[:400]):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 @dataclass
 class Attempt:
     provider: str
@@ -171,6 +198,10 @@ class SemanticJudge:
         m.inc("semantic.invocations")
         m.inc(f"semantic.{op}.invocations")
         eligible = [p for p in self.providers if p.supports(capability)]
+        # Skip a provider that refused at the account level moments ago (see _account_refusal): it would refuse again.
+        live = [p for p in eligible if _SUSPENDED.get(_provider_key(p), 0.0) <= self._mono()]
+        if live:
+            eligible = live
         deadline_hit = False
 
         for p in eligible:
@@ -193,6 +224,9 @@ class SemanticJudge:
                     m.inc("semantic.provider_failures")
                     m.inc(f"semantic.provider_failures.{p.name}.{kind.value}")
                     m.event("provider_failure", op=op, provider=p.name, kind=kind.value, attempt=n)
+                    if kind is ErrorKind.PERMANENT and _account_refusal(exc):
+                        _SUSPENDED[_provider_key(p)] = self._mono() + SUSPEND_S
+                        m.event("provider_suspended", op=op, provider=p.name, seconds=SUSPEND_S)
                     if kind is ErrorKind.PERMANENT or n >= pol.per_provider_attempts:
                         break
                     delay = pol.backoff(n, self._rng)

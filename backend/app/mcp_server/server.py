@@ -42,6 +42,7 @@ installed package plus the SDK's own release notes, not assumed).
 """
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -135,13 +136,31 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
     _LIFESPAN_STATE["pool"] = pool
     from app.services import search_projection as _sp
     _drain_task = _sp.start_background_drain(pool)      # keeps the global search projections fresh for retrieval
+    _warm_task = asyncio.get_running_loop().create_task(_warm_up(), name="mcp-warm-up")
     try:
         yield {"pool": pool}
     finally:
+        _warm_task.cancel()
         if _drain_task is not None:
             _drain_task.cancel()
         _LIFESPAN_STATE.pop("pool", None)
         await pool.close()
+
+
+async def _warm_up() -> None:
+    """Pay the one-time costs at startup instead of on the first find_ways / submit_way (measured 2026-10-02: the
+    first call was ~6 s slower): the TLS trust store, the Vertex credential refresh, and the semantic judge's
+    provider chain. No model is called. Best-effort: a failure here only means the first request pays it."""
+    try:
+        from app.services import embeddings as _emb
+        from app.services.identity_resolution import default_judge
+        from app.utils.tls import shared_ssl_context
+
+        await asyncio.to_thread(shared_ssl_context)
+        await asyncio.gather(asyncio.to_thread(_emb._vertex_credentials_sync), asyncio.to_thread(default_judge),
+                             return_exceptions=True)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).info("warm-up skipped", exc_info=True)
 
 
 class OidcAwareTokenVerifier(TokenVerifier):
@@ -1520,7 +1539,9 @@ async def _attach_candidate_ways(pool, candidates: list, query: str, facts: list
 def _find_ways_llm_client(api_key: str, base_url: str) -> "OpenAI":
     """One client per (key, base URL) per process: a client per call rebuilt its HTTP connection pool --
     a fresh TCP + TLS handshake on every find_ways. Keyed on the key so a rotated key takes effect."""
-    return OpenAI(max_retries=0, api_key=api_key, base_url=base_url)
+    from app.utils.tls import sync_http_client
+
+    return OpenAI(max_retries=0, api_key=api_key, base_url=base_url, http_client=sync_http_client(timeout=60.0))
 
 
 async def _find_ways_impl(

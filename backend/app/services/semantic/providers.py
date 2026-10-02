@@ -533,7 +533,8 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
         from app.services.vertex_endpoints import llm_location, openapi_base
 
         base_url = openapi_base(settings.vertex_project, llm_location(settings.vertex_region, settings.vertex_llm_location))
-        raw_client = AsyncOpenAI(api_key="placeholder", base_url=base_url, max_retries=0, timeout=timeout_s)
+        raw_client = AsyncOpenAI(api_key="placeholder", base_url=base_url, max_retries=0, timeout=timeout_s,
+                http_client=_tls_client(timeout_s))
         # This provider is built once and cached for the worker process's
         # whole lifetime (identity_resolution.py's default_judge()), so the
         # token must be refreshed per call, not frozen here -- see
@@ -567,7 +568,8 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
         from openai import AsyncOpenAI
 
         clients = [AsyncOpenAI(api_key=k, base_url=settings.semantic_gemini_base_url,
-                               max_retries=0, timeout=timeout_s) for k in keys]
+                               max_retries=0, timeout=timeout_s,
+                http_client=_tls_client(timeout_s)) for k in keys]
         return OpenAICompatProvider("gemini", clients, settings.semantic_gemini_model)
     if name == "gemma":
         # Production fallback: use the configured General Compute
@@ -584,17 +586,27 @@ def build_provider(name: str, settings, *, timeout_s: float) -> Optional[Semanti
                      or getattr(settings, "general_compute_judge_model", None) or "gemma-4-31b-it")
             base_url = getattr(settings, "general_compute_base_url", None)
             clients = [AsyncOpenAI(api_key=k, base_url=base_url,
-                                   max_retries=0, timeout=timeout_s) for k in keys]
+                                   max_retries=0, timeout=timeout_s,
+                http_client=_tls_client(timeout_s)) for k in keys]
             return OpenAICompatProvider("gemma", clients, model)
         model = settings.local_model_name or (settings.local_judge_model if settings.use_local_models else None)
         if not model:
             return None
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key="local", base_url=settings.local_base_url, max_retries=0, timeout=timeout_s)
+        client = AsyncOpenAI(api_key="local", base_url=settings.local_base_url, max_retries=0, timeout=timeout_s,
+                http_client=_tls_client(timeout_s))
         return OpenAICompatProvider("gemma", [client], model)
     log.warning("semantic: unknown provider %r in SEMANTIC_PROVIDER_* ignored", name)
     return None
+
+
+def _tls_client(timeout_s):
+    """httpx client on the process-wide TLS context (app/utils/tls.py): building a context per client cost
+    0.4-2.6 s of blocking CPU on Windows."""
+    from app.utils.tls import async_http_client
+
+    return async_http_client(timeout=timeout_s)
 
 
 def build_provider_chain(settings=None, *, timeout_s: Optional[float] = None) -> list[SemanticProvider]:

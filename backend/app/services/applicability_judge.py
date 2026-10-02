@@ -357,6 +357,26 @@ class LLMJudge:
 SYSTEMONE_PATH = "/v1/systemone"
 
 
+_SHARED_CLIENTS: dict = {}
+
+
+async def _shared_client(timeout_seconds: float):
+    """ONE keep-alive httpx client per (event loop, timeout). A client per call rebuilt the TLS context and redid the
+    TLS handshake every time: on Windows each build blocked the loop 0.4-2.6 s, and a find_ways makes ~36 judge calls
+    (measured 2026-10-02: 8-13 s of a 12-27 s find_ways)."""
+    import asyncio
+    import weakref
+
+    from app.utils.tls import async_http_client
+
+    loop = asyncio.get_running_loop()
+    per_loop = _SHARED_CLIENTS.setdefault(id(loop), (weakref.ref(loop), {}))[1]
+    client = per_loop.get(timeout_seconds)
+    if client is None or client.is_closed:
+        client = per_loop[timeout_seconds] = async_http_client(timeout=timeout_seconds)
+    return client
+
+
 class RemoteHTTPJudge:
     """TypeSafe AI's hosted "Jev" System One model (this is the "JEV"
     transport): ONE endpoint, `POST {base_url}/v1/systemone`, body
@@ -391,9 +411,7 @@ class RemoteHTTPJudge:
         client = self._http_client
         owned = False
         if client is None:
-            import httpx
-            client = httpx.AsyncClient(timeout=self.timeout_seconds)
-            owned = True
+            client = await _shared_client(self.timeout_seconds)
         try:
             response = await client.post(f"{self.base_url}{path}", json=payload, headers=self._headers())
             response.raise_for_status()

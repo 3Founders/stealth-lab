@@ -251,6 +251,12 @@ def _gemini_client(api_key: str) -> Any:
 _VERTEX_HTTP_CLIENTS: "weakref.WeakKeyDictionary[Any, Any]" = weakref.WeakKeyDictionary()
 
 
+def _shared_ssl():
+    from app.utils.tls import shared_ssl_context
+
+    return shared_ssl_context()
+
+
 async def _vertex_http_client() -> Any:
     """ONE keep-alive httpx client per event loop. Building a client loads the CA bundle, which took ~1 s of blocking CPU
     each time on Windows: with a client per request, 60 concurrent embeds took 63 s (measured 2026-09-29) although the
@@ -261,7 +267,7 @@ async def _vertex_http_client() -> Any:
     task = _VERTEX_HTTP_CLIENTS.get(loop)
     if task is None:
         task = loop.create_task(asyncio.to_thread(lambda: httpx.AsyncClient(
-            timeout=60.0, limits=httpx.Limits(max_connections=32, max_keepalive_connections=16))))
+            verify=_shared_ssl(), timeout=60.0, limits=httpx.Limits(max_connections=32, max_keepalive_connections=16))))
         _VERTEX_HTTP_CLIENTS[loop] = task
     return await task
 
