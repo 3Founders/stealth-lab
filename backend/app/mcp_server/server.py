@@ -58,6 +58,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import dotenv_values, load_dotenv
 load_dotenv()
+# Storage layout v2: the knowledge shards (K###_DATABASE_URL) and search members (S###_DATABASE_URL) are in the
+# git-ignored backend/.neon_shards.env, not backend/.env. Load it too, whichever way the server is started
+# (`uvicorn app.mcp_server.server:app` or stealthlab-mcp-server), and point shard lookups at the same file so a shard
+# added while the server runs is still found. The environment wins over the file.
+_SHARDS_ENV = Path(__file__).resolve().parents[2] / ".neon_shards.env"
+if _SHARDS_ENV.is_file():
+    os.environ.setdefault("STEALTH_SHARDS_ENV_FILE", str(_SHARDS_ENV))
+    load_dotenv(_SHARDS_ENV)
+else:
+    print(f"stealthlab-mcp: no {_SHARDS_ENV} -- knowledge shards and search members (K###/S###_DATABASE_URL) must "
+          "come from the environment, or retrieval and the search drain cannot reach them", file=sys.stderr)
 
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
