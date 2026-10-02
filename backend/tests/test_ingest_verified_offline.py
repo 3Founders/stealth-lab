@@ -168,10 +168,24 @@ def test_a_step_over_the_limit_is_shortened_on_feedback(monkeypatch):
     assert calls[1]["messages"][-2] == {"role": "assistant", "content": json.dumps(long_step)}
     assert calls[1]["model"] == "m"
 
-    # a reply that breaks something other than a length limit is not "shortened"
+    # every other format problem is named the same way: an extra field, a missing one, a reply that is not JSON
+    for bad, said in (({**GOOD, "extra": 1}, "extra is not an allowed field"),
+                      ({k: v for k, v in GOOD.items() if k != "steps"}, "steps is missing")):
+        calls.clear()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps(bad), json.dumps(GOOD)])))
+        assert asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                                      patch="p", tests=("t",))).name == GOOD["name"]
+        assert said in calls[1]["messages"][-1]["content"]
     calls.clear()
-    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps({**GOOD, "extra": 1})])))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions(['{"name": "cut off', json.dumps(GOOD)])))
+    assert asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                                  patch="p", tests=("t",))).name == GOOD["name"]
+    assert "not one complete JSON object" in calls[1]["messages"][-1]["content"]
+
+    # still broken after the feedback (no retry model): the item fails as before
+    calls.clear()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps({**GOOD, "extra": 1})] * 2)))
     with pytest.raises(ex.ExtractionFailed, match="schema"):
         asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
                                patch="p", tests=("t",)))
-    assert len(calls) == 1
+    assert len(calls) == 2

@@ -69,24 +69,28 @@ def _user(goal: str, repo: str, language: Optional[str], issue: str, hints: str,
 
 
 class ExtractionFailed(RuntimeError):
-    def __init__(self, message: str, *, raw: str = "", too_long: tuple[str, ...] = ()):
+    def __init__(self, message: str, *, raw: str = "", problems: tuple[str, ...] = ()):
         super().__init__(message)
         self.raw = raw              # the reply that failed, so a retry can show it back
-        self.too_long = too_long    # "steps[2].do is 512 characters (at most 400)" -- fixable by shortening
+        self.problems = problems    # what to fix, in words the model can act on ("steps[2].do is 512 characters ...")
 
 
-def _too_long(errors: list) -> tuple[str, ...]:
-    """Length-limit violations only, in words the model can act on."""
+def _problems(errors: list) -> tuple[str, ...]:
+    """Pydantic validation errors as instructions: where, and what is wrong."""
     out = []
     for e in errors:
-        if e.get("type") not in ("string_too_long", "too_long"):
-            continue
-        loc = "".join(f"[{p}]" if isinstance(p, int) else (f".{p}" if i else str(p)) for i, p in enumerate(e.get("loc", ())))
-        limit = (e.get("ctx") or {}).get("max_length")
-        value = e.get("input")
-        size = len(value) if isinstance(value, (str, list)) else None
-        unit = "characters" if e.get("type") == "string_too_long" else "items"
-        out.append(f"{loc} is {size} {unit} (at most {limit})" if size is not None else f"{loc} is over its limit of {limit}")
+        loc = "".join(f"[{p}]" if isinstance(p, int) else (f".{p}" if i else str(p))
+                      for i, p in enumerate(e.get("loc", ()))) or "the object"
+        kind, ctx, value = e.get("type"), (e.get("ctx") or {}), e.get("input")
+        if kind in ("string_too_long", "too_long") and isinstance(value, (str, list)):
+            unit = "characters" if kind == "string_too_long" else "items"
+            out.append(f"{loc} is {len(value)} {unit} (at most {ctx.get('max_length')})")
+        elif kind == "missing":
+            out.append(f"{loc} is missing")
+        elif kind == "extra_forbidden":
+            out.append(f"{loc} is not an allowed field (remove it)")
+        else:
+            out.append(f"{loc}: {e.get('msg')}")
     return tuple(out)
 
 
@@ -102,26 +106,27 @@ async def extract(client: Any, model: str, *, goal: str, repo: str, language: Op
         return await _extract_once(client, model, **args)
     except ExtractionFailed as first:
         failed = first
-    # A reply that only ran over a length limit is shown back with the exact fields to shorten (2026-10-02: on
-    # SWE-rebench-V2 even gemini-3.6-flash wrote steps over 400 characters, failing ~3% of items for good).
-    feedback = _shorten_feedback(failed)
+    # A reply that breaks the format is shown back with exactly what to fix (2026-10-02: on SWE-rebench-V2 even
+    # gemini-3.6-flash wrote steps over 400 characters, and ~0.5% of replies missed or added fields, failing for good).
+    feedback = _fix_feedback(failed)
     if feedback is not None:
         try:
             return await _extract_once(client, model, feedback=feedback, **args)
         except ExtractionFailed as again:
             failed = again
-            feedback = _shorten_feedback(again)
+            feedback = _fix_feedback(again)
     retry = (os.environ.get("EXTRACT_RETRY_MODEL") or "").strip()
     if not retry or retry == model:
         raise failed
     return await _extract_once(client, retry, feedback=feedback, **args)
 
 
-def _shorten_feedback(failed: "ExtractionFailed") -> Optional[tuple[str, str]]:
-    if not failed.too_long or not failed.raw:
+def _fix_feedback(failed: "ExtractionFailed") -> Optional[tuple[str, str]]:
+    if not failed.problems or not failed.raw:
         return None
-    return failed.raw, ("Your reply broke these length limits: " + "; ".join(failed.too_long) + ". Reply with the "
-                        "same JSON object, shortening only those fields and keeping their meaning. Nothing else.")
+    return failed.raw[:8000], ("Your reply broke the required format: " + "; ".join(failed.problems) + ". Reply with "
+                               "the corrected, complete JSON object, changing only what these problems need and "
+                               "keeping the meaning. Nothing else.")
 
 
 async def _extract_once(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
@@ -143,15 +148,17 @@ async def _extract_once(client: Any, model: str, *, goal: str, repo: str, langua
     raw = (resp.choices[0].message.content or "").strip()
     payload = parse_json_object(raw)
     if payload is None:
-        raise ExtractionFailed(f"reply was not JSON: {raw[:200]!r}")
+        raise ExtractionFailed(f"reply was not JSON: {raw[:200]!r}", raw=raw,
+                               problems=("the reply was not one complete JSON object (it may have been cut off; "
+                                         "keep it within the limits)",) if raw else ())
     try:
         result = Extraction.model_validate(payload)
     except ValidationError as exc:
         errors = exc.errors()
-        too_long = _too_long(errors)
         raise ExtractionFailed(f"reply did not match the schema: {errors[:3]}", raw=raw,
-                               too_long=too_long if len(too_long) == len(errors) else ()) from exc
+                               problems=_problems(errors)) from exc
     if result.steps[-1].role != "verify":
-        raise ExtractionFailed("the last step is not the verification")
+        raise ExtractionFailed("the last step is not the verification", raw=raw, problems=(
+            "the last step must have role \"verify\" and its check must run the failing tests",))
     result.model_used = used
     return result
