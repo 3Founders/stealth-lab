@@ -23,6 +23,7 @@ INFRASTRUCTURE_FAILURES = (
     "ConnectionDoesNotExistError", "InterfaceError", "ConnectionError", "TimeoutError", "OSError",
     "ShardUnavailable", "github_unavailable", "PostgresConnectionError", "TooManyConnectionsError",
     "SemanticJudgmentUnavailable",    # every judge model refused (capacity): identity fails closed, the item waits
+    "EmbeddingError",                 # every embedding key refused (quota) -- 1,406 items in 30 minutes, 2026-10-02
 )
 
 
