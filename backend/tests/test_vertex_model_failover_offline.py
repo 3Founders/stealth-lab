@@ -184,3 +184,11 @@ def test_the_judge_can_lead_with_its_own_model(monkeypatch):
     p = providers.build_provider("vertex", settings, timeout_s=10)
     assert [c.chat.completions._model for c in p._clients] == ["google/gemini-3.6-flash", "google/gemini-3.7-flash"]
     assert p.model == "google/gemini-3.6-flash"
+
+
+def test_a_caller_can_ask_for_another_model_of_the_chain():
+    client = FakeClient(down=set())
+    resp = _completions(client).create(model=B, messages=[])
+    assert resp.model == B and [m for m, _ in client.calls] == [B]
+    resp = _completions(client).create(model="not-in-chain", messages=[])
+    assert resp.model == A

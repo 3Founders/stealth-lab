@@ -74,6 +74,24 @@ class ExtractionFailed(RuntimeError):
 
 async def extract(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
                   hints: str, patch: str, tests: tuple[str, ...]) -> Extraction:
+    """One extraction; a reply that breaks the contract is redone ONCE with EXTRACT_RETRY_MODEL when set (2026-10-02:
+    gemini-2.5-flash, the cheapest model that passed the quality comparison, wrote a step over the 400-character
+    limit on ~8% of items; gemini-3.6-flash keeps to it)."""
+    import os
+
+    try:
+        return await _extract_once(client, model, goal=goal, repo=repo, language=language, issue=issue,
+                                   hints=hints, patch=patch, tests=tests)
+    except ExtractionFailed:
+        retry = (os.environ.get("EXTRACT_RETRY_MODEL") or "").strip()
+        if not retry or retry == model:
+            raise
+        return await _extract_once(client, retry, goal=goal, repo=repo, language=language, issue=issue,
+                                   hints=hints, patch=patch, tests=tests)
+
+
+async def _extract_once(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
+                        hints: str, patch: str, tests: tuple[str, ...]) -> Extraction:
     from app.services import ingest_budget
     from app.services.llm_json import parse_json_object
     from app.utils.aio import run_blocking
