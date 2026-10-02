@@ -141,3 +141,37 @@ def test_the_procedure_identity_key_changes_with_the_extracted_content():
     assert _source_key(task, a) == _source_key(task, _run(json.dumps(GOOD)))
     assert _source_key(task, a) != _source_key(task, b)
     assert _source_key(task, a).startswith("swe-solution:o__r-1:")
+
+
+def test_a_step_over_the_limit_is_shortened_on_feedback(monkeypatch):
+    """SWE-rebench-V2 (2026-10-02): steps over 400 characters failed items for good; the reply is now shown back with
+    the exact fields to shorten, once on the same model, then on EXTRACT_RETRY_MODEL."""
+    monkeypatch.delenv("EXTRACT_RETRY_MODEL", raising=False)
+    long_step = {**GOOD, "steps": [{**GOOD["steps"][0], "do": "x" * 500}, *GOOD["steps"][1:]]}
+    calls = []
+
+    class Completions:
+        def __init__(self, replies):
+            self.replies = list(replies)
+
+        def create(self, **kw):
+            calls.append(kw)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.replies.pop(0)))],
+                                   usage=None)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps(long_step), json.dumps(GOOD)])))
+    out = asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                                 patch="p", tests=("t",)))
+    assert out.steps[0].do == GOOD["steps"][0]["do"]
+    feedback = calls[1]["messages"][-1]["content"]
+    assert "steps[0].do is 500 characters (at most 400)" in feedback
+    assert calls[1]["messages"][-2] == {"role": "assistant", "content": json.dumps(long_step)}
+    assert calls[1]["model"] == "m"
+
+    # a reply that breaks something other than a length limit is not "shortened"
+    calls.clear()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps({**GOOD, "extra": 1})])))
+    with pytest.raises(ex.ExtractionFailed, match="schema"):
+        asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                               patch="p", tests=("t",)))
+    assert len(calls) == 1

@@ -69,7 +69,25 @@ def _user(goal: str, repo: str, language: Optional[str], issue: str, hints: str,
 
 
 class ExtractionFailed(RuntimeError):
-    pass
+    def __init__(self, message: str, *, raw: str = "", too_long: tuple[str, ...] = ()):
+        super().__init__(message)
+        self.raw = raw              # the reply that failed, so a retry can show it back
+        self.too_long = too_long    # "steps[2].do is 512 characters (at most 400)" -- fixable by shortening
+
+
+def _too_long(errors: list) -> tuple[str, ...]:
+    """Length-limit violations only, in words the model can act on."""
+    out = []
+    for e in errors:
+        if e.get("type") not in ("string_too_long", "too_long"):
+            continue
+        loc = "".join(f"[{p}]" if isinstance(p, int) else (f".{p}" if i else str(p)) for i, p in enumerate(e.get("loc", ())))
+        limit = (e.get("ctx") or {}).get("max_length")
+        value = e.get("input")
+        size = len(value) if isinstance(value, (str, list)) else None
+        unit = "characters" if e.get("type") == "string_too_long" else "items"
+        out.append(f"{loc} is {size} {unit} (at most {limit})" if size is not None else f"{loc} is over its limit of {limit}")
+    return tuple(out)
 
 
 async def extract(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
@@ -79,19 +97,36 @@ async def extract(client: Any, model: str, *, goal: str, repo: str, language: Op
     limit on ~8% of items; gemini-3.6-flash keeps to it)."""
     import os
 
+    args = dict(goal=goal, repo=repo, language=language, issue=issue, hints=hints, patch=patch, tests=tests)
     try:
-        return await _extract_once(client, model, goal=goal, repo=repo, language=language, issue=issue,
-                                   hints=hints, patch=patch, tests=tests)
-    except ExtractionFailed:
-        retry = (os.environ.get("EXTRACT_RETRY_MODEL") or "").strip()
-        if not retry or retry == model:
-            raise
-        return await _extract_once(client, retry, goal=goal, repo=repo, language=language, issue=issue,
-                                   hints=hints, patch=patch, tests=tests)
+        return await _extract_once(client, model, **args)
+    except ExtractionFailed as first:
+        failed = first
+    # A reply that only ran over a length limit is shown back with the exact fields to shorten (2026-10-02: on
+    # SWE-rebench-V2 even gemini-3.6-flash wrote steps over 400 characters, failing ~3% of items for good).
+    feedback = _shorten_feedback(failed)
+    if feedback is not None:
+        try:
+            return await _extract_once(client, model, feedback=feedback, **args)
+        except ExtractionFailed as again:
+            failed = again
+            feedback = _shorten_feedback(again)
+    retry = (os.environ.get("EXTRACT_RETRY_MODEL") or "").strip()
+    if not retry or retry == model:
+        raise failed
+    return await _extract_once(client, retry, feedback=feedback, **args)
+
+
+def _shorten_feedback(failed: "ExtractionFailed") -> Optional[tuple[str, str]]:
+    if not failed.too_long or not failed.raw:
+        return None
+    return failed.raw, ("Your reply broke these length limits: " + "; ".join(failed.too_long) + ". Reply with the "
+                        "same JSON object, shortening only those fields and keeping their meaning. Nothing else.")
 
 
 async def _extract_once(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
-                        hints: str, patch: str, tests: tuple[str, ...]) -> Extraction:
+                        hints: str, patch: str, tests: tuple[str, ...],
+                        feedback: Optional[tuple[str, str]] = None) -> Extraction:
     from app.services import ingest_budget
     from app.services.llm_json import parse_json_object
     from app.utils.aio import run_blocking
@@ -100,7 +135,9 @@ async def _extract_once(client: Any, model: str, *, goal: str, repo: str, langua
     resp = await run_blocking(
         client.chat.completions.create, model=model, temperature=0, max_tokens=2500,
         messages=[{"role": "system", "content": _PROMPT},
-                  {"role": "user", "content": _user(goal, repo, language, issue, hints, patch, tests)}])
+                  {"role": "user", "content": _user(goal, repo, language, issue, hints, patch, tests)},
+                  *([{"role": "assistant", "content": feedback[0]}, {"role": "user", "content": feedback[1]}]
+                    if feedback else [])])
     used = getattr(resp, "model", None) or model
     await ingest_budget.record_completion(used, EXTRACT_OP, getattr(resp, "usage", None))
     raw = (resp.choices[0].message.content or "").strip()
@@ -110,7 +147,10 @@ async def _extract_once(client: Any, model: str, *, goal: str, repo: str, langua
     try:
         result = Extraction.model_validate(payload)
     except ValidationError as exc:
-        raise ExtractionFailed(f"reply did not match the schema: {exc.errors()[:3]}") from exc
+        errors = exc.errors()
+        too_long = _too_long(errors)
+        raise ExtractionFailed(f"reply did not match the schema: {errors[:3]}", raw=raw,
+                               too_long=too_long if len(too_long) == len(errors) else ()) from exc
     if result.steps[-1].role != "verify":
         raise ExtractionFailed("the last step is not the verification")
     result.model_used = used
