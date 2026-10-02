@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 
@@ -61,3 +62,21 @@ def test_server_entry_preflight_and_bad_root(monkeypatch, tmp_path):
     empty_dir = tmp_path / "empty"
     empty_dir.mkdir()
     assert server_entry.main(["--backend-root", str(empty_dir)]) == 1
+
+
+def test_server_entry_loads_shard_connection_strings(monkeypatch, tmp_path):
+    """Storage layout v2: K###/S### connection strings live in backend/.neon_shards.env, not backend/.env."""
+    from stealthlab_connect import server_entry
+
+    for name in ("K001_DATABASE_URL", "S001_DATABASE_URL", "STEALTH_SHARDS_ENV_FILE", "FROM_DOTENV"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("S001_DATABASE_URL", "postgresql://already-set/db")
+    (tmp_path / ".env").write_text("FROM_DOTENV=1\n", encoding="utf-8")
+    (tmp_path / ".neon_shards.env").write_text(
+        "K001_DATABASE_URL=postgresql://k1/db\nS001_DATABASE_URL=postgresql://from-file/db\n", encoding="utf-8")
+    assert server_entry.load_backend_dotenv(tmp_path) is True
+    assert os.environ["FROM_DOTENV"] == "1"
+    assert os.environ["K001_DATABASE_URL"] == "postgresql://k1/db"
+    assert os.environ["S001_DATABASE_URL"] == "postgresql://already-set/db"     # the environment wins
+    assert os.environ["STEALTH_SHARDS_ENV_FILE"] == str(tmp_path / ".neon_shards.env")
+    assert server_entry.load_shards_env(tmp_path) == 2
