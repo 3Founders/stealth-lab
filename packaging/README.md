@@ -136,6 +136,14 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 `STEALTHLAB_MCP_TOKEN` is required for HTTP mode (the server fails fast
 without it); stdio mode bypasses auth by protocol design and does not need it.
 
+With storage layout v2, `DATABASE_URL` is only the control database. The
+knowledge shards (`K###_DATABASE_URL`) and search members (`S###_DATABASE_URL`)
+are in `backend/.neon_shards.env` (gitignored; written by
+`scripts/provision_neon_shards.py` and storage autoscale). The server loads it
+after `backend/.env` and re-reads it when it changes; a variable already set in
+the environment wins. Without that file every shard must come from the
+environment.
+
 ## Smoke test A — MCP server over HTTP (Claude Code / any Streamable HTTP client)
 
 ```bash

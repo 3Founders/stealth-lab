@@ -227,7 +227,13 @@ def shard_dsn(env_name: Optional[str]) -> Optional[str]:
     if _ENV_FILE_CACHE["key"] != key:
         values: dict[str, str] = {}
         for line in path.read_text(encoding="utf-8").splitlines():
-            name, sep, val = line.strip().partition("=")
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):].lstrip()
+            name, sep, val = line.partition("=")
+            name, val = name.strip(), val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in "'\"":
+                val = val[1:-1]
             if sep and name and not name.startswith("#"):
                 values[name] = val
         _ENV_FILE_CACHE.update(key=key, values=values)

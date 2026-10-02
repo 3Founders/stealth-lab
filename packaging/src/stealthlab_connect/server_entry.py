@@ -10,16 +10,37 @@ from ._bootstrap import BackendRootNotFound, get_backend_root, load_mcp_server_m
 _DEFAULT_PORT = 8765
 
 
+SHARDS_ENV_NAME = ".neon_shards.env"
+
+
 def load_backend_dotenv(backend_root: Path) -> bool:
-    dotenv_path = backend_root / ".env"
-    if not dotenv_path.is_file():
-        return False
+    """backend/.env, then backend/.neon_shards.env: with storage layout v2 the knowledge shards (K###_DATABASE_URL)
+    and search members (S###_DATABASE_URL) live in the second file, which provisioning writes. Neither overrides a
+    variable already set in the environment."""
     try:
         from dotenv import load_dotenv
     except ImportError:
         return False
-    load_dotenv(dotenv_path)
-    return True
+    dotenv_path = backend_root / ".env"
+    loaded = dotenv_path.is_file()
+    if loaded:
+        load_dotenv(dotenv_path)
+    load_shards_env(backend_root)
+    return loaded
+
+
+def load_shards_env(backend_root: Path) -> int:
+    """Load the shard connection strings and point app.services.shards at the same file, so a shard provisioned
+    while the server runs is still reachable (shard_dsn re-reads the file when it changes). Returns how many
+    connection strings it holds; never prints them."""
+    path = backend_root / SHARDS_ENV_NAME
+    if not path.is_file():
+        return 0
+    from dotenv import dotenv_values, load_dotenv
+
+    os.environ.setdefault("STEALTH_SHARDS_ENV_FILE", str(path))
+    load_dotenv(path)
+    return sum(1 for name, value in dotenv_values(path).items() if name.endswith("_DATABASE_URL") and value)
 
 
 def preflight_http() -> list[str]:
@@ -57,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     load_backend_dotenv(backend_root)
+    if not (backend_root / SHARDS_ENV_NAME).is_file():
+        print(f"stealthlab-mcp-server: no {SHARDS_ENV_NAME} in {backend_root} -- shard and search-member "
+              "databases must then come from the environment", file=sys.stderr)
 
     if not args.stdio:
         problems = preflight_http()
