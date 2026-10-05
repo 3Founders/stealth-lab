@@ -189,3 +189,32 @@ async def test_embed_configured_provider_dispatches_to_vertex(monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_gemini_embedding_2_through_the_gemini_api_is_the_vertex_space(monkeypatch):
+    """With both Vertex projects suspended (2026-10-03) the Gemini API served gemini-embedding-2 with the stored
+    vectors exactly (cosine 1.00000) once given the same document form; the label must stay the Vertex one."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.config import settings
+    from app.services import embeddings as em
+
+    monkeypatch.setattr(settings, "embedding_provider_chain", "gemini")
+    monkeypatch.setattr(settings, "gemini_embedding_model", "gemini-embedding-2")
+    monkeypatch.setattr(settings, "gemini_api_keys", "k1")
+    monkeypatch.setattr(settings, "use_local_models", False)
+    seen = {}
+
+    class Models:
+        async def embed_content(self, model, contents, config):
+            seen.update(model=model, contents=contents, task_type=getattr(config, "task_type", None))
+            return SimpleNamespace(embeddings=[SimpleNamespace(values=[0.0] * 1024) for _ in contents])
+
+    monkeypatch.setattr(em, "_gemini_client", lambda key: SimpleNamespace(aio=SimpleNamespace(models=Models())))
+    e = em.Embedder()
+    monkeypatch.setattr(e, "_acquire_gemini_budget", lambda n: asyncio.sleep(0))
+    assert e.embedding_model_id() == "vertex:gemini-embedding-2"
+    asyncio.run(e._embed_gemini(["Escape keyword columns"], "document"))
+    assert seen["contents"] == ["title: none | text: Escape keyword columns"]
+    assert seen["task_type"] is None

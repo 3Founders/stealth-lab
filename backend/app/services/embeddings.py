@@ -443,6 +443,10 @@ class Embedder:
     def embedding_model_id(self) -> str:
         provider = self._configured_provider()
         if provider == "gemini":
+            if self._is_gen2():
+                # The same model as Vertex's: through the Gemini API, with the same document form, it returned the
+                # stored Vertex vector exactly (cosine 1.00000, 2026-10-03). One label keeps one vector space.
+                return f"vertex:{settings.gemini_embedding_model}"
             return f"gemini:{settings.gemini_embedding_model}"
         if provider == "vertex":
             return f"vertex:{settings.gemini_embedding_model}"
@@ -739,14 +743,23 @@ class Embedder:
             client = _gemini_client(key)
             t0 = time.perf_counter()
             try:
-                result = await client.aio.models.embed_content(
-                    model=settings.gemini_embedding_model,
-                    contents=list(texts),
-                    config=types.EmbedContentConfig(
-                        task_type=task_type,
-                        output_dimensionality=self.dimension,
-                    ),
-                )
+                if self._is_gen2():
+                    # gemini-embedding-2 takes no task_type; the task is stated in the text, exactly as on Vertex
+                    # (_gen2_text), so these vectors are the stored ones.
+                    result = await client.aio.models.embed_content(
+                        model=settings.gemini_embedding_model,
+                        contents=[self._gen2_text(t, input_type) for t in texts],
+                        config=types.EmbedContentConfig(output_dimensionality=self.dimension),
+                    )
+                else:
+                    result = await client.aio.models.embed_content(
+                        model=settings.gemini_embedding_model,
+                        contents=list(texts),
+                        config=types.EmbedContentConfig(
+                            task_type=task_type,
+                            output_dimensionality=self.dimension,
+                        ),
+                    )
             except Exception as exc:  # noqa: BLE001
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 err_class = ("429" if ("429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc))

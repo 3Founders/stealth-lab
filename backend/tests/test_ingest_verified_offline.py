@@ -141,3 +141,51 @@ def test_the_procedure_identity_key_changes_with_the_extracted_content():
     assert _source_key(task, a) == _source_key(task, _run(json.dumps(GOOD)))
     assert _source_key(task, a) != _source_key(task, b)
     assert _source_key(task, a).startswith("swe-solution:o__r-1:")
+
+
+def test_a_step_over_the_limit_is_shortened_on_feedback(monkeypatch):
+    """SWE-rebench-V2 (2026-10-02): steps over 400 characters failed items for good; the reply is now shown back with
+    the exact fields to shorten, once on the same model, then on EXTRACT_RETRY_MODEL."""
+    monkeypatch.delenv("EXTRACT_RETRY_MODEL", raising=False)
+    long_step = {**GOOD, "steps": [{**GOOD["steps"][0], "do": "x" * 500}, *GOOD["steps"][1:]]}
+    calls = []
+
+    class Completions:
+        def __init__(self, replies):
+            self.replies = list(replies)
+
+        def create(self, **kw):
+            calls.append(kw)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.replies.pop(0)))],
+                                   usage=None)
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps(long_step), json.dumps(GOOD)])))
+    out = asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                                 patch="p", tests=("t",)))
+    assert out.steps[0].do == GOOD["steps"][0]["do"]
+    feedback = calls[1]["messages"][-1]["content"]
+    assert "steps[0].do is 500 characters (at most 400)" in feedback
+    assert calls[1]["messages"][-2] == {"role": "assistant", "content": json.dumps(long_step)}
+    assert calls[1]["model"] == "m"
+
+    # every other format problem is named the same way: an extra field, a missing one, a reply that is not JSON
+    for bad, said in (({**GOOD, "extra": 1}, "extra is not an allowed field"),
+                      ({k: v for k, v in GOOD.items() if k != "steps"}, "steps is missing")):
+        calls.clear()
+        client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps(bad), json.dumps(GOOD)])))
+        assert asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                                      patch="p", tests=("t",))).name == GOOD["name"]
+        assert said in calls[1]["messages"][-1]["content"]
+    calls.clear()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions(['{"name": "cut off', json.dumps(GOOD)])))
+    assert asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                                  patch="p", tests=("t",))).name == GOOD["name"]
+    assert "not one complete JSON object" in calls[1]["messages"][-1]["content"]
+
+    # still broken after the feedback (no retry model): the item fails as before
+    calls.clear()
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions([json.dumps({**GOOD, "extra": 1})] * 2)))
+    with pytest.raises(ex.ExtractionFailed, match="schema"):
+        asyncio.run(ex.extract(client, "m", goal="g", repo="o/r", language="python", issue="i", hints="",
+                               patch="p", tests=("t",)))
+    assert len(calls) == 2

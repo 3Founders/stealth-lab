@@ -69,7 +69,29 @@ def _user(goal: str, repo: str, language: Optional[str], issue: str, hints: str,
 
 
 class ExtractionFailed(RuntimeError):
-    pass
+    def __init__(self, message: str, *, raw: str = "", problems: tuple[str, ...] = ()):
+        super().__init__(message)
+        self.raw = raw              # the reply that failed, so a retry can show it back
+        self.problems = problems    # what to fix, in words the model can act on ("steps[2].do is 512 characters ...")
+
+
+def _problems(errors: list) -> tuple[str, ...]:
+    """Pydantic validation errors as instructions: where, and what is wrong."""
+    out = []
+    for e in errors:
+        loc = "".join(f"[{p}]" if isinstance(p, int) else (f".{p}" if i else str(p))
+                      for i, p in enumerate(e.get("loc", ()))) or "the object"
+        kind, ctx, value = e.get("type"), (e.get("ctx") or {}), e.get("input")
+        if kind in ("string_too_long", "too_long") and isinstance(value, (str, list)):
+            unit = "characters" if kind == "string_too_long" else "items"
+            out.append(f"{loc} is {len(value)} {unit} (at most {ctx.get('max_length')})")
+        elif kind == "missing":
+            out.append(f"{loc} is missing")
+        elif kind == "extra_forbidden":
+            out.append(f"{loc} is not an allowed field (remove it)")
+        else:
+            out.append(f"{loc}: {e.get('msg')}")
+    return tuple(out)
 
 
 async def extract(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
@@ -79,19 +101,37 @@ async def extract(client: Any, model: str, *, goal: str, repo: str, language: Op
     limit on ~8% of items; gemini-3.6-flash keeps to it)."""
     import os
 
+    args = dict(goal=goal, repo=repo, language=language, issue=issue, hints=hints, patch=patch, tests=tests)
     try:
-        return await _extract_once(client, model, goal=goal, repo=repo, language=language, issue=issue,
-                                   hints=hints, patch=patch, tests=tests)
-    except ExtractionFailed:
-        retry = (os.environ.get("EXTRACT_RETRY_MODEL") or "").strip()
-        if not retry or retry == model:
-            raise
-        return await _extract_once(client, retry, goal=goal, repo=repo, language=language, issue=issue,
-                                   hints=hints, patch=patch, tests=tests)
+        return await _extract_once(client, model, **args)
+    except ExtractionFailed as first:
+        failed = first
+    # A reply that breaks the format is shown back with exactly what to fix (2026-10-02: on SWE-rebench-V2 even
+    # gemini-3.6-flash wrote steps over 400 characters, and ~0.5% of replies missed or added fields, failing for good).
+    feedback = _fix_feedback(failed)
+    if feedback is not None:
+        try:
+            return await _extract_once(client, model, feedback=feedback, **args)
+        except ExtractionFailed as again:
+            failed = again
+            feedback = _fix_feedback(again)
+    retry = (os.environ.get("EXTRACT_RETRY_MODEL") or "").strip()
+    if not retry or retry == model:
+        raise failed
+    return await _extract_once(client, retry, feedback=feedback, **args)
+
+
+def _fix_feedback(failed: "ExtractionFailed") -> Optional[tuple[str, str]]:
+    if not failed.problems or not failed.raw:
+        return None
+    return failed.raw[:8000], ("Your reply broke the required format: " + "; ".join(failed.problems) + ". Reply with "
+                               "the corrected, complete JSON object, changing only what these problems need and "
+                               "keeping the meaning. Nothing else.")
 
 
 async def _extract_once(client: Any, model: str, *, goal: str, repo: str, language: Optional[str], issue: str,
-                        hints: str, patch: str, tests: tuple[str, ...]) -> Extraction:
+                        hints: str, patch: str, tests: tuple[str, ...],
+                        feedback: Optional[tuple[str, str]] = None) -> Extraction:
     from app.services import ingest_budget
     from app.services.llm_json import parse_json_object
     from app.utils.aio import run_blocking
@@ -100,18 +140,25 @@ async def _extract_once(client: Any, model: str, *, goal: str, repo: str, langua
     resp = await run_blocking(
         client.chat.completions.create, model=model, temperature=0, max_tokens=2500,
         messages=[{"role": "system", "content": _PROMPT},
-                  {"role": "user", "content": _user(goal, repo, language, issue, hints, patch, tests)}])
+                  {"role": "user", "content": _user(goal, repo, language, issue, hints, patch, tests)},
+                  *([{"role": "assistant", "content": feedback[0]}, {"role": "user", "content": feedback[1]}]
+                    if feedback else [])])
     used = getattr(resp, "model", None) or model
     await ingest_budget.record_completion(used, EXTRACT_OP, getattr(resp, "usage", None))
     raw = (resp.choices[0].message.content or "").strip()
     payload = parse_json_object(raw)
     if payload is None:
-        raise ExtractionFailed(f"reply was not JSON: {raw[:200]!r}")
+        raise ExtractionFailed(f"reply was not JSON: {raw[:200]!r}", raw=raw,
+                               problems=("the reply was not one complete JSON object (it may have been cut off; "
+                                         "keep it within the limits)",) if raw else ())
     try:
         result = Extraction.model_validate(payload)
     except ValidationError as exc:
-        raise ExtractionFailed(f"reply did not match the schema: {exc.errors()[:3]}") from exc
+        errors = exc.errors()
+        raise ExtractionFailed(f"reply did not match the schema: {errors[:3]}", raw=raw,
+                               problems=_problems(errors)) from exc
     if result.steps[-1].role != "verify":
-        raise ExtractionFailed("the last step is not the verification")
+        raise ExtractionFailed("the last step is not the verification", raw=raw, problems=(
+            "the last step must have role \"verify\" and its check must run the failing tests",))
     result.model_used = used
     return result
