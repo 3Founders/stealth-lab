@@ -1,6 +1,6 @@
 """
-MCP v1 surface (final_thing.md): five tools (find_ways, report_discovery,
-submit_way, plus the model recommender's recommend_models and report_model_run),
+MCP v1 surface (final_thing.md): six tools (find_ways, report_discovery,
+submit_way, plus the model recommender's recommend_models, report_model_run and report_result),
 the three related-claims resources, and the two client-side
 prompts (survey_repo, plan_and_run). The older v2
 tools were removed; the surface is probed in a fresh subprocess.
@@ -42,7 +42,8 @@ def _surface(value: str) -> dict:
 
 def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
     s = _surface("v1")
-    assert s["tools"] == ["find_ways", "recommend_models", "report_discovery", "report_model_run", "submit_way"]
+    assert s["tools"] == ["find_ways", "recommend_models", "report_discovery", "report_model_run", "report_result",
+                         "submit_way"]
     assert s["resources"] == [
         "stealth://claims/{claim_id}",
         "stealth://goals/{goal_id}/claims",

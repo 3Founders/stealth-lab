@@ -473,11 +473,13 @@ _V1_INSTRUCTIONS = (
     "like an existing one is not stored. No links allowed; an automated "
     "screen rejects malicious or NSFW content, then it is live (never "
     "verified on submission). 5) Optional, to pick the cheapest model that "
-    "will pass: recommend_models(procedure_id, candidates=[\"model|scaffold\", ...]) "
-    "returns a ladder (try A; if its check fails, B); after each attempt call "
-    "report_model_run(...) with the returned instance_key so the per-goal model "
-    "scores learn. On a local server reads need no token (a hosted one asks you to sign in); report_discovery, submit_way and "
-    "report_model_run need a signed-in user or write token."
+    "will pass: pass candidates=[\"model|scaffold\", ...] to find_ways and a "
+    "model_plan comes back with a ladder (try A; if its check fails, B). After "
+    "each model you run, call report_result(instance_key, accepted): it stops "
+    "you on a pass and names the next model on a failure. (recommend_models + "
+    "report_model_run do the same by hand.) On a local server reads need no "
+    "token (a hosted one asks you to sign in); report_discovery, submit_way, "
+    "report_model_run and report_result need a signed-in user or write token."
 )
 
 server = MCPServer(
@@ -532,7 +534,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery", "submit_way", "report_model_run")},
+        "report_discovery", "submit_way", "report_model_run", "report_result")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "find_best_way", "reproduce_procedure", "continue_run",
@@ -555,7 +557,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 
 V1_TOOLS: frozenset[str] = frozenset({
-    "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run"})
+    "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run", "report_result"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -568,6 +570,8 @@ _V1_ANNOTATIONS: dict[str, dict] = {
                          "idempotent_hint": False, "open_world_hint": False},
     "report_model_run": {"title": "Report a model run", "read_only_hint": False, "destructive_hint": False,
                          "idempotent_hint": False, "open_world_hint": False},
+    "report_result": {"title": "Report a model attempt", "read_only_hint": False, "destructive_hint": False,
+                      "idempotent_hint": False, "open_world_hint": False},
     # publishes to a shared library other people's agents read
     "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
@@ -1341,11 +1345,60 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
 
 
 @server.tool()
+async def report_result(ctx: Context, instance_key: str, accepted: bool, model: str | None = None,
+                        scaffold: str | None = None, check_kind: str | None = None,
+                        tokens_in: int | None = None, tokens_out: int | None = None,
+                        tokens_cached: int | None = None, cost_usd: float | None = None,
+                        latency_ms: int | None = None, pass_fraction: float | None = None) -> str:
+    """
+    Report one attempt of the model plan find_ways gave you, and learn what to do next.
+    Call it after EACH model you ran, with the `instance_key` from `model_plan` and whether
+    your check accepted the result. If it passed: stop. If it failed: the reply names the
+    next model to run (`next_model`), already conditioned on the failures so far -- no
+    other call is needed.
+
+    model / scaffold: leave out when you ran the next rung of the ladder; give both when you
+      ran something else. check_kind: how you checked (defaults to the plan's).
+    tokens_*, cost_usd, latency_ms: what the attempt used -- they make later plans cheaper to predict.
+    For instance_keys from recommend_models use report_model_run instead.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.routing import plan as _plan
+
+    scope = _caller_access_scope()
+    unit = None
+    if (model is None) != (scaffold is None):
+        return "REFUSED: give both model and scaffold, or neither"
+    if model is not None:
+        unit = f"{model}|{scaffold}"
+    try:
+        instance = await _plan.load_instance(pool, scope, instance_key)
+        visibility, owner_id = None, None
+        if instance.procedure_id is not None:
+            from app.services.applicability import ProcedureNotFound
+            try:
+                procedure = await _resolve_live_procedure(pool, instance.procedure_id, scope)
+            except ProcedureNotFound as exc:
+                return f"REFUSED: {exc}"
+            visibility, owner_id = str(procedure.get("visibility") or "public"), procedure.get("owner_id")
+        result = await _plan.report_result(
+            pool, scope=scope, instance=instance, accepted=accepted, unit=unit, check_kind=check_kind,
+            tokens_in=tokens_in, tokens_out=tokens_out, tokens_cached=tokens_cached, cost_usd=cost_usd,
+            latency_ms=latency_ms, pass_fraction=pass_fraction,
+            reporter=_resolve_caller_identity(fallback="anonymous-host"), visibility=visibility, owner_id=owner_id)
+    except _plan.RoutingError as exc:
+        return f"REFUSED: {exc}"
+    return _plan.dumps(result)
+
+
+@server.tool()
 async def find_ways(
     query: str, ctx: Context,
     repo_claims: str = "",
     current_scope_json: str = "{}", max_depth: int = 6,
     semantic: bool = True, use_llm: bool = True, top_k: int = 5,
+    candidates: list[Any] | None = None, check_kind: str | None = None,
+    model_constraints: dict[str, Any] | None = None,
 ) -> str:
     """
     Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
@@ -1393,6 +1446,13 @@ async def find_ways(
          `suggested` names the one candidate to start from.
 
     Read-only; needs no token. Report what you learn with `report_discovery`.
+
+    Optional model plan: pass `candidates` (the "model|scaffold" units you can run; a deployment
+    may also supply them server-side) and a `model_plan` block comes back with the cheapest
+    ladder likely to pass (try A; if its check fails, B). `check_kind` is how you will check
+    each attempt (tests by default); `model_constraints` is recommend_models' `constraints`.
+    Run the first model, check it, then call `report_result(instance_key, accepted)` -- its
+    reply names the next model. Without candidates the reply is unchanged.
     """
     import time as _time
 
@@ -1412,9 +1472,41 @@ async def find_ways(
             semantic=semantic, use_llm=use_llm, top_k=top_k,
         )
     if decision is not None:
-        gov.remember(caller, decision.key, reply)
+        gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
     await _record_find_ways(ctx, query, reply, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
-    return reply
+    return await _attach_model_plan(reply, ctx, candidates=candidates, check_kind=check_kind,
+                                    constraints=model_constraints)
+
+
+async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] | None,
+                             check_kind: str | None, constraints: dict[str, Any] | None) -> str:
+    """Add `model_plan` to a find_ways reply when the caller (or a registered provider) can supply
+    candidates. The plan never changes the knowledge and never breaks the reply: any failure
+    becomes a status inside the block."""
+    from app.routing import plan as _plan
+
+    if not _plan.wants_plan(candidates):
+        return reply
+    try:
+        body = json.loads(reply)
+    except (TypeError, ValueError):
+        return reply                                       # a REFUSED: ... text
+    if not isinstance(body, dict):
+        return reply
+    root = next((p for p in body.get("procedures") or [] if isinstance(p, dict) and p.get("goal_id")), None)
+    if body.get("outcome") != "resolved" or root is None:
+        body["model_plan"] = {"status": "no_goal", "reason": "routing needs one resolved Goal with a Procedure; "
+                                                              f"find_ways answered {body.get('outcome')!r}"}
+        return json.dumps(body, default=str)
+    try:
+        pool = ctx.request_context.lifespan_context["pool"]
+        body["model_plan"] = await _plan.model_plan(
+            pool, scope=_caller_access_scope(), goal_id=str(root["goal_id"]),
+            procedure_id=str(root["procedure_id"]) if root.get("procedure_id") else None,
+            candidates=candidates or (), check_kind=check_kind, constraints=constraints)
+    except Exception as exc:  # noqa: BLE001 -- the plan is an addition; the knowledge still stands
+        body["model_plan"] = {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"}
+    return json.dumps(body, default=str)
 
 
 def _find_ways_caller(ctx: Context) -> Optional[str]:

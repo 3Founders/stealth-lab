@@ -467,7 +467,8 @@ def test_every_registered_mcp_tool_is_classified(mcp):
 
     src = open(mcp.__file__, encoding="utf-8").read()
     names = set(re.findall(r"@server\.tool\([^)]*\)\s*\nasync def (\w+)\(", src))
-    assert names == {"find_ways", "submit_way", "report_discovery", "recommend_models", "report_model_run"}
+    assert names == {"find_ways", "submit_way", "report_discovery", "recommend_models", "report_model_run",
+                     "report_result"}
     unclassified = sorted(n for n in names if n not in mcp._TOOL_SCOPES)
     assert not unclassified, f"classify these MCP tools in _TOOL_SCOPES (default is deny-to-readers): {unclassified}"
 

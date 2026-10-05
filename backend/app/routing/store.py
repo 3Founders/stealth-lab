@@ -114,6 +114,36 @@ async def goal_observations(pool: Any, goal_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _json_value(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, (str, bytes)) else value
+
+
+async def instance_decision(pool: Any, goal_id: str, instance_key: str) -> Optional[dict]:
+    """The latest whole-task decision for one instance (each report re-decides under the same key)."""
+    log = await _goal_log_pool(pool, goal_id)
+    row = await log.fetchrow(
+        "SELECT id::text AS id, goal_id::text AS goal_id, procedure_id::text AS procedure_id, candidates, ladder, "
+        "constraints, visibility, owner_id FROM routing_decisions "
+        "WHERE goal_id = $1::uuid AND instance_key = $2 AND step_order IS NULL ORDER BY created_at DESC LIMIT 1",
+        str(goal_id), instance_key)
+    if row is None:
+        return None
+    out = dict(row)
+    for key in ("candidates", "ladder", "constraints"):
+        out[key] = _json_value(out[key])
+    return out
+
+
+async def instance_attempts(pool: Any, goal_id: str, instance_key: str) -> list[dict]:
+    """Whole-task attempts already reported for one instance, oldest first."""
+    log = await _goal_log_pool(pool, goal_id)
+    rows = await log.fetch(
+        "SELECT model_key, scaffold, accepted, check_kind, attempt_index FROM routing_observations "
+        "WHERE goal_id = $1::uuid AND instance_key = $2 AND step_order IS NULL "
+        "ORDER BY occurred_at, attempt_index", str(goal_id), instance_key)
+    return [dict(r) for r in rows]
+
+
 async def all_observations(pool: Any, *, public_only: bool) -> list[dict]:
     from app.services import search_group
 
