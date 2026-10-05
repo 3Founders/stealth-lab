@@ -106,8 +106,17 @@ pokemon_red.gbc
 pokemon-agent/saves/
 pokemon-agent/roms/
 
-# Neon shard connection strings (backend/scripts/provision_neon_shards.py) -- secrets
+# Neon shard connection strings (backend/scripts/provision_neon_shards.py) -- secrets.
+# BOTH spellings, and no leading slash: git matches a slash-free pattern at any
+# depth, so this catches the file wherever the script writes it. The previous
+# rule was `.neon_shards.env` -- with a leading dot -- while the file the
+# provisioner actually writes is `backend/neon_shards.env`, so the rule matched
+# nothing and 88 live shard DSNs sat untracked and one `git add -A` from being
+# committed. Verified 2026-10-04: the file was never committed and no live
+# credential appears in any tracked blob, but the passwords still need rotating.
+neon_shards.env
 .neon_shards.env
+*neon_shards*.env
 
 # BigCodeBench local demo: downloaded dataset and run outputs (regenerable)
 experiments/bigcodebench/data/

@@ -72,6 +72,7 @@ class RetrievalConfig:
     procedure_alternatives: int = 5
     min_confidence: float = 0.6     # model confidence needed to call a verdict "firm"
     judge_concurrency: int = 4
+    judge_batch_size: int = 10      # candidates per judge call (1 = the old one-call-per-candidate path)
     include_hierarchy_paths: bool = True
     # Hierarchy expansion (bounded; the flat candidates always remain the baseline)
     hierarchy_max_hops: int = 2         # parents of parents / children of children
@@ -344,15 +345,42 @@ async def _judge_all(
         async with sem:
             return await judge.judge_identity(kind, ctx_text, h.text)
 
-    results = await asyncio.gather(*[one(h) for h in hits], return_exceptions=True)
-    ok = 0
-    for h, res in zip(hits, results):
+    taken: list[Hit] = []
+
+    def take(h: Hit, verdict: dict, provider: Optional[str]) -> None:
+        h.relation, h.confidence, h.judged = verdict["relation"], verdict["confidence"], True
+        taken.append(h)
+        if provider and provider not in meta.providers:
+            meta.providers.append(provider)
+
+    # One call per chunk of candidates, not one per candidate: find_ways made 10-25 judge calls of ~1.5 s each, four at a
+    # time (measured 2026-10-02). A chunk the batch call could not answer is judged one candidate at a time, as before --
+    # the verdicts are the same contextual judgment either way, never a heuristic.
+    pending: list[Hit] = list(hits)
+    batch = getattr(judge, "judge_identity_batch", None)
+    if callable(batch) and cfg.judge_batch_size > 1 and len(hits) > 1:
+        chunks = [hits[i:i + cfg.judge_batch_size] for i in range(0, len(hits), cfg.judge_batch_size)]
+
+        async def chunk_call(chunk: list[Hit]):
+            async with sem:
+                return await batch(kind, ctx_text, [h.text for h in chunk])
+
+        replies = await asyncio.gather(*[chunk_call(c) for c in chunks], return_exceptions=True)
+        pending = []
+        for chunk, res in zip(chunks, replies):
+            if isinstance(res, BaseException) or not res.ok or len(res.value or []) != len(chunk):
+                pending.extend(chunk)
+                continue
+            for h, verdict in zip(chunk, res.value):
+                take(h, verdict, res.provider)
+        meta.counts[f"{stage}_batched"] = len(hits) - len(pending)
+
+    results = await asyncio.gather(*[one(h) for h in pending], return_exceptions=True)
+    for h, res in zip(pending, results):
         if isinstance(res, BaseException) or not res.ok:
             continue
-        h.relation, h.confidence, h.judged = res.value["relation"], res.value["confidence"], True
-        ok += 1
-        if res.provider and res.provider not in meta.providers:
-            meta.providers.append(res.provider)
+        take(h, res.value, res.provider)
+    ok = len(taken)
     if meta.providers:
         meta.mode = MODE_JEV if meta.providers == ["jev"] else MODE_MODEL
     meta.latency_ms[f"{stage}_rerank"] = (time.monotonic() - t0) * 1000

@@ -173,6 +173,80 @@ def test_frontends_never_receive_database_credentials():
         assert not re.search(r"NEXT_PUBLIC_[A-Z_]*(DATABASE|NEON|POSTGRES|SERVICE_ROLE|SERVICE_TOKEN)", text), f
 
 
+# Filenames that carry live credentials on a developer machine or CI runner, and
+# the paths they have actually appeared at. `backend/neon_shards.env` is here
+# because `.gitignore` shipped a rule for `.neon_shards.env` -- leading dot --
+# while the provisioner writes `backend/neon_shards.env`, so the rule matched
+# nothing and 88 live shard DSNs sat untracked and one `git add -A` from being
+# committed. Matched with fnmatch against the parsed rules rather than by
+# shelling out to `git check-ignore`, so this stays a pure offline test.
+_SECRET_FILENAMES: tuple[str, ...] = (
+    "backend/neon_shards.env",
+    "neon_shards.env",
+    "backend/.neon_shards.env",
+    "deploy/neon_shards.env",
+    "backend/.env",
+    "backend/.env.bak.20260927141635",
+    ".env.bak",
+    ".claude/traces/2026-01-01/session.jsonl",
+    "backend/data/raw_payloads/blob.bin",
+)
+
+
+def _gitignore_patterns() -> list[str]:
+    patterns: list[str] = []
+    for line in (REPO / ".gitignore").read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        patterns.append(entry)
+    return patterns
+
+
+def _ignore_matches(relative_path: str, pattern: str) -> bool:
+    """fnmatch, plus git's directory semantics: a rule naming a directory
+    covers everything beneath it. Without the ancestor walk, a rule like
+    `.claude/traces/` would fail to match `.claude/traces/a/b.jsonl`."""
+    import fnmatch
+
+    candidate = pattern.rstrip("/")
+    basename = relative_path.rsplit("/", 1)[-1]
+    # git: a pattern containing no slash matches the BASENAME at any depth,
+    # which is why a bare `.env.bak*` covers `backend/.env.bak.<stamp>`.
+    if "/" not in candidate and fnmatch.fnmatch(basename, candidate):
+        return True
+    if fnmatch.fnmatch(relative_path, candidate):
+        return True
+    parts = relative_path.split("/")
+    return any(
+        fnmatch.fnmatch("/".join(parts[:i]), candidate)
+        for i in range(1, len(parts))
+    )
+
+
+@pytest.mark.parametrize("relative_path", _SECRET_FILENAMES)
+def test_secret_bearing_filenames_are_gitignored(relative_path):
+    """A credential file must be matched by at least one rule. Pure fnmatch, so
+    this runs offline with no git binary."""
+    patterns = _gitignore_patterns()
+    matched = [p for p in patterns if _ignore_matches(relative_path, p)]
+    assert matched, (
+        f"{relative_path} is matched by no .gitignore rule -- it is one `git add -A` "
+        f"from being committed. Add the rule and rotate the credential."
+    )
+
+
+def test_gitignore_does_not_anchor_a_secret_rule_to_the_repo_root():
+    """A secret rule containing a slash is anchored to the repo root unless it
+    starts with `**/`, so `backend/x.env` would not be caught by a rule written
+    as `secrets/x.env`. Guards the shape of the rule, not just its presence."""
+    anchored = [
+        p for p in _gitignore_patterns()
+        if "/" in p and not p.startswith("**/") and "shard" in p
+    ]
+    assert not anchored, f"secret rule(s) anchored to the repo root: {anchored}"
+
+
 def test_migrations_do_not_depend_on_supabase_auth_schema():
     """Neon has no auth.uid()/auth.jwt()/service_role: no migration may rely on them."""
     offenders = []
