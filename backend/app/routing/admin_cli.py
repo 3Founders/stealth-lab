@@ -5,6 +5,7 @@
     routing-local-refit GOAL_ID            refit one Goal now (normally queued per observation)
     routing-price MODEL --input X --output Y [--cached Z]    USD per million tokens
     routing-model MODEL [--predecessor P] [--open-weights] [--local]
+    routing-sync-prices [--apply]          prices declared by the provider connections -> routing_prices
     routing-import FILE.jsonl              attempt outcomes from a benchmark pipeline / public results
     routing-audit OBSERVATION_ID --correct true|false        gold label for check-error rates
     routing-sbc [--sims N]                 simulation-based calibration on the current data design
@@ -16,7 +17,7 @@ from datetime import datetime
 from typing import Any
 
 COMMANDS = ("routing-status", "routing-refit", "routing-local-refit", "routing-price", "routing-model",
-            "routing-import", "routing-audit", "routing-sbc")
+            "routing-import", "routing-audit", "routing-sbc", "routing-sync-prices")
 
 
 def add_parsers(sub: Any) -> None:
@@ -40,6 +41,8 @@ def add_parsers(sub: Any) -> None:
     p = sub.add_parser("routing-audit")
     p.add_argument("observation_id")
     p.add_argument("--correct", choices=["true", "false"], required=True)
+    p = sub.add_parser("routing-sync-prices")
+    p.add_argument("--apply", action="store_true", help="write the changes (default: show them)")
     p = sub.add_parser("routing-sbc")
     p.add_argument("--sims", type=int, default=100)
     p.add_argument("--draws", type=int, default=100)
@@ -94,6 +97,14 @@ async def run(pool: Any, a: Any) -> int:
     if a.cmd == "routing-price":
         await store.set_price(pool, a.model, input_per_mtok=a.input, output_per_mtok=a.output, cached_per_mtok=a.cached)
         print(json.dumps({"model": a.model, "input": a.input, "output": a.output, "cached": a.cached}))
+        return 0
+    if a.cmd == "routing-sync-prices":
+        from app.providers import registry, sync_prices
+        from app.services.access import AccessScope
+
+        changes = await sync_prices(pool, await registry.visible_connections(AccessScope.unrestricted()),
+                                    apply=a.apply)
+        print(json.dumps({"applied": bool(a.apply), "changes": changes}, indent=2))
         return 0
     if a.cmd == "routing-model":
         await store.set_model(pool, a.model, predecessor=a.predecessor, open_weights=a.open_weights,

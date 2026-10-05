@@ -98,8 +98,9 @@ def goal_of_instance(instance_key: str) -> Optional[str]:
 # ------------------------------------------------------------------ the plan (find_ways)
 
 def wants_plan(explicit: Sequence[Any] | None) -> bool:
-    """A plan is attached only when someone can supply candidates; otherwise find_ways is unchanged."""
-    return bool(explicit) or bool(_PROVIDERS)
+    """A plan is attached only when someone can supply candidates; otherwise find_ways is unchanged.
+    A provider may expose `configured()` to say it has nothing to offer (e.g. no connections set up)."""
+    return bool(explicit) or any(getattr(p, "configured", lambda: True)() for p in _PROVIDERS)
 
 
 async def model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_id: Optional[str] = None,

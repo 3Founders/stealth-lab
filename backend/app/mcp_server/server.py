@@ -476,8 +476,11 @@ _V1_INSTRUCTIONS = (
     "will pass: pass candidates=[\"model|scaffold\", ...] to find_ways and a "
     "model_plan comes back with a ladder (try A; if its check fails, B). After "
     "each model you run, call report_result(instance_key, accepted): it stops "
-    "you on a pass and names the next model on a failure. (recommend_models + "
-    "report_model_run do the same by hand.) On a local server reads need no "
+    "you on a pass and names the next model on a failure. call_model(prompt, "
+    "model=\"auto\", instance_key) runs that next model for you on the models and "
+    "agents this deployment has connected (call_model also runs any named model "
+    "for any other prompt). (recommend_models + report_model_run do the same by "
+    "hand.) On a local server reads need no "
     "token (a hosted one asks you to sign in); report_discovery, submit_way, "
     "report_model_run and report_result need a signed-in user or write token."
 )
@@ -537,7 +540,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "report_discovery", "submit_way", "report_model_run", "report_result")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
-        "find_best_way", "reproduce_procedure", "continue_run",
+        "call_model", "find_best_way", "reproduce_procedure", "continue_run",
         "resume_execution_run", "retry_run_node")},
     "decide_procedure": _acx.KNOWLEDGE_PUBLISH,
 }
@@ -557,7 +560,8 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 
 V1_TOOLS: frozenset[str] = frozenset({
-    "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run", "report_result"})
+    "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run", "report_result",
+    "call_model"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -572,6 +576,9 @@ _V1_ANNOTATIONS: dict[str, dict] = {
                          "idempotent_hint": False, "open_world_hint": False},
     "report_result": {"title": "Report a model attempt", "read_only_hint": False, "destructive_hint": False,
                       "idempotent_hint": False, "open_world_hint": False},
+    # sends the prompt to an external model/agent endpoint and may spend the connection owner's money
+    "call_model": {"title": "Call a connected model or agent", "read_only_hint": False, "destructive_hint": False,
+                   "idempotent_hint": False, "open_world_hint": True},
     # publishes to a shared library other people's agents read
     "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
@@ -1389,6 +1396,79 @@ async def report_result(ctx: Context, instance_key: str, accepted: bool, model: 
     except _plan.RoutingError as exc:
         return f"REFUSED: {exc}"
     return _plan.dumps(result)
+
+
+@server.tool()
+async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: str | None = None,
+                     instance_key: str | None = None, system: str | None = None, max_tokens: int = 1024,
+                     temperature: float | None = None, data_class: str = "USER_PRIVATE",
+                     max_cost_usd: float | None = None) -> str:
+    """
+    Run a prompt on a model or an AI agent (a model with its own harness) that this deployment has
+    connected, and get its answer back. Use it for anything: a sub-task, a search, a draft, a second
+    opinion. The server holds the credentials -- you never see or send a key.
+
+    model: a model name ("deepseek-v3.2"), a full unit ("model|scaffold"), or "auto" to run the NEXT
+      model of the plan find_ways gave you (needs instance_key). scaffold: the agent harness; leave it
+      out for a bare model.
+    instance_key: from find_ways' model_plan. With it, check the answer and then call
+      report_result(instance_key, accepted, ...) -- the reply below carries the exact arguments.
+    data_class: how sensitive the prompt is (PUBLIC_SOURCE, GLOBAL_PROCEDURE, ORG_PRIVATE,
+      USER_PRIVATE, CONFIDENTIAL_DATA, PERSONAL_DATA ...). The call is refused if the connection is not
+      approved for that class. max_cost_usd: refuse if the worst case could cost more.
+
+    It sends only `prompt` and `system`. It does not stream; a long agent task returns its current state.
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.providers import CallRequest, ProviderCallFailed, ProviderError, call_unit, unit_of
+    from app.routing import plan as _plan
+
+    scope = _caller_access_scope()
+    try:
+        if model == "auto":
+            if not instance_key:
+                return "REFUSED: model='auto' needs the instance_key from find_ways' model_plan"
+            unit = _plan._default_unit(await _plan.load_instance(pool, scope, instance_key))
+        else:
+            unit = unit_of(model, scaffold)
+            if instance_key:
+                await _plan.load_instance(pool, scope, instance_key)            # the key must be one we issued
+    except _plan.RoutingError as exc:
+        return f"REFUSED: {exc}"
+    try:
+        result = await call_unit(
+            pool, scope, unit,
+            CallRequest(prompt=prompt, system=system, max_tokens=max_tokens, temperature=temperature,
+                        data_class=data_class),
+            actor=_resolve_caller_identity(fallback="anonymous-host"),
+            tenant_id=scope.org_ids[0] if scope.org_ids else None, max_cost_usd=max_cost_usd)
+    except ProviderCallFailed as exc:
+        return f"FAILED: {exc}"
+    except ProviderError as exc:
+        return f"REFUSED: {exc}"
+    usage = {"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost_usd": result.cost_usd,
+             "latency_ms": result.latency_ms}
+    body: dict[str, Any] = {"unit": result.unit, "text": result.text, "usage": usage}
+    if result.state:
+        body["state"] = result.state
+    if result.finish_reason:
+        body["finish_reason"] = result.finish_reason
+    if instance_key:
+        report = {"instance_key": instance_key, "accepted": "<did your check pass?>",
+                  **{k: v for k, v in usage.items() if v is not None and k != "latency_ms"},
+                  **({"latency_ms": usage["latency_ms"]} if usage["latency_ms"] is not None else {})}
+        if model != "auto":
+            report["model"], report["scaffold"] = result.unit.split("|", 1)
+        body["next"] = {"check_then_call": "report_result", "with": report}
+    return json.dumps(body, default=str)
+
+
+from app.providers.service import ProviderCandidates as _ProviderCandidates  # noqa: E402
+from app.routing import plan as _routing_plan  # noqa: E402
+
+# Connected models/agents become routing candidates -- but only once a connection source is configured,
+# so a bare server's find_ways is unchanged (plan.wants_plan asks `configured()`).
+_routing_plan.register_candidate_provider(_ProviderCandidates())
 
 
 @server.tool()
