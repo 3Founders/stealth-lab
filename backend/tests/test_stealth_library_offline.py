@@ -418,7 +418,7 @@ def _patch_find_ways(monkeypatch, outcome="resolved"):
     monkeypatch.setattr("app.services.license_attribution.attach_attribution", attribution)
     monkeypatch.setattr("app.services.retrieval_service.build_query_context", build_qc)
     monkeypatch.setattr(srv, "_record_find_ways", record)
-    monkeypatch.setattr(srv, "_governor", lambda: None)
+    monkeypatch.setattr("app.mcp_server.find_ways_governor.governor", lambda: None)
     return srv, seen
 
 
@@ -446,7 +446,7 @@ def test_governor_cache_key_includes_library_arguments(monkeypatch):
 
     srv_, _ = _patch_find_ways(monkeypatch)
     gov = FindWaysGovernor()
-    monkeypatch.setattr(srv, "_governor", lambda: gov)
+    monkeypatch.setattr("app.mcp_server.find_ways_governor.governor", lambda: gov)
     monkeypatch.setattr(srv, "_find_ways_caller", lambda ctx: "session:x")
     q = "make the csv export handle quotes"
     first = json.loads(_run(srv.find_ways(query=q, ctx=_Ctx(), use_llm=False, semantic=False)))
