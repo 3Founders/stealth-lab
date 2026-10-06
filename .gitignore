@@ -139,3 +139,7 @@ experiments/swebench_rebench/__pycache__/
 
 # step-0 pilot: per-instance license join cache, rebuilt from the pinned parent revision
 backend/data/license_maps/
+
+# scan_knowledge_conflicts.py output: ~60 MB, regenerable (run it from backend/). Untracked in 2026-10; the file stays
+# in git history, which was not rewritten.
+backend/conflict_candidates.json
