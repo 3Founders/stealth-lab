@@ -1312,6 +1312,10 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
     judged; host reports can never claim 'benchmark').
     step_order / step_role: set them when the attempt ran ONE step (a run.md node) of
     procedure_id, judged by that node's check; omit them for a whole-task attempt.
+
+    Example: report_model_run(model="google/gemma-4", scaffold="claude-code", accepted=true,
+      instance_key="<from recommend_models>", goal_id="<goal uuid>", check_kind="tests", tokens_in=9000,
+      tokens_out=700, cost_usd=0.004)
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.routing.service import record_observation
@@ -1368,6 +1372,9 @@ async def report_result(ctx: Context, instance_key: str, accepted: bool, model: 
       ran something else. check_kind: how you checked (defaults to the plan's).
     tokens_*, cost_usd, latency_ms: what the attempt used -- they make later plans cheaper to predict.
     For instance_keys from recommend_models use report_model_run instead.
+
+    Example: report_result(instance_key="<goal>.9f2c…", accepted=false, tokens_in=8200, tokens_out=640)
+      -> {"status": "rejected", "next_model": "deepseek-v3.2|direct", ...}
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.routing import plan as _plan
@@ -1418,6 +1425,10 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
       approved for that class. max_cost_usd: refuse if the worst case could cost more.
 
     It sends only `prompt` and `system`. It does not stream; a long agent task returns its current state.
+
+    Examples: call_model(prompt="Summarise this stack trace: …", model="deepseek-v3.2")
+      call_model(prompt="<the sub-task>", model="auto", instance_key="<goal>.9f2c…")  # next rung of the plan
+      call_model(prompt="<the sub-task>", model="gemma-4", scaffold="coder")           # an agent with a harness
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.providers import CallRequest, ProviderCallFailed, ProviderError, call_unit, unit_of
@@ -1478,7 +1489,7 @@ async def find_ways(
     current_scope_json: str = "{}", max_depth: int = 6,
     semantic: bool = True, use_llm: bool = True, top_k: int = 5,
     candidates: list[Any] | None = None, check_kind: str | None = None,
-    model_constraints: dict[str, Any] | None = None,
+    model_constraints: dict[str, Any] | None = None, detail: str = "full",
 ) -> str:
     """
     Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
@@ -1533,19 +1544,28 @@ async def find_ways(
     each attempt (tests by default); `model_constraints` is recommend_models' `constraints`.
     Run the first model, check it, then call `report_result(instance_key, accepted)` -- its
     reply names the next model. Without candidates the reply is unchanged.
+
+    detail: "full" (default) returns every step in full. "summary" shortens step text, checks and
+    example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and
+    preconditions stay complete): much less to carry through a long session. Call again with the same
+    query and detail="full" for the whole thing; a hosted server answers that from cache.
     """
     import time as _time
 
+    from app.mcp_server import find_ways_detail as _detail
     from app.mcp_server.find_ways_governor import governor as _governor
     from app.services.shards import track_shard_requests
 
+    if detail not in _detail.DETAILS:
+        return f"REFUSED: detail must be one of {list(_detail.DETAILS)}"
+    shape = _detail.summarize if detail == "summary" else (lambda text: text)
     t0 = _time.monotonic()
     gov, caller = _governor(), _find_ways_caller(ctx)
     decision = gov.check(caller, query, repo_claims) if gov is not None and caller is not None else None
     if decision is not None and decision.action != "run":
         await _record_find_ways(ctx, query, decision.reply, {}, (_time.monotonic() - t0) * 1000,
                                 governor=decision.action)
-        return decision.reply
+        return shape(decision.reply)
     with track_shard_requests() as shard_stats:
         reply = await _find_ways_impl(
             query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
@@ -1554,7 +1574,7 @@ async def find_ways(
     if decision is not None:
         gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
     await _record_find_ways(ctx, query, reply, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
-    return await _attach_model_plan(reply, ctx, candidates=candidates, check_kind=check_kind,
+    return await _attach_model_plan(shape(reply), ctx, candidates=candidates, check_kind=check_kind,
                                     constraints=model_constraints)
 
 
