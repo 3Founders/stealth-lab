@@ -198,6 +198,16 @@ class Hit:
         return d
 
 
+_PIN_ORDER = {"library": 2, "same_repo": 1}
+
+
+def _goal_order(h: Hit) -> tuple:
+    """Judged Goal order: confidence first; at EQUAL confidence a Goal this repository's library names,
+    then one of this repository's own Goals (library_context pins), then fused rank. Without pins this
+    is exactly (-confidence, -rrf, id)."""
+    return (-(h.confidence or 0), -_PIN_ORDER.get(h.extra.get("pin"), 0), -h.rrf, h.id)
+
+
 def _default_tenant_scope(scope: AccessScope) -> TenantScope:
     return TenantScope.unrestricted() if scope.is_unrestricted else TenantScope.commons()
 
@@ -327,6 +337,89 @@ def _extra(r) -> dict:
     return {k: r[k] for k in r.keys() if k not in ("id", "name", "text", "home_shard_id", "r", "dist")}
 
 
+_GOAL_TEXT = "canonical_name || COALESCE(': ' || short_description, '')"
+_GOAL_LIVE = "status IN ('active', 'candidate') AND has_procedures"
+
+
+def _uuids(ids: Sequence[str]) -> list[str]:
+    import uuid as _uuid
+
+    out = []
+    for i in ids:
+        try:
+            out.append(str(_uuid.UUID(str(i))))
+        except ValueError:
+            continue
+    return out
+
+
+async def _library_goal_hits(
+    pool: Any, ctx: QueryContext, library: Any, cands: list[Hit], *, scope: AccessScope,
+    embedding: Optional[list[float]], embedding_model: Optional[str], cfg: RetrievalConfig, meta: RetrievalMeta,
+) -> list[Hit]:
+    """Global Goals this repository points at (app.services.library_context): the Goals its library
+    entries name, and -- for a strong repo identity -- its own Goals nearest to the request. Each is
+    marked `extra["pin"]`; ones the fused search already found are marked in place, the rest fetched by
+    id (same visibility and liveness filter as the search legs). Returned in pin order."""
+    from app.services import library_context as lc
+
+    ident = library.identity
+    if not library.pinned and (ident is None or ident.weak):
+        return []                                   # nothing points at a global Goal: no query at all
+    by_id = {h.id: h for h in cands}
+    pinned: dict[str, str] = dict(library.pinned)
+    targets = await _leg_targets(pool, "goal_search_index")
+    cols = f"goal_id::text AS id, canonical_name AS name, {_GOAL_TEXT} AS text, home_shard_id"
+
+    async def fetch(sql_for: Any, args: tuple, key: Any, limit: int) -> list:
+        return await _leg_rows(targets, sql_for, args, key=key, limit=limit)
+
+    if ident is not None and not ident.weak:
+        repo_goal_ids = _uuids(await lc.same_repo_goal_ids(pool, ident))
+        scope_ids = [ident.repo_id] + ([ident.public_name] if ident.public_name else [])
+        vis_sql, vis_params = visibility_predicate(scope, param_index=3)
+        where = (f"({_GOAL_LIVE}) AND {vis_sql} AND (goal_id = ANY($1::uuid[]) "
+                 f"OR (scope_type = 'repository' AND scope_entity_id = ANY($2::text[])))")
+        base = (repo_goal_ids, scope_ids, *vis_params)
+        n = len(base) + 1
+        rows: list = []
+        if embedding is not None and embedding_model:
+            rows = await fetch(
+                lambda t: f"SELECT {cols}, embedding <=> ${n}::vector AS dist FROM {t} WHERE {where} "
+                          f"AND embedding IS NOT NULL AND embedding_model = ${n + 1} ORDER BY dist ASC, goal_id "
+                          f"LIMIT {lc.SAME_REPO_JUDGE_K}",
+                (*base, to_pgvector(embedding), embedding_model), key=lambda r: (r["dist"], r["id"]),
+                limit=lc.SAME_REPO_JUDGE_K)
+        elif fts_or_query(ctx.query):
+            rows = await fetch(
+                lambda t: f"SELECT {cols}, ts_rank_cd(search_tsv, to_tsquery('english', ${n})) AS r FROM {t} "
+                          f"WHERE {where} AND search_tsv @@ to_tsquery('english', ${n}) ORDER BY r DESC, goal_id "
+                          f"LIMIT {lc.SAME_REPO_JUDGE_K}",
+                (*base, fts_or_query(ctx.query)), key=lambda r: (-r["r"], r["id"]), limit=lc.SAME_REPO_JUDGE_K)
+        library.same_repo_goals = len(repo_goal_ids)
+        for r in rows:
+            by_id.setdefault(r["id"], Hit(r["id"], r["name"], r["text"], r["home_shard_id"], extra=_extra(r)))
+            pinned.setdefault(r["id"], lc.SAME_REPO_PIN)
+
+    missing = _uuids([gid for gid in pinned if gid not in by_id])
+    if missing:
+        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        rows = await fetch(lambda t: f"SELECT {cols} FROM {t} WHERE goal_id = ANY($1::uuid[]) AND ({_GOAL_LIVE}) "
+                                     f"AND {vis_sql}",
+                           (missing, *vis_params), key=lambda r: r["id"], limit=len(missing))
+        for r in rows:
+            by_id.setdefault(r["id"], Hit(r["id"], r["name"], r["text"], r["home_shard_id"], extra=_extra(r)))
+    out = []
+    for gid, reason in pinned.items():
+        h = by_id.get(gid)
+        if h is not None:
+            h.extra["pin"] = reason
+            out.append(h)
+    library.pinned = {h.id: h.extra["pin"] for h in out}
+    meta.counts.update(library_pinned_goals=len(out), library_local_entries=len(library.local_hits))
+    return sorted(out, key=lambda h: -lc.pin_rank(h))
+
+
 # ------------------------------------------------------------ semantic step
 
 
@@ -421,7 +514,12 @@ class GoalSearchResult:
 async def search_goals(
     pool: asyncpg.Pool, ctx: QueryContext, *, scope: AccessScope, embedder: Any = None, judge: Optional[SemanticJudge] = None,
     cfg: RetrievalConfig = RetrievalConfig(), meta: Optional[RetrievalMeta] = None,
+    library: Any = None,
 ) -> GoalSearchResult:
+    """`library` (an app.services.library_context.LibraryContext, or None): this repository's own
+    library entries and pinned Goals, judged in the same batch as -- and in addition to -- the top
+    `rerank_top_k` fused candidates. None (every caller but find_ways with library arguments) runs
+    exactly the search below with nothing added."""
     meta = meta if meta is not None else RetrievalMeta()
     judge = judge if judge is not None else default_judge()
     await _catch_up_projection(pool, meta)
@@ -448,12 +546,20 @@ async def search_goals(
         meta.counts.update(goal_fts_candidates=n_fts, goal_vector_candidates=n_vec, goal_fused=len(cands))
         _tel.set_attrs(sp, fts=n_fts, vector=n_vec, fused=len(cands))
     top = cands[: cfg.rerank_top_k]
-    await _judge_all(judge, "task_goal", ctx.text, top, cfg, meta, stage="goal")
+    local: list[Hit] = []
+    if library is not None and (library.active or library.local_hits):
+        pinned = await _library_goal_hits(pool, ctx, library, cands, scope=scope, embedding=emb,
+                                          embedding_model=model, cfg=cfg, meta=meta)
+        top_ids = {h.id for h in top}
+        top = top + [h for h in pinned if h.id not in top_ids]      # in addition to the cut, never instead
+        known = {h.id for h in cands}
+        cands = cands + [h for h in pinned if h.id not in known]
+        local = list(library.local_hits)
+    await _judge_all(judge, "task_goal", ctx.text, top + local, cfg, meta, stage="goal")
     judged = [h for h in top if h.judged]
     matches = sorted((h for h in judged if h.relation == "matches" and (h.confidence or 0) >= cfg.min_confidence),
-                     key=lambda h: (-(h.confidence or 0), -h.rrf, h.id))
-    partial = sorted((h for h in judged if h.relation in ("partial", "matches")),
-                     key=lambda h: (-(h.confidence or 0), -h.rrf, h.id))
+                     key=_goal_order)
+    partial = sorted((h for h in judged if h.relation in ("partial", "matches")), key=_goal_order)
     if matches:
         return GoalSearchResult(matches[: cfg.goal_resolve_max], cands, "matches")
     if partial:
@@ -977,10 +1083,10 @@ def combine_goal_resolution(goal_result: GoalSearchResult, routed: Sequence[Hit]
     judged = [hit for hit in routed if hit.judged]
     matches = sorted(
         (hit for hit in judged if hit.relation == "matches" and (hit.confidence or 0) >= cfg.min_confidence),
-        key=lambda hit: (-(hit.confidence or 0), -hit.rrf, hit.id))
+        key=_goal_order)
     partial = sorted(
         (hit for hit in judged if hit.relation in ("partial", "matches")),
-        key=lambda hit: (-(hit.confidence or 0), -hit.rrf, hit.id))
+        key=_goal_order)
     if matches:
         return GoalSearchResult(matches[: cfg.goal_resolve_max], goal_result.candidates, "matches")
     if partial:
