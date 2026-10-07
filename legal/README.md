@@ -7,15 +7,26 @@
 ```
 legal/
   README.md            this file
+  REVIEW_PLAN.md       reading order, which documents need counsel, questions to ask
   b2b/
-    mnda.md            Mutual NDA: sign before any access to a customer's repos, staging or tickets
-    pilot_agreement.md Short pilot, signable by a founder before incorporation (novation to the entity)
-    msa.md             Master Services Agreement, with Exhibits A (Service Levels), B (Acceptable Use),
-                       C (DPA placeholder) and D (Order Form fields)
-  b2c/                 (not started) Creator Terms, content licence, takedown policy, payout terms
-  dpdp/                (not started) DPA, privacy notice, subprocessor list, retention schedule, breach procedure
-  tax/                 (not started) GST invoicing, Section 194O TDS, foreign payouts (FEMA/RBI) notes
-  corporate/           (not started) founders' agreement, PIIA, IP-assignment deed, licence audit matrix
+    mnda.md            Mutual NDA (Option B lets a founder sign before incorporation)
+    pilot_agreement.md Short pilot, signable by a founder before incorporation
+    msa.md             Master Services Agreement, Exhibits A-D
+    order_form_and_measurement_schedule.md   price, term and the savings-based fee
+    security_addendum.md
+  dpdp/
+    dpa.md             Data Processing Agreement (DPDP Act roles, schedules)
+    incident_procedure.md
+  b2c/
+    creator_terms.md   Contributor terms, takedown and grievance, payouts
+  tax/
+    tax_notes.md       GST, TDS, 194O, export, for an accountant
+  corporate/
+    ip_assignment_deed.md
+    founders_agreement.md
+    novation_notice.md
+    piia.md
+    licence_matrix.md
 ```
 
 ## Order of use with a customer
@@ -71,11 +82,6 @@ Practical route: incorporate first. A private limited company via SPICe+ usually
 - **99.9% uptime** from a single, undeployed process. Do not sign Exhibit A until it can be met.
 - **No training** cannot be promised more strongly than each model provider's terms allow (BLOCKERS P9). Check them first.
 
-## Next documents (in priority order)
+## What is left
 
-1. **Order Form / Pilot SOW** with the **Measurement Schedule** (gain-share formula, baseline, control, floor, cap, audit, dispute).
-2. **DPA** (Data Fiduciary / Data Processor under the DPDP Act, 2023), **subprocessor list**, **retention and deletion schedule**.
-3. **Security addendum** and incident procedure; **SLA/support** detail if needed beyond Exhibit A.
-4. **Terms of Service**, **Privacy Policy**, **cookie notice** (public site).
-5. Marketplace: **Creator Terms**, content licence, takedown and grievance process, payout and tax terms.
-6. Corporate: founders' agreement, **PIIA**, IP-assignment deed for pre-incorporation work, OSS / model / dataset licence matrix.
+All drafts listed above exist. Not drafted: Terms of Service, Privacy Policy and cookie notice are in `docs/legal/` and still need review; a trademark search; the final entity details. See `REVIEW_PLAN.md`.
