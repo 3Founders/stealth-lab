@@ -197,6 +197,13 @@ async def goal_token_stats(pool: Any, goal_id: str, *, steps: bool = False) -> d
     return out
 
 
+def _jsonable(value: Any) -> Any:
+    """A plain JSON value for a jsonb parameter. Every pool registers a jsonb codec that encodes (app/db/session.py),
+    so passing json.dumps() text stored a JSON *string* inside jsonb -- invisible to SQL `->>` (it returns NULL), the
+    fail-open trap of securityp1.md §5.1 item 2. Pass objects; migration 149 unwraps the rows written before."""
+    return json.loads(json.dumps(value, default=str))
+
+
 async def record_decision(pool: Any, row: Mapping[str, Any]) -> None:
     log = await _goal_log_pool(pool, str(row["goal_id"]))
     await log.execute(
@@ -204,8 +211,8 @@ async def record_decision(pool: Any, row: Mapping[str, Any]) -> None:
         "propensity, meets_target, predicted, constraints, visibility, owner_id, step_order) "
         "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14)",
         row["id"], row["goal_id"], row.get("procedure_id"), row["instance_key"], row.get("params_version"),
-        json.dumps(row["candidates"]), json.dumps(row["ladder"]), float(row["propensity"]), bool(row["meets_target"]),
-        json.dumps(row["predicted"]), json.dumps(row.get("constraints") or {}), row.get("visibility") or "public",
+        _jsonable(row["candidates"]), _jsonable(row["ladder"]), float(row["propensity"]), bool(row["meets_target"]),
+        _jsonable(row["predicted"]), _jsonable(row.get("constraints") or {}), row.get("visibility") or "public",
         row.get("owner_id"), row.get("step_order"))
 
 
@@ -238,7 +245,7 @@ async def save_params(pool: Any, *, method: str, draws: bytes, meta: Mapping[str
             return int(await conn.fetchval(
                 "INSERT INTO routing_params (status, method, draws, meta, diagnostics) "
                 "VALUES ('active', $1, $2, $3::jsonb, $4::jsonb) RETURNING version",
-                method, draws, json.dumps(meta), json.dumps(diagnostics)))
+                method, draws, _jsonable(meta), _jsonable(diagnostics)))
 
 
 async def load_posteriors(pool: Any, kind: str, ids: Sequence[str]) -> dict[str, dict]:
@@ -453,7 +460,7 @@ async def upsert_evidence_items(pool: Any, rows: Sequence[Mapping[str, Any]]) ->
         "repo = EXCLUDED.repo, created_at = COALESCE(EXCLUDED.created_at, routing_evidence_items.created_at), "
         "features = EXCLUDED.features",
         [(r["item_key"], str(r["goal_id"]), bool(r.get("is_goal")), r["benchmark"], r.get("repo"),
-          r.get("created_at"), json.dumps(r.get("features") or {})) for r in rows])
+          r.get("created_at"), _jsonable(r.get("features") or {})) for r in rows])
     return len(rows)
 
 

@@ -75,7 +75,81 @@ refused.
 
 ## P1-A: multi-tenant isolation
 
-In progress.
+### Suite runs (2026-10-07, throwaway DB `kel_v2_isolation` on 127.0.0.1:55432; `scripts/run_isolation_suites.py`)
+
+`owner` is `kel_owner` (the cluster superuser that owns the tables). `stealth_app` was created with
+`scripts/sql/create_app_role.sql`: not superuser, not `BYPASSRLS`, no DDL.
+
+| File | owner: pass / fail / skip | stealth_app: pass / fail / skip |
+|---|---|---|
+| `test_mcp_tenant_isolation_e2e.py` | 3 / 0 / 0 | 3 / 0 / 0 |
+| `test_cross_user_isolation_e2e.py` | 3 / 0 / 0 | 3 / 0 / 0 |
+| `test_retrieval_fixture_isolation_e2e.py` | 2 / 0 / 0 | 2 / 0 / 0 |
+| `test_agents_file_download_isolation_e2e.py` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `test_ingestion_episode_extraction_privacy_e2e.py` | 1 / 0 / 0 | 1 / 0 / 0 |
+| `test_product_model_privacy_e2e.py` | 2 / 0 / 0 | 2 / 0 / 0 |
+| `test_hardening_h2_rls_backstop.py` | 22 / 0 / 0 | 22 / 0 / 0 |
+| `test_access.py` | 9 / 0 / 0 | 9 / 0 / 0 |
+| `test_routing_isolation_e2e.py` | 3 / 0 / 0 | 3 / 0 / 0 |
+| `test_org_governance_e2e.py` | 32 / 0 / 0 | 26 / **6** / 0 (see note) |
+| `evaluation/privacy/` | 2 / 0 / 0 | 2 / 0 / 0 |
+| **new** `test_tenant_isolation_p1a_e2e.py` | 7 / 0 / **1** (see note) | 8 / 0 / 0 |
+| `test_service_identity_offline.py` (offline, item 8) | 20 / 0 / 0 | n/a |
+
+**Notes on the counts:**
+- **The 6 `test_org_governance_e2e.py` failures as `stealth_app` are not leaks.** Those tests are written to run as
+  the owner and then switch into their own restricted role (`SET ROLE sl_gov_app`) to exercise row-level security,
+  and one tamper test needs owner rights on `audit_events`. `stealth_app` may do neither, so they fail in setup with
+  `permission denied to set role` / `must be owner`. As the owner all 32 pass, including their own restricted-role
+  RLS checks.
+- **The one owner skip in the new file is deliberate.** The RLS test refuses to run as a role that bypasses RLS,
+  because it could prove nothing there. As `stealth_app` it runs and passes.
+
+**Before the fixes, three suites never ran at all, and one was stale:**
+- `test_mcp_tenant_isolation_e2e.py` and `test_routing_isolation_e2e.py` set `STEALTHLAB_MCP_TOKEN=test-token`
+  before importing the server. The server refuses to import when that differs from the token `backend/.env`
+  declares, so on any checkout with a `.env` they errored in setup (3 + 3 errors). The fixture now uses the
+  declared token.
+- `test_retrieval_fixture_isolation_e2e.py` called Vertex for embeddings, which this environment cannot reach
+  (403), and it must not call a provider anyway. It now uses a deterministic vector, with the query at the
+  fixture's own vector (the strongest possible match). A new control case shows the same procedure, *unflagged*,
+  is returned, so the absence is the predicate working.
+- `evaluation/privacy`: the stale test (item 7) is fixed.
+
+**Mutation check (2026-10-07).** With the old fail-open `instance_key` guard put back in `plan.load_instance`,
+`test_unknown_foreign_and_ownerless_instance_keys_answer_identically` failed as `stealth_app`, and so did the offline
+`test_an_instance_issued_to_nobody_stays_with_unidentified_callers_only`. With the fix restored, both pass
+(`.scratch` script, file restored and verified).
+
+### The ten gaps of securityp1.md §5.1
+
+| # | Gap | Outcome |
+|---|---|---|
+| 1 | `instance_key` binding | **Confirmed and fixed.** The cross-user binding held (the routing suite passes), but it **failed open** for an instance with no recorded issuer: any signed-in user could take over a key issued before the binding or to an unidentified caller. Now an ownerless instance stays with unidentified callers only (the single-user server's posture; in shared mode they cannot write). Unknown, foreign and ownerless keys answer the same text (new live test). Commit: core-a P1-A |
+| 2 | Double-encoded routing JSON | **Confirmed and fixed.** No SQL reads these columns with `->>` today (the one place parses in Python), so nothing failed open yet. But the writers stored JSON strings, and the planted-row test shows `meta->>'_caller'` returned NULL before and the value after. The writers now pass objects (`store._jsonable`). Migration `149_unwrap_double_encoded_routing_json.sql` unwraps old rows (idempotent, verified on the scratch DB). **Not applied to production yet**, pending the owner's decision |
+| 3 | Migration 29 fallback allows unset tenant | **Confirmed and deferred.** 5 tables (`change_set_operations`, `change_sets`, `evidence`, `executions`, `failure_routes`) use `sl_tenant_scope_allows`, which allows when `app.tenant_id` is unset; the 5 migration-136 tables use the strict `sl_org_strict`. Switching needs an audit of every path to `tenant_transaction()` first. Pinned by a new test, recorded in the runbook's Residual risks #8 |
+| 4 | Routing tables without RLS | **Confirmed and deferred.** RLS is off on all 10 `routing_*` tables (`pg_class.relrowsecurity = false`, 0 policies). The global tables need none. `routing_decisions` / `routing_observations` carry `visibility` / `owner_id` and rely on application checks. Plan in Residual risks #9 |
+| 5 | One shared DB credential | **Confirmed. Fixed on the scratch DB, deferred on Neon.** `scripts/sql/create_app_role.sql` creates `stealth_app` (all privileged flags false, verified), and the suites run as it. Not run on any shared database |
+| 6 | Anonymous read path | **Not reproducible as a leak.** The anonymous token carries only `stealthlab:tools` + `retrieval:read`. New offline tests: every write/execute v1 tool is refused, an unclassified tool defaults to refused, a blank `Bearer` is treated as no header, and anonymous scope is public-only. The existing suites cover reads of private Goals |
+| 7 | Stale privacy test | **Fixed.** `find_goal` now returns `(page, has_more)`. The test unpacks it, and its assertion is unchanged |
+| 8 | API key / service token | **Not reproducible.** Service tokens: `test_service_identity_offline.py` 20 passed (wrong issuer/audience, forged, expired, revoked, scope escalation refused). Legacy admin key: on outside PRODUCTION unless `ADMIN_API_KEY_LEGACY_ENABLED` is set. **Owner action:** set it to `false` on the hosted service if that service runs as STAGING (Residual risks #10) |
+| 9 | `call_model` per-user limits | **Not reproducible.** `governing_org` never takes the paying org from the caller unchecked: another org is refused, a non-member is refused, no org context fails closed, and several orgs mean the caller must choose (new offline test). Budgets, per-user daily limits, the kill switch and per-org RLS on the ledger: `test_org_governance_e2e.py` 32 passed (owner) |
+| 10 | Timing / error oracles | Error text: **fixed and tested** (see #1). Private-goal existence through `find_ways`: covered by `test_mcp_tenant_isolation_e2e.py` (passes). **Timing was not measured** |
+
+### Scenarios of securityp1.md §5.3
+
+| # | Scenario | Test |
+|---|---|---|
+| 1 | Private Goal / Procedure invisible to B in `find_ways` | `test_mcp_tenant_isolation_e2e.py` (existing, now runs) |
+| 2 | A's `instance_key` refused for B, same error as unknown | `test_routing_isolation_e2e.py` + new `test_unknown_foreign_and_ownerless_instance_keys_answer_identically` |
+| 3 | Org X / Y / non-member on org-visible rows | `test_routing_isolation_e2e.py::test_org_visibility_reaches_only_members_of_that_org`; org RLS in `test_org_governance_e2e.py` |
+| 4 | Anonymous: reads public only, every write refused | new `test_an_anonymous_caller_may_read_but_every_write_and_execute_tool_is_refused`, `test_a_blank_bearer...`, `test_the_anonymous_scope_is_public_only` |
+| 5 | Same checks as `stealth_app` | the stealth_app column above |
+| 6 | Forgotten `tenant_transaction` on FORCE RLS | new `test_without_a_tenant_setting_strict_tables_see_nothing_and_fallback_tables_are_the_known_gap` (stealth_app) |
+| 7 | Pooled connection reused after tenant A | new `test_a_pooled_connection_carries_no_tenant_after_a_tenant_transaction` |
+| 8 | A spends against org Y's budget | new `test_the_billed_organisation_is_never_taken_from_the_caller_unchecked`; budgets in `test_org_governance_e2e.py` |
+| 9 | Service token with wrong audience / scope | `test_service_identity_offline.py` (20 passed) |
+| 10 | Withdrawn private content returned to nobody | new `test_a_withdrawn_procedure_is_returned_to_nobody` (with a "reachable while live" control) |
 
 ## P1-B: SLA
 

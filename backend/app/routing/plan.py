@@ -250,8 +250,13 @@ async def load_instance(pool: Any, scope: AccessScope, instance_key: str) -> Ins
     # The binding is the EARLIEST decision's caller, so a later decision made under the same key (recommend_models
     # lets a caller reuse a key) can neither take the instance over nor clear its owner.
     owner = await store.instance_issuer(pool, goal_id, instance_key)
-    if owner is not None and not scope.is_unrestricted and scope.viewer_id != owner:
-        raise unknown                                   # someone else's instance: same answer as a missing one
+    # securityp1.md §5.1 item 1. An instance issued to a named caller is that caller's. One issued to NOBODY (a
+    # decision written before the binding existed, or a plan made for an unidentified caller -- the single-user
+    # server's shared-token posture) stays with unidentified callers only: a signed-in user can never take it over.
+    # (In shared mode an unidentified caller cannot call a write tool at all, so this opens nothing there.)
+    # Same answer as a missing key in every refused case.
+    if not scope.is_unrestricted and owner != (str(scope.viewer_id) if scope.viewer_id is not None else None):
+        raise unknown
     return Instance(instance_key, goal, decision, await store.instance_attempts(pool, goal_id, instance_key))
 
 

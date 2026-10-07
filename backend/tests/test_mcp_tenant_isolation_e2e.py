@@ -84,7 +84,14 @@ def _offline_embeddings(monkeypatch):
 
 @pytest.fixture
 def srv():
-    os.environ.setdefault("STEALTHLAB_MCP_TOKEN", "test-token")
+    # The server refuses to import when the token in effect differs from the one backend/.env declares, so a
+    # hard-coded "test-token" made this suite error out (never run) on every checkout that has a .env.
+    from pathlib import Path
+
+    from dotenv import dotenv_values
+
+    declared = dotenv_values(Path(__file__).resolve().parents[1] / ".env").get("STEALTHLAB_MCP_TOKEN")
+    os.environ.setdefault("STEALTHLAB_MCP_TOKEN", declared or "test-token")
     import app.mcp_server.server as server_module
 
     return server_module

@@ -269,7 +269,8 @@ async def test_published_solution_discoverable_by_b_and_bs_execution_is_independ
     # reachable by lexical search on its own real content (not a shared
     # random tag collision, per this suite's own established discipline
     # around this shared, never-cleaned-up dev DB).
-    found = await pm.find_goal(pool, f"deflake shared test runner {tag}", scope=b_scope)
+    # find_goal returns (page, has_more) since pagination was added; the assertion is unchanged
+    found, _has_more = await pm.find_goal(pool, f"deflake shared test runner {tag}", scope=b_scope)
     assert problem["id"] in {p["id"] for p in found}
     assert await pm.get_goal_for_product(pool, problem["id"], scope=b_scope) is not None
     solutions = await pm.list_goal_solutions(pool, problem["id"], scope=b_scope)

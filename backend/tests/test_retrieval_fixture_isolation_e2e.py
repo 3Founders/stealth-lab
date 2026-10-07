@@ -53,7 +53,6 @@ import pytest
 
 from app.db.session import create_pool
 from app.services.applicability import find_applicable_procedures
-from app.services.embeddings import Embedder
 from app.services.procedures import (
     MIN_DISTINCT_CONTEXTS_FOR_VERIFIED,
     MIN_SUCCESSES_FOR_VERIFIED,
@@ -69,13 +68,61 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _unit_vector(seed: str, dim: int = 1024) -> list[float]:
+    """A deterministic unit vector: no embedding provider is called (the suite must run offline, and the
+    provider is not what is under test -- the retrieval predicate is)."""
+    import hashlib
+    import math
+    import random
+
+    rng = random.Random(hashlib.sha256(seed.encode("utf-8")).digest())
+    v = [rng.uniform(-1.0, 1.0) for _ in range(dim)]
+    n = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / n for x in v]
+
+
+async def _verified_approved(pool, run_id: str, goal_vec: list[float], *, fixture: bool):
+    result = await capture_procedure(
+        pool, name=f"regression-test-fixture-isolation-{run_id}-{'fx' if fixture else 'real'}",
+        goal=f"regression-test-fixture-isolation unique marker phrase ({run_id})",
+        steps=[{"order": 0, "goal": "run linter"}],
+        provenance="system_pending_review", scope_type="global", embedding=goal_vec,
+        is_engineering_fixture=fixture,
+    )
+    row_id = result["id"]
+    for i in range(MIN_SUCCESSES_FOR_VERIFIED):
+        await record_execution_outcome(
+            pool, procedure_row_id=row_id, success=True,
+            context_key=f"ctx-{i % (MIN_DISTINCT_CONTEXTS_FOR_VERIFIED + 1)}",
+        )
+    await approve_procedure(pool, procedure_row_id=row_id, approved_by="tester")
+    return row_id
+
+
+@pytest.mark.asyncio
+async def test_the_same_procedure_not_flagged_as_a_fixture_is_returned():
+    """Control for the test below: with the flag off, the identical procedure at the identical vector IS
+    returned -- so the absence below is the fixture predicate at work, not a query that could never match."""
+    pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
+    row_id = None
+    try:
+        run_id = uuid.uuid4().hex[:8]
+        vec = _unit_vector(f"fixture-isolation-control-{run_id}")
+        row_id = await _verified_approved(pool, run_id, vec, fixture=False)
+        candidates = await find_applicable_procedures(pool, goal_embedding=vec, require_verified=True, limit=10)
+        assert str(row_id) in {str(c["id"]) for c in candidates}
+    finally:
+        if row_id is not None:
+            await pool.execute("DELETE FROM procedures WHERE id = $1", row_id)
+        await pool.close()
+
+
 @pytest.mark.asyncio
 async def test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_user_facing_retrieval():
     pool = await create_pool(DATABASE_URL, min_size=1, max_size=2)
     row_id = None
     try:
         run_id = uuid.uuid4().hex[:8]
-        embedder = Embedder()
 
         # Deliberately mirror test_find_best_way_plan_only_e2e.py's real
         # fixture-creation pattern exactly -- same name prefix convention
@@ -86,24 +133,10 @@ async def test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_us
         # MIN_DISTINCT_CONTEXTS_FOR_VERIFIED distinct contexts, then
         # approve_procedure) that legitimately earns verification_state=
         # 'verified'/approval_status='approved' today.
-        goal_text = (
-            f"regression-test-fixture-isolation unique marker phrase ({run_id}) "
-            "-- run the shared lint pass and verify the change"
-        )
-        goal_vec = await embedder.embed_one(goal_text, input_type="document")
-        result = await capture_procedure(
-            pool, name=f"regression-test-fixture-isolation-{run_id}", goal=goal_text,
-            steps=[{"order": 0, "goal": "run linter"}],
-            provenance="system_pending_review", scope_type="global", embedding=goal_vec,
-            is_engineering_fixture=True,
-        )
-        row_id = result["id"]
-        for i in range(MIN_SUCCESSES_FOR_VERIFIED):
-            await record_execution_outcome(
-                pool, procedure_row_id=row_id, success=True,
-                context_key=f"ctx-{i % (MIN_DISTINCT_CONTEXTS_FOR_VERIFIED + 1)}",
-            )
-        await approve_procedure(pool, procedure_row_id=row_id, approved_by="tester")
+        # The query uses the fixture's OWN vector: the strongest possible match. Before db/39+db/40 this returned the
+        # fixture; a provider-made embedding of a paraphrase (the original form of this test) is only weaker.
+        vec = _unit_vector(f"fixture-isolation-{run_id}")
+        row_id = await _verified_approved(pool, run_id, vec, fixture=True)
 
         confirmed = await pool.fetchrow(
             "SELECT verification_state, approval_status FROM procedures WHERE id = $1", row_id,
@@ -111,16 +144,8 @@ async def test_test_fixture_procedure_does_not_surface_as_normal_knowledge_in_us
         assert confirmed["verification_state"] == "verified"
         assert confirmed["approval_status"] == "approved"
 
-        # A genuinely unrelated, normal user-facing query embedding, sharing
-        # only the rare marker phrase -- if retrieval is doing anything more
-        # than "matches the fixture's own exact wording", this proves the
-        # fixture is reachable via ordinary semantic similarity the way any
-        # real procedure would be, not just an exact-string coincidence.
-        query_vec = await embedder.embed_one(
-            f"run the shared lint pass and verify the change ({run_id})", input_type="query",
-        )
         candidates = await find_applicable_procedures(
-            pool, goal_embedding=query_vec, require_verified=True, limit=10,
+            pool, goal_embedding=vec, require_verified=True, limit=10,
         )
         matched_ids = {c["id"] for c in candidates}
 

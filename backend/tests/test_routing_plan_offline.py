@@ -302,9 +302,19 @@ def test_an_instance_belongs_to_the_caller_it_was_issued_to(monkeypatch):
             run(plan.load_instance(None, other, f"{GOAL}.abc"))
 
 
-def test_an_instance_issued_to_nobody_stays_open(monkeypatch):
+def test_an_instance_issued_to_nobody_stays_with_unidentified_callers_only(monkeypatch):
+    # securityp1.md §5.1 item 1: issued to nobody (a pre-binding decision, or a plan for the single-user server's
+    # unidentified caller) -- the unidentified caller keeps it, a signed-in user can never take it over
     _issued_to(monkeypatch, None)
-    assert run(plan.load_instance(None, AccessScope.for_user("u2"), f"{GOAL}.abc"))
+    assert run(plan.load_instance(None, AccessScope.anonymous(), f"{GOAL}.abc"))
+    with pytest.raises(plan.RoutingError, match="unknown instance_key"):
+        run(plan.load_instance(None, AccessScope.for_user("u2"), f"{GOAL}.abc"))
+
+
+def test_an_unidentified_caller_cannot_use_a_named_callers_instance(monkeypatch):
+    _issued_to(monkeypatch, "u1")
+    with pytest.raises(plan.RoutingError, match="unknown instance_key"):
+        run(plan.load_instance(None, AccessScope.anonymous(), f"{GOAL}.abc"))
 
 
 def test_the_plan_stamps_the_real_caller_and_ignores_one_supplied_by_the_agent(monkeypatch):
