@@ -81,9 +81,11 @@ State as of 2026-10-07. Evidence: [final_prod_docs/p1_results.md](../final_prod_
    - A routing row of an `org`-visible Goal records the organisation as its owner, so every member can reach it.
    - The sync tables (`synced_projects`, `sync_device_credentials`) had the same permissive-when-unset helper, and
      no code ever set their owner. They now deny without an owner bound, and every sync path binds its owner.
-   - **Deploy order:** while the services connect as the `BYPASSRLS` owner, 150 changes nothing they see. Before
-     switching them to `stealth_app`, the new code (which binds every scope) must be live, and 150 must be applied to
-     the control database and to S001–S004.
+   - **Deploy order:** while the services connect as the `BYPASSRLS` owner, 150 changes nothing they see.
+     - Done 2026-10-08: 150 applied to the control database and S001–S004.
+     - Before switching to `stealth_app`: the new code (which binds every scope) must be live, **and** the knowledge
+       shards K001–K084 need the pending migrations, 150 included. They carry the migration-29 tables too, and still
+       have the old permissive helper. Run `migrate.py --dsn` per shard, as `scripts/provision_neon_shards.py` does.
 10. Closed 2026-10-08: see 7. An explicit `ADMIN_API_KEY_LEGACY_ENABLED=false` on the host is still the clearest
     setting.
 
