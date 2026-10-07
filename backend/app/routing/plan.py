@@ -198,7 +198,8 @@ def _compact(rec: Mapping[str, Any]) -> dict[str, Any]:
     evidence = rec.get("evidence") or {}
     units = rec.get("units") or {}
     # plan §5.2: what the reply rests on, and the ladder with per-rung uncertainty (routing.md is written from it)
-    basis = "posterior" if (evidence.get("goal_observations") or 0) > 0 or any(
+    # the caller's own local outcomes (route_obs, feat/library) also make it a posterior
+    basis = "posterior" if (evidence.get("goal_observations") or 0) > 0 or evidence.get("local") or any(
         b == "fitted" for b in (evidence.get("models") or {}).values()) else "prior"
     step = rec.get("step") or {}
     return {
