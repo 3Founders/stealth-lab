@@ -2,7 +2,7 @@ anthropic
 asyncpg
 fastapi
 huggingface-hub
-mcp[cli]>=2.0.0
+mcp[cli]>=2.3.0
 numpy
 openai
 openpyxl
