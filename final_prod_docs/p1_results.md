@@ -153,4 +153,91 @@ refused.
 
 ## P1-B: SLA
 
-Not started. It needs the owner's decisions (support tiers, on-call) and measurements.
+**Status: the SLA is not offerable yet.** No availability has been measured, the service is one instance, and the
+support tiers are undecided. The SLA policy's own "Conditions before this policy is offered" stand. Measured so far:
+
+### Restore test (2026-10-07)
+
+The throwaway DB `kel_v2_isolation` was dumped (`pg_dump -Fc`, 0.8 MB, **0.9 s**) and restored into a new database
+(`pg_restore --no-owner`, **4.0 s**). The checks matched exactly: 131 tables, 2,364 rows (`pg_stat_user_tables`
+after `ANALYZE`), 142 `schema_migrations` entries.
+
+This proves the procedure, **not production timings**: production is larger, and on Neon a restore is a
+point-in-time branch restore. Neon's documentation (fetched 2026-10-07):
+- A restore "last[s] a few seconds", and existing connections are interrupted.
+- The history window is Free **6 hours**, Launch **up to 7 days**, Scale **up to 30 days**.
+
+**The recovery point depends on the plan of every project, and production is 89 Neon projects** (control, S001–S004,
+K001–K084). A consistent recovery restores all 89 to the same timestamp, so the recovery time scales with that.
+**Owner input needed:** the Neon plan of each project. Next step: time one branch restore of the control project.
+
+### Local load test: server + database overhead (2026-10-07)
+
+How it was run:
+- `scripts/load_test_local.py`, against the throwaway DB seeded with 300 Goals.
+- One uvicorn worker (as deployed), on this laptop (4 cores, 8 GB).
+- The embedding provider and the judges were **stubbed**: no model provider was called, as securityp1.md requires.
+- Every request went through the real HTTP + MCP stack, authenticated with the operator token. With the judges
+  stubbed, `find_ways` ends `no_match`, so this is the **overhead path**, not a full resolved answer.
+- Closed-loop clients, 15 s per level.
+
+| `find_ways` concurrent clients | requests | throughput | errors | p50 | p95 | p99 |
+|---|---|---|---|---|---|---|
+| 1 | 1,173 | 78 /s | 0 | 11 ms | 22 ms | 33 ms |
+| 5 | 2,236 | 149 /s | 0 | 33 ms | 41 ms | 56 ms |
+| 10 | 2,176 | 145 /s | 0 | 65 ms | 96 ms | 161 ms |
+| 25 | 2,224 | 148 /s | 0 | 163 ms | 207 ms | 334 ms |
+| 50 | 2,130 | 142 /s | 0 | 326 ms | 628 ms | 917 ms |
+| 100 | 1,615 | 108 /s | 0 | 684 ms | **2,936 ms** | 5,636 ms |
+
+`detail="summary"` gives the same numbers up to 25 clients, then degrades sooner: p95 1,258 ms at 50 clients,
+5,401 ms at 100.
+
+**Saturation:** one process serves about **145–150 requests/s** of server-side work; above about 25 concurrent
+requests they queue. **Breaking point:** p95 passes 2 s at about **100 concurrent requests** (50 with `summary`).
+There were no errors at any level.
+
+**Load at the business size:** for about 1,000 users, assuming about 10 `find_ways` per user per 8-hour working day
+(an assumption, to be replaced with telemetry), the average is about 0.35 /s and a 10× peak about 3.5 /s. So **1×,
+2× and 5× are 0.35, 0.7 and 1.75 /s**, all two orders of magnitude below the server's overhead capacity. The real
+limits in production are the judge calls (seconds each), the provider rate limits, and the database pool size,
+which this run did not include.
+
+### Not measured yet (owner input needed)
+
+| Item | Why it is open | What is needed |
+|---|---|---|
+| `find_ways` p50/p95/p99 in production | Locally the judges are stubbed, so their time is excluded | One read-only aggregate query on production's recorded `find_ways` timings (owner OK), or the authenticated synthetic probe |
+| `recommend_models` / `report_result` latency | Needs fitted routing parameters (production has none yet) | After the routing refit |
+| `call_model` added overhead | Needs a provider connection; a stub adapter run is still to do | A local stub-provider run, or `provider_call_ledger.gate_ms` once traffic exists |
+| Availability | No probe exists | An external uptime monitor on `/healthz` and `/readyz`, plus a 5-minute authenticated synthetic `find_ways` (owner OK for the account), for 30 days |
+| Support tiers and on-call | A business decision | Who is on call, in which hours, and the first-response time per severity. Do not adopt 15 minutes without a staffed on-call |
+
+### What blocks 99.9% (owner: platform)
+
+99.9% allows about 43.8 minutes of downtime per 30-day month. Today:
+
+1. **One replica** (`railway.mcp.json` `numReplicas: 1`). Every deploy and every crash is downtime.
+2. **Migrations run at container start** (`sh -c "python scripts/migrate.py && exec uvicorn ..."`). A deploy waits
+   for them, and a failed one keeps the service down.
+3. **In-process state:** `TasksExtension` task state and the per-process `find_ways` governor make
+   `--workers 1` load-bearing, so a second instance would split that state.
+4. **One worker process:** about 150 requests/s of server-side work at most (above), and no headroom during a
+   restart.
+5. **A non-pooled `DATABASE_URL`**, plus 89 Neon projects whose computes may need to wake up. Cold starts add
+   latency, and each project is a separate failure point.
+6. **No external monitoring or alerting** for the MCP server (only ingestion alerts exist).
+
+Two instances need items 3 and 5 solved first (state out of process, pooled connections), and 2 (migrations as a
+separate release step). Until then, the honest statement is: **"99.9% is a target, not yet offered"**, which is what
+the claims register says.
+
+### SLA documents
+
+- `final_prod_docs/customer/sla_policy.md`: only the restore-test date is filled (marked "procedure only"). The
+  `find_ways` p95, `call_model` overhead, RPO, RTO and support times stay `[●]` until the inputs above exist. A
+  number would claim more than the data shows.
+- `legal/b2b/msa.md`: no SLA numbers to fill. Its `[●]` blanks are legal and commercial (parties, insurance, order
+  form), owned by the legal session.
+- `final_prod_docs/06_claims_register.md`: the uptime row now says nothing is measured yet; new rows cover health
+  checks and graceful shutdown, and backups and restore.

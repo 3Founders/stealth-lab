@@ -41,7 +41,7 @@ Security incidents: notice within **48 hours** of confirmation, plus any report 
 
 ## 5. Recovery
 
-Recovery point objective **[●]**; recovery time objective **[●]**. Backups are the database provider's point-in-time restore; a restore test was last run on **[date]**.
+Recovery point objective **[●]**; recovery time objective **[●]**. Backups are the database provider's point-in-time restore; a restore test was last run on **[2026-10-07, procedure only, on a throwaway database; a production-sized restore is still to run]**.
 
 ## Conditions before this policy is offered
 

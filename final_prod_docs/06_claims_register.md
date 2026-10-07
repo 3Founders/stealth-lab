@@ -9,7 +9,9 @@
 | TLS 1.3 in transit | Nothing yet | "TLS 1.3" | Run an SSL scan on the live endpoint; record the result and date |
 | Encryption at rest | "Our database and object-storage providers encrypt at rest" only after confirming their documentation | A key-management claim | Link each provider's statement here |
 | Hosted in [region] | The real regions, by component, from document 01 | "India only", "US only" | Move components, or describe the true split in the DPA |
-| 99.9% uptime | A target, with measurement rules | A guarantee | Items in document 04 |
+| 99.9% uptime | A target, with measurement rules. As of 2026-10-07 **no availability has been measured** (no external probe yet), and the service runs as one instance. | A guarantee; any uptime percentage | Items in document 04 and the "what blocks 99.9%" list in `p1_results.md`; 30 days of probe data |
+| Health checks and graceful shutdown | "Liveness and readiness endpoints; on shutdown, in-flight requests finish before the process stops" (live-tested 2026-10-07 on Windows; Linux SIGTERM run still to do) | "Zero-downtime deploys" (one instance restarts on every deploy) | Two instances and a rolling deploy |
+| Backups and restore | "Point-in-time restore from our database provider" (Neon: restore in seconds; the history window depends on the plan) | An RPO or RTO figure | The Neon plan of every project confirmed; one production-sized branch restore timed (`p1_results.md`) |
 | Under 30 ms added latency | "We are not in the model-call path" | Any millisecond figure | Not applicable unless we build a proxy |
 | Automatic failover between Anthropic and OpenAI | "With several configured connections, a rule can fall back" once built | Automatic failover today | Build and test it |
 | Independent penetration test, no high or critical findings | "Planned after deployment" | Any statement of results | A completed test and retest |
