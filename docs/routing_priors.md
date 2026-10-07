@@ -21,7 +21,7 @@ yet: the new reads return nothing.
 
 ## Loading it (operator)
 
-1. Apply migrations `136_routing_priors.sql` (control) and `137_routing_priors_search.sql` (`--target search`).
+1. Apply migrations `147_routing_priors.sql` (control) and `148_routing_priors_search.sql` (`--target search`).
 2. Download the public files into one folder. All are public and need no key:
 
    | Folder / file | Source |
@@ -51,6 +51,21 @@ yet: the new reads return nothing.
 
    Re-running is safe: cards and items are upserted, and observations and aggregates carry a dedupe key.
    The OpenHands trajectories are **not** imported here. The ingestion pipeline already records them.
+
+## Fitting at this size
+
+Exact NUTS costs about a thousand gradients per draw, and each gradient touches every attempt at every
+quadrature node. On 39k public results it ran for more than an hour per fit on 4 cores without finishing,
+and the full import (about 118k results) would take far longer. `fit.choose_method` therefore uses:
+
+| Condition | Method |
+|---|---|
+| latents ≤ `STEALTH_ROUTING_NUTS_MAX_LATENTS` (20,000) **and** (attempts + aggregates) × nodes ≤ `STEALTH_ROUTING_NUTS_MAX_WORK` (150,000) | exact NUTS, as before |
+| otherwise | low-rank Gaussian VI (`STEALTH_ROUTING_VI_RANK` 32, `STEALTH_ROUTING_VI_STEPS` 6000) |
+
+Measured on the 39k SWE-bench Verified results (4,007 latents): VI took 817 s, and the loss changed by
+0.07% over its last tenth of steps. The diagnostics record that tail change, and a value above 1% means
+the fit has not converged. `--method nuts` still forces the exact sampler.
 
 ## Updating between nightly fits
 

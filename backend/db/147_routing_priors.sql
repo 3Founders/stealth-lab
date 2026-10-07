@@ -1,5 +1,5 @@
--- Migration 136: model-side priors for the recommender (docs/plan_2026-10_priors_library_survey.md §2).
--- Next free number: 138 (137 is its project-B twin). Additive only. Idempotent.
+-- Migration 147: model-side priors for the recommender (docs/plan_2026-10_priors_library_survey.md §2).
+-- Next free number: 149 (148 is its project-B twin; 140-146 are taken on other branches). Additive only. Idempotent.
 --
 --   routing_model_cards        what is public about a model before anyone runs it on our Goals: release /
 --                              cutoff dates, size, open weights, reasoning, list prices, family. The joint

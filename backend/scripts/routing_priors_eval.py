@@ -54,7 +54,7 @@ SPLITS = {"verified": "verified.parquet", "lite": "lite.parquet", "multilingual"
 def cfg(fast: bool) -> RoutingDefaults:
     return RoutingDefaults(draws=128 if fast else 200, nightly_warmup=250 if fast else 400, nightly_chains=2,
                            nightly_samples=150 if fast else 250, latent_dims=3, embedding_dims=0,
-                           nuts_max_latents=10 ** 9)
+                           nuts_max_latents=10 ** 9, gh_eps_nodes=12)
 
 
 # ---------------------------------------------------------------- data
@@ -220,40 +220,43 @@ def family_override(f: Mapping[str, Any], held: Sequence[str], data: Data) -> di
     return out
 
 
-def cold_start(data: Data, held_sets: Sequence[Sequence[str]], conf: RoutingDefaults, label: str) -> dict:
-    per_obs = defaultdict(list)
-    folds = []
-    for k, held in enumerate(held_sets):
-        held = set(held)
-        train = [o for o in data.obs if o["model_key"] not in held]
-        test = [o for o in data.obs if o["model_key"] in held]
-        if not test or not train:
-            continue
-        items = data.items
-        fits = {"cards": fit(train, items, cards=data.cards, features=True, conf=conf, seed=k),
-                "no_cards": fit(train, items, cards=None, features=True, conf=conf, seed=k)}
-        pairs = sorted({(o["model_key"], o["scaffold"]) for o in test})
-        by_item = defaultdict(list)
-        for o in test:
-            by_item[o["goal_id"]].append(o)
-        test_items = [it for it in items.values() if it["goal_id"] in by_item]
-        preds = {
-            "cards": predict(fits["cards"], pairs, test_items, data.cards),
-            "no_cards (old prior)": predict(fits["no_cards"], pairs, test_items, None),
-            "family_average": predict(fits["no_cards"], pairs, test_items, None,
-                                      override=family_override(fits["no_cards"], sorted(held), data)),
-        }
-        col = {p: j for j, p in enumerate(pairs)}
-        row = {it["goal_id"]: i for i, it in enumerate(test_items)}
-        for name, pm in preds.items():
-            for o in test:
-                per_obs[name].append((pm[row[o["goal_id"]], col[(o["model_key"], o["scaffold"])]], float(o["accepted"]),
-                                      o["model_key"]))
-        folds.append({"held_out": sorted(held), "train_obs": len(train), "test_obs": len(test),
-                      "fit_seconds": {n: round(f["seconds"]) for n, f in fits.items()},
-                      "diagnostics": {n: f["diag"] for n, f in fits.items()}})
-        print(f"[{label}] fold {k}: {len(held)} models held out, {len(test)} test obs", flush=True)
-    result = {"folds": folds, "metrics": {}, "rate_error": {}}
+def cold_start_fold(data: Data, held: Sequence[str], conf: RoutingDefaults, k: int, label: str) -> Optional[dict]:
+    """One fold: fit without the held-out models (with and without cards), predict them. Returns the
+    per-observation predictions so folds can run as separate processes and be merged later."""
+    held = set(held)
+    train = [o for o in data.obs if o["model_key"] not in held]
+    test = [o for o in data.obs if o["model_key"] in held]
+    if not test or not train:
+        return None
+    items = data.items
+    fits = {"cards": fit(train, items, cards=data.cards, features=True, conf=conf, seed=k),
+            "no_cards": fit(train, items, cards=None, features=True, conf=conf, seed=k)}
+    pairs = sorted({(o["model_key"], o["scaffold"]) for o in test})
+    test_goals = {o["goal_id"] for o in test}
+    test_items = [it for it in items.values() if it["goal_id"] in test_goals]
+    preds = {
+        "cards": predict(fits["cards"], pairs, test_items, data.cards),
+        "no_cards (old prior)": predict(fits["no_cards"], pairs, test_items, None),
+        "family_average": predict(fits["no_cards"], pairs, test_items, None,
+                                  override=family_override(fits["no_cards"], sorted(held), data)),
+    }
+    col = {p: j for j, p in enumerate(pairs)}
+    row = {it["goal_id"]: i for i, it in enumerate(test_items)}
+    rows = {name: [[float(pm[row[o["goal_id"]], col[(o["model_key"], o["scaffold"])]]), float(o["accepted"]),
+                    o["model_key"]] for o in test] for name, pm in preds.items()}
+    print(f"[{label}] fold {k}: {len(held)} models held out, {len(test)} test obs", flush=True)
+    return {"fold": k, "held_out": sorted(held), "train_obs": len(train), "test_obs": len(test),
+            "fit_seconds": {n: round(f["seconds"]) for n, f in fits.items()},
+            "diagnostics": {n: f["diag"] for n, f in fits.items()}, "rows": rows}
+
+
+def summarize_cold_start(folds: Sequence[dict]) -> dict:
+    per_obs: dict[str, list] = defaultdict(list)
+    for f in folds:
+        for name, rows in f["rows"].items():
+            per_obs[name].extend(rows)
+    result = {"folds": [{k: v for k, v in f.items() if k != "rows"} for f in folds], "metrics": {},
+              "rate_error": {}}
     arrays = {}
     for name, rows in per_obs.items():
         p = np.array([r[0] for r in rows])
@@ -273,6 +276,11 @@ def cold_start(data: Data, held_sets: Sequence[Sequence[str]], conf: RoutingDefa
             ll_o = y * np.log(p_o) + (1 - y) * np.log(1 - p_o)
             result["cards_vs"][other] = {"loglik_gain_per_obs": bootstrap_diff(ll_c, ll_o, m)}
     return result
+
+
+def cold_start(data: Data, held_sets: Sequence[Sequence[str]], conf: RoutingDefaults, label: str) -> dict:
+    folds = [f for k, held in enumerate(held_sets) if (f := cold_start_fold(data, held, conf, k, label))]
+    return summarize_cold_start(folds)
 
 
 # ---------------------------------------------------------------- leave one benchmark out
@@ -601,11 +609,27 @@ def main() -> int:
     ap.add_argument("--fast", action="store_true")
     ap.add_argument("--sims", type=int, default=40)
     ap.add_argument("--temporal-after", default="2025-10-01")
+    ap.add_argument("--fold", type=int, help="lomo: run only this fold, write lomo_fold<K>.json (resumable)")
+    ap.add_argument("--merge", action="store_true", help="lomo: merge the lomo_fold*.json files into lomo.json")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     conf = cfg(args.fast)
     exps = ["lomo", "temporal", "lobo", "routing", "sbc"] if args.exp == "all" else [args.exp]
     data = None
+    if args.merge:
+        import glob as _glob
+
+        folds = []
+        for path in sorted(_glob.glob(os.path.join(args.out, "lomo_fold*.json"))):
+            with open(path, encoding="utf-8") as fh:
+                got = json.load(fh)
+            if got:
+                folds.append(got)
+        result = {"experiment": "lomo", "config": conf.__dict__, **summarize_cold_start(folds)}
+        with open(os.path.join(args.out, "lomo.json"), "w", encoding="utf-8") as fh:
+            json.dump(result, fh, indent=1, default=str)
+        print(f"merged {len(folds)} folds into lomo.json", flush=True)
+        return 0
     for exp in exps:
         t0 = time.time()
         if exp != "sbc" and data is None:
@@ -620,6 +644,12 @@ def main() -> int:
             rng.shuffle(models)
             held = [models[i::args.folds] for i in range(args.folds)]
             sub = _restrict(data, "verified")
+            if args.fold is not None:
+                one = cold_start_fold(sub, held[args.fold], conf, args.fold, "lomo")
+                with open(os.path.join(args.out, f"lomo_fold{args.fold}.json"), "w", encoding="utf-8") as fh:
+                    json.dump(one, fh, default=str)
+                print(f"wrote lomo_fold{args.fold}.json ({round(time.time() - t0)} s)", flush=True)
+                continue
             result = cold_start(sub, held, conf, "lomo")
         elif exp == "temporal":
             sub = _restrict(data, "verified")

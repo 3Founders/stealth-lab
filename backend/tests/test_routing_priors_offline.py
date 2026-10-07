@@ -358,3 +358,24 @@ def test_unit_terms_uses_the_updated_drift_for_a_fitted_model():
     assert np.allclose(base[:, 0], -1.5)
     base0, _ = unit_terms(g, [("m", "s")], {}, now, np.random.default_rng(0))
     assert abs(base0[:, 0].mean()) < 0.1                                              # without it: the prior drift
+
+
+def test_large_data_switches_to_low_rank_vi_and_it_recovers_the_model_order():
+    pytest.importorskip("numpyro")
+    from app.routing import fit
+    from app.routing.config import RoutingDefaults
+
+    cards, theta, obs, meta = _fit_world(n_models=8, n_items=30)
+    conf = RoutingDefaults(draws=64, embedding_dims=0, latent_dims=1, gh_eps_nodes=12, vi_steps=2500,
+                           nuts_max_work=1000)                     # this design is "large" for the test
+    data, info = fit.build_joint_data(obs, meta, {}, {}, conf, cards=cards)
+    assert fit.choose_method(data, conf) == "vi_lowrank"
+    assert fit.choose_method(data, RoutingDefaults(embedding_dims=0, latent_dims=1)) == "nuts"
+    samples, used, diag = fit.run_joint(data, conf, seed=0)
+    assert used == "vi_lowrank" and diag["elbo_tail_rel_change"] < 0.01
+    est = dict(zip(info["models"], samples["theta_hist"][:, :, -1].mean(axis=0)))
+    keys = sorted(theta)
+    # rank agreement between the truth and the VI estimate (Spearman) -- 8 models, 30 items each
+    rt = np.argsort(np.argsort([theta[k] for k in keys]))
+    re_ = np.argsort(np.argsort([est[k] for k in keys]))
+    assert np.corrcoef(rt, re_)[0, 1] > 0.7

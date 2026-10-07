@@ -44,7 +44,13 @@ class RoutingDefaults:
     nightly_warmup: int = field(default_factory=lambda: _i("STEALTH_ROUTING_NIGHTLY_WARMUP", 500))
     nightly_chains: int = field(default_factory=lambda: _i("STEALTH_ROUTING_NIGHTLY_CHAINS", 4))
     nightly_samples: int = field(default_factory=lambda: _i("STEALTH_ROUTING_NIGHTLY_SAMPLES", 500))  # per chain; thinned to S
-    nuts_max_latents: int = field(default_factory=lambda: _i("STEALTH_ROUTING_NUTS_MAX_LATENTS", 20000))  # above: flow VI
+    nuts_max_latents: int = field(default_factory=lambda: _i("STEALTH_ROUTING_NUTS_MAX_LATENTS", 20000))  # above: VI
+    # NUTS cost grows with the data too: attempts x quadrature nodes per gradient, ~1e3 gradients per draw. Above
+    # this much work per gradient a nightly NUTS run takes hours (39k public results took >1 h per fit on 4 cores),
+    # so the fit switches to low-rank Gaussian VI, which needs a few thousand gradients in total.
+    nuts_max_work: int = field(default_factory=lambda: _i("STEALTH_ROUTING_NUTS_MAX_WORK", 150000))
+    vi_steps: int = field(default_factory=lambda: _i("STEALTH_ROUTING_VI_STEPS", 6000))
+    vi_rank: int = field(default_factory=lambda: _i("STEALTH_ROUTING_VI_RANK", 32))
     local_global_draws: int = field(default_factory=lambda: _i("STEALTH_ROUTING_LOCAL_GLOBAL_DRAWS", 16))
     local_warmup: int = field(default_factory=lambda: _i("STEALTH_ROUTING_LOCAL_WARMUP", 300))
     # --- quadrature

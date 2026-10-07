@@ -284,13 +284,27 @@ def latent_count(data: Mapping[str, Any], k: int) -> int:
 
 # ================================================================ joint fit
 
+def gradient_work(data: Mapping[str, Any], cfg: RoutingDefaults) -> int:
+    """Likelihood terms evaluated per gradient: (attempts + aggregates) x quadrature nodes."""
+    return (int(data["n_attempts"]) + int(data.get("n_aggregates", 0))) * int(cfg.gh_eps_nodes)
+
+
+def choose_method(data: Mapping[str, Any], cfg: RoutingDefaults) -> str:
+    """Exact NUTS while it is affordable; low-rank Gaussian VI for large latent counts or large data."""
+    k = int(data["k"])
+    if latent_count(data, k) <= cfg.nuts_max_latents and gradient_work(data, cfg) <= cfg.nuts_max_work:
+        return "nuts"
+    return "vi_lowrank"
+
+
 def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: int = 0,
               num_draws: Optional[int] = None, method: Optional[str] = None) -> tuple[dict[str, np.ndarray], str, dict]:
     """Posterior draws (S of each site / deterministic), the method used, diagnostics."""
     import jax
     import jax.numpy as jnp  # noqa: F401
     from numpyro.infer import MCMC, NUTS, Predictive, SVI, Trace_ELBO
-    from numpyro.infer.autoguide import AutoBNAFNormal
+    from numpyro.infer import init_to_median
+    from numpyro.infer.autoguide import AutoBNAFNormal, AutoLowRankMultivariateNormal
     from numpyro.optim import Adam
 
     from app.routing.model import joint_model
@@ -299,7 +313,7 @@ def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: in
     s_draws = num_draws or cfg.draws
     k = int(data["k"])
     args = (data, k, cfg.gh_eps_nodes)
-    chosen = method or ("nuts" if latent_count(data, k) <= cfg.nuts_max_latents else "flow_vi")
+    chosen = method or choose_method(data, cfg)
     key = jax.random.PRNGKey(seed)
     if chosen == "nuts":
         chains = cfg.nightly_chains
@@ -312,6 +326,19 @@ def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: in
         keep = np.linspace(0, total - 1, s_draws).round().astype(int)
         samples = {k_: np.asarray(v)[keep] for k_, v in raw.items()}
         diag = _nuts_diagnostics(mcmc)
+    elif chosen == "vi_lowrank":
+        guide = AutoLowRankMultivariateNormal(joint_model, rank=cfg.vi_rank, init_loc_fn=init_to_median(num_samples=15))
+        steps = cfg.vi_steps
+        svi = SVI(joint_model, guide, Adam(lambda i: 1e-2 * 0.05 ** (i / steps)), Trace_ELBO())
+        result = svi.run(key, steps, *args, progress_bar=False)
+        post = Predictive(guide, params=result.params, num_samples=s_draws)(jax.random.PRNGKey(seed + 1), *args)
+        samples = {k_: np.asarray(v) for k_, v in post.items()}
+        losses = np.asarray(result.losses)
+        tail = max(steps // 10, 1)
+        diag = {"final_elbo_loss": float(losses[-tail:].mean()), "svi_steps": steps, "rank": cfg.vi_rank,
+                # relative change of the loss over the last tenth: a converged fit is flat
+                "elbo_tail_rel_change": float(abs(losses[-tail:].mean() - losses[-2 * tail:-tail].mean())
+                                              / max(abs(losses[-tail:].mean()), 1e-9))}
     else:
         guide = AutoBNAFNormal(joint_model, num_flows=2)
         svi = SVI(joint_model, guide, Adam(1e-3), Trace_ELBO())

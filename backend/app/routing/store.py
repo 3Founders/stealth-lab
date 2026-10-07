@@ -26,7 +26,7 @@ _OBS_COLUMNS = (
     "latency_ms", "reporter", "recommendation_id", "visibility", "owner_id", "occurred_at",
     "step_order", "step_role",
 )
-# Migration 136/137 columns. Written only when a row carries them, so a database the migration has not
+# Migration 147/148 columns. Written only when a row carries them, so a database the migration has not
 # reached yet keeps accepting live observations unchanged.
 _OPTIONAL_OBS_COLUMNS = ("item_created_at", "dedupe_key")
 
@@ -325,7 +325,7 @@ async def goal_rows(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
 
 
 async def goal_features(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
-    """Structural patch features of Goals that are also public benchmark items (migration 136)."""
+    """Structural patch features of Goals that are also public benchmark items (migration 147)."""
     if not goal_ids:
         return {}
     rows = await _missing_table_safe(pool.fetch(
@@ -369,7 +369,7 @@ async def enqueue_local_refit(pool: Any, goal_id: str, observation_id: str, *, v
         offload=False)   # the payload is one id: nothing to put in object storage
 
 
-# ------------------------------------------------------------------ model-side priors (migration 136)
+# ------------------------------------------------------------------ model-side priors (migration 147)
 
 async def _missing_table_safe(coro: Any) -> list:
     """Reads of the migration-136 tables return nothing on a database the migration has not reached."""
@@ -489,7 +489,7 @@ async def save_model_updates(pool: Any, version: int, updates: Sequence[Mapping[
 
 
 async def model_updates(pool: Any, version: int) -> dict[str, Any]:
-    """{model_key: (S,) drift draws} for the given params version (empty before migration 136)."""
+    """{model_key: (S,) drift draws} for the given params version (empty before migration 147)."""
     from app.routing.model_update import decode
 
     rows = await _missing_table_safe(pool.fetch(
