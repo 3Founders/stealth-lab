@@ -22,6 +22,7 @@ without a fan-out. Keys from `recommend_models` do not have this shape; report t
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Protocol, Sequence
@@ -34,6 +35,10 @@ RoutingError = service.RoutingError
 
 # Keys recommend() adds to the stored constraints; they are bookkeeping, not caller input.
 _BOOKKEEPING = ("check_kind", "previous_attempts", "previous_steps", "remaining_steps")
+# Who the instance was issued to, stored with its decision. The MCP spec's "state handle hijacking" rule: a
+# handle is bound to the authenticated caller server-side, so knowing the key (or seeing the Goal) is not enough.
+# Not in _BOOKKEEPING on purpose: it is carried into every later re-decision of the same instance.
+CALLER_KEY = "_caller"
 
 
 # ------------------------------------------------------------------ candidate providers
@@ -103,11 +108,19 @@ def wants_plan(explicit: Sequence[Any] | None) -> bool:
     return bool(explicit) or any(getattr(p, "configured", lambda: True)() for p in _PROVIDERS)
 
 
-async def model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_id: Optional[str] = None,
-                     candidates: Sequence[Any] = (), check_kind: Optional[str] = None,
-                     constraints: Optional[Mapping[str, Any]] = None,
-                     cfg: RoutingDefaults = DEFAULTS) -> dict[str, Any]:
-    constraints = dict(constraints or {})
+async def model_plan(pool: Any, **kwargs: Any) -> dict[str, Any]:
+    """The plan, plus `plan_ms`: how long computing it took. That is the router's overhead on a find_ways call; it is
+    reported on every status (ok, no_candidates, unavailable) so a slow or failing router is visible, not hidden."""
+    started = time.monotonic()
+    out = await _model_plan(pool, **kwargs)
+    return {**out, "plan_ms": int((time.monotonic() - started) * 1000)}
+
+
+async def _model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_id: Optional[str] = None,
+                      candidates: Sequence[Any] = (), check_kind: Optional[str] = None,
+                      constraints: Optional[Mapping[str, Any]] = None,
+                      cfg: RoutingDefaults = DEFAULTS) -> dict[str, Any]:
+    constraints = {k: v for k, v in dict(constraints or {}).items() if k != CALLER_KEY}
     units, problems = await gather_candidates(pool, scope=scope, goal_id=goal_id, constraints=constraints,
                                               explicit=candidates)
     extra = {"provider_errors": problems} if problems else {}
@@ -118,7 +131,8 @@ async def model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_i
     try:
         rec = await service.recommend(
             pool, goal_id=goal_id, candidates=units, access_scope=scope, procedure_id=procedure_id,
-            check_kind=check_kind, instance_key=new_instance_key(goal_id), constraints=constraints, cfg=cfg)
+            check_kind=check_kind, instance_key=new_instance_key(goal_id),
+            constraints={**constraints, CALLER_KEY: scope.viewer_id}, cfg=cfg)
     except RoutingError as exc:
         return {"status": "unavailable", "reason": str(exc), **extra}
     return {**_compact(rec), **extra}
@@ -168,6 +182,11 @@ async def load_instance(pool: Any, scope: AccessScope, instance_key: str) -> Ins
     decision = await store.instance_decision(pool, goal_id, instance_key)
     if decision is None:
         raise unknown
+    # The binding is the EARLIEST decision's caller, so a later decision made under the same key (recommend_models
+    # lets a caller reuse a key) can neither take the instance over nor clear its owner.
+    owner = await store.instance_issuer(pool, goal_id, instance_key)
+    if owner is not None and not scope.is_unrestricted and scope.viewer_id != owner:
+        raise unknown                                   # someone else's instance: same answer as a missing one
     return Instance(instance_key, goal, decision, await store.instance_attempts(pool, goal_id, instance_key))
 
 

@@ -28,6 +28,9 @@ export type ConsentState =
       authorizationId: string;
       clientName: string;
       clientUri: string | null;
+      /** the app gave no name, so the page can only call it "An app" (clients register themselves, so a name is a
+       * claim, not proof; an empty one is a reason to slow down) */
+      unnamed: boolean;
       redirectUri: string;
       scopes: string[];
       email: string;
@@ -67,6 +70,19 @@ export function safeRedirect(url: string | undefined | null): string | null {
   }
 }
 
+/** True when the app will be sent back to this computer (a desktop client's localhost callback). The page says so:
+ * a web page can prove which domain a client controls, but not which program is listening on a local port, so the
+ * user is the check (MCP spec, "Localhost Redirect URI Risks"). */
+export function isLocalRedirect(uri: string | undefined | null): boolean {
+  if (!uri) return false;
+  try {
+    const host = new URL(uri).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost");
+  } catch {
+    return false;
+  }
+}
+
 export async function loadConsent(authorizationId: string | null): Promise<ConsentState> {
   const client = getSupabase();
   if (!client) return { kind: "not-configured" };
@@ -87,8 +103,9 @@ export async function loadConsent(authorizationId: string | null): Promise<Conse
   return {
     kind: "ask",
     authorizationId: data.authorization_id,
-    clientName: data.client?.name || "An app",
+    clientName: data.client?.name?.trim() || "An app",
     clientUri: data.client?.uri || null,
+    unnamed: !data.client?.name?.trim(),
     redirectUri: data.redirect_uri,
     scopes: (data.scope || "").split(/\s+/).filter(Boolean),
     email: data.user?.email || "",

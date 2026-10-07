@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Mapping, Optional, Protocol, Sequence
 
 from app.providers import adapters
@@ -61,16 +62,23 @@ def _unit(raw: Mapping[str, Any]) -> UnitSpec:
     model, scaffold = str(raw.get("model") or ""), str(raw.get("scaffold") or DIRECT)
     if not model or "|" in model or "|" in scaffold:
         raise ValueError("a unit needs a model (and optional scaffold) without '|'")
-    prices = [raw.get(k) for k in ("input_per_mtok", "output_per_mtok", "per_call_usd")]
+    prices = [raw.get(k) for k in ("input_per_mtok", "output_per_mtok", "per_call_usd", "cached_input_per_mtok",
+                                         "cache_write_input_per_mtok")]
     if any(p is not None and float(p) < 0 for p in prices):
         raise ValueError(f"unit {model}: prices cannot be negative")
     if (raw.get("input_per_mtok") is None) != (raw.get("output_per_mtok") is None):
         raise ValueError(f"unit {model}: give both input_per_mtok and output_per_mtok, or neither")
+    tier = raw.get("tier")
+    if tier is not None and not (isinstance(tier, str) and re.fullmatch(r"[a-z0-9_-]{1,32}", tier)):
+        raise ValueError(f"unit {model}: tier must be 1-32 characters of a-z, 0-9, '_' or '-'")
     return UnitSpec(
-        model=model, scaffold=scaffold, provider_model=raw.get("provider_model"),
+        tier=tier, model=model, scaffold=scaffold, provider_model=raw.get("provider_model"),
         input_per_mtok=None if raw.get("input_per_mtok") is None else float(raw["input_per_mtok"]),
         output_per_mtok=None if raw.get("output_per_mtok") is None else float(raw["output_per_mtok"]),
         per_call_usd=None if raw.get("per_call_usd") is None else float(raw["per_call_usd"]),
+        cached_input_per_mtok=None if raw.get("cached_input_per_mtok") is None else float(raw["cached_input_per_mtok"]),
+        cache_write_input_per_mtok=(None if raw.get("cache_write_input_per_mtok") is None
+                                    else float(raw["cache_write_input_per_mtok"])),
         path=raw.get("path"), max_output_tokens=raw.get("max_output_tokens"))
 
 

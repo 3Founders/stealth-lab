@@ -17,11 +17,13 @@ logged by the MCP layer's tracing only. Those must land before a shared key serv
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Optional, Sequence
 
 from app.providers import adapters, registry
 from app.providers.secrets import resolve_secret
-from app.providers.types import (CallRequest, CallResult, Connection, ProviderCallDenied, UnitSpec, worst_case_cost)
+from app.providers.types import (CallRequest, CallResult, Connection, ProviderCallDenied, ProviderCallFailed, UnitSpec,
+                                 worst_case_cost)
 from app.providers.url_guard import check_endpoint
 from app.services.access import AccessScope
 from app.services.classification import DataClass
@@ -65,9 +67,39 @@ def _validate(request: CallRequest) -> None:
         raise ProviderCallDenied(f"unknown data_class {request.data_class!r}")
 
 
+def governing_org(conn: Connection, scope: AccessScope, requested_org: Optional[str], *, governed: bool) -> Optional[str]:
+    """The ONE organisation whose policy, budget and ledger this call falls under, or None when none applies.
+
+    governed=False is a single-operator deployment (DEPLOYMENT_MODE=single_user): the operator is the only principal,
+    so there is no organisation to govern. In a shared deployment nothing is guessed: an org-owned connection is
+    governed by its owner; otherwise the caller's organisation is used only when they have exactly one or name it
+    explicitly, and a caller with none may use only a connection of their own."""
+    if not governed:
+        return None
+    member_orgs = tuple(scope.org_ids)
+    if conn.owner.startswith("org:"):
+        owner = conn.owner[4:]
+        if requested_org and requested_org != owner:
+            raise ProviderCallDenied(f"connection {conn.connection_id!r} belongs to a different organization")
+        return owner
+    if requested_org:
+        if requested_org not in member_orgs:
+            raise ProviderCallDenied("you are not a member of that organization")
+        return requested_org
+    if len(member_orgs) == 1:
+        return member_orgs[0]
+    if len(member_orgs) > 1:
+        raise ProviderCallDenied("you belong to several organizations; say which one pays with org_id")
+    if conn.owner.startswith("user:"):
+        return None
+    raise ProviderCallDenied(f"connection {conn.connection_id!r} is billed to an organization and you belong to none")
+
+
 async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallRequest, *,
                     actor: Optional[str] = None, tenant_id: Optional[str] = None,
-                    max_cost_usd: Optional[float] = None) -> CallResult:
+                    max_cost_usd: Optional[float] = None, org_id: Optional[str] = None, governed: bool = False,
+                    tool: str = "call_model", instance_key: Optional[str] = None) -> CallResult:
+    started = time.monotonic()
     _validate(request)
     conn, spec = await find_unit(scope, unit)
     if request.data_class not in conn.allowed_data_classes:
@@ -95,7 +127,50 @@ async def call_unit(pool: Any, scope: AccessScope, unit: str, request: CallReque
         raise ProviderCallDenied(f"connection {conn.connection_id!r} has unsupported kind {conn.kind!r}")
     await check_endpoint(conn.base_url, allow_http_loopback=conn.allow_http_loopback)
     secret = await resolve_secret(conn.credential_ref)
-    return await adapter.call(conn, spec, request, secret)
+
+    org = governing_org(conn, scope, org_id, governed=governed)
+    if org is None:
+        return await adapter.call(conn, spec, request, secret)
+    if not actor:
+        raise ProviderCallDenied("a governed call needs an identified caller")
+    from app.services import org_governance as gov
+
+    try:
+        reservation = await gov.reserve_call(
+            pool, org_id=org, actor_subject=actor, tool=tool, unit=unit, connection_id=conn.connection_id,
+            provider=conn.provider, model=spec.model, scaffold=spec.scaffold, data_class=request.data_class,
+            instance_key=instance_key, worst_case_usd=worst_case_cost(spec, request))
+    except gov.GovernanceError as exc:
+        if exc.code in gov.DENIAL_CODES:             # a policy refusal: keep it for the organisation's admins
+            try:
+                await gov.record_denial(pool, org_id=org, actor_subject=actor, tool=tool, unit=unit,
+                                        provider=conn.provider, model=spec.model, data_class=request.data_class,
+                                        error=exc)
+            except gov.GovernanceError as record_error:
+                raise ProviderCallFailed(f"the call was refused ({exc}) and the refusal could not be recorded: "
+                                         f"{record_error}") from exc
+        raise ProviderCallDenied(str(exc)) from exc
+    gate_ms = int((time.monotonic() - started) * 1000)      # everything OUR code did before the provider was called
+    try:
+        result = await adapter.call(conn, spec, request, secret)
+    except BaseException as exc:
+        try:
+            await gov.fail_call(pool, reservation, error_type=type(exc).__name__)
+        except gov.GovernanceError as release_error:
+            raise ProviderCallFailed(f"the call failed and its budget hold could not be released: {release_error}") from exc
+        raise
+    try:
+        await gov.settle_call(
+            pool, reservation, tokens_input_fresh=result.tokens_in, tokens_cache_read=result.tokens_cache_read,
+            tokens_cache_write=result.tokens_cache_write, tokens_output=result.tokens_out, cost_usd=result.cost_usd,
+            cost_source=result.cost_source, latency_ms=result.latency_ms,
+            gate_ms=gate_ms, tier=spec.tier,
+            prices={"input": spec.input_per_mtok, "output": spec.output_per_mtok,
+                    "cache_read": spec.cached_input_per_mtok, "cache_write": spec.cache_write_input_per_mtok})
+    except gov.GovernanceError as exc:
+        raise ProviderCallFailed(f"the call completed but its cost could not be recorded, so the result is withheld: "
+                                 f"{exc}") from exc
+    return result
 
 
 async def sync_prices(pool: Any, connections: Sequence[Connection], *, apply: bool = True) -> list[dict[str, Any]]:

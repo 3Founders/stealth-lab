@@ -102,8 +102,19 @@ def find(**kw):
     return asyncio.run(srv.find_ways("add a docx export to the report page", _ctx(), **kw))
 
 
-def test_default_is_the_full_reply_unchanged(tool):
-    assert find() == _reply()
+def test_default_is_the_full_reply_plus_the_untrusted_content_notice(tool):
+    body = json.loads(find())
+    notice = body.pop("content_trust")
+    assert body == json.loads(_reply()) and "untrusted data" in notice
+
+
+def test_the_notice_is_only_on_replies_that_carry_contributed_text():
+    assert srv._mark_untrusted(json.dumps({"outcome": "no_match", "candidates": []})) == json.dumps(
+        {"outcome": "no_match", "candidates": []})
+    assert srv._mark_untrusted("REFUSED: x") == "REFUSED: x"
+    assert srv._mark_untrusted(json.dumps({"outcome": "refused", "governor": {}})).count("content_trust") == 0
+    ambiguous = json.loads(srv._mark_untrusted(json.dumps({"outcome": "ambiguous", "candidates": [{"goal": "a"}]})))
+    assert "content_trust" in ambiguous
 
 
 def test_summary_then_full_costs_one_lookup(tool):

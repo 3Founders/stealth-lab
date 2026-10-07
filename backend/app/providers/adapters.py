@@ -94,9 +94,21 @@ class OpenAICompatAdapter:
             raise ProviderCallFailed(f"{conn.connection_id}: empty reply (finish_reason=length): the model used its "
                                      "token budget before answering; raise max_tokens")
         usage = data.get("usage") or {}
-        tokens_in, tokens_out = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        prompt, tokens_out = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        # The OpenAI shape counts cached tokens INSIDE prompt_tokens and reports them as a subset; split them so
+        # `tokens_in` is always fresh input (Anthropic-style endpoints already report them separately).
+        cached = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                  if isinstance(usage.get("prompt_tokens_details"), dict) else None)
+        cached = cached if isinstance(cached, int) and cached >= 0 else None
+        tokens_in = prompt if prompt is None or cached is None else max(prompt - cached, 0)
+        reported = usage.get("cost")
+        if isinstance(reported, (int, float)) and not isinstance(reported, bool) and reported >= 0:
+            cost, source = float(reported), "provider"
+        else:
+            cost = tokens_cost(spec, tokens_in, tokens_out, cached)
+            source = "declared" if cost is not None else None
         return CallResult(unit=spec.unit, connection_id=conn.connection_id, text=text, tokens_in=tokens_in,
-                          tokens_out=tokens_out, cost_usd=tokens_cost(spec, tokens_in, tokens_out),
+                          tokens_out=tokens_out, tokens_cache_read=cached, cost_usd=cost, cost_source=source,
                           latency_ms=_ms(t0), finish_reason=finish)
 
 
@@ -164,8 +176,9 @@ class A2AAdapter:
         text, state = _reply_text(result)
         if state in _FAILED_STATES:
             raise ProviderCallFailed(f"{conn.connection_id}: the agent's task ended {state}")
-        return CallResult(unit=spec.unit, connection_id=conn.connection_id, text=text,
-                          cost_usd=tokens_cost(spec, None, None), latency_ms=_ms(t0),
+        cost = tokens_cost(spec, None, None)
+        return CallResult(unit=spec.unit, connection_id=conn.connection_id, text=text, cost_usd=cost,
+                          cost_source="declared" if cost is not None else None, latency_ms=_ms(t0),
                           state=None if state in (None, *_OK_STATES) else state)
 
 

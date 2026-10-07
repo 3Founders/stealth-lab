@@ -1,0 +1,61 @@
+# Secret scanning on every pull request; dependency audit and SBOMs weekly and on demand.
+#
+# Written, not yet run. The audit jobs are deliberately blocking (no continue-on-error): the repository has open
+# dependency alerts, so the first scheduled run is expected to fail until they are triaged. They run on a schedule and by
+# hand, not on every push, so they do not block unrelated work.
+name: security
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"     # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  python-audit:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pip-audit cyclonedx-bom
+      - run: pip-audit -r backend/requirements.txt
+      - run: cyclonedx-py requirements backend/requirements.txt -o sbom-backend.cdx.json
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom-backend, path: sbom-backend.cdx.json }
+
+  node-audit:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [prod_frontend, packaging/npm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: npm ci
+        working-directory: ${{ matrix.dir }}
+      - run: npm audit --audit-level=high
+        working-directory: ${{ matrix.dir }}
+      - run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.cdx.json
+        working-directory: ${{ matrix.dir }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ strategy.job-index }}
+          path: ${{ matrix.dir }}/sbom.cdx.json

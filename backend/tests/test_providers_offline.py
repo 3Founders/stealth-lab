@@ -301,6 +301,15 @@ def test_invalid_connections_are_refused_with_a_reason(patch, message):
         registry.connection_from_dict(_raw(**patch))
 
 
+def test_a_tier_is_a_short_lowercase_label_or_absent():
+    raw = _raw(units=[{"model": "m1", "tier": "flagship"}, {"model": "m2"}])
+    conn = registry.connection_from_dict(raw)
+    assert [u.tier for u in conn.units] == ["flagship", None]
+    for bad in ("Flagship", "", "x" * 33, "has space", 3):
+        with pytest.raises(ValueError, match="tier must be"):
+            registry.connection_from_dict(_raw(units=[{"model": "m1", "tier": bad}]))
+
+
 def test_visibility_rules():
     platform, org_a = _conn(cid="p"), _conn(cid="a", owner="org:org-a")
     org_b, mine, theirs = _conn(cid="b", owner="org:org-b"), _conn(cid="m", owner="user:u1"), _conn(cid="t", owner="user:u2")

@@ -52,9 +52,21 @@ describe("loadConsent — what /oauth/consent shows", () => {
       user: { id: "u1", email: "a@b.c" }, scope: "openid email",
     }, error: null });
     expect(await loadConsent("auth-1")).toEqual({
-      kind: "ask", authorizationId: "auth-1", clientName: "Claude", clientUri: "https://claude.ai",
+      kind: "ask", authorizationId: "auth-1", clientName: "Claude", clientUri: "https://claude.ai", unnamed: false,
       redirectUri: "http://localhost:3334/callback", scopes: ["openid", "email"], email: "a@b.c",
     });
+  });
+
+  it("flags an app that registered without a name", async () => {
+    mockGetSession.mockResolvedValue(SIGNED_IN);
+    for (const client of [{ id: "c2", name: "", uri: "", logo_uri: "" }, { id: "c3", name: "   ", uri: "" }, undefined]) {
+      mockDetails.mockResolvedValue({ data: {
+        authorization_id: "auth-2", redirect_uri: "http://localhost:8787/callback", client,
+        user: { id: "u1", email: "a@b.c" }, scope: "openid",
+      }, error: null });
+      const s = await loadConsent("auth-2");
+      expect(s).toMatchObject({ kind: "ask", clientName: "An app", unnamed: true });
+    }
   });
 
   it("redirects straight back when the user already approved this app", async () => {

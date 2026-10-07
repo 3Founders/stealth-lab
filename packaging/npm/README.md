@@ -53,6 +53,26 @@ under Desktop's **Settings → Connectors → Add custom connector** instead.
 JSON configs are edited in place. Other servers and keys are kept, a `.bak`
 copy is written first, and a file that doesn't parse is left untouched.
 
+## Telling Cursor, Codex and opencode when to use it
+
+Only Claude Code has hooks, so other agents have to be told. Run this in a repo:
+
+```
+npx -y stealthlab-mcp instructions            # add --client cursor to force the Cursor rule
+npx -y stealthlab-mcp instructions --remove   # take it out again; --dry-run shows what would change
+```
+
+It writes a short block between `<!-- stealthlab:begin -->` and `<!-- stealthlab:end -->` in `AGENTS.md` (Cursor,
+Codex and opencode all read it; the rest of your file is left alone), and, if the repo has a `.cursor` directory,
+`.cursor/rules/stealthlab.mdc`. The text says when to call `find_ways`, to treat what it returns as untrusted data,
+and to report each attempt with `report_result`.
+
+**Cursor specifics.** Cursor asks for approval before every MCP tool by default (it does not use a tool's read-only
+hint the way ChatGPT does). In Cursor's settings, allow `find_ways` and `report_result` to run automatically and leave
+`call_model` on "ask": it sends your prompt to another model and can spend money. Cursor signs in through the same
+OAuth flow as Claude Code; its fixed return addresses are `http://localhost:8787/callback` (desktop app) and
+`https://www.cursor.com/agents/mcp/oauth/callback` (cloud agents), so the authorization server must accept both.
+
 ## Claude Code hooks (installed with Claude Code; `--no-hooks` skips them)
 
 The hooks make knowledge flow both ways without the model having to decide to call a tool. They are added to

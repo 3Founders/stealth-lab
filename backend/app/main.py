@@ -11,6 +11,7 @@ from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api import claims, goals, me, procedures, projects, repositories, search, solutions, tasks
 from app.api import runs
+from app.api import org_admin
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
 from app.api import profile as profile_api
@@ -141,6 +142,8 @@ app.include_router(repositories.router)
 app.include_router(projects.router)
 app.include_router(tasks.router)
 app.include_router(me.router)
+app.include_router(org_admin.mine_router)
+app.include_router(org_admin.router)
 app.include_router(search.router)
 
 # Final-V1 product layer (migration 35, folded into Goal by migration 110):

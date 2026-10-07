@@ -20,6 +20,7 @@ import { runPromptHook } from "../lib/hook.mjs";
 import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs";
 import { runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
 import { runCaptureHook, runCaptureWorker } from "../lib/capture_hook.mjs";
+import { applyInstructions } from "../lib/instructions.mjs";
 
 const pkg = readPackage();
 const UA = `stealthlab-mcp/${pkg.version} node/${process.versions.node}`;
@@ -31,6 +32,10 @@ Usage:
   npx -y stealthlab-mcp install [options]    register StealthLab with your agents
   stealthlab-mcp uninstall [--client <id>]   remove it again
   stealthlab-mcp doctor                      check the hosted server is reachable
+  stealthlab-mcp instructions [--dir <repo>] [--client cursor] [--remove] [--dry-run]
+                                             tell the agents in a repo when to use StealthLab: a marked block in
+                                             AGENTS.md (Cursor, Codex, opencode read it) and, for Cursor,
+                                             .cursor/rules/stealthlab.mdc. Edit or remove it any time.
   stealthlab-mcp login --token <token>       save a token (only report_discovery needs one)
   stealthlab-mcp logout                      forget the saved token
   stealthlab-mcp config                      print the saved config (token masked)
@@ -199,6 +204,8 @@ async function main() {
         url: { type: "string" },
         token: { type: "string" },
         "dry-run": { type: "boolean" },
+        dir: { type: "string" },
+        remove: { type: "boolean" },
         "no-hooks": { type: "boolean" },
         "with-exec": { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -221,6 +228,13 @@ async function main() {
       return cmdUninstall(v);
     case "doctor":
       return cmdDoctor(v);
+    case "instructions": {
+      const dir = v.dir || process.cwd();
+      for (const r of applyInstructions(dir, { clients: v.client || [], remove: !!v.remove, dryRun: !!v["dry-run"] })) {
+        out(`${r.result.padEnd(12)} ${r.file}`);
+      }
+      return;
+    }
     case "login":
       if (!v.token) die("pass --token <token>", 2);
       writeConfig({ token: v.token });

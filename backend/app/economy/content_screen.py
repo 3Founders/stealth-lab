@@ -2,7 +2,7 @@
 Automated admission for contributions (submit_way): the gate that stands in for
 human review while there is none.
 
-Two checks, in this order, both before anything is written:
+Four checks, in this order, all before anything is written:
 
   1. No links. A contributed Goal or way is read by other people's agents, which
      follow what they read; a URL is the cheapest way to point them somewhere
@@ -10,6 +10,12 @@ Two checks, in this order, both before anything is written:
      hardest thing for a reader to judge. Contributions are plain instructions, so
      any link refuses the whole submission. Checked with a pattern, not a model,
      because it must never be talked out of it.
+  1a. No hidden text. Zero-width, bidi-override and Unicode "tag" characters are invisible to a reviewer and to this
+     screen's model but not to the agent that later reads the way (ASCII smuggling), and no legitimate procedure
+     needs them. A pattern, for the same reason as the links.
+  1b. No stock prompt-injection phrases ("ignore the previous instructions", "reveal your system prompt", ...).
+     Defence in depth, not the judge: the list is short and specific so ordinary engineering text does not trip it,
+     and an attacker who avoids it still meets the LLM screen below.
   2. An LLM screen for malicious and NSFW content -- judgment a pattern cannot
      make ("delete the build cache" vs "delete the victim's backups"). The model
      reads the submission as data inside <untrusted_data> markers and answers
@@ -54,6 +60,45 @@ def find_links(texts: Iterable[str]) -> list[str]:
         for rx in _LINK_RES:
             for m in rx.finditer(text or ""):
                 hit = m.group(0)
+                if hit not in found:
+                    found.append(hit)
+    return found
+
+
+# U+200B-200F zero-width and direction marks, U+202A-202E and U+2066-2069 bidi overrides and isolates, U+2060-2064 word
+# joiner and invisible operators, U+FEFF BOM, U+00AD soft hyphen, U+180E, U+E0000-E007F Unicode tags, and C0/C1 controls
+# other than tab, newline and carriage return.
+_HIDDEN_RE = re.compile(
+    "[​-‏‪-‮⁠-⁤⁦-⁩﻿­᠎"
+    "\U000e0000-\U000e007f\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+_INJECTION_RES = (
+    re.compile(r"\b(ignore|disregard|forget|override)\b[^.\n]{0,25}\b(previous|prior|above|earlier|preceding)\b"
+               r"[^.\n]{0,25}\b(instructions?|prompts?|rules?|guidelines?|directions?|messages?|context)\b", re.I),
+    re.compile(r"\b(reveal|print|show|output|repeat|leak|disclose)\b[^.\n]{0,30}\b(your|the)\s+"
+               r"(system|developer|hidden)\s+(prompt|message|instructions?)\b", re.I),
+    re.compile(r"\b(developer|jailbreak|DAN)\s+mode\b", re.I),
+    re.compile(r"\b(do not|don't|never)\s+(tell|inform|notify|alert|show)\s+the\s+user\b", re.I),
+)
+
+
+def find_hidden_text(texts: Iterable[str]) -> list[str]:
+    """Each distinct invisible or control character found, as 'U+XXXX' (in order)."""
+    found: list[str] = []
+    for text in texts:
+        for m in _HIDDEN_RE.finditer(text or ""):
+            label = f"U+{ord(m.group(0)):04X}"
+            if label not in found:
+                found.append(label)
+    return found
+
+
+def find_injection_phrases(texts: Iterable[str]) -> list[str]:
+    found: list[str] = []
+    for text in texts:
+        for rx in _INJECTION_RES:
+            for m in rx.finditer(text or ""):
+                hit = m.group(0)[:80]
                 if hit not in found:
                     found.append(hit)
     return found
@@ -113,16 +158,29 @@ def _completion_providers() -> list:
 
 
 def _render(submission: dict[str, Any]) -> str:
-    return "<untrusted_data>\n" + json.dumps(submission, ensure_ascii=False, indent=1)[:24_000] + "\n</untrusted_data>"
+    # `<` and `>` are escaped inside the data so a submission cannot write its own closing marker and step out of
+    # <untrusted_data>; as JSON text the meaning is unchanged.
+    body = json.dumps(submission, ensure_ascii=False, indent=1)[:24_000]
+    body = body.replace("<", "\\u003c").replace(">", "\\u003e")
+    return "<untrusted_data>\n" + body + "\n</untrusted_data>"
 
 
 async def screen_contribution(submission: dict[str, Any], *, providers: Optional[list] = None) -> ScreenVerdict:
     """Links first (no model call if any), then the LLM screen. Never raises."""
     from app.services.llm_json import parse_json_object
 
-    links = find_links(flatten_text(submission))
+    texts = flatten_text(submission)
+    links = find_links(texts)
     if links:
         return ScreenVerdict(False, "contributions may not contain links", ["link"], links)
+    hidden = find_hidden_text(texts)
+    if hidden:
+        return ScreenVerdict(False, "contributions may not contain invisible or control characters "
+                                    f"({', '.join(hidden[:5])})", ["hidden_text"])
+    phrases = find_injection_phrases(texts)
+    if phrases:
+        return ScreenVerdict(False, "contributions may not address the reading agent or its instructions "
+                                    f"(found: {phrases[0]!r})", ["injection"])
 
     providers = _completion_providers() if providers is None else providers
     if not providers:

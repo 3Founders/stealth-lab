@@ -2,7 +2,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
-import { SCOPE_TEXT, decide, loadConsent, type ConsentState } from "@/lib/oauth-consent";
+import { SCOPE_TEXT, decide, isLocalRedirect, loadConsent, type ConsentState } from "@/lib/oauth-consent";
 
 // Supabase's OAuth 2.1 server sends MCP clients' sign-ins here (the
 // "authorization path" in the Supabase dashboard). See lib/oauth-consent.ts.
@@ -71,6 +71,19 @@ function ConsentInner() {
         It will return to <code>{state.redirectUri}</code>
         {state.clientUri && <> ({state.clientUri})</>}. You can remove its access at any time under <a href="/account/connections">Account → Connected apps</a>.
       </p>
+
+      {state.unnamed && (
+        <p className="small dim">
+          This app didn&rsquo;t say what it is. Anyone can register an app, so only allow it if you just started
+          this connection yourself.
+        </p>
+      )}
+      {isLocalRedirect(state.redirectUri) && (
+        <p className="small dim">
+          This sends the app back to a program on <b>this computer</b>. Only allow it if you just started the
+          connection yourself from {state.clientName}.
+        </p>
+      )}
 
       <div className="cform-submit">
         <button className="btn-ink" type="button" onClick={() => answer(true)} disabled={busy}>

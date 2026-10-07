@@ -100,12 +100,35 @@ def test_a_routing_error_becomes_a_status_not_an_exception(monkeypatch):
         raise service.RoutingError("goal not found")
     monkeypatch.setattr(service, "recommend", fake)
     out = run(plan.model_plan(None, scope=SCOPE, goal_id=GOAL, candidates=["a|h"]))
-    assert out == {"status": "unavailable", "reason": "goal not found"}
+    assert {k: v for k, v in out.items() if k != "plan_ms"} == {"status": "unavailable", "reason": "goal not found"}
+    assert isinstance(out["plan_ms"], int) and out["plan_ms"] >= 0                # the router's time is reported even on failure
 
 
 def test_not_ready_passes_through():
     assert plan._compact({"status": "not_ready", "reason": "no fitted model yet"}) == {
         "status": "not_ready", "reason": "no fitted model yet"}
+
+
+def test_the_routers_plan_time_is_stored_with_the_find_ways_record(monkeypatch):
+    import app.mcp_server.server as srv
+    from app.services import search_group
+    seen = {}
+
+    class Log:
+        async def execute(self, sql, *args):
+            seen["detail"] = args[-1]
+
+    async def log_pool(pool, key, **kw):
+        return Log()
+    monkeypatch.setattr(search_group, "pool_for_log", log_pool)
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: SimpleNamespace(viewer_id="u1"))
+    ctx = SimpleNamespace(request_context=SimpleNamespace(lifespan_context={"pool": object()}))
+    reply = json.dumps({"outcome": "resolved", "model_plan": {"status": "ok", "plan_ms": 7}})
+    run(srv._record_find_ways(ctx, "q", reply, {}, 123.4))
+    assert seen["detail"]["plan_ms"] == 7 and seen["detail"]["total_ms"] == 123.4 and seen["detail"]["outcome"] == "resolved"
+    seen.clear()
+    run(srv._record_find_ways(ctx, "q", json.dumps({"outcome": "no_match"}), {}, 5.0))
+    assert "plan_ms" not in seen["detail"]                                            # no plan, no invented number
 
 
 def test_goal_of_instance_rejects_foreign_keys():
@@ -240,11 +263,74 @@ def test_load_instance_returns_the_stored_state(monkeypatch):
 
     async def attempts(pool, goal_id, key):
         return [{"model_key": "a", "scaffold": "h", "accepted": False, "check_kind": "tests", "attempt_index": 0}]
+    async def issuer(pool, goal_id, key):
+        return None
     monkeypatch.setattr(store, "visible_goal", goal)
     monkeypatch.setattr(store, "instance_decision", decision)
     monkeypatch.setattr(store, "instance_attempts", attempts)
+    monkeypatch.setattr(store, "instance_issuer", issuer)
     inst = run(plan.load_instance(None, SCOPE, f"{GOAL}.abc"))
     assert inst.procedure_id == PROC and len(inst.attempts) == 1
+
+
+def _issued_to(monkeypatch, who):
+    async def goal(pool, goal_id, scope):
+        return {"visibility": "public", "owner_id": None}
+
+    async def decision(pool, goal_id, key):
+        return {"id": "rec-1", "goal_id": goal_id, "procedure_id": PROC, "candidates": ["a|h"], "ladder": ["a|h"],
+                "constraints": {}, "visibility": "public", "owner_id": None}
+
+    async def attempts(pool, goal_id, key):
+        return []
+
+    async def issuer(pool, goal_id, key):
+        return who
+    monkeypatch.setattr(store, "visible_goal", goal)
+    monkeypatch.setattr(store, "instance_decision", decision)
+    monkeypatch.setattr(store, "instance_attempts", attempts)
+    monkeypatch.setattr(store, "instance_issuer", issuer)
+
+
+def test_an_instance_belongs_to_the_caller_it_was_issued_to(monkeypatch):
+    _issued_to(monkeypatch, "u1")
+    assert run(plan.load_instance(None, AccessScope.for_user("u1"), f"{GOAL}.abc")).procedure_id == PROC
+    assert run(plan.load_instance(None, AccessScope.for_org_member("u1", ["o"]), f"{GOAL}.abc"))
+    assert run(plan.load_instance(None, AccessScope.unrestricted(), f"{GOAL}.abc"))              # internal / stdio
+    for other in (AccessScope.for_user("u2"), AccessScope.anonymous()):
+        with pytest.raises(service.RoutingError, match="unknown instance_key"):
+            run(plan.load_instance(None, other, f"{GOAL}.abc"))
+
+
+def test_an_instance_issued_to_nobody_stays_open(monkeypatch):
+    _issued_to(monkeypatch, None)
+    assert run(plan.load_instance(None, AccessScope.for_user("u2"), f"{GOAL}.abc"))
+
+
+def test_the_plan_stamps_the_real_caller_and_ignores_one_supplied_by_the_agent(monkeypatch):
+    seen = {}
+
+    async def fake(pool, **kw):
+        seen.update(kw)
+        return _rec(["a|h"], instance_key=kw["instance_key"])
+    monkeypatch.setattr(service, "recommend", fake)
+    run(plan.model_plan(None, scope=AccessScope.for_user("u1"), goal_id=GOAL, candidates=["a|h"],
+                        constraints={"_caller": "someone-else", "max_rungs": 2}))
+    assert seen["constraints"] == {"max_rungs": 2, "_caller": "u1"}
+
+
+def test_a_re_decision_keeps_the_owner(monkeypatch):
+    rows = _record(monkeypatch)
+    seen = {}
+
+    async def fake(pool, **kw):
+        seen.update(kw)
+        return _rec(["c|h"], instance_key=kw["instance_key"])
+    monkeypatch.setattr(service, "recommend", fake)
+    inst = _instance()
+    inst.decision["constraints"]["_caller"] = "u1"
+    run(plan.report_result(None, scope=SCOPE, instance=inst, accepted=False))
+    assert seen["constraints"].get("_caller") == "u1" and rows
 
 
 # ------------------------------------------------------------------ MCP surface
@@ -299,3 +385,15 @@ def test_a_plan_failure_never_breaks_find_ways(monkeypatch):
     reply = json.dumps({"outcome": "resolved", "procedures": [{"goal_id": GOAL}]})
     body = json.loads(_attach(reply, candidates=["a|h"]))
     assert body["outcome"] == "resolved" and body["model_plan"]["status"] == "unavailable"
+
+
+def test_stored_json_is_read_whether_or_not_it_was_double_encoded():
+    # record_decision writes json.dumps() text through a pool whose jsonb codec encodes again, so the column holds a
+    # JSON string of JSON text; readers must give the same dict for that, for a plain dict, and for plain text.
+    value = {"_caller": "u1", "check_kind": "tests"}
+    once = json.dumps(value)
+    assert store._json_value(value) == value
+    assert store._json_value(once) == value
+    assert store._json_value(json.dumps(once)) == value
+    assert store._json_value(once.encode()) == value
+    assert store._json_value(None) is None

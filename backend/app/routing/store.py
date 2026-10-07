@@ -115,7 +115,13 @@ async def goal_observations(pool: Any, goal_id: str) -> list[dict]:
 
 
 def _json_value(value: Any) -> Any:
-    return json.loads(value) if isinstance(value, (str, bytes)) else value
+    """A jsonb value as Python. These routing tables are written with json.dumps() through a pool whose jsonb codec
+    already encodes, so a stored value is a JSON *string* holding the JSON text; unwrap until it is not a string
+    (twice at most), which also reads correctly if the writers are ever fixed."""
+    for _ in range(2):
+        if isinstance(value, (str, bytes)):
+            value = json.loads(value)
+    return value
 
 
 async def instance_decision(pool: Any, goal_id: str, instance_key: str) -> Optional[dict]:
@@ -132,6 +138,19 @@ async def instance_decision(pool: Any, goal_id: str, instance_key: str) -> Optio
     for key in ("candidates", "ladder", "constraints"):
         out[key] = _json_value(out[key])
     return out
+
+
+async def instance_issuer(pool: Any, goal_id: str, instance_key: str) -> Optional[str]:
+    """Who an instance was first issued to: the `_caller` stored with its EARLIEST decision (None when it was
+    issued to nobody in particular, e.g. by recommend_models without a plan)."""
+    log = await _goal_log_pool(pool, goal_id)
+    raw = await log.fetchval(       # parsed in Python: `constraints->>'_caller'` returns NULL on the double-encoded rows
+        "SELECT constraints FROM routing_decisions "
+        "WHERE goal_id = $1::uuid AND instance_key = $2 AND step_order IS NULL ORDER BY created_at ASC LIMIT 1",
+        str(goal_id), instance_key)
+    constraints = _json_value(raw) if raw is not None else None
+    caller = constraints.get("_caller") if isinstance(constraints, dict) else None
+    return None if caller is None else str(caller)
 
 
 async def instance_attempts(pool: Any, goal_id: str, instance_key: str) -> list[dict]:

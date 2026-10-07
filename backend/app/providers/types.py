@@ -38,8 +38,11 @@ class UnitSpec:
     provider_model: Optional[str] = None        # the id the endpoint expects, when it differs
     input_per_mtok: Optional[float] = None      # USD per million tokens (feeds routing_prices)
     output_per_mtok: Optional[float] = None
+    cached_input_per_mtok: Optional[float] = None   # price of tokens read from the provider's prompt cache
+    cache_write_input_per_mtok: Optional[float] = None   # price of tokens written to the prompt cache
     per_call_usd: Optional[float] = None        # agents that bill per task rather than per token
     path: Optional[str] = None                  # appended to the connection's base_url
+    tier: Optional[str] = None                  # admin label for comparisons: "light", "standard", "flagship", ...
     max_output_tokens: Optional[int] = None
 
     @property
@@ -83,9 +86,12 @@ class CallResult:
     unit: str
     connection_id: str
     text: str
-    tokens_in: Optional[int] = None
+    tokens_in: Optional[int] = None             # FRESH input only: never includes cache reads or writes
     tokens_out: Optional[int] = None
+    tokens_cache_read: Optional[int] = None
+    tokens_cache_write: Optional[int] = None
     cost_usd: Optional[float] = None
+    cost_source: Optional[str] = None           # "provider" (reported by the endpoint) | "declared" (tokens x declared price)
     latency_ms: Optional[int] = None
     finish_reason: Optional[str] = None
     state: Optional[str] = None                 # agents: the task state when it is not simply "completed"
@@ -112,12 +118,17 @@ def worst_case_cost(spec: UnitSpec, request: CallRequest) -> Optional[float]:
     return (estimate_tokens(request.prompt, request.system) * spec.input_per_mtok + cap * spec.output_per_mtok) / 1e6
 
 
-def tokens_cost(spec: UnitSpec, tokens_in: Optional[int], tokens_out: Optional[int]) -> Optional[float]:
+def tokens_cost(spec: UnitSpec, tokens_in: Optional[int], tokens_out: Optional[int],
+                tokens_cache_read: Optional[int] = None) -> Optional[float]:
+    """Dollars at the unit's DECLARED prices. Cache reads cost the declared cached price; with none declared they are
+    charged at the full input price (an over-estimate, never an under-estimate)."""
     if spec.per_call_usd is not None:
         return float(spec.per_call_usd)
     if spec.input_per_mtok is None or spec.output_per_mtok is None or tokens_in is None or tokens_out is None:
         return None
-    return (tokens_in * spec.input_per_mtok + tokens_out * spec.output_per_mtok) / 1e6
+    cached = tokens_cache_read or 0
+    cached_price = spec.cached_input_per_mtok if spec.cached_input_per_mtok is not None else spec.input_per_mtok
+    return (tokens_in * spec.input_per_mtok + cached * cached_price + tokens_out * spec.output_per_mtok) / 1e6
 
 
 def as_tuple(value: Optional[Sequence[str]]) -> tuple[str, ...]:
