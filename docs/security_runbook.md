@@ -82,10 +82,12 @@ State as of 2026-10-07. Evidence: [final_prod_docs/p1_results.md](../final_prod_
    - The sync tables (`synced_projects`, `sync_device_credentials`) had the same permissive-when-unset helper, and
      no code ever set their owner. They now deny without an owner bound, and every sync path binds its owner.
    - **Deploy order:** while the services connect as the `BYPASSRLS` owner, 150 changes nothing they see.
-     - Done 2026-10-08: 150 applied to the control database and S001–S004.
-     - Before switching to `stealth_app`: the new code (which binds every scope) must be live, **and** the knowledge
-       shards K001–K084 need the pending migrations, 150 included. They carry the migration-29 tables too, and still
-       have the old permissive helper. Run `migrate.py --dsn` per shard, as `scripts/provision_neon_shards.py` does.
+     - Done 2026-10-08: migrations 134–150 applied to the control database, S001–S004 and **all 84 knowledge shards
+       K001–K084** (84 of 84, exit 0). `stealth_app` was created on **all 89** databases (`provision_app_role.py
+       --apply`; flags verified). A test login as `stealth_app` through Neon works: no superuser, no `BYPASSRLS`, reads OK.
+     - **Remaining: the operator switch.** Deploy the current `main` first, then set the host's `DATABASE_URL` and every
+       `S###`/`K###_DATABASE_URL` to the `stealth_app` URLs in `backend/.stealth_app.env` (gitignored, never commit it).
+       Keep the owner URLs for `scripts/migrate.py` only. From that moment, every RLS policy applies to the services.
 10. Closed 2026-10-08: see 7. An explicit `ADMIN_API_KEY_LEGACY_ENABLED=false` on the host is still the clearest
     setting.
 

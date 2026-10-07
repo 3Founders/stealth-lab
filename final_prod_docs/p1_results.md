@@ -164,6 +164,15 @@ The owner asked for this in the session: "prod will be used by 2000 people, so c
 | Legacy admin key (#8 / risk #10) | Now on in TEST only, unless `ADMIN_API_KEY_LEGACY_ENABLED` says otherwise (it used to be on everywhere outside PRODUCTION) | `test_runtime_guard_offline.py` and the auth suites: 126 passed. The 2 failures were already there and are unrelated: a static-scan false positive on `SERVICE_ROLE_SCOPES`, and this machine's half-configured service-token env |
 | `stealth_app` on Neon (#5) | `scripts/provision_app_role.py` is written: dry run by default, prints host names only, verified on the throwaway DB. **Not run on Neon**: it needs a password the owner generates, plus the host's DATABASE_URLs switched to the role | the throwaway-DB run: flags all false |
 
+**Production rollout (2026-10-08, owner-approved: "yes do that"):**
+- Migrations 134–150 were applied to all 84 knowledge shards (84 of 84, exit 0). The control database and S001–S004
+  were already current.
+- `stealth_app` was created on all 89 production databases (control, S001–S004, K001–K084), with every flag
+  verified false (superuser, `BYPASSRLS`, createdb, createrole).
+- Read-only login checks as `stealth_app` on control, S001, K001 and K084 can read Goals with RLS in force.
+- The connection URLs are in the gitignored `backend/.stealth_app.env`.
+- **Still to do (operator):** switch the host's database URLs to `stealth_app`, after deploying the current `main`.
+
 **Read-only check of production (2026-10-08).** The control role is not a superuser but **has `BYPASSRLS`**, and it
 owns the tables. Every RLS policy, old and new, is therefore bypassed in production today. Isolation rests on the
 application checks (which the suites verify). Switching the services to `stealth_app` is what turns the database
