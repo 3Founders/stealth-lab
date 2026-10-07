@@ -1,0 +1,29 @@
+{
+  "_comment": "Gold set for stealthlab-mcp survey (plan §4.5): public repositories covering the §4.1 shapes. Cloned --depth 1 at the pinned commit by scripts/survey-gold.mjs; ground truth (units + key facts) in survey-gold-truth.json was written by reading each repository's own config and docs.",
+  "repos": [
+    { "id": "ky", "url": "https://github.com/sindresorhus/ky", "shape": "single npm package" },
+    { "id": "vite", "url": "https://github.com/vitejs/vite", "shape": "pnpm workspace" },
+    { "id": "jest", "url": "https://github.com/jestjs/jest", "shape": "yarn workspaces" },
+    { "id": "nest", "url": "https://github.com/nestjs/nest", "shape": "lerna / npm monorepo" },
+    { "id": "ripgrep", "url": "https://github.com/BurntSushi/ripgrep", "shape": "Cargo workspace" },
+    { "id": "axum", "url": "https://github.com/tokio-rs/axum", "shape": "Cargo workspace (examples excluded)" },
+    { "id": "cobra", "url": "https://github.com/spf13/cobra", "shape": "single Go module" },
+    { "id": "otel-go", "url": "https://github.com/open-telemetry/opentelemetry-go", "shape": "many Go modules" },
+    { "id": "requests", "url": "https://github.com/psf/requests", "shape": "single Python package (setup.py + pyproject)" },
+    { "id": "poetry", "url": "https://github.com/python-poetry/poetry", "shape": "Poetry project" },
+    { "id": "fastapi", "url": "https://github.com/fastapi/fastapi", "shape": "Python + docs site" },
+    { "id": "okhttp", "url": "https://github.com/square/okhttp", "shape": "Gradle multi-project (Kotlin)" },
+    { "id": "petclinic", "url": "https://github.com/spring-projects/spring-petclinic", "shape": "Maven single + Gradle" },
+    { "id": "mediatr", "url": "https://github.com/jbogard/MediatR", "shape": ".NET solution" },
+    { "id": "fmt", "url": "https://github.com/fmtlib/fmt", "shape": "CMake + Bazel" },
+    { "id": "rules_go", "url": "https://github.com/bazel-contrib/rules_go", "shape": "Bazel" },
+    { "id": "phoenix", "url": "https://github.com/phoenixframework/phoenix", "shape": "Elixir (mix) + npm assets" },
+    { "id": "laravel", "url": "https://github.com/laravel/laravel", "shape": "PHP composer app + npm" },
+    { "id": "rails", "url": "https://github.com/rails/rails", "shape": "Ruby: many gemspecs" },
+    { "id": "mkdocs-material", "url": "https://github.com/squidfunk/mkdocs-material", "shape": "docs site + npm + python" },
+    { "id": "dotfiles", "url": "https://github.com/mathiasbynens/dotfiles", "shape": "dotfiles, no manifest" },
+    { "id": "nowinandroid", "url": "https://github.com/android/nowinandroid", "shape": "Android Gradle multi-module" },
+    { "id": "flutter-samples", "url": "https://github.com/flutter/samples", "shape": "many Dart/Flutter packages (pub workspace)" },
+    { "id": "stealth-lab", "url": "local", "shape": "polyglot: Python backend + TS frontends + packaging" }
+  ]
+}

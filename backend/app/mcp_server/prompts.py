@@ -107,42 +107,70 @@ _HOW_TO_WRITE = """   - Each sentence stands on its own. Carry its context insid
      rather than smoothing it over."""
 
 
-def survey_repo(repo_path: str = "") -> str:
-    """Look around this repo and write .stealth/claims.md: short, cited facts
-    about its purpose, stack, how work is checked, what exists, what it has
-    decided and what is missing, that find_ways uses to pick Procedures that fit."""
-    where = f" at `{repo_path}`" if repo_path else ""
-    return f"""Survey the repository{where} and write `.stealth/claims.md`.
+_SURVEY_TOPICS_ROOT = "purpose, stack, runtime, build, test, lint, ci, layout"
+_SURVEY_TOPICS_UNIT = "purpose, stack, build, test"
 
-1. Read only what states facts, not the whole codebase: manifests and
-   lockfiles (package.json, pyproject.toml, requirements*.txt, go.mod,
-   Cargo.toml, ...), version pins (.nvmrc, .python-version, .tool-versions),
-   build/test config (Makefile, tsconfig, jest/vitest/pytest config),
-   CI workflows, Dockerfile, README / AGENTS.md / CLAUDE.md / CONTRIBUTING,
-   CHANGELOG, .env.example, and the top level of the source tree.
-2. What to capture.
+
+def survey_repo(repo_path: str = "") -> str:
+    """Survey this repo into .stealth/claims.md (and one claims/<unit>.md page per
+    package in a monorepo): short, cited facts about its purpose, stack, how work
+    is checked, what exists, what it has decided and what is missing, that
+    find_ways uses to pick Procedures that fit."""
+    where = f" at `{repo_path}`" if repo_path else ""
+    target = repo_path or "."
+    return f"""Survey the repository{where}: write cited facts to `.stealth/claims.md`, plus one
+`.stealth/claims/<unit>.md` page per package ("unit") when the repository has several.
+
+1. Scan first (deterministic, local, uploads nothing):
+   `npx -y stealthlab-mcp survey {target}`
+   It finds every unit (workspaces of any ecosystem, nested packages, Bazel/Buck/Pants
+   groups, docs sites, notebooks, mobile apps), leaves out vendored, generated and
+   fixture code, computes the repository identity, writes the facts a file states
+   outright (versions, scripts, CI commands, frameworks) as `by=scanner` lines, mines
+   past fix commits into `.stealth/library.md`, and writes `.stealth/survey/worklist.md`.
+   No Node.js? Do the same by hand: read the manifests, version pins, build/test
+   config, CI workflows, Dockerfile, README / AGENTS.md / CONTRIBUTING and the top of
+   the source tree, and write the facts yourself.
+2. Work the worklist. Each `WORK|<unit>|page=...|missing=...|read=...` line is one unit:
+   - read ONLY the files in `read=` (they fit the budget; `(head)` means its first part);
+   - write the facts that need judgement on `page=`: what the unit is for, the features it
+     already has, the decisions it made, known issues, conventions -- and cover every
+     topic in `missing=` with a cited fact or an `absent` fact carrying `of=<topic>`;
+   - never edit or repeat a `by=scanner` line; a unit with `inherits=<unit>` is built
+     like that unit, so write only what differs;
+   - `STALE|...` lines name facts whose cited line changed: re-check each one; if it no
+     longer holds, leave it `stale` and append the corrected fact.
+   Units not in the worklist keep their scanner facts until a task touches them; then run
+   `npx -y stealthlab-mcp survey {target} --touch <path>` and survey that unit.
+3. What to capture.
 {_WHAT_TO_CAPTURE}
-3. Write one fact per line, in this exact format:
+4. Write one fact per line, in this exact format:
    `{CLAIMS_MD_FORMAT}`
    e.g. `CLAIM|R-001|current|runtime|repository|Node 20.11|source=.nvmrc:1#sha=9f2c1ab|version=1`
    - statement: one plain sentence a stranger could check ("Tests run with `pnpm test`").
 {_HOW_TO_WRITE}
-   - source: the file and line that shows it; sha = first 7 chars of
-     `git hash-object <path>`, so the fact goes stale when the file changes.
-   - Facts about absence use topic `absent` and source=`search:<what you looked for>`.
-4. Group by topic, in this order: {_TOPICS}. Number ids R-001, R-002, ...
-   straight down the file, so every topic is one contiguous range and an
-   agent can read a whole topic in one `rg`/read.
-5. Rules: only what a file actually shows -- never guess. Never copy a
-   secret or an env value (names only). At most 200 facts; prefer the ones
-   that change how work is done or which way fits. Start the file with a
-   `#` comment line saying what it is and when it was written.
-6. Re-survey: keep the id of a fact that still holds, set `status=stale` on
-   one whose source line changed and re-check it, append new facts at the
-   end of their topic block.
+   - scope: `repository` in claims.md; `unit:<path>` on a unit's page.
+   - source: `<path>:<line>` of the line that shows it. Leave out `#sha=`: the validator
+     stamps it, so the fact goes stale when that line changes.
+   - Anything in backticks or quotes, and every version number, must appear exactly as written in
+     the cited file -- copy it, never abbreviate it with `...`. A literal `|` is written `¦`.
+   - Facts about absence use topic `absent`, `of=<topic>` and source=`search:<what you looked for>`.
+   - ids: next free number on that page (`R-012` in claims.md, `R-<unit slug>-007` on a
+     unit page); add each fact at the end of its topic block, topics in this order:
+     {_TOPICS}.
+5. Check: `npx -y stealthlab-mcp survey {target} --validate`. It checks every fact against
+   the line it cites (the backticked commands, quoted text and versions must be there, and
+   commands must exist in the manifests, Makefile or CI) and moves any that fail to
+   `.stealth/survey/rejected.md` with the reason. Fix or drop those, then validate again.
+6. Rules: only what a file actually shows -- never guess. Never copy a secret or an env
+   value (names only). Coverage, not count: every unit in the worklist covers
+   {_SURVEY_TOPICS_UNIT} (the root also {_SURVEY_TOPICS_ROOT}), each by a cited fact or an
+   `absent` fact; keep each page under 64 KB and prefer facts that change how work is
+   done or which way fits.
 
-These facts stay on this machine. They're sent only as the `repo_claims`
-argument of find_ways, used for that one request, and never stored."""
+These facts stay on this machine. They're sent only as the `repo_claims` argument of
+find_ways (claims.md plus the pages of the units a task touches), used for that one
+request, and never stored."""
 
 
 def plan_and_run(task: str) -> str:
@@ -155,7 +183,9 @@ You are the planner. StealthLab returns knowledge; you make the plan and
 own every file in `.stealth/`.
 
 1. Facts. If `.stealth/claims.md` is missing, run the survey_repo prompt first.
-2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md>)` once.
+2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md, then the
+   .stealth/claims/<unit>.md pages of the units the task touches (index/units.idx maps a path
+   to its page)>)` once.
    - "resolved": you get `procedures` (each with full `steps`, `alternatives`,
      `repo_fit`, and `verified_solution` when one was recorded: the code that passed its checks
      plus its `locator`; if `code` is null, open the locator yourself) and `unresolved`.

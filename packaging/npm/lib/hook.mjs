@@ -70,12 +70,49 @@ export function shouldLookUp(prompt, policy) {
   return (text.match(/\w+/g) || []).length >= policy.minWords;
 }
 
-function readClaims(cwd) {
-  try {
-    return fs.readFileSync(path.join(cwd || process.cwd(), ".stealth", "claims.md"), "utf8").slice(0, 65536);
-  } catch {
-    return "";
+const CLAIMS_BUDGET = 64000; // the server's MAX_REPO_CLAIMS_BYTES
+
+// Repository facts for find_ways: claims.md, then the claims/<unit>.md pages of the units this prompt is
+// about (named in the prompt by path, name or slug, or the unit the agent's cwd is in), within the
+// server's byte budget. A small repository sends every page. Finds .stealth/ from a sub-directory too.
+export function readClaims(cwd, prompt = "") {
+  let dir = path.resolve(cwd || process.cwd());
+  let sdir = null;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, ".stealth", "claims.md"))) { sdir = path.join(dir, ".stealth"); break; }
+    const up = path.dirname(dir);
+    if (up === dir) return "";
+    dir = up;
   }
+  const read = (rel) => { try { return fs.readFileSync(path.join(sdir, rel), "utf8"); } catch { return ""; } };
+  let out = read("claims.md");
+  const units = [];
+  for (const line of read(path.join("index", "units.idx")).split(/\r?\n/)) {
+    if (!line.startsWith("UNIT|")) continue;
+    const f = line.split("|");
+    const kv = Object.fromEntries(f.slice(3).map((x) => [x.slice(0, x.indexOf("=")), x.slice(x.indexOf("=") + 1)]));
+    if (f[2] !== "." && kv.page?.startsWith("claims/")) units.push({ slug: f[1], path: f[2], name: kv.name, page: kv.page });
+  }
+  if (!units.length) return out.slice(0, CLAIMS_BUDGET);
+  const pages = units.map((u) => ({ ...u, text: read(u.page) }));
+  const total = Buffer.byteLength(out) + pages.reduce((s, p) => s + Buffer.byteLength(p.text), 0);
+  const rel = path.relative(dir, path.resolve(cwd || process.cwd())).split(path.sep).join("/");
+  const p = String(prompt || "").toLowerCase();
+  const score = (u) => {
+    if (total <= CLAIMS_BUDGET * 0.75) return 1; // small repository: every page
+    let s = 0;
+    if (rel && (rel === u.path || rel.startsWith(u.path + "/"))) s += 4;
+    if (p.includes(u.path.toLowerCase())) s += 3;
+    if (u.name && u.name.length >= 3 && p.includes(u.name.toLowerCase())) s += 2;
+    if (u.slug.length >= 3 && new RegExp(`\\b${u.slug.replace(/[^a-z0-9-]/g, "")}\\b`).test(p)) s += 1;
+    return s;
+  };
+  const chosen = pages.map((u) => ({ u, s: score(u) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s || b.u.path.length - a.u.path.length);
+  for (const { u } of chosen) {
+    if (Buffer.byteLength(out) + Buffer.byteLength(u.text) + 1 > CLAIMS_BUDGET) continue;
+    out += (out.endsWith("\n") ? "" : "\n") + u.text;
+  }
+  return out.slice(0, CLAIMS_BUDGET);
 }
 
 function parseBody(text) {
@@ -201,7 +238,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
   try {
     const reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
-      repoClaims: readClaims(payload.cwd), timeoutMs: policy.timeoutMs, fetchImpl,
+      repoClaims: readClaims(payload.cwd, payload.prompt), timeoutMs: policy.timeoutMs, fetchImpl,
     });
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env }); } catch { /* capture is best-effort */ }
