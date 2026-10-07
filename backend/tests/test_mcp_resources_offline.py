@@ -6,14 +6,16 @@ These do NOT re-test the underlying service functions (product_model /
 procedure_graph_api / claim_graph_api / implementation_registry /
 durable_resume each have their own suites). They prove the RESOURCE-LAYER
 contract:
-  * all 8 canonical URIs register as templates on the server;
+  * the v1 resource templates (the three related-claims URIs) register on the server
+    -- the older procedure/goal/evaluation/run templates were removed with the v2
+    surface (cb52606); their handler functions remain and are tested by direct call;
   * each handler dispatches to the real underlying service function with a
     visibility scope (never AccessScope.unrestricted());
   * an unknown / out-of-scope id yields a clean "# Not found" body, not an
     exception;
   * a `candidate` / unverified object is rendered with that status, never
     as "verified";
-  * the 29 existing @server.tool() functions still register.
+  * registering resources does not clobber the tool surface.
 
 Same import-time os.environ guard as test_mcp_check_procedure_offline.py:
 importing app.mcp_server.server runs a module-level load_dotenv().
@@ -82,29 +84,21 @@ def _templates():
     return set(tmpl.keys())
 
 
-def test_all_six_resource_uris_registered():
-    # v2 surface (conftest pins it): the six legacy resources plus the two
-    # v1 related-claims resources.
+def test_v1_resource_templates_registered():
+    # The v1 surface (cb52606 removed the v2 procedure/goal/evaluation/run templates); the
+    # exact whole surface is pinned by test_mcp_v1_surface_offline.py.
     assert _templates() == {
-        "stealth://procedures/{procedure_id}",
-        "stealth://goals/{goal_id}",
-        "stealth://goals/{goal_id}/solutions",
         "stealth://claims/{claim_id}",
-        "stealth://evaluations/{evaluation_id}",
-        "stealth://runs/{run_id}",
         "stealth://procedures/{procedure_id}/claims",
         "stealth://goals/{goal_id}/claims",
     }
 
 
 def test_existing_tools_still_registered():
-    # Was a hardcoded `== 29`, the exact count when MCP Resources was
-    # added -- real intent is "resources didn't clobber the tool
-    # surface", not "the tool count is frozen at 29 forever". The MCP
-    # hardening pass (B1-B38) added 7 more real tools since; >= 29 keeps
-    # proving the original intent without going stale every time a tool
-    # is added.
-    assert len(srv.server._tool_manager.list_tools()) >= 29
+    # Intent: registering resources did not clobber the tool surface. The v1 tools must all
+    # still be there (no frozen count: tools get added).
+    names = {t.name for t in srv.server._tool_manager.list_tools()}
+    assert {"find_ways", "report_discovery", "submit_way", "report_result"} <= names
 
 
 # --------------------------------------------------------------------------
@@ -326,30 +320,27 @@ def _sdk_ctx(pool="pool"):
 
 
 def test_read_resource_dispatches_template_and_injects_context(monkeypatch, _anon_scope):
-    async def fake_resolve(pool, procedure_id):
-        return {"id": PROC_ROW_ID, "procedure_id": PROC_HANDLE}
+    seen = {}
+    cid = str(uuid4())
 
-    async def fake_detail(pool, row_id, *, scope):
-        return {
-            "id": row_id, "procedure_id": PROC_HANDLE, "version": 1, "name": "n",
-            "display_name": "Demo proc", "goal": "g", "display_description": "does g",
-            "applicability_summary": "when X", "failure_modes": [],
-            "steps": [{"goal": "s1"}], "preconditions": [], "invariants": [],
-            "verification_state": "candidate", "approval_status": None,
-            "staleness": "fresh", "availability": "active",
-            "evidence_summary": {"total": 0}, "claims": [],
-            "executor_kinds": [], "provenance": "prior_library",
-        }
+    async def fake_get_claim(pool, claim_id, *, scope):
+        seen["args"] = (pool, claim_id, scope)
+        return {"id": claim_id, "statement": "pandas 2.0 removed DataFrame.append",
+                "subject": "pandas", "predicate": "removed", "object": "DataFrame.append",
+                "truth_state": "IN", "epistemic_status": "supported"}
 
-    monkeypatch.setattr(srv, "_resolve_live_procedure", fake_resolve)
-    monkeypatch.setattr(res._pg, "get_procedure_detail", fake_detail)
+    async def fake_ev(pool, claim_id, *, scope):
+        return []
 
-    out = _run(srv.server.read_resource(
-        f"stealth://procedures/{uuid4()}", _sdk_ctx(),
-    ))
+    monkeypatch.setattr(res._claims, "get_claim", fake_get_claim)
+    monkeypatch.setattr(res._claims, "get_claim_evidence_api", fake_ev)
+
+    out = _run(srv.server.read_resource(f"stealth://claims/{cid}", _sdk_ctx()))
     body = list(out)[0].content
-    assert body.startswith("# Procedure: Demo proc")
-    assert "candidate" in body and "verified" not in body.lower()
+    # the URI parameter was extracted, the request's pool injected, and the caller's scope used
+    assert seen["args"][0] == "pool" and seen["args"][1] == cid
+    assert seen["args"][2] is _anon_scope["scope"]
+    assert "Truth state:** IN" in body
 
 
 def test_read_resource_unknown_uri_raises_not_found():
@@ -360,13 +351,11 @@ def test_read_resource_unknown_uri_raises_not_found():
 
 
 def test_read_resource_not_found_body_is_clean(monkeypatch, _anon_scope):
-    async def fake_get_goal(pool, gid, *, scope, **kw):
+    async def fake_get_claim(pool, cid, *, scope):
         return None
 
-    monkeypatch.setattr(res._pm, "get_goal_for_product", fake_get_goal)
-    out = _run(srv.server.read_resource(
-        f"stealth://goals/{uuid4()}", _sdk_ctx(),
-    ))
+    monkeypatch.setattr(res._claims, "get_claim", fake_get_claim)
+    out = _run(srv.server.read_resource(f"stealth://claims/{uuid4()}", _sdk_ctx()))
     assert list(out)[0].content.startswith("# Not found")
 
 
