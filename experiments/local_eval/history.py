@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import math
 import re
+import json
 import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
@@ -51,6 +52,7 @@ class Entry:
     files: list[str]
     score: float = 0.0
     diff: str = ""
+    solution: str = ""      # survey provider: library/solutions/<id>.diff, relative to .stealth/library
 
 
 @dataclass
@@ -172,12 +174,101 @@ def claims_stub(repo: Path, base_commit: str) -> list[str]:
     return facts
 
 
+SURVEY_ENV = "LOCAL_EVAL_SURVEY_MJS"   # path to workstream C's packaging/npm/lib/survey/survey.mjs
+RUNNER = Path(__file__).resolve().parent / "survey_runner.mjs"
+
+
+def survey_path() -> Path:
+    import os
+
+    p = os.environ.get(SURVEY_ENV)
+    if not p:
+        raise NotImplementedError(
+            f"set {SURVEY_ENV} to workstream C's packaging/npm/lib/survey/survey.mjs (feat/survey, or main once "
+            "merged), and log the switch from the stub in DEVIATIONS.md before building scored notes")
+    return Path(p)
+
+
+def _kv(fields: list[str]) -> dict[str, str]:
+    return dict(x.split("=", 1) for x in fields if "=" in x)
+
+
+def parse_claims(stealth: Path) -> list[str]:
+    """CLAIM|id|status|topic|scope|statement|source=...|... -> '[topic] statement (scope; source)'."""
+    out = []
+    for page in [stealth / "claims.md", *sorted((stealth / "claims").glob("*.md"))]:
+        if not page.exists():
+            continue
+        for line in page.read_text(encoding="utf-8", errors="replace").splitlines():
+            f = line.split("|")
+            if f[0] != "CLAIM" or len(f) < 6 or f[2] not in ("current", "absent"):
+                continue
+            scope = "" if f[4] in ("repository", "repo", ".") else f"{f[4]}; "
+            src = _kv(f[6:]).get("source", "").split("#")[0]
+            out.append(f"[{f[3]}] {f[5]} ({scope}{src})" if (src or scope) else f"[{f[3]}] {f[5]}")
+    return out
+
+
+def parse_library(stealth: Path) -> list[Entry]:
+    """GOAL/PROC blocks of library.md (+ library/archive-*.md) -> entries carrying their solution diff path."""
+    entries: dict[str, Entry] = {}
+    for page in [stealth / "library.md", *sorted((stealth / "library").glob("archive-*.md"))]:
+        if not page.exists():
+            continue
+        for line in page.read_text(encoding="utf-8", errors="replace").splitlines():
+            f = line.split("|")
+            if f[0] == "GOAL" and len(f) >= 3:
+                entries[f[1]] = Entry(sha=_kv(f[3:]).get("commit", f[1]), when=0, subject=f[2], body="", files=[])
+            elif f[0] == "PROC" and len(f) >= 3 and f[1].split(".")[0] in entries:
+                kv = _kv(f[3:])
+                e = entries[f[1].split(".")[0]]
+                e.files = [t.split("#")[0] for t in kv.get("touches", "").split(",") if t]
+                e.solution = kv.get("solution", "")
+    return list(entries.values())
+
+
+def survey_context(repo: Path, base_commit: str, issue: str, mem: dict) -> LocalContext:
+    """Workstream C's real scanner + miner on a fresh worktree at base_commit (its `git log HEAD` there sees only
+    ancestors of base_commit), then the library ranked against the issue as a terms.idx lookup would (BM25 over
+    titles and touched paths). `since` is two years before the BASE commit, not before today."""
+    import datetime
+    import shutil
+    import tempfile
+
+    scanner = survey_path()   # refuse before touching git when the scanner is not configured
+    base_time = int(git(repo, "show", "-s", "--format=%ct", base_commit).strip())
+    since = datetime.datetime.fromtimestamp(base_time - mem["history_window_days"] * 86400,
+                                            datetime.timezone.utc).strftime("%Y-%m-%d")
+    wt = Path(tempfile.mkdtemp(prefix="survey_", dir=repo.parent))
+    try:
+        git(repo, "worktree", "add", "--detach", "--force", str(wt), base_commit)
+        r = subprocess.run(["node", str(RUNNER), str(scanner), str(wt), since, str(mem["history_max_commits"])],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800)
+        if r.returncode != 0:
+            raise RuntimeError(f"survey failed: {r.stderr[-400:]}")
+        summary = json.loads(r.stdout.strip().splitlines()[-1])
+        stealth = wt / ".stealth"
+        lib = parse_library(stealth)
+        for e, s in zip(lib, bm25_rank(issue, [f"{e.subject}\n{' '.join(e.files)}" for e in lib])):
+            e.score = s
+        top = [e for e in sorted(lib, key=lambda e: -e.score) if e.score > 0][: mem["library_entries"]]
+        for e in top[: mem["library_diffs"]]:
+            sol = stealth / "library" / e.solution
+            if e.solution and sol.exists():
+                d = sol.read_text(encoding="utf-8", errors="replace")
+                n = mem["diff_max_chars"]
+                e.diff = d if len(d) <= n else d[: n - 20].rstrip() + "\n...[truncated]"
+        hist = summary.get("history") or {}
+        return LocalContext(claims=parse_claims(stealth), library=top,
+                            scanned_commits=int(hist.get("scanned") or 0), fix_commits=len(lib))
+    finally:
+        git(repo, "worktree", "remove", "--force", str(wt), check=False)
+        shutil.rmtree(wt, ignore_errors=True)
+
+
 def local_context(repo: Path, base_commit: str, issue: str, mem: dict, provider: str = "stub") -> LocalContext:
     if provider == "survey":
-        raise NotImplementedError(
-            "workstream C's scanner/miner is not merged yet. When it is: return LocalContext(claims=<claims.md "
-            "facts for the unit(s) at base_commit>, library=<library.md entries mined from ancestors of "
-            "base_commit, ranked against the issue>) and log the switch in DEVIATIONS.md before building notes.")
+        return survey_context(repo, base_commit, issue, mem)
     if provider != "stub":
         raise ValueError(f"unknown local provider {provider!r}")
     commits, scanned = fix_commits(repo, base_commit, mem["history_window_days"], mem["history_max_commits"])

@@ -15,7 +15,7 @@
   "corpus": {
     "_doc": "The global Kel corpus, exported ONCE to a local file (no Neon reads during the experiment). corpus.jsonl rows: gid, name, desc, proc, steps, pre, pitfalls, source, row_ref. Embeddings: BAAI/bge-small-en-v1.5 of 'name\\ndesc', normalised.",
     "path_env": "LOCAL_EVAL_CORPUS_DIR",
-    "default_path": "../../.scratch/local-eval-assets",
+    "default_path": "C:/Users/user/stealth-lab/.scratch/local-eval-assets",
     "jsonl": "corpus.jsonl",
     "embeddings": "corpus_bge_small.npy",
     "sha256": null
@@ -24,8 +24,8 @@
     "rule": "unseen = instance_id not in the corpus; created_at >= model_cutoff (the agent model cannot have seen the fix); the repo has >= min_history corpus Goals created strictly before the task; at most max_per_repo tasks per repo (the earliest, so later tasks never inform the choice); a stable hash order picks the scored set and the calibration set from DIFFERENT repos",
     "model_cutoff": "2024-07-01",
     "min_history": 10,
-    "max_per_repo": 6,
-    "n_test": 300,
+    "max_per_repo": 8,
+    "n_test": 322,
     "n_calibration": 12,
     "exclude_ids_files": ["queries.json"],
     "seed": "kel-local-eval-v1"

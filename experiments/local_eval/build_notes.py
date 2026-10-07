@@ -167,7 +167,7 @@ def pick_goals(corpus: Corpus, q: np.ndarray, task: dict, tier: str, skip_prs: s
 
 
 # ---------------------------------------------------------------- main
-def build(ids: list[str], inst: dict, workers: int) -> None:
+def build(ids: list[str], inst: dict, workers: int, freeze: bool = True) -> None:
     mem, prov = CONFIG["memory"], CONFIG["providers"]
     if prov["global"] != "replica":
         raise NotImplementedError("providers.global = 'find_ways' needs the real server (STEALTH_MCP_URL); "
@@ -237,7 +237,8 @@ def build(ids: list[str], inst: dict, workers: int) -> None:
               "notes_sha256": {arm: stable_hash(json.dumps(read_json(RUNS / f"notes_{arm}.json"), sort_keys=True))
                                for arm in NOTE_ARMS},
               "local_errors": errors}
-    write_json(RUNS / "kel_frozen.json", frozen)
+    if freeze:   # a --limit smoke test never freezes Kel (generate.py would then accept held-out arms)
+        write_json(RUNS / "kel_frozen.json", frozen)
     print(json.dumps({"tasks": len(ids), "local_errors": len(errors),
                       "empty_local": sum(1 for i in ids if not notes["L1"][i]["text"]),
                       "mean_chars": {a: round(np.mean([meta[i]["chars"][a] for i in ids])) for a in NOTE_ARMS}},
@@ -252,7 +253,7 @@ def main() -> None:
     a = ap.parse_args()
     design, inst = read_json(RUNS / "design.json"), read_json(RUNS / "instances.json")
     ids = design["test"] + design["calibration"] if a.part == "all" else design[a.part]
-    build(ids[: a.limit] if a.limit else ids, inst, a.workers)
+    build(ids[: a.limit] if a.limit else ids, inst, a.workers, freeze=not a.limit)
 
 
 if __name__ == "__main__":
