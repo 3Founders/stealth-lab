@@ -51,6 +51,11 @@ Usage:
   stealthlab-mcp hook subagent-start         Claude Code SubagentStart / SubagentStop hooks (installed by
   stealthlab-mcp hook subagent-stop          "install --with-exec"): re-run a plan node's check= after a
                                              subagent and record the outcome with report_model_run
+  stealthlab-mcp survey [path] [options]     survey this repository locally (uploads nothing): units, repo identity,
+                                             cited facts in .stealth/claims*.md, a worklist for the agent, and
+                                             library.md from past fix commits. --validate re-checks facts only.
+                                             Options: --validate --touch <path> --max-units <n> --no-history
+                                             --history-max <n> --verify-commands --allow-public-name --full --json
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
@@ -190,11 +195,47 @@ async function cmdDoctor(v) {
   out("ok");
 }
 
+async function cmdSurvey(dir, argv) {
+  let v;
+  try {
+    ({ values: v } = parseArgs({
+      args: argv,
+      options: {
+        validate: { type: "boolean" }, touch: { type: "string", multiple: true }, "max-units": { type: "string" },
+        "no-history": { type: "boolean" }, "history-max": { type: "string" }, since: { type: "string" },
+        "verify-commands": { type: "boolean" }, "allow-public-name": { type: "boolean" }, full: { type: "boolean" },
+        json: { type: "boolean" }, "dry-run": { type: "boolean" },
+      },
+      strict: true,
+    }));
+  } catch (err) {
+    die(`${err.message}\n\n${HELP}`, 2);
+  }
+  // Imported lazily: only `survey` loads the scanner.
+  const { runSurvey } = await import("../lib/survey/survey.mjs");
+  const r = runSurvey(dir || process.cwd(), {
+    validateOnly: v.validate, touch: v.touch, maxUnits: v["max-units"] ? Number(v["max-units"]) : undefined,
+    history: !v["no-history"], historyMax: v["history-max"] ? Number(v["history-max"]) : undefined, since: v.since,
+    verifyCommands: v["verify-commands"], allowPublicName: v["allow-public-name"] ? true : undefined, full: v.full, dryRun: v["dry-run"],
+  });
+  if (v.json) return process.stdout.write(JSON.stringify(r, null, 2) + "\n");
+  const val = r.validation;
+  out(`survey   : ${r.root} (${r.listing.files} files via ${r.listing.source}${r.listing.sparse ? `, ${r.listing.sparse} sparse` : ""})`);
+  out(`identity : ${r.identity.repo_id} (${r.identity.strength}, from ${r.identity.source})`);
+  out(`units    : ${r.units.length}${r.lazy ? " (lazy: root + touched units now)" : ""}; zones ${r.zones.length}; aux ${r.aux}`);
+  out(`facts    : +${r.merge.added} ~${r.merge.updated} -${r.merge.removed}; checked ok ${val.ok || 0}, stamped ${val.stamped || 0}, relocated ${val.relocated || 0}, stale ${val.stale || 0}, unverifiable ${val.unverifiable || 0}, rejected ${val.rejected || 0}`);
+  for (const x of r.rejected.slice(0, 10)) out(`  rejected ${x.page} ${x.id}: ${x.reason}`);
+  if (r.history) out(`library  : +${r.history.added || 0} past fixes (${r.history.scanned || 0} commits scanned)`);
+  out(`worklist : ${r.worklist.length} unit(s) for the agent, ~${r.estTokens} tokens -> .stealth/survey/worklist.md`);
+  out(`time     : ${r.timing.total_ms} ms`);
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
-  // `hook <event>` takes one positional; everything else is flags only.
-  const sub = cmd === "hook" && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
+  const sub = (cmd === "hook" || cmd === "survey") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  if (cmd === "survey") return cmdSurvey(sub, argv);
   let v;
   try {
     ({ values: v } = parseArgs({

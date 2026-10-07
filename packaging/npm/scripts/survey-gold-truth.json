@@ -1,0 +1,718 @@
+{
+  "_comment": "Hand-written ground truth for scripts/survey-gold.mjs, from each repository's own config and docs (read 2026-10-07, --depth 1 clones of the default branch). units: explicit list, or `manifests` (git :(glob) pathspecs whose directories are units, root '.' always included) minus `exclude` (regex on the unit path) -- expanded with git's own matcher, not the scanner's. A unit is a package this repository builds or ships; examples, fixtures and test harnesses are not units unless a workspace declares them. keys: facts a developer needs first (run/test/build commands, runtime versions), each a list of acceptable regexes over the scanner's fact statements.",
+  "ky": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "test command",
+        "any": [
+          "`npm test` runs `xo && npm run build"
+        ]
+      },
+      {
+        "name": "build command",
+        "any": [
+          "`npm run build` runs `del-cli distribution && tsc"
+        ]
+      },
+      {
+        "name": "node engine",
+        "any": [
+          "engines\\.node `>=22`"
+        ]
+      },
+      {
+        "name": "CI node versions",
+        "any": [
+          "Node\\.js latest, 24, 22"
+        ]
+      }
+    ]
+  },
+  "vite": {
+    "manifests": [
+      "packages/*/package.json",
+      "playground/**/package.json",
+      "packages/**/__tests__/**/package.json",
+      "docs/package.json"
+    ],
+    "exclude": "(^|/)(node_modules|\\.[^/]+)(/|$)",
+    "keys": [
+      {
+        "name": "package manager",
+        "any": [
+          "uses pnpm@12\\.6\\.0"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`pnpm test` runs `pnpm test-unit"
+        ]
+      },
+      {
+        "name": "build command",
+        "any": [
+          "`pnpm run build` runs `pnpm -r"
+        ]
+      },
+      {
+        "name": "lint command",
+        "any": [
+          "`pnpm run lint` runs `eslint"
+        ]
+      },
+      {
+        "name": "node engine",
+        "any": [
+          "engines\\.node `\\^20\\.19\\.0"
+        ]
+      }
+    ],
+    "excludeMarkers": true
+  },
+  "jest": {
+    "manifests": [
+      "packages/*/package.json",
+      "website/package.json",
+      "examples/*/package.json"
+    ],
+    "keys": [
+      {
+        "name": "package manager",
+        "any": [
+          "yarn@4\\.18\\.0"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`yarn test` runs `yarn lint && yarn jest`"
+        ]
+      },
+      {
+        "name": "build command",
+        "any": [
+          "`yarn run build` runs `yarn build:js"
+        ]
+      },
+      {
+        "name": "lint command",
+        "any": [
+          "`yarn run lint` runs `eslint"
+        ]
+      },
+      {
+        "name": "node engine",
+        "any": [
+          "engines\\.node"
+        ]
+      }
+    ]
+  },
+  "nest": {
+    "manifests": [
+      "packages/*/package.json"
+    ],
+    "keys": [
+      {
+        "name": "test command",
+        "any": [
+          "`npm test` runs `vitest run`"
+        ]
+      },
+      {
+        "name": "build command",
+        "any": [
+          "`npm run build` runs `tsc -b -v packages`"
+        ]
+      },
+      {
+        "name": "lint command",
+        "any": [
+          "`npm run lint` runs `oxlint"
+        ]
+      },
+      {
+        "name": "node engine",
+        "any": [
+          "engines\\.node `>= 20`"
+        ]
+      }
+    ]
+  },
+  "ripgrep": {
+    "units": [
+      ".",
+      "crates/globset",
+      "crates/grep",
+      "crates/cli",
+      "crates/index",
+      "crates/matcher",
+      "crates/pcre2",
+      "crates/printer",
+      "crates/regex",
+      "crates/searcher",
+      "crates/ignore"
+    ],
+    "keys": [
+      {
+        "name": "rust version",
+        "any": [
+          "Rust 1\\.96"
+        ]
+      },
+      {
+        "name": "edition",
+        "any": [
+          "edition 2024"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`cargo test( --workspace)?`"
+        ]
+      }
+    ]
+  },
+  "axum": {
+    "units": [
+      ".",
+      "axum",
+      "axum-core",
+      "axum-extra",
+      "axum-macros"
+    ],
+    "keys": [
+      {
+        "name": "rust version",
+        "any": [
+          "Rust 1\\.80"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`cargo test --workspace`",
+          "runs `cargo test --locked --workspace"
+        ]
+      }
+    ]
+  },
+  "cobra": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "go version",
+        "any": [
+          "Go 1\\.15"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`go test \\./\\.\\.\\.`"
+        ]
+      },
+      {
+        "name": "make test",
+        "any": [
+          "`make test`"
+        ]
+      }
+    ]
+  },
+  "otel-go": {
+    "manifests": [
+      "**/go.mod"
+    ],
+    "exclude": "(^|/)(examples?|tests?|testdata|fixtures?|benchmarks?|\\.[^/]+)(/|$)",
+    "keys": [
+      {
+        "name": "go version",
+        "any": [
+          "Go 1\\.26\\.0"
+        ]
+      },
+      {
+        "name": "make test",
+        "any": [
+          "`make test`"
+        ]
+      },
+      {
+        "name": "lint",
+        "any": [
+          "golangci-lint|`make lint`"
+        ]
+      }
+    ]
+  },
+  "requests": {
+    "units": [
+      ".",
+      "docs"
+    ],
+    "keys": [
+      {
+        "name": "python version",
+        "any": [
+          "Python `>=3\\.10`"
+        ]
+      },
+      {
+        "name": "pytest",
+        "any": [
+          "pytest is configured"
+        ]
+      },
+      {
+        "name": "tox",
+        "any": [
+          "tox is configured"
+        ]
+      },
+      {
+        "name": "make test",
+        "any": [
+          "`make test`"
+        ]
+      },
+      {
+        "name": "ruff",
+        "any": [
+          "Ruff is configured"
+        ]
+      }
+    ]
+  },
+  "poetry": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "python version",
+        "any": [
+          "Python `>=3\\.10,<4\\.0`"
+        ]
+      },
+      {
+        "name": "poetry",
+        "any": [
+          "managed with Poetry",
+          "locks its Python dependencies with Poetry"
+        ]
+      },
+      {
+        "name": "ruff",
+        "any": [
+          "Ruff is configured"
+        ]
+      }
+    ]
+  },
+  "fastapi": {
+    "manifests": [
+      "docs/*/mkdocs.yml"
+    ],
+    "keys": [
+      {
+        "name": "python version",
+        "any": [
+          "Python `>=3\\.10`"
+        ]
+      },
+      {
+        "name": "pytest",
+        "any": [
+          "pytest is configured"
+        ]
+      },
+      {
+        "name": "uv",
+        "any": [
+          "with uv \\(uv\\.lock"
+        ]
+      },
+      {
+        "name": "mypy",
+        "any": [
+          "mypy is configured"
+        ]
+      },
+      {
+        "name": "CI test",
+        "any": [
+          "runs `uv run --no-sync bash scripts/test-cov\\.sh",
+          "runs `uv run --no-sync pytest"
+        ]
+      }
+    ]
+  },
+  "okhttp": {
+    "units": [
+      ".",
+      "mockwebserver",
+      "mockwebserver-deprecated",
+      "mockwebserver-junit4",
+      "mockwebserver-junit5",
+      "regression-test",
+      "native-image-tests",
+      "okcurl",
+      "okhttp",
+      "okhttp-bom",
+      "okhttp-brotli",
+      "okhttp-coroutines",
+      "okhttp-dnsoverhttps",
+      "okhttp-hpacktests",
+      "okhttp-idna-mapping-table",
+      "okhttp-java-net-cookiejar",
+      "okhttp-logging-interceptor",
+      "okhttp-osgi-tests",
+      "okhttp-sse",
+      "okhttp-testing-support",
+      "okhttp-tls",
+      "okhttp-urlconnection",
+      "okhttp-zstd",
+      "samples/compare",
+      "samples/crawler",
+      "samples/guide",
+      "samples/simple-client",
+      "samples/slack",
+      "samples/static-server",
+      "samples/tlssurvey",
+      "samples/unixdomainsockets",
+      "module-tests",
+      "android-test",
+      "android-test-app",
+      "samples/android",
+      "build-logic"
+    ],
+    "keys": [
+      {
+        "name": "test command",
+        "any": [
+          "`\\./gradlew :okhttp:test`"
+        ]
+      },
+      {
+        "name": "gradle build",
+        "any": [
+          "Gradle multi-project build"
+        ]
+      }
+    ]
+  },
+  "petclinic": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "spring boot",
+        "any": [
+          "Spring Boot 4\\.1\\.0"
+        ]
+      },
+      {
+        "name": "java version",
+        "any": [
+          "java\\.version to 17"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`\\./mvnw test`",
+          "`\\./gradlew test`"
+        ]
+      }
+    ]
+  },
+  "mediatr": {
+    "units": [
+      ".",
+      "samples/MediatR.Examples.AspNetCore",
+      "samples/MediatR.Examples.Autofac",
+      "samples/MediatR.Examples.DryIoc",
+      "samples/MediatR.Examples.Lamar",
+      "samples/MediatR.Examples.LightInject",
+      "samples/MediatR.Examples.PublishStrategies",
+      "samples/MediatR.Examples.SimpleInjector",
+      "samples/MediatR.Examples.Stashbox",
+      "samples/MediatR.Examples",
+      "src/MediatR.Contracts",
+      "src/MediatR",
+      "test/MediatR.Benchmarks",
+      "test/MediatR.DependencyInjectionTests",
+      "test/MediatR.Tests"
+    ],
+    "keys": [
+      {
+        "name": "target framework",
+        "any": [
+          "targets net"
+        ]
+      },
+      {
+        "name": "test framework",
+        "any": [
+          "uses (xUnit|NUnit|MSTest)"
+        ]
+      }
+    ]
+  },
+  "fmt": {
+    "units": [
+      ".",
+      "support"
+    ],
+    "keys": [
+      {
+        "name": "cmake",
+        "any": [
+          "builds with CMake"
+        ]
+      },
+      {
+        "name": "ctest",
+        "any": [
+          "CTest"
+        ]
+      }
+    ]
+  },
+  "rules_go": {
+    "units": [
+      ".",
+      "docs",
+      "extras",
+      "go",
+      "internal",
+      "proto",
+      "go/tools/fetch_repo",
+      "go/tools/releaser",
+      "go/tools/windows-testrunner"
+    ],
+    "keys": [
+      {
+        "name": "bazel",
+        "any": [
+          "builds with Bazel"
+        ]
+      },
+      {
+        "name": "bazel version",
+        "any": [
+          "Bazel 9\\.2\\.0"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`bazel test //go/\\.\\.\\.`"
+        ]
+      }
+    ]
+  },
+  "phoenix": {
+    "units": [
+      ".",
+      "installer"
+    ],
+    "keys": [
+      {
+        "name": "elixir version",
+        "any": [
+          "Elixir ~> 1\\.15"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`mix test`"
+        ]
+      }
+    ]
+  },
+  "laravel": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "php version",
+        "any": [
+          "PHP `\\^8\\.3`"
+        ]
+      },
+      {
+        "name": "laravel",
+        "any": [
+          "uses Laravel"
+        ]
+      },
+      {
+        "name": "build command",
+        "any": [
+          "`npm run build` runs `vite build`"
+        ]
+      },
+      {
+        "name": "dev command",
+        "any": [
+          "`npm run dev` runs `vite`"
+        ]
+      }
+    ]
+  },
+  "rails": {
+    "units": [
+      ".",
+      "actioncable",
+      "actionmailbox",
+      "actionmailer",
+      "actionpack",
+      "actiontext",
+      "actionview",
+      "activejob",
+      "activemodel",
+      "activerecord",
+      "activestorage",
+      "activesupport",
+      "railties",
+      "tools/rail_inspector",
+      "tools/releaser"
+    ],
+    "keys": []
+  },
+  "mkdocs-material": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "build command",
+        "any": [
+          "`npm run build` runs"
+        ]
+      },
+      {
+        "name": "python version",
+        "any": [
+          "requires Python"
+        ]
+      }
+    ]
+  },
+  "dotfiles": {
+    "units": [
+      "."
+    ],
+    "keys": [
+      {
+        "name": "no manifest",
+        "any": [
+          "No package manifest was found at the repository root; it looks like a dotfiles repository"
+        ]
+      }
+    ]
+  },
+  "nowinandroid": {
+    "gradleIncludes": "settings.gradle.kts",
+    "keys": [
+      {
+        "name": "android app",
+        "any": [
+          "an Android application"
+        ]
+      },
+      {
+        "name": "test command",
+        "any": [
+          "`\\./gradlew :app:test`"
+        ]
+      }
+    ],
+    "extraUnits": [
+      "build-logic/convention"
+    ]
+  },
+  "flutter-samples": {
+    "pubspecWorkspace": "pubspec.yaml",
+    "keys": [
+      {
+        "name": "dart sdk",
+        "any": [
+          "requires the Dart SDK"
+        ]
+      },
+      {
+        "name": "flutter",
+        "any": [
+          "Flutter package"
+        ]
+      }
+    ],
+    "extraManifests": [
+      "add_to_app/*/*/settings.gradle*",
+      "add_to_app/*/*/app/build.gradle*"
+    ],
+    "xcodeprojParents": [
+      "add_to_app/*/*/*.xcodeproj/project.pbxproj"
+    ],
+    "extraUnits": [
+      "web_embedding/ng-flutter"
+    ]
+  },
+  "stealth-lab": {
+    "units": [
+      ".",
+      "backend",
+      "frontend",
+      "frontendv1",
+      "frontendv2",
+      "frontendv3",
+      "packaging",
+      "packaging/npm",
+      "plat_v1",
+      "plat_v1/frontend",
+      "pokemon_stealth",
+      "prod_frontend",
+      "stealth_md_editor_ui"
+    ],
+    "keys": [
+      {
+        "name": "npm client tests",
+        "any": [
+          "In `packaging/npm`, `npm test` runs `node --test"
+        ]
+      },
+      {
+        "name": "CI python",
+        "any": [
+          "sets up Python 3\\.12"
+        ]
+      },
+      {
+        "name": "backend python",
+        "any": [
+          "`backend` requires Python"
+        ]
+      },
+      {
+        "name": "CI backend tests",
+        "any": [
+          "runs `pytest .* in `backend`"
+        ]
+      }
+    ]
+  },
+  "_corrections": "Truth corrections after the first run, each checked by reading the repo: requests docs/ (Sphinx), fmt support/ (Android build), rules_go go/tools/* (own go.mod), phoenix assets/ and vite fixture package.json files are {\"type\":\"module\"}/{} markers, nowinandroid build-logic/convention (nested includeBuild), flutter-samples add_to_app native host apps. flutter-samples web_embedding/ng-flutter is an Angular host app (its own package.json). vite: pnpm matches <pattern>/package.json, so playground/** includes playground/package.json itself (the truth glob had excluded it)."
+}

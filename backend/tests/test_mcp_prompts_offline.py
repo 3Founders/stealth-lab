@@ -64,6 +64,33 @@ def test_survey_repo_states_the_claims_grammar_the_parser_reads():
                        "scope": "repository", "source": ".nvmrc:1#sha=9f2c1ab"}]
 
 
+def test_survey_repo_runs_the_scanner_then_the_worklist_then_the_validator():
+    body = prm.survey_repo("/repo")
+    # The deterministic scanner first, the agent per unit from the worklist, the validator last.
+    scan = body.index("npx -y stealthlab-mcp survey /repo")
+    work = body.index(".stealth/survey/worklist.md")
+    check = body.index("npx -y stealthlab-mcp survey /repo --validate")
+    assert scan < work < check
+    assert "scope: `repository` in claims.md; `unit:<path>` on a unit's page" in body
+    assert "never edit or repeat a `by=scanner` line" in body
+    assert "inherits=<unit>" in body and "--touch <path>" in body
+    # Coverage, not a fixed fact count.
+    assert "At most 200 facts" not in body and "Coverage, not count" in body
+    # The agent no longer computes hashes; the validator stamps them.
+    assert "git hash-object" not in body
+
+
+def test_survey_scope_and_extra_fields_parse_with_the_server_parser():
+    from app.execution.repo_facts import parse_repo_claims
+
+    line = ("CLAIM|R-ui-003|current|test|unit:packages/ui|In `packages/ui`, `pnpm test` runs `vitest run`"
+            "|source=packages/ui/package.json:5#sha=1a2b3c4|version=1|by=scanner|key=script:test|inherits=packages/core")
+    claims, truncated = parse_repo_claims(line)
+    assert not truncated
+    assert claims == [{"claim_id": "R-ui-003", "statement": "In `packages/ui`, `pnpm test` runs `vitest run`",
+                       "topic": "test", "scope": "unit:packages/ui", "source": "packages/ui/package.json:5#sha=1a2b3c4"}]
+
+
 def test_plan_and_run_has_the_tiny_packet_and_node_format():
     body = prm.plan_and_run("x")
     assert 'Do node N-3. Read: rg "N-3" .stealth/run.md' in body

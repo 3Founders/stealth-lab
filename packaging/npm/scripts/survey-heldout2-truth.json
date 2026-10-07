@@ -1,0 +1,31 @@
+{
+  "_comment": "HELD-OUT set 2: truth written from each repository's config BEFORE the scanner was ever run on it (2026-10-07). Units are what the repository actually builds or ships, judged by reading it -- including packages a workspace does not declare (ruff playground/api, playground/deploy) and docs sites in unusual places (pytest doc/en) -- so this set also measures cases the scanner's declared-workspace policy can miss. Test fixtures (ruff crates/*/resources, ty_completion_eval/truth/*, ecto examples/) are not units.",
+  "deno-std": { "units": [".", "assert", "async", "bytes", "cache", "cbor", "cli", "collections", "crypto", "csv", "data_structures", "datetime", "dotenv", "encoding",
+    "expect", "fmt", "front_matter", "fs", "html", "http", "ini", "internal", "io", "json", "jsonc", "math", "media_types", "msgpack", "net", "path", "random",
+    "regexp", "semver", "streams", "tar", "testing", "text", "toml", "ulid", "uuid", "webgpu", "xml", "yaml", "_tools/node_test_runner"], "keys": [
+    { "name": "test command", "any": ["`deno task test` runs `deno test -A --parallel"] },
+    { "name": "workspace", "any": ["workspace with 42 members"] } ] },
+  "commons-lang": { "units": ["."], "keys": [
+    { "name": "java version", "any": ["maven\\.compiler\\.source to 1\\.8", "java\\.version"] },
+    { "name": "test command", "any": ["`mvn test`", "`\\./mvnw test`"] } ] },
+  "ecto": { "units": ["."], "keys": [
+    { "name": "elixir version", "any": ["Elixir ~> 1\\.14"] },
+    { "name": "test command", "any": ["`mix test`"] } ] },
+  "ruff": { "manifests": ["crates/*/Cargo.toml"], "extraUnits": ["python/py-fuzzer", "python/ruff-ecosystem", "scripts/benchmarks", "scripts/ty_benchmark",
+    "playground", "playground/ty", "playground/ruff", "playground/shared", "playground/api", "playground/deploy"], "keys": [
+    { "name": "rust version", "any": ["Rust 1\\.97"] },
+    { "name": "edition", "any": ["edition 2024"] },
+    { "name": "python build", "any": ["`maturin` build backend"] },
+    { "name": "test command", "any": ["`cargo test --workspace`"] } ] },
+  "pytest": { "units": [".", "doc/en"], "keys": [
+    { "name": "python version", "any": ["Python `>=3\\.10`"] },
+    { "name": "pytest config", "any": ["pytest is configured"] },
+    { "name": "tox", "any": ["tox is configured"] },
+    { "name": "mypy", "any": ["mypy is configured"] },
+    { "name": "uv lock", "any": ["with uv \\(uv\\.lock"] } ] },
+  "starlight": { "manifests": ["packages/*/**/package.json", "examples/*/**/package.json", "docs/package.json"], "exclude": "(^|/)(node_modules|\\.[^/]+)(/|$)",
+    "excludeMarkers": true, "keys": [
+    { "name": "package manager", "any": ["uses pnpm@11\\.22\\.0"] },
+    { "name": "build command", "any": ["`pnpm run build` runs `pnpm --filter '@astrojs/\\*' build`"] },
+    { "name": "lint command", "any": ["`pnpm run lint` runs `eslint \\. --max-warnings 0`"] } ] }
+}

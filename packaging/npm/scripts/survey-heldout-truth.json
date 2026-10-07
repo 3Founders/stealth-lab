@@ -1,0 +1,31 @@
+{
+  "_comment": "HELD-OUT set: truth written from each repository's config BEFORE the scanner was ever run on it (2026-10-07), and the scanner was not changed after seeing these results. Same conventions as survey-gold-truth.json.",
+  "flask": { "units": [".", "docs"], "keys": [
+    { "name": "python version", "any": ["Python `>=3\\.10`"] },
+    { "name": "pytest", "any": ["pytest is configured"] },
+    { "name": "ruff", "any": ["Ruff is configured"] },
+    { "name": "mypy", "any": ["mypy is configured"] },
+    { "name": "uv lock", "any": ["with uv \\(uv\\.lock"] },
+    { "name": "build backend", "any": ["`flit_core\\.buildapi`"] } ] },
+  "gin": { "units": ["."], "keys": [
+    { "name": "go version", "any": ["Go 1\\.26\\.0"] },
+    { "name": "make test", "any": ["`make test`"] },
+    { "name": "go test", "any": ["`go test \\./\\.\\.\\.`"] } ] },
+  "tokio": { "units": [".", "tokio", "tokio-macros", "tokio-test", "tokio-stream", "tokio-util", "benches", "examples", "stress-test", "tests-build", "tests-integration"], "keys": [
+    { "name": "test command", "any": ["`cargo test --workspace`", "`cargo test -p tokio`"] } ] },
+  "retrofit": { "units": [".", "retrofit", "retrofit-bom", "retrofit/android-test", "retrofit/java-test", "retrofit/kotlin-test", "retrofit/test-helpers", "retrofit-mock",
+    "retrofit-response-type-keeper", "retrofit-adapters/guava", "retrofit-adapters/java8", "retrofit-adapters/rxjava", "retrofit-adapters/rxjava2", "retrofit-adapters/rxjava3",
+    "retrofit-adapters/scala", "retrofit-converters/gson", "retrofit-converters/guava", "retrofit-converters/jackson", "retrofit-converters/java8", "retrofit-converters/jaxb",
+    "retrofit-converters/jaxb3", "retrofit-converters/kotlinx-serialization", "retrofit-converters/moshi", "retrofit-converters/protobuf", "retrofit-converters/scalars",
+    "retrofit-converters/simplexml", "retrofit-converters/wire", "samples"], "keys": [
+    { "name": "test command", "any": ["`\\./gradlew :retrofit:test`"] },
+    { "name": "multi-project", "any": ["Gradle multi-project build with 27 members"] } ] },
+  "serilog": { "units": [".", "src/Serilog", "test/TestDummies", "test/Serilog.Tests", "test/Serilog.PerformanceTests", "test/Serilog.ApprovalTests", "test/AotTestApp"], "keys": [
+    { "name": "sdk pin", "any": ["\\.NET SDK [\\d.]+ is pinned"] },
+    { "name": "target framework", "any": ["`src/Serilog` targets net"] } ] },
+  "svelte": { "manifests": ["packages/*/package.json", "playgrounds/*/package.json"], "keys": [
+    { "name": "package manager", "any": ["uses pnpm@10\\.33\\.4"] },
+    { "name": "test command", "any": ["`pnpm test` runs `vitest run`"] },
+    { "name": "lint command", "any": ["`pnpm run lint` runs `eslint && prettier --check \\.`"] },
+    { "name": "build command", "any": ["`pnpm run build` runs `pnpm -r"] } ] }
+}
