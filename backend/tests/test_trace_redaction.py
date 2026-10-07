@@ -224,3 +224,17 @@ def test_a6_tool_response_sensitive_path_is_excluded_wholesale():
     result = redact_event(event)
     assert result["tool_output"] == PATH_REDACTION_PLACEHOLDER
     assert "tool_response" not in result
+
+
+def test_personal_data_patterns_redact_email_and_ip_but_not_ssh_remote():
+    from app.services.trace_redaction import redact_event
+
+    event = {"tool_output": "Author: Rahul <rahul@company.com> // fixed by a.b+c@sub.example.co.in from 10.0.3.255; "
+                            "remote git@github.com:org/repo.git version 1.2.3.4.5"}
+    out = redact_event(event)
+    text = str(out)
+    assert "rahul@company.com" not in text and "a.b+c@sub.example.co.in" not in text
+    assert "10.0.3.255" not in text
+    assert "[REDACTED:email_address]" in text and "[REDACTED:ipv4_address]" in text
+    assert "git@github.com:org/repo.git" in text
+    assert "1.2.3.4.5" in text

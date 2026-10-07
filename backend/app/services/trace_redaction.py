@@ -37,6 +37,15 @@ KNOWN_TOKEN_PATTERNS: list[tuple[str, re.Pattern]] = [
     )),
 ]
 
+# Personal-data patterns (DPDP / GDPR "identifiable by or in relation to" data that hides in code workflows: commit
+# author emails, "Fixed by x@y.com" comments, config maintainer fields, IPs in log files). Applied at the same chokepoint
+# and reported under their own names so a count of what was removed is available. Same honest limit: names and phone
+# numbers without a stable shape are NOT detected; `git@host:org/repo` SSH remotes are deliberately not treated as emails.
+PERSONAL_DATA_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("email_address", re.compile(r"(?<![A-Za-z0-9._%+-])(?!git@)[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")),
+    ("ipv4_address", re.compile(r"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])")),
+]
+
 # Layer 2: path-based rules. A tool call reading any of these is treated
 # as sensitive by content regardless of what pattern-matching finds --
 # ticket 18's own example (a private key's raw bytes don't match any
@@ -74,7 +83,7 @@ def _redact_string(value: str) -> tuple[str, list[str]]:
     """Substitutes every known-token match within one string value.
     Returns (possibly-modified string, list of pattern names matched)."""
     matched: list[str] = []
-    for name, pattern in KNOWN_TOKEN_PATTERNS:
+    for name, pattern in (*KNOWN_TOKEN_PATTERNS, *PERSONAL_DATA_PATTERNS):
         def _sub(m: re.Match, _name=name) -> str:
             matched.append(_name)
             return f"[REDACTED:{_name}]"
