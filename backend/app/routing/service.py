@@ -122,12 +122,22 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
                 stored_steps = predict.unpack(steps_row["draws"])
 
     registry = await store.model_registry(pool)
+    from app.routing.cards import load_cards, resolve
+
+    cards = load_cards(await store.model_cards(pool))
     prices = await store.current_prices(pool, [m for m, _ in units])
+    list_priced = []
+    for m, _s in units:                  # no contracted price yet: the card's public list price
+        card = resolve(m, cards)
+        if m not in prices and card is not None and card.price_in is not None and card.price_out is not None:
+            prices[m] = costs.Price(card.price_in, card.price_out, None)
+            list_priced.append(m)
     usable, excluded = [], []
     for m, s in units:
         flags = registry.get(m, {})
         if m not in prices:
-            excluded.append({"unit": unit_id(m, s), "reason": "no price in routing_prices (admin routing-price)"})
+            excluded.append({"unit": unit_id(m, s), "reason": "no price in routing_prices (admin routing-price) "
+                                                              "and no model card with a list price"})
         elif constraints.get("open_weights_only") and not flags.get("open_weights"):
             excluded.append({"unit": unit_id(m, s), "reason": "not registered as open-weights"})
         elif constraints.get("local_only") and not flags.get("local"):
@@ -180,7 +190,8 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
 
     predecessors = {m: r.get("predecessor") for m, r in registry.items()}
     distinct_units = list(dict.fromkeys(u for u, _ in columns))
-    base_u, z_u = predict.unit_terms(g, distinct_units, predecessors, now, rng)
+    updates = await store.model_updates(pool, g.version)
+    base_u, z_u = predict.unit_terms(g, distinct_units, predecessors, now, rng, cards=cards, updates=updates)
 
     def success(cols: Sequence[tuple[tuple[str, str], Optional[int]]]) -> tuple[np.ndarray, np.ndarray]:
         idx = [distinct_units.index(u) for u, _ in cols]
@@ -254,17 +265,27 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
     alternatives = [describe(int(i)) for i in feasible if int(i) != result.chosen][:4]
     single = {unit_id(*usable[u]): float(result.draw_weights @ (p[:, u, :] * node_w).sum(axis=1))
               for u in range(len(usable))}
+    unit_stats = {}
+    for u in range(len(usable)):                 # per-unit single-attempt success: mean and 90% interval over draws
+        per_draw = (p[:, u, :] * node_w).sum(axis=1)
+        q05, q95 = _weighted_quantiles(per_draw, result.draw_weights, (0.05, 0.95))
+        mean = single[unit_id(*usable[u])]
+        unit_stats[unit_id(*usable[u])] = {"p_ok_mean": round(mean, 4), "p_ok_q05": round(q05, 4),
+                                           "p_ok_q95": round(q95, 4),
+                                           "cost_mean": round(float(mean * cost_ok[u] + (1 - mean) * cost_fail[u]), 6)}
     recommendation_id = str(uuid.uuid4())
     response = {
         "status": "ok", "recommendation_id": recommendation_id, "instance_key": instance_key, "goal_id": goal_id,
-        "procedure_id": procedure_id, "params_version": g.version,
+        "procedure_id": procedure_id, "params_version": g.version, "as_of": g.meta.get("fitted_at"),
         "recommended": chosen, "meets_reliability_target": result.meets_target,
         "reliability_target": float(constraints.get("reliability_target") or cfg.reliability_target),
-        "alternatives": alternatives, "p_correct_single_attempt": single,
+        "alternatives": alternatives, "p_correct_single_attempt": single, "units": unit_stats,
         "value_usd": value, "wrong_penalty_usd": wrong_penalty, "check_kind": check_kind,
         "propensity": result.propensity, "excluded": excluded,
         "evidence": {"goal_observations": stored_goal["n_observations"] if stored_goal else 0,
                      "goal_posterior": (stored_goal or {}).get("method") or "prior (parents + embedding)",
+                     "models": {unit_id(m, s): _model_basis(g, m, registry, cards) for m, s in usable},
+                     **({"list_priced": list_priced} if list_priced else {}),
                      **({"local": local_evidence} if local_evidence else {})},
         "how_to_report": "after each rung, call report_model_run(model, scaffold, accepted, instance_key, "
                          "goal_id or procedure_id, check_kind, tokens..., recommendation_id, attempt_index"
@@ -325,6 +346,29 @@ def reweight_by_local_obs(draw_w: np.ndarray, loglik: np.ndarray) -> tuple[np.nd
     return w, {"ess": round(ess, 1), "draws": int(w.shape[0])}
 
 
+def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, qs: Sequence[float]) -> list[float]:
+    order = np.argsort(values)
+    cum = np.cumsum(np.asarray(weights, dtype=float)[order])
+    cum = cum / cum[-1]
+    return [float(values[order][min(int(np.searchsorted(cum, q)), len(values) - 1)]) for q in qs]
+
+
+def _model_basis(g: predict.Globals, model_key: str, registry: Mapping[str, Mapping[str, Any]],
+                 cards: Mapping[str, Any]) -> str:
+    """Where a model's ability estimate comes from: 'fitted' (it has data), 'predecessor' (a fitted
+    earlier version), 'card' (its public metadata) or 'population' (nothing known about it)."""
+    from app.routing.cards import resolve
+
+    if model_key in g.models:
+        return "fitted"
+    pred, hops = registry.get(model_key, {}).get("predecessor"), 0
+    while pred and hops < 32:
+        if pred in g.models:
+            return "predecessor"
+        pred, hops = registry.get(pred, {}).get("predecessor"), hops + 1
+    return "card" if resolve(model_key, cards) is not None and "card_beta" in g.arrays else "population"
+
+
 def _base_policy_node_ok(p: np.ndarray, node_w: np.ndarray, draw_w: np.ndarray, alpha: np.ndarray,
                          beta: np.ndarray, max_rungs: int, top: int = 3) -> np.ndarray:
     """(S, N) P(a later step succeeds | eps) under its base policy: the most reliable
@@ -348,6 +392,13 @@ async def record_observation(pool: Any, obs: Mapping[str, Any], *, enqueue_refit
     if enqueue_refit:
         await store.enqueue_local_refit(pool, str(obs["goal_id"]), ids[0], visibility=obs.get("visibility") or "public",
                                         owner_id=obs.get("owner_id"))
+        if (obs.get("visibility") or "public") == "public":
+            try:                                  # the cross-Goal model update is an addition: never fail a report
+                await store.enqueue_model_update(pool)
+            except Exception:  # noqa: BLE001
+                import logging
+
+                logging.getLogger(__name__).warning("could not queue the model update", exc_info=True)
     return ids[0]
 
 

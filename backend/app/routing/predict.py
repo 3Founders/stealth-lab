@@ -61,16 +61,22 @@ class Globals:
     def epoch(self) -> date:
         return date.fromisoformat(self.meta["epoch"])
 
-    def phi1(self, embedding: Optional[Sequence[float]]) -> np.ndarray:
-        """[1, PCA(embedding)]. A Goal without an embedding has no phi information:
-        its projection is the population mean (0 in the centred PCA space)."""
+    def phi1(self, embedding: Optional[Sequence[float]], features: Optional[Mapping[str, Any]] = None) -> np.ndarray:
+        """[1, PCA(embedding), structural features (when the fit used them)]. A Goal without an
+        embedding has no phi information: its projection is the population mean (0 in the centred
+        PCA space); a Goal without a known patch gets the mean features plus the missing flag."""
         p = self.arrays["pca_components"].shape[0]
-        if embedding is None or p == 0:
-            return np.concatenate([[1.0], np.zeros(p)])
-        e = np.asarray(embedding, dtype=np.float64)
-        if e.shape[0] != self.arrays["pca_mean"].shape[0]:
-            return np.concatenate([[1.0], np.zeros(p)])
-        return np.concatenate([[1.0], self.arrays["pca_components"] @ (e - self.arrays["pca_mean"])])
+        e = None if embedding is None else np.asarray(embedding, dtype=np.float64)
+        if e is None or p == 0 or e.shape[0] != self.arrays["pca_mean"].shape[0]:
+            out = np.concatenate([[1.0], np.zeros(p)])
+        else:
+            out = np.concatenate([[1.0], self.arrays["pca_components"] @ (e - self.arrays["pca_mean"])])
+        if self.meta.get("goal_features"):
+            from app.routing import goal_features as gf
+
+            out = np.concatenate([out, gf.standardised(features, np.asarray(self.meta["goal_feature_mean"]),
+                                                       np.asarray(self.meta["goal_feature_sd"]))])
+        return out
 
 
 def load_globals(version: int, blob: bytes, meta: Mapping[str, Any]) -> Globals:
@@ -101,12 +107,19 @@ def procedure_prior_draws(g: Globals, rng: np.random.Generator) -> np.ndarray:
 # ---------------------------------------------------------------- units
 
 def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mapping[str, Optional[str]],
-               now: datetime, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+               now: datetime, rng: np.random.Generator,
+               cards: Optional[Mapping[str, Any]] = None,
+               updates: Optional[Mapping[str, np.ndarray]] = None) -> tuple[np.ndarray, np.ndarray]:
     """(base (S, U), z (S, U, K)) with base = theta[m, now] + gamma[s] + delta[m, s].
 
-    Known model: its ability at its last fitted week plus the random-walk drift since.
+    Known model: its ability at its last fitted week plus the random-walk drift since -- the drift's
+    POSTERIOR from the public observations since the fit when `updates` has it (model_update.py), else
+    its prior.
     Unknown model: from its nearest known predecessor (N(theta_pred, 0.5^2), skills
-    N(z_pred, 0.3^2)), or from the population prior when it has none."""
+    N(z_pred, 0.3^2)); without one, from its model card's regression (cards.prior_mean),
+    which is the population prior when there is no card or the fit predates cards."""
+    from app.routing.cards import prior_mean, resolve
+
     arr, s_count = g.arrays, g.draws
     model_ix = {m: i for i, m in enumerate(g.models)}
     scaffold_ix = {s: i for i, s in enumerate(g.scaffolds)}
@@ -120,7 +133,10 @@ def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mappi
         if model_key in model_ix:
             m = model_ix[model_key]
             gap = max(0, now_week - int(last_week[m]))
-            theta = arr["theta_last"][:, m] + arr["sigma_drift"] * np.sqrt(gap) * rng.standard_normal(s_count)
+            if updates is not None and model_key in updates:
+                theta = arr["theta_last"][:, m] + updates[model_key]
+            else:
+                theta = arr["theta_last"][:, m] + arr["sigma_drift"] * np.sqrt(gap) * rng.standard_normal(s_count)
             z = arr["z"][:, m, :]
         else:
             pred = predecessors.get(model_key)
@@ -129,8 +145,9 @@ def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mappi
                 theta = theta_p + SIGMA_NEW_VERSION * rng.standard_normal(s_count)
                 z = z_p + SUCCESSOR_Z_SD * rng.standard_normal((s_count, g.k))
             else:
-                theta = arr["sigma_theta"] * rng.standard_normal(s_count)
-                z = rng.standard_normal((s_count, g.k))
+                mu_theta, mu_z = prior_mean(arr, g.meta, resolve(model_key, cards or {}), rng)
+                theta = mu_theta + arr["sigma_theta"] * rng.standard_normal(s_count)
+                z = mu_z + rng.standard_normal((s_count, g.k))
         theta_cache[model_key] = (theta, z)
         return theta, z
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from app.routing.store import LOCAL_REFIT_JOB, NIGHTLY_REFIT_JOB
+from app.routing.store import LOCAL_REFIT_JOB, MODEL_UPDATE_JOB, NIGHTLY_REFIT_JOB
 
 
 async def handle_local_refit(pool: Any, payload: Mapping[str, Any]) -> dict:
@@ -20,8 +20,15 @@ async def handle_nightly_refit(pool: Any, payload: Mapping[str, Any]) -> dict:
     return await nightly_refit(pool, method=payload.get("method"))
 
 
+async def handle_model_update(pool: Any, payload: Mapping[str, Any]) -> dict:
+    from app.routing import model_update
+
+    return await model_update.run(pool)
+
+
 def register() -> None:
     from app.services.ingestion_jobs import JOB_HANDLERS
 
     JOB_HANDLERS[LOCAL_REFIT_JOB] = handle_local_refit
     JOB_HANDLERS[NIGHTLY_REFIT_JOB] = handle_nightly_refit
+    JOB_HANDLERS[MODEL_UPDATE_JOB] = handle_model_update

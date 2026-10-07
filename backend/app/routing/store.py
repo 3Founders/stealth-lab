@@ -26,6 +26,9 @@ _OBS_COLUMNS = (
     "latency_ms", "reporter", "recommendation_id", "visibility", "owner_id", "occurred_at",
     "step_order", "step_role",
 )
+# Migration 147/148 columns. Written only when a row carries them, so a database the migration has not
+# reached yet keeps accepting live observations unchanged.
+_OPTIONAL_OBS_COLUMNS = ("item_created_at", "dedupe_key")
 
 
 class ObservationRejected(ValueError):
@@ -33,7 +36,7 @@ class ObservationRejected(ValueError):
 
 
 def validate_observation(obs: Mapping[str, Any]) -> dict[str, Any]:
-    row = {k: obs.get(k) for k in _OBS_COLUMNS}
+    row = {k: obs.get(k) for k in _OBS_COLUMNS + _OPTIONAL_OBS_COLUMNS}
     for key in ("goal_id", "model_key", "scaffold", "instance_key"):
         if not row[key]:
             raise ObservationRejected(f"{key} is required")
@@ -83,18 +86,21 @@ async def insert_observations(pool: Any, rows: Sequence[Mapping[str, Any]]) -> l
         return []
     await ensure_models(pool, (r["model_key"] for r in clean))
     ids = [str(uuid.uuid4()) for _ in clean]
-    cols = ", ".join(("id",) + _OBS_COLUMNS)
-    marks = ", ".join(f"${i}" for i in range(1, len(_OBS_COLUMNS) + 2))
+    columns = _OBS_COLUMNS + tuple(c for c in _OPTIONAL_OBS_COLUMNS if any(r.get(c) is not None for r in clean))
+    cols = ", ".join(("id",) + columns)
+    marks = ", ".join(f"${i}" for i in range(1, len(columns) + 2))
+    # a re-imported public result (same dedupe_key) is skipped, never counted twice
+    conflict = " ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING" if "dedupe_key" in columns else ""
     now = datetime.now().astimezone()
     # A Goal's observations stay together on one search member (per-Goal aggregates read one database);
     # storage layout v2. Without a search group this is the single search pool, as before.
     by_goal: dict[str, list] = {}
     for obs_id, r in zip(ids, clean):
         by_goal.setdefault(str(r["goal_id"]), []).append(
-            [obs_id, *[(r[c] if c != "occurred_at" else (r[c] or now)) for c in _OBS_COLUMNS]])
+            [obs_id, *[(r[c] if c != "occurred_at" else (r[c] or now)) for c in columns]])
     for goal_id, batch in by_goal.items():
         log = await _goal_log_pool(pool, goal_id)
-        await log.executemany(f"INSERT INTO routing_observations ({cols}) VALUES ({marks})", batch)
+        await log.executemany(f"INSERT INTO routing_observations ({cols}) VALUES ({marks}){conflict}", batch)
     return ids
 
 
@@ -330,8 +336,21 @@ async def goal_rows(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
         "SELECT goal_id::text AS id, visibility::text AS visibility, owner_id, embedding::text AS embedding "
         "FROM goal_search_index WHERE goal_id = ANY($1::uuid[])", list({str(g) for g in goal_ids}))
     member = await _member_embeddings(pool, [r["id"] for r in rows]) if rows else None
-    return {r["id"]: {"id": r["id"], "visibility": r["visibility"], "owner_id": r["owner_id"],
-                      "embedding": _vector(r["embedding"] if member is None else member.get(r["id"]))} for r in rows}
+    out = {r["id"]: {"id": r["id"], "visibility": r["visibility"], "owner_id": r["owner_id"],
+                     "embedding": _vector(r["embedding"] if member is None else member.get(r["id"]))} for r in rows}
+    for goal_id, feats in (await goal_features(pool, list(out))).items():
+        out[goal_id]["features"] = feats
+    return out
+
+
+async def goal_features(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
+    """Structural patch features of Goals that are also public benchmark items (migration 147)."""
+    if not goal_ids:
+        return {}
+    rows = await _missing_table_safe(pool.fetch(
+        "SELECT goal_id::text AS id, features FROM routing_evidence_items WHERE goal_id = ANY($1::uuid[]) "
+        "AND features <> '{}'::jsonb", list({str(g) for g in goal_ids})))
+    return {r["id"]: _json_value(r["features"]) for r in rows}
 
 
 async def goal_parents(pool: Any, goal_ids: Sequence[str]) -> dict[str, list[str]]:
@@ -367,3 +386,140 @@ async def enqueue_local_refit(pool: Any, goal_id: str, observation_id: str, *, v
         scope_type={"public": "global", "private": "user", "org": "organization"}[visibility],
         owner_id=owner_id if visibility != "public" else None, visibility=visibility, max_attempts=3,
         offload=False)   # the payload is one id: nothing to put in object storage
+
+
+# ------------------------------------------------------------------ model-side priors (migration 147)
+
+async def _missing_table_safe(coro: Any) -> list:
+    """Reads of the migration-136 tables return nothing on a database the migration has not reached."""
+    import asyncpg
+
+    try:
+        return await coro
+    except (asyncpg.UndefinedTableError, asyncpg.UndefinedColumnError):
+        return []
+
+
+async def model_cards(pool: Any) -> list[dict]:
+    rows = await _missing_table_safe(pool.fetch(
+        "SELECT model_key, family, provider, release_date, training_cutoff, open_weights, params_b, active_params_b, "
+        "reasoning, context_k, price_in, price_out, aliases, source FROM routing_model_cards"))
+    return [dict(r) for r in rows]
+
+
+async def upsert_model_cards(pool: Any, rows: Sequence[Mapping[str, Any]]) -> int:
+    """Insert or refresh cards. A field the new row leaves unknown keeps its stored value; aliases merge."""
+    if not rows:
+        return 0
+    await pool.executemany(
+        "INSERT INTO routing_model_cards (model_key, family, provider, release_date, training_cutoff, open_weights, "
+        "params_b, active_params_b, reasoning, context_k, price_in, price_out, aliases, source, as_of) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::text[], $14, now()) "
+        "ON CONFLICT (model_key) DO UPDATE SET "
+        "family = COALESCE(EXCLUDED.family, routing_model_cards.family), "
+        "provider = COALESCE(EXCLUDED.provider, routing_model_cards.provider), "
+        "release_date = COALESCE(EXCLUDED.release_date, routing_model_cards.release_date), "
+        "training_cutoff = COALESCE(EXCLUDED.training_cutoff, routing_model_cards.training_cutoff), "
+        "open_weights = COALESCE(EXCLUDED.open_weights, routing_model_cards.open_weights), "
+        "params_b = COALESCE(EXCLUDED.params_b, routing_model_cards.params_b), "
+        "active_params_b = COALESCE(EXCLUDED.active_params_b, routing_model_cards.active_params_b), "
+        "reasoning = COALESCE(EXCLUDED.reasoning, routing_model_cards.reasoning), "
+        "context_k = COALESCE(EXCLUDED.context_k, routing_model_cards.context_k), "
+        "price_in = COALESCE(EXCLUDED.price_in, routing_model_cards.price_in), "
+        "price_out = COALESCE(EXCLUDED.price_out, routing_model_cards.price_out), "
+        "aliases = ARRAY(SELECT DISTINCT unnest(routing_model_cards.aliases || EXCLUDED.aliases)), "
+        "source = CASE WHEN EXCLUDED.source = '' THEN routing_model_cards.source ELSE EXCLUDED.source END, "
+        "as_of = now()",
+        [(r["model_key"], r.get("family"), r.get("provider"), r.get("release_date"), r.get("training_cutoff"),
+          r.get("open_weights"), r.get("params_b"), r.get("active_params_b"), r.get("reasoning"), r.get("context_k"),
+          r.get("price_in"), r.get("price_out"), list(r.get("aliases") or []), r.get("source") or "") for r in rows])
+    return len(rows)
+
+
+async def evidence_items(pool: Any) -> list[dict]:
+    rows = await _missing_table_safe(pool.fetch(
+        "SELECT item_key, goal_id::text AS goal_id, is_goal, benchmark, repo, created_at, features "
+        "FROM routing_evidence_items"))
+    return [{**dict(r), "features": _json_value(r["features"]) or {}} for r in rows]
+
+
+async def upsert_evidence_items(pool: Any, rows: Sequence[Mapping[str, Any]]) -> int:
+    if not rows:
+        return 0
+    await pool.executemany(
+        "INSERT INTO routing_evidence_items (item_key, goal_id, is_goal, benchmark, repo, created_at, features) "
+        "VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::jsonb) ON CONFLICT (item_key) DO UPDATE SET "
+        "goal_id = EXCLUDED.goal_id, is_goal = EXCLUDED.is_goal, benchmark = EXCLUDED.benchmark, "
+        "repo = EXCLUDED.repo, created_at = COALESCE(EXCLUDED.created_at, routing_evidence_items.created_at), "
+        "features = EXCLUDED.features",
+        [(r["item_key"], str(r["goal_id"]), bool(r.get("is_goal")), r["benchmark"], r.get("repo"),
+          r.get("created_at"), json.dumps(r.get("features") or {})) for r in rows])
+    return len(rows)
+
+
+async def aggregate_results(pool: Any) -> list[dict]:
+    rows = await _missing_table_safe(pool.fetch(
+        "SELECT source, benchmark, model_key, scaffold, n, k, item_created_min, item_created_max, occurred_at "
+        "FROM routing_aggregate_results"))
+    return [dict(r) for r in rows]
+
+
+async def upsert_aggregate_results(pool: Any, rows: Sequence[Mapping[str, Any]]) -> int:
+    if not rows:
+        return 0
+    await ensure_models(pool, (r["model_key"] for r in rows))
+    await pool.executemany(
+        "INSERT INTO routing_aggregate_results (source, benchmark, model_key, scaffold, n, k, item_created_min, "
+        "item_created_max, occurred_at, dedupe_key) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) "
+        "ON CONFLICT (dedupe_key) DO UPDATE SET n = EXCLUDED.n, k = EXCLUDED.k, occurred_at = EXCLUDED.occurred_at",
+        [(r["source"], r["benchmark"], r["model_key"], r["scaffold"], int(r["n"]), int(r["k"]), r.get("item_created_min"),
+          r.get("item_created_max"), r["occurred_at"],
+          r.get("dedupe_key") or f"{r['benchmark']}|{r['model_key']}|{r['scaffold']}|{r.get('split') or ''}")
+         for r in rows])
+    return len(rows)
+
+
+# ------------------------------------------------------------------ between-nightly model updates (model_update.py)
+
+MODEL_UPDATE_JOB = "routing_model_update"
+
+
+async def observations_since(pool: Any, since: datetime, *, public_only: bool) -> list[dict]:
+    """Observations recorded after `since` (the active fit), from every search member: the recent tail only."""
+    from app.services import search_group
+
+    where = "WHERE occurred_at > $1" + (" AND visibility = 'public'" if public_only else "")
+    rows = await search_group.fetch_all(
+        pool, "SELECT goal_id::text AS goal_id, model_key, scaffold, accepted, check_kind, step_order, occurred_at "
+        f"FROM routing_observations {where}", since, strict=True)
+    return [dict(r) for r in rows]
+
+
+async def save_model_updates(pool: Any, version: int, updates: Sequence[Mapping[str, Any]]) -> None:
+    from app.routing.model_update import encode
+
+    if not updates:
+        return
+    await pool.executemany(
+        "INSERT INTO routing_model_updates (params_version, model_key, drift, n_observations, updated_at) "
+        "VALUES ($1, $2, $3, $4, now()) ON CONFLICT (params_version, model_key) DO UPDATE SET "
+        "drift = EXCLUDED.drift, n_observations = EXCLUDED.n_observations, updated_at = now()",
+        [(version, u["model_key"], encode(u["drift"]), int(u["n"])) for u in updates])
+
+
+async def model_updates(pool: Any, version: int) -> dict[str, Any]:
+    """{model_key: (S,) drift draws} for the given params version (empty before migration 147)."""
+    from app.routing.model_update import decode
+
+    rows = await _missing_table_safe(pool.fetch(
+        "SELECT model_key, drift FROM routing_model_updates WHERE params_version = $1", version))
+    return {r["model_key"]: decode(bytes(r["drift"])) for r in rows}
+
+
+async def enqueue_model_update(pool: Any, now: Optional[datetime] = None) -> None:
+    """At most one between-nightly model update per hour, however many observations arrive."""
+    from app.ingestion import queue
+
+    hour = (now or datetime.now().astimezone()).strftime("%Y%m%d%H")
+    await queue.enqueue(pool, MODEL_UPDATE_JOB, {}, idempotency_key=f"model_update:{hour}", scope_type="global",
+                        visibility="public", max_attempts=2, offload=False)

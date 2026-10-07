@@ -31,6 +31,16 @@ through the Goal DAG with an embedding baseline:
 A Goal without parents has an empty sum -- the same formula, not a special case. Each
 observation enters the likelihood once, so DAG diamonds cannot double count.
 
+Model side (docs/plan_2026-10_priors_library_survey.md §2): a model with a version predecessor
+starts from it; one without starts from its CARD (cards.py) instead of a pure guess,
+
+    theta[m, 0] = beta . x_m + f_theta[family] + sigma_theta * xi,   z[m] = B x_m + f_z[family] + xi_z
+
+with beta, B and the pooled family effects learned across every model with public results.
+Public benchmark items published before a model's training cutoff add kappa >= 0 to its logit
+(contamination; learned, never applied to live tasks), and leaderboards that publish only a
+percentage enter as a binomial likelihood over the benchmark's Goal node (aggregate_loglik).
+
 Identification:
   * mean model ability is fixed at 0 (location of theta vs b);
   * the skill matrix z is lower triangular with a positive diagonal in its first K rows
@@ -146,6 +156,59 @@ def reporter_alpha(alpha_k: Any, check: Any, reporter: Any, rho: Any) -> Any:
     return jnp.where((reporter >= 0) & (check != BENCHMARK), shifted, base)
 
 
+def card_prior(data: Mapping[str, Any], m_count: int, k: int) -> tuple[Any, Any]:
+    """(mu_theta (M,), mu_z (M, K)): the model-card regression (cards.py) that a model without a
+    predecessor starts from. Zeros -- the population prior -- when the data carries no cards."""
+    mx = data.get("model_x")
+    if mx is None or np.asarray(mx).shape[1] == 0:
+        return jnp.zeros(m_count), jnp.zeros((m_count, k))
+    x = jnp.asarray(mx)
+    c_dim = x.shape[1]
+    n_fam = max(int(data.get("n_families", 0)), 1)
+    fam = jnp.asarray(data["model_family"])
+    # one shared scale: with few models and ~16 covariates the coefficients shrink together toward 0 (the old
+    # population prior) unless the data hold them up -- noise covariates cannot each take +-0.5 for free
+    tau_beta = _halfnormal("tau_card_beta", 0.5)
+    beta = numpyro.deterministic("card_beta", tau_beta * _std_normal("xi_card_beta", (c_dim,)))
+    tau_ft = _halfnormal("tau_fam_theta", 0.5)
+    # centred: the families' common level is the population location (already shared by abilities and Goal
+    # difficulties), so leaving it free gives the sampler a flat ridge to wander along
+    xi_ft = _std_normal("xi_fam_theta", (n_fam,))
+    fam_theta = tau_ft * (xi_ft - xi_ft.mean())
+    numpyro.deterministic("fam_theta", fam_theta)
+    mu_theta = x @ beta + jnp.where(fam >= 0, fam_theta[jnp.clip(fam, 0)], 0.0)
+    if k == 0:
+        return mu_theta, jnp.zeros((m_count, 0))
+    b_mat = numpyro.sample("card_B", dist.Normal(jnp.zeros((k, c_dim)), 0.3).to_event(2))
+    tau_fz = _halfnormal("tau_fam_z", 0.3)
+    xi_fz = _std_normal("xi_fam_z", (n_fam, k))
+    fam_z = tau_fz * (xi_fz - xi_fz.mean(axis=0, keepdims=True))
+    numpyro.deterministic("fam_z", fam_z)
+    mu_z = x @ b_mat.T + jnp.where((fam >= 0)[:, None], fam_z[jnp.clip(fam, 0)], 0.0)
+    return mu_theta, mu_z
+
+
+def contamination(data: Mapping[str, Any]) -> Any:
+    """kappa >= 0: the logit bonus a model gets on a public benchmark item published before its
+    training cutoff (memorisation). Learned, and never applied at decision time (live tasks are new)."""
+    if "att_contam" not in data and "agg_contam" not in data:
+        return 0.0
+    return _halfnormal("kappa", 0.5)
+
+
+def aggregate_loglik(logit_a: Any, sig_eps_a: Any, n: Any, k_ok: Any, eps_nodes: int) -> Any:
+    """Binomial log-likelihood of aggregate-only public results (a leaderboard %: k of n items
+    resolved), with the per-item difficulty integrated out by Gauss-Hermite quadrature:
+    P = E_eps[sigmoid(logit - sigma_eps * eps)]. The binomial coefficient is a constant and omitted.
+    Items are treated as exchangeable draws from the benchmark node -- their shared identity across
+    models is lost in an aggregate, which only makes this evidence weaker, never biased."""
+    ex, ew = standard_normal_rule(eps_nodes)
+    arg = logit_a[:, None] - sig_eps_a[:, None] * jnp.asarray(ex)[None, :]
+    log_p = logsumexp(jax.nn.log_sigmoid(arg) + jnp.log(jnp.asarray(ew))[None, :], axis=1)
+    log_q = logsumexp(jax.nn.log_sigmoid(-arg) + jnp.log(jnp.asarray(ew))[None, :], axis=1)
+    return (k_ok * log_p + (n - k_ok) * log_q).sum()
+
+
 def joint_model(data: Mapping[str, Any], k: int, eps_nodes: int) -> None:
     """The full model over every Goal / Procedure / model / scaffold in `data`
     (built by fit.build_joint_data)."""
@@ -159,24 +222,27 @@ def joint_model(data: Mapping[str, Any], k: int, eps_nodes: int) -> None:
     sigma_drift = _halfnormal("sigma_drift", 0.1)
     xi_theta = _std_normal("xi_theta", (m_count,))
     zeta = _std_normal("zeta", (m_count, weeks))
+    mu_theta, mu_z = card_prior(data, m_count, k)
     theta_hist = jnp.zeros((m_count, weeks))
     pred, first = data["model_pred"], data["model_first_week"]
     week_idx = np.arange(weeks)
     for m in range(m_count):                     # predecessors are ordered first (fit.py)
         start = (theta_hist[pred[m], first[m]] + SIGMA_NEW_VERSION * xi_theta[m]) if pred[m] >= 0 \
-            else sigma_theta * xi_theta[m]
+            else mu_theta[m] + sigma_theta * xi_theta[m]
         steps = jnp.where(week_idx > first[m], zeta[m], 0.0)
         theta_hist = theta_hist.at[m].set(start + sigma_drift * jnp.cumsum(steps))
     numpyro.deterministic("theta_hist", theta_hist)
 
     if k > 0:
-        z = skill_matrix(_std_normal("z_raw", (m_count, k)),
+        z_raw = _std_normal("z_raw", (m_count, k))
+        no_pred = jnp.asarray(np.asarray(pred) < 0)[:, None]
+        z = skill_matrix(jnp.where(no_pred, mu_z + z_raw, z_raw),
                          _halfnormal("z_diag", 1.0, (min(m_count, k),)), m_count, k)
     else:
-        z = jnp.zeros((m_count, 0))
+        z_raw = z = jnp.zeros((m_count, 0))
     for m in range(m_count):                     # a successor's skills start near its predecessor's
         if pred[m] >= 0 and m >= k:
-            z = z.at[m].set(z[pred[m]] + SUCCESSOR_Z_SD * (z[m]))
+            z = z.at[m].set(z[pred[m]] + SUCCESSOR_Z_SD * z_raw[m])
     numpyro.deterministic("z", z)
 
     gamma = TAU_GAMMA * _std_normal("xi_gamma", (s_count,))
@@ -219,6 +285,15 @@ def joint_model(data: Mapping[str, Any], k: int, eps_nodes: int) -> None:
     alpha_k, beta_k = check_rates()
     tau_rho = _halfnormal("tau_rho", 0.5)
     rho = tau_rho * _std_normal("xi_rho", (max(r_count, 1),))
+    kappa = contamination(data)
+
+    if data.get("n_aggregates", 0):
+        ma, sa, ga = (jnp.asarray(data["agg_model"]), jnp.asarray(data["agg_scaffold"]),
+                      jnp.asarray(data["agg_goal"]))
+        logit_a = (theta_hist[ma, jnp.asarray(data["agg_week"])] + gamma[sa] + delta[ma, sa] - x[ga, 0]
+                   + (x[ga, 2:] * z[ma]).sum(axis=1) + kappa * jnp.asarray(data["agg_contam"]))
+        numpyro.factor("aggregates", aggregate_loglik(
+            logit_a, jnp.exp(x[ga, 1]), jnp.asarray(data["agg_n"]), jnp.asarray(data["agg_k"]), eps_nodes))
 
     if data["n_attempts"] == 0:
         return
@@ -232,6 +307,8 @@ def joint_model(data: Mapping[str, Any], k: int, eps_nodes: int) -> None:
                           + (step_e[jnp.clip(att_step, 0)] * zm).sum(axis=1), 0.0)
     logit_r = (theta_hist[mi, wk] + gamma[si] + delta[mi, si] - x[gi, 0]
                + (x[gi, 2:] * zm).sum(axis=1) + (proc_term * zm).sum(axis=1) + step_term)
+    if "att_contam" in data:
+        logit_r = logit_r + kappa * jnp.asarray(data["att_contam"])
     sig_eps_r = jnp.exp(x[gi, 1])
     check, reporter = data["att_check"], data["att_reporter"]
     alpha_r = reporter_alpha(alpha_k, check, reporter, rho)

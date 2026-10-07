@@ -70,6 +70,55 @@ def registered_candidate_providers() -> tuple[CandidateProvider, ...]:
     return tuple(_PROVIDERS)
 
 
+DEFAULT_MODELS_ENV = "STEALTH_DEFAULT_MODELS"
+
+
+class PublicCatalogCandidates:
+    """Units the DEPLOYMENT can run for anyone (e.g. through its own OpenRouter or vLLM key), declared as
+    STEALTH_DEFAULT_MODELS="model|scaffold,model|scaffold". A bare model name means the direct scaffold.
+    Each needs a price (routing_prices) or a model card with a list price, or the recommender excludes it."""
+
+    name = "catalog"
+
+    def __init__(self, env: Optional[Mapping[str, str]] = None):
+        self._env = env
+
+    def units(self) -> list[str]:
+        import os
+
+        raw = (self._env if self._env is not None else os.environ).get(DEFAULT_MODELS_ENV, "")
+        out: list[str] = []
+        for item in raw.split(","):
+            item = item.strip()
+            if item:
+                unit = item if "|" in item else f"{item}|direct"
+                if unit not in out:
+                    out.append(unit)
+        return out
+
+    def configured(self) -> bool:
+        return bool(self.units())
+
+    async def candidates(self, pool: Any, *, scope: AccessScope, goal_id: str,
+                         constraints: Mapping[str, Any]) -> Sequence[str]:
+        return self.units()
+
+
+def caller_unit(model: Optional[str], client: Optional[str] = None) -> Optional[str]:
+    """The caller's OWN model as a unit -- always runnable, by definition (CallerModelCandidates, plan §2.4).
+    `model` is what the agent says it is ("claude-sonnet-4-5", or a full "model|scaffold"); the scaffold
+    is its MCP client ("claude-code", "cursor", ...) because the harness changes the success rate."""
+    if not model or not str(model).strip():
+        return None
+    model = str(model).strip()
+    if "|" in model:
+        return model
+    from app.routing.cards import canonical_key
+
+    scaffold = canonical_key(client) if client else "direct"
+    return f"{model}|{scaffold or 'direct'}"
+
+
 async def gather_candidates(pool: Any, *, scope: AccessScope, goal_id: str, constraints: Mapping[str, Any],
                             explicit: Sequence[Any] = ()) -> tuple[list[Any], list[dict[str, str]]]:
     """Explicit candidates first, then every provider's. A provider that raises is skipped and
@@ -146,8 +195,18 @@ def _compact(rec: Mapping[str, Any]) -> dict[str, Any]:
     if rec.get("status") != "ok":
         return {k: rec[k] for k in ("status", "reason", "excluded") if k in rec}
     ladder = list((rec.get("recommended") or {}).get("ladder") or [])
+    evidence = rec.get("evidence") or {}
+    units = rec.get("units") or {}
+    # plan §5.2: what the reply rests on, and the ladder with per-rung uncertainty (routing.md is written from it)
+    basis = "posterior" if (evidence.get("goal_observations") or 0) > 0 or any(
+        b == "fitted" for b in (evidence.get("models") or {}).values()) else "prior"
+    step = rec.get("step") or {}
     return {
-        "status": "ok", "instance_key": rec["instance_key"], "recommendation_id": rec["recommendation_id"],
+        "status": "ok", "basis": basis, "fit_id": rec.get("params_version"), "as_of": rec.get("as_of"),
+        "steps": [{"step": step.get("step_order") if step else "*",
+                   "ladder": [{"unit": u, **units.get(u, {})} for u in ladder]}],
+        "model_basis": evidence.get("models") or {},
+        "instance_key": rec["instance_key"], "recommendation_id": rec["recommendation_id"],
         "ladder": ladder, "meets_reliability_target": rec.get("meets_reliability_target"),
         "reliability_target": rec.get("reliability_target"), "check_kind": rec.get("check_kind"),
         "recommended": rec.get("recommended"), "alternatives": rec.get("alternatives") or [],

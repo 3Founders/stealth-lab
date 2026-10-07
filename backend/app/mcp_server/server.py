@@ -1484,6 +1484,8 @@ from app.routing import plan as _routing_plan  # noqa: E402
 # Connected models/agents become routing candidates -- but only once a connection source is configured,
 # so a bare server's find_ways is unchanged (plan.wants_plan asks `configured()`).
 _routing_plan.register_candidate_provider(_ProviderCandidates())
+# Models the deployment itself can run for anyone (STEALTH_DEFAULT_MODELS); inert when the variable is unset.
+_routing_plan.register_candidate_provider(_routing_plan.PublicCatalogCandidates())
 
 
 @server.tool()
@@ -1495,6 +1497,7 @@ async def find_ways(
     candidates: list[Any] | None = None, check_kind: str | None = None,
     model_constraints: dict[str, Any] | None = None, detail: str = "full",
     repo_identity: dict[str, Any] | None = None, library_rows: str = "", route_obs: str = "",
+    my_model: str | None = None,
 ) -> str:
     """
     Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
@@ -1562,6 +1565,11 @@ async def find_ways(
       comes back: the ROUTE line(s) to write into routing.md.
     Like repo_claims, these are used for this request only -- never stored or logged.
 
+    my_model: the model YOU are (e.g. "claude-sonnet-4-5"). It is always a candidate (scaffold = your
+    MCP client), so the plan says whether to keep the task yourself or hand it to a cheaper / stronger
+    model. Each rung carries p_ok (mean and 90% interval) and expected cost; `basis` says whether that
+    rests on observed runs ("posterior") or on public benchmarks and model cards only ("prior").
+
     detail: "full" (default) returns every step in full. "summary" shortens step text, checks and
     example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and
     preconditions stay complete): much less to carry through a long session. Call again with the same
@@ -1597,6 +1605,9 @@ async def find_ways(
     # the library arguments only reach the plan when the caller sent them: without them, exactly as before
     local = {} if library is None and not (route_obs or "").strip() else {
         "route_obs": route_obs, "library": library, "local_args": True}
+    own = _routing_plan.caller_unit(my_model, (_find_ways_client(ctx) or {}).get("name"))
+    if own is not None:
+        candidates = [*(candidates or []), own]
     final = await _attach_model_plan(_mark_untrusted(shape(reply)), ctx, candidates=candidates, check_kind=check_kind,
                                      constraints=model_constraints, **local)
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it

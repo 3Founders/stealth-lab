@@ -34,6 +34,8 @@ def _enable_x64() -> None:
     jax.config.update("jax_enable_x64", True)
 
 SCALAR_SITES = ("sigma_theta", "sigma_drift", "tau_c")
+# model-card prior and contamination (cards.py, model.card_prior); absent from fits made without cards
+CARD_SITES = ("card_beta", "card_B", "fam_theta", "fam_z", "tau_fam_theta", "tau_fam_z", "kappa")
 
 
 # ================================================================ data assembly
@@ -101,13 +103,22 @@ def _levels(goals: list[str], parents: Mapping[str, Sequence[str]]) -> list[np.n
 
 def build_joint_data(observations: Sequence[Mapping[str, Any]], goal_meta: Mapping[str, Mapping[str, Any]],
                      parents: Mapping[str, Sequence[str]], registry: Mapping[str, Mapping[str, Any]],
-                     cfg: RoutingDefaults = DEFAULTS) -> tuple[dict[str, Any], dict[str, Any]]:
-    """(numeric data for model.joint_model, index maps / meta)."""
+                     cfg: RoutingDefaults = DEFAULTS, *, cards: Optional[Mapping[str, Any]] = None,
+                     aggregates: Sequence[Mapping[str, Any]] = ()) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(numeric data for model.joint_model, index maps / meta).
+
+    cards: {model_key: cards.ModelCard} -- with them, models without a predecessor start from
+    their card's regression and public benchmark items before a model's cutoff are flagged
+    (contamination). None keeps the card-free model exactly as before.
+    aggregates: aggregate-only public results {model_key, scaffold, goal_id, n, k, occurred_at,
+    item_created_min?, item_created_max?, contam_fraction?} on a benchmark's Goal node
+    (model.aggregate_loglik)."""
     obs = [o for o in observations if str(o["goal_id"]) in goal_meta]
-    epoch = _epoch(obs)
-    models = _topological_models({o["model_key"] for o in obs}, registry)
+    aggs = [a for a in aggregates if str(a["goal_id"]) in goal_meta and int(a["n"]) > 0]
+    epoch = _epoch([*obs, *aggs])
+    models = _topological_models({o["model_key"] for o in obs} | {a["model_key"] for a in aggs}, registry)
     m_ix = {m: i for i, m in enumerate(models)}
-    scaffolds = sorted({o["scaffold"] for o in obs})
+    scaffolds = sorted({o["scaffold"] for o in obs} | {a["scaffold"] for a in aggs})
     s_ix = {s: i for i, s in enumerate(scaffolds)}
     reporters = sorted({o["reporter"] for o in obs if o.get("reporter")})
     r_ix = {r: i for i, r in enumerate(reporters)}
@@ -123,18 +134,26 @@ def build_joint_data(observations: Sequence[Mapping[str, Any]], goal_meta: Mappi
     for g, i in g_ix.items():
         emb = goal_meta[g].get("embedding")
         phi1[i, 1:] = pca_comp @ (np.asarray(emb) - pca_mean) if (emb is not None and p_dim) else 0.0
-    max_p = max([len([p for p in parents.get(g, []) if p in g_ix]) for g in goals] + [1])
+    feat_mean = feat_sd = None
+    if any("features" in goal_meta[g] for g in goals):     # structural patch features (goal_features.py)
+        from app.routing import goal_features as gf
+
+        feat_mean, feat_sd = gf.standardisation([goal_meta[g].get("features") for g in goals])
+        phi1 = np.concatenate([phi1, np.stack([gf.standardised(goal_meta[g].get("features"), feat_mean, feat_sd)
+                                               for g in goals])], axis=1)
+    max_p =max([len([p for p in parents.get(g, []) if p in g_ix]) for g in goals] + [1])
     par = -np.ones((len(goals), max_p), dtype=np.int32)
     for g, i in g_ix.items():
         ps = [g_ix[p] for p in parents.get(g, []) if p in g_ix]
         par[i, :len(ps)] = ps
     weeks = [week_index(o["occurred_at"], epoch) for o in obs]
-    n_weeks = (max(weeks) + 1) if weeks else 1
+    agg_weeks = [week_index(a["occurred_at"], epoch) for a in aggs]
+    n_weeks = (max(weeks + agg_weeks) + 1) if (weeks or agg_weeks) else 1
 
     first_week = np.zeros(len(models), dtype=np.int32)
     last_week = np.zeros(len(models), dtype=np.int32)
     seen: dict[int, list[int]] = defaultdict(list)
-    for o, w in zip(obs, weeks):
+    for o, w in zip([*obs, *aggs], weeks + agg_weeks):
         seen[m_ix[o["model_key"]]].append(w)
     for m in range(len(models)):
         if seen[m]:
@@ -189,10 +208,64 @@ def build_joint_data(observations: Sequence[Mapping[str, Any]], goal_meta: Mappi
         "goal_observations": {g: sum(1 for o in obs if str(o["goal_id"]) == g) for g in goals},
         "procedure_observations": {p: sum(1 for o in obs if str(o.get("procedure_id")) == p) for p in procs},
         "_pca_mean": pca_mean, "_pca_components": pca_comp,
+        **({"goal_features": list(gf.FEATURES), "goal_feature_mean": feat_mean.tolist(),
+            "goal_feature_sd": feat_sd.tolist()} if feat_mean is not None else {}),
         "steps": [[pid, order, roles.get((pid, order), "other")] for pid, order in steps],
         "step_roles": list(STEP_ROLES),
     }
+    if cards is not None:
+        _add_cards(data, meta, models, obs, aggs, cards)
+    if aggs:
+        data.update({
+            "n_aggregates": len(aggs),
+            "agg_model": np.array([m_ix[a["model_key"]] for a in aggs], dtype=np.int32),
+            "agg_scaffold": np.array([s_ix[a["scaffold"]] for a in aggs], dtype=np.int32),
+            "agg_goal": np.array([g_ix[str(a["goal_id"])] for a in aggs], dtype=np.int32),
+            "agg_week": np.array(agg_weeks, dtype=np.int32),
+            "agg_n": np.array([float(a["n"]) for a in aggs]),
+            "agg_k": np.array([float(a["k"]) for a in aggs]),
+        })
+        data.setdefault("agg_contam", np.zeros(len(aggs)))
+        meta["n_aggregates"] = len(aggs)
     return data, meta
+
+
+def _as_date(v: Any) -> Optional[date]:
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    return date.fromisoformat(str(v)[:10])
+
+
+def _add_cards(data: dict[str, Any], meta: dict[str, Any], models: Sequence[str],
+               obs: Sequence[Mapping[str, Any]], aggs: Sequence[Mapping[str, Any]], cards: Mapping[str, Any]) -> None:
+    """Covariates, families and contamination flags (cards.py, model.card_prior / contamination)."""
+    from app.routing import cards as cardlib
+
+    found = [cardlib.resolve(m, cards) for m in models]
+    design = cardlib.design_for(found)
+    x, fam = cardlib.design_matrix(design, found)
+    cutoff = {m: (c.contamination_cutoff() if c is not None else None) for m, c in zip(models, found)}
+    contam = np.zeros(len(obs))
+    for r, o in enumerate(obs):
+        item, cut = _as_date(o.get("item_created_at")), cutoff.get(o["model_key"])
+        if o.get("check_kind") == "benchmark" and item is not None and cut is not None and item < cut:
+            contam[r] = 1.0
+    agg_contam = np.zeros(len(aggs))
+    for r, a in enumerate(aggs):
+        lo, hi = _as_date(a.get("item_created_min")), _as_date(a.get("item_created_max"))
+        cut = cutoff.get(a["model_key"])
+        if a.get("contam_fraction") is not None:
+            agg_contam[r] = float(a["contam_fraction"])
+        elif lo is not None and hi is not None and cut is not None:
+            agg_contam[r] = float(np.clip((cut - lo).days / max((hi - lo).days, 1), 0.0, 1.0))
+    data.update({"model_x": x, "model_family": fam, "n_families": len(design.families),
+                 "att_contam": contam, "agg_contam": agg_contam})
+    meta.update(design.to_meta())
+    meta["model_cards"] = {m: c.model_key for m, c in zip(models, found) if c is not None}
 
 
 def step_key(o: Mapping[str, Any]) -> Optional[tuple[str, int]]:
@@ -211,13 +284,27 @@ def latent_count(data: Mapping[str, Any], k: int) -> int:
 
 # ================================================================ joint fit
 
+def gradient_work(data: Mapping[str, Any], cfg: RoutingDefaults) -> int:
+    """Likelihood terms evaluated per gradient: (attempts + aggregates) x quadrature nodes."""
+    return (int(data["n_attempts"]) + int(data.get("n_aggregates", 0))) * int(cfg.gh_eps_nodes)
+
+
+def choose_method(data: Mapping[str, Any], cfg: RoutingDefaults) -> str:
+    """Exact NUTS while it is affordable; low-rank Gaussian VI for large latent counts or large data."""
+    k = int(data["k"])
+    if latent_count(data, k) <= cfg.nuts_max_latents and gradient_work(data, cfg) <= cfg.nuts_max_work:
+        return "nuts"
+    return "vi_lowrank"
+
+
 def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: int = 0,
               num_draws: Optional[int] = None, method: Optional[str] = None) -> tuple[dict[str, np.ndarray], str, dict]:
     """Posterior draws (S of each site / deterministic), the method used, diagnostics."""
     import jax
     import jax.numpy as jnp  # noqa: F401
     from numpyro.infer import MCMC, NUTS, Predictive, SVI, Trace_ELBO
-    from numpyro.infer.autoguide import AutoBNAFNormal
+    from numpyro.infer import init_to_median
+    from numpyro.infer.autoguide import AutoBNAFNormal, AutoLowRankMultivariateNormal
     from numpyro.optim import Adam
 
     from app.routing.model import joint_model
@@ -226,7 +313,7 @@ def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: in
     s_draws = num_draws or cfg.draws
     k = int(data["k"])
     args = (data, k, cfg.gh_eps_nodes)
-    chosen = method or ("nuts" if latent_count(data, k) <= cfg.nuts_max_latents else "flow_vi")
+    chosen = method or choose_method(data, cfg)
     key = jax.random.PRNGKey(seed)
     if chosen == "nuts":
         chains = cfg.nightly_chains
@@ -239,6 +326,19 @@ def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: in
         keep = np.linspace(0, total - 1, s_draws).round().astype(int)
         samples = {k_: np.asarray(v)[keep] for k_, v in raw.items()}
         diag = _nuts_diagnostics(mcmc)
+    elif chosen == "vi_lowrank":
+        guide = AutoLowRankMultivariateNormal(joint_model, rank=cfg.vi_rank, init_loc_fn=init_to_median(num_samples=15))
+        steps = cfg.vi_steps
+        svi = SVI(joint_model, guide, Adam(lambda i: 1e-2 * 0.05 ** (i / steps)), Trace_ELBO())
+        result = svi.run(key, steps, *args, progress_bar=False)
+        post = Predictive(guide, params=result.params, num_samples=s_draws)(jax.random.PRNGKey(seed + 1), *args)
+        samples = {k_: np.asarray(v) for k_, v in post.items()}
+        losses = np.asarray(result.losses)
+        tail = max(steps // 10, 1)
+        diag = {"final_elbo_loss": float(losses[-tail:].mean()), "svi_steps": steps, "rank": cfg.vi_rank,
+                # relative change of the loss over the last tenth: a converged fit is flat
+                "elbo_tail_rel_change": float(abs(losses[-tail:].mean() - losses[-2 * tail:-tail].mean())
+                                              / max(abs(losses[-tail:].mean()), 1e-9))}
     else:
         guide = AutoBNAFNormal(joint_model, num_flows=2)
         svi = SVI(joint_model, guide, Adam(1e-3), Trace_ELBO())
@@ -246,8 +346,10 @@ def run_joint(data: dict[str, Any], cfg: RoutingDefaults = DEFAULTS, *, seed: in
         post = Predictive(guide, params=result.params, num_samples=s_draws)(jax.random.PRNGKey(seed + 1), *args)
         samples = {k_: np.asarray(v) for k_, v in post.items()}
         diag = {"final_elbo_loss": float(result.losses[-1]), "svi_steps": 20000}
-    det = Predictive(joint_model, posterior_samples=samples, return_sites=[
-        "theta_hist", "z", "gamma", "delta", "w", "tau", "goal_x", "proc_c", "step_d", "step_e"])(jax.random.PRNGKey(seed + 2), *args)
+    sites = ["theta_hist", "z", "gamma", "delta", "w", "tau", "goal_x", "proc_c", "step_d", "step_e"]
+    if data.get("model_x") is not None and np.asarray(data["model_x"]).shape[1]:
+        sites += ["card_beta", "fam_theta"] + (["fam_z"] if k > 0 else [])
+    det = Predictive(joint_model, posterior_samples=samples, return_sites=sites)(jax.random.PRNGKey(seed + 2), *args)
     samples.update({k_: np.asarray(v) for k_, v in det.items()})
     return samples, chosen, diag
 
@@ -282,6 +384,7 @@ def global_arrays(samples: Mapping[str, np.ndarray], meta: Mapping[str, Any]) ->
         "mu_role": samples["mu_role"], "tau_d": samples["tau_d"], "tau_e": samples["tau_e"],
         "alpha": alpha, "beta": beta,
         "pca_mean": np.asarray(meta["_pca_mean"]), "pca_components": np.asarray(meta["_pca_components"]),
+        **{key: samples[key] for key in CARD_SITES if key in samples},
     }
 
 
@@ -308,23 +411,34 @@ def step_posts(steps: Sequence[Sequence[Any]], step_d: np.ndarray, step_e: np.nd
 
 async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int = 0,
                         method: Optional[str] = None) -> dict[str, Any]:
-    from app.routing import store
+    from app.routing import evidence, store
+    from app.routing.cards import load_cards
 
     observations = await store.all_observations(pool, public_only=True)
-    observed_goals = sorted({str(o["goal_id"]) for o in observations})
+    items = await store.evidence_items(pool)
+    synthetic = {str(it["goal_id"]) for it in items if not it.get("is_goal")}
+    observed_goals = sorted({str(o["goal_id"]) for o in observations} - synthetic)
     parents = await store.ancestry(pool, observed_goals)
     all_goals = sorted(set(observed_goals) | {p for ps in parents.values() for p in ps})
     rows = await store.goal_rows(pool, all_goals)
     goal_meta = {g: r for g, r in rows.items() if r["visibility"] == "public"}
+    # public benchmark evidence: items that are not our Goals become evidence Goals under benchmark nodes,
+    # leaderboard percentages become binomial counts on the benchmark node (evidence.py)
+    extra_meta, extra_parents, aggregates = evidence.assemble(items, await store.aggregate_results(pool),
+                                                              known_goals=set(rows))
+    goal_meta = evidence.merge_goal_meta(goal_meta, extra_meta)
+    parents = {**extra_parents, **parents}
     registry = await store.model_registry(pool)
-    data, meta = build_joint_data(observations, goal_meta, parents, registry, cfg)
+    cards = load_cards(await store.model_cards(pool))
+    data, meta = build_joint_data(observations, goal_meta, parents, registry, cfg, cards=cards or None,
+                                  aggregates=aggregates)
     # Minutes of CPU (NUTS): off the event loop, or every other job of the worker stalls with it (2026-09-30: a
     # 405 s refit froze the worker and left another job's transaction idle for 250 s).
     samples, used, diag = await asyncio.to_thread(run_joint, data, cfg, seed=seed, method=method)
     arrays = global_arrays(samples, meta)
     from app.routing.service import token_summary
 
-    stored_meta = {**public_meta(meta),
+    stored_meta = {**public_meta(meta), "fitted_at": datetime.now(timezone.utc).isoformat(),
                    "tokens": token_summary([o for o in observations if step_key(o) is None]),
                    "tokens_step": token_summary([o for o in observations if step_key(o) is not None])}
     version = await store.save_params(pool, method=used, draws=pack(arrays), meta=stored_meta, diagnostics=diag)
@@ -334,7 +448,7 @@ async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int
     posts = [{"kind": "goal", "id": g, "version": version, "method": "joint",
               "draws": pack({"x": samples["goal_x"][:, i, :]}),
               "n_observations": meta["goal_observations"].get(g, 0), "last_observation_at": last_at.get(g)}
-             for i, g in enumerate(meta["goals"])]
+             for i, g in enumerate(meta["goals"]) if not goal_meta[g].get("synthetic")]
     posts += [{"kind": "procedure", "id": p, "version": version, "method": "joint",
                "draws": pack({"c": samples["proc_c"][:, i, :]}),
                "n_observations": meta["procedure_observations"].get(p, 0)}
@@ -353,6 +467,8 @@ async def nightly_refit(pool: Any, cfg: RoutingDefaults = DEFAULTS, *, seed: int
     for g in stale:
         await local_refit(pool, g, cfg, seed=seed)
     return {"version": version, "method": used, "diagnostics": diag, "goals": len(meta["goals"]),
+            "evidence_goals": sum(1 for g in meta["goals"] if goal_meta[g].get("synthetic")),
+            "aggregates": meta.get("n_aggregates", 0), "model_cards": len(meta.get("model_cards") or {}),
             "procedures": len(meta["procedures"]), "observations": meta["n_observations"],
             "refreshed_private_goals": len(stale)}
 
@@ -387,8 +503,8 @@ async def aligned_goal_draws(pool: Any, g: Globals, goal_id: str, *, rng: np.ran
         if prow is None or not may_pool(prow, meta):
             continue
         parents.append((await aligned_goal_draws(pool, g, p, rng=rng, cache=cache, depth=depth + 1),
-                        g.phi1(prow.get("embedding"))))
-    cache[goal_id] = goal_prior_draws(g, g.phi1(meta.get("embedding")), parents, rng)
+                        g.phi1(prow.get("embedding"), prow.get("features"))))
+    cache[goal_id] = goal_prior_draws(g, g.phi1(meta.get("embedding"), meta.get("features")), parents, rng)
     return cache[goal_id]
 
 
@@ -421,14 +537,16 @@ async def local_refit(pool: Any, goal_id: str, cfg: RoutingDefaults = DEFAULTS, 
     for p in parent_ids:
         prow = (await store.goal_rows(pool, [p])).get(p)
         if prow is not None and may_pool(prow, meta):
-            parents.append((await aligned_goal_draws(pool, g, p, rng=rng, cache=cache), g.phi1(prow.get("embedding"))))
-    mu = _goal_prior_parts(g, g.phi1(meta.get("embedding")), parents)
+            parents.append((await aligned_goal_draws(pool, g, p, rng=rng, cache=cache), g.phi1(prow.get("embedding"), prow.get("features"))))
+    mu = _goal_prior_parts(g, g.phi1(meta.get("embedding"), meta.get("features")), parents)
     if not observations:
         x = mu + g.arrays["tau"] * rng.standard_normal(mu.shape)
         await store.save_posteriors(pool, [{"kind": "goal", "id": goal_id, "version": g.version, "method": "local_nuts",
                                             "draws": pack({"x": x}), "n_observations": 0}])
         return {"goal_id": goal_id, "observations": 0}
-    local = _local_data(g, observations, rng)
+    from app.routing.cards import load_cards
+
+    local = _local_data(g, observations, rng, cards=load_cards(await store.model_cards(pool)))
     # ~45 s of CPU per Goal: off the event loop (see nightly_refit).
     xi_goal, xi_proc, steps_out, ess = await asyncio.to_thread(_local_posterior, g, mu, local, cfg, seed)
     x = mu + g.arrays["tau"] * xi_goal
@@ -449,8 +567,10 @@ async def local_refit(pool: Any, goal_id: str, cfg: RoutingDefaults = DEFAULTS, 
     return {"goal_id": goal_id, "observations": len(observations), "params_version": g.version, "ess": ess}
 
 
-def _local_data(g: Globals, observations: Sequence[Mapping[str, Any]], rng: np.random.Generator) -> dict[str, Any]:
-    """Per-draw known terms and slots for latents the global fit has not seen."""
+def _local_data(g: Globals, observations: Sequence[Mapping[str, Any]], rng: np.random.Generator,
+                cards: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+    """Per-draw known terms and slots for latents the global fit has not seen. A new model with no
+    fitted predecessor starts from its card (cards.prior_mean), as in the joint model."""
     arr, s_count, k = g.arrays, g.draws, g.k
     m_ix = {m: i for i, m in enumerate(g.models)}
     s_ix = {s: i for i, s in enumerate(g.scaffolds)}
@@ -490,6 +610,8 @@ def _local_data(g: Globals, observations: Sequence[Mapping[str, Any]], rng: np.r
     anchor_z = np.zeros((s_count, max(len(new_models), 1), k))
     anchor_scale = np.ones(max(len(new_models), 1))
     has_anchor = np.zeros(max(len(new_models), 1), dtype=bool)
+    from app.routing.cards import prior_mean, resolve
+
     for i, m in enumerate(new_models):
         pred, hops = registry_pred.get(m), 0
         while pred and pred not in m_ix and hops < 32:
@@ -498,6 +620,8 @@ def _local_data(g: Globals, observations: Sequence[Mapping[str, Any]], rng: np.r
             anchor_theta[:, i] = arr["theta_last"][:, m_ix[pred]]
             anchor_z[:, i, :] = arr["z"][:, m_ix[pred], :]
             has_anchor[i] = True
+        else:                                     # its card's regression (zeros without cards)
+            anchor_theta[:, i], anchor_z[:, i, :] = prior_mean(arr, g.meta, resolve(m, cards or {}), rng)
     instances: dict[tuple[str, str], int] = {}
     inst = np.array([instances.setdefault((str(o.get("reporter") or ""), str(o["instance_key"])), len(instances))
                      for o in observations], dtype=np.int32)
@@ -579,10 +703,10 @@ def _local_posterior(g: Globals, mu: np.ndarray, local: Mapping[str, Any], cfg: 
         c = f["tau_c"][:, None, None] * latent["xi_proc"][None, :, :]                  # (J, P, K)
         new_theta = jnp.where(has_anchor[None, :],
                               f["anchor_theta"] + SIGMA_NEW_VERSION * latent["xi_m"][None, :],
-                              f["sigma_theta"][:, None] * latent["xi_m"][None, :])     # (J, NM)
+                              f["anchor_theta"] + f["sigma_theta"][:, None] * latent["xi_m"][None, :])  # (J, NM)
         new_z = jnp.where(has_anchor[None, :, None],
                           f["anchor_z"] + SUCCESSOR_Z_SD * latent["xi_z"][None, :, :],
-                          jnp.broadcast_to(latent["xi_z"][None, :, :], f["anchor_z"].shape))
+                          f["anchor_z"] + latent["xi_z"][None, :, :])
         theta = jnp.where(m_slot[None, :] >= 0, new_theta[:, jnp.clip(m_slot, 0)], f["known_theta"])
         z = jnp.where((m_slot >= 0)[None, :, None], new_z[:, jnp.clip(m_slot, 0), :], f["known_z"])
         gd = (f["known_gd"]
