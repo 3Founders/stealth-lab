@@ -1,6 +1,8 @@
 """Grade patches with the task's REAL tests: SWE-rebench-V2's prebuilt image, test command and log parser.
 
     .venv/Scripts/python grade_tests.py --gold --part test      # FIRST: gold patches must resolve (validates tasks)
+    .venv/Scripts/python grade_tests.py --empty --part test     # and an empty patch must NOT resolve
+    .venv/Scripts/python valid_tasks.py                         # -> runs/valid_tasks.json (scored set)
     .venv/Scripts/python grade_tests.py --tag test_L1           # grades runs/predictions_test_L1.jsonl
 
 SWE-rebench-V2 publishes images and log parsers but no runner, so this is the runner, kept minimal and identical
@@ -153,8 +155,8 @@ def run_modal(image: str, sh: str, timeout: int) -> str:
 RUNNERS = {"docker": run_docker, "modal": run_modal}
 
 
-def grade_one(src: dict, patch: str, runner: str, timeout: int) -> dict:
-    if not (patch or "").strip():
+def grade_one(src: dict, patch: str, runner: str, timeout: int, run_empty: bool = False) -> dict:
+    if not (patch or "").strip() and not run_empty:
         return {"resolved": False, "status": "empty_patch"}
     started = time.time()
     try:
@@ -170,6 +172,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", help="grades runs/predictions_<tag>.jsonl")
     ap.add_argument("--gold", action="store_true", help="grade the gold patches (task validation)")
+    ap.add_argument("--empty", action="store_true",
+                    help="run the tests with NO patch (task validation: an empty patch must not resolve)")
     ap.add_argument("--part", default="test")
     ap.add_argument("--workers", type=int, default=CONFIG["grading"]["max_workers"])
     ap.add_argument("--runner", default=CONFIG["grading"]["runner"], choices=sorted(RUNNERS))
@@ -180,18 +184,21 @@ def main() -> None:
     if a.gold:
         tag = f"gold_{a.part}"
         preds = {i: src[i]["patch"] for i in read_json(RUNS / "design.json")[a.part]}
+    elif a.empty:
+        tag = f"empty_{a.part}"
+        preds = {i: "" for i in read_json(RUNS / "design.json")[a.part]}
     elif a.tag:
         tag = a.tag
         preds = {r["instance_id"]: r.get("model_patch") or "" for r in load_jsonl(RUNS / f"predictions_{tag}.jsonl")}
     else:
-        raise SystemExit("--tag or --gold")
+        raise SystemExit("--tag, --gold or --empty")
     out_path = RUNS / f"tests_{tag}.json"
     done = read_json(out_path) if out_path.exists() else {}
     todo = [i for i in preds if i not in done or (a.retry_errors and done[i]["status"] == "error")]
     print(f"{tag}: {len(todo)} to grade ({len(done)} done), runner={a.runner}, parsers sha256={sha[:12]}", flush=True)
 
     def work(i: str) -> None:
-        res = grade_one(src[i], preds[i], a.runner, CONFIG["grading"]["timeout_s"])
+        res = grade_one(src[i], preds[i], a.runner, CONFIG["grading"]["timeout_s"], run_empty=a.empty)
         with _lock:
             done[i] = res
             write_json(out_path, done)

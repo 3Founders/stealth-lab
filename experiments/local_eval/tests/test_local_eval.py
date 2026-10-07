@@ -299,3 +299,33 @@ def test_analysis_end_to_end(tmp_path, monkeypatch):
     assert "resolved:L3_vs_L2" in out["secondary"]
     text = analyze.report(out)
     assert "## Primary" in text and "L1_vs_A0" in text
+
+
+# ---------------------------------------------------------------- task validity
+def test_validity_rule():
+    import valid_tasks as vt
+    ok, bad = {"status": "graded", "resolved": True}, {"status": "graded", "resolved": False}
+    err = {"status": "error", "resolved": False}
+    assert vt.classify(ok, bad) == "valid"
+    assert vt.classify(bad, bad) == "gold_fails"
+    assert vt.classify(ok, ok) == "empty_passes"
+    assert vt.classify(err, bad) == vt.classify(ok, err) == "environment_error"
+    assert vt.classify(None, bad) == "not_checked"
+
+
+def test_analysis_uses_only_valid_tasks(tmp_path, monkeypatch):
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    ids = [f"o{k % 5}__r-{k}" for k in range(20)]
+    (runs / "instances.json").write_text(json.dumps({i: {"repo": i.split("__")[0] + "/r", "language": "python",
+                                                         "history_goals": 20} for i in ids}))
+    (runs / "design.json").write_text(json.dumps({"test": ids}))
+    (runs / "valid_tasks.json").write_text(json.dumps({"valid": ids[:12]}))
+    for arm in analyze.ARMS:
+        (runs / f"attempts_test_{arm}.jsonl").write_text("\n".join(json.dumps({"instance_id": i, "usage": {}})
+                                                                    for i in ids))
+        (runs / f"tests_test_{arm}.json").write_text(json.dumps({i: {"resolved": True, "status": "graded"}
+                                                                 for i in ids}))
+    monkeypatch.setattr(analyze, "RUNS", runs)
+    assert analyze.run("test", "valid")["n_scored"] == 12
+    assert analyze.run("test", "design")["n_scored"] == 20
