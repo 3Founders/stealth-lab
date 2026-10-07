@@ -21,7 +21,7 @@ These documents answer a CISO's questionnaire. Each statement is tagged by how w
 
 `customer/` holds the three documents written to be sent to a customer once the bracketed blanks are filled: `security_whitepaper.md` (one page), `sla_policy.md`, `security_assessment_summary.md` (a template: no independent test exists yet). The numbered files are internal evidence behind them.
 
-Related, already in the repo: `docs/legal/SECURITY_OVERVIEW.md`, `docs/legal/SUBPROCESSORS.md` (dated 2026-09-09, partly stale), `docs/security/vulnerability_policy.md`, `docs/security_runbook.md`, `docs/provider_connections.md`, `legal/` (MNDA, MSA).
+Related, already in the repo: `docs/legal/SECURITY_OVERVIEW.md`, `docs/legal/SUBPROCESSORS.md` (updated 2026-10-07; confirm the blanks), `docs/security/vulnerability_policy.md`, `docs/security_runbook.md`, `docs/provider_connections.md`, `legal/` (MNDA, MSA).
 
 ## How this differs from the checklist we were given
 

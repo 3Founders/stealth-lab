@@ -1,58 +1,45 @@
-# Subprocessors & Third-Party Data Processing
+# Subprocessors and third-party data processing
 
-**STATUS: DRAFT — REQUIRES LEGAL REVIEW.**
+**STATUS: DRAFT. Needs founder confirmation of the "Confirm" column and counsel review.** Updated 2026-10-07 from `backend/requirements*.txt`, `backend/app/config.py`, `backend/app/services/{embeddings,object_storage}.py`, `docs/deploy/hosted-mcp.md`, `docs/provider_connections.md` and the deployment notes. The code cannot prove a contract, a region or a retention setting, so those are left for you to confirm. This replaces the 2026-09-09 version, which listed the debate-panel vendors as if they were in the MCP path.
 
-This list is derived from what's actually referenced in `backend/requirements.txt`,
-`backend/.env.example`, and related config as of 2026-09-09 — not from a claimed vendor
-relationship. **We do not assert that any provider below has a signed DPA/SCC with StealthLab
-unless a founder/counsel confirms that separately** — the codebase cannot prove a contract exists.
+## A. In the data path of the hosted MCP service
 
-## Currently configured / in active use
+| Provider | Purpose | Customer data it can receive | Region | Confirm |
+|---|---|---|---|---|
+| **Neon** (Postgres, pgvector) | Primary database: procedures, goals, outcomes, ledger | Everything we store (see `final_prod_docs/02_data_inventory_and_retention.md`) | us-east-2 per deployment notes | Project region; signed DPA; encryption-at-rest statement; backup window |
+| **Supabase** | Sign-in and the OAuth 2.1 server | Email, user id, session tokens | **[project region]** | Region; DPA |
+| **Google Vertex AI** | Embeddings and model judgment for `find_ways`; ADC, no API key | The task description, and procedure text sent for judging and embedding | `us-central1` for embeddings; `global` for newer chat models (`config.py: vertex_region, vertex_llm_location`) | Project id; data-use terms for the Vertex model used (zero retention, no training); region |
+| **Cloudflare R2** | Object storage for large raw artifacts (documents, traces, logs), content-addressed | Raw ingestion artifacts, redacted by `trace_redaction` | **[R2 jurisdiction]** | What is actually stored; the jurisdiction setting |
+| **Container host** (Railway per `railway.mcp.json`) | Runs the MCP server | All request traffic in transit; logs | **[region, not set in the repo]** | Host, region, log retention |
 
-| Provider | Purpose | Evidence | Data involved |
+## B. Configured fallbacks, off unless a key is set
+
+The code tries providers in order, so any one can receive the same text as Vertex does if the earlier ones fail (`embedding_provider_chain = "gemini,voyage"`; `semantic_provider_fallbacks = "vertex,gemini,gemma"`).
+
+| Provider | Purpose | Switch | Confirm |
 |---|---|---|---|
-| **Supabase** | Authentication (Supabase Auth issuing OIDC JWTs); in hosted mode, likely also the Postgres database | `backend/.env.example` (`SUPABASE_PROJECT_URL`, `SUPABASE_JWT_AUDIENCE`), `frontendv1/src/lib/supabase/client.ts` | Account email, user id, session tokens; in hosted mode, all application data stored in that Postgres instance |
-| **Anthropic (Claude)** | Model calls (debate panel member, per `.env.example`) | `backend/.env.example` (`ANTHROPIC_API_KEY`), `backend/requirements.txt` (`anthropic`) | Procedure/claim text sent for model processing |
-| **OpenAI** | Model calls (debate panel member) | `backend/.env.example` (`OPENAI_API_KEY`), `requirements.txt` (`openai`) | Same as above |
-| **Fireworks AI** | Model calls (debate panel member) | `backend/.env.example` (`FIREWORKS_API_KEY`) | Same as above |
-| **Google (Gemini / `google-genai`)** | Model calls (independent judge role) and/or embeddings | `backend/.env.example` (`GOOGLE_API_KEY`), `requirements.txt` (`google-genai`) | Same as above |
-| **Voyage AI** | Embeddings for search | `backend/.env.example` (`VOYAGE_API_KEY`), `requirements.txt` (`voyageai`) | Redacted procedure/trace text sent for embedding |
+| **Google Gemini API** (API key) | Embeddings and judging fallback | `GEMINI_API_KEY(S)` | Whether set in production; the free-tier terms differ from Vertex and may allow use for product improvement. **Do not leave a free-tier key set for customer data** |
+| **Voyage AI** | Embeddings fallback | `VOYAGE_API_KEY(S)` | Whether set; retention terms |
+| **General Compute** | Hosted open-weight judge | `USE_GENERAL_COMPUTE` (default false) | Whether used |
+| **OpenRouter** | Judge route | `OPENROUTER_*` | Whether used |
+| **Sentry** | Error reports, no source code intended | `SENTRY_DSN` | Whether set; scrub rules |
+| **Plausible** | Cookieless site analytics, skipped on Do Not Track | `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` | Whether set |
 
-## Optional (only active if explicitly configured)
+## C. Customer-chosen providers (`call_model`)
 
-| Provider | Purpose | Evidence | Notes |
-|---|---|---|---|
-| **Sentry** | Error/trace observability for the backend ASGI apps and worker | `backend/requirements.txt` (`sentry-sdk[fastapi]`), `backend/app/observability.py` | No-op unless `SENTRY_DSN` is set — "optional at runtime" per the requirements-file comment |
-| **Plausible** (cloud, or self-hosted with no third party) | Cookieless website analytics for the public site | `prod_frontend/lib/analytics.ts` | No-op unless `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` is set; skipped when the visitor sends Do Not Track / Global Privacy Control |
-| **Sentry** (browser project) | Website error reporting (no tracing, replay or PII) | `prod_frontend/lib/monitoring.ts` | No-op unless `NEXT_PUBLIC_SENTRY_DSN` is set; skipped on Do Not Track / GPC |
-| **General Compute** | Hosted open-weight model access (alternative to the closed-frontier panel above) | `backend/.env.example` (`USE_GENERAL_COMPUTE`, `GENERAL_COMPUTE_*`) | Off by default (`USE_GENERAL_COMPUTE=false`) |
-| **Ollama (self-hosted/local)** | Local model serving for development, no external network call | `backend/.env.example` (`USE_LOCAL_MODELS`, `LOCAL_BASE_URL`) | Off by default; when on, routes to a local endpoint you run yourself — not a third-party subprocessor in the usual sense |
+When a customer configures a connection, the prompt goes to **the provider the customer chose, with the customer's own key**. That provider is the customer's processor, not ours. For platform-paid calls (no customer key), we choose the provider and list it in the order form.
 
-## Not found in the codebase
+## D. Not in the MCP path
 
-No evidence was found of: Stripe/payment processors, SMS/email delivery providers, CRM/marketing
-tools, or dedicated cloud hosting vendor SDKs beyond what's implied by Supabase/deployment config
-(`render.yaml`). **[FOUNDER: if you use Render, AWS, GCP, or another host directly, add it here —
-this list only reflects what appears as application-level dependencies/config in the reviewed
-code, not your infrastructure/hosting arrangement.]**
+Anthropic, OpenAI and Fireworks appear in `requirements.txt` and `.env.example` for the older debate-panel product and for research runs. They do not receive data from the hosted MCP tools unless a customer configures them under section C. Remove the packages or keep this note.
 
 ## What this list does not tell you
 
-- **DPA/SCC/contractual status** with any provider above — undetermined from the code; confirm
-  with the founder/legal team before making any compliance claim.
-- **Data residency/region** for each provider — not configured explicitly anywhere reviewed;
-  default provider regions apply unless stated otherwise in a provider-specific config not found
-  here.
-- **Retention at the provider** — governed by each provider's own terms, not StealthLab's.
+- **Contracts.** Whether a signed DPA or standard clauses exist with each provider: undetermined. Do not state it to a customer until confirmed.
+- **Retention and training.** Governed by each provider's terms. Check Vertex, Neon, Supabase and R2 first, and record the document and date here.
+- **Region.** Several rows are blank because nothing in the repository sets them.
+- **Payment, email or CRM vendors.** None found in code. Add any you use.
 
-Per `STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` LC-005, a formal provider/model policy registry
-(with region, retention, training-use, subprocessor, and DPA fields, plus a `can_send()` decision
-point gating which data classes may go to which provider) was specified but listed as **not yet
-implemented** as of the compliance ledger dated 2026-09-08. Until that lands, treat provider
-routing as governed by API-key presence and cost limits only (`GOVERNANCE_ENABLED`,
-`DAILY_LLM_BUDGET_USD` in `.env.example`) — **not** by a data-classification policy.
+## Process to keep it current
 
----
-*Generated from repository state on 2026-09-09. Cross-references: `backend/requirements.txt`,
-`backend/.env.example`, `backend/app/observability.py`,
-`STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` (LC-005).*
+Change this file in the same pull request that adds a provider. Customers get notice before a provider that receives source code is added (MNDA §5.2 and the MSA).
