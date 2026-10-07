@@ -34,7 +34,7 @@ from app.services.access import AccessScope
 RoutingError = service.RoutingError
 
 # Keys recommend() adds to the stored constraints; they are bookkeeping, not caller input.
-_BOOKKEEPING = ("check_kind", "previous_attempts", "previous_steps", "remaining_steps")
+_BOOKKEEPING = ("check_kind", "previous_attempts", "previous_steps", "remaining_steps", "local_obs")
 # Who the instance was issued to, stored with its decision. The MCP spec's "state handle hijacking" rule: a
 # handle is bound to the authenticated caller server-side, so knowing the key (or seeing the Goal) is not enough.
 # Not in _BOOKKEEPING on purpose: it is carried into every later re-decision of the same instance.
@@ -119,7 +119,10 @@ async def model_plan(pool: Any, **kwargs: Any) -> dict[str, Any]:
 async def _model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_id: Optional[str] = None,
                       candidates: Sequence[Any] = (), check_kind: Optional[str] = None,
                       constraints: Optional[Mapping[str, Any]] = None,
-                      cfg: RoutingDefaults = DEFAULTS) -> dict[str, Any]:
+                      cfg: RoutingDefaults = DEFAULTS,
+                      local_obs: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    """`local_obs`: the caller's own attempt counts on this Goal ([{unit, n, ok}], from the OBS lines of
+    `.stealth/routing.md`); they condition the plan on what happened in the caller's repository."""
     constraints = {k: v for k, v in dict(constraints or {}).items() if k != CALLER_KEY}
     units, problems = await gather_candidates(pool, scope=scope, goal_id=goal_id, constraints=constraints,
                                               explicit=candidates)
@@ -132,7 +135,8 @@ async def _model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_
         rec = await service.recommend(
             pool, goal_id=goal_id, candidates=units, access_scope=scope, procedure_id=procedure_id,
             check_kind=check_kind, instance_key=new_instance_key(goal_id),
-            constraints={**constraints, CALLER_KEY: scope.viewer_id}, cfg=cfg)
+            constraints={**constraints, CALLER_KEY: scope.viewer_id}, cfg=cfg,
+            **({"local_obs": list(local_obs)} if local_obs else {}))
     except RoutingError as exc:
         return {"status": "unavailable", "reason": str(exc), **extra}
     return {**_compact(rec), **extra}
@@ -148,6 +152,7 @@ def _compact(rec: Mapping[str, Any]) -> dict[str, Any]:
         "reliability_target": rec.get("reliability_target"), "check_kind": rec.get("check_kind"),
         "recommended": rec.get("recommended"), "alternatives": rec.get("alternatives") or [],
         "excluded": rec.get("excluded") or [],
+        **({"local_evidence": rec["evidence"]["local"]} if (rec.get("evidence") or {}).get("local") else {}),
         "next": (f"Run {ladder[0]!r} on the task, check the result ({rec.get('check_kind')}), then call "
                  "report_result(instance_key, accepted). If it failed the reply names the next model."
                  if ladder else "No rung is recommended; use the model you would have used."),
@@ -244,7 +249,8 @@ async def report_result(pool: Any, *, scope: AccessScope, instance: Instance, ac
         rec = await service.recommend(
             pool, goal_id=decision["goal_id"], candidates=list(decision.get("candidates") or []),
             access_scope=scope, procedure_id=instance.procedure_id, check_kind=check,
-            instance_key=instance.instance_key, previous_attempts=previous, constraints=constraints, cfg=cfg)
+            instance_key=instance.instance_key, previous_attempts=previous, constraints=constraints, cfg=cfg,
+            **({"local_obs": stored["local_obs"]} if stored.get("local_obs") else {}))
     except RoutingError as exc:
         return {**base, "status": "rejected", "next": f"No next model could be recommended ({exc})."}
     compact = _compact(rec)

@@ -61,14 +61,18 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
                     cfg: RoutingDefaults = DEFAULTS, record: bool = True,
                     step_order: Optional[int] = None, step_role: Optional[str] = None,
                     previous_steps: Sequence[Mapping[str, Any]] = (),
-                    remaining_steps: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+                    remaining_steps: Sequence[Mapping[str, Any]] = (),
+                    local_obs: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
     """The ladder to run for one instance of `goal_id` (docs/model_routing_plan.md §6-§7, §10).
 
     Task level (step_order None): a ladder for the whole task.
     Step level: a ladder for ONE step of `procedure_id`'s run. `previous_steps` are the
     run's earlier steps (they share the run's difficulty, so a failure there informs
     this step); `remaining_steps` are the steps still to come, so the target and the
-    value are the WHOLE run's (one-step rollout, see ladder.py)."""
+    value are the WHOLE run's (one-step rollout, see ladder.py).
+
+    `local_obs` ([{unit, n, ok}], the caller's `.stealth/routing.md` OBS counts) are earlier
+    instances of this Goal in the caller's own repository: see `local_obs_loglik`."""
     constraints = dict(constraints or {})
     goal = await store.visible_goal(pool, goal_id, access_scope)
     if goal is None:
@@ -166,6 +170,13 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
         if (unit, order) not in columns:
             columns.append((unit, order))
         attempts_cols.append((a, columns.index((unit, order))))
+    local_cols: list[tuple[int, int, int]] = []        # (column, attempts, accepted) of the repo's own past instances
+    for o in list(local_obs)[:cfg.max_candidates]:
+        unit = _parse_units([o["unit"]])[0]
+        item_terms(None)                                  # a whole-task outcome, also on a step-level call
+        if (unit, None) not in columns:
+            columns.append((unit, None))
+        local_cols.append((columns.index((unit, None)), int(o["n"]), int(o["ok"])))
 
     predecessors = {m: r.get("predecessor") for m, r in registry.items()}
     distinct_units = list(dict.fromkeys(u for u, _ in columns))
@@ -195,6 +206,11 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
         a_alpha, a_beta = predict.check_rates(g, a.get("check_kind") or check_kind)
         attempts.append(ladder.Attempt(col, bool(a.get("accepted")), a_alpha, a_beta))
     node_w, draw_w = ladder.belief(eps_w, p, attempts)
+    local_evidence = None
+    if local_cols:
+        draw_w, local_evidence = reweight_by_local_obs(draw_w, local_obs_loglik(p, eps_w, alpha, beta, local_cols))
+        local_evidence.update(attempts=sum(n for _, n, _ in local_cols), accepted=sum(k for _, _, k in local_cols),
+                              units=len(local_cols))
     max_rungs = int(constraints.get("max_rungs") or cfg.max_rungs)
 
     # ---- the rest of the run: P(every later step succeeds | eps) under a base policy
@@ -248,7 +264,8 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
         "value_usd": value, "wrong_penalty_usd": wrong_penalty, "check_kind": check_kind,
         "propensity": result.propensity, "excluded": excluded,
         "evidence": {"goal_observations": stored_goal["n_observations"] if stored_goal else 0,
-                     "goal_posterior": (stored_goal or {}).get("method") or "prior (parents + embedding)"},
+                     "goal_posterior": (stored_goal or {}).get("method") or "prior (parents + embedding)",
+                     **({"local": local_evidence} if local_evidence else {})},
         "how_to_report": "after each rung, call report_model_run(model, scaffold, accepted, instance_key, "
                          "goal_id or procedure_id, check_kind, tokens..., recommendation_id, attempt_index"
                          + (", step_order, step_role)" if step_level else ")"),
@@ -266,9 +283,46 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
             "propensity": result.propensity, "meets_target": result.meets_target,
             "predicted": {"recommended": chosen, "alternatives": alternatives},
             "constraints": {**constraints, "check_kind": check_kind, "previous_attempts": len(previous_attempts),
-                            "previous_steps": len(previous_steps), "remaining_steps": len(later)},
+                            "previous_steps": len(previous_steps), "remaining_steps": len(later),
+                            # counts only (unit, n, ok): report_result re-solves the next rung with them
+                            **({"local_obs": [dict(o) for o in list(local_obs)[:cfg.max_candidates]]}
+                               if local_obs else {})},
             "visibility": goal["visibility"], "owner_id": goal["owner_id"], "step_order": current})
     return response
+
+
+def local_obs_loglik(p: np.ndarray, eps_w: np.ndarray, alpha: np.ndarray, beta: np.ndarray,
+                     local_cols: Sequence[tuple[int, int, int]]) -> np.ndarray:
+    """(S,) log-likelihood, per aligned posterior draw, of the caller's own past outcomes on this Goal.
+
+    Each OBS attempt was a separate instance of the Goal in the caller's repo: its difficulty eps is
+    its own, so it is integrated out per attempt, and the attempt was accepted with probability
+    E_eps[p (1 - beta) + (1 - p) alpha] (the same check model as `ladder.belief`). With `ok` of `n`
+    accepted, the draw's likelihood is that probability to the power `ok` times its complement to the
+    power `n - ok` (OBS keeps counts, not order, so this is the binomial kernel)."""
+    ll = np.zeros(p.shape[0])
+    for col, n, ok in local_cols:
+        pu = p[:, col, :]
+        p_acc = ((pu * (1 - beta)[:, None] + (1 - pu) * alpha[:, None]) * eps_w[None, :]).sum(axis=1)
+        p_acc = np.clip(p_acc, 1e-12, 1 - 1e-12)
+        ll += ok * np.log(p_acc) + (n - ok) * np.log1p(-p_acc)
+    return ll
+
+
+def reweight_by_local_obs(draw_w: np.ndarray, loglik: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+    """Posterior draw weights given the caller's local outcomes: prior weights times their likelihood.
+
+    This is the repo-specific posterior of plan §3.3 computed as importance reweighting of the stored,
+    aligned joint draws rather than by `fit.local_refit` (NUTS, ~45 s per Goal, and it persists its
+    posterior to the shared store -- wrong for counts that belong to one caller's repository and are
+    used for one request). Same model, same latents, exact as the draw count grows; the effective
+    sample size says how much the local evidence moved the posterior (a small ESS means the counts
+    are far from what the global posterior expected)."""
+    log_w = np.log(np.clip(draw_w, 1e-300, None)) + loglik
+    w = np.exp(log_w - log_w.max())
+    w = w / w.sum()
+    ess = 1.0 / float((w ** 2).sum())
+    return w, {"ess": round(ess, 1), "draws": int(w.shape[0])}
 
 
 def _base_policy_node_ok(p: np.ndarray, node_w: np.ndarray, draw_w: np.ndarray, alpha: np.ndarray,

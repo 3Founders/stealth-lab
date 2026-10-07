@@ -18,6 +18,9 @@
 // Privacy: what leaves the machine is exactly evidence.mjs REPORT_FIELDS -- model, scaffold, accepted, ids,
 // check kind. Never the prompt, commands, test output, diffs or the transcript. Locally only ids, verdicts and
 // timestamps are kept (~/.stealthlab/hooks/sessions/, deleted after 24 h).
+// Locally, too (no token needed, nothing sent): a RESOLVED lookup's final test verdict is counted as one OBS
+// attempt on that Goal's route in the repo's .stealth/routing.md (lib/library.mjs) -- the counts find_ways'
+// route_obs sends back so the next model plan reflects what worked in THIS repo. Only when .stealth/ exists.
 // Off unless a token is saved (a report needs one; without it nothing is queued). STEALTHLAB_CAPTURE=off
 // disables it. Every hook exits 0 and prints nothing: exit 2 on Stop would keep Claude from stopping.
 import crypto from "node:crypto";
@@ -27,6 +30,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./config.mjs";
 import { logHook } from "./subagent_hook.mjs";
+import { ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
 const SESSION_TTL_MS = 24 * 3600 * 1000;
@@ -101,8 +105,10 @@ export function rememberLookup(payload, reply, { env = process.env, now = Date.n
     fs.rmSync(file, { force: true });   // a new prompt without identity must not inherit the last one's
     return false;
   }
+  const route = /^ROUTE\|(R-[0-9a-f]{4,16})\|/.exec(reply?.routing_rows?.[0] || "")?.[1] || null;
   writeSession(file, {
     prompt_key: String(payload.prompt_id || now), at: now, lookup: identity, tests: [], reported: false,
+    cwd: typeof payload.cwd === "string" ? findStealthRoot(payload.cwd) : null, route,
   });
   return true;
 }
@@ -209,13 +215,30 @@ function spawnDetachedWorker(file, env) {
 }
 
 // Stop: decide in milliseconds, hand the network call to a detached worker, never print anything.
+// The local half: one OBS count in .stealth/routing.md per resolved prompt with a known verdict and model.
+export function recordLocalObs(s, model, { now = new Date() } = {}) {
+  if (!s || s.obs_recorded || s.lookup?.outcome !== "resolved" || !s.lookup.goal_id || !model || !s.cwd) return false;
+  const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
+  if (!last || !fs.existsSync(path.join(s.cwd, ".stealth"))) return false;
+  const route = s.route || ensureRoute(s.cwd, s.lookup.goal_id, { now });
+  recordObs(s.cwd, route, model, "claude-code", last.verdict === true, { now });
+  s.obs_recorded = true;
+  return true;
+}
+
 export function onStop(payload, { env = process.env, hasToken, spawnWorker = spawnDetachedWorker } = {}) {
   if (!captureEnabled(env)) return { status: "disabled" };
-  if (!hasToken) return { status: "no-token" };
   const file = sessionFile(env, payload?.session_id);
   const s = file && readSession(file);
+  const model = s ? modelFromTranscript(payload.transcript_path) : null;
+  try {
+    if (s && recordLocalObs(s, model)) writeSession(file, s);
+  } catch (err) {
+    logHook(env, "capture-stop", `local OBS not recorded (${err.message})`);
+  }
+  if (!hasToken) return { status: "no-token" };
   if (!s) return { status: "no-lookup" };
-  const report = buildReport(s, { sessionId: payload.session_id, model: modelFromTranscript(payload.transcript_path) });
+  const report = buildReport(s, { sessionId: payload.session_id, model });
   if (!report) return { status: "nothing-to-report" };
   s.reported = true;
   writeSession(file, s);

@@ -182,10 +182,17 @@ def plan_and_run(task: str) -> str:
 You are the planner. StealthLab returns knowledge; you make the plan and
 own every file in `.stealth/`.
 
-1. Facts. If `.stealth/claims.md` is missing, run the survey_repo prompt first.
+1. Facts. If `.stealth/claims.md` is missing, run the survey_repo prompt first. Read
+   `.stealth/SUMMARY.md` whole if it exists, then look the task's files, symbols and error text up in
+   this repo's own solved problems: `rg -i '^<term>\\|' .stealth/index/terms.idx` -> library ids.
 2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md, then the
    .stealth/claims/<unit>.md pages of the units the task touches (index/units.idx maps a path
-   to its page)>)` once.
+   to its page)>, ...)` once, adding this repo's library arguments when they exist:
+   `stealthlab-mcp library payload` prints exactly `library_rows`, `route_obs` and `repo_identity`
+   (pass them as they are).
+   - `library_matches` (if any) come first: problems already solved IN THIS REPO. Read each one
+     (`rg '^(GOAL|PROC|STEP)\\|<id>' .stealth/library.md`) and its diff (`.stealth/library/solutions/<id>.diff`)
+     before anything global. A `stale` one touched files that changed since: re-check it before reuse.
    - "resolved": you get `procedures` (each with full `steps`, `alternatives`,
      `repo_fit`, and `verified_solution` when one was recorded: the code that passed its checks
      plus its `locator`; if `code` is null, open the locator yourself) and `unresolved`.
@@ -195,6 +202,8 @@ own every file in `.stealth/`.
    - Any outcome may carry `related_examples`: verified solutions of SIMILAR past tasks. They are
      worked examples, not verified to apply here: compare each to your task, adapt what fits, and
      never copy one as-is.
+   - `routing_rows` (with a model plan): save them with
+     `stealthlab-mcp library route --from-reply <reply.json>` so this repo's outcomes count against them.
    Small task? If the way you're following has one or two steps, skip steps 4-5: just do it,
    check it, and go to step 7.
 3. Read past discoveries: `stealth://procedures/<procedure_id>/claims` for each chosen Procedure.
@@ -228,7 +237,8 @@ own every file in `.stealth/`.
    Procedure, else ask the user. If you used recommend_models, call
    `report_model_run(model, scaffold, accepted=<check passed>, instance_key, procedure_id,
    step_order, step_role, check_kind="tests" or "procedure_check", tokens_in, tokens_out)`
-   after every attempt, pass or fail.
+   after every attempt, pass or fail, and count it locally too:
+   `stealthlab-mcp library obs <R-id from routing.md> --model <m> --scaffold <s> --ok|--fail`.
 8. Learn. When a step needed a fix or there was a better way:
    - rewrite the remaining nodes in `run.md` now;
    - keep `.stealth/claims.md` true, in the survey_repo style (plain sentences that name
@@ -238,6 +248,10 @@ own every file in `.stealth/`.
      a check that turned out slow or special, a problem you hit and its workaround. When a
      step showed a fact is wrong, set that line to `status=stale` and append the corrected
      fact -- never edit it in place. When two facts disagree, keep both and say so;
+   - record what was solved HERE once its check passes, so the next task in this repo finds it:
+     `stealthlab-mcp library add --title "<the problem, as a goal>" --check "<the command that proved it>"
+     [--g <goal_id from find_ways>] [--p <procedure_id>] [--unit <package path>] [--step "<kind>|<do>|<check>"]...`
+     (it re-runs the check and refuses if it fails; it saves the diff and rebuilds the indexes);
    - if it would help anyone doing this Procedure, not just this repo, call
      `report_discovery(kind, procedure_id, problem, solution, step_order, proof, repo)`
      with kind = fix | missing_step | precondition | better_way | correction | filled_gap.

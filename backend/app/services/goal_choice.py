@@ -36,13 +36,17 @@ def judged_goal_candidate(hit: Any) -> dict:
 
 async def choose_goal(
     pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int,
-    collect: Optional[list] = None,
+    collect: Optional[list] = None, library: Any = None,
 ) -> Optional[tuple[str, Optional[dict], dict]]:
     """Returns (outcome, selected_goal, payload), or None when no semantic judge
     answered. `facts` are request-scoped repo facts ({claim_id, statement});
     they only enter the judge's context text and are never stored.
     `collect`, when given, receives every JUDGED Goal candidate (flat and hierarchy) -- the input of
-    `retrieval_service.related_examples`; the returned payload is unchanged."""
+    `retrieval_service.related_examples`; the returned payload is unchanged.
+    `library` (app.services.library_context.LibraryContext): this repository's own entries and Goals
+    (judged with the rest; see that module). When two or more Goals tie within CONFIDENCE_MARGIN and
+    exactly one of them is named by this repository's library, it is chosen -- the repo has verified
+    it -- and `goal_judgment.tiebreak` says so. Without `library` nothing here changes."""
     from app.services import retrieval_service as rs
 
     cfg = rs.RetrievalConfig()
@@ -51,7 +55,8 @@ async def choose_goal(
     local_claims = [{"id": f["claim_id"], "statement": f["statement"]} for f in facts]
     try:
         ctx = await rs.build_query_context(query, local_claims, embedder=None, cfg=cfg)
-        found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta)
+        found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta,
+                                      **({"library": library} if library is not None else {}))
         routed = await rs._route_goal_candidates(
             pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
         )
@@ -82,6 +87,14 @@ async def choose_goal(
         runner_up = resolved[1] if len(resolved) > 1 else None
         if runner_up is None or (top.confidence or 0) - (runner_up.confidence or 0) >= CONFIDENCE_MARGIN:
             return "resolved", {"id": top.id, "canonical_name": top.name}, {"goal_judgment": judgment}
+        if library is not None:
+            from app.services.library_context import apply_tiebreak
+
+            chosen = apply_tiebreak(resolved, CONFIDENCE_MARGIN)
+            if chosen is not None:
+                judgment["tiebreak"] = {"by": "library", "goal_id": chosen.id,
+                                        "reason": "the only tied Goal this repository's library has solved before"}
+                return "resolved", {"id": chosen.id, "canonical_name": chosen.name}, {"goal_judgment": judgment}
         return "ambiguous", None, {
             "goal_judgment": judgment,
             "candidates": [judged_goal_candidate(hit) for hit in resolved[:top_k]],

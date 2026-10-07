@@ -1,0 +1,95 @@
+{
+ "local_obs_b00c1e": [
+  {
+   "n": 1,
+   "ok": 1,
+   "unit": "claude-sonnet-5-5|claude-code"
+  },
+  {
+   "n": 5,
+   "ok": 3,
+   "unit": "gpt-oss-120b|kel"
+  }
+ ],
+ "obs": [
+  {
+   "last": "2026-10-06",
+   "model": "gpt-oss-120b",
+   "n": 5,
+   "ok": 3,
+   "route": "R-b00c1e",
+   "scaffold": "kel"
+  },
+  {
+   "last": "2026-10-03",
+   "model": "claude-sonnet-5-5",
+   "n": 1,
+   "ok": 1,
+   "route": "R-b00c1e",
+   "scaffold": "claude-code"
+  },
+  {
+   "last": "2026-10-06",
+   "model": "gpt-oss-120b",
+   "n": 4,
+   "ok": 3,
+   "route": "R-a11ce5",
+   "scaffold": "kel"
+  }
+ ],
+ "rendered": [
+  "ROUTE|R-b00c1e|goal=L-b00c1e|g=2c1d4a9e-0f3b-4c55-9e1a-7b2f0c6d8e11|fit=4|basis=posterior|as_of=2026-10-06|step=*|ladder=ollama:qwen3-coder::kel:p=0.62[0.48,0.75]:$0.0010 > claude-sonnet-5-5::claude-code:p=0.88[0.80,0.94]:$0.0900|whole=p=0.95[0.90,0.98]:$0.0410",
+  "ROUTE|R-a11ce5|goal=-|g=9f9f9f9f-0000-4000-8000-000000000001|fit=-|basis=-|as_of=2026-10-06|step=2|ladder=-|whole=-",
+  "OBS|R-b00c1e|gpt-oss-120b|kel|n=5|ok=3|last=2026-10-06",
+  "OBS|R-b00c1e|claude-sonnet-5-5|claude-code|n=1|ok=1|last=2026-10-03",
+  "OBS|R-a11ce5|gpt-oss-120b|kel|n=4|ok=3|last=2026-10-06"
+ ],
+ "routes": [
+  {
+   "as_of": "2026-10-06",
+   "basis": "posterior",
+   "fit": "4",
+   "g": "2c1d4a9e-0f3b-4c55-9e1a-7b2f0c6d8e11",
+   "goal": "L-b00c1e",
+   "id": "R-b00c1e",
+   "ladder": [
+    {
+     "cost": 0.001,
+     "model": "ollama:qwen3-coder",
+     "p_mean": 0.62,
+     "p_q05": 0.48,
+     "p_q95": 0.75,
+     "scaffold": "kel"
+    },
+    {
+     "cost": 0.09,
+     "model": "claude-sonnet-5-5",
+     "p_mean": 0.88,
+     "p_q05": 0.8,
+     "p_q95": 0.94,
+     "scaffold": "claude-code"
+    }
+   ],
+   "step": "*",
+   "whole": {
+    "cost": 0.041,
+    "model": "",
+    "p_mean": 0.95,
+    "p_q05": 0.9,
+    "p_q95": 0.98,
+    "scaffold": ""
+   }
+  },
+  {
+   "as_of": "2026-10-06",
+   "basis": null,
+   "fit": null,
+   "g": "9f9f9f9f-0000-4000-8000-000000000001",
+   "goal": null,
+   "id": "R-a11ce5",
+   "ladder": [],
+   "step": "2",
+   "whole": null
+  }
+ ]
+}

@@ -23,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { claudeDir } from "./claude_exec.mjs";
 import { modelFromTranscript, rememberLookup } from "./capture_hook.mjs";
+import { findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
 
@@ -129,7 +130,8 @@ function parseBody(text) {
 }
 
 // One find_ways call over Streamable HTTP: initialize -> initialized -> tools/call -> close.
-export async function callFindWays({ url, token, userAgent, query, repoClaims, timeoutMs, fetchImpl = globalThis.fetch }) {
+// `extra`: this repo's library arguments (lib/library.mjs requestPayload) -- sent only when they exist.
+export async function callFindWays({ url, token, userAgent, query, repoClaims, timeoutMs, extra = {}, fetchImpl = globalThis.fetch }) {
   const signal = AbortSignal.timeout(timeoutMs);
   const headers = { accept: ACCEPT, "content-type": "application/json", "user-agent": userAgent };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -147,7 +149,7 @@ export async function callFindWays({ url, token, userAgent, query, repoClaims, t
   await post({ jsonrpc: "2.0", method: "notifications/initialized" }, sid, proto);
   const res = await post({
     jsonrpc: "2.0", id: 2, method: "tools/call",
-    params: { name: "find_ways", arguments: { query: query.slice(0, 1500), repo_claims: repoClaims } },
+    params: { name: "find_ways", arguments: { query: query.slice(0, 1500), repo_claims: repoClaims, ...extra } },
   }, sid, proto);
   if (!res.ok) throw new Error(`find_ways HTTP ${res.status}`);
   const body = parseBody(await res.text());
@@ -184,11 +186,42 @@ function solution(vs, n) {
     "```" + (vs.language || "") + "\n" + cut(vs.code, n) + "\n```";
 }
 
+// This repo's own solved problems (find_ways' library_matches), read from the local library: the entry's steps
+// and the diff that solved it. First in the block -- the evidence says they are what helps most (plan §0).
+// mode "lean": only entries the judge called a match.
+function libraryParts(reply, root, mode, budget) {
+  const out = [];
+  if (!root) return out;
+  const matches = (reply.library_matches || []).filter((m) => (mode === "lean" ? m.relation === "matches" : true));
+  for (const m of matches.slice(0, 2)) {
+    let entry = null;
+    try { entry = readEntry(root, m.id); } catch { /* the library moved or is unreadable: skip it */ }
+    if (!entry) continue;
+    const steps = entry.lines.filter((l) => l.startsWith("STEP|")).map((l, i) => {
+      const f = l.split("|");
+      const check = (f[4] || "").startsWith("check=") && f[4] !== "check=-" ? ` (check: ${unesc(f[4].slice(6))})` : "";
+      return `  ${i + 1}. ${unesc(f[3] || "")}${check}`;
+    });
+    const sol = entry.lines.map((l) => /\|solution=([^|]+)\|/.exec(l)?.[1]).find((x) => x && x !== "-");
+    let diff = "";
+    if (sol) {
+      try { diff = fs.readFileSync(path.join(root, ".stealth", "library", sol), "utf8"); } catch { /* no diff kept */ }
+    }
+    const how = m.judged ? `${m.relation}, confidence ${m.confidence}` : "not judged: matched by words only";
+    const stale = m.status === "stale" ? " -- STALE: files it touched changed since; re-check before reusing" : "";
+    out.push(`Solved before in THIS repo (${how}) -- ${m.title}${m.unit && m.unit !== "." ? ` [${m.unit}]` : ""}` +
+      ` (${m.outcome}, ${m.verified_at || "unverified"})${stale}:\n${steps.join("\n")}` +
+      (diff ? `\n  the diff that solved it (.stealth/library/${sol}):\n` + "```diff\n" + cut(diff, budget) + "\n```" : ""));
+  }
+  return out;
+}
+
 // The knowledge block added to the agent's context, or "" when find_ways had nothing usable.
 // mode "lean": only a resolved way (the exact Goal); near misses and related examples are left out.
-export function formatKnowledge(reply, maxChars = 8000, { mode = "full" } = {}) {
+// `root`: the repo whose .stealth/library.md holds the library matches (none -> they are not shown).
+export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = null } = {}) {
   if (!reply || typeof reply !== "object" || mode === "off") return "";
-  const parts = [];
+  const parts = libraryParts(reply, root, mode, 2000);
   const procs = reply.outcome === "resolved" ? (reply.procedures || []) : [];
   for (const p of procs.slice(0, 2)) {
     const tested = p.tested_by_source ? " [its solution passed the source task's own tests]" : "";
@@ -236,13 +269,20 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
   const mode = deliveryMode(policy, policy.strongMode ? detectModel(payload, env) : null);
   if (mode === "off") return;
   try {
+    const root = findStealthRoot(payload.cwd || process.cwd());   // null: no .stealth here, a plain lookup
+    let extra = {};
+    try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
     const reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
-      repoClaims: readClaims(payload.cwd, payload.prompt), timeoutMs: policy.timeoutMs, fetchImpl,
+      repoClaims: readClaims(payload.cwd, payload.prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl,
     });
+    // The route the server chose for this Goal, kept locally so outcomes can be counted against it.
+    try {
+      if (root && Array.isArray(reply?.routing_rows) && reply.routing_rows.length) upsertRoutes(root, reply.routing_rows);
+    } catch { /* routing.md is best-effort */ }
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env }); } catch { /* capture is best-effort */ }
-    const context = formatKnowledge(reply, policy.maxChars, { mode });
+    const context = formatKnowledge(reply, policy.maxChars, { mode, root });
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }

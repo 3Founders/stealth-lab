@@ -1494,6 +1494,7 @@ async def find_ways(
     semantic: bool = True, use_llm: bool = True, top_k: int = 5,
     candidates: list[Any] | None = None, check_kind: str | None = None,
     model_constraints: dict[str, Any] | None = None, detail: str = "full",
+    repo_identity: dict[str, Any] | None = None, library_rows: str = "", route_obs: str = "",
 ) -> str:
     """
     Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
@@ -1549,6 +1550,18 @@ async def find_ways(
     Run the first model, check it, then call `report_result(instance_key, accepted)` -- its
     reply names the next model. Without candidates the reply is unchanged.
 
+    This repository's own knowledge (all optional; with none of them the reply is exactly as before):
+    repo_identity: {repo_id, public_name?, strength?} from `.stealth/meta.json` (repo_id is a hash;
+      send public_name -- owner/name -- only if the user allows). A strong identity lets this repo's own
+      global Goals be judged too; strength "weak" (or a p: id) is never used to match other repos.
+    library_rows: the text of `.stealth/index/library.idx` (up to 64 KB): problems already solved in
+      THIS repo. Matching entries come back as `library_matches` (read them, and their diffs under
+      `.stealth/library/solutions/`, before anything global); a Goal they name wins a tie.
+    route_obs: the ROUTE and OBS lines of `.stealth/routing.md` (up to 16 KB): this machine's attempt
+      counts per model. With a model plan they condition it on what worked HERE, and `routing_rows`
+      comes back: the ROUTE line(s) to write into routing.md.
+    Like repo_claims, these are used for this request only -- never stored or logged.
+
     detail: "full" (default) returns every step in full. "summary" shortens step text, checks and
     example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and
     preconditions stay complete): much less to carry through a long session. Call again with the same
@@ -1565,7 +1578,10 @@ async def find_ways(
     shape = _detail.summarize if detail == "summary" else (lambda text: text)
     t0 = _time.monotonic()
     gov, caller = _governor(), _find_ways_caller(ctx)
-    decision = gov.check(caller, query, repo_claims) if gov is not None and caller is not None else None
+    library = _library_context(repo_identity, library_rows)
+    # the knowledge depends on the library arguments, so a cached reply may only be reused for the same ones
+    cache_facts = repo_claims if library is None else f"{repo_claims}\x1e{library.fingerprint()}"
+    decision = gov.check(caller, query, cache_facts) if gov is not None and caller is not None else None
     if decision is not None and decision.action != "run":
         await _record_find_ways(ctx, query, decision.reply, {}, (_time.monotonic() - t0) * 1000,
                                 governor=decision.action)
@@ -1574,11 +1590,15 @@ async def find_ways(
         reply = await _find_ways_impl(
             query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
             semantic=semantic, use_llm=use_llm, top_k=top_k,
+            **({"library": library} if library is not None else {}),
         )
     if decision is not None:
         gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
+    # the library arguments only reach the plan when the caller sent them: without them, exactly as before
+    local = {} if library is None and not (route_obs or "").strip() else {
+        "route_obs": route_obs, "library": library, "local_args": True}
     final = await _attach_model_plan(_mark_untrusted(shape(reply)), ctx, candidates=candidates, check_kind=check_kind,
-                                     constraints=model_constraints)
+                                     constraints=model_constraints, **local)
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it
     await _record_find_ways(ctx, query, final, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return final
@@ -1606,10 +1626,15 @@ def _mark_untrusted(reply: str) -> str:
 
 
 async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] | None,
-                             check_kind: str | None, constraints: dict[str, Any] | None) -> str:
+                             check_kind: str | None, constraints: dict[str, Any] | None,
+                             route_obs: str = "", library: Any = None, local_args: bool = False) -> str:
     """Add `model_plan` to a find_ways reply when the caller (or a registered provider) can supply
     candidates. The plan never changes the knowledge and never breaks the reply: any failure
-    becomes a status inside the block."""
+    becomes a status inside the block.
+
+    With the library arguments (`local_args`): the OBS counts in `route_obs` for the resolved Goal
+    condition the plan (plan.model_plan local_obs), and `routing_rows` -- the ROUTE line(s) for
+    `.stealth/routing.md` -- is added next to an ok plan."""
     from app.routing import plan as _plan
 
     if not _plan.wants_plan(candidates):
@@ -1627,13 +1652,56 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
         return json.dumps(body, default=str)
     try:
         pool = ctx.request_context.lifespan_context["pool"]
+        routes, local_obs = _route_obs_for(route_obs, str(root["goal_id"])) if local_args else ([], [])
         body["model_plan"] = await _plan.model_plan(
             pool, scope=_caller_access_scope(), goal_id=str(root["goal_id"]),
             procedure_id=str(root["procedure_id"]) if root.get("procedure_id") else None,
-            candidates=candidates or (), check_kind=check_kind, constraints=constraints)
+            candidates=candidates or (), check_kind=check_kind, constraints=constraints,
+            **({"local_obs": local_obs} if local_obs else {}))
+        if local_args:
+            rows = _routing_rows(body["model_plan"], routes, library, str(root["goal_id"]))
+            if rows:
+                body["routing_rows"] = rows
     except Exception as exc:  # noqa: BLE001 -- the plan is an addition; the knowledge still stands
         body["model_plan"] = {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"}
     return json.dumps(body, default=str)
+
+
+def _library_context(repo_identity: Any, library_rows: str) -> Any:
+    """The request's LibraryContext, or None when the caller sent no library arguments (then every
+    library hook in find_ways is skipped and the reply is exactly as before)."""
+    if not repo_identity and not (library_rows or "").strip():
+        return None
+    from app.services import library_context as _lc
+
+    return _lc.build(repo_identity, library_rows)
+
+
+def _route_obs_for(route_obs: str, goal_id: str) -> tuple[list[Any], list[dict[str, Any]]]:
+    """(routes, local_obs): every ROUTE line, and the OBS counts that bear on `goal_id`."""
+    from app.stealth import library as _lib
+
+    if not (route_obs or "").strip():
+        return [], []
+    routes, obs = _lib.parse_routing(route_obs, max_bytes=_lib.ROUTE_OBS_MAX_BYTES)
+    return routes, _lib.local_obs_for_goal(routes, obs, goal_id)
+
+
+def _routing_rows(plan: dict[str, Any], routes: list[Any], library: Any, goal_id: str) -> list[str]:
+    """ROUTE line(s) for routing.md from an ok model plan: the caller's existing route for this Goal is
+    reused (so its OBS lines keep counting), else a new random R-id; `goal=` is the library entry that
+    names this Goal, when there is one."""
+    import secrets as _secrets
+    from datetime import date as _date
+
+    from app.stealth import library as _lib
+
+    if not isinstance(plan, dict) or (plan.get("status") != "ok" and not plan.get("steps")):
+        return []
+    route_id = next((r.id for r in routes if r.g == goal_id), None) or f"R-{_secrets.token_hex(3)}"
+    entry = next((r.id for r in (library.rows if library is not None else []) if r.g == goal_id), None)
+    return [_lib.render_route_line(r) for r in _lib.routes_from_model_plan(
+        plan, route_id=route_id, goal=entry, g=goal_id, as_of=_date.today().isoformat())]
 
 
 def _find_ways_caller(ctx: Context) -> Optional[str]:
@@ -1780,7 +1848,7 @@ def _find_ways_llm_client(api_key: str, base_url: str) -> "OpenAI":
 
 async def _find_ways_impl(
     query: str, ctx: Context, *, repo_claims: str, current_scope_json: str, max_depth: int,
-    semantic: bool, use_llm: bool, top_k: int,
+    semantic: bool, use_llm: bool, top_k: int, library: Any = None,
 ) -> str:
     from app.execution import repo_facts as _rf
     from app.execution.goal_knowledge import goal_tree_to_knowledge
@@ -1824,9 +1892,20 @@ async def _find_ways_impl(
         [] if settings.knowledge_related_examples and settings.knowledge_verified_examples else None)
     goal_choice = await _find_ways_goal_choice(
         pool, query, facts, scope=scope, embedder=embedder, top_k=top_k, collect=related_hits,
+        **({"library": library} if library is not None else {}),
     )
 
+    if library is not None:
+        from app.services import library_context as _lc
+        from app.services.retrieval_service import Hit as _Hit
+
+        library.select_local(query, _lc.make_local_hit_factory(_Hit))
+
     async def _with_related(body: dict, exclude: tuple = ()) -> str:
+        if library is not None:
+            # this repo's own solved problems first: the caller reads them (and their diffs) locally
+            body["library_matches"] = library.matches()
+            body["library"] = library.report()
         if related_hits is not None:
             from app.services import retrieval_service as _rs_rel
 
@@ -1945,9 +2024,11 @@ from app.services.goal_choice import (  # noqa: E402 -- shared with the REST API
 
 async def _find_ways_goal_choice(
     pool: Any, query: str, facts: list, *, scope: Any, embedder: Any, top_k: int, collect: Optional[list] = None,
+    library: Any = None,
 ) -> Optional[tuple[str, Optional[dict], dict]]:
     return await _find_ways_goal_choice_impl(pool, query, facts, scope=scope, embedder=embedder, top_k=top_k,
-                                             **({"collect": collect} if collect is not None else {}))
+                                             **({"collect": collect} if collect is not None else {}),
+                                             **({"library": library} if library is not None else {}))
 
 
 def _suggested_candidate(candidates: list) -> Optional[dict]:

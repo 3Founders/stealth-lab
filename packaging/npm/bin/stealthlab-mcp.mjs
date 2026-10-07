@@ -56,6 +56,9 @@ Usage:
                                              library.md from past fix commits. --validate re-checks facts only.
                                              Options: --validate --touch <path> --max-units <n> --no-history
                                              --history-max <n> --verify-commands --allow-public-name --full --json
+  stealthlab-mcp library <command>           keep .stealth/library.md (this repo's solved problems), its
+                                             indexes, SUMMARY.md and routing.md up to date; local only
+                                             ("stealthlab-mcp library help" for the commands)
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
@@ -233,6 +236,11 @@ async function cmdSurvey(dir, argv) {
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  if (cmd === "library") {
+    // its own flags and positionals (lib/library_cli.mjs); imported lazily like exec
+    const { runLibraryCli } = await import("../lib/library_cli.mjs");
+    return runLibraryCli(argv);
+  }
   // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
   const sub = (cmd === "hook" || cmd === "survey") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
   if (cmd === "survey") return cmdSurvey(sub, argv);
