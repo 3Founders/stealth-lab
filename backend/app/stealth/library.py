@@ -135,6 +135,7 @@ class LibStep:
     kind: str
     do: str
     check: Optional[str] = None
+    extra: list[str] = field(default_factory=list)       # fields this grammar does not know, kept verbatim
 
 
 @dataclass
@@ -145,6 +146,7 @@ class LibProc:
     solution: Optional[str] = None
     touches: list[Touch] = field(default_factory=list)
     steps: list[LibStep] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -159,6 +161,7 @@ class LibEntry:
     route: Optional[str] = None
     tags: list[str] = field(default_factory=list)
     procs: list[LibProc] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)       # e.g. the survey's commit=<sha>; kept, never dropped
 
 
 @dataclass
@@ -177,18 +180,19 @@ def render_goal_line(e: LibEntry) -> str:
         "GOAL", e.id, esc(e.title.strip()), _kv("unit", e.unit or "."), _kv("g", e.g),
         _kv("outcome", e.outcome), _kv("status", e.status), _kv("verified_at", e.verified_at),
         _kv("route", e.route), "tags=" + (",".join(_esc_list_item(t) for t in e.tags) if e.tags else "-"),
+        *e.extra,
     ])
 
 
 def render_proc_line(entry_id: str, p: LibProc) -> str:
     touches = ",".join(f"{_esc_list_item(t.path)}#sha={t.sha}" for t in p.touches) or "-"
     return SEP.join(["PROC", f"{entry_id}.p{p.index}", esc(p.name.strip()), _kv("p", p.p),
-                     _kv("solution", p.solution), "touches=" + touches])
+                     _kv("solution", p.solution), "touches=" + touches, *p.extra])
 
 
 def render_step_line(entry_id: str, proc_index: int, s: LibStep) -> str:
     return SEP.join(["STEP", f"{entry_id}.p{proc_index}:{s.order}", esc(s.kind), esc(s.do.strip()),
-                     _kv("check", s.check)])
+                     _kv("check", s.check), *s.extra])
 
 
 def render_block(e: LibEntry) -> list[str]:
@@ -216,6 +220,22 @@ def _parse_touches(raw: str) -> list[Touch]:
         path, sep, sha = item.rpartition("#sha=")
         if sep and path and sha:
             out.append(Touch(unesc(path), sha.strip()))
+    return out
+
+
+_GOAL_KEYS = frozenset(("unit", "g", "outcome", "status", "verified_at", "route", "tags"))
+_PROC_KEYS = frozenset(("p", "solution", "touches"))
+_STEP_KEYS = frozenset(("check",))
+
+
+def _extra_fields(fields: Sequence[str], known: frozenset) -> list[str]:
+    """Fields another writer added (the survey's commit=<sha>, diff=truncated, ...): kept verbatim and in order,
+    so canonicalising library.md never loses them. A repeated known key is not extra (the first one counts)."""
+    out = []
+    for f in fields:
+        k, sep, _ = f.partition("=")
+        if not (sep and k in known) and f:
+            out.append(f)
     return out
 
 
@@ -271,7 +291,7 @@ def parse_library(text: str) -> Library:
             outcome=kv.get("outcome") if kv.get("outcome") in OUTCOMES else "pass",
             status=kv.get("status") if kv.get("status") in STATUSES else "current",
             verified_at=_dash(kv.get("verified_at")), route=_dash(kv.get("route")),
-            tags=_parse_tags(kv.get("tags", "-")))
+            tags=_parse_tags(kv.get("tags", "-")), extra=_extra_fields(f[3:], _GOAL_KEYS))
     proc_objs: dict[tuple[str, int], LibProc] = {}
     for (gid, idx), (_line, f) in sorted(procs.items()):
         if gid not in entries:
@@ -279,7 +299,7 @@ def parse_library(text: str) -> Library:
             continue
         kv = _split_kv(f[3:])
         p = LibProc(index=idx, name=unesc(f[2]), p=_dash(kv.get("p")), solution=_dash(kv.get("solution")),
-                    touches=_parse_touches(kv.get("touches", "-")))
+                    touches=_parse_touches(kv.get("touches", "-")), extra=_extra_fields(f[3:], _PROC_KEYS))
         entries[gid].procs.append(p)
         proc_objs[(gid, idx)] = p
     for (gid, pidx, order), (_line, f) in sorted(steps.items()):
@@ -288,7 +308,8 @@ def parse_library(text: str) -> Library:
             problems.append(f"orphan: {gid}.p{pidx}:{order} has no PROC line; skipped")
             continue
         kv = _split_kv(f[4:])
-        p.steps.append(LibStep(order=order, kind=unesc(f[2]), do=unesc(f[3]), check=_dash(kv.get("check"))))
+        p.steps.append(LibStep(order=order, kind=unesc(f[2]), do=unesc(f[3]), check=_dash(kv.get("check")),
+                               extra=_extra_fields(f[4:], _STEP_KEYS)))
     return Library(sorted(entries.values(), key=lambda e: e.id), problems)
 
 

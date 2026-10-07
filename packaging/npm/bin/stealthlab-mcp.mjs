@@ -51,6 +51,9 @@ Usage:
   stealthlab-mcp hook subagent-start         Claude Code SubagentStart / SubagentStop hooks (installed by
   stealthlab-mcp hook subagent-stop          "install --with-exec"): re-run a plan node's check= after a
                                              subagent and record the outcome with report_model_run
+  stealthlab-mcp library <command>           keep .stealth/library.md (this repo's solved problems), its
+                                             indexes, SUMMARY.md and routing.md up to date; local only
+                                             ("stealthlab-mcp library help" for the commands)
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
@@ -193,6 +196,11 @@ async function cmdDoctor(v) {
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  if (cmd === "library") {
+    // its own flags and positionals (lib/library_cli.mjs); imported lazily like exec
+    const { runLibraryCli } = await import("../lib/library_cli.mjs");
+    return runLibraryCli(argv);
+  }
   // `hook <event>` takes one positional; everything else is flags only.
   const sub = cmd === "hook" && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
   let v;

@@ -4,8 +4,8 @@
 # PROC|<L-id>.p<n>|<name>|p=<global procedure id or ->|solution=<solutions/<L-id>.diff or ->|touches=<path#sha=<sha>,...>
 # STEP|<L-id>.p<n>:<k>|<action|instruction|subgoal>|<do>|check=<command or ->
 
-GOAL|L-0a91f2|Fix KeyError %7C when the config has no "db" section (90% %257C of users)|unit=.|g=-|outcome=historical|status=current|verified_at=2026-08-02|route=-|tags=config
-PROC|L-0a91f2.p1|Default the section|p=-|solution=solutions/L-0a91f2.diff|touches=src/config%2Cloader.py#sha=77aa001
+GOAL|L-0a91f2|Fix KeyError %7C when the config has no "db" section (90% %257C of users)|unit=.|g=-|outcome=historical|status=current|verified_at=2026-08-02|route=-|tags=config|commit=0a91f2e7c1
+PROC|L-0a91f2.p1|Default the section|p=-|solution=solutions/L-0a91f2.diff|touches=src/config%2Cloader.py#sha=77aa001|diff=truncated
 STEP|L-0a91f2.p1:1|action|Use config.get("db", {})|check=pytest -q tests/test_config.py %7C tail -1
 
 GOAL|L-77d3e0|Speed up the slow integration test by reusing the Postgres container|unit=services/worker|g=-|outcome=fail|status=current|verified_at=2026-10-01|route=-|tags=-

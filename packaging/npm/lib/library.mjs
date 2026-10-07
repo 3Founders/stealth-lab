@@ -36,6 +36,18 @@ const COUNT = /^[0-9]+$/;
 const OUTCOMES = ["pass", "historical", "fail"];
 const STATUSES = ["current", "stale"];
 const RAW_KEYS = new Set(["touches", "tags", "ladder"]);
+const GOAL_KEYS = new Set(["unit", "g", "outcome", "status", "verified_at", "route", "tags"]);
+const PROC_KEYS = new Set(["p", "solution", "touches"]);
+const STEP_KEYS = new Set(["check"]);
+
+// Fields another writer added (the survey's commit=<sha>, diff=truncated, ...): kept verbatim and in order, so
+// canonicalising never loses them (== library.py _extra_fields).
+function extraFields(fields, known) {
+  return fields.filter((f) => {
+    const i = f.indexOf("=");
+    return f && !(i > 0 && known.has(f.slice(0, i)));
+  });
+}
 
 export const LIBRARY_HEADER =
   "# library.md -- problems solved in THIS repository, with the diffs that solved them.\n" +
@@ -98,18 +110,19 @@ export function renderGoalLine(e) {
   return [
     "GOAL", e.id, esc(pyStrip(e.title)), kv("unit", e.unit || "."), kv("g", e.g), kv("outcome", e.outcome || "pass"),
     kv("status", e.status || "current"), kv("verified_at", e.verified_at), kv("route", e.route),
-    "tags=" + ((e.tags || []).length ? e.tags.map(escItem).join(",") : "-"),
+    "tags=" + ((e.tags || []).length ? e.tags.map(escItem).join(",") : "-"), ...(e.extra || []),
   ].join(SEP);
 }
 
 export function renderProcLine(entryId, p) {
   const touches = (p.touches || []).map((t) => `${escItem(t.path)}#sha=${t.sha}`).join(",") || "-";
   return ["PROC", `${entryId}.p${p.index}`, esc(pyStrip(p.name)), kv("p", p.p), kv("solution", p.solution),
-    "touches=" + touches].join(SEP);
+    "touches=" + touches, ...(p.extra || [])].join(SEP);
 }
 
 export function renderStepLine(entryId, procIndex, s) {
-  return ["STEP", `${entryId}.p${procIndex}:${s.order}`, esc(s.kind), esc(pyStrip(s.do)), kv("check", s.check)].join(SEP);
+  return ["STEP", `${entryId}.p${procIndex}:${s.order}`, esc(s.kind), esc(pyStrip(s.do)), kv("check", s.check),
+    ...(s.extra || [])].join(SEP);
 }
 
 export function renderBlock(e) {
@@ -188,6 +201,7 @@ export function parseLibrary(text) {
       outcome: OUTCOMES.includes(k.outcome) ? k.outcome : "pass",
       status: STATUSES.includes(k.status) ? k.status : "current",
       verified_at: dash(k.verified_at), route: dash(k.route), tags: parseTags(k.tags), procs: [],
+      extra: extraFields(f.slice(3), GOAL_KEYS),
     });
   }
   const keyed = (map, parse) => [...map.entries()].map(([key, v]) => ({ k: parse(key), v }));
@@ -200,7 +214,8 @@ export function parseLibrary(text) {
       continue;
     }
     const k = splitKv(f.slice(3));
-    const p = { index: idx, name: unesc(f[2]), p: dash(k.p), solution: dash(k.solution), touches: parseTouches(k.touches), steps: [] };
+    const p = { index: idx, name: unesc(f[2]), p: dash(k.p), solution: dash(k.solution), touches: parseTouches(k.touches), steps: [],
+      extra: extraFields(f.slice(3), PROC_KEYS) };
     entries.get(gid).procs.push(p);
     procObjs.set(`${gid} ${idx}`, p);
   }
@@ -213,7 +228,7 @@ export function parseLibrary(text) {
       continue;
     }
     const k = splitKv(f.slice(4));
-    p.steps.push({ order, kind: unesc(f[2]), do: unesc(f[3]), check: dash(k.check) });
+    p.steps.push({ order, kind: unesc(f[2]), do: unesc(f[3]), check: dash(k.check), extra: extraFields(f.slice(4), STEP_KEYS) });
   }
   return { entries: [...entries.values()].sort((a, b) => cmp(a.id, b.id)), problems };
 }
@@ -352,6 +367,17 @@ export function stealthDir(root) {
   return path.join(root || process.cwd(), ".stealth");
 }
 
+// The directory holding .stealth/ at or above `cwd` (the agent may run in a sub-directory), or null.
+export function findStealthRoot(cwd = process.cwd()) {
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, ".stealth"))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) return null;
+    dir = up;
+  }
+}
+
 const P = (root, ...parts) => path.join(stealthDir(root), ...parts);
 const read = (file) => { try { return fs.readFileSync(file, "utf8"); } catch { return null; } };
 const today = (now = new Date()) => now.toISOString().slice(0, 10);
@@ -456,7 +482,8 @@ function claimsStats(text) {
 function unitPaths(root) {
   const text = read(P(root, "index", "units.idx"));
   if (!text) return [];
-  return text.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l && !l.startsWith("#")).map((l) => l.split(SEP)[0]);
+  return text.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l && !l.startsWith("#"))
+    .map((l) => { const f = l.split(SEP); return f[0] === "UNIT" ? f[2] : f[0]; }).filter(Boolean);
 }
 
 export function renderSummary(root, { lib, routing, now = new Date() } = {}) {
@@ -594,7 +621,8 @@ export function checkStaleness(root, { gitImpl = git, write = true } = {}) {
     const unverifiable = [];
     for (const t of e.procs.flatMap((p) => p.touches)) {
       const sha = now.get(t.path);
-      if (!sha) (sparse ? unverifiable : changed).push(`${t.path} (missing)`);
+      if (!t.sha || t.sha === "-") unverifiable.push(`${t.path} (no recorded sha)`);
+      else if (!sha) (sparse ? unverifiable : changed).push(`${t.path} (missing)`);
       else if (!sha.startsWith(t.sha)) changed.push(t.path);
     }
     if (changed.length && e.status !== "stale") {

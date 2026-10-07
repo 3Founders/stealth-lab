@@ -479,3 +479,24 @@ def test_model_plan_gets_local_obs_and_routing_rows_only_with_library_args(monke
     assert got[1]["local_obs"] == [{"unit": "claude-sonnet-5-5|claude-code", "n": 1, "ok": 1},
                                    {"unit": "gpt-oss-120b|kel", "n": 5, "ok": 3}]
     assert body["routing_rows"][0].startswith(f"ROUTE|R-b00c1e|goal=-|g={GID}|fit=4|")   # the existing route is reused
+
+
+# ============================================================ MCP surface text
+
+def test_library_format_resource_carries_the_real_grammar():
+    from app.mcp_server.resources import library_format_resource
+
+    text = _run(library_format_resource())
+    assert L.LIBRARY_HEADER in text and L.ROUTING_HEADER in text and L.IDX_HEADER in text
+    assert "stealthlab-mcp library add" in text
+
+
+def test_plan_and_run_reads_this_repos_library_first_and_writes_back():
+    from app.mcp_server.prompts import plan_and_run
+
+    text = plan_and_run("t")
+    for needle in ("SUMMARY.md", "terms.idx", "stealthlab-mcp library payload", "library_matches",
+                   "stealthlab-mcp library route --from-reply", "stealthlab-mcp library obs",
+                   "stealthlab-mcp library add"):
+        assert needle in text, needle
+    assert text.index("library_matches") < text.index('"resolved"')     # local before global

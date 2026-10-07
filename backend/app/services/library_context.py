@@ -168,7 +168,8 @@ async def same_repo_goal_ids(pool: Any, identity: Optional[RepoIdentity]) -> lis
         return []
     rows = await pool.fetch(
         "SELECT DISTINCT goal_id::text AS goal_id FROM benchmarks "
-        "WHERE lower(environment_specification ->> 'repo') = $1 AND goal_id IS NOT NULL LIMIT $2",
+        "WHERE environment_specification ? 'repo' AND lower(environment_specification ->> 'repo') = $1 "
+        "AND goal_id IS NOT NULL LIMIT $2",
         identity.public_name, SAME_REPO_MAX_GOALS)
     return [r["goal_id"] for r in rows]
 

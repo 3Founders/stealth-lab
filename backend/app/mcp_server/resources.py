@@ -388,6 +388,29 @@ async def plan_and_run_prompt_resource() -> str:
     return plan_and_run("<your task>")
 
 
+async def library_format_resource() -> str:
+    """stealth://formats/library -- the grammar of .stealth/library.md and routing.md and how to keep them."""
+    from app.stealth.library import IDX_HEADER, LIBRARY_HEADER, ROUTING_HEADER
+
+    return (
+        "# .stealth library: this repository's own solved problems and model routes\n\n"
+        "Kept on the user's machine by `stealthlab-mcp library <command>` (npm package stealthlab-mcp); the\n"
+        "server only ever sees what find_ways' `library_rows` / `route_obs` / `repo_identity` carry, for one request.\n\n"
+        "## library.md (committed; `.stealth/.gitattributes`: library.md merge=union)\n```\n" + LIBRARY_HEADER + "```\n"
+        "Free text is escaped: `|` -> %7C, newline -> %0A, a literal %XX -> %25XX.\n\n"
+        "## index/library.idx (generated; what find_ways' library_rows sends)\n```\n" + IDX_HEADER + "```\n\n"
+        "## routing.md (generated ROUTE lines from find_ways' routing_rows; OBS counts from this machine)\n```\n"
+        + ROUTING_HEADER + "```\n\n"
+        "## Commands\n"
+        "- `stealthlab-mcp library index` -- canonical library.md, library.idx, terms.idx, SUMMARY.md\n"
+        "- `stealthlab-mcp library add --title <goal> --check <cmd> [--g <goal id>] ...` -- write back a solved "
+        "problem (re-runs the check; refuses if it fails; keeps the diff in library/solutions/)\n"
+        "- `stealthlab-mcp library check` / `refresh <id>` -- staleness from git hash-object of touched files\n"
+        "- `stealthlab-mcp library route --from-reply <reply.json>` / `obs <R-id> --model m --scaffold s --ok|--fail`\n"
+        "- `stealthlab-mcp library payload` -- exactly what the knowledge hook sends to find_ways\n"
+    )
+
+
 _V1_RESOURCES = [
     ("stealth://claims/{claim_id}", "claim", "Claim",
      "One structured claim: subject/predicate/object, truth state, epistemic "
@@ -407,6 +430,9 @@ _V1_RESOURCES = [
      "The plan_and_run prompt with a <your task> placeholder: find_ways, compile "
      ".stealth/run.md, do and check each step, keep claims.md true, report what was "
      "learned. Same text as the MCP prompt.", plan_and_run_prompt_resource),
+    ("stealth://formats/library", "format-library", ".stealth library format",
+     "The grammar of .stealth/library.md (this repo's solved problems), index/library.idx and routing.md, "
+     "and the stealthlab-mcp library commands that keep them.", library_format_resource),
 ]
 
 def register_resources(server) -> None:
