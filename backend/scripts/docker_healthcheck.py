@@ -2,8 +2,10 @@
 """
 Docker HEALTHCHECK for the MCP server container.
 
-GET / on the served port must answer 200 with {"service": "stealthlab-mcp"}:
-that proves uvicorn is up and this is the StealthLab MCP app. (The old probe
+GET /healthz (liveness, app/mcp_server/health.py) on the served port must answer
+200 with {"status": "alive"}: the event loop answers. It checks no dependency on
+purpose, so a database blip never restarts the container; readiness (/readyz) is
+for the host's traffic routing, not for this probe. (The old probe
 expected a bare POST /mcp to be refused with 401; since anonymous reads were
 added, an unauthenticated request is let through as a read-only caller and a
 bare POST is answered 400, so that probe marked every healthy container
@@ -15,7 +17,7 @@ import os
 import sys
 import urllib.request
 
-URL = f"http://127.0.0.1:{os.environ.get('PORT', '8765')}/"
+URL = f"http://127.0.0.1:{os.environ.get('PORT', '8765')}/healthz"
 
 
 def main() -> int:
@@ -26,7 +28,7 @@ def main() -> int:
             body = json.loads(response.read() or b"{}")
     except Exception:
         return 1
-    return 0 if body.get("service") == "stealthlab-mcp" else 1
+    return 0 if body.get("status") == "alive" else 1
 
 
 if __name__ == "__main__":

@@ -303,6 +303,19 @@ tools formerly listed here -- `detect_conflict_trigger`, `propose_
 synthesis`, `submit_approval`, `decompose_task` -- were removed from the
 MCP surface 2026-09-16, see the notice at the top of this file.)
 
+## Health and shutdown (`/healthz`, `/readyz`)
+
+`GET /healthz` is liveness: it returns 200 whenever the event loop answers. `GET /readyz` is readiness:
+- it returns 200 only when the pool exists, `SELECT 1` answers within 2 s, the newest control migration
+  shipped in the image is applied, and shutdown has not begun;
+- otherwise it returns 503, naming the failed check, never a connection string.
+
+Both are unauthenticated and rate-limited per process. On SIGTERM (SIGBREAK on Windows), readiness turns 503
+first. Uvicorn (`--timeout-graceful-shutdown 25` in the container) then drains in-flight requests, and the
+lifespan closes the pool and flushes Sentry and OpenTelemetry. Code: `app/mcp_server/health.py`. Tests:
+`tests/test_mcp_health_offline.py`, plus the live check `scripts/live_shutdown_check.py` (loopback scratch
+database only).
+
 ## Hosting -- Streamable HTTP, for real clients (Claude Code included)
 
 The Inspector quickstart above uses **stdio** (a subprocess Claude Code or

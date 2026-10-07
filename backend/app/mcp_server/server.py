@@ -145,17 +145,23 @@ async def lifespan(server: MCPServer) -> AsyncIterator[dict]:
         raise RuntimeError("DATABASE_URL not set -- see backend/.env")
     pool = await create_pool(os.environ["DATABASE_URL"])
     _LIFESPAN_STATE["pool"] = pool
+    from app.mcp_server import health as _health
+    # SIGTERM flips /readyz to 503 at once, before uvicorn drains in-flight requests (securityp1.md P1-C)
+    _restore_signals = _health.install_drain_on_signals()
     from app.services import search_projection as _sp
     _drain_task = _sp.start_background_drain(pool)      # keeps the global search projections fresh for retrieval
     _warm_task = asyncio.get_running_loop().create_task(_warm_up(), name="mcp-warm-up")
     try:
         yield {"pool": pool}
     finally:
+        _health.mark_draining("lifespan shutdown")
         _warm_task.cancel()
         if _drain_task is not None:
             _drain_task.cancel()
         _LIFESPAN_STATE.pop("pool", None)
         await pool.close()
+        _health.flush_observability()
+        _restore_signals()
 
 
 async def _warm_up() -> None:
@@ -794,6 +800,24 @@ async def root_health(request: Request) -> JSONResponse:  # noqa: ARG001
         "status": "ok",
         "mcp_endpoint": "/mcp",
     })
+
+
+@server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
+async def healthz(request: Request) -> JSONResponse:  # noqa: ARG001
+    """Liveness: the event loop answers. No dependency checks (app/mcp_server/health.py)."""
+    from app.mcp_server import health as _health
+
+    code, body = await _health.healthz_response()
+    return JSONResponse(body, status_code=code)
+
+
+@server.custom_route("/readyz", methods=["GET"], include_in_schema=False)
+async def readyz(request: Request) -> JSONResponse:  # noqa: ARG001
+    """Readiness: pool, database, migrations, not draining. 503 names the failed check, nothing else."""
+    from app.mcp_server import health as _health
+
+    code, body = await _health.readyz_response(_LIFESPAN_STATE.get("pool"))
+    return JSONResponse(body, status_code=code, headers={"Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------------------

@@ -10,9 +10,31 @@ endpoint up.
 
 1. New service from this repo, and set its **config file path** to
    `railway.mcp.json`. That file builds `backend/Dockerfile.mcp-server`, runs
-   one replica, and health-checks `GET /`.
+   one replica, and health-checks `GET /readyz` (readiness: the database answers,
+   migrations are current, and the process is not shutting down).
 2. The container runs migrations first and then starts uvicorn on `$PORT`
    with `--workers 1`. That setting is required: task state is in-memory.
+   `--timeout-graceful-shutdown 25` lets in-flight requests finish on SIGTERM.
+   Keep the host's stop grace period above 25 s.
+
+**Probes:**
+
+| Endpoint | Checks | Who uses it |
+|---|---|---|
+| `GET /healthz` | Liveness only: the event loop answers, no dependency checks | Docker `HEALTHCHECK` (`scripts/docker_healthcheck.py`), so a database blip never restarts the container |
+| `GET /readyz` | 200 when the pool exists, `SELECT 1` answers within 2 s, the newest control migration in the image is applied, and the process is not draining. Otherwise 503, with the failed check named and no connection details | The host health check (Railway `healthcheckPath`), so traffic is withheld while the process is not ready |
+| `GET /` | Unchanged static `ok` | Anything that still probes it |
+
+On SIGTERM, `/readyz` turns 503 at once, uvicorn stops accepting connections and
+waits up to 25 s for in-flight requests, and the shutdown then closes the
+database pool and flushes Sentry and OpenTelemetry. Model and embedding providers
+are not part of readiness: `find_ways` degrades to lexical search without them.
+
+`python -m app.ingestion.admin ledger-settle-abandoned [--apply]` closes
+provider-call reservations that a dead process left open. It settles them at
+their reserved worst case, so budgets never under-count. Run it after a crash,
+or on a schedule. `scripts/live_shutdown_check.py --dsn <loopback scratch DB>`
+re-runs the live drain test.
 3. Add a custom domain, for example `mcp.<your-domain>`.
 
 Any other container host (Cloud Run, Render, Fly) works the same way: build

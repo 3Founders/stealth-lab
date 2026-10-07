@@ -22,6 +22,7 @@
     python -m app.ingestion.admin fold-implementations        # convert archived legacy implementations into step bindings / one-step procedures
     python -m app.ingestion.admin ingest-codemods --source nodejs --checkout DIR --commit SHA [--apply --shard-dsn-env ENV]   # step 7 (local shard only)
     python -m app.ingestion.admin ingest-trajectories --shard-dsn-env ENV [--limit N --semantics N --budget-cap-usd X]      # steps 0/1 (local shard only)
+    python -m app.ingestion.admin ledger-settle-abandoned [--older-than-minutes 30] [--apply]   # close provider-call reservations a dead process left open
     python -m app.ingestion.admin cascade-repo owner/name [--top N] [--no-judge] [--apply --max-usd X]              # code cascade: non-trivial spans of a repo
 """
 from __future__ import annotations
@@ -90,6 +91,9 @@ def _parse(argv=None) -> argparse.Namespace:
     _traj_cli.add_parsers(sub)
     from app.ingestion import cascade_cli as _cascade_cli  # code cascade: cascade-repo (dry run unless --apply)
     _cascade_cli.add_parsers(sub)
+    la = sub.add_parser("ledger-settle-abandoned")
+    la.add_argument("--older-than-minutes", type=int, default=30)
+    la.add_argument("--apply", action="store_true", help="settle them (default: count only)")
     sub.add_parser("judge-health")   # probe every semantic judge path (single + batch) and each General Compute key
     sub.add_parser("verify-projections")
     sub.add_parser("verify-dedup")
@@ -179,6 +183,13 @@ async def _amain(a: argparse.Namespace) -> int:
         return await _run_local_pilot(a)
     pool = await create_pool(control_database_url(), max_size=2)
     try:
+        if a.cmd == "ledger-settle-abandoned":
+            from app.services import org_governance as og
+
+            done = await og.settle_abandoned_all(pool, older_than_minutes=a.older_than_minutes, apply=a.apply)
+            print(json.dumps({"applied": a.apply, "older_than_minutes": a.older_than_minutes,
+                              "organizations": len(done), "rows": sum(done.values()), "per_org": done}, indent=2))
+            return 0
         if a.cmd.startswith("routing-"):
             from app.routing import admin_cli as _routing_cli
             return await _routing_cli.run(pool, a)

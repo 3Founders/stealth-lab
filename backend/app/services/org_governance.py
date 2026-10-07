@@ -385,6 +385,46 @@ async def fail_call(pool: Any, reservation: Reservation, *, error_type: str, lat
         raise GovernanceError(f"ledger row {reservation.ledger_id} was not reserved, so it could not be released")
 
 
+# ------------------------------------------------------------------ abandoned reservations (securityp1.md P1-C)
+
+# A provider call times out after app.providers.adapters.TIMEOUT_S (120 s); the server drains for at most 25 s on
+# shutdown. A reservation still open well past both was abandoned: the process died between reserve and settle.
+ABANDONED_AFTER_MINUTES = 30
+
+
+async def settle_abandoned(pool: Any, org_id: str, *, older_than_minutes: int = ABANDONED_AFTER_MINUTES,
+                           apply: bool = True) -> int:
+    """Close one organisation's abandoned reservations. Whether the provider charged for such a call is unknown, so
+    it is SETTLED at its reserved worst case (cost_source 'upper_bound', error_type 'abandoned'): budgets never
+    under-count, and the row stops holding budget as a live reservation. Marking it 'failed' instead would release
+    the hold and record no cost, under-counting spend whenever the call did go through. Returns the row count."""
+    if older_than_minutes < ABANDONED_AFTER_MINUTES // 2:
+        raise GovernanceError(f"older_than_minutes must be at least {ABANDONED_AFTER_MINUTES // 2}: a younger "
+                              "reservation may still be in flight")
+    async with tenant_transaction(pool, _scope(org_id)) as conn:
+        where = ("organization_id = $1::uuid AND status = 'reserved' "
+                 "AND created_at < now() - make_interval(mins => $2)")
+        if not apply:
+            return int(await conn.fetchval(f"SELECT count(*) FROM provider_call_ledger WHERE {where}",
+                                           str(org_id), int(older_than_minutes)))
+        status = await conn.execute(
+            "UPDATE provider_call_ledger SET status = 'settled', cost_usd = reserved_usd, cost_source = 'upper_bound', "
+            f"error_type = 'abandoned', settled_at = now() WHERE {where}", str(org_id), int(older_than_minutes))
+    return int(str(status).split()[-1])
+
+
+async def settle_abandoned_all(pool: Any, *, older_than_minutes: int = ABANDONED_AFTER_MINUTES,
+                               apply: bool = True) -> dict[str, int]:
+    """settle_abandoned for every organisation, each under its own tenant scope (the ledger has FORCE RLS)."""
+    org_ids = [r["id"] for r in await pool.fetch("SELECT id::text AS id FROM organizations")]
+    out = {}
+    for org_id in org_ids:
+        n = await settle_abandoned(pool, org_id, older_than_minutes=older_than_minutes, apply=apply)
+        if n:
+            out[org_id] = n
+    return out
+
+
 # ------------------------------------------------------------------ reading: usage and audit export
 
 async def usage_daily(pool: Any, *, actor_roles: Collection[str], org_id: str, since: datetime,
