@@ -150,3 +150,7 @@ experiments/local_eval/.venv/
 # scan_knowledge_conflicts.py output: ~60 MB, regenerable (run it from backend/). Untracked in 2026-10; the file stays
 # in git history, which was not rewritten.
 backend/conflict_candidates.json
+
+# stealth_app database role credentials and URLs (scripts/provision_app_role.py) -- secrets, never commit
+.stealth_app*.env
+

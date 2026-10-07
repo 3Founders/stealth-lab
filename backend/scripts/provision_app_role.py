@@ -32,7 +32,8 @@ STATEMENTS = [
             CREATE ROLE stealth_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
         END IF;
     END $$""",
-    "ALTER ROLE stealth_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
+    # No `ALTER ROLE ... NOBYPASSRLS` here: managed Postgres (Neon) refuses attribute changes even to the role's
+    # creator ("permission denied to alter role"). CREATE ROLE above sets them, and the flags are verified afterwards.
     "GRANT USAGE ON SCHEMA public TO stealth_app",
     "REVOKE CREATE ON SCHEMA public FROM stealth_app",
     "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO stealth_app",
