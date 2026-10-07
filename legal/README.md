@@ -9,6 +9,7 @@ legal/
   README.md            this file
   b2b/
     mnda.md            Mutual NDA: sign before any access to a customer's repos, staging or tickets
+    pilot_agreement.md Short pilot, signable by a founder before incorporation (novation to the entity)
     msa.md             Master Services Agreement, with Exhibits A (Service Levels), B (Acceptable Use),
                        C (DPA placeholder) and D (Order Form fields)
   b2c/                 (not started) Creator Terms, content licence, takedown policy, payout terms
