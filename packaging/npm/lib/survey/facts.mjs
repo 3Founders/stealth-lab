@@ -164,7 +164,7 @@ function repoLayout(ctx, add, addSearch, text) {
       "pdm-workspace": "PDM workspace", "gradle-settings": "Gradle multi-project build", "maven-modules": "Maven multi-module build",
       sln: ".NET solution", "mix-umbrella": "Elixir umbrella project", melos: "Melos (Dart) workspace", "pub-workspace": "Dart pub workspace",
       "cmake-subdirectories": "CMake project with subprojects", "bazel-packages": "Bazel monorepo", "buck-packages": "Buck monorepo",
-      "pants-packages": "Pants monorepo" }[w.by] || w.by;
+      "pants-packages": "Pants monorepo", "deno-workspace": "Deno workspace" }[w.by] || w.by;
     const where = w.root === "." ? "The repository" : tick(w.root);
     const sample = w.members.slice(0, 6).map(tick).join(", ") + (w.members.length > 6 ? `, and ${w.members.length - 6} more` : "");
     add(w.root, "layout", `workspace:${w.by}`, `${where} is a ${label} with ${w.members.length} member${w.members.length === 1 ? "" : "s"} declared in ${w.file}: ${sample}`, w.file, w.line);
@@ -675,6 +675,12 @@ function gradleFacts(u, f, add, text, subject, ctx) {
   const rel = decl && u.path !== buildRoot ? (buildRoot === "." ? u.path : u.path.slice(buildRoot.length + 1)) : "";
   const proj = rel ? ":" + rel.replace(/\//g, ":") + ":" : "";
   const where = buildRoot === "." ? "the repository root" : tick(buildRoot);
+  // A java-platform (BOM) or version-catalog project has no `test` task (held-out retrofit-bom).
+  const platformLine = tlines.findIndex((l) => /['"`]java-platform['"`]|['"`]version-catalog['"`]/.test(l)) + 1;
+  if (platformLine) {
+    add(u.path, "build", "gradle-platform", `${cap(subject(u))} is a Gradle platform (BOM) project with no tests of its own`, f, platformLine);
+    return;
+  }
   add(u.path, "test", "gradle-test", `${cap(subject(u))} is tested with ${tick(`${wrapper} ${proj}test`)} from ${where} (standard Gradle task)`, f, 1);
 }
 

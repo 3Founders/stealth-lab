@@ -496,7 +496,8 @@ export function logicalCommands(lines) {
     }
     if (!t || t.startsWith("#")) continue;
     if (/^([|&;)(}{\]"'<>-]|\|\||&&|then\b|else\b|elif\b|fi\b|do\b|done\b|esac\b)/.test(t)) continue;
-    if (/^[A-Za-z_]\w*=(\S*|\$\(.*)$/.test(t)) continue; // assignment, not a command
+    // An assignment, not a command: `x=1`, `x=$(ls)`, `title="Update docs for ${name}"` (held-out ruff CI).
+    if (/^[A-Za-z_]\w*=("[^"]*"|'[^']*'|\S*|\$\(.*)\s*(#.*)?$/.test(t)) continue;
     const hd = t.match(/<<-?\s*['"]?(\w+)['"]?/);
     const q = quoteState(t, null);
     if (q) { openQuote = q; continue; } // the command continues inside a string: never report half of it

@@ -42,7 +42,8 @@ const VENDOR_DIRS_AT_PACKAGE_ROOT = new Map([
 // Directory names whose undeclared manifests are fixtures/examples, not packages of this repository.
 const AUX_DIRS = new Set(["test", "tests", "__tests__", "testdata", "test-data", "test_data", "fixtures", "__fixtures__",
   "fixture", "examples", "example", "samples", "sample", "demo", "demos", "testing", "benchmarks", "e2e", "spec",
-  "templates", "template", "scaffold", "scaffolds", "boilerplate", "playground", "integration_test", "integration_tests",
+  // ("playground" is deliberately absent: ruff's playground/ is a real app with its own workspace.)
+  "templates", "template", "scaffold", "scaffolds", "boilerplate", "integration_test", "integration_tests",
   "integration-tests"]);
 // Tracked build output.
 const GENERATED_DIRS = new Set(["dist", "out", "__generated__", "generated", ".next", ".nuxt", "coverage", "site-packages"]);
@@ -176,14 +177,19 @@ export function resolveUnits(files, read, opts = {}) {
       const full = root === "." ? v : `${root}/${v}`;
       const re = gitGlobToRegExp(path.posix.normalize(full), true);
       (negated ? neg : pos).push(re);
+      // Package managers match `<pattern>/package.json`, where a trailing `**` also matches zero folders:
+      // `playground/**` includes playground/ itself (vite's playground/package.json is a workspace package).
+      if (/\/\*\*$/.test(full)) (negated ? neg : pos).push(gitGlobToRegExp(path.posix.normalize(full.replace(/\/\*\*$/, "")), true));
     }
     const out = new Set();
     for (const d of manifestDirsOf(eco)) {
       if (d === root) continue;
-      if (pos.some((re) => re.test(d)) && !neg.some((re) => re.test(d))) out.add(d);
+      if (neg.some((re) => re.test(d))) { excluded.add(d); continue; }
+      if (pos.some((re) => re.test(d))) out.add(d);
     }
     return out;
   };
+  const excluded = new Set(); // dirs a workspace explicitly negates ("!packages/legacy")
   // A workspace declared inside an example/fixture/hidden directory (axum's examples/Cargo.toml workspace)
   // describes those examples, not this repository's packages: it declares nothing.
   const declare = (root, eco, by, file, line, members) => {
@@ -218,6 +224,16 @@ export function resolveUnits(files, read, opts = {}) {
     if (zoneOf(d) || !Array.isArray(rj?.projects)) continue;
     const members = new Set(rj.projects.map((p) => join(d, String(p.projectFolder || ""))).filter((p) => manifests.has(p)));
     declare(d, "npm", "rush", f, jsonKeyLine(text(f) || "", ["projects"]) || 1, members);
+  }
+  // Deno workspaces: deno.json(c) `"workspace": ["./a", "./b"]` (or `{ "members": [...] }`).
+  for (const base of ["deno.json", "deno.jsonc"]) {
+    for (const f of byBase.get(base) || []) {
+      const d = posixDir(f);
+      const dj = json(f);
+      const ws = Array.isArray(dj?.workspace) ? dj.workspace : Array.isArray(dj?.workspace?.members) ? dj.workspace.members : null;
+      if (!ws || zoneOf(d)) continue;
+      declare(d, "deno", "deno-workspace", f, jsonKeyLine(text(f) || "", ["workspace"]) || 1, expand(d, ws.map((v) => ({ value: v })), "deno"));
+    }
   }
   // Rust
   for (const [d, ms] of manifests) {
@@ -387,9 +403,38 @@ export function resolveUnits(files, read, opts = {}) {
     if (dir !== "." && !declared.length) {
       if (isAux(dir)) { aux.push({ path: dir, reason: "fixture-or-example", manifests: ms.map((m) => m.file) }); continue; }
       const sameEco = insideSameEcoWorkspace(dir, ecos.flatMap((e) => (JVM.includes(e) ? JVM : [e])));
-      if (sameEco && !ecos.includes("nx")) { aux.push({ path: dir, reason: "undeclared-in-workspace", manifests: ms.map((m) => m.file) }); continue; }
+      // A real npm package the workspace just doesn't list (ruff playground/api: a name and scripts of its own)
+      // is still a package; one the workspace explicitly negates, or a nameless/scriptless one, is not.
+      const pj = ecos.includes("npm") ? json(ms.find((m) => m.eco === "npm").file) : null;
+      const realPackage = pj && typeof pj.name === "string" && pj.scripts && Object.keys(pj.scripts).length > 0;
+      if (sameEco && !ecos.includes("nx") && (excluded.has(dir) || !realPackage)) {
+        aux.push({ path: dir, reason: excluded.has(dir) ? "excluded-by-workspace" : "undeclared-in-workspace", manifests: ms.map((m) => m.file) });
+        continue;
+      }
     }
     units.set(dir, { path: dir, ecosystems: ecos, manifests: ms.map((m) => m.file), declaredBy: declared, kind: "package" });
+  }
+
+  // Fixture batches: five or more undeclared sibling directories, each with the same kind of manifest, inside
+  // another package (ruff's crates/ty_completion_eval/truth/<case>/pyproject.toml) are test cases, not packages.
+  {
+    const nearestUnitAbove = (d) => { let p = posixDir(d); for (;;) { if (units.has(p)) return p; if (p === ".") return "."; p = posixDir(p); } };
+    const groups = new Map();
+    for (const [dir, u] of units) {
+      if (dir === "." || u.declaredBy.length) continue;
+      const host = nearestUnitAbove(dir);
+      if (host === ".") continue; // top-level folders of the repository (services/a, services/b, ...) are real packages
+      const key = `${posixDir(dir)}|${u.manifests.map((m) => m.slice(m.lastIndexOf("/") + 1)).sort().join(",")}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(dir);
+    }
+    for (const dirs of groups.values()) {
+      if (dirs.length < 5) continue;
+      for (const dir of dirs) {
+        aux.push({ path: dir, reason: "fixture-batch", manifests: units.get(dir).manifests });
+        units.delete(dir);
+      }
+    }
   }
 
   // Special unit kinds (only where no package unit already covers the directory as its own root).
@@ -403,7 +448,8 @@ export function resolveUnits(files, read, opts = {}) {
   for (const base of DOCS_MARKERS) {
     for (const f of byBase.get(base) || []) {
       const d = posixDir(f);
-      if (base === "conf.py" && !/(^|\/)(docs?|doc\/source|docs\/source)$/.test(d)) continue;
+      // Sphinx: a conf.py anywhere under a doc/ or docs/ folder (docs/, docs/source, pytest's doc/en).
+      if (base === "conf.py" && !segs(d).some((s) => /^docs?$/.test(s))) continue;
       if (base === "_config.yml" && !segs(d).some((s) => /^docs?$/.test(s)) && d !== ".") continue;
       if (d === ".") { units.get(".") && (units.get(".").tags = [...new Set([...(units.get(".").tags || []), "docs"])]); continue; }
       special(base === "conf.py" && d.endsWith("/source") ? posixDir(d) : d, "docs");
@@ -554,6 +600,9 @@ function unitName(u, json, toml, text) {
     if (base === "package.json" || base === "composer.json" || base === "project.json" || base.startsWith("deno.json")) {
       const n = json(f)?.name;
       if (typeof n === "string" && n) return n;
+    } else if (base === "mix.exs") {
+      const m = (text(f) || "").match(/\bapp:\s*:(\w+)/); // `app: :ecto` (held-out ecto was named "root")
+      if (m) return m[1];
     } else if (base === "pyproject.toml") {
       const t = toml(f);
       const n = t && (tomlGet(t.data, "project.name") || tomlGet(t.data, "tool.poetry.name"));

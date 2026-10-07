@@ -113,14 +113,42 @@ flask, gin, tokio, retrofit, serilog, svelte (`survey-heldout-truth.json`). The 
 | unit precision | 0.994 (one extra: retrofit `website/`, an Astro docs site with its own `package.json`. On inspection it is a real unit that my truth missed) | — |
 | unit recall | 1.000 | — |
 | key-fact recall | 0.944 (17/18) | 1.000 |
-| fact precision (72 sampled, hand-checked) | **94.4% (68/72)**, below the 97% gate | not re-sampled |
+| fact precision (72 sampled, hand-checked) | **94.4% (68/72)**, below the 97% gate | **98.6% (71/72)**, fresh sample (seed 31337) |
 
 The held-out errors, all fixed afterwards with tests:
 - multi-line Makefile recipes summarised by their first line (2);
 - `<TargetFrameworks Condition=...>` combined with `$(TargetFrameworks)` (1, which is also the key-fact miss);
 - the JavaScript body of `actions/github-script` read as a shell command (1).
 
-**Honest reading.** On repositories it was not tuned on, deterministic fact precision was 94–98% across samples, and every error found was a parser bug of a kind that does not repeat once fixed. 72 facts is a small sample, and one annotator is a limitation.
+The one miss in the re-sample was a Gradle `java-platform` (BOM) module given a `test` command it does not have. It is now fixed with a test.
+
+## Held-out set 2 (6 repositories): shapes the first sets did not cover
+
+deno std (a Deno workspace), commons-lang (single Maven project), ecto (Elixir), ruff (Rust workspace + Python + an npm playground), pytest (tox, Sphinx docs in `doc/en`), starlight (pnpm docs monorepo); see `survey-heldout2-truth.json`.
+
+Truth was written before the first run. It deliberately counts what a repository *actually* builds or ships, including packages its workspace does not list (ruff's `playground/api`, `playground/deploy`). So this set also tests where "declared workspaces are exact" is too strict.
+
+| metric | held-out run | after the fixes it triggered |
+|---|---|---|
+| unit precision | **0.940** | 0.996 |
+| unit recall | **0.895** | 0.995 |
+| key-fact recall | **0.944** | 1.000 |
+| fact precision (64 sampled, hand-checked) | **96.9% (62/64)**, just below the gate | not re-sampled |
+
+What it found, all fixed with a regression test:
+- **No Deno workspace support.** `deno.json` `"workspace": [...]` was not parsed. Members still showed up through their own `deno.json` files, except `testing`, which matched the fixture-directory list.
+- **Fixture cases counted as packages.** 29 `pyproject.toml` files under ruff's `crates/ty_completion_eval/truth/<case>/` became units. New rule: five or more undeclared sibling manifests of the same kind inside another package are a fixture batch.
+- **Real packages a workspace does not list were dropped.** ruff's `playground` (a real app: "playground" was on the fixture list) and its `api`/`deploy` packages. New rule: an undeclared npm package that has a name and scripts, and that the workspace does not explicitly negate, is a unit.
+- **Sphinx docs** found only directly under `docs/`, so pytest's `doc/en` was missed.
+- **Fact errors:**
+  - ecto's root reported as "named `root`" (mix `app: :ecto` not read);
+  - a quoted shell assignment reported as a CI command.
+
+Remaining after the fixes:
+- ruff `scripts/benchmarks` is still treated as a fixture directory (the "benchmarks" name rule). I kept that policy; it is the one remaining recall miss.
+- deno std `crypto/_wasm` (a Rust → WASM crate) is found but was missing from my truth. It is the one remaining extra.
+
+**Honest reading.** Across the two held-out sets, before any fixes, deterministic fact precision was 94.4% and 96.9%. Unit detection was 0.994–1.0 on the first set but 0.94 / 0.90 on the second, because it hit three shapes I had not implemented: Deno workspaces, fixture batches and undeclared real packages. Each held-out round found new parser gaps, and fixing them did not regress the earlier sets: all three sets were re-run after every change. Expect the next unseen shape to cost a few points the same way. 72 + 64 facts is a small sample, and one annotator is a limitation.
 
 ## End to end: the agent half
 

@@ -117,7 +117,7 @@ test("pages: root facts in claims.md, one page per unit, ids contiguous by topic
   assert.deepEqual(ids, [...ids].sort((a, b) => a - b), "a new page numbers ids straight down the file");
   const idx = fs.readFileSync(path.join(dir, ".stealth", "index", "units.idx"), "utf8");
   assert.match(idx, /^UNIT\|ui\|packages\/ui\|kind=package\|eco=npm\|name=@acme\/ui\|parent=root\|template=t-[0-9a-f]{8}\|/m);
-  assert.match(idx, /^AUX\|packages\/legacy\|reason=undeclared-in-workspace$/m);
+  assert.match(idx, /^AUX\|packages\/legacy\|reason=excluded-by-workspace$/m, "the workspace's own !negation is the reason");
   const root = fs.readFileSync(path.join(dir, ".stealth", "index", "root.idx"), "utf8");
   assert.match(root, /^units\|index\/units\.idx\|/m);
   assert.ok(Buffer.byteLength(root) <= 4096);
@@ -620,4 +620,41 @@ test("history: conventional-commit types decide; bodies don't make a feature a f
   assert.equal(inLib + inArchive, 220, "nothing is lost: what does not fit is archived");
   // A re-run adds nothing new and does not re-add archived entries.
   assert.equal(runSurvey(dir, { historyMax: 220 }).history.added, 0);
+});
+
+test("held-out regression: a Gradle java-platform (BOM) project gets no test command", () => {
+  const dir = makeRepo({ "settings.gradle": "include ':lib'\ninclude ':bom'\n", "gradlew": "", "lib/build.gradle": "apply plugin: 'java-library'\n",
+    "bom/build.gradle": "apply plugin: 'java-platform'\n" });
+  survey(dir);
+  const s = statements(dir);
+  assert.match(s, /`lib` is tested with `\.\/gradlew :lib:test`/);
+  assert.doesNotMatch(s, /:bom:test/);
+  assert.match(s, /`bom` is a Gradle platform \(BOM\) project/);
+});
+
+test("held-out-2 regressions: deno workspaces, fixture batches, undeclared real packages, nested sphinx docs, mix names, quoted assignments", async () => {
+  const { logicalCommands } = await import("../lib/survey/parse.mjs");
+  assert.deepEqual(logicalCommands([{ text: 'pull_request_title="Update docs for ${name}"', line: 1 }, { text: "gh pr create", line: 2 }]).map((c) => c.text), ["gh pr create"]);
+
+  const files = {
+    "deno.json": JSON.stringify({ workspace: ["./assert", "./testing"] }, null, 2),
+    "assert/deno.json": JSON.stringify({ name: "@std/assert", exports: "./mod.ts" }), "testing/deno.json": JSON.stringify({ name: "@std/testing", exports: "./mod.ts" }),
+    "Cargo.toml": "[workspace]\nmembers = [\"crates/*\"]\n",
+    "crates/evalr/Cargo.toml": "[package]\nname = \"evalr\"\n",
+    "app/package.json": JSON.stringify({ name: "app", workspaces: ["web"], scripts: { dev: "vite" } }),
+    "app/web/package.json": JSON.stringify({ name: "web", scripts: { build: "vite build" } }),
+    "app/api/package.json": JSON.stringify({ name: "api", scripts: { deploy: "wrangler deploy" } }),
+    "app/cfg/package.json": JSON.stringify({ type: "module" }),
+    "doc/en/conf.py": "extensions = []\n",
+    "lib/mix.exs": "defmodule Ecto.MixProject do\n  def project, do: [app: :ecto, elixir: \"~> 1.14\"]\nend\n",
+  };
+  for (let i = 0; i < 6; i++) files[`crates/evalr/truth/case-${i}/pyproject.toml`] = `[project]\nname = "test"\nrequires-python = ">=3.13"\n`;
+  const dir = makeRepo(files);
+  const r = survey(dir);
+  const units = r.units.map((u) => u.path).sort();
+  for (const u of ["assert", "testing", "crates/evalr", "app", "app/web", "app/api", "doc/en", "lib"]) assert.ok(units.includes(u), `missing ${u}`);
+  assert.ok(!units.some((u) => u.includes("/truth/")), "a batch of fixture cases inside a crate is not six packages");
+  assert.ok(!units.includes("app/cfg"), "a nameless, scriptless marker is not a package");
+  assert.match(statements(dir), /`lib` is a package named `ecto`/);
+  assert.match(statements(dir), /Deno workspace|deno-workspace/);
 });

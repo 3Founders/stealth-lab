@@ -34,8 +34,8 @@
   "vite": {
     "manifests": [
       "packages/*/package.json",
-      "playground/*/**/package.json",
-      "packages/**/__tests__/*/**/package.json",
+      "playground/**/package.json",
+      "packages/**/__tests__/**/package.json",
       "docs/package.json"
     ],
     "exclude": "(^|/)(node_modules|\\.[^/]+)(/|$)",
@@ -714,5 +714,5 @@
       }
     ]
   },
-  "_corrections": "Truth corrections after the first run, each checked by reading the repo: requests docs/ (Sphinx), fmt support/ (Android build), rules_go go/tools/* (own go.mod), phoenix assets/ and vite fixture package.json files are {\"type\":\"module\"}/{} markers, nowinandroid build-logic/convention (nested includeBuild), flutter-samples add_to_app native host apps. flutter-samples web_embedding/ng-flutter is an Angular host app (its own package.json)."
+  "_corrections": "Truth corrections after the first run, each checked by reading the repo: requests docs/ (Sphinx), fmt support/ (Android build), rules_go go/tools/* (own go.mod), phoenix assets/ and vite fixture package.json files are {\"type\":\"module\"}/{} markers, nowinandroid build-logic/convention (nested includeBuild), flutter-samples add_to_app native host apps. flutter-samples web_embedding/ng-flutter is an Angular host app (its own package.json). vite: pnpm matches <pattern>/package.json, so playground/** includes playground/package.json itself (the truth glob had excluded it)."
 }
