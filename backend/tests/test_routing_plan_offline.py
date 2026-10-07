@@ -299,3 +299,44 @@ def test_a_plan_failure_never_breaks_find_ways(monkeypatch):
     reply = json.dumps({"outcome": "resolved", "procedures": [{"goal_id": GOAL}]})
     body = json.loads(_attach(reply, candidates=["a|h"]))
     assert body["outcome"] == "resolved" and body["model_plan"]["status"] == "unavailable"
+
+
+# ------------------------------------------------------------------ default candidates and the reply shape (plan §2.4, §5.2)
+
+def test_the_callers_own_model_is_a_unit_on_its_client_scaffold():
+    assert plan.caller_unit("claude-sonnet-4-5", "Claude Code") == "claude-sonnet-4-5|claude-code"
+    assert plan.caller_unit("gpt-5|my-agent", "cursor") == "gpt-5|my-agent"
+    assert plan.caller_unit("deepseek-v3.2") == "deepseek-v3.2|direct"
+    assert plan.caller_unit("  ") is None and plan.caller_unit(None) is None
+
+
+def test_catalog_candidates_come_from_the_deployment_setting_and_are_inert_without_it():
+    empty = plan.PublicCatalogCandidates(env={})
+    assert not empty.configured()
+    cat = plan.PublicCatalogCandidates(env={plan.DEFAULT_MODELS_ENV: "gpt-oss-120b, qwen3-coder|openhands,gpt-oss-120b"})
+    assert cat.configured()
+    assert run(cat.candidates(None, scope=SCOPE, goal_id=GOAL, constraints={})) == [
+        "gpt-oss-120b|direct", "qwen3-coder|openhands"]
+    plan.register_candidate_provider(empty)
+    assert not plan.wants_plan(None)                     # an unset catalogue never turns the plan on
+    plan.register_candidate_provider(cat)
+    assert plan.wants_plan(None)
+
+
+def test_the_plan_carries_basis_fit_and_per_rung_uncertainty(monkeypatch):
+    rec = _rec(["a|s", "b|s"], params_version=7, as_of="2026-10-07T00:00:00+00:00",
+               units={"a|s": {"p_ok_mean": 0.4, "p_ok_q05": 0.2, "p_ok_q95": 0.6, "cost_mean": 0.01},
+                      "b|s": {"p_ok_mean": 0.8, "p_ok_q05": 0.7, "p_ok_q95": 0.9, "cost_mean": 0.2}},
+               evidence={"goal_observations": 0, "models": {"a|s": "card", "b|s": "population"}})
+
+    async def fake(*a, **k):
+        return rec
+    monkeypatch.setattr(service, "recommend", fake)
+    out = run(plan.model_plan(None, scope=SCOPE, goal_id=GOAL, candidates=["a|s", "b|s"]))
+    assert out["basis"] == "prior" and out["fit_id"] == 7 and out["as_of"].startswith("2026-10-07")
+    assert out["steps"] == [{"step": "*", "ladder": [
+        {"unit": "a|s", "p_ok_mean": 0.4, "p_ok_q05": 0.2, "p_ok_q95": 0.6, "cost_mean": 0.01},
+        {"unit": "b|s", "p_ok_mean": 0.8, "p_ok_q05": 0.7, "p_ok_q95": 0.9, "cost_mean": 0.2}]}]
+    assert out["ladder"] == ["a|s", "b|s"]                 # the old fields are still there
+    rec["evidence"]["models"]["a|s"] = "fitted"
+    assert run(plan.model_plan(None, scope=SCOPE, goal_id=GOAL, candidates=["a|s"]))["basis"] == "posterior"

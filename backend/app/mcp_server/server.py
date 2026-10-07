@@ -1480,6 +1480,8 @@ from app.routing import plan as _routing_plan  # noqa: E402
 # Connected models/agents become routing candidates -- but only once a connection source is configured,
 # so a bare server's find_ways is unchanged (plan.wants_plan asks `configured()`).
 _routing_plan.register_candidate_provider(_ProviderCandidates())
+# Models the deployment itself can run for anyone (STEALTH_DEFAULT_MODELS); inert when the variable is unset.
+_routing_plan.register_candidate_provider(_routing_plan.PublicCatalogCandidates())
 
 
 @server.tool()
@@ -1490,6 +1492,7 @@ async def find_ways(
     semantic: bool = True, use_llm: bool = True, top_k: int = 5,
     candidates: list[Any] | None = None, check_kind: str | None = None,
     model_constraints: dict[str, Any] | None = None, detail: str = "full",
+    my_model: str | None = None,
 ) -> str:
     """
     Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
@@ -1545,6 +1548,11 @@ async def find_ways(
     Run the first model, check it, then call `report_result(instance_key, accepted)` -- its
     reply names the next model. Without candidates the reply is unchanged.
 
+    my_model: the model YOU are (e.g. "claude-sonnet-4-5"). It is always a candidate (scaffold = your
+    MCP client), so the plan says whether to keep the task yourself or hand it to a cheaper / stronger
+    model. Each rung carries p_ok (mean and 90% interval) and expected cost; `basis` says whether that
+    rests on observed runs ("posterior") or on public benchmarks and model cards only ("prior").
+
     detail: "full" (default) returns every step in full. "summary" shortens step text, checks and
     example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and
     preconditions stay complete): much less to carry through a long session. Call again with the same
@@ -1574,6 +1582,9 @@ async def find_ways(
     if decision is not None:
         gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
     await _record_find_ways(ctx, query, reply, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
+    own = _routing_plan.caller_unit(my_model, (_find_ways_client(ctx) or {}).get("name"))
+    if own is not None:
+        candidates = [*(candidates or []), own]
     return await _attach_model_plan(shape(reply), ctx, candidates=candidates, check_kind=check_kind,
                                     constraints=model_constraints)
 

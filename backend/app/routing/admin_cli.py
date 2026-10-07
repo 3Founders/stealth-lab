@@ -3,10 +3,12 @@
     routing-status                         active parameters, diagnostics, data counts
     routing-refit [--method nuts|flow_vi]  nightly joint fit (schedule it daily)
     routing-local-refit GOAL_ID            refit one Goal now (normally queued per observation)
+    routing-model-update                   models' ability drift from public observations since the fit (hourly job)
     routing-price MODEL --input X --output Y [--cached Z]    USD per million tokens
     routing-model MODEL [--predecessor P] [--open-weights] [--local]
     routing-sync-prices [--apply]          prices declared by the provider connections -> routing_prices
     routing-import FILE.jsonl              attempt outcomes from a benchmark pipeline / public results
+    routing-import-public DIR [--sources a,b] [--apply]   public results + model cards from downloaded files
     routing-audit OBSERVATION_ID --correct true|false        gold label for check-error rates
     routing-sbc [--sims N]                 simulation-based calibration on the current data design
 """
@@ -16,14 +18,15 @@ import json
 from datetime import datetime
 from typing import Any
 
-COMMANDS = ("routing-status", "routing-refit", "routing-local-refit", "routing-price", "routing-model",
-            "routing-import", "routing-audit", "routing-sbc", "routing-sync-prices")
+COMMANDS = ("routing-model-update", "routing-status", "routing-refit", "routing-local-refit", "routing-price", "routing-model",
+            "routing-import", "routing-audit", "routing-sbc", "routing-sync-prices", "routing-import-public")
 
 
 def add_parsers(sub: Any) -> None:
     sub.add_parser("routing-status")
     p = sub.add_parser("routing-refit")
     p.add_argument("--method", choices=["nuts", "flow_vi"])
+    sub.add_parser("routing-model-update")
     p = sub.add_parser("routing-local-refit")
     p.add_argument("goal_id")
     p = sub.add_parser("routing-price")
@@ -38,6 +41,10 @@ def add_parsers(sub: Any) -> None:
     p.add_argument("--local", action="store_true", default=None)
     p = sub.add_parser("routing-import")
     p.add_argument("file")
+    p = sub.add_parser("routing-import-public")
+    p.add_argument("data_dir", help="folder with the downloaded public files (docs/routing_priors.md)")
+    p.add_argument("--sources", default="openrouter,swebench,rebench,swe-agent,routerbench")
+    p.add_argument("--apply", action="store_true", help="write (default: report what would be written)")
     p = sub.add_parser("routing-audit")
     p.add_argument("observation_id")
     p.add_argument("--correct", choices=["true", "false"], required=True)
@@ -89,6 +96,11 @@ async def run(pool: Any, a: Any) -> int:
 
         print(json.dumps(await nightly_refit(pool, method=a.method), default=str, indent=2))
         return 0
+    if a.cmd == "routing-model-update":
+        from app.routing import model_update
+
+        print(json.dumps(await model_update.run(pool), default=str, indent=2))
+        return 0
     if a.cmd == "routing-local-refit":
         from app.routing.fit import local_refit
 
@@ -116,6 +128,17 @@ async def run(pool: Any, a: Any) -> int:
             rows = [_import_row(json.loads(line)) for line in fh if line.strip()]
         ids = await store.insert_observations(pool, rows)
         print(json.dumps({"imported": len(ids), "next": "run routing-refit to fit them"}))
+        return 0
+    if a.cmd == "routing-import-public":
+        from app.routing import import_public
+
+        sources = [x.strip() for x in a.sources.split(",") if x.strip()]
+        unknown = sorted(set(sources) - set(import_public.SOURCES))
+        if unknown:
+            print(json.dumps({"error": f"unknown sources {unknown}; known: {list(import_public.SOURCES)}"}))
+            return 2
+        print(json.dumps(await import_public.run(pool, a.data_dir, sources=sources, apply=a.apply), default=str,
+                         indent=2))
         return 0
     if a.cmd == "routing-audit":
         from app.services import search_group
