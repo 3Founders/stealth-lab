@@ -234,6 +234,12 @@ class Instance:
 
 
 async def load_instance(pool: Any, scope: AccessScope, instance_key: str) -> Instance:
+    """`_load_instance` under the caller's routing row-level-security scope (migration 150)."""
+    with store.routing_scope(scope):
+        return await _load_instance(pool, scope, instance_key)
+
+
+async def _load_instance(pool: Any, scope: AccessScope, instance_key: str) -> Instance:
     """What the server stored for an instance_key issued by `model_plan` / `report_result`.
     An unknown key and one the caller may not see fail identically (no enumeration)."""
     unknown = RoutingError("unknown instance_key (use the one find_ways or report_result returned)")
@@ -272,7 +278,13 @@ def _default_unit(instance: Instance) -> str:
                        "(\"model|scaffold\") for the model you actually ran")
 
 
-async def report_result(pool: Any, *, scope: AccessScope, instance: Instance, accepted: bool,
+async def report_result(pool: Any, *, scope: AccessScope, **kwargs: Any) -> dict[str, Any]:
+    """`_report_result` under the caller's routing row-level-security scope (migration 150)."""
+    with store.routing_scope(scope):
+        return await _report_result(pool, scope=scope, **kwargs)
+
+
+async def _report_result(pool: Any, *, scope: AccessScope, instance: Instance, accepted: bool,
                         unit: Optional[str] = None, check_kind: Optional[str] = None,
                         tokens_in: Optional[int] = None, tokens_out: Optional[int] = None,
                         tokens_cached: Optional[int] = None, cost_usd: Optional[float] = None,

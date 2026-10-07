@@ -201,9 +201,24 @@ async def _each(pool: Any, call: Callable[[Any], Awaitable[Any]], *, strict: boo
     return list(await asyncio.gather(*[_bounded(mid, call(p), strict=strict) for mid, p in members]))
 
 
-async def fetch_all(pool: Any, sql: str, *args: Any, strict: bool = True, pools: Any = None) -> list:
+def _scoped(method: str, sql: str, args: tuple, scope: Optional[dict]) -> Callable[[Any], Any]:
+    """A per-member call; with `scope` (access.scoped_transaction kwargs: owner / readers / system) the statement runs
+    inside a transaction that binds those row-level-security settings first (migration 150)."""
+    if not scope:
+        return lambda p: getattr(p, method)(sql, *args)
+
+    async def call(p: Any) -> Any:
+        from app.services.access import scoped_transaction
+
+        async with scoped_transaction(p, **scope) as conn:
+            return await getattr(conn, method)(sql, *args)
+    return call
+
+
+async def fetch_all(pool: Any, sql: str, *args: Any, strict: bool = True, pools: Any = None,
+                    scope: Optional[dict] = None) -> list:
     """Every member's rows (unordered concatenation)."""
-    parts = await _each(pool, lambda p: p.fetch(sql, *args), strict=strict, pools=pools)
+    parts = await _each(pool, _scoped("fetch", sql, args, scope), strict=strict, pools=pools)
     return [r for part in parts if part for r in part]
 
 
@@ -215,19 +230,20 @@ async def fetchrow_any(pool: Any, sql: str, *args: Any, strict: bool = True, poo
     return None
 
 
-async def fetchval_sum(pool: Any, sql: str, *args: Any, strict: bool = True, pools: Any = None) -> Any:
+async def fetchval_sum(pool: Any, sql: str, *args: Any, strict: bool = True, pools: Any = None,
+                       scope: Optional[dict] = None) -> Any:
     """Sum of a numeric scalar over members (counts, spend totals)."""
     total = 0
-    for part in await _each(pool, lambda p: p.fetchval(sql, *args), strict=strict, pools=pools):
+    for part in await _each(pool, _scoped("fetchval", sql, args, scope), strict=strict, pools=pools):
         if part is not None:
             total += part
     return total
 
 
-async def execute_all(pool: Any, sql: str, *args: Any, pools: Any = None) -> int:
+async def execute_all(pool: Any, sql: str, *args: Any, pools: Any = None, scope: Optional[dict] = None) -> int:
     """Run a statement on every member (deletes by key, maintenance); returns rows affected."""
     n = 0
-    for part in await _each(pool, lambda p: p.execute(sql, *args), strict=True, pools=pools):
+    for part in await _each(pool, _scoped("execute", sql, args, scope), strict=True, pools=pools):
         try:
             n += int(str(part).rsplit(" ", 1)[-1])
         except (ValueError, IndexError):

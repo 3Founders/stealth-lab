@@ -199,8 +199,11 @@ def _auth_posture_problems(settings: Any, env: str) -> list[str]:
         out.append("identity issuer / JWKS URL must be https:// outside TEST")
 
     key = getattr(settings, "admin_api_key", None)
-    explicit = getattr(settings, "admin_api_key_legacy_enabled", None)
-    if key and (True if explicit is None else bool(explicit)):
+    enabled = getattr(settings, "legacy_admin_key_enabled", None)
+    if enabled is None:                                 # a settings object without the property: assume enabled
+        explicit = getattr(settings, "admin_api_key_legacy_enabled", None)
+        enabled = True if explicit is None else bool(explicit)
+    if key and enabled:
         if len(key) < 32 or key.strip().lower() in _WEAK_SECRETS:
             out.append("ADMIN_API_KEY is a default/weak secret (>= 32 random chars required, or set ADMIN_API_KEY_LEGACY_ENABLED=false)")
 

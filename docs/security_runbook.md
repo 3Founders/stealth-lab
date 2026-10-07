@@ -52,29 +52,40 @@ State as of 2026-10-07. Evidence: [final_prod_docs/p1_results.md](../final_prod_
      `stealth_app`. Counts are in p1_results.md.
    - A Neon *branch* run is still to do before cutover. Never run them on the production branch.
 2. Migration 99 now runs as part of the full migration set on the throwaway database (141 files applied, 0 pending).
-3. **The restricted role exists only in a script.** `scripts/sql/create_app_role.sql` creates `stealth_app`
-   (no superuser, no `BYPASSRLS`, no DDL), and it is verified on the throwaway database.
-   - **Not created on Neon.** Until it is, and the services' `DATABASE_URL` uses it, the services connect as the
-     table owner, and FORCE RLS does nothing for them.
+3. **The restricted role is ready but not yet in use in production.**
+   - `scripts/provision_app_role.py` creates `stealth_app` on the control database, S###, and K### (dry run by
+     default, `--apply` to write; it prints host names only). It is verified on the throwaway database.
+   - **Not run on Neon yet**, and the services still connect as the table owner. **That role has `BYPASSRLS`**
+     (checked read-only on 2026-10-08: not superuser, `rolbypassrls = true`, owns the tables). So **in production
+     today every RLS policy is bypassed**: migration 29's, migration 136's and migration 150's alike. Isolation rests
+     entirely on the application checks, which the suites verify. Switching the services to `stealth_app` is what
+     makes the database layer enforce. **This is the highest-value remaining step.**
+   - Operator steps: generate a password, run the script with `--apply`, then switch each service's `DATABASE_URL`
+     (and S###/K###) user to `stealth_app`. Keep the owner credentials for `migrate.py` only.
    - `stealth_worker` / `stealth_migrate` / `stealth_readonly` / `stealth_maint` are still documented only.
 4. Supabase access tokens cannot be revoked before `exp`; mitigated by the per-request `users.is_active` check.
 5. Shard-admin CLI actions (`app.ingestion.admin`) do not write `audit_events`.
 6. `docker-compose.yml` ships a dev-only DB password; never reuse it.
-7. Legacy admin key: in PRODUCTION it is off unless `ADMIN_API_KEY_LEGACY_ENABLED=true`.
-8. **Five tables use migration 29's lenient rule** (`change_set_operations`, `change_sets`, `evidence`,
-   `executions`, `failure_routes`). `sl_tenant_scope_allows()` *allows* a row when `app.tenant_id` is unset, so a
-   path that forgets `tenant_transaction()` is not blocked there. The migration-136 tables are strict.
-   - **Deferred:** switching them to strict first needs an audit showing every path that touches them runs inside
-     `tenant_transaction()`. Otherwise those writes would start failing.
-   - Pinned by `test_without_a_tenant_setting_strict_tables_see_nothing_and_fallback_tables_are_the_known_gap`.
-9. **The routing tables have no row-level security.** That includes `routing_decisions` and
-   `routing_observations`, which carry `visibility` / `owner_id`. Application checks are the only layer.
-   - **Deferred:** move the routing log writes under `tenant_transaction()`, then add strict policies. A strict
-     policy added first would break every routing write, and the lenient one would add nothing.
-   - The global routing tables (params, model cards, prices, the model registry) hold no tenant data.
-10. **Check the legacy admin key on the hosted service.** `STEALTHLAB_ENV` decides whether it works when
-    `ADMIN_API_KEY_LEGACY_ENABLED` is unset, and it is on outside PRODUCTION. If the hosted service runs with
-    `STEALTHLAB_ENV=STAGING`, set `ADMIN_API_KEY_LEGACY_ENABLED=false` there explicitly.
+7. Legacy admin key: on in TEST only, unless `ADMIN_API_KEY_LEGACY_ENABLED` says otherwise (since 2026-10-08;
+   before that it was on everywhere outside PRODUCTION, including a host started as STAGING).
+8. **Closed 2026-10-08 (migration 150): the five migration-29 tables** (`change_set_operations`, `change_sets`,
+   `evidence`, `executions`, `failure_routes`).
+   - With `app.tenant_id` unset they now allow only the shared commons tenant's rows, not every row.
+   - The audit found no code path that writes another tenant to them, so nothing changed for existing paths.
+   - `TenantScope.unrestricted()` binds the explicit system scope (`app.rls_system`).
+9. **Closed 2026-10-08 (migration 150): the routing logs.** `routing_decisions` and `routing_observations` have
+   FORCE RLS.
+   - `public` rows are visible to everyone. Other rows are visible only to their owner's readers (the caller's
+     subject and organisations, bound per request through `store.routing_scope`), or under the system scope
+     (workers, the nightly fit, admin commands).
+   - A routing row of an `org`-visible Goal records the organisation as its owner, so every member can reach it.
+   - The sync tables (`synced_projects`, `sync_device_credentials`) had the same permissive-when-unset helper, and
+     no code ever set their owner. They now deny without an owner bound, and every sync path binds its owner.
+   - **Deploy order:** while the services connect as the `BYPASSRLS` owner, 150 changes nothing they see. Before
+     switching them to `stealth_app`, the new code (which binds every scope) must be live, and 150 must be applied to
+     the control database and to S001–S004.
+10. Closed 2026-10-08: see 7. An explicit `ADMIN_API_KEY_LEGACY_ENABLED=false` on the host is still the clearest
+    setting.
 
 ## Break-glass
 

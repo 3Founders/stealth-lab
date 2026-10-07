@@ -147,12 +147,15 @@ async def issue_sync_device_credential(
     trusts its caller completely, same as issue_credential in
     service_identity.py."""
     ttl_seconds = ttl_seconds or cfg.max_ttl_seconds
+    from app.services.access import scoped_transaction
+
     token, jti = _mint(cfg, owner_subject=owner_subject, project_id=project_id, ttl_seconds=ttl_seconds)
-    await pool.execute(
-        "INSERT INTO sync_device_credentials (credential_id, owner_subject, project_id, fingerprint, scope, expires_at) "
-        "VALUES ($1, $2, $3::uuid, $4, $5, now() + make_interval(secs => $6))",
-        jti, owner_subject, project_id, token_fingerprint(token), SYNC_UPLOAD_SCOPE, float(ttl_seconds),
-    )
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        await conn.execute(
+            "INSERT INTO sync_device_credentials (credential_id, owner_subject, project_id, fingerprint, scope, "
+            "expires_at) VALUES ($1, $2, $3::uuid, $4, $5, now() + make_interval(secs => $6))",
+            jti, owner_subject, project_id, token_fingerprint(token), SYNC_UPLOAD_SCOPE, float(ttl_seconds),
+        )
     return token
 
 
@@ -172,8 +175,11 @@ async def rotate_sync_device_credential(
     new_token, new_jti = _mint(
         cfg, owner_subject=ctx.owner_subject, project_id=ctx.project_id, ttl_seconds=cfg.max_ttl_seconds,
     )
+    from app.services.access import bind_scope
+
     async with pool.acquire() as conn:
         async with conn.transaction():
+            await bind_scope(conn, owner=ctx.owner_subject)
             await conn.execute(
                 "UPDATE sync_device_credentials SET revoked_at = now(), revoked_reason = 'rotated' "
                 "WHERE credential_id = $1 AND revoked_at IS NULL",
@@ -198,11 +204,14 @@ async def revoke_sync_device_credential(
     actually revoked, False if it didn't exist / wasn't this owner's /
     was already revoked (indistinguishable on purpose, same 404-shaped
     discipline as app/api/me.py)."""
-    result = await pool.execute(
-        "UPDATE sync_device_credentials SET revoked_at = now(), revoked_reason = $3 "
-        "WHERE credential_id = $1 AND owner_subject = $2 AND revoked_at IS NULL",
-        credential_id, owner_subject, reason,
-    )
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        result = await conn.execute(
+            "UPDATE sync_device_credentials SET revoked_at = now(), revoked_reason = $3 "
+            "WHERE credential_id = $1 AND owner_subject = $2 AND revoked_at IS NULL",
+            credential_id, owner_subject, reason,
+        )
     return result.endswith(" 1")
 
 
@@ -212,11 +221,14 @@ async def revoke_all_sync_device_credentials_for_project(
     """Called by unsync (app.stealth.project_sync.unsync_project) -- stops
     all future ongoing sync for that project immediately, independent of
     however many devices hold a live credential for it."""
-    await pool.execute(
-        "UPDATE sync_device_credentials SET revoked_at = now(), revoked_reason = $3 "
-        "WHERE project_id = $1::uuid AND owner_subject = $2 AND revoked_at IS NULL",
-        project_id, owner_subject, reason,
-    )
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        await conn.execute(
+            "UPDATE sync_device_credentials SET revoked_at = now(), revoked_reason = $3 "
+            "WHERE project_id = $1::uuid AND owner_subject = $2 AND revoked_at IS NULL",
+            project_id, owner_subject, reason,
+        )
 
 
 async def verify_sync_device_token(
@@ -261,11 +273,15 @@ async def verify_sync_device_token(
     # verifies cryptographically but was never registered (or was already
     # revoked) is rejected here -- same "signature alone is not enough"
     # discipline service_identity.py's PgServiceRegistry enforces.
-    row = await pool.fetchrow(
-        "SELECT revoked_at, expires_at FROM sync_device_credentials "
-        "WHERE credential_id = $1 AND owner_subject = $2 AND project_id = $3::uuid",
-        jti, owner_subject, project_id,
-    )
+    from app.services.access import scoped_transaction
+
+    # owner_subject comes from the signature-verified claims above, so the owner scope is the token's own
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        row = await conn.fetchrow(
+            "SELECT revoked_at, expires_at FROM sync_device_credentials "
+            "WHERE credential_id = $1 AND owner_subject = $2 AND project_id = $3::uuid",
+            jti, owner_subject, project_id,
+        )
     if row is None:
         raise SyncDeviceTokenRejected("unregistered")
     if row["revoked_at"] is not None:

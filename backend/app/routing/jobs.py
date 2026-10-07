@@ -10,20 +10,28 @@ from app.routing.store import LOCAL_REFIT_JOB, MODEL_UPDATE_JOB, NIGHTLY_REFIT_J
 
 async def handle_local_refit(pool: Any, payload: Mapping[str, Any]) -> dict:
     from app.routing.fit import local_refit
+    from app.routing.store import routing_scope
 
-    return await local_refit(pool, str(payload["goal_id"]))
+    with routing_scope(system=True):          # a worker reads a Goal's observations whoever owns them
+        return await local_refit(pool, str(payload["goal_id"]))
 
 
 async def handle_nightly_refit(pool: Any, payload: Mapping[str, Any]) -> dict:
     from app.routing.fit import nightly_refit
 
-    return await nightly_refit(pool, method=payload.get("method"))
+    from app.routing.store import routing_scope
+
+    with routing_scope(system=True):
+        return await nightly_refit(pool, method=payload.get("method"))
 
 
 async def handle_model_update(pool: Any, payload: Mapping[str, Any]) -> dict:
     from app.routing import model_update
 
-    return await model_update.run(pool)
+    from app.routing.store import routing_scope
+
+    with routing_scope(system=True):
+        return await model_update.run(pool)
 
 
 def register() -> None:

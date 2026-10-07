@@ -130,7 +130,11 @@ def test_tenant_setting_statement_is_the_single_emission_point():
     assert args == (TENANT_SETTING, ORG_A)
 
 
-def test_unrestricted_hatch_opens_a_plain_transaction():
+def test_unrestricted_hatch_binds_the_explicit_system_scope_and_no_tenant():
+    # Since migration 150 an UNSET tenant means "the commons only", not "everything", so the maintenance hatch binds
+    # app.rls_system (deliberate, visible) instead of binding nothing -- and still never a tenant.
+    from app.services.access import SYSTEM_SETTING
+
     pool = RecordingPool()
 
     async def body():
@@ -138,8 +142,10 @@ def test_unrestricted_hatch_opens_a_plain_transaction():
             await conn.execute("SELECT 1")
 
     asyncio.run(body())
-    assert kinds(pool) == ["BEGIN", "EXECUTE", "COMMIT"]
-    assert all(TENANT_SETTING not in sql for sql, _ in executed(pool))
+    assert kinds(pool) == ["BEGIN", "EXECUTE", "EXECUTE", "COMMIT"]
+    sqls = executed(pool)
+    assert sqls[0][1] == (SYSTEM_SETTING,) and "set_config" in sqls[0][0]       # first statement after BEGIN
+    assert all(TENANT_SETTING not in str(args) for _, args in sqls)
 
 
 def test_tenant_setting_statement_refuses_unrestricted_scope():

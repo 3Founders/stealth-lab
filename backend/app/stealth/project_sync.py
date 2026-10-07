@@ -130,9 +130,14 @@ async def preview_sync(pool: asyncpg.Pool, *, project_id: str, owner_subject: st
     """Read-only: never writes. Tells the caller (and, through it, the
     user, before any confirmation) whether this project is unsynced,
     already synced to them, or already synced to someone else."""
-    row = await pool.fetchrow(
-        "SELECT owner_subject FROM synced_projects WHERE project_id = $1::uuid", project_id,
-    )
+    from app.services.access import scoped_transaction
+
+    # Cross-owner by design (it must say "synced by someone else" without naming them): the one place this module
+    # reads under the system scope (migration 150), and it returns only booleans.
+    async with scoped_transaction(pool, system=True) as conn:
+        row = await conn.fetchrow(
+            "SELECT owner_subject FROM synced_projects WHERE project_id = $1::uuid", project_id,
+        )
     if row is None:
         return {"project_id": project_id, "already_synced_by_you": False, "synced_by_someone_else": False}
     same = row["owner_subject"] == owner_subject
@@ -148,19 +153,24 @@ async def sync_project(pool: asyncpg.Pool, *, project_id: str, owner_subject: st
     never silently transferred or overwritten. Re-syncing your own
     already-synced project is a harmless no-op that returns the existing
     row."""
-    row = await pool.fetchrow(
-        """
-        INSERT INTO synced_projects (project_id, owner_subject)
-        VALUES ($1::uuid, $2)
-        ON CONFLICT (project_id) DO NOTHING
-        RETURNING *
-        """,
-        project_id, owner_subject,
-    )
-    if row is None:
-        row = await pool.fetchrow("SELECT * FROM synced_projects WHERE project_id = $1::uuid", project_id)
-        if row["owner_subject"] != owner_subject:
-            raise AlreadySyncedToAnotherAccount(project_id)
+    from app.services.access import scoped_transaction
+
+    # The conflict check must see another owner's row to refuse it; the system scope is confined to this
+    # transaction, and nothing of the other owner's row leaves this function.
+    async with scoped_transaction(pool, system=True) as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO synced_projects (project_id, owner_subject)
+            VALUES ($1::uuid, $2)
+            ON CONFLICT (project_id) DO NOTHING
+            RETURNING *
+            """,
+            project_id, owner_subject,
+        )
+        if row is None:
+            row = await conn.fetchrow("SELECT * FROM synced_projects WHERE project_id = $1::uuid", project_id)
+    if row["owner_subject"] != owner_subject:
+        raise AlreadySyncedToAnotherAccount(project_id)
     return dict(row)
 
 
@@ -192,7 +202,7 @@ class StaleRevision(Exception):
 
 
 async def record_sync_upload(
-    pool: asyncpg.Pool, *, project_id: str, revision: int, ciphertext: bytes,
+    pool: asyncpg.Pool, *, project_id: str, owner_subject: str, revision: int, ciphertext: bytes,
     wrapped_p_dek: Optional[str] = None, recovery_salt: Optional[str] = None,
     kdf_params: Optional[dict] = None,
 ) -> dict:
@@ -222,7 +232,10 @@ async def record_sync_upload(
     it calls are concerned."""
     from app.services.object_storage import get_store, store_blob
 
-    current = await pool.fetchrow("SELECT revision FROM synced_projects WHERE project_id = $1::uuid", project_id)
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        current = await conn.fetchrow("SELECT revision FROM synced_projects WHERE project_id = $1::uuid", project_id)
     if current is None:
         raise ValueError(f"project {project_id} is not synced")
     if revision <= current["revision"]:
@@ -233,20 +246,23 @@ async def record_sync_upload(
         raise RuntimeError("no object storage configured (OBJECT_STORAGE_URL unset)")
     blob = await store_blob(pool, store, ciphertext, content_type="application/octet-stream")
 
-    row = await pool.fetchrow(
-        """
-        UPDATE synced_projects
-        SET snapshot_sha256 = $2, snapshot_locator = $3, snapshot_size_bytes = $4,
-            bootstrapped_at = COALESCE(bootstrapped_at, now()), revision = $5,
-            wrapped_p_dek = COALESCE($6, wrapped_p_dek),
-            recovery_salt = COALESCE($7, recovery_salt),
-            kdf_params = COALESCE($8::jsonb, kdf_params)
-        WHERE project_id = $1::uuid
-        RETURNING *
-        """,
-        project_id, blob["sha256"], blob["locator"], blob["size"], revision,
-        wrapped_p_dek, recovery_salt, json.dumps(kdf_params) if kdf_params is not None else None,
-    )
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        row = await conn.fetchrow(
+            """
+            UPDATE synced_projects
+            SET snapshot_sha256 = $2, snapshot_locator = $3, snapshot_size_bytes = $4,
+                bootstrapped_at = COALESCE(bootstrapped_at, now()), revision = $5,
+                wrapped_p_dek = COALESCE($6, wrapped_p_dek),
+                recovery_salt = COALESCE($7, recovery_salt),
+                kdf_params = COALESCE($8::jsonb, kdf_params)
+            WHERE project_id = $1::uuid
+            RETURNING *
+            """,
+            project_id, blob["sha256"], blob["locator"], blob["size"], revision,
+            wrapped_p_dek, recovery_salt, json.dumps(kdf_params) if kdf_params is not None else None,
+        )
+    if row is None:
+        raise ValueError(f"project {project_id} is not synced")
     return dict(row)
 
 
@@ -256,10 +272,13 @@ async def record_sync_upload(
 async def list_synced_projects(pool: asyncpg.Pool, *, owner_subject: str) -> list[dict]:
     """This account's synced projects, newest sync first. Scoped
     strictly to `owner_subject` -- never another account's projects."""
-    rows = await pool.fetch(
-        "SELECT * FROM synced_projects WHERE owner_subject = $1 ORDER BY synced_at DESC",
-        owner_subject,
-    )
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM synced_projects WHERE owner_subject = $1 ORDER BY synced_at DESC",
+            owner_subject,
+        )
     return [dict(r) for r in rows]
 
 
@@ -268,10 +287,13 @@ async def get_synced_project(pool: asyncpg.Pool, *, project_id: str, owner_subje
     that has already been validated as a well-formed UUID (an
     ill-formed one would otherwise surface as a raw asyncpg cast
     error rather than an honest 404 -- see app/api/me.py)."""
-    row = await pool.fetchrow(
-        "SELECT * FROM synced_projects WHERE project_id = $1::uuid AND owner_subject = $2",
-        project_id, owner_subject,
-    )
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM synced_projects WHERE project_id = $1::uuid AND owner_subject = $2",
+            project_id, owner_subject,
+        )
     return dict(row) if row else None
 
 
@@ -308,10 +330,13 @@ async def unsync_project(pool: asyncpg.Pool, *, project_id: str, owner_subject: 
     synced and owned by this subject), False otherwise -- callers treat
     both "never synced" and "synced by someone else" identically (never
     confirms which)."""
-    row = await pool.fetchrow(
-        "DELETE FROM synced_projects WHERE project_id = $1::uuid AND owner_subject = $2 RETURNING snapshot_sha256",
-        project_id, owner_subject,
-    )
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, owner=owner_subject) as conn:
+        row = await conn.fetchrow(
+            "DELETE FROM synced_projects WHERE project_id = $1::uuid AND owner_subject = $2 RETURNING snapshot_sha256",
+            project_id, owner_subject,
+        )
     if row is None:
         return False
     if row["snapshot_sha256"]:

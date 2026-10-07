@@ -54,7 +54,13 @@ def _parse_units(raw: Sequence[Any]) -> list[tuple[str, str]]:
     return out
 
 
-async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], access_scope: AccessScope,
+async def recommend(pool: Any, *, access_scope: AccessScope, **kwargs: Any) -> dict[str, Any]:
+    """`_recommend` under the caller's routing row-level-security scope (migration 150)."""
+    with store.routing_scope(access_scope):
+        return await _recommend(pool, access_scope=access_scope, **kwargs)
+
+
+async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], access_scope: AccessScope,
                     procedure_id: Optional[str] = None, check_kind: Optional[str] = None,
                     instance_key: Optional[str] = None, previous_attempts: Sequence[Mapping[str, Any]] = (),
                     constraints: Optional[Mapping[str, Any]] = None, now: Optional[datetime] = None,
@@ -308,7 +314,9 @@ async def recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acces
                             # counts only (unit, n, ok): report_result re-solves the next rung with them
                             **({"local_obs": [dict(o) for o in list(local_obs)[:cfg.max_candidates]]}
                                if local_obs else {})},
-            "visibility": goal["visibility"], "owner_id": goal["owner_id"], "step_order": current})
+            "visibility": goal["visibility"],
+            "owner_id": store.routing_owner(goal["visibility"], goal["owner_id"], goal.get("tenant_id")),
+            "step_order": current})
     return response
 
 

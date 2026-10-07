@@ -1355,7 +1355,10 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
             return f"REFUSED: {exc}"
         procedure_id = str(procedure["procedure_id"])
         goal_id = goal_id or (str(procedure["achieves_goal_id"]) if procedure.get("achieves_goal_id") else None)
-        visibility, owner_id = str(procedure.get("visibility") or "public"), procedure.get("owner_id")
+        from app.routing.store import routing_owner
+
+        visibility = str(procedure.get("visibility") or "public")
+        owner_id = routing_owner(visibility, procedure.get("owner_id"), procedure.get("tenant_id"))
     if goal_id is None:
         return "REFUSED: give goal_id or a procedure_id linked to a goal"
     from app.routing.store import visible_goal
@@ -1363,17 +1366,23 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
     if goal is None:
         return f"REFUSED: goal {goal_id} not found"
     if procedure_id is None:
-        visibility, owner_id = goal["visibility"], goal["owner_id"]
+        from app.routing.store import routing_owner
+
+        visibility = goal["visibility"]
+        owner_id = routing_owner(visibility, goal["owner_id"], goal.get("tenant_id"))
+    from app.routing.store import routing_scope
+
     try:
-        observation_id = await record_observation(pool, {
-            "source": "live", "goal_id": goal_id, "procedure_id": procedure_id,
-            "model_key": f"{model}@{version}" if version else model, "scaffold": scaffold,
-            "instance_key": instance_key, "attempt_index": attempt_index, "check_kind": check_kind,
-            "accepted": accepted, "pass_fraction": pass_fraction, "tokens_in": tokens_in, "tokens_out": tokens_out,
-            "tokens_cached": tokens_cached, "cost_usd": cost_usd, "latency_ms": latency_ms,
-            "reporter": _resolve_caller_identity(fallback="anonymous-host"), "recommendation_id": recommendation_id,
-            "visibility": visibility, "owner_id": owner_id, "step_order": step_order, "step_role": step_role,
-        })
+        with routing_scope(scope):          # migration 150: the write runs under the caller's routing scope
+            observation_id = await record_observation(pool, {
+                "source": "live", "goal_id": goal_id, "procedure_id": procedure_id,
+                "model_key": f"{model}@{version}" if version else model, "scaffold": scaffold,
+                "instance_key": instance_key, "attempt_index": attempt_index, "check_kind": check_kind,
+                "accepted": accepted, "pass_fraction": pass_fraction, "tokens_in": tokens_in, "tokens_out": tokens_out,
+                "tokens_cached": tokens_cached, "cost_usd": cost_usd, "latency_ms": latency_ms,
+                "reporter": _resolve_caller_identity(fallback="anonymous-host"), "recommendation_id": recommendation_id,
+                "visibility": visibility, "owner_id": owner_id, "step_order": step_order, "step_role": step_role,
+            })
     except (ObservationRejected, ValueError) as exc:
         return f"REFUSED: {exc}"
     return json.dumps({"observation_id": observation_id, "goal_id": goal_id})
@@ -1418,7 +1427,10 @@ async def report_result(ctx: Context, instance_key: str, accepted: bool, model: 
                 procedure = await _resolve_live_procedure(pool, instance.procedure_id, scope)
             except ProcedureNotFound as exc:
                 return f"REFUSED: {exc}"
-            visibility, owner_id = str(procedure.get("visibility") or "public"), procedure.get("owner_id")
+            from app.routing.store import routing_owner
+
+            visibility = str(procedure.get("visibility") or "public")
+            owner_id = routing_owner(visibility, procedure.get("owner_id"), procedure.get("tenant_id"))
         result = await _plan.report_result(
             pool, scope=scope, instance=instance, accepted=accepted, unit=unit, check_kind=check_kind,
             tokens_in=tokens_in, tokens_out=tokens_out, tokens_cached=tokens_cached, cost_usd=cost_usd,

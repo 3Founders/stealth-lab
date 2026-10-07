@@ -372,7 +372,7 @@ async def upload_sync_ciphertext(
 
     try:
         row = await record_sync_upload(
-            pool, project_id=project_id, revision=revision, ciphertext=ciphertext,
+            pool, project_id=project_id, owner_subject=device.owner_subject, revision=revision, ciphertext=ciphertext,
             wrapped_p_dek=body.get("wrapped_p_dek"), recovery_salt=body.get("recovery_salt"),
             kdf_params=body.get("kdf_params"),
         )

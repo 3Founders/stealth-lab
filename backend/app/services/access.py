@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -319,8 +319,11 @@ async def tenant_transaction(pool: Any, tenant_scope: TenantScope):
     wrapper is the backstop's armature, not the primary filter.
     """
     if tenant_scope.is_unrestricted:
+        # Since migration 150 an UNSET setting is not "everything" any more (it is the commons only), so the
+        # maintenance hatch binds the explicit system scope instead -- still deliberate, still visible.
         async with pool.acquire() as conn:
             async with conn.transaction():
+                await conn.execute("SELECT set_config($1, 'on', TRUE)", SYSTEM_SETTING)
                 yield conn
         return
 
@@ -329,3 +332,51 @@ async def tenant_transaction(pool: Any, tenant_scope: TenantScope):
         async with conn.transaction():
             await conn.execute(sql, *args)
             yield conn
+
+
+# ---------------------------------------------------------------------------
+# Owner / routing / system scopes for row-level security (migration 150).
+#
+# Same transaction-local binding as tenant_transaction (set_config(..., TRUE) as the first statement after BEGIN), so
+# a setting can never outlive its transaction or reach the next borrower of the connection.
+#
+#   owner    app.owner_subject    sync tables: only this subject's rows (unset -> none)
+#   readers  app.routing_readers  routing logs: 'public' rows plus rows owned by one of these ids (subject + orgs)
+#   system   app.rls_system       workers, maintenance, admin commands: every row. NEVER for a user request.
+# ---------------------------------------------------------------------------
+
+SYSTEM_SETTING = "app.rls_system"
+OWNER_SETTING = "app.owner_subject"
+ROUTING_READERS_SETTING = "app.routing_readers"
+
+
+async def bind_scope(conn: Any, *, owner: Optional[str] = None, readers: Sequence[str] = (),
+                     system: bool = False) -> None:
+    """Bind the given scopes inside the CURRENT transaction of `conn` (callers own the transaction)."""
+    if system:
+        await conn.execute("SELECT set_config($1, 'on', TRUE)", SYSTEM_SETTING)
+    if owner:
+        await conn.execute("SELECT set_config($1, $2, TRUE)", OWNER_SETTING, str(owner))
+    clean = [str(r) for r in readers if r and "," not in str(r)]
+    if clean:
+        await conn.execute("SELECT set_config($1, $2, TRUE)", ROUTING_READERS_SETTING, ",".join(clean))
+
+
+@asynccontextmanager
+async def scoped_transaction(pool: Any, *, owner: Optional[str] = None, readers: Sequence[str] = (),
+                             system: bool = False):
+    """A connection + transaction with the given row-level-security scopes bound first. With nothing given, the
+    tables protected by migration 150 show only what an anonymous caller may see (commons / public rows)."""
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await bind_scope(conn, owner=owner, readers=readers, system=system)
+            yield conn
+
+
+def routing_readers_of(scope: "AccessScope") -> tuple[str, ...]:
+    """The ids whose non-public routing rows `scope` may read: its own subject and its organisations."""
+    out: list[str] = []
+    if getattr(scope, "viewer_id", None):
+        out.append(str(scope.viewer_id))
+    out.extend(str(o) for o in (getattr(scope, "org_ids", None) or ()))
+    return tuple(dict.fromkeys(out))

@@ -75,6 +75,14 @@ def _import_row(raw: dict) -> dict:
 
 
 async def run(pool: Any, a: Any) -> int:
+    """Operator commands run under the routing system scope (migration 150): they read and write every owner's logs."""
+    from app.routing.store import routing_scope
+
+    with routing_scope(system=True):
+        return await _run(pool, a)
+
+
+async def _run(pool: Any, a: Any) -> int:
     from app.routing import store
     from app.services.shards import search_pool
 
@@ -85,8 +93,10 @@ async def run(pool: Any, a: Any) -> int:
             "ORDER BY version DESC LIMIT 1")
         print(json.dumps({
             "active_params": dict(row) if row else None,
-            "observations": await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_observations"),
-            "decisions": await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_decisions"),
+            "observations": await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_observations",
+                                                            scope=store.current_scope()),
+            "decisions": await search_group.fetchval_sum(pool, "SELECT count(*) FROM routing_decisions",
+                                                         scope=store.current_scope()),
             "goal_posteriors": await pool.fetchval("SELECT count(*) FROM routing_posteriors WHERE entity_kind = 'goal'"),
             "priced_models": await pool.fetchval("SELECT count(DISTINCT model_key) FROM routing_prices"),
         }, default=str, indent=2))
@@ -145,7 +155,7 @@ async def run(pool: Any, a: Any) -> int:
 
         updated = await search_group.execute_all(
             pool, "UPDATE routing_observations SET gold_correct = $2 WHERE id = $1::uuid",
-            a.observation_id, a.correct == "true")
+            a.observation_id, a.correct == "true", scope=store.current_scope())
         print(json.dumps({"updated": updated}))
         return 0
     if a.cmd == "routing-sbc":

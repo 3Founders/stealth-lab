@@ -151,6 +151,34 @@ refused.
 | 9 | Service token with wrong audience / scope | `test_service_identity_offline.py` (20 passed) |
 | 10 | Withdrawn private content returned to nobody | new `test_a_withdrawn_procedure_is_returned_to_nobody` (with a "reachable while live" control) |
 
+## Deferred P1-A items closed (2026-10-08, for a 2,000-user production)
+
+The owner asked for this in the session: "prod will be used by 2000 people, so clear the deferred things".
+
+| Item | What changed | Evidence |
+|---|---|---|
+| Migration 149 in production | Applied to the control database and S001–S004 (owner-requested: "run the migration"); 0 pending after | `migrate.py` output, `--status` per member |
+| Migration-29 tables permissive when unset (#3) | Migration 150: with `app.tenant_id` unset, only the shared commons tenant's rows. The audit found no writer of another tenant to these five tables. `TenantScope.unrestricted()` binds the explicit `app.rls_system` | `test_without_a_tenant_setting_strict_tables_see_nothing_and_the_db29_tables_see_only_the_commons` |
+| Routing logs without RLS (#4) | Migration 150: FORCE RLS on `routing_decisions` / `routing_observations`. `public` rows are visible to everyone; other rows only to the owner's readers (caller subject + organisations) or under the system scope. Every routing entry point binds its scope (`store.routing_scope`): requests in `service.recommend`, `plan.load_instance` / `report_result` and `report_model_run`; workers, admin commands and imports run as system. An `org`-visible Goal's routing rows record the organisation as owner (`store.routing_owner`), so members reach them | `test_routing_logs_show_public_rows_to_all_and_private_rows_only_to_their_readers`, `test_routing_rows_of_an_org_goal_are_owned_by_the_organisation`; the existing routing suites still pass as `stealth_app` |
+| **Found while doing it:** the sync tables' RLS never enforced | `sl_owner_scope_allows` allowed every row when `app.owner_subject` was unset, and no code ever set it. Migration 150 makes it deny without an owner. Every sync path now binds its owner; the two cross-owner checks (`preview_sync`, `sync_project`'s conflict) use a narrow system scope and return only booleans or an error | `test_sync_rows_are_invisible_without_their_owner_bound_and_a_conflict_is_still_refused`; the offline sync fake now enforces owner binding (19 passed) |
+| Legacy admin key (#8 / risk #10) | Now on in TEST only, unless `ADMIN_API_KEY_LEGACY_ENABLED` says otherwise (it used to be on everywhere outside PRODUCTION) | `test_runtime_guard_offline.py` and the auth suites: 126 passed. The 2 failures were already there and are unrelated: a static-scan false positive on `SERVICE_ROLE_SCOPES`, and this machine's half-configured service-token env |
+| `stealth_app` on Neon (#5) | `scripts/provision_app_role.py` is written: dry run by default, prints host names only, verified on the throwaway DB. **Not run on Neon**: it needs a password the owner generates, plus the host's DATABASE_URLs switched to the role | the throwaway-DB run: flags all false |
+
+**Read-only check of production (2026-10-08).** The control role is not a superuser but **has `BYPASSRLS`**, and it
+owns the tables. Every RLS policy, old and new, is therefore bypassed in production today. Isolation rests on the
+application checks (which the suites verify). Switching the services to `stealth_app` is what turns the database
+layer on.
+
+**Suites on a FRESH throwaway DB (2026-10-08, 143 migrations incl. 149 and 150), as `stealth_app`:**
+mcp_tenant 3/0, cross_user 3/0, retrieval_fixture 2/0, agents_download 1/0, episode_privacy 1/0,
+product_model_privacy 2/0, h2_rls_backstop 22/0, access 9/0, routing_isolation 3/0, routing_e2e 3/0,
+evaluation/privacy 2/0, new p1a **11/0**, and org_governance 26/6 (the same 6 setup-privilege failures as before;
+32/0 as owner).
+
+The scratch DB was rebuilt before this run, because the earlier load-test seed (300 Goals) had crowded the
+search-ranking assertion in `test_a_private_goal_is_not_offered_to_another_user`. It failed the same way as the
+superuser, so it was data, not RLS.
+
 ## P1-B: SLA
 
 **Status: the SLA is not offerable yet.** No availability has been measured, the service is one instance, and the

@@ -35,6 +35,59 @@ class ObservationRejected(ValueError):
     pass
 
 
+# ------------------------------------------------------------------ row-level security scope (migration 150)
+#
+# routing_decisions / routing_observations carry FORCE RLS: 'public' rows for everyone, any other row only for its
+# owner's readers (the caller's subject and organisations) or under the explicit system scope. Every statement on
+# them runs inside a transaction that binds the CURRENT scope first. The scope is set once per entry point:
+#   requests  (service.recommend, plan.load_instance / report_result)  -> routing_scope(access_scope)
+#   workers   (refits, model update, admin commands, imports)          -> routing_scope(system=True)
+# With no scope set a statement sees and writes 'public' rows only -- a forgotten scope fails closed.
+
+import contextlib as _contextlib
+import contextvars as _contextvars
+
+_RLS_SCOPE: "_contextvars.ContextVar[dict]" = _contextvars.ContextVar("routing_rls_scope", default={})
+
+
+@_contextlib.contextmanager
+def routing_scope(access_scope: Optional[AccessScope] = None, *, system: bool = False):
+    """Bind the routing logs' row-level-security scope for everything awaited inside (contextvars follow awaits)."""
+    from app.services.access import routing_readers_of
+
+    if system:
+        value = {"system": True}
+    elif access_scope is not None and getattr(access_scope, "is_unrestricted", False):
+        value = {"system": True}
+    elif access_scope is not None:
+        value = {"readers": routing_readers_of(access_scope)}
+    else:
+        value = {}
+    token = _RLS_SCOPE.set(value)
+    try:
+        yield
+    finally:
+        _RLS_SCOPE.reset(token)
+
+
+def current_scope() -> dict:
+    return dict(_RLS_SCOPE.get())
+
+
+async def _log_call(log: Any, method: str, sql: str, *args: Any) -> Any:
+    """One statement on a routing log table, under the current scope."""
+    async with _log_tx(log) as conn:
+        return await getattr(conn, method)(sql, *args)
+
+
+@_contextlib.asynccontextmanager
+async def _log_tx(log: Any):
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(log, **current_scope()) as conn:
+        yield conn
+
+
 def validate_observation(obs: Mapping[str, Any]) -> dict[str, Any]:
     row = {k: obs.get(k) for k in _OBS_COLUMNS + _OPTIONAL_OBS_COLUMNS}
     for key in ("goal_id", "model_key", "scaffold", "instance_key"):
@@ -100,7 +153,8 @@ async def insert_observations(pool: Any, rows: Sequence[Mapping[str, Any]]) -> l
             [obs_id, *[(r[c] if c != "occurred_at" else (r[c] or now)) for c in columns]])
     for goal_id, batch in by_goal.items():
         log = await _goal_log_pool(pool, goal_id)
-        await log.executemany(f"INSERT INTO routing_observations ({cols}) VALUES ({marks}){conflict}", batch)
+        async with _log_tx(log) as conn:
+            await conn.executemany(f"INSERT INTO routing_observations ({cols}) VALUES ({marks}){conflict}", batch)
     return ids
 
 
@@ -114,9 +168,10 @@ async def _goal_log_pool(pool: Any, goal_id: str) -> Any:
 
 async def goal_observations(pool: Any, goal_id: str) -> list[dict]:
     log = await _goal_log_pool(pool, goal_id)
-    rows = await log.fetch(
-        "SELECT *, goal_id::text AS goal_id, procedure_id::text AS procedure_id FROM routing_observations "
-        "WHERE goal_id = $1::uuid ORDER BY occurred_at", str(goal_id))
+    async with _log_tx(log) as conn:
+        rows = await conn.fetch(
+            "SELECT *, goal_id::text AS goal_id, procedure_id::text AS procedure_id FROM routing_observations "
+            "WHERE goal_id = $1::uuid ORDER BY occurred_at", str(goal_id))
     return [dict(r) for r in rows]
 
 
@@ -133,7 +188,7 @@ def _json_value(value: Any) -> Any:
 async def instance_decision(pool: Any, goal_id: str, instance_key: str) -> Optional[dict]:
     """The latest whole-task decision for one instance (each report re-decides under the same key)."""
     log = await _goal_log_pool(pool, goal_id)
-    row = await log.fetchrow(
+    row = await _log_call(log, "fetchrow", 
         "SELECT id::text AS id, goal_id::text AS goal_id, procedure_id::text AS procedure_id, candidates, ladder, "
         "constraints, visibility, owner_id FROM routing_decisions "
         "WHERE goal_id = $1::uuid AND instance_key = $2 AND step_order IS NULL ORDER BY created_at DESC LIMIT 1",
@@ -150,7 +205,7 @@ async def instance_issuer(pool: Any, goal_id: str, instance_key: str) -> Optiona
     """Who an instance was first issued to: the `_caller` stored with its EARLIEST decision (None when it was
     issued to nobody in particular, e.g. by recommend_models without a plan)."""
     log = await _goal_log_pool(pool, goal_id)
-    raw = await log.fetchval(       # parsed in Python: `constraints->>'_caller'` returns NULL on the double-encoded rows
+    raw = await _log_call(log, "fetchval",        # parsed in Python: `constraints->>'_caller'` returns NULL on the double-encoded rows
         "SELECT constraints FROM routing_decisions "
         "WHERE goal_id = $1::uuid AND instance_key = $2 AND step_order IS NULL ORDER BY created_at ASC LIMIT 1",
         str(goal_id), instance_key)
@@ -162,7 +217,7 @@ async def instance_issuer(pool: Any, goal_id: str, instance_key: str) -> Optiona
 async def instance_attempts(pool: Any, goal_id: str, instance_key: str) -> list[dict]:
     """Whole-task attempts already reported for one instance, oldest first."""
     log = await _goal_log_pool(pool, goal_id)
-    rows = await log.fetch(
+    rows = await _log_call(log, "fetch", 
         "SELECT model_key, scaffold, accepted, check_kind, attempt_index FROM routing_observations "
         "WHERE goal_id = $1::uuid AND instance_key = $2 AND step_order IS NULL "
         "ORDER BY occurred_at, attempt_index", str(goal_id), instance_key)
@@ -175,7 +230,7 @@ async def all_observations(pool: Any, *, public_only: bool) -> list[dict]:
     where = "WHERE visibility = 'public'" if public_only else ""
     rows = await search_group.fetch_all(
         pool, f"SELECT *, goal_id::text AS goal_id, procedure_id::text AS procedure_id FROM routing_observations {where} "
-        "ORDER BY occurred_at", strict=True)
+        "ORDER BY occurred_at", strict=True, scope=current_scope())
     return [dict(r) for r in sorted(rows, key=lambda r: (r["occurred_at"], str(r["id"])))]
 
 
@@ -184,7 +239,7 @@ async def goal_token_stats(pool: Any, goal_id: str, *, steps: bool = False) -> d
     whole-task attempts, or (steps=True) its single-step attempts."""
     log = await _goal_log_pool(pool, goal_id)
     kind = "step_order IS NOT NULL" if steps else "step_order IS NULL"
-    rows = await log.fetch(
+    rows = await _log_call(log, "fetch", 
         "SELECT model_key || '|' || scaffold AS unit, accepted, count(*) AS n, "
         "avg(ln(greatest(tokens_in, 1))) AS li, avg(ln(greatest(tokens_out, 1))) AS lo, "
         "avg(ln(1 + coalesce(tokens_cached, 0))) AS lc "
@@ -206,7 +261,7 @@ def _jsonable(value: Any) -> Any:
 
 async def record_decision(pool: Any, row: Mapping[str, Any]) -> None:
     log = await _goal_log_pool(pool, str(row["goal_id"]))
-    await log.execute(
+    await _log_call(log, "execute", 
         "INSERT INTO routing_decisions (id, goal_id, procedure_id, instance_key, params_version, candidates, ladder, "
         "propensity, meets_target, predicted, constraints, visibility, owner_id, step_order) "
         "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10::jsonb, $11::jsonb, $12, $13, $14)",
@@ -326,14 +381,23 @@ async def _member_embeddings(pool: Any, goal_ids: Sequence[str]) -> Optional[dic
 async def visible_goal(pool: Any, goal_id: str, access_scope: AccessScope) -> Optional[dict]:
     vis, params = visibility_predicate(access_scope, alias="g", param_index=2)
     row = await pool.fetchrow(
-        f"SELECT g.goal_id::text AS id, g.visibility::text AS visibility, g.owner_id, g.embedding::text AS embedding "
-        f"FROM goal_search_index g WHERE g.goal_id = $1::uuid AND {vis}", str(goal_id), *params)
+        f"SELECT g.goal_id::text AS id, g.visibility::text AS visibility, g.owner_id, g.tenant_id::text AS tenant_id, "
+        f"g.embedding::text AS embedding FROM goal_search_index g WHERE g.goal_id = $1::uuid AND {vis}",
+        str(goal_id), *params)
     if row is None:
         return None
     member = await _member_embeddings(pool, [row["id"]])
     embedding = row["embedding"] if member is None else member.get(row["id"])
     return {"id": row["id"], "visibility": row["visibility"], "owner_id": row["owner_id"],
-            "embedding": _vector(embedding)}
+            "tenant_id": row["tenant_id"], "embedding": _vector(embedding)}
+
+
+def routing_owner(visibility: Optional[str], owner_id: Optional[str], tenant_id: Optional[str]) -> Optional[str]:
+    """The owner a routing row records (migration 150's policy reads it): an 'org'-visible Goal's rows belong to its
+    ORGANISATION (so every member's scope -- which carries their org ids -- reaches them), anything else to its owner."""
+    if visibility == "org" and tenant_id:
+        return str(tenant_id)
+    return None if owner_id is None else str(owner_id)
 
 
 async def goal_rows(pool: Any, goal_ids: Sequence[str]) -> dict[str, dict]:
@@ -498,7 +562,7 @@ async def observations_since(pool: Any, since: datetime, *, public_only: bool) -
     where = "WHERE occurred_at > $1" + (" AND visibility = 'public'" if public_only else "")
     rows = await search_group.fetch_all(
         pool, "SELECT goal_id::text AS goal_id, model_key, scaffold, accepted, check_kind, step_order, occurred_at "
-        f"FROM routing_observations {where}", since, strict=True)
+        f"FROM routing_observations {where}", since, strict=True, scope=current_scope())
     return [dict(r) for r in rows]
 
 

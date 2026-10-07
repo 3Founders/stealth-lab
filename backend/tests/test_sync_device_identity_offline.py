@@ -36,11 +36,28 @@ OTHER_PROJECT = "22222222-2222-2222-2222-222222222222"
 
 
 class FakePool:
+    """Mirrors migration 150's row-level security: every statement on sync_device_credentials must run on a
+    connection whose transaction bound app.owner_subject to the row's owner (or the system scope)."""
+
     def __init__(self):
         self.rows: dict[str, dict] = {}
+        self.unscoped = []                 # statements that reached the table without an owner bound
 
-    async def execute(self, sql, *params):
+    def _check_scope(self, scope, owner):
+        if scope.get("app.rls_system") == "on":
+            return
+        if scope.get("app.owner_subject") != owner:
+            self.unscoped.append((owner, dict(scope)))
+            raise AssertionError(f"sync_device_credentials touched without owner {owner!r} bound: {scope}")
+
+    async def execute(self, sql, *params, _scope=None):
         flat = " ".join(sql.split())
+        if flat.startswith("SELECT set_config"):
+            raise AssertionError("a scope must be bound on a connection inside a transaction, not on the pool")
+        if flat.startswith("INSERT INTO sync_device_credentials"):
+            self._check_scope(_scope or {}, params[1])
+        elif flat.startswith("UPDATE sync_device_credentials") and "owner_subject = $2" in flat:
+            self._check_scope(_scope or {}, params[1])
         if flat.startswith("INSERT INTO sync_device_credentials"):
             credential_id, owner_subject, project_id, fingerprint, scope = params[:5]
             self.rows[credential_id] = {
@@ -73,10 +90,11 @@ class FakePool:
             return f"UPDATE {n}"
         raise AssertionError(f"unexpected execute: {flat[:100]}")
 
-    async def fetchrow(self, sql, *params):
+    async def fetchrow(self, sql, *params, _scope=None):
         flat = " ".join(sql.split())
         if flat.startswith("SELECT revoked_at, expires_at FROM sync_device_credentials"):
             credential_id, owner_subject, project_id = params
+            self._check_scope(_scope or {}, owner_subject)
             row = self.rows.get(credential_id)
             if row is None or row["owner_subject"] != owner_subject or row["project_id"] != project_id:
                 return None
@@ -101,12 +119,19 @@ class _ConnCtx:
 class _Conn:
     def __init__(self, pool):
         self.pool = pool
+        self.scope: dict[str, str] = {}
 
     def transaction(self):
         return _TxnCtx()
 
     async def execute(self, sql, *params):
-        return await self.pool.execute(sql, *params)
+        if " ".join(sql.split()).startswith("SELECT set_config"):
+            self.scope[params[0]] = params[1] if len(params) > 1 else "on"
+            return "SELECT 1"
+        return await self.pool.execute(sql, *params, _scope=self.scope)
+
+    async def fetchrow(self, sql, *params):
+        return await self.pool.fetchrow(sql, *params, _scope=self.scope)
 
 
 class _TxnCtx:

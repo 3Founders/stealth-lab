@@ -690,11 +690,12 @@ class Settings(BaseSettings):
 
     @property
     def legacy_admin_key_enabled(self) -> bool:
-        """The static admin key is opt-IN in production: an explicit
-        ADMIN_API_KEY_LEGACY_ENABLED wins, otherwise it works only outside PRODUCTION."""
+        """The static admin key is opt-IN outside TEST: an explicit ADMIN_API_KEY_LEGACY_ENABLED wins, otherwise it
+        works only in TEST. (It used to default to on everywhere except PRODUCTION, so a hosted service started with
+        STEALTHLAB_ENV=STAGING accepted it -- securityp1.md residual risk #10.)"""
         if self.admin_api_key_legacy_enabled is not None:
             return bool(self.admin_api_key_legacy_enabled)
-        return not self.is_production
+        return self.environment == "TEST"
 
     def require(self, field: str) -> str:
         value = getattr(self, field, None)
