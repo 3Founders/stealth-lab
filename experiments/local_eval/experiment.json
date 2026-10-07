@@ -1,0 +1,87 @@
+{
+  "_doc": "Frozen settings for the local-vs-global knowledge evaluation (docs/plan_2026-10_priors_library_survey.md, workstream D; pre-registration in PREREGISTRATION.md). Same agent, budget and decoding in every arm; the ONLY difference is the memory block (runs/notes_<arm>.json). Generation reuses experiments/swebench/generate.py with KEL_SWEBENCH_CONFIG=<this file>. Change NOTHING after the design is frozen -- log deviations in DEVIATIONS.md.",
+  "dataset": {
+    "name": "nebius/SWE-rebench-V2",
+    "split": "train",
+    "revision": "475dd5e8703bb5fb22dd3c60b5d038b019eba1e0",
+    "file": "data/train-00000-of-00001.parquet"
+  },
+  "history_datasets": [
+    {"name": "nebius/SWE-rebench", "revision": "89cdfbab4ab1bd8f5a658bb212d1b63624f4f881",
+     "files": ["data/test-00000-of-00002.parquet", "data/test-00001-of-00002.parquet"]},
+    {"name": "nebius/SWE-rebench-V2", "revision": "475dd5e8703bb5fb22dd3c60b5d038b019eba1e0",
+     "files": ["data/train-00000-of-00001.parquet"]}
+  ],
+  "corpus": {
+    "_doc": "The global Kel corpus, exported ONCE to a local file (no Neon reads during the experiment). corpus.jsonl rows: gid, name, desc, proc, steps, pre, pitfalls, source, row_ref. Embeddings: BAAI/bge-small-en-v1.5 of 'name\\ndesc', normalised.",
+    "path_env": "LOCAL_EVAL_CORPUS_DIR",
+    "default_path": "C:/Users/user/stealth-lab/.scratch/local-eval-assets",
+    "jsonl": "corpus.jsonl",
+    "embeddings": "corpus_bge_small.npy",
+    "sha256": null
+  },
+  "split": {
+    "rule": "unseen = instance_id not in the corpus; created_at >= model_cutoff (the agent model cannot have seen the fix); the repo has >= min_history corpus Goals created strictly before the task; at most max_per_repo tasks per repo (the earliest, so later tasks never inform the choice); a stable hash order picks the scored set and the calibration set from DIFFERENT repos",
+    "model_cutoff": "2024-07-01",
+    "min_history": 10,
+    "max_per_repo": 8,
+    "n_test": 322,
+    "n_calibration": 12,
+    "exclude_ids_files": ["queries.json"],
+    "seed": "kel-local-eval-v1"
+  },
+  "agent": {
+    "module": "app.execution.coding_agent.Agent",
+    "max_steps": null,
+    "temperature": 0.0,
+    "max_steps_candidates": [40, 60]
+  },
+  "model": {
+    "id": "gpt-oss-120b",
+    "base_url_env": "EXPERIMENT_BASE_URL",
+    "api_key_env": "EXPERIMENT_API_KEY",
+    "openrouter_provider_order": null,
+    "price_per_mtok": {"input": null, "output": null, "source": null}
+  },
+  "arms": {
+    "A0": "nothing (the agent alone, real checkout at base_commit)",
+    "L1": "local .stealth only: claims (repo facts) + library (this repo's past fixes from git history before base_commit, with diffs)",
+    "L2": "L1 + enterprise-global: Kel Goals from the same GitHub org, created before the task",
+    "L3": "L2 + full global: Kel Goals from the whole corpus, created before the task"
+  },
+  "memory": {
+    "tier_max_chars": 4000,
+    "diff_max_chars": 2400,
+    "library_entries": 3,
+    "library_diffs": 2,
+    "global_entries": 3,
+    "global_diffs": 2,
+    "history_window_days": 730,
+    "history_max_commits": 5000
+  },
+  "providers": {
+    "_doc": "Pluggable sources for each tier. 'stub' = the deterministic stand-ins in history.py until workstream C (feat/survey) merges; switch to 'survey' then and log it in DEVIATIONS.md BEFORE building the scored notes. 'replica' = local retrieval over the exported corpus with the same embedding model find_ways uses; 'find_ways' = the real server tool (needs STEALTH_MCP_URL).",
+    "local": "stub",
+    "global": "replica"
+  },
+  "grading": {
+    "backend": "v2",
+    "runner": "modal",
+    "max_workers": 8,
+    "timeout_s": 1800,
+    "log_parsers": {
+      "url": "https://raw.githubusercontent.com/SWE-rebench/SWE-rebench-V2/c71902a8cf8d2b725f63d51f199f4d3e56f68d2d/lib/agent/log_parsers.py",
+      "sha256": null
+    },
+    "right_cause": {
+      "grader": "claude sonnet subagents, blind to arm, 8 tasks per batch",
+      "primary_field": "root_cause_right"
+    }
+  },
+  "kel_database": "kel_local_eval",
+  "pinned": null,
+  "kel_settings": {
+    "_doc": "Set by swe_env.py for every step. No arm calls the Kel server during generation (notes are built beforehand), so these only keep swe_env's guard consistent.",
+    "verified_examples": true
+  }
+}

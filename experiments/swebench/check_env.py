@@ -36,7 +36,8 @@ def current() -> dict:
     except Exception:  # noqa: BLE001
         swebench_version = None
     backend = grading_backend()
-    if backend in ("modal", "gce"):
+    v2_runner = swe_env.CONFIG["grading"].get("runner") if backend == "v2" else None
+    if backend in ("modal", "gce") or (backend == "v2" and v2_runner == "modal"):
         docker = f"n/a (graded on {backend})"  # generation needs no Docker; grading images run remotely
     else:
         try:
@@ -52,7 +53,7 @@ def current() -> dict:
     return {
         "kel_commit": _git("rev-parse", "HEAD"), "kel_tree_clean": not dirty,
         "swebench_version": swebench_version, "docker_server": docker, "grading_backend": backend,
-        "modal_ready": modal_ready() if backend == "modal" else None,
+        "modal_ready": modal_ready() if backend == "modal" or v2_runner == "modal" else None,
         "modal_compat": _modal_compat() if backend == "modal" else None,
         "gce_harness": "swebench==5.0.2 official, native docker on GCE (gce_grade_startup.sh)" if backend == "gce" else None,
         "python": platform.python_version(),
@@ -107,11 +108,12 @@ def require_pinned(*, scored: bool = True) -> dict:
     problems = []
     if not env["kel_tree_clean"]:
         problems.append("uncommitted changes in backend/ or experiments/swebench/ -- commit or stash first")
-    if env["swebench_version"] is None:
+    v2 = env["grading_backend"] == "v2"   # experiments/local_eval: its own V2 test runner, no swebench harness
+    if env["swebench_version"] is None and not v2:
         problems.append("swebench is not installed (pip install swebench)")
     if env["docker_server"] is None:
         problems.append("docker is not reachable (docker version failed) -- or set grading.backend to \"modal\"")
-    if env["grading_backend"] == "modal" and not env["modal_ready"]:
+    if (env["grading_backend"] == "modal" or env["modal_ready"] is False) and not env["modal_ready"]:
         problems.append("grading.backend is modal but modal is not installed/authenticated (pip install "
                         "\"swebench[modal]\" && modal setup)")
     if env["grading_backend"] == "modal" and env["modal_compat"] is None:
