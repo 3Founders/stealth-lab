@@ -4,7 +4,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useOrg } from "@/components/OrgContext";
-import { isAdminRole, isOwnerRole } from "@/lib/org-api";
+import { canSeePerPerson, isAdminRole, isOwnerRole } from "@/lib/org-api";
 import { getSession } from "@/lib/session";
 import { getSupabase } from "@/lib/supabase";
 
@@ -23,9 +23,9 @@ const orgLinks = [
   { href: "/policy", label: "Policy", need: "admin" },
   { href: "/usage", label: "Usage", need: "admin" },
   { href: "/performance", label: "Performance", need: "admin" },
-  { href: "/people", label: "People", need: "admin" },
-  { href: "/calls", label: "Calls", need: "admin" },
-  { href: "/denials", label: "Denials", need: "admin" },
+  { href: "/people", label: "People", need: "person" },
+  { href: "/calls", label: "Calls", need: "person" },
+  { href: "/denials", label: "Denials", need: "person" },
   { href: "/audit", label: "Audit", need: "admin" },
   { href: "/compliance", label: "Compliance", need: "owner" },
 ] as const;
@@ -39,7 +39,7 @@ export default function AdminHeader() {
   const orgList = orgs.kind === "ok" ? orgs.data : [];
   // Operator tools are for platform staff: executives never see them unless they open one, via the quiet link below.
   const onPlatformPage = platformLinks.some((l) => pathname === l.href || pathname.startsWith(`${l.href}/`));
-  const visibleOrgLinks = orgLinks.filter((l) => (l.need === "owner" ? isOwnerRole(current?.role) : isAdminRole(current?.role)));
+  const visibleOrgLinks = orgLinks.filter((l) => (l.need === "owner" ? isOwnerRole(current?.role) : l.need === "person" ? canSeePerPerson(current?.role) : isAdminRole(current?.role)));
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +86,7 @@ export default function AdminHeader() {
               {visibleOrgLinks.map((l) => (
                 <Link key={l.href} href={l.href} aria-current={pathname === l.href ? "page" : undefined}>{l.label}</Link>
               ))}
+              {visibleOrgLinks.length > 0 && <Link href="/coming" aria-current={pathname === "/coming" ? "page" : undefined} style={{ color: "var(--grey)" }}>Coming soon</Link>}
               {!onPlatformPage && <Link href="/operations" style={{ color: "var(--grey)" }}>Operator tools</Link>}
             </nav>
           </div>

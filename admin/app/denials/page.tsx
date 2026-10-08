@@ -129,7 +129,7 @@ export default function DenialsPage() {
     <>
       <Hero marker="GOVERNANCE" title="Denials" lead="Model calls the organisation's policy or budget refused, and why." />
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 32 }}>
-        <OrgGate need="admin">{(org) => <DenialsPanel key={org.organization_id} org={org} />}</OrgGate>
+        <OrgGate need="person">{(org) => <DenialsPanel key={org.organization_id} org={org} />}</OrgGate>
       </section>
     </>
   );

@@ -2,12 +2,15 @@
 export interface Range { since: string; until: string }
 
 const DAY = 864e5;
+/** The backend refuses longer ranges for usage by user, calls, denials and the performance summary. */
+export const MAX_RANGE_DAYS = 366;
 const RE = /^\d{4}-\d{2}-\d{2}$/;
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const utc = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d));
 
 export const isRange = (r: Partial<Range> | null | undefined): r is Range =>
-  !!r && RE.test(r.since ?? "") && RE.test(r.until ?? "") && (r.since as string) < (r.until as string);
+  !!r && RE.test(r.since ?? "") && RE.test(r.until ?? "") && (r.since as string) < (r.until as string)
+  && Math.round((Date.parse(r.until as string) - Date.parse(r.since as string)) / DAY) <= MAX_RANGE_DAYS;
 
 /** The last `days` days including today. */
 export function lastDays(days: number, now = new Date()): Range {

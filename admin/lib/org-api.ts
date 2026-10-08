@@ -9,7 +9,9 @@
 import { API_URL, apiDelete, apiGet, apiPost, apiPut, type ApiState } from "@/lib/api";
 import { getAccessToken } from "@/lib/session";
 
-export type OrgRole = "owner" | "admin" | "member" | "viewer";
+/** Roles the backend returns today are owner/admin/member/viewer; team_lead, executive and auditor are planned, so they are
+ * typed here and every gate below treats an unknown or planned role as having NO extra rights until it is wired. */
+export type OrgRole = "owner" | "admin" | "member" | "viewer" | "team_lead" | "executive" | "auditor";
 
 export interface Org {
   organization_id: string;
@@ -192,6 +194,9 @@ export interface AuditEvent {
 
 export interface AuditPage {
   events: AuditEvent[];
+  /** Present only when the backend supports `order=desc` (then "asc" or "desc"). Absent means an older backend. */
+  order?: "asc" | "desc";
+  next_before_id?: number | null;
   next_after_id: number | null;
   chain_intact: boolean;
   first_broken_id: number | null;
@@ -248,6 +253,48 @@ export const getPerformanceSummary = (orgId: string, since: string, until: strin
 export const getAudit = (orgId: string, since: string, until: string, afterId = 0, limit = 200, signal?: AbortSignal) =>
   apiGet<AuditPage>(`${o(orgId)}/audit?${new URLSearchParams({ since, until, after_id: String(afterId), limit: String(limit) })}`, signal);
 
+/**
+ * The newest audit events in a range. The audit API returns oldest first, so "recent" means walking the pages to the end;
+ * this stops after `maxPages` and says so (`truncated`), in which case what is returned is the OLDEST part of the range,
+ * not the latest, and the caller must not present it as "recent".
+ */
+export async function getAuditTail(orgId: string, since: string, until: string, maxPages = 3, signal?: AbortSignal):
+  Promise<ApiState<{ events: AuditEvent[]; truncated: boolean; chain_intact: boolean; first_broken_id: number | null }>> {
+  let after = 0;
+  let events: AuditEvent[] = [];
+  let intact = true;
+  let broken: number | null = null;
+  for (let page = 0; page < maxPages; page++) {
+    const r = await getAudit(orgId, since, until, after, 1000, signal);
+    if (r.kind !== "ok") return r;
+    events = events.concat(r.data.events);
+    if (!r.data.chain_intact) { intact = false; broken = broken ?? r.data.first_broken_id; }
+    if (r.data.next_after_id == null) return { kind: "ok", data: { events, truncated: false, chain_intact: intact, first_broken_id: broken } };
+    after = r.data.next_after_id;
+  }
+  return { kind: "ok", data: { events, truncated: true, chain_intact: intact, first_broken_id: broken } };
+}
+
+/** The latest audit events, newest first, however the backend can supply them. */
+export interface AuditRecent { events: AuditEvent[]; chain_intact: boolean; first_broken_id: number | null; checked: number; newestFirst: boolean; truncated: boolean }
+
+/**
+ * Prefer `order=desc` (one small request). A backend that predates it ignores the parameter and answers oldest-first
+ * without an `order` key, or refuses it with a 422: in both cases fall back to walking the pages (getAuditTail) so the
+ * result is still the true latest events, or is flagged `truncated` when even that can't reach them.
+ */
+export async function getAuditRecent(orgId: string, since: string, until: string, take = 50, signal?: AbortSignal): Promise<ApiState<AuditRecent>> {
+  const q = new URLSearchParams({ since, until, order: "desc", limit: String(take) });
+  const r = await apiGet<AuditPage>(`${o(orgId)}/audit?${q}`, signal);
+  if (r.kind === "ok" && r.data.order === "desc") {
+    return { kind: "ok", data: { events: r.data.events, chain_intact: r.data.chain_intact, first_broken_id: r.data.first_broken_id, checked: r.data.events.length, newestFirst: true, truncated: false } };
+  }
+  if (r.kind === "unauthenticated" || r.kind === "forbidden" || r.kind === "unconfigured") return r;
+  const walked = await getAuditTail(orgId, since, until, 3, signal);
+  if (walked.kind !== "ok") return walked;
+  return { kind: "ok", data: { events: walked.data.events, chain_intact: walked.data.chain_intact, first_broken_id: walked.data.first_broken_id, checked: walked.data.events.length, newestFirst: false, truncated: walked.data.truncated } };
+}
+
 /** The CSV export needs the bearer token, so it is fetched and saved as a Blob rather than linked to. */
 export async function downloadAuditCsv(orgId: string, since: string, until: string): Promise<{ ok: boolean; message: string; chainIntact?: boolean }> {
   if (!API_URL) return { ok: false, message: "No backend configured." };
@@ -278,6 +325,9 @@ export const approveErasure = (orgId: string, requestId: string) => apiPost<Reco
 export const executeErasure = (orgId: string, requestId: string) => apiPost<ErasureResult>(`${o(orgId)}/erasure-requests/${encodeURIComponent(requestId)}/execute`, {});
 
 export const isAdminRole = (role?: OrgRole) => role === "owner" || role === "admin";
+/** Who may see individuals (per-person spend, calls by person, who was refused). Executives see aggregates only: people
+ * fear usage data feeding performance reviews, so identity-level views are limited to owner, admin and (later) team lead. */
+export const canSeePerPerson = (role?: OrgRole) => role === "owner" || role === "admin" || role === "team_lead";
 export const isOwnerRole = (role?: OrgRole) => role === "owner";
 
 /** Splits a textarea/comma list into a trimmed, de-duplicated list (no wildcards are ever invented here). */

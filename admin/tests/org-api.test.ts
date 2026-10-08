@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAdminRole, isOwnerRole, parseList } from "@/lib/org-api";
+import { canSeePerPerson, isAdminRole, isOwnerRole, parseList } from "@/lib/org-api";
 
 describe("parseList", () => {
   it("splits lines and commas, trims, de-duplicates, drops blanks", () => {
@@ -16,5 +16,15 @@ describe("role gates", () => {
     expect(isAdminRole("member") || isAdminRole("viewer") || isAdminRole(undefined)).toBe(false);
     expect(isOwnerRole("owner")).toBe(true);
     expect(isOwnerRole("admin")).toBe(false);
+  });
+});
+
+describe("per-person visibility", () => {
+  it("only owner, admin and team lead may see individuals; executives, auditors, members and viewers may not", () => {
+    for (const r of ["owner", "admin", "team_lead"] as const) expect(canSeePerPerson(r)).toBe(true);
+    for (const r of ["executive", "auditor", "member", "viewer", undefined] as const) expect(canSeePerPerson(r)).toBe(false);
+  });
+  it("a planned role gains no admin or owner rights by being typed", () => {
+    for (const r of ["executive", "auditor", "team_lead"] as const) { expect(isAdminRole(r)).toBe(false); expect(isOwnerRole(r)).toBe(false); }
   });
 });

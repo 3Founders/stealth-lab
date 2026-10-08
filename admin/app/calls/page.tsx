@@ -138,7 +138,7 @@ export default function CallsPage() {
     <>
       <Hero marker="GOVERNANCE" title="Calls" lead="Every allowed model call: who made it, which model, what it cost and how long it took." />
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 32 }}>
-        <OrgGate need="admin">{(org) => <CallsPanel key={org.organization_id} org={org} />}</OrgGate>
+        <OrgGate need="person">{(org) => <CallsPanel key={org.organization_id} org={org} />}</OrgGate>
       </section>
     </>
   );

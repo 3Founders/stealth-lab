@@ -154,7 +154,7 @@ export default function PeoplePage() {
     <>
       <Hero marker="GOVERNANCE" title="People" lead="Who is spending, where each person stands against today's cap, and who is in the organisation." />
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 32 }}>
-        <OrgGate need="admin">{(org) => <PeoplePanel key={org.organization_id} org={org} />}</OrgGate>
+        <OrgGate need="person">{(org) => <PeoplePanel key={org.organization_id} org={org} />}</OrgGate>
       </section>
     </>
   );

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { AdminNotice, Hero, Stat } from "@/components/Admin";
+import { ComingCard } from "@/components/ExecWidgets";
 import OrgGate from "@/components/OrgGate";
 import { getPolicy, parseList, putPolicy, setKillSwitch, type ApiState, type Org, type OrgPolicy } from "@/lib/org-api";
 
@@ -114,6 +115,14 @@ function PolicyPanel({ org }: { org: Org }) {
         <div className="cfield"><label htmlFor="db">Per-user daily budget (USD)</label><input id="db" type="text" inputMode="decimal" value={daily} onChange={(e) => setDaily(e.target.value)} required placeholder="0 means no spend" /></div>
         <div><button type="submit" className="btn-ink" disabled={busy}>{busy ? "Saving…" : policy ? "Save policy" : "Create policy"}</button></div>
       </form>
+
+      <div className="panel" style={{ maxWidth: 720 }}>
+        <ComingCard title="Model catalog and policy rules">
+          Allow models by rule (provider, family, price ceiling, data class, region, open weights) instead of listing each one, with new models included automatically or held for approval. Until then, this page uses the explicit lists above.
+        </ComingCard>
+        <ComingCard title="Home region">Choose where the organisation&rsquo;s data is kept.</ComingCard>
+        <ComingCard title="Proposals and approval">Policy and budget changes will become proposals that an executive approves. Today an owner or admin changes them directly.</ComingCard>
+      </div>
     </>
   );
 }

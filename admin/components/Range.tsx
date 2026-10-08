@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { PRESETS, isRange, lastDays, rangeFromQuery, rangeToQuery, type Range } from "@/lib/range";
+import { MAX_RANGE_DAYS, PRESETS, isRange, lastDays, rangeFromQuery, rangeToQuery, type Range } from "@/lib/range";
 
 const KEY = "kel-admin-range";
 
@@ -26,8 +26,9 @@ export function useRange(defaultDays: number): { range: Range; ready: boolean; s
   }, []);
 
   const setRange = useCallback((r: Range) => {
-    if (!isRange(r)) return;
+    // An invalid range is shown (so the picker doesn't fight the typist) but never stored or fetched.
     setR(r);
+    if (!isRange(r)) return;
     try { window.localStorage.setItem(KEY, JSON.stringify(r)); } catch { /* ignore */ }
     const url = new URL(window.location.href);
     url.search = rangeToQuery(r);
@@ -62,7 +63,7 @@ export function RangePicker({ range, setRange, idPrefix }: { range: Range; setRa
       <div className="cfield"><label htmlFor={`${idPrefix}-u`}>Until (exclusive)</label>
         <input id={`${idPrefix}-u`} type="date" value={range.until} onChange={(e) => setRange({ ...range, until: e.target.value })} style={dateStyle} /></div>
       <button type="button" className="btn-line" onClick={copyLink}>{copied ? "Link copied" : "Copy link to this view"}</button>
-      {invalid && <span className="small" role="alert">&ldquo;From&rdquo; must be before &ldquo;Until&rdquo;.</span>}
+      {invalid && <span className="small" role="alert">&ldquo;From&rdquo; must be before &ldquo;Until&rdquo;, and the range can be at most {MAX_RANGE_DAYS} days.</span>}
     </div>
   );
 }

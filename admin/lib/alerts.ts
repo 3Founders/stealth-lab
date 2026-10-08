@@ -6,6 +6,9 @@
 import { percent, type Micros } from "@/lib/money";
 
 export type BurnLevel = "ok" | "warn" | "over";
+/** Share of the monthly budget at which an admin is warned. Same markers as the budget bar. */
+export const BUDGET_WARN_PCT = 75;
+export const BUDGET_URGENT_PCT = 90;
 export interface BurnStatus { level: BurnLevel; message: string }
 
 /** Budget status from month-to-date spend, linear month-end projection and the monthly budget. */
@@ -14,7 +17,9 @@ export function budgetStatus(mtd: Micros, projected: Micros, budget: Micros | nu
   if (budget <= 0n) return mtd > 0n ? { level: "over", message: "The monthly budget is $0 (no spend allowed) but spend has been recorded." } : null;
   if (mtd >= budget) return { level: "over", message: `Month-to-date spend has reached the monthly budget (${percent(mtd, budget)}%).` };
   if (projected > budget) return { level: "warn", message: `On the current pace this month ends at ${percent(projected, budget)}% of the monthly budget.` };
-  if ((mtd * 100n) / budget >= 80n) return { level: "warn", message: `${percent(mtd, budget)}% of the monthly budget is already used.` };
+  const used = (mtd * 100n) / budget;
+  if (used >= BigInt(BUDGET_URGENT_PCT)) return { level: "warn", message: `${percent(mtd, budget)}% of the monthly budget is used: nearly at the limit.` };
+  if (used >= BigInt(BUDGET_WARN_PCT)) return { level: "warn", message: `${percent(mtd, budget)}% of the monthly budget is already used.` };
   return { level: "ok", message: `${percent(mtd, budget)}% of the monthly budget used; projected ${percent(projected, budget)}%.` };
 }
 

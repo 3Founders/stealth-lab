@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { anomalousDays, budgetStatus } from "@/lib/alerts";
 import { csvCell, toCsv } from "@/lib/export";
 import { toMicros } from "@/lib/money";
-import { PRESETS, isRange, lastDays, lastMonth, lengthDays, pctChange, previousRange, rangeFromQuery, rangeToQuery, thisMonth } from "@/lib/range";
+import { MAX_RANGE_DAYS, PRESETS, isRange, lastDays, lastMonth, lengthDays, pctChange, previousRange, rangeFromQuery, rangeToQuery, thisMonth } from "@/lib/range";
 
 describe("csv export", () => {
   it("quotes commas, quotes and newlines", () => {
@@ -83,5 +83,28 @@ describe("anomalousDays", () => {
   it("a flat baseline flags only a doubling", () => {
     expect(anomalousDays(days([5, 5, 5, 5, 5, 5, 5, 9])).size).toBe(0);
     expect([...anomalousDays(days([5, 5, 5, 5, 5, 5, 5, 11]))]).toEqual(["2026-09-08"]);
+  });
+});
+
+describe("budget alert levels (75% / 90%)", () => {
+  const mm = toMicros;
+  it("warns from 75% and again from 90%, with different wording; ok below 75%", () => {
+    expect(budgetStatus(mm("74"), mm("74"), mm("100"))?.level).toBe("ok");
+    const at75 = budgetStatus(mm("75"), mm("75"), mm("100"));
+    expect(at75?.level).toBe("warn");
+    const at90 = budgetStatus(mm("90"), mm("90"), mm("100"));
+    expect(at90?.level).toBe("warn");
+    expect(at90?.message).toMatch(/nearly at the limit/);
+    expect(at75?.message).not.toMatch(/nearly at the limit/);
+    expect(budgetStatus(mm("100"), mm("100"), mm("100"))?.level).toBe("over");
+  });
+});
+
+describe("range limit", () => {
+  it("accepts exactly the backend maximum and rejects one day more", () => {
+    const since = "2026-01-01";
+    const until = (days: number) => new Date(Date.parse(since) + days * 864e5).toISOString().slice(0, 10);
+    expect(isRange({ since, until: until(MAX_RANGE_DAYS) })).toBe(true);
+    expect(isRange({ since, until: until(MAX_RANGE_DAYS + 1) })).toBe(false);
   });
 });
