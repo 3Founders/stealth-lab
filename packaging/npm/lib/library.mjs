@@ -9,6 +9,17 @@
 // The grammar is the same as backend/app/stealth/library.py, which documents it; the shared fixtures in
 // test/fixtures/library hold both implementations to the same canonical text, idx and parse.
 //
+// Two layers in library.md (2026-10-08):
+//   knowledge -- reusable, deduplicated: Goals (with parents), the Ways (procedures) that achieve them, their Steps.
+//                G|G-xxxxxxxx|<title>|parent=<G-id or ->|g=<global goal id or ->|unit=<path or .>|tags=<csv or ->
+//                W|W-xxxxxxxx|<name>|goal=<G-id>|p=<global procedure id or ->|v=<version>
+//                S|W-xxxxxxxx:<k>|<action|instruction|subgoal>|<do>|check=<command or ->
+//   solved here -- one entry per problem solved in this repo, with its diff (GOAL/PROC/STEP L- lines, below),
+//                linked to the knowledge by goal=<G-id> (on GOAL) and way=<W-id> (on PROC).
+// Knowledge ids are content hashes (the normalised title; the Way's step list), so two machines that learn the
+// same thing write the same line and a merge=union merge stays clean. Routing keeps outcomes per Way: a plan for
+// a matched entry is keyed to its Way, so every problem solved the same way shares one record.
+//
 // Layout (book analogy, plan §3.1):
 //   SUMMARY.md            back cover: read whole (<= 3 KB), regenerated when a source changes
 //   library.md            chapter: problems solved here (committed; .gitattributes merge=union)
@@ -33,11 +44,16 @@ const ROUTE_ID = /^R-[0-9a-f]{4,16}$/;
 const PROC_ID = /^(L-[0-9a-f]{4,16})\.p([0-9]+)$/;
 const STEP_ID = /^(L-[0-9a-f]{4,16})\.p([0-9]+):([0-9]+)$/;
 const COUNT = /^[0-9]+$/;
+const KGOAL_ID = /^G-[0-9a-f]{6,16}$/;
+const WAY_ID = /^W-[0-9a-f]{6,16}$/;
+const WAY_STEP_ID = /^(W-[0-9a-f]{6,16}):([0-9]+)$/;
+const KGOAL_KEYS = new Set(["parent", "g", "unit", "tags"]);
+const WAY_KEYS = new Set(["goal", "p", "v"]);
 const OUTCOMES = ["pass", "historical", "fail"];
 const STATUSES = ["current", "stale"];
 const RAW_KEYS = new Set(["touches", "tags", "ladder"]);
-const GOAL_KEYS = new Set(["unit", "g", "outcome", "status", "verified_at", "route", "tags"]);
-const PROC_KEYS = new Set(["p", "solution", "touches"]);
+const GOAL_KEYS = new Set(["unit", "g", "outcome", "status", "verified_at", "route", "tags", "goal"]);
+const PROC_KEYS = new Set(["p", "solution", "touches", "way"]);
 const STEP_KEYS = new Set(["check"]);
 
 // Fields another writer added (the survey's commit=<sha>, diff=truncated, ...): kept verbatim and in order, so
@@ -56,7 +72,10 @@ export const LIBRARY_HEADER =
   "status=<current|stale>|verified_at=<date>|route=<R-id or ->|tags=<csv or ->\n" +
   "# PROC|<L-id>.p<n>|<name>|p=<global procedure id or ->|solution=<solutions/<L-id>.diff or ->|" +
   "touches=<path#sha=<sha>,...>\n" +
-  "# STEP|<L-id>.p<n>:<k>|<action|instruction|subgoal>|<do>|check=<command or ->\n";
+  "# STEP|<L-id>.p<n>:<k>|<action|instruction|subgoal>|<do>|check=<command or ->\n" +
+  "# Knowledge (reusable; content-hash ids): G|<G-id>|<title>|parent=|g=|unit=|tags=   " +
+  "W|<W-id>|<name>|goal=<G-id>|p=|v=   S|<W-id>:<k>|<kind>|<do>|check=\n" +
+  "# An entry links to it with goal=<G-id> on GOAL and way=<W-id> on PROC.\n";
 export const ROUTING_HEADER =
   "# routing.md -- GENERATED. ROUTE lines come from find_ways' model_plan (replaced on each plan);\n" +
   "# OBS lines are this machine's own attempt counts per route (sent back as find_ways' route_obs).\n" +
@@ -110,14 +129,15 @@ export function renderGoalLine(e) {
   return [
     "GOAL", e.id, esc(pyStrip(e.title)), kv("unit", e.unit || "."), kv("g", e.g), kv("outcome", e.outcome || "pass"),
     kv("status", e.status || "current"), kv("verified_at", e.verified_at), kv("route", e.route),
-    "tags=" + ((e.tags || []).length ? e.tags.map(escItem).join(",") : "-"), ...(e.extra || []),
+    "tags=" + ((e.tags || []).length ? e.tags.map(escItem).join(",") : "-"), ...(e.goal ? [kv("goal", e.goal)] : []),
+    ...(e.extra || []),
   ].join(SEP);
 }
 
 export function renderProcLine(entryId, p) {
   const touches = (p.touches || []).map((t) => `${escItem(t.path)}#sha=${t.sha}`).join(",") || "-";
   return ["PROC", `${entryId}.p${p.index}`, esc(pyStrip(p.name)), kv("p", p.p), kv("solution", p.solution),
-    "touches=" + touches, ...(p.extra || [])].join(SEP);
+    "touches=" + touches, ...(p.way ? [kv("way", p.way)] : []), ...(p.extra || [])].join(SEP);
 }
 
 export function renderStepLine(entryId, procIndex, s) {
@@ -134,9 +154,38 @@ export function renderBlock(e) {
   return lines;
 }
 
-export function renderLibrary(entries) {
-  const list = Array.isArray(entries) ? entries : entries.entries;
-  const blocks = [...list].sort((a, b) => cmp(a.id, b.id)).map((e) => renderBlock(e).join("\n"));
+export function renderKGoalLine(g) {
+  return ["G", g.id, esc(pyStrip(g.title)), kv("parent", g.parent), kv("g", g.g), kv("unit", g.unit || "."),
+    "tags=" + ((g.tags || []).length ? g.tags.map(escItem).join(",") : "-"), ...(g.extra || [])].join(SEP);
+}
+
+export function renderWayLine(w) {
+  return ["W", w.id, esc(pyStrip(w.name)), kv("goal", w.goal), kv("p", w.p), kv("v", w.v || 1), ...(w.extra || [])].join(SEP);
+}
+
+export function renderWayStepLine(wayId, s) {
+  return ["S", `${wayId}:${s.order}`, esc(s.kind), esc(pyStrip(s.do)), kv("check", s.check), ...(s.extra || [])].join(SEP);
+}
+
+// The knowledge section: each Goal, then the Ways that achieve it with their Steps; Ways whose Goal is not
+// declared come last. Sorted by id, so the text is canonical whatever order lines were merged in.
+export function renderKnowledge(goals = [], ways = []) {
+  const blocks = [];
+  const wayBlock = (w) => [renderWayLine(w), ...[...(w.steps || [])].sort((a, b) => a.order - b.order)
+    .map((st) => renderWayStepLine(w.id, st))];
+  const known = new Set(goals.map((g) => g.id));
+  for (const g of [...goals].sort((a, b) => cmp(a.id, b.id))) {
+    blocks.push([renderKGoalLine(g), ...ways.filter((w) => w.goal === g.id).sort((a, b) => cmp(a.id, b.id))
+      .flatMap(wayBlock)].join("\n"));
+  }
+  for (const w of ways.filter((x) => !known.has(x.goal)).sort((a, b) => cmp(a.id, b.id))) blocks.push(wayBlock(w).join("\n"));
+  return blocks;
+}
+
+export function renderLibrary(lib) {
+  const list = Array.isArray(lib) ? lib : lib.entries;
+  const knowledge = Array.isArray(lib) ? [] : renderKnowledge(lib.goals || [], lib.ways || []);
+  const blocks = [...knowledge, ...[...list].sort((a, b) => cmp(a.id, b.id)).map((e) => renderBlock(e).join("\n"))];
   return LIBRARY_HEADER + (blocks.length ? "\n" + blocks.join("\n\n") + "\n" : "");
 }
 
@@ -163,6 +212,9 @@ export function parseLibrary(text) {
   const goals = new Map();
   const procs = new Map();
   const steps = new Map();
+  const kgoals = new Map();
+  const ways = new Map();
+  const wsteps = new Map();
   const keep = (store, key, label, line, fields, rank) => {
     const old = store.get(key);
     if (!old || old.line === line) {
@@ -188,6 +240,12 @@ export function parseLibrary(text) {
       keep(procs, `${m[1]} ${m[2]}`, m[1], line, f, (ff, l) => l);
     } else if (f[0] === "STEP" && f.length >= 4 && (m = STEP_ID.exec(f[1]))) {
       keep(steps, `${m[1]} ${m[2]} ${m[3]}`, m[1], line, f, (ff, l) => l);
+    } else if (f[0] === "G" && f.length >= 3 && KGOAL_ID.test(f[1])) {
+      keep(kgoals, f[1], f[1], line, f, (ff, l) => l);
+    } else if (f[0] === "W" && f.length >= 3 && WAY_ID.test(f[1])) {
+      keep(ways, f[1], f[1], line, f, (ff, l) => l);
+    } else if (f[0] === "S" && f.length >= 4 && (m = WAY_STEP_ID.exec(f[1]))) {
+      keep(wsteps, `${m[1]} ${m[2]}`, m[1], line, f, (ff, l) => l);
     } else {
       problems.push(`line ${n}: not a library line, skipped`);
     }
@@ -201,7 +259,7 @@ export function parseLibrary(text) {
       outcome: OUTCOMES.includes(k.outcome) ? k.outcome : "pass",
       status: STATUSES.includes(k.status) ? k.status : "current",
       verified_at: dash(k.verified_at), route: dash(k.route), tags: parseTags(k.tags), procs: [],
-      extra: extraFields(f.slice(3), GOAL_KEYS),
+      ...(KGOAL_ID.test(k.goal || "") ? { goal: k.goal } : {}), extra: extraFields(f.slice(3), GOAL_KEYS),
     });
   }
   const keyed = (map, parse) => [...map.entries()].map(([key, v]) => ({ k: parse(key), v }));
@@ -215,7 +273,7 @@ export function parseLibrary(text) {
     }
     const k = splitKv(f.slice(3));
     const p = { index: idx, name: unesc(f[2]), p: dash(k.p), solution: dash(k.solution), touches: parseTouches(k.touches), steps: [],
-      extra: extraFields(f.slice(3), PROC_KEYS) };
+      ...(WAY_ID.test(k.way || "") ? { way: k.way } : {}), extra: extraFields(f.slice(3), PROC_KEYS) };
     entries.get(gid).procs.push(p);
     procObjs.set(`${gid} ${idx}`, p);
   }
@@ -230,7 +288,140 @@ export function parseLibrary(text) {
     const k = splitKv(f.slice(4));
     p.steps.push({ order, kind: unesc(f[2]), do: unesc(f[3]), check: dash(k.check), extra: extraFields(f.slice(4), STEP_KEYS) });
   }
-  return { entries: [...entries.values()].sort((a, b) => cmp(a.id, b.id)), problems };
+  const kgoalList = [...kgoals.entries()].sort((a, b) => cmp(a[0], b[0])).map(([id, { fields: f }]) => {
+    const k = splitKv(f.slice(3));
+    return { id, title: unesc(f[2]), parent: KGOAL_ID.test(k.parent || "") ? k.parent : null, g: dash(k.g),
+      unit: dash(k.unit) || ".", tags: parseTags(k.tags), extra: extraFields(f.slice(3), KGOAL_KEYS) };
+  });
+  const wayMap = new Map();
+  for (const [id, { fields: f }] of [...ways.entries()].sort((a, b) => cmp(a[0], b[0]))) {
+    const k = splitKv(f.slice(3));
+    wayMap.set(id, { id, name: unesc(f[2]), goal: KGOAL_ID.test(k.goal || "") ? k.goal : null, p: dash(k.p),
+      v: COUNT.test(k.v || "") ? Number(k.v) : 1, steps: [], extra: extraFields(f.slice(3), WAY_KEYS) });
+  }
+  for (const [key, { fields: f }] of [...wsteps.entries()].sort((a, b) => cmp(a[0], b[0]))) {
+    const [wid, order] = key.split(" ");
+    const w = wayMap.get(wid);
+    if (!w) {
+      problems.push(`orphan: ${wid}:${order} has no W line; skipped`);
+      continue;
+    }
+    const k = splitKv(f.slice(4));
+    w.steps.push({ order: Number(order), kind: unesc(f[2]), do: unesc(f[3]), check: dash(k.check),
+      extra: extraFields(f.slice(4), STEP_KEYS) });
+  }
+  for (const w of wayMap.values()) w.steps.sort((a, b) => a.order - b.order);
+  return { entries: [...entries.values()].sort((a, b) => cmp(a.id, b.id)), goals: kgoalList, ways: [...wayMap.values()],
+    problems };
+}
+
+// ------------------------------------------------------------------ knowledge: link entries to Goals and Ways
+
+const norm = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
+export const goalIdFor = (title) => `G-${shortHash(`goal|${norm(title)}`).slice(0, 8)}`;
+export function wayIdFor(name, steps) {
+  const sig = (steps || []).length
+    ? steps.map((st) => [norm(st.kind), norm(st.do), norm(st.check)].join("|")).join("\n")
+    : `name|${norm(name)}`;
+  return `W-${shortHash(`way|${sig}`).slice(0, 8)}`;
+}
+
+// Give every entry a Goal and every one of its procedures a Way, reusing what exists: the same normalised title is
+// the same Goal, the same step list (kind, text, check) is the same Way. Entries already linked are left alone.
+// Returns the number of links added; `lib` is changed in place.
+export function linkKnowledge(lib) {
+  lib.goals = lib.goals || [];
+  lib.ways = lib.ways || [];
+  const goals = new Map(lib.goals.map((g) => [g.id, g]));
+  const ways = new Map(lib.ways.map((w) => [w.id, w]));
+  let added = 0;
+  for (const e of lib.entries) {
+    if (e.outcome === "fail") continue;                 // a failed attempt is not knowledge to reuse
+    if (!e.goal) {
+      const id = goalIdFor(e.title);
+      if (!goals.has(id)) {
+        const g = { id, title: e.title, parent: null, g: e.g || null, unit: e.unit || ".", tags: [...(e.tags || [])], extra: [] };
+        goals.set(id, g);
+        lib.goals.push(g);
+      }
+      e.goal = id;
+      added++;
+    }
+    for (const p of e.procs || []) {
+      if (p.way) continue;
+      const steps = (p.steps || []).map((st) => ({ order: st.order, kind: st.kind, do: st.do, check: st.check || null, extra: [] }));
+      const id = wayIdFor(p.name, steps);
+      if (!ways.has(id)) {
+        const w = { id, name: p.name, goal: e.goal, p: p.p || null, v: 1, steps, extra: [] };
+        ways.set(id, w);
+        lib.ways.push(w);
+      }
+      p.way = id;
+      added++;
+    }
+  }
+  return added;
+}
+
+// `library link`: link every unlinked entry, write library.md if anything changed, rebuild the indexes.
+export function linkLibrary(root) {
+  const lib = loadLibrary(root);
+  const added = linkKnowledge(lib);
+  if (added) {
+    // the knowledge lines take room too: keep library.md within its budget by archiving the oldest entries and
+    // dropping Goals / Ways no remaining entry uses (their ids are content hashes, so they come back if needed)
+    const moved = [];
+    while (lib.entries.length > 1 && Buffer.byteLength(renderLibrary(lib)) > LIBRARY_MAX_BYTES) {
+      lib.entries.sort((a, b) => cmp(b.verified_at || "", a.verified_at || "") || cmp(a.id, b.id));
+      moved.push(lib.entries.pop());
+      pruneKnowledge(lib);
+    }
+    // mined history goes where the survey looks for it (so a re-run never mines it again); the rest by month
+    const groups = new Map();
+    for (const e of moved) {
+      const name = e.outcome === "historical" ? "archive-historical.md" : `archive-${new Date().toISOString().slice(0, 7)}.md`;
+      groups.set(name, [...(groups.get(name) || []), e]);
+    }
+    for (const [name, es] of groups) {
+      const file = P(root, "library", name);
+      writeIfChanged(file, renderLibrary([...parseLibrary(read(file) || "").entries, ...es]));
+    }
+    writeIfChanged(P(root, "library.md"), renderLibrary(lib));
+  }
+  const built = buildIndex(root);
+  return { linked: added, goals: lib.goals.length, ways: lib.ways.length, entries: lib.entries.length, changed: built.changed };
+}
+
+// Goals and Ways that no entry in library.md links to any more (their entries were archived). A Goal another kept
+// Goal names as its parent stays.
+function pruneKnowledge(lib) {
+  const usedWays = new Set(lib.entries.flatMap((e) => (e.procs || []).map((p) => p.way)).filter(Boolean));
+  lib.ways = (lib.ways || []).filter((w) => usedWays.has(w.id));
+  const used = new Set([...lib.entries.map((e) => e.goal), ...lib.ways.map((w) => w.goal)].filter(Boolean));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const g of lib.goals || []) if (used.has(g.id) && g.parent && !used.has(g.parent)) { used.add(g.parent); grew = true; }
+  }
+  lib.goals = (lib.goals || []).filter((g) => used.has(g.id));
+}
+
+// `library goal <G-id> --parent <G-id>`: set (or clear with "-") a Goal's parent. A cycle is refused.
+export function setGoalParent(root, id, parent) {
+  const lib = loadLibrary(root);
+  const g = lib.goals.find((x) => x.id === id);
+  if (!g) throw new Error(`no knowledge goal ${id}`);
+  const target = parent === "-" ? null : parent;
+  if (target) {
+    const byId = new Map(lib.goals.map((x) => [x.id, x]));
+    if (!byId.has(target)) throw new Error(`no knowledge goal ${target}`);
+    for (let cur = target; cur; cur = byId.get(cur)?.parent) {
+      if (cur === id) throw new Error(`${target} is under ${id}: a goal cannot be its own ancestor`);
+    }
+  }
+  g.parent = target;
+  writeIfChanged(P(root, "library.md"), renderLibrary(lib));
+  buildIndex(root);
+  return g;
 }
 
 // ------------------------------------------------------------------ index/library.idx
@@ -515,6 +706,10 @@ export function renderSummary(root, { lib, routing, now = new Date() } = {}) {
   const stale = library.entries.filter((e) => e.status === "stale").length;
   const libLine = `Library: ${library.entries.length} solved here` +
     (library.entries.length ? ` (${fmt(counts("outcome"))}${stale ? `; ${stale} stale -- re-check before reuse` : ""})` : "");
+  const kg = library.goals || [];
+  const kw = library.ways || [];
+  const knowLine = `Knowledge: ${kg.length} goals${kg.some((g) => g.parent) ? ` (${kg.filter((g) => g.parent).length} under a parent)` : ""}, ` +
+    `${kw.length} ways${library.entries.some((e) => !e.goal) ? " (some entries unlinked: run `stealthlab-mcp library link`)" : ""}`;
   const tried = obs.reduce((s, o) => s + o.n, 0);
   const passed = obs.reduce((s, o) => s + o.ok, 0);
   const routeLine = `Routes: ${new Set(routes.map((r) => r.id)).size} (local attempts ${tried}, accepted ${passed})`;
@@ -524,9 +719,10 @@ export function renderSummary(root, { lib, routing, now = new Date() } = {}) {
     "Look up:",
     "  rg -i '^<file, symbol or word>\\|' .stealth/index/terms.idx   -> library ids",
     "  rg '^(GOAL|PROC|STEP)\\|<L-id>' .stealth/library.md           -> the entry; its diff: .stealth/library/solutions/<L-id>.diff",
+    "  rg '^(W|S)\\|<W-id>' .stealth/library.md                       -> a reusable way and its steps",
     "  rg '^CLAIM\\|[^|]*\\|[^|]*\\|<topic>\\|' .stealth/claims.md        -> facts on a topic",
   ];
-  const build = (n, withUnits) => [...head, withUnits ? unitLine : `Units: ${units.length}`, libLine,
+  const build = (n, withUnits) => [...head, withUnits ? unitLine : `Units: ${units.length}`, libLine, knowLine,
     ...(n ? ["Newest:", ...newest.slice(0, n)] : []), routeLine, "", ...tail].join("\n") + "\n";
   for (const withUnits of [true, false]) {
     for (let n = Math.min(8, newest.length); n >= 0; n--) {
@@ -583,7 +779,10 @@ export function readEntry(root, id) {
   }
   const lines = (read(P(root, "library.md")) || "").split("\n").filter((l) => {
     const f = l.split(SEP);
-    return ["GOAL", "PROC", "STEP"].includes(f[0]) && (f[1] || "").split(".")[0] === id;
+    if (["GOAL", "PROC", "STEP"].includes(f[0])) return (f[1] || "").split(".")[0] === id;
+    if (f[0] === "G") return f[1] === id;
+    if (f[0] === "W" || f[0] === "S") return (f[1] || "").split(":")[0] === id;
+    return false;
   });
   return lines.length ? { id, lines, via: "scan" } : null;
 }
@@ -707,13 +906,15 @@ export function addEntry(root, opts, { gitImpl = git, now = new Date(), check = 
   if (opts.check && !steps.some((s) => s.check)) steps.push({ order: steps.length + 1, kind: "action", do: "Run the check", check: opts.check });
   const entry = {
     id, title, unit: opts.unit || ".", g: opts.g || null, outcome, status: "current", verified_at: verifiedAt,
-    route: opts.route || null, tags: opts.tags || [],
-    procs: [{ index: 1, name: String(opts.name || title), p: opts.p || null, solution,
+    route: opts.route || null, tags: opts.tags || [], goal: opts.goal || null,
+    procs: [{ index: 1, name: String(opts.name || title), p: opts.p || null, solution, way: opts.way || null,
       touches: touched.filter((t) => shas.get(t)).map((t) => ({ path: t, sha: shas.get(t).slice(0, 12) })), steps }],
   };
   if (diff) writeIfChanged(P(root, "library", solution), diff);
-  const text = renderLibrary([...lib.entries, entry]);
-  if (Buffer.byteLength(text) > LIBRARY_MAX_BYTES) archiveOldest(root, lib, entry);
+  const next = { ...lib, entries: [...lib.entries, entry] };
+  linkKnowledge(next);                                  // reuse the Goal / Way this problem shares, or add them
+  const text = renderLibrary(next);
+  if (Buffer.byteLength(text) > LIBRARY_MAX_BYTES) archiveOldest(root, next, entry);
   else writeIfChanged(P(root, "library.md"), text);
   buildIndex(root);
   return entry;
@@ -721,14 +922,17 @@ export function addEntry(root, opts, { gitImpl = git, now = new Date(), check = 
 
 // library.md over its cap: the oldest-verified entries move to library/archive-<yyyy-mm>.md (same grammar, still
 // greppable), newest stay, until the chapter fits again.
+// The knowledge section always stays in library.md: only solved entries are archived.
 function archiveOldest(root, lib, entry) {
-  const keep = [...lib.entries, entry].sort((a, b) => cmp(b.verified_at || "", a.verified_at || ""));
+  void entry;
+  const keep = [...lib.entries].sort((a, b) => cmp(b.verified_at || "", a.verified_at || ""));
   const moved = [];
-  while (keep.length > 1 && Buffer.byteLength(renderLibrary(keep)) > LIBRARY_MAX_BYTES) moved.push(keep.pop());
+  const size = (es) => Buffer.byteLength(renderLibrary({ ...lib, entries: es }));
+  while (keep.length > 1 && size(keep) > LIBRARY_MAX_BYTES) moved.push(keep.pop());
   const file = P(root, "library", `archive-${new Date().toISOString().slice(0, 7)}.md`);
   const old = parseLibrary(read(file) || "").entries;
   writeIfChanged(file, renderLibrary([...old, ...moved]));
-  writeIfChanged(P(root, "library.md"), renderLibrary(keep));
+  writeIfChanged(P(root, "library.md"), renderLibrary({ ...lib, entries: keep }));
 }
 
 // ---- routing.md upkeep
@@ -841,7 +1045,8 @@ export function taskFeatures(root) {
     if (!diff) continue;
     const st = patchStats(diff);
     if (!st.files) continue;
-    entries[e.id] = st;
+    const way = e.procs.map((p) => p.way).find(Boolean);
+    entries[e.id] = { ...st, ...(e.goal ? { goal: e.goal } : {}), ...(way ? { way } : {}) };
     n++;
   }
   const all = Object.values(entries);
@@ -850,9 +1055,15 @@ export function taskFeatures(root) {
     const v = all.map((x) => x[k]).sort((a, b) => a - b);
     return v[Math.floor((v.length - 1) / 2)];
   };
-  const repo = Object.fromEntries(["files", "hunks", "lines_added", "lines_removed", "languages", "packages"]
-    .map((k) => [k, median(k)]));
-  return { entries, repo };
+  const FIELDS = ["files", "hunks", "lines_added", "lines_removed", "languages", "packages"];
+  const repo = Object.fromEntries(FIELDS.map((k) => [k, median(k)]));
+  const byWay = new Map();
+  for (const st of all) if (st.way) byWay.set(st.way, [...(byWay.get(st.way) || []), st]);
+  const ways = Object.fromEntries([...byWay.entries()].map(([w, rows]) => [w, Object.fromEntries(FIELDS.map((k) => {
+    const v = rows.map((r) => r[k]).sort((a, b) => a - b);
+    return [k, v[Math.floor((v.length - 1) / 2)]];
+  }))]));
+  return { entries, repo, ...(byWay.size ? { ways } : {}) };
 }
 
 export function requestPayload(root, { env = process.env } = {}) {

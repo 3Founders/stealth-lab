@@ -11,6 +11,14 @@ Evidence for why this is the core (plan §0): same-repo past fixes with their re
     PROC|L-7f3a1c.p1|<name>|p=<global procedure id or ->|solution=solutions/L-7f3a1c.diff|touches=src/x.py#sha=1a2b3c4,...
     STEP|L-7f3a1c.p1:1|<action|instruction|subgoal>|<do>|check=<command or ->
 
+Above the entries sits the reusable KNOWLEDGE layer (2026-10-08): Goals with parents, the Ways (procedures) that
+achieve them, and their Steps -- deduplicated, with content-hash ids, so the same problem solved twice shares one
+Goal and the same procedure one Way. Entries link to it (goal= on GOAL, way= on PROC).
+
+    G|G-1a2b3c4d|<title>|parent=<G-id or ->|g=<global goal id or ->|unit=<path or .>|tags=<csv or ->
+    W|W-5e6f7a8b|<name>|goal=<G-id>|p=<global procedure id or ->|v=<version>
+    S|W-5e6f7a8b:1|<action|instruction|subgoal>|<do>|check=<command or ->
+
 routing.md is generated from find_ways' `model_plan` plus this machine's own outcomes:
 
     ROUTE|R-7f3a1c|goal=<L-id or ->|g=<global goal id>|fit=<fit id or ->|basis=<prior|posterior|->|as_of=<date>|step=*|ladder=<model>::<scaffold>:p=0.81[0.70,0.89]:$0.04 > ...|whole=p=0.86[0.75,0.93]:$0.06
@@ -47,6 +55,9 @@ ENTRY_ID = re.compile(r"^L-[0-9a-f]{4,16}$")
 ROUTE_ID = re.compile(r"^R-[0-9a-f]{4,16}$")
 _PROC_ID = re.compile(r"^(L-[0-9a-f]{4,16})\.p([0-9]+)$")
 _STEP_ID = re.compile(r"^(L-[0-9a-f]{4,16})\.p([0-9]+):([0-9]+)$")
+KGOAL_ID = re.compile(r"^G-[0-9a-f]{6,16}$")
+WAY_ID = re.compile(r"^W-[0-9a-f]{6,16}$")
+_WAY_STEP_ID = re.compile(r"^(W-[0-9a-f]{6,16}):([0-9]+)$")
 _ESC_PCT = re.compile(r"%(?=[0-9A-Fa-f]{2})")
 _PCT = re.compile(r"%([0-9A-Fa-f]{2})")
 
@@ -62,6 +73,9 @@ LIBRARY_HEADER = (
     "# PROC|<L-id>.p<n>|<name>|p=<global procedure id or ->|solution=<solutions/<L-id>.diff or ->|"
     "touches=<path#sha=<sha>,...>\n"
     "# STEP|<L-id>.p<n>:<k>|<action|instruction|subgoal>|<do>|check=<command or ->\n"
+    "# Knowledge (reusable; content-hash ids): G|<G-id>|<title>|parent=|g=|unit=|tags=   "
+    "W|<W-id>|<name>|goal=<G-id>|p=|v=   S|<W-id>:<k>|<kind>|<do>|check=\n"
+    "# An entry links to it with goal=<G-id> on GOAL and way=<W-id> on PROC.\n"
 )
 ROUTING_HEADER = (
     "# routing.md -- GENERATED. ROUTE lines come from find_ways' model_plan (replaced on each plan);\n"
@@ -147,6 +161,29 @@ class LibProc:
     touches: list[Touch] = field(default_factory=list)
     steps: list[LibStep] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
+    way: Optional[str] = None                             # the knowledge Way this procedure is an instance of
+
+
+@dataclass
+class KGoal:
+    id: str
+    title: str
+    parent: Optional[str] = None
+    g: Optional[str] = None
+    unit: str = "."
+    tags: list[str] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Way:
+    id: str
+    name: str
+    goal: Optional[str] = None
+    p: Optional[str] = None
+    v: int = 1
+    steps: list[LibStep] = field(default_factory=list)
+    extra: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -162,12 +199,15 @@ class LibEntry:
     tags: list[str] = field(default_factory=list)
     procs: list[LibProc] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)       # e.g. the survey's commit=<sha>; kept, never dropped
+    goal: Optional[str] = None                            # the knowledge Goal this problem is an instance of
 
 
 @dataclass
 class Library:
     entries: list[LibEntry]
     problems: list[str] = field(default_factory=list)     # lines skipped or conflicts resolved, for the reader
+    goals: list[KGoal] = field(default_factory=list)
+    ways: list[Way] = field(default_factory=list)
 
     def by_id(self) -> dict[str, LibEntry]:
         return {e.id: e for e in self.entries}
@@ -180,14 +220,15 @@ def render_goal_line(e: LibEntry) -> str:
         "GOAL", e.id, esc(e.title.strip()), _kv("unit", e.unit or "."), _kv("g", e.g),
         _kv("outcome", e.outcome), _kv("status", e.status), _kv("verified_at", e.verified_at),
         _kv("route", e.route), "tags=" + (",".join(_esc_list_item(t) for t in e.tags) if e.tags else "-"),
-        *e.extra,
+        *([_kv("goal", e.goal)] if e.goal else []), *e.extra,
     ])
 
 
 def render_proc_line(entry_id: str, p: LibProc) -> str:
     touches = ",".join(f"{_esc_list_item(t.path)}#sha={t.sha}" for t in p.touches) or "-"
     return SEP.join(["PROC", f"{entry_id}.p{p.index}", esc(p.name.strip()), _kv("p", p.p),
-                     _kv("solution", p.solution), "touches=" + touches, *p.extra])
+                     _kv("solution", p.solution), "touches=" + touches, *([_kv("way", p.way)] if p.way else []),
+                     *p.extra])
 
 
 def render_step_line(entry_id: str, proc_index: int, s: LibStep) -> str:
@@ -203,10 +244,40 @@ def render_block(e: LibEntry) -> list[str]:
     return lines
 
 
+def render_kgoal_line(g: KGoal) -> str:
+    return SEP.join(["G", g.id, esc(g.title.strip()), _kv("parent", g.parent), _kv("g", g.g), _kv("unit", g.unit or "."),
+                     "tags=" + (",".join(_esc_list_item(t) for t in g.tags) if g.tags else "-"), *g.extra])
+
+
+def render_way_line(w: Way) -> str:
+    return SEP.join(["W", w.id, esc(w.name.strip()), _kv("goal", w.goal), _kv("p", w.p), _kv("v", w.v or 1), *w.extra])
+
+
+def render_way_step_line(way_id: str, s: LibStep) -> str:
+    return SEP.join(["S", f"{way_id}:{s.order}", esc(s.kind), esc(s.do.strip()), _kv("check", s.check), *s.extra])
+
+
+def render_knowledge(goals: Sequence[KGoal], ways: Sequence[Way]) -> list[str]:
+    """Each Goal, then the Ways that achieve it with their Steps; Ways whose Goal is not declared come last."""
+    def way_block(w: Way) -> list[str]:
+        return [render_way_line(w), *(render_way_step_line(w.id, s) for s in sorted(w.steps, key=lambda s: s.order))]
+
+    known = {g.id for g in goals}
+    blocks = []
+    for g in sorted(goals, key=lambda g: g.id):
+        lines = [render_kgoal_line(g)]
+        for w in sorted((w for w in ways if w.goal == g.id), key=lambda w: w.id):
+            lines.extend(way_block(w))
+        blocks.append("\n".join(lines))
+    blocks.extend("\n".join(way_block(w)) for w in sorted((w for w in ways if w.goal not in known), key=lambda w: w.id))
+    return blocks
+
+
 def render_library(lib: Library | Iterable[LibEntry]) -> str:
-    """Canonical text: header, then one block per entry sorted by id, blank line between."""
+    """Canonical text: header, the knowledge blocks, then one block per entry sorted by id, blank line between."""
     entries = lib.entries if isinstance(lib, Library) else list(lib)
-    blocks = ["\n".join(render_block(e)) for e in sorted(entries, key=lambda e: e.id)]
+    knowledge = render_knowledge(lib.goals, lib.ways) if isinstance(lib, Library) else []
+    blocks = knowledge + ["\n".join(render_block(e)) for e in sorted(entries, key=lambda e: e.id)]
     return LIBRARY_HEADER + ("\n" + "\n\n".join(blocks) + "\n" if blocks else "")
 
 
@@ -223,8 +294,10 @@ def _parse_touches(raw: str) -> list[Touch]:
     return out
 
 
-_GOAL_KEYS = frozenset(("unit", "g", "outcome", "status", "verified_at", "route", "tags"))
-_PROC_KEYS = frozenset(("p", "solution", "touches"))
+_GOAL_KEYS = frozenset(("unit", "g", "outcome", "status", "verified_at", "route", "tags", "goal"))
+_PROC_KEYS = frozenset(("p", "solution", "touches", "way"))
+_KGOAL_KEYS = frozenset(("parent", "g", "unit", "tags"))
+_WAY_KEYS = frozenset(("goal", "p", "v"))
 _STEP_KEYS = frozenset(("check",))
 
 
@@ -253,6 +326,9 @@ def parse_library(text: str) -> Library:
     goals: dict[str, tuple[str, list[str]]] = {}
     procs: dict[tuple[str, int], tuple[str, list[str]]] = {}
     steps: dict[tuple[str, int, int], tuple[str, list[str]]] = {}
+    kgoals: dict[str, tuple[str, list[str]]] = {}
+    ways: dict[str, tuple[str, list[str]]] = {}
+    wsteps: dict[tuple[str, int], tuple[str, list[str]]] = {}
 
     def keep(store: dict, key: Any, line: str, fields: list[str], *, rank: Any) -> None:
         old = store.get(key)
@@ -280,6 +356,13 @@ def parse_library(text: str) -> Library:
         elif kind == "STEP" and len(f) >= 4 and _STEP_ID.match(f[1]):
             m = _STEP_ID.match(f[1])
             keep(steps, (m.group(1), int(m.group(2)), int(m.group(3))), line, f, rank=line_rank)
+        elif kind == "G" and len(f) >= 3 and KGOAL_ID.match(f[1]):
+            keep(kgoals, f[1], line, f, rank=line_rank)
+        elif kind == "W" and len(f) >= 3 and WAY_ID.match(f[1]):
+            keep(ways, f[1], line, f, rank=line_rank)
+        elif kind == "S" and len(f) >= 4 and _WAY_STEP_ID.match(f[1]):
+            m = _WAY_STEP_ID.match(f[1])
+            keep(wsteps, (m.group(1), int(m.group(2))), line, f, rank=line_rank)
         else:
             problems.append(f"line {n}: not a library line, skipped")
 
@@ -291,7 +374,8 @@ def parse_library(text: str) -> Library:
             outcome=kv.get("outcome") if kv.get("outcome") in OUTCOMES else "pass",
             status=kv.get("status") if kv.get("status") in STATUSES else "current",
             verified_at=_dash(kv.get("verified_at")), route=_dash(kv.get("route")),
-            tags=_parse_tags(kv.get("tags", "-")), extra=_extra_fields(f[3:], _GOAL_KEYS))
+            tags=_parse_tags(kv.get("tags", "-")), extra=_extra_fields(f[3:], _GOAL_KEYS),
+            goal=kv["goal"] if KGOAL_ID.match(kv.get("goal") or "") else None)
     proc_objs: dict[tuple[str, int], LibProc] = {}
     for (gid, idx), (_line, f) in sorted(procs.items()):
         if gid not in entries:
@@ -299,7 +383,8 @@ def parse_library(text: str) -> Library:
             continue
         kv = _split_kv(f[3:])
         p = LibProc(index=idx, name=unesc(f[2]), p=_dash(kv.get("p")), solution=_dash(kv.get("solution")),
-                    touches=_parse_touches(kv.get("touches", "-")), extra=_extra_fields(f[3:], _PROC_KEYS))
+                    touches=_parse_touches(kv.get("touches", "-")), extra=_extra_fields(f[3:], _PROC_KEYS),
+                    way=kv["way"] if WAY_ID.match(kv.get("way") or "") else None)
         entries[gid].procs.append(p)
         proc_objs[(gid, idx)] = p
     for (gid, pidx, order), (_line, f) in sorted(steps.items()):
@@ -310,7 +395,28 @@ def parse_library(text: str) -> Library:
         kv = _split_kv(f[4:])
         p.steps.append(LibStep(order=order, kind=unesc(f[2]), do=unesc(f[3]), check=_dash(kv.get("check")),
                                extra=_extra_fields(f[4:], _STEP_KEYS)))
-    return Library(sorted(entries.values(), key=lambda e: e.id), problems)
+    kgoal_list = []
+    for gid, (_line, f) in sorted(kgoals.items()):
+        kv = _split_kv(f[3:])
+        kgoal_list.append(KGoal(id=gid, title=unesc(f[2]),
+                                parent=kv["parent"] if KGOAL_ID.match(kv.get("parent") or "") else None,
+                                g=_dash(kv.get("g")), unit=_dash(kv.get("unit")) or ".",
+                                tags=_parse_tags(kv.get("tags", "-")), extra=_extra_fields(f[3:], _KGOAL_KEYS)))
+    way_map: dict[str, Way] = {}
+    for wid, (_line, f) in sorted(ways.items()):
+        kv = _split_kv(f[3:])
+        way_map[wid] = Way(id=wid, name=unesc(f[2]), goal=kv["goal"] if KGOAL_ID.match(kv.get("goal") or "") else None,
+                           p=_dash(kv.get("p")), v=int(kv["v"]) if _COUNT.match(kv.get("v") or "") else 1,
+                           extra=_extra_fields(f[3:], _WAY_KEYS))
+    for (wid, order), (_line, f) in sorted(wsteps.items()):
+        w = way_map.get(wid)
+        if w is None:
+            problems.append(f"orphan: {wid}:{order} has no W line; skipped")
+            continue
+        kv = _split_kv(f[4:])
+        w.steps.append(LibStep(order=order, kind=unesc(f[2]), do=unesc(f[3]), check=_dash(kv.get("check")),
+                               extra=_extra_fields(f[4:], _STEP_KEYS)))
+    return Library(sorted(entries.values(), key=lambda e: e.id), problems, kgoal_list, list(way_map.values()))
 
 
 # ---------------------------------------------------------------- index/library.idx

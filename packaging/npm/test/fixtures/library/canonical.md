@@ -3,6 +3,8 @@
 # GOAL|<L-id>|<title>|unit=<path or .>|g=<global goal id or ->|outcome=<pass|historical|fail>|status=<current|stale>|verified_at=<date>|route=<R-id or ->|tags=<csv or ->
 # PROC|<L-id>.p<n>|<name>|p=<global procedure id or ->|solution=<solutions/<L-id>.diff or ->|touches=<path#sha=<sha>,...>
 # STEP|<L-id>.p<n>:<k>|<action|instruction|subgoal>|<do>|check=<command or ->
+# Knowledge (reusable; content-hash ids): G|<G-id>|<title>|parent=|g=|unit=|tags=   W|<W-id>|<name>|goal=<G-id>|p=|v=   S|<W-id>:<k>|<kind>|<do>|check=
+# An entry links to it with goal=<G-id> on GOAL and way=<W-id> on PROC.
 
 GOAL|L-0a91f2|Fix KeyError %7C when the config has no "db" section (90% %257C of users)|unit=.|g=-|outcome=historical|status=current|verified_at=2026-08-02|route=-|tags=config|commit=0a91f2e7c1
 PROC|L-0a91f2.p1|Default the section|p=-|solution=solutions/L-0a91f2.diff|touches=src/config%2Cloader.py#sha=77aa001|diff=truncated

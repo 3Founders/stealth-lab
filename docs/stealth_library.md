@@ -30,6 +30,32 @@ parses to every entry; conflicting versions of one line resolve the same way in 
 `verified_at`) and are reported; free text is percent-escaped reversibly (a `check=` with a shell pipe survives);
 line ranges are disposable (the idx is trusted only while its `source_sha` and each block's hash match).
 
+## Two layers: knowledge and solved-here (2026-10-08)
+
+`library.md` holds a reusable **knowledge** layer above the solved entries:
+
+| line | what |
+|---|---|
+| `G|G-…|<title>|parent=<G-id or ->|g=|unit=|tags=` | a Goal; `parent=` builds a hierarchy (`stealthlab-mcp library goal <G> --parent <G>`) |
+| `W|W-…|<name>|goal=<G-id>|p=|v=` | a Way (procedure) that achieves the Goal, reusable across problems |
+| `S|W-…:<k>|<kind>|<do>|check=` | the Way's steps |
+
+- **Links:** each solved entry links to the layer: `goal=<G-id>` on its `GOAL` line, `way=<W-id>` on its `PROC` line.
+- **Ids are content hashes:**
+  - the same normalised title is one Goal;
+  - the same step list (kind, text, check) is one Way.
+
+  Two machines that learn the same thing write identical lines, so `merge=union` stays clean.
+- **What links entries:**
+  - `library add` (or `--goal` / `--way` to attach to an existing one);
+  - the survey's history mining;
+  - `stealthlab-mcp library link`, which migrates an older file.
+- **Size budget:** when the knowledge lines push `library.md` past 64 KB, the oldest entries are archived and
+  Goals / Ways nothing uses any more are dropped. A Goal another kept Goal names as its parent stays.
+- **Routing:** a plan for a matched entry is keyed to its **Way**: `task_features` names the entry's Goal and
+  Way, plus the Way's median fix size. Every problem this repo solved the same way therefore shares one routing
+  record and one prior.
+
 ## find_ways (all optional; without them the reply is unchanged)
 
 - `library_rows` (the idx, ≤ 64 KB): up to 6 entries (preselected by word overlap; failed attempts skipped) are

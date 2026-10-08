@@ -21,6 +21,7 @@ import { buildFacts } from "./facts.mjs";
 import { claimsOf, idPrefix, kvGet, mergeScannerFacts, pageFor, pageText, readPage, renderClaim, scopeFor, TOPICS, writeAtomic } from "./claims.mjs";
 import { makeContext, validatePage } from "./validate.mjs";
 import { HISTORY_DEFAULTS, mineHistory } from "./history.mjs";
+import { linkLibrary } from "../library.mjs";
 
 export const DEFAULTS = {
   maxUnits: 40,              // above this many units, survey lazily: root + touched units only
@@ -229,7 +230,11 @@ export function runSurvey(rootArg, opts = {}) {
       unitOf: fileUnit, excluded: (f) => Boolean(resolved.zoneOf(posixDir(f))),
     });
     history = { head: res.head, mined_at: new Date().toISOString(), added: res.added, scanned: res.scanned, redacted: res.redacted, truncated: res.truncated };
-    if (res.added) writes.push(`library.md (+${res.added})`);
+    if (res.added) {
+      writes.push(`library.md (+${res.added})`);
+      // the mined fixes join the knowledge layer: one Goal per problem, one Way per distinct procedure
+      try { linkLibrary(root); } catch { /* linked on the next `stealthlab-mcp library link` */ }
+    }
     timing.history_ms = Math.round(performance.now() - t4);
   }
   w("index/root.idx", renderRootIdx(path.join(sdir, "index", "root.idx"), units, multi, fs.existsSync(path.join(sdir, "library.md"))));

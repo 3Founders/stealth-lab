@@ -431,7 +431,10 @@ test("history: fix commits become library.md entries with diffs; non-fixes, bots
   const lib = fs.readFileSync(path.join(dir, ".stealth", "library.md"), "utf8");
   const goals = lib.split("\n").filter((l) => l.startsWith("GOAL|"));
   assert.equal(goals.length, 2);
-  assert.match(lib, /^GOAL\|L-[0-9a-f]{7}\|Fix add\(\) returning the difference \(#12\)\|unit=\.\|g=-\|outcome=historical\|verified_at=\d{4}-\d{2}-\d{2}\|route=-\|commit=[0-9a-f]{40}$/m);
+  // canonical, and linked to the knowledge layer (one Goal per problem, one Way per procedure)
+  assert.match(lib, /^GOAL\|L-[0-9a-f]{7}\|Fix add\(\) returning the difference \(#12\)\|unit=\.\|g=-\|outcome=historical\|status=current\|verified_at=\d{4}-\d{2}-\d{2}\|route=-\|tags=-\|goal=G-[0-9a-f]{8}\|commit=[0-9a-f]{40}$/m);
+  assert.match(lib, /^G\|G-[0-9a-f]{8}\|Fix add\(\) returning the difference \(#12\)\|/m);
+  assert.match(lib, /^W\|W-[0-9a-f]{8}\|.*\|goal=G-[0-9a-f]{8}\|/m);
   assert.match(lib, /^PROC\|L-[0-9a-f]{7}\.p1\|.*\|p=-\|solution=solutions\/L-[0-9a-f]{7}\.diff\|touches=pkg\/calc\.py#sha=[0-9a-f]{7}/m);
   assert.match(lib, /^STEP\|L-[0-9a-f]{7}\.p1:1\|action\|.*\|check=pytest tests\/test_calc\.py$/m);
   assert.match(lib, /redacted=1/);

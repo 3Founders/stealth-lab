@@ -513,3 +513,23 @@ def test_plan_and_run_reads_this_repos_library_first_and_writes_back():
                    "stealthlab-mcp library add"):
         assert needle in text, needle
     assert text.index("library_matches") < text.index('"resolved"')     # local before global
+
+
+def test_knowledge_layer_round_trips_and_matches_the_client():
+    """linked.md is what the npm client writes after `library link` (shared fixture): Python parses and renders the
+    same Goals (with parents), Ways and Steps byte for byte, and every passing entry is linked to them."""
+    text = (FIX / "linked.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    lib = L.parse_library(text)
+    assert lib.problems == []
+    assert L.render_library(lib) == text
+    assert len(lib.goals) >= 2 and len(lib.ways) >= 2
+    goal_ids, way_ids = {g.id for g in lib.goals}, {w.id for w in lib.ways}
+    for e in lib.entries:
+        if e.outcome != "fail":
+            assert e.goal in goal_ids and all(p.way in way_ids for p in e.procs)
+    assert all(w.goal in goal_ids and w.steps for w in lib.ways)
+
+
+def test_a_way_step_without_its_way_is_reported_not_invented():
+    lib = L.parse_library(L.LIBRARY_HEADER + "S|W-0123abcd:1|action|do it|check=-\n")
+    assert lib.ways == [] and any("orphan: W-0123abcd:1" in p for p in lib.problems)

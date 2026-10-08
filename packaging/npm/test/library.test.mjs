@@ -114,7 +114,7 @@ test("readEntry recovers when a range is wrong but source_sha was forged", () =>
   fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("canonical.md"));
   L.buildIndex(root);
   const idxFile = path.join(root, ".stealth", "index", "library.idx");
-  fs.writeFileSync(idxFile, fs.readFileSync(idxFile, "utf8").replace("|13|16|", "|2|3|"));
+  fs.writeFileSync(idxFile, fs.readFileSync(idxFile, "utf8").replace("|15|18|", "|2|3|"));
   const got = L.readEntry(root, "L-b00c1e");
   assert.equal(got.via, "rebuilt-idx");
   assert.equal(got.lines.length, 4);
@@ -344,4 +344,79 @@ test("task_features: fix sizes per entry and the repo median, numbers only", () 
   assert.deepEqual(tf.repo, tf.entries["L-0a91f2"]);
   assert.ok(!JSON.stringify(tf).includes("src/"));
   assert.equal(L.requestPayload(root).task_features.entries["L-0a91f2"].files, 2);
+});
+
+// ---- knowledge layer (Goals with parents, reusable Ways, their Steps)
+
+test("linked fixture: knowledge lines round-trip byte for byte (the same text Python renders)", () => {
+  const text = fx("linked.md");
+  const lib = L.parseLibrary(text);
+  assert.deepEqual(lib.problems, []);
+  assert.equal(L.renderLibrary(lib), text);
+  assert.ok(lib.goals.length >= 2 && lib.ways.length >= 2);
+  for (const e of lib.entries.filter((x) => x.outcome !== "fail")) {
+    assert.ok(lib.goals.some((g) => g.id === e.goal), e.id);
+    assert.ok(e.procs.every((p) => lib.ways.some((w) => w.id === p.way)), e.id);
+  }
+  assert.equal(L.linkKnowledge(lib), 0);                     // already linked: nothing to add
+});
+
+test("linking reuses one Goal per problem and one Way per procedure, with content-hash ids", () => {
+  const step = { order: 1, kind: "action", do: "Use config.get(\"db\", {})", check: "pytest -q" };
+  const entry = (id, title, stepDo) => ({ id, title, unit: ".", g: null, outcome: "pass", status: "current",
+    verified_at: "2026-10-01", route: null, tags: [], extra: [],
+    procs: [{ index: 1, name: "Default the section", p: null, solution: null, touches: [], extra: [],
+      steps: [{ ...step, do: stepDo, extra: [] }] }] });
+  const lib = { entries: [entry("L-000001", "Fix KeyError  when DB missing", step.do),
+                          entry("L-000002", "fix keyerror when db missing", step.do),
+                          entry("L-000003", "Another problem", step.do),
+                          entry("L-000004", "Another problem", "Something else")], goals: [], ways: [] };
+  assert.equal(L.linkKnowledge(lib), 8);
+  assert.equal(lib.goals.length, 2);                          // the first two titles differ only in case/space
+  assert.equal(lib.ways.length, 2);                           // three entries share one procedure
+  assert.equal(lib.entries[0].goal, lib.entries[1].goal);
+  assert.equal(lib.entries[0].procs[0].way, lib.entries[2].procs[0].way);
+  assert.notEqual(lib.entries[2].procs[0].way, lib.entries[3].procs[0].way);
+  assert.equal(lib.entries[0].goal, L.goalIdFor("Fix KeyError when DB missing"));
+  const again = L.parseLibrary(L.renderLibrary(lib));         // what another machine would write: identical
+  assert.equal(L.renderLibrary(again), L.renderLibrary(lib));
+});
+
+test("goal parents: set, clear, and a cycle is refused", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-know-"));
+  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("linked.md"));
+  const [a, b] = L.loadLibrary(root).goals.map((g) => g.id);
+  assert.equal(L.setGoalParent(root, a, b).parent, b);
+  assert.throws(() => L.setGoalParent(root, b, a), /cannot be its own ancestor/);
+  assert.equal(L.loadLibrary(root).goals.find((g) => g.id === a).parent, b);
+  assert.equal(L.setGoalParent(root, a, "-").parent, null);
+  assert.throws(() => L.setGoalParent(root, "G-ffffffff", "-"), /no knowledge goal/);
+});
+
+test("linkLibrary migrates an unlinked file; addEntry attaches to an existing Way; payload names it", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-link-"));
+  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("canonical.md"));
+  const r = L.linkLibrary(root);
+  assert.ok(r.linked > 0 && r.goals >= 2 && r.ways >= 2);
+  assert.equal(L.linkLibrary(root).linked, 0);
+  const lib = L.loadLibrary(root);
+  const way = lib.ways[0];
+  const e = L.addEntry(root, { title: "A new problem", way: way.id, verify: false, outcome: "historical",
+    steps: [{ kind: "action", do: "x" }] }, { gitImpl: () => "" });
+  assert.equal(e.procs[0].way, way.id);
+  const after = L.loadLibrary(root);
+  assert.ok(after.goals.some((g) => g.id === e.goal));
+  assert.match(fs.readFileSync(path.join(root, ".stealth", "SUMMARY.md"), "utf8"), /Knowledge: \d+ goals/);
+});
+
+test("survey history mining keeps the knowledge lines", async () => {
+  const { readLibrary } = await import("../lib/survey/history.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lib-hist-"));
+  const file = path.join(dir, "library.md");
+  fs.writeFileSync(file, fx("linked.md"));
+  const got = readLibrary(file);
+  assert.ok(got.knowledge.some((l) => l.startsWith("G|")) && got.knowledge.some((l) => l.startsWith("S|")));
+  assert.ok(got.blocks.size >= 2);
 });

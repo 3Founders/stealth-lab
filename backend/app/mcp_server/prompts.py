@@ -254,7 +254,9 @@ own every file in `.stealth/`.
    - record what was solved HERE once its check passes, so the next task in this repo finds it:
      `stealthlab-mcp library add --title "<the problem, as a goal>" --check "<the command that proved it>"
      [--g <goal_id from find_ways>] [--p <procedure_id>] [--unit <package path>] [--step "<kind>|<do>|<check>"]...`
-     (it re-runs the check and refuses if it fails; it saves the diff and rebuilds the indexes);
+     (it re-runs the check and refuses if it fails; it saves the diff and rebuilds the indexes; it reuses the
+     repo's Goal and Way for the same problem and procedure, or pass `--goal <G-id>` / `--way <W-id>` to
+     attach to existing ones from `.stealth/library.md`'s G / W lines);
    - to offer a solved entry to everyone, `stealthlab-mcp library share <L-id>` drafts the
      submit_way call (problem, way, steps and checks only; never the diff or paths): fill its
      placeholders, remove anything specific to this repo, then send it;

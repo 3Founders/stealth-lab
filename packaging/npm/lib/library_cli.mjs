@@ -15,12 +15,16 @@ export const LIBRARY_HELP = `stealthlab-mcp library <command> [--root <repo>]   
   refresh <L-id>                after re-checking a stale entry: current file shas, status current
   add --title <goal> --check <cmd> [--diff-base <rev> | --diff-file <path>] [--unit <path>] [--g <goal id>]
       [--p <procedure id>] [--name <way>] [--step "<kind>|<do>|<check>"]... [--tags a,b]
+      [--goal <G-id>] [--way <W-id>]  (attach to an existing Goal / Way; otherwise found or created)
       [--outcome pass|historical|fail] [--route <R-id>] [--no-verify]
                                 write back a solved problem: runs --check first and refuses if it fails;
                                 the diff (default: git diff HEAD + untracked files) goes to library/solutions/
   route --from-reply <file|->   write find_ways' routing_rows into routing.md (or --line <ROUTE line>...)
   obs <R-id> --model <m> --scaffold <s> (--ok | --fail)
                                 count one attempt on a route (what find_ways' route_obs sends back)
+  link                          give every entry a reusable Goal (G-) and Way (W-): the same problem shares one
+                                Goal, the same procedure one Way (content-hash ids, merge-safe); then re-index
+  goal <G-id> --parent <G-id|-> place a Goal under a parent Goal (or clear it); cycles are refused
   share <L-id>                  draft the submit_way call that offers this entry to everyone: problem, way and
                                 steps with checks only (never the diff or paths); you fill the rest and send it
   payload                       the find_ways arguments the knowledge hook sends (library_rows, route_obs,
@@ -58,6 +62,7 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
       "diff-base": { type: "string" }, "diff-file": { type: "string" }, "no-verify": { type: "boolean" },
       "from-reply": { type: "string" }, line: { type: "string", multiple: true },
       model: { type: "string" }, scaffold: { type: "string" }, ok: { type: "boolean" }, fail: { type: "boolean" },
+      parent: { type: "string" }, goal: { type: "string" }, way: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -79,6 +84,7 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
       const diff = v["diff-file"] ? readInput(v["diff-file"]) : L.diffFromGit(root, v["diff-base"] || "HEAD");
       return print(L.addEntry(root, {
         title: v.title, unit: v.unit, g: v.g, p: v.p, name: v.name, outcome: v.outcome, route: v.route,
+        goal: v.goal, way: v.way,
         tags: v.tags ? v.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
         steps: (v.step || []).map(parseStep), diff, check: v.check, verify: !v["no-verify"],
       }));
@@ -99,6 +105,11 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
     }
     case "payload":
       return print(L.requestPayload(root));
+    case "link":
+      return print(L.linkLibrary(root));
+    case "goal":
+      if (!v.parent) throw new Error("library goal <G-id> --parent <G-id or ->");
+      return print(L.setGoalParent(root, positionals[0], v.parent));
     case "share":
       return print(L.shareDraft(root, positionals[0]));
     default:

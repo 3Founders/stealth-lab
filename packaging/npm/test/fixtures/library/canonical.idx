@@ -1,6 +1,6 @@
 # library.idx -- GENERATED from library.md (rebuilt whenever source_sha differs). Do not hand-edit.
 # id|status|outcome|unit|g|verified_at|start|end|block_sha|title
-# source_sha=f95a22f21cfa
-L-0a91f2|current|historical|.|-|2026-08-02|7|9|f10e1db22bcf|Fix KeyError %7C when the config has no "db" section (90% %257C of users)
-L-77d3e0|current|fail|services/worker|-|2026-10-01|11|11|b010b89a487d|Speed up the slow integration test by reusing the Postgres container
-L-b00c1e|stale|pass|packages/api|2c1d4a9e-0f3b-4c55-9e1a-7b2f0c6d8e11|2026-10-05|13|16|a28cdf7f03a0|Make the CSV export handle commas inside quoted fields
+# source_sha=4e105c62e1df
+L-0a91f2|current|historical|.|-|2026-08-02|9|11|f10e1db22bcf|Fix KeyError %7C when the config has no "db" section (90% %257C of users)
+L-77d3e0|current|fail|services/worker|-|2026-10-01|13|13|b010b89a487d|Speed up the slow integration test by reusing the Postgres container
+L-b00c1e|stale|pass|packages/api|2c1d4a9e-0f3b-4c55-9e1a-7b2f0c6d8e11|2026-10-05|15|18|a28cdf7f03a0|Make the CSV export handle commas inside quoted fields

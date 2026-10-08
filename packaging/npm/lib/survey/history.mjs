@@ -162,16 +162,18 @@ function checkFor(c, unitPath) {
 /** Parse library.md into blocks keyed by GOAL id (lines kept verbatim). */
 export function readLibrary(file) {
   let text = "";
-  try { text = fs.readFileSync(file, "utf8"); } catch { return { header: [], blocks: new Map() }; }
+  try { text = fs.readFileSync(file, "utf8"); } catch { return { header: [], blocks: new Map(), knowledge: [] }; }
   const header = [];
   const blocks = new Map();
+  const knowledge = [];                       // G / W / S lines (the reusable layer): kept verbatim, written back first
   let cur = null;
   for (const line of text.split(/\r?\n/)) {
+    if (/^(G|W|S)\|/.test(line)) { knowledge.push(line); continue; }
     if (line.startsWith("GOAL|")) { cur = line.split("|")[1]; blocks.set(cur, [line]); continue; }
     if (cur && /^(PROC|STEP)\|/.test(line) && line.split("|")[1].startsWith(cur)) { blocks.get(cur).push(line); continue; }
     if (!cur && line.trim()) header.push(line);
   }
-  return { header, blocks };
+  return { header, blocks, knowledge };
 }
 
 /**
@@ -235,7 +237,7 @@ export function mineHistory(root, stealthDir, opts) {
       if (budget - sizeOf(b) >= 0) { keep.set(id, b); budget -= sizeOf(b); } else rest.set(id, b);
     }
     const render = (m) => [...m.keys()].sort().map((k) => m.get(k).join("\n")).join("\n\n");
-    const body = render(keep);
+    const body = [lib.knowledge.join("\n"), render(keep)].filter(Boolean).join("\n\n");
     writeAtomic(libFile, header.join("\n") + "\n\n" + body + (body ? "\n" : ""));
     if (rest.size || fs.existsSync(archiveFile)) {
       writeAtomic(archiveFile, "# archive-historical.md -- older past fixes moved out of library.md to keep it within 64 KB. Same grammar; grep it the same way.\n\n" + render(rest) + (rest.size ? "\n" : ""));

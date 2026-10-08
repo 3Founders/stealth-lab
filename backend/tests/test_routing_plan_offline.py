@@ -423,6 +423,13 @@ def test_plan_case_order_global_then_library_then_repo_then_generic():
     assert virtual["features"] == stats
     assert virtual["id"] == service.virtual_goal_id("library", "r:0123456789abcdef:L-0a91f2")
 
+    # a linked library: the plan is keyed to the entry's reusable Way, with the Way's typical fix size
+    linked = {"entries": {"L-0a91f2": {**stats, "goal": "G-394a964c", "way": "W-0011aabb"}},
+              "ways": {"W-0011aabb": repo}, "repo": repo}
+    _, virtual = srv._plan_case(matched, _Lib("r:0123456789abcdef"), linked)
+    assert virtual["ref"] == "W-0011aabb" and virtual["features"] == repo
+    assert virtual["id"] == service.virtual_goal_id("library", "r:0123456789abcdef:W-0011aabb")
+
     partial = {"outcome": "no_match", "library_matches": [{"id": "L-0a91f2", "judged": True, "relation": "partial"}]}
     _, virtual = srv._plan_case(partial, _Lib("r:0123456789abcdef"), tf)
     assert virtual["kind"] == "repo" and virtual["features"] == repo

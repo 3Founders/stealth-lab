@@ -1849,9 +1849,14 @@ def _plan_case(body: dict[str, Any], library: Any, task_features: Any) -> tuple[
     best = next((m for m in body.get("library_matches") or []
                  if m.get("judged") and m.get("relation") == "matches" and m.get("outcome") != "fail"), None)
     if best is not None and repo_id:
-        ref = f"{repo_id}:{best['id']}"
-        return None, {"id": _rs.virtual_goal_id("library", ref), "kind": "library", "ref": best["id"],
-                      "features": entries.get(best["id"]) or repo_stats, "parents": parents}
+        # keyed to the entry's reusable Way when the library is linked (library.md's knowledge layer), so every
+        # problem this repo solved the same way shares one routing record; else to the entry itself
+        entry = entries.get(best["id"]) if isinstance(entries.get(best["id"]), dict) else {}
+        way = entry.get("way") if isinstance(entry.get("way"), str) else None
+        ways = tf.get("ways") if isinstance(tf.get("ways"), dict) else {}
+        ref = way or best["id"]
+        return None, {"id": _rs.virtual_goal_id("library", f"{repo_id}:{ref}"), "kind": "library", "ref": ref,
+                      "features": (ways.get(way) if way else None) or entry or repo_stats, "parents": parents}
     if repo_id:
         return None, {"id": _rs.virtual_goal_id("repo", repo_id), "kind": "repo", "features": repo_stats,
                       "parents": parents}
