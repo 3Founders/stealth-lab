@@ -1,0 +1,28 @@
+{
+  "_doc": "DRAFT settings for the routing arms of the local-only test (route_run.py). Not frozen: the owner picks the models, budget and targets in the routing pre-registration, then this file is frozen (frozen: true) and only changed through DEVIATIONS.md. Tasks, memory (L1 notes), agent, budget and grading are experiment.json's, unchanged.",
+  "frozen": false,
+  "models": {
+    "_doc": "model_key (as the routing model knows it) -> how to call it. Prices in USD per million tokens, used for the reported cost; the planner uses its own card prices.",
+    "gpt-oss-120b": {"id": "gpt-oss-120b", "base_url_env": "EXPERIMENT_BASE_URL", "api_key_env": "EXPERIMENT_API_KEY",
+                     "price_in": null, "price_out": null},
+    "claude-sonnet-4-5": {"id": "anthropic/claude-sonnet-4.5", "base_url_env": "OPENROUTER_BASE_URL",
+                          "api_key_env": "OPENROUTER_API_KEY", "price_in": 3.0, "price_out": 15.0}
+  },
+  "scaffold": "kel",
+  "memory_arm": "L1",
+  "check": {
+    "_doc": "What the agent could know before delivering, computed from the same test run as the grade: 'regression' = the patch applies and every PASS_TO_PASS test passes (the repo's existing tests); 'partial' = regression and at least one FAIL_TO_PASS test passes (a reproduction test); 'oracle' = resolved (a perfect check, upper bound only).",
+    "kind": "regression",
+    "routing_check_kind": "tests"
+  },
+  "max_rungs": 3,
+  "arms": {
+    "R70": {"policy": "route", "reliability_target": 0.70},
+    "R80": {"policy": "route", "reliability_target": 0.80},
+    "R90": {"policy": "route", "reliability_target": 0.90},
+    "STRONG": {"policy": "fixed", "ladder": ["claude-sonnet-4-5"]},
+    "CHEAP": {"policy": "fixed", "ladder": ["gpt-oss-120b"]},
+    "NAIVE": {"policy": "fixed", "ladder": ["gpt-oss-120b", "claude-sonnet-4-5"]}
+  },
+  "primary_metric": "mean delivered-task cost at a resolved rate not worse than STRONG by more than 3 points"
+}
