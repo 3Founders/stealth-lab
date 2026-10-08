@@ -255,8 +255,9 @@ use; **(C)** = Chaitanya; **(Agent)** = an agent session. Details for each item 
 `legal/README.md`.
 
 ### Stage 1: prove the product works (the local-only test)
-- [ ] 1. (Agent) Semantic codes for Ways: codebook built (192 codes from 20,731 Ways), bundle refit with code
-      parents is running; then check that codes separate model performance, test and push.
+- [x] 1. (Agent, 2026-10-09, 93380e5) Semantic codes for Ways: 192-code codebook from 20,731 Ways; bundle refit
+      with code parents (117,731 results, 70 models). Codes separate difficulty (pass rate 0.09-0.27 by group);
+      whether they separate WHICH model is better is untested (coded results are mostly SWE-agent Llama runs).
 - [ ] 2. (Agent) An experiment runner that routes. It calls find_ways with candidate models, runs the first rung,
       runs the check, calls report_result and escalates, and records cost and pass/fail per attempt. Fork D's
       harness runs one fixed model.
