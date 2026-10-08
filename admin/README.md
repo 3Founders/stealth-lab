@@ -30,7 +30,8 @@ The backend must allow this origin: add `http://localhost:3200` (and the hosted 
 
 | Page | Backend | Who |
 |---|---|---|
-| Overview, Ingestion, Review, Moderation, Credits | `/v1/admin/*`, `/v1/economy/*` | accounts with the `admin:ops` scope |
+| **Executive** (`/`, the home page) | the org endpoints below (usage, users, performance summary, budget, denials, audit, members) | org owner or admin |
+| Operations (`/operations`), Ingestion, Review, Moderation, Credits | `/v1/admin/*`, `/v1/economy/*` | platform staff with the `admin:ops` scope; linked quietly as "Operator tools" |
 | Policy, Usage, Performance, People, Calls, Denials, Audit | `/v1/orgs/{org_id}/...` | org owner or admin |
 | Compliance (legal holds, erasure) | `/v1/orgs/{org_id}/...` | org owner |
 

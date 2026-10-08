@@ -10,7 +10,7 @@ import { getSupabase } from "@/lib/supabase";
 
 // Operator tools that act on the whole platform (the backend's admin scope decides who may use them).
 const platformLinks = [
-  { href: "/", label: "Overview" },
+  { href: "/operations", label: "Operations" },
   { href: "/ingestion", label: "Ingestion" },
   { href: "/review", label: "Review" },
   { href: "/moderation", label: "Moderation" },
@@ -19,6 +19,7 @@ const platformLinks = [
 
 // Per-organisation governance, shown on a second row for the organisation picked in the selector.
 const orgLinks = [
+  { href: "/", label: "Executive", need: "admin" },
   { href: "/policy", label: "Policy", need: "admin" },
   { href: "/usage", label: "Usage", need: "admin" },
   { href: "/performance", label: "Performance", need: "admin" },
@@ -36,6 +37,8 @@ export default function AdminHeader() {
   const [signedIn, setSignedIn] = useState<boolean | undefined>(undefined);
   const { orgs, current, select } = useOrg();
   const orgList = orgs.kind === "ok" ? orgs.data : [];
+  // Operator tools are for platform staff: executives never see them unless they open one, via the quiet link below.
+  const onPlatformPage = platformLinks.some((l) => pathname === l.href || pathname.startsWith(`${l.href}/`));
   const visibleOrgLinks = orgLinks.filter((l) => (l.need === "owner" ? isOwnerRole(current?.role) : isAdminRole(current?.role)));
 
   useEffect(() => {
@@ -54,14 +57,16 @@ export default function AdminHeader() {
     <div className="nav-wrap">
       <div className="frame">
         <header className="nav">
-          <Link href="/" className="logo" aria-label="keळ admin, overview" onClick={() => setOpen(false)}>
+          <Link href="/" className="logo" aria-label="keळ admin, home" onClick={() => setOpen(false)}>
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
-          <nav aria-label="Platform" className="nav-links">
-            {platformLinks.map((l) => (
-              <Link key={l.href} href={l.href} aria-current={pathname === l.href ? "page" : undefined} onClick={() => setOpen(false)}>{l.label}</Link>
-            ))}
-          </nav>
+          {onPlatformPage ? (
+            <nav aria-label="Platform" className="nav-links">
+              {platformLinks.map((l) => (
+                <Link key={l.href} href={l.href} aria-current={pathname === l.href ? "page" : undefined} onClick={() => setOpen(false)}>{l.label}</Link>
+              ))}
+            </nav>
+          ) : <span aria-hidden="true" />}
           {signedIn === undefined ? (
             <span className="btn-ink desk" aria-hidden="true" style={{ visibility: "hidden" }}>Sign out</span>
           ) : signedIn ? (
@@ -70,15 +75,18 @@ export default function AdminHeader() {
             <Link href="/sign-in" className="btn-ink desk">Sign in</Link>
           )}
         </header>
-        {orgList.length > 0 && (
+        {(orgList.length > 0 || !onPlatformPage) && (
           <div className="subnav">
-            <select aria-label="Organisation" value={current?.organization_id ?? ""} onChange={(e) => select(e.target.value)}>
-              {orgList.map((x) => <option key={x.organization_id} value={x.organization_id}>{x.name} ({x.role})</option>)}
-            </select>
+            {orgList.length > 0 && (
+              <select aria-label="Organisation" value={current?.organization_id ?? ""} onChange={(e) => select(e.target.value)}>
+                {orgList.map((x) => <option key={x.organization_id} value={x.organization_id}>{x.name} ({x.role})</option>)}
+              </select>
+            )}
             <nav aria-label="Organisation" className="nav-links">
               {visibleOrgLinks.map((l) => (
                 <Link key={l.href} href={l.href} aria-current={pathname === l.href ? "page" : undefined}>{l.label}</Link>
               ))}
+              {!onPlatformPage && <Link href="/operations" style={{ color: "var(--grey)" }}>Operator tools</Link>}
             </nav>
           </div>
         )}
