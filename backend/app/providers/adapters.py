@@ -80,6 +80,8 @@ class OpenAICompatAdapter:
         body: dict[str, Any] = {"model": spec.sent_model, "messages": messages, "max_tokens": cap}
         if request.temperature is not None:
             body["temperature"] = request.temperature
+        for key, value in conn.request_extras.items():                 # ours always win: extras only ADD fields
+            body.setdefault(key, value)
         headers = {"Authorization": f"Bearer {secret}"} if secret else {}
         t0 = time.monotonic()
         data = _json(conn, await _post(conn, _join(conn.base_url, spec, "chat/completions"), json=body,

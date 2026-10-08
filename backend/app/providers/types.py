@@ -93,6 +93,23 @@ class Connection:
     credential_refs: tuple[str, ...] = ()
     timeout_s: Optional[float] = None           # per-call limit for this endpoint (default adapters.TIMEOUT_S)
     slow_ms: Optional[int] = None               # typical latency above this marks the endpoint slow (tried last)
+    # What the PROVIDER has told us about handling our prompts. None means unknown and is never read as true: an
+    # unanswered DPA question must not look like a "no". These are declarations by whoever configured the
+    # connection, checked against the provider's own terms before launch (docs/provider_catalog.md); nothing here
+    # proves what the provider does.
+    zdr: Optional[bool] = None                  # zero data retention (stricter than no_training)
+    no_training: Optional[bool] = None          # the provider does not train on our prompts
+    region: Optional[str] = None                # where inference runs: "us", "eu", "in", ... or "unknown"
+    dpa_signed: bool = False                    # a data processing agreement is in place with this provider
+    # Extra JSON fields merged into every chat/completions body (never overriding the fields we set), e.g. OpenRouter's
+    # `provider: {"zdr": true}`. registry.PROTECTED_BODY_KEYS lists what a record may not set.
+    request_extras: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def compliance(self) -> dict[str, Any]:
+        """The data-handling declarations as one read model, for admin pages and policy checks."""
+        return {"zdr": self.zdr, "no_training": self.no_training, "region": self.region or "unknown",
+                "dpa_signed": self.dpa_signed}
 
     def spec_for(self, unit: str) -> Optional[UnitSpec]:
         return next((u for u in self.units if u.unit == unit), None)

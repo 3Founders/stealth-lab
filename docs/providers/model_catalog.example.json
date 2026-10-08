@@ -1,0 +1,15 @@
+{
+  "_note": "Example only. Set STEALTH_MODEL_CATALOG_FILE to a copy with offerings you have verified on each provider's page. An offering without both prices is skipped (no unit is generated).",
+  "models": [
+    {
+      "model": "deepseek-v3.2",
+      "family": "deepseek",
+      "licence": "MIT (reported)",
+      "origin": "CN",
+      "tier": "standard",
+      "offerings": [
+        {"connection_id": "deepinfra", "provider_model": "REPLACE_WITH_PROVIDER_MODEL_ID"}
+      ]
+    }
+  ]
+}

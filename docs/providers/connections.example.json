@@ -1,0 +1,53 @@
+{
+  "_note": "Example only. Set STEALTH_PROVIDER_CONNECTIONS_FILE to a copy with real provider model ids and prices. Keys stay in env vars (credential_ref), never here. Every compliance flag is a declaration: confirm it against the provider's own terms and a signed DPA before setting it true. Leave a flag out when unknown.",
+  "connections": [
+    {
+      "connection_id": "openrouter",
+      "kind": "openai_compatible",
+      "provider": "openrouter",
+      "base_url": "https://openrouter.ai/api/v1",
+      "credential_ref": "env:OPENROUTER_API_KEY",
+      "owner": "platform",
+      "credential_owner": "customer",
+      "allowed_data_classes": ["PUBLIC_SOURCE", "GLOBAL_PROCEDURE", "ORG_PRIVATE", "USER_PRIVATE"],
+      "zdr": true,
+      "region": "unknown",
+      "request_extras": {"provider": {"zdr": true, "data_collection": "deny"}},
+      "units": [{"model": "deepseek-v3.2", "provider_model": "REPLACE_WITH_PROVIDER_MODEL_ID"}]
+    },
+    {
+      "connection_id": "generalcompute",
+      "kind": "openai_compatible",
+      "provider": "generalcompute",
+      "base_url": "https://api.generalcompute.com/v1",
+      "credential_ref": "env:GENERAL_COMPUTE_API_KEY",
+      "owner": "platform",
+      "credential_owner": "customer",
+      "allowed_data_classes": ["PUBLIC_SOURCE", "GLOBAL_PROCEDURE", "ORG_PRIVATE", "USER_PRIVATE"],
+      "units": [{"model": "qwen3-coder", "provider_model": "REPLACE_WITH_PROVIDER_MODEL_ID"}]
+    },
+    {
+      "connection_id": "deepinfra",
+      "kind": "openai_compatible",
+      "provider": "deepinfra",
+      "base_url": "https://api.deepinfra.com/v1/openai",
+      "credential_ref": "env:DEEPINFRA_API_KEY",
+      "owner": "platform",
+      "credential_owner": "customer",
+      "allowed_data_classes": ["PUBLIC_SOURCE", "GLOBAL_PROCEDURE", "ORG_PRIVATE", "USER_PRIVATE"],
+      "region": "us",
+      "units": [{"model": "deepseek-v3.2", "provider_model": "REPLACE_WITH_PROVIDER_MODEL_ID"}]
+    },
+    {
+      "connection_id": "novita",
+      "kind": "openai_compatible",
+      "provider": "novita",
+      "base_url": "https://api.novita.ai/openai/v1",
+      "credential_ref": "env:NOVITA_API_KEY",
+      "owner": "platform",
+      "credential_owner": "customer",
+      "allowed_data_classes": ["PUBLIC_SOURCE", "GLOBAL_PROCEDURE"],
+      "units": [{"model": "deepseek-v3.2", "provider_model": "REPLACE_WITH_PROVIDER_MODEL_ID"}]
+    }
+  ]
+}

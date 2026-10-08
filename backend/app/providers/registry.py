@@ -22,6 +22,7 @@ import json
 import os
 import re
 from typing import Any, Mapping, Optional, Protocol, Sequence
+from urllib.parse import urlparse
 
 from app.providers import adapters
 from app.providers.types import (CREDENTIAL_OWNERS, DIRECT, Connection, ProviderCallDenied, UnitSpec, as_tuple)
@@ -82,6 +83,49 @@ def _unit(raw: Mapping[str, Any]) -> UnitSpec:
         path=raw.get("path"), max_output_tokens=raw.get("max_output_tokens"))
 
 
+# Body fields a connection record may not set: the adapter owns them, and an override could silently change what is
+# sent (the model that runs, the prompt, streaming, tools, or the caps the cost check relied on).
+PROTECTED_BODY_KEYS = frozenset({"model", "messages", "stream", "stream_options", "tools", "tool_choice",
+                                 "functions", "function_call", "max_tokens", "max_completion_tokens", "temperature"})
+_REGION = re.compile(r"[a-z]{2,8}(-[a-z0-9]{1,8})?")
+
+
+def _tri_state(cid: str, name: str, value: Any) -> Optional[bool]:
+    if value is not None and not isinstance(value, bool):
+        raise ValueError(f"{cid}: {name} must be true, false or absent (unknown)")
+    return value
+
+
+def _region(cid: str, value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _REGION.fullmatch(value):
+        raise ValueError(f"{cid}: region must be lowercase like \"us\", \"eu\", \"in\" or \"unknown\"")
+    return value
+
+
+def _is_openrouter(base_url: str) -> bool:
+    host = (urlparse(base_url).hostname or "").lower()
+    return host == "openrouter.ai" or host.endswith(".openrouter.ai")
+
+
+def _request_extras(cid: str, kind: str, value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if kind != "openai_compatible":
+        raise ValueError(f"{cid}: request_extras only applies to openai_compatible connections")
+    if not isinstance(value, Mapping) or not all(isinstance(k, str) for k in value):
+        raise ValueError(f"{cid}: request_extras must be an object")
+    clash = sorted(PROTECTED_BODY_KEYS & set(value))
+    if clash:
+        raise ValueError(f"{cid}: request_extras cannot set {', '.join(clash)} (the adapter owns those fields)")
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{cid}: request_extras must be plain JSON") from exc
+    return json.loads(json.dumps(value))
+
+
 def connection_from_dict(raw: Mapping[str, Any]) -> Connection:
     """Validate one connection record. Raises ValueError with a message an admin can act on."""
     cid = str(raw.get("connection_id") or "").strip()
@@ -116,13 +160,25 @@ def connection_from_dict(raw: Mapping[str, Any]) -> Connection:
         raise ValueError(f"{cid}: timeout_s must be between 1 and 600 seconds")
     if slow_ms is not None and not (isinstance(slow_ms, int) and slow_ms > 0):
         raise ValueError(f"{cid}: slow_ms must be a positive integer (milliseconds)")
+    flags = {name: _tri_state(cid, name, raw.get(name)) for name in ("zdr", "no_training")}
+    region = _region(cid, raw.get("region"))
+    dpa = raw.get("dpa_signed", False)
+    if not isinstance(dpa, bool):
+        raise ValueError(f"{cid}: dpa_signed must be true or false")
+    extras = _request_extras(cid, kind, raw.get("request_extras"))
+    routing = extras.get("provider")
+    if (flags["zdr"] is True and _is_openrouter(str(raw["base_url"]))
+            and not (isinstance(routing, dict) and routing.get("zdr") is True)):
+        raise ValueError(f"{cid}: zdr is true on OpenRouter, so request_extras.provider.zdr must be true as well "
+                         "(otherwise OpenRouter may route to an endpoint that keeps data)")
     return Connection(
         connection_id=cid, kind=kind, base_url=str(raw["base_url"]), units=units, owner=owner,
         provider=str(raw.get("provider") or cid), credential_ref=raw.get("credential_ref"),
         credential_owner=credential_owner, allowed_data_classes=as_tuple(raw.get("allowed_data_classes")),
         enabled=bool(raw.get("enabled", True)), allow_http_loopback=allow_http,
         credential_refs=tuple(refs or ()), timeout_s=None if timeout_s is None else float(timeout_s),
-        slow_ms=slow_ms)
+        slow_ms=slow_ms, zdr=flags["zdr"], no_training=flags["no_training"], region=region, dpa_signed=dpa,
+        request_extras=extras)
 
 
 def load_connections_file(path: str) -> list[Connection]:
