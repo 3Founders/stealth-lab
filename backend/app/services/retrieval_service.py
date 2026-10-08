@@ -47,6 +47,7 @@ import asyncpg
 
 from app import telemetry as _tel
 from app.services.access import AccessScope, TenantScope, tenant_predicate, visibility_predicate
+from app.utils import stage_timer as _stages
 from app.services.embeddings import to_pgvector
 from app.services.hierarchical_goal_routing import (
     HierarchicalGoalRoutingConfig,
@@ -477,6 +478,7 @@ async def _judge_all(
     if meta.providers:
         meta.mode = MODE_JEV if meta.providers == ["jev"] else MODE_MODEL
     meta.latency_ms[f"{stage}_rerank"] = (time.monotonic() - t0) * 1000
+    _stages.add(f"judge_{stage}", meta.latency_ms[f"{stage}_rerank"])
     meta.counts[f"{stage}_judged"] = ok
     if ok == 0:
         meta.degrade(f"{stage}: no semantic provider answered (JEV and NLI/model rerankers unavailable)")
@@ -522,7 +524,8 @@ async def search_goals(
     exactly the search below with nothing added."""
     meta = meta if meta is not None else RetrievalMeta()
     judge = judge if judge is not None else default_judge()
-    await _catch_up_projection(pool, meta)
+    with _stages.stage("catch_up"):
+        await _catch_up_projection(pool, meta)
     emb, model = None, None
     if embedder is not None:
         t0 = time.monotonic()
@@ -534,6 +537,7 @@ async def search_goals(
         except Exception:  # noqa: BLE001 -- FTS-only, flagged
             meta.degrade("embedding provider unavailable: lexical candidates only")
         meta.latency_ms["embed"] = (time.monotonic() - t0) * 1000
+        _stages.add("embed", meta.latency_ms["embed"])
     with _tel.span("retrieval.goal_search", kind="RETRIEVER", on_error=_tel.FailureCode.RETRIEVAL_ERROR) as sp:
         t0 = time.monotonic()
         cands, n_fts, n_vec = await _legs(
@@ -543,6 +547,7 @@ async def search_goals(
             # only Goals an agent can act on (migration 130): a Goal without a live Procedure is not a candidate
             where_extra="status IN ('active', 'candidate') AND has_procedures", extra_params=[], cfg=cfg)
         meta.latency_ms["goal_search"] = (time.monotonic() - t0) * 1000
+        _stages.add("goal_search_legs", meta.latency_ms["goal_search"])
         meta.counts.update(goal_fts_candidates=n_fts, goal_vector_candidates=n_vec, goal_fused=len(cands))
         _tel.set_attrs(sp, fts=n_fts, vector=n_vec, fused=len(cands))
     top = cands[: cfg.rerank_top_k]
@@ -1238,8 +1243,9 @@ async def rank_goal_procedures(
 
     meta = meta if meta is not None else RetrievalMeta()
     source_goals = [str(g) for g in (candidate_goal_ids or [goal_id])]
-    rows = await fetch_goal_procedures(pool, source_goals, columns=_hydrate_cols(), where=_CANDIDATE_BASE_WHERE,
-                                       scope=scope)
+    with _stages.stage("procedure_fetch"):
+        rows = await fetch_goal_procedures(pool, source_goals, columns=_hydrate_cols(),
+                                           where=_CANDIDATE_BASE_WHERE, scope=scope)
     if not rows:
         return ProcedureSearchResult([], None, [], [], "no procedure is linked to the goal")
     rows.sort(key=lambda r: (r.get("verification_state") != "verified",
@@ -1256,10 +1262,11 @@ async def rank_goal_procedures(
             extra={"procedure_row_id": row_id,
                    "goal_id": str(row.get("achieves_goal_id") or goal_id)},
         ))
-    return await _rank_procedure_candidates(
-        pool, ctx, cands, by_row, scope=scope, judge=judge, cfg=cfg, meta=meta, current_scope=current_scope,
-        require_verified=require_verified,
-    )
+    with _stages.stage("procedure_rank"):
+        return await _rank_procedure_candidates(
+            pool, ctx, cands, by_row, scope=scope, judge=judge, cfg=cfg, meta=meta, current_scope=current_scope,
+            require_verified=require_verified,
+        )
 
 
 async def _rank_procedure_candidates(

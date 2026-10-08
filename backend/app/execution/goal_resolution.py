@@ -30,6 +30,7 @@ import asyncpg
 from app.services.access import AccessScope
 from app.services.goals import normalize_goal_name
 from app.services.routed_reads import fetch_goal
+from app.utils import stage_timer as _stages
 
 log = logging.getLogger(__name__)
 
@@ -219,10 +220,13 @@ async def _feasible_procedures_for_goal(
     if root_ctx is not None and depth > 0 and goal_name:
         text = goal_name + root_ctx.text[len(root_ctx.query):] if root_ctx.text.startswith(root_ctx.query) else goal_name
         node_ctx = rs.QueryContext(query=goal_name, claims=root_ctx.claims, text=text)
-    result = await rs.rank_goal_procedures(
-        pool, goal_id, node_ctx, scope=access_scope, judge=context.get("_judge") if node_ctx is not None else None,
-        meta=context.get("_retrieval_meta"), current_scope=current_scope, candidate_goal_ids=candidate_goal_ids,
-    )
+    with _stages.stage("procedure_tier"):
+        result = await rs.rank_goal_procedures(
+            pool, goal_id, node_ctx, scope=access_scope,
+            judge=context.get("_judge") if node_ctx is not None else None,
+            meta=context.get("_retrieval_meta"), current_scope=current_scope,
+            candidate_goal_ids=candidate_goal_ids,
+        )
     ordered = []
     if result.selected is not None:
         ordered.append(result.selected)

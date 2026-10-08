@@ -119,3 +119,22 @@ Per-process state, which `WEB_CONCURRENCY` > 1 makes per-worker: the `find_ways`
 reply cache, the triage verdict memo and the `/triage` rate window. Limits are therefore up to `WEB_CONCURRENCY` times
 looser, never tighter, and a repeated query may miss a cache another worker holds. Nothing else is shared in memory.
 Not yet load tested.
+
+## 5. Measuring latency
+
+Every `find_ways` call writes one `retrieval_decisions` row (mode `find_ways`) with `total_ms` and a `stages` map: the
+wall time of each pipeline stage (`governor`, `triage_judge`, `goal_search`, `catch_up`, `embed`, `goal_search_legs`,
+`judge_goal`, `hierarchy`, `resolve_tree`, `procedure_tier`, `procedure_fetch`, `procedure_rank`, `selector_judge`,
+`related_examples`, `attribution`, `model_plan`, ...). The recorder is `backend/app/utils/stage_timer.py`; a stage's `ms` is
+the sum over its calls, so overlapping calls can add up to more than `total_ms`. Only stage names and numbers are stored,
+never a query. Read it with:
+
+```
+python scripts/find_ways_latency_report.py                       # last 7 days: p50/p90/p99 per stage, share of total
+python scripts/find_ways_latency_report.py --outcome resolved    # one outcome (resolved, ambiguous, no_match, not_needed)
+python scripts/find_ways_latency_report.py --json                # compare two releases
+```
+
+It reads the database the server logs to (`SEARCH_DATABASE_URL`, else `DATABASE_URL`) and only reads. Decide latency work
+from this table, not from estimates.
+

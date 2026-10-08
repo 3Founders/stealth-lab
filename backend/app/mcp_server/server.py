@@ -81,6 +81,7 @@ from pydantic import AnyHttpUrl
 from app.db.session import create_pool
 from datetime import timedelta
 
+from app.utils import stage_timer as _stages
 from app.services.access import AccessScope, TenantScope, visibility_predicate
 from app.services.authn import (
     FetchingJwks,
@@ -1670,11 +1671,13 @@ async def find_ways(
         return f"REFUSED: detail must be one of {list(_detail.DETAILS)}"
     shape = _detail.summarize if detail == "summary" else (lambda text: text)
     t0 = _time.monotonic()
+    _stages.begin()                                   # per-stage timing for this request (utils/stage_timer.py)
     gov, caller = _governor(), _find_ways_caller(ctx)
     library = _library_context(repo_identity, library_rows)
     # the knowledge depends on the library arguments, so a cached reply may only be reused for the same ones
     cache_facts = repo_claims if library is None else f"{repo_claims}\x1e{library.fingerprint()}"
-    decision = gov.check(caller, query, cache_facts) if gov is not None and caller is not None else None
+    with _stages.stage("governor"):
+        decision = gov.check(caller, query, cache_facts) if gov is not None and caller is not None else None
     if decision is not None and decision.action != "run":
         await _record_find_ways(ctx, query, decision.reply, {}, (_time.monotonic() - t0) * 1000,
                                 governor=decision.action)
@@ -1689,11 +1692,12 @@ async def find_ways(
         await _record_find_ways(ctx, query, reply, {}, (_time.monotonic() - t0) * 1000, governor="triage")
         return reply
     with track_shard_requests() as shard_stats:
-        reply = await _find_ways_impl(
-            query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
-            semantic=semantic, use_llm=use_llm, top_k=top_k,
-            **({"library": library} if library is not None else {}),
-        )
+        with _stages.stage("impl"):
+            reply = await _find_ways_impl(
+                query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
+                semantic=semantic, use_llm=use_llm, top_k=top_k,
+                **({"library": library} if library is not None else {}),
+            )
     if triaged is not None:
         from app.mcp_server.find_ways_triage import with_triage
 
@@ -1706,8 +1710,9 @@ async def find_ways(
     own = _routing_plan.caller_unit(my_model, (_find_ways_client(ctx) or {}).get("name"))
     if own is not None:
         candidates = [*(candidates or []), own]
-    final = await _attach_model_plan(_mark_untrusted(shape(reply)), ctx, candidates=candidates, check_kind=check_kind,
-                                     constraints=model_constraints, **local)
+    with _stages.stage("model_plan"):
+        final = await _attach_model_plan(_mark_untrusted(shape(reply)), ctx, candidates=candidates,
+                                         check_kind=check_kind, constraints=model_constraints, **local)
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it
     await _record_find_ways(ctx, query, final, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return final
@@ -1728,8 +1733,9 @@ async def _find_ways_triage(query: str):
         judge = _rs.default_judge()
     except Exception:  # noqa: BLE001 -- no judge is no triage; the lookup runs
         judge = None
-    verdict = await triage(query, judge, timeout_s=settings.find_ways_triage_timeout_ms / 1000.0,
-                           min_confidence=settings.find_ways_triage_min_confidence)
+    with _stages.stage("triage_judge"):
+        verdict = await triage(query, judge, timeout_s=settings.find_ways_triage_timeout_ms / 1000.0,
+                               min_confidence=settings.find_ways_triage_min_confidence)
     CACHE.put(query, verdict)
     return verdict
 
@@ -1902,6 +1908,7 @@ async def _record_find_ways(ctx: Context, query: str, reply: str, shard_requests
             _hashlib.sha256(query.encode()).hexdigest(), _caller_access_scope().viewer_id,
             bool(shard_requests.get("unavailable")),
             {"outcome": outcome, "total_ms": round(total_ms, 1), "shard_requests": shard_requests,
+             **({"stages": _stage_snapshot} if (_stage_snapshot := _stages.snapshot()) else {}),
              "shards": shard_requests.get("shards", []), "client": _find_ways_client(ctx),
              **({"governor": governor} if governor else {}),
              **({"plan_ms": plan_ms} if isinstance(plan_ms, int) else {})})
@@ -2020,10 +2027,11 @@ async def _find_ways_impl(
     # Round-4 fix (knowledge_related_examples): the judged Goal candidates feed `related_examples`.
     related_hits: Optional[list] = (
         [] if settings.knowledge_related_examples and settings.knowledge_verified_examples else None)
-    goal_choice = await _find_ways_goal_choice(
-        pool, query, facts, scope=scope, embedder=embedder, top_k=top_k, collect=related_hits,
-        **({"library": library} if library is not None else {}),
-    )
+    with _stages.stage("goal_choice"):
+        goal_choice = await _find_ways_goal_choice(
+            pool, query, facts, scope=scope, embedder=embedder, top_k=top_k, collect=related_hits,
+            **({"library": library} if library is not None else {}),
+        )
 
     if library is not None:
         from app.services import library_context as _lc
@@ -2040,10 +2048,11 @@ async def _find_ways_impl(
             from app.services import retrieval_service as _rs_rel
 
             try:
-                body["related_examples"] = await _rs_rel.related_examples(
-                    pool, related_hits, scope=scope, limit=settings.knowledge_related_examples_limit,
-                    drop_confidence=settings.knowledge_related_examples_drop_confidence,
-                    exclude_procedure_ids=exclude)
+                with _stages.stage("related_examples"):
+                    body["related_examples"] = await _rs_rel.related_examples(
+                        pool, related_hits, scope=scope, limit=settings.knowledge_related_examples_limit,
+                        drop_confidence=settings.knowledge_related_examples_drop_confidence,
+                        exclude_procedure_ids=exclude)
             except Exception:  # noqa: BLE001 -- examples are an addition; the answer still stands
                 import logging
 
@@ -2052,14 +2061,16 @@ async def _find_ways_impl(
         # CC-BY content must carry its credit wherever it is handed out (BLOCKERS I7).
         from app.services.license_attribution import attach_attribution
 
-        await attach_attribution(pool, body)
+        with _stages.stage("attribution"):
+            await attach_attribution(pool, body)
         return json.dumps(body, default=str)
 
     if goal_choice is not None:
         outcome, selected_goal, payload = goal_choice
         if outcome != "resolved":
             if outcome == "ambiguous" and payload.get("candidates"):
-                await _attach_candidate_ways(pool, payload["candidates"], query, facts, scope=scope)
+                with _stages.stage("candidate_ways"):
+                    await _attach_candidate_ways(pool, payload["candidates"], query, facts, scope=scope)
                 if settings.knowledge_suggested_candidate:
                     suggestion = _suggested_candidate(payload["candidates"])
                     if suggestion is not None:
@@ -2068,10 +2079,11 @@ async def _find_ways_impl(
             return await _with_related({"outcome": outcome, "repo_facts": repo_report, **payload}, listed)
         goal_judgment = payload["goal_judgment"]
     else:
-        intent = await _resolve_intent(
-            pool, query, context={"current_scope": current_scope},
-            client=client, embedder=embedder, scope=scope, top_k=top_k,
-        )
+        with _stages.stage("lexical_fallback"):
+            intent = await _resolve_intent(
+                pool, query, context={"current_scope": current_scope},
+                client=client, embedder=embedder, scope=scope, top_k=top_k,
+            )
         goal_judgment = {"mode": "lexical_fallback", "reason": "no semantic judge answered"}
 
         if intent.outcome == "ambiguous" and facts:
@@ -2122,10 +2134,11 @@ async def _find_ways_impl(
             selector = _rf.RepoFactsProcedureSelector(claims=facts, judge=judge)
         resolve_context["_procedure_selector"] = selector
     try:
-        tree = await resolve_goal(
-            pool, goal_id, context=resolve_context, scope=scope,
-            max_depth=max_depth, embedder=embedder,
-        )
+        with _stages.stage("resolve_tree"):
+            tree = await resolve_goal(
+                pool, goal_id, context=resolve_context, scope=scope,
+                max_depth=max_depth, embedder=embedder,
+            )
     except GoalResolutionError as exc:
         return f"REFUSED: {exc}"
     if selector is not None:

@@ -32,6 +32,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from app.utils import stage_timer as _stages
+
 MAX_REPO_CLAIMS = 200
 MAX_REPO_CLAIMS_BYTES = 64_000
 CLAIMS_PER_PROCEDURE_MIN = 5
@@ -199,7 +201,8 @@ class RepoFactsProcedureSelector:
         ]
         self.calls += 1
         try:
-            judgments = await self.judge.judge_batch(goal_name, inputs)
+            with _stages.stage("selector_judge"):
+                judgments = await self.judge.judge_batch(goal_name, inputs)
         except Exception as exc:  # noqa: BLE001 -- chain exhausted / provider error: never block the plan
             self._not_checked(f"semantic judge unavailable: {type(exc).__name__}")
             return feasible, []

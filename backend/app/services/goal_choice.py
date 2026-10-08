@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Optional
+from app.utils import stage_timer as _stages
 
 log = logging.getLogger(__name__)
 
@@ -55,11 +56,13 @@ async def choose_goal(
     local_claims = [{"id": f["claim_id"], "statement": f["statement"]} for f in facts]
     try:
         ctx = await rs.build_query_context(query, local_claims, embedder=None, cfg=cfg)
-        found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta,
-                                      **({"library": library} if library is not None else {}))
-        routed = await rs._route_goal_candidates(
-            pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
-        )
+        with _stages.stage("goal_search"):
+            found = await rs.search_goals(pool, ctx, scope=scope, embedder=embedder, judge=judge, cfg=cfg, meta=meta,
+                                          **({"library": library} if library is not None else {}))
+        with _stages.stage("hierarchy"):
+            routed = await rs._route_goal_candidates(
+                pool, found, scope=scope, cfg=cfg, meta=meta, ctx=ctx, judge=judge,
+            )
         if collect is not None:
             collect.extend(h for h in [*found.candidates, *routed] if getattr(h, "judged", False))
         # Flat and hierarchy candidates compete on the same judged verdicts: a
