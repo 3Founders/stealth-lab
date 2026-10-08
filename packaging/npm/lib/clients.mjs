@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { addCaptureHooks, removeCaptureHooks } from "./capture_hook.mjs";
+import { uninstallCursorHooks, upsertCursorHooks } from "./cursor_hooks.mjs";
 
 export const SERVER_NAME = "stealthlab";
 
@@ -209,6 +210,7 @@ const withHeaders = (obj, token) => (token ? { ...obj, headers: bearer(token) } 
 export function clients({ env = process.env, platform = process.platform } = {}) {
   const h = home(env);
   const cursor = path.join(h, ".cursor", "mcp.json");
+  const cursorHooks = path.join(h, ".cursor", "hooks.json");
   const windsurf = path.join(h, ".codeium", "windsurf", "mcp_config.json");
   const codex = path.join(env.CODEX_HOME || path.join(h, ".codex"), "config.toml");
   const desktop = claudeDesktopConfig(env, platform);
@@ -237,9 +239,18 @@ export function clients({ env = process.env, platform = process.platform } = {})
       id: "cursor",
       label: "Cursor",
       detect: () => fs.existsSync(path.dirname(cursor)),
-      where: () => cursor,
-      install: ({ url, token }) => upsertJsonServer(cursor, withHeaders({ url }, token)),
-      uninstall: () => removeJsonServer(cursor),
+      where: () => `${cursor} + hooks in ${cursorHooks}`,
+      // The hooks (lib/cursor_hooks.mjs) are Cursor's version of the Claude Code knowledge + capture hooks;
+      // --no-hooks registers the server only (and takes out hooks an earlier install added).
+      install: ({ url, token, hooks = true, launch }) => {
+        upsertJsonServer(cursor, withHeaders({ url }, token));
+        if (hooks && launch) upsertCursorHooks(cursorHooks, launch);
+        else uninstallCursorHooks(cursorHooks);
+      },
+      uninstall: () => {
+        const hooksRemoved = uninstallCursorHooks(cursorHooks);
+        return removeJsonServer(cursor) || hooksRemoved;
+      },
     },
     {
       id: "vscode",

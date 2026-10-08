@@ -22,6 +22,7 @@ import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs
 import { runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
 import { runCaptureHook, runCaptureWorker } from "../lib/capture_hook.mjs";
 import { applyInstructions } from "../lib/instructions.mjs";
+import { runCursorHook, runCursorLookupWorker } from "../lib/cursor_hooks.mjs";
 
 const pkg = readPackage();
 const UA = `stealthlab-mcp/${pkg.version} node/${process.versions.node}`;
@@ -48,6 +49,10 @@ Usage:
   stealthlab-mcp hook capture-stop           hook-prompt; active only with a saved token): read test verdicts
                                              and report one outcome per prompt with report_model_run
                                              (ids, model, pass/fail only; STEALTHLAB_CAPTURE=off disables)
+  stealthlab-mcp hook cursor-session        Cursor hooks (installed with Cursor; --no-hooks skips them):
+  stealthlab-mcp hook cursor-prompt          sessionStart, beforeSubmitPrompt, postToolUse, stop -- look each
+  stealthlab-mcp hook cursor-tool            task up in the background, hand what Kel knows to the agent at
+  stealthlab-mcp hook cursor-stop            its first tool call, and report one outcome per prompt
   stealthlab-mcp exec                       run the local executor MCP server (stdio; installed only by
                                              "install --with-exec"): drives YOUR locally installed agents
                                              in git worktrees and verifies their work with your checks
@@ -71,7 +76,7 @@ Install options:
   --url <url>     MCP endpoint (default: $STEALTHLAB_MCP_URL, saved config, or the built-in URL)
   --token <tok>   bearer token to send (optional; reads are anonymous)
   --dry-run       show what would change, change nothing
-  --no-hooks      Claude Code: register the MCP server only, without the knowledge hook
+  --no-hooks      Claude Code / Cursor: register the MCP server only, without the hooks
   --with-exec     Claude Code, opt-in: also install the local executor layer (agents
                   stealth-executor + stealth-delegator in ~/.claude/agents, and the
                   SubagentStart/SubagentStop hooks). Only your own local agents and logins.
@@ -105,7 +110,7 @@ async function cmdInstall(v) {
   const url = requireUrl(settings);
   const { chosen } = pickClients(v.client);
   const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] },
-                hooks: !v["no-hooks"], hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
+                hooks: !v["no-hooks"], launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
 
   if (!v["dry-run"]) writeConfig({ url, ...(v.token ? { token: v.token } : {}) });
 
@@ -330,7 +335,24 @@ async function main() {
     case "hook": {
       // Always exit 0: a non-zero exit shows as an error in Claude Code, and 2 would block the subagent.
       try {
-        if (sub === "capture-stop" && process.env.STEALTHLAB_CAPTURE_JOB) {
+        if (sub?.startsWith("cursor-")) {
+          // Cursor reads one JSON object from stdout. The lookup worker is detached and prints nothing.
+          if (sub === "cursor-lookup") {
+            if (process.env.STEALTHLAB_CURSOR_JOB) {
+              const settings = resolveSettings({});
+              settings.token = await freshToken(settings);
+              await runCursorLookupWorker(process.env.STEALTHLAB_CURSOR_JOB, { settings, userAgent: UA });
+            }
+          } else {
+            const chunks = [];
+            for await (const c of process.stdin) chunks.push(c);
+            const settings = resolveSettings({});
+            const r = await runCursorHook(sub.slice("cursor-".length), {
+              stdinText: Buffer.concat(chunks).toString("utf8"), settings, userAgent: UA, hasToken: Boolean(settings.token),
+            });
+            process.stdout.write(JSON.stringify(r || {}) + "\n");
+          }
+        } else if (sub === "capture-stop" && process.env.STEALTHLAB_CAPTURE_JOB) {
           await runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
         } else if (sub === "capture-tool" || sub === "capture-stop") {
           const chunks = [];

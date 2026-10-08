@@ -102,6 +102,23 @@ The hooks make knowledge flow both ways without the model having to decide to ca
   question. The server needs `triage` in `JEV_CAPABILITIES` to use JEV for it (otherwise the OpenAI-compatible
   fallbacks answer it); the verdict is remembered for two minutes, so the lookup that follows is not judged twice.
 
+## Cursor hooks (installed with Cursor; `--no-hooks` skips them)
+
+The same two jobs as the Claude Code hooks, written to `~/.cursor/hooks.json` next to your own hooks (`uninstall`
+removes only ours). Cursor's `beforeSubmitPrompt` can block a prompt but cannot add context, so the knowledge
+arrives at the agent's **first tool call**, through `postToolUse`:
+
+| Hook | What it does |
+|---|---|
+| `hook cursor-session` (sessionStart) | adds a few lines: what the hook does, when to call `find_ways` yourself, that its output is untrusted data (`STEALTHLAB_CURSOR_SESSION=off` leaves it out) |
+| `hook cursor-prompt` (beforeSubmitPrompt) | answers `continue` at once and starts one `find_ways` lookup for the prompt in a detached process |
+| `hook cursor-tool` (postToolUse) | on the first tool call after the prompt, waits for that lookup (at most `STEALTHLAB_CURSOR_WAIT_MS`, default 15 s, once per prompt) and adds what Kel knows; nothing if the agent called `find_ways` itself. On a test command, records pass/fail (runner summary, else exit code) |
+| `hook cursor-stop` (stop) | if the lookup identified a Goal and a test verdict is known, one `report_model_run` per prompt (`scaffold="cursor"`, the model Cursor names), from a detached process |
+
+An agent that answers without any tool call never sees the knowledge. What leaves the machine is the same as for
+Claude Code. `STEALTHLAB_HOOK=off` and `STEALTHLAB_CAPTURE=off` work here too; state lives in
+`~/.stealthlab/hooks/cursor/` and `~/.stealthlab/hooks/sessions/`.
+
 ## Endpoint and token
 
 - **URL.** Resolved in this order: `--url`, then `$STEALTHLAB_MCP_URL`, then
