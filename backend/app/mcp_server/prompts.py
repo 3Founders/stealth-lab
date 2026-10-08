@@ -256,7 +256,11 @@ own every file in `.stealth/`.
      `report_discovery(kind, procedure_id, problem, solution, step_order, proof, repo)`
      with kind = fix | missing_step | precondition | better_way | correction | filled_gap.
      Pass `repo` when it only holds for this repository.
-9. Finish: tell the user what was done, the proof, and what was learned."""
+9. Finish: tell the user what was done, the proof, and what was learned.
+
+Tools named above that are not in your tool list (recommend_models, report_model_run, report_discovery,
+call_model, submit_way) are run with `use_tool(name, arguments)`; `discover_tools(names=[...])` shows their
+arguments."""
 
 
 _V1_PROMPTS = [

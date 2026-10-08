@@ -12,7 +12,8 @@ endpoint up.
    `railway.mcp.json`. That file builds `backend/Dockerfile.mcp-server`, runs
    one replica, and health-checks `GET /readyz` (readiness: the database answers,
    migrations are current, and the process is not shutting down).
-2. The container runs migrations first and then starts uvicorn on `$PORT`
+2. The container runs migrations first -- as `MIGRATE_DATABASE_URL` when it is set (the owner role, which may run
+   DDL), else as `DATABASE_URL` -- and then starts uvicorn on `$PORT`
    with `--workers ${WEB_CONCURRENCY:-1}`. One worker is the default and the tested
    configuration. It was pinned to 1 while an in-memory task store existed; that is
    gone (the transport is stateless), so more workers are allowed -- see
@@ -55,6 +56,8 @@ one instance.
 | `OIDC_ISSUER` | `https://<project>.supabase.co/auth/v1` | Signed-in users (needed by `report_discovery`) |
 | `OIDC_AUDIENCE` | `authenticated` | same |
 | `WEB_CONCURRENCY` | `1` (default) | Worker processes; see "Concurrency" |
+| `MIGRATE_DATABASE_URL` | the owner-role URL (optional) | Migrations run as it when set; needed once `DATABASE_URL` is the restricted `stealth_app` role, which cannot run DDL |
+| `MCP_TOOL_DISCOVERY` | `progressive` (default) or `all` | `progressive` lists only `find_ways`, `report_result`, `discover_tools` and `use_tool`; agents find the rest with `discover_tools` and run them with `use_tool` (hidden tools stay callable by name). `all` lists every tool |
 | `DB_POOL_MAX_SIZE` | `20`-`40` behind a `-pooler` endpoint | Connections **per worker**. One `find_ways` uses several at once (search legs run concurrently), so the default of 10 starves at about ten simultaneous calls |
 | `JEV_BASE_URL` and/or `GEMINI_API_KEY` | judge provider | Contextual Goal and Procedure judgment. Without it, `find_ways` still answers, but with `goal_judgment.mode = "lexical_fallback"` |
 | `VOYAGE_API_KEY` (or `GEMINI_API_KEY`) | embeddings | vector leg of Goal and Procedure search |

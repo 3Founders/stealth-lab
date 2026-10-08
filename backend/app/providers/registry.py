@@ -106,11 +106,23 @@ def connection_from_dict(raw: Mapping[str, Any]) -> Connection:
         validate_url_shape(str(raw.get("base_url") or ""), allow_http_loopback=allow_http)
     except ProviderCallDenied as exc:
         raise ValueError(f"{cid}: base_url: {exc}") from exc
+    refs = raw.get("credential_refs")
+    if refs is not None and (not isinstance(refs, (list, tuple)) or not all(isinstance(r, str) and ":" in r for r in refs)):
+        raise ValueError(f"{cid}: credential_refs must be a list of references like \"env:NAME\"")
+    if refs and raw.get("credential_ref"):
+        raise ValueError(f"{cid}: give credential_ref or credential_refs, not both")
+    timeout_s, slow_ms = raw.get("timeout_s"), raw.get("slow_ms")
+    if timeout_s is not None and not (isinstance(timeout_s, (int, float)) and 1 <= float(timeout_s) <= 600):
+        raise ValueError(f"{cid}: timeout_s must be between 1 and 600 seconds")
+    if slow_ms is not None and not (isinstance(slow_ms, int) and slow_ms > 0):
+        raise ValueError(f"{cid}: slow_ms must be a positive integer (milliseconds)")
     return Connection(
         connection_id=cid, kind=kind, base_url=str(raw["base_url"]), units=units, owner=owner,
         provider=str(raw.get("provider") or cid), credential_ref=raw.get("credential_ref"),
         credential_owner=credential_owner, allowed_data_classes=as_tuple(raw.get("allowed_data_classes")),
-        enabled=bool(raw.get("enabled", True)), allow_http_loopback=allow_http)
+        enabled=bool(raw.get("enabled", True)), allow_http_loopback=allow_http,
+        credential_refs=tuple(refs or ()), timeout_s=None if timeout_s is None else float(timeout_s),
+        slow_ms=slow_ms)
 
 
 def load_connections_file(path: str) -> list[Connection]:

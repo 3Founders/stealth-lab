@@ -42,8 +42,10 @@ def _surface(value: str) -> dict:
 
 def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
     s = _surface("v1")
-    assert s["tools"] == ["call_model", "find_ways", "recommend_models", "report_discovery", "report_model_run", "report_result",
-                         "submit_way"]
+    # registered (callable by name); what tools/list SHOWS is decided by settings.mcp_tool_discovery
+    # (tests/test_mcp_progressive_discovery_offline.py)
+    assert s["tools"] == ["call_model", "discover_tools", "find_ways", "recommend_models", "report_discovery",
+                         "report_model_run", "report_result", "submit_way", "use_tool"]
     assert s["resources"] == [
         "stealth://claims/{claim_id}",
         "stealth://goals/{goal_id}/claims",

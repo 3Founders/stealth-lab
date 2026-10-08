@@ -28,7 +28,27 @@ class ProviderCallDenied(ProviderError):
 
 
 class ProviderCallFailed(ProviderError):
-    """The endpoint was reached (or should have been) and the call did not succeed."""
+    """The endpoint was reached (or should have been) and the call did not succeed.
+
+    `status` is the HTTP status when there was one; `transport` is True when the endpoint could not be reached at
+    all (connection error, timeout). Together they decide whether another endpoint is worth trying
+    (providers/health.py `is_outage`). `attempts` lists what was tried when several endpoints failed."""
+
+    def __init__(self, message: str, *, status: Optional[int] = None, transport: bool = False,
+                 attempts: Sequence[Mapping[str, Any]] = (), budget_timeout: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.transport = transport
+        self.attempts = list(attempts)
+        # the caller's own latency budget (max_latency_ms) ran out: try elsewhere, but it is not an outage of the
+        # endpoint, so the endpoint is not rested for it
+        self.budget_timeout = budget_timeout
+
+    @property
+    def outage(self) -> bool:
+        from app.providers.health import is_outage
+
+        return is_outage(self.status, self.transport)
 
 
 @dataclass(frozen=True)
@@ -67,9 +87,22 @@ class Connection:
     allowed_data_classes: tuple[str, ...] = ()
     enabled: bool = True
     allow_http_loopback: bool = False           # local vLLM / dev only; never for a hosted tenant
+    # Several keys for the same endpoint ("env:KEY_A", "env:KEY_B"): a key that is rate-limited (429) or refused
+    # (401/402/403) is rested and the next one is used for the same call (providers/health.py). With none, the
+    # single `credential_ref` is used as before.
+    credential_refs: tuple[str, ...] = ()
+    timeout_s: Optional[float] = None           # per-call limit for this endpoint (default adapters.TIMEOUT_S)
+    slow_ms: Optional[int] = None               # typical latency above this marks the endpoint slow (tried last)
 
     def spec_for(self, unit: str) -> Optional[UnitSpec]:
         return next((u for u in self.units if u.unit == unit), None)
+
+    @property
+    def keys(self) -> tuple[Optional[str], ...]:
+        """The credential references to try, in order; (None,) for an endpoint that needs no credential."""
+        if self.credential_refs:
+            return tuple(self.credential_refs)
+        return (self.credential_ref,)
 
 
 @dataclass(frozen=True)

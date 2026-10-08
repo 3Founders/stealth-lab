@@ -65,4 +65,8 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
 # the triage verdict memo and /triage rate window, and its own DB pool (DB_POOL_MAX_SIZE connections EACH: keep
 # WEB_CONCURRENCY x DB_POOL_MAX_SIZE x replicas under the database's connection limit, or use the -pooler endpoint).
 # Per-process limits therefore become per-worker, which is looser by a factor of WEB_CONCURRENCY, never tighter.
-CMD ["sh", "-c", "python scripts/migrate.py && exec uvicorn app.mcp_server.server:app --host 0.0.0.0 --port ${PORT:-8765} --workers ${WEB_CONCURRENCY:-1} --timeout-graceful-shutdown 25 --proxy-headers --forwarded-allow-ips='*'"]
+# Migrations run as MIGRATE_DATABASE_URL when it is set (the owner role: DDL), the app as DATABASE_URL (after the
+# switch, the restricted stealth_app role, which cannot run DDL; 3-hard.md Decision 1, step 3a). Unset, both are
+# DATABASE_URL, exactly as before.
+# --timeout-graceful-shutdown 25 lets in-flight requests finish on SIGTERM (keep the host's stop grace above 25 s).
+CMD ["sh", "-c", "python scripts/migrate.py --dsn \"${MIGRATE_DATABASE_URL:-$DATABASE_URL}\" && exec uvicorn app.mcp_server.server:app --host 0.0.0.0 --port ${PORT:-8765} --workers ${WEB_CONCURRENCY:-1} --timeout-graceful-shutdown 25 --proxy-headers --forwarded-allow-ips='*'"]

@@ -165,6 +165,10 @@ class Settings(BaseSettings):
     # "triage" to JEV_CAPABILITIES -- then the fallbacks) decides before any search whether the request is a
     # reusable task worth a lookup. Other kinds get `outcome: "not_needed"` at once. Fails toward the lookup:
     # no verdict within `find_ways_triage_timeout_ms`, or a skip below `find_ways_triage_min_confidence`, runs it.
+    # MCP tool listing (app/mcp_server/server.py): "progressive" lists only find_ways, report_result,
+    # discover_tools and use_tool -- the others are found with discover_tools and run with use_tool (and stay
+    # callable by name); "all" lists every tool as before.
+    mcp_tool_discovery: str = "progressive"
     find_ways_triage: bool = True
     find_ways_triage_timeout_ms: int = 4000
     find_ways_triage_min_confidence: float = 0.6

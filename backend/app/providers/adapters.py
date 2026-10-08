@@ -53,15 +53,17 @@ def _ms(t0: float) -> int:
 
 async def _post(conn: Connection, url: str, *, json: dict, headers: dict, secret: Optional[str]):
     try:
-        async with http_client(timeout=TIMEOUT_S, follow_redirects=False) as client:
+        async with http_client(timeout=conn.timeout_s or TIMEOUT_S, follow_redirects=False) as client:
             return await client.post(url, json=json, headers=headers)
     except Exception as exc:  # noqa: BLE001 -- any transport failure is one error to the caller
-        raise ProviderCallFailed(f"{conn.connection_id}: request failed ({exc.__class__.__name__})") from exc
+        raise ProviderCallFailed(f"{conn.connection_id}: request failed ({exc.__class__.__name__})",
+                                 transport=True) from exc
 
 
 def _json(conn: Connection, response, secret: Optional[str]) -> Any:
     if response.status_code >= 300:
-        raise ProviderCallFailed(f"{conn.connection_id}: HTTP {response.status_code}: {_snippet(response.text, secret)}")
+        raise ProviderCallFailed(f"{conn.connection_id}: HTTP {response.status_code}: {_snippet(response.text, secret)}",
+                                 status=response.status_code)
     try:
         return response.json()
     except ValueError as exc:

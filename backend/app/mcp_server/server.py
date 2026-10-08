@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import re
 import logging
 import os
 import secrets
@@ -489,7 +490,10 @@ _V1_INSTRUCTIONS = (
     "for any other prompt). (recommend_models + report_model_run do the same by "
     "hand.) On a local server reads need no "
     "token (a hosted one asks you to sign in); report_discovery, submit_way, "
-    "report_model_run and report_result need a signed-in user or write token."
+    "report_model_run and report_result need a signed-in user or write token. "
+    "Tools: find_ways and report_result are listed; discover_tools(need) finds the "
+    "others (call_model, submit_way, report_discovery, recommend_models, "
+    "report_model_run) with their arguments, and use_tool(name, arguments) runs one."
 )
 
 server = MCPServer(
@@ -536,7 +540,9 @@ _TOOL_SCOPES: dict[str, str] = {
     **{n: _READ for n in (
         "retrieve_precedent", "search_procedures", "get_claim_graph", "get_relevant_claims", "get_procedure",
         "check_applicability", "check_procedure", "search_goals", "inspect_goal", "list_goal_procedures",
-        "resolve_intent", "explain_goal_route", "find_ways", "recommend_models",
+        "resolve_intent", "explain_goal_route", "find_ways", "recommend_models", "discover_tools",
+        # use_tool runs another tool, whose own scope is checked when it runs (_traced_tool)
+        "use_tool",
         "get_route_decision", "project_knowledge", "inspect_trajectory",
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
         "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
@@ -568,7 +574,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run", "report_result",
-    "call_model"})
+    "call_model", "discover_tools", "use_tool"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -586,6 +592,10 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     # sends the prompt to an external model/agent endpoint and may spend the connection owner's money
     "call_model": {"title": "Call a connected model or agent", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
+    "discover_tools": {"title": "Find more tools", "read_only_hint": True, "open_world_hint": False},
+    # runs the named tool, which may write or call an external model: not read-only
+    "use_tool": {"title": "Run a discovered tool", "read_only_hint": False, "destructive_hint": False,
+                 "idempotent_hint": False, "open_world_hint": True},
     # publishes to a shared library other people's agents read
     "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
@@ -1359,6 +1369,7 @@ async def recommend_models(ctx: Context, candidates: list[Any], goal_id: str | N
             previous_steps=previous_steps or (), remaining_steps=remaining_steps or ())
     except RoutingError as exc:
         return f"REFUSED: {exc}"
+    await _mark_availability(result, scope)
     return json.dumps(result, default=str)
 
 
@@ -1491,7 +1502,8 @@ async def report_result(ctx: Context, instance_key: str, accepted: bool, model: 
 async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: str | None = None,
                      instance_key: str | None = None, system: str | None = None, max_tokens: int = 1024,
                      temperature: float | None = None, data_class: str = "USER_PRIVATE",
-                     max_cost_usd: float | None = None, org_id: str | None = None) -> str:
+                     max_cost_usd: float | None = None, org_id: str | None = None,
+                     fallback_models: list[str] | None = None, max_latency_ms: int | None = None) -> str:
     """
     Run a prompt on a model or an AI agent (a model with its own harness) that this deployment has
     connected, and get its answer back. Use it for anything: a sub-task, a search, a draft, a second
@@ -1509,40 +1521,69 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
       In a shared deployment every call is checked against that organization's policy (kill switch, allowlists,
       data classes) and held against its budgets first; with no policy the call is refused.
 
+    When a model is not working: if several connected endpoints serve it, the next one is tried automatically.
+    If every endpoint of the model is down, model="auto" moves on to the plan's next model; with a named model,
+    the models in `fallback_models` (["model" or "model|scaffold", ...]) are tried in order -- without it a named
+    model is never swapped for another. The reply's `unit` is the model that actually answered, and
+    `fell_back` lists what failed first. An outage is never reported as a failed attempt of that model.
+    max_latency_ms: your latency budget per attempt (e.g. 20000). An endpoint that has not answered by then is
+      abandoned and the next endpoint -- then, as above, the next model -- is tried. Endpoints that are usually
+      slow are tried after fast ones even without it.
+
     It sends only `prompt` and `system`. It does not stream; a long agent task returns its current state.
 
     Examples: call_model(prompt="Summarise this stack trace: …", model="deepseek-v3.2")
       call_model(prompt="<the sub-task>", model="auto", instance_key="<goal>.9f2c…")  # next rung of the plan
       call_model(prompt="<the sub-task>", model="gemma-4", scaffold="coder")           # an agent with a harness
+      call_model(prompt="…", model="deepseek-v3.2", fallback_models=["qwen3-coder", "gemma-4"])
     """
     pool = ctx.request_context.lifespan_context["pool"]
     from app.providers import CallRequest, ProviderCallFailed, ProviderError, call_unit, unit_of
+
+    if max_latency_ms is not None and not 500 <= max_latency_ms <= 600_000:
+        return "REFUSED: max_latency_ms must be between 500 and 600000"
     from app.routing import plan as _plan
 
     scope = _caller_access_scope()
     try:
+        extra = [unit_of(m, None) for m in (fallback_models or []) if isinstance(m, str) and m.strip()]
         if model == "auto":
             if not instance_key:
                 return "REFUSED: model='auto' needs the instance_key from find_ways' model_plan"
-            unit = _plan._default_unit(await _plan.load_instance(pool, scope, instance_key))
+            instance = await _plan.load_instance(pool, scope, instance_key)
+            unit = _plan._default_unit(instance)
+            ladder = [str(u) for u in (getattr(instance, "decision", None) or {}).get("ladder") or []]
+            extra = (ladder[ladder.index(unit) + 1:] if unit in ladder else []) + extra   # the plan's later rungs
         else:
             unit = unit_of(model, scaffold)
             if instance_key:
                 await _plan.load_instance(pool, scope, instance_key)            # the key must be one we issued
     except _plan.RoutingError as exc:
         return f"REFUSED: {exc}"
-    try:
-        result = await call_unit(
-            pool, scope, unit,
-            CallRequest(prompt=prompt, system=system, max_tokens=max_tokens, temperature=temperature,
-                        data_class=data_class),
-            actor=_resolve_caller_identity(fallback="anonymous-host"),
-            tenant_id=org_id or (scope.org_ids[0] if scope.org_ids else None), max_cost_usd=max_cost_usd,
-            org_id=org_id, governed=settings.deployment_mode == "shared", tool="call_model", instance_key=instance_key)
-    except ProviderCallFailed as exc:
-        return f"FAILED: {exc}"
-    except ProviderError as exc:
-        return f"REFUSED: {exc}"
+    order = list(dict.fromkeys([unit, *extra]))
+    request = CallRequest(prompt=prompt, system=system, max_tokens=max_tokens, temperature=temperature,
+                          data_class=data_class)
+    fell_back: list[dict[str, Any]] = []
+    result = None
+    for candidate in order:
+        try:
+            result = await call_unit(
+                pool, scope, candidate, request,
+                actor=_resolve_caller_identity(fallback="anonymous-host"),
+                tenant_id=org_id or (scope.org_ids[0] if scope.org_ids else None), max_cost_usd=max_cost_usd,
+                org_id=org_id, governed=settings.deployment_mode == "shared", tool="call_model",
+                instance_key=instance_key, max_latency_ms=max_latency_ms)
+            break
+        except ProviderCallFailed as exc:
+            if not exc.outage or len(order) == 1:
+                return f"FAILED: {exc}" + (f" (after: {json.dumps(fell_back)})" if fell_back else "")
+            fell_back.append({"unit": candidate, "error": str(exc)})
+        except ProviderError as exc:
+            if len(order) == 1:
+                return f"REFUSED: {exc}"
+            fell_back.append({"unit": candidate, "refused": str(exc)})
+    if result is None:
+        return "FAILED: no model could answer: " + json.dumps(fell_back)
     usage = {"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost_usd": result.cost_usd,
              "latency_ms": result.latency_ms}
     body: dict[str, Any] = {"unit": result.unit, "text": result.text, "usage": usage}
@@ -1550,11 +1591,16 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
         body["state"] = result.state
     if result.finish_reason:
         body["finish_reason"] = result.finish_reason
+    failover = (result.extra or {}).get("failover")
+    if failover:
+        body["endpoints_failed_first"] = failover
+    if fell_back:
+        body["requested_unit"], body["fell_back"] = unit, fell_back
     if instance_key:
         report = {"instance_key": instance_key, "accepted": "<did your check pass?>",
                   **{k: v for k, v in usage.items() if v is not None and k != "latency_ms"},
                   **({"latency_ms": usage["latency_ms"]} if usage["latency_ms"] is not None else {})}
-        if model != "auto":
+        if model != "auto" or result.unit != unit:                 # not the plan's default rung: name what ran
             report["model"], report["scaffold"] = result.unit.split("|", 1)
         body["next"] = {"check_then_call": "report_result", "with": report}
     return json.dumps(body, default=str)
@@ -1794,6 +1840,7 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
             procedure_id=str(root["procedure_id"]) if root.get("procedure_id") else None,
             candidates=candidates or (), check_kind=check_kind, constraints=constraints,
             **({"local_obs": local_obs} if local_obs else {}))
+        await _mark_availability(body["model_plan"], _caller_access_scope())
         if local_args:
             rows = _routing_rows(body["model_plan"], routes, library, str(root["goal_id"]))
             if rows:
@@ -1801,6 +1848,154 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
     except Exception as exc:  # noqa: BLE001 -- the plan is an addition; the knowledge still stands
         body["model_plan"] = {"status": "unavailable", "reason": f"{type(exc).__name__}: {exc}"}
     return json.dumps(body, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Progressive tool discovery (settings.mcp_tool_discovery = "progressive", the default).
+#
+# Why: every listed tool's name, description and argument schema goes into the agent's context on EVERY turn, and
+# most turns need only find_ways. So tools/list shows a small core -- find_ways, report_result and the two tools
+# below -- and the rest (call_model, recommend_models, report_model_run, submit_way, report_discovery) are found
+# when needed: discover_tools(need) returns the matching tools with their full arguments, and use_tool(name,
+# arguments) runs one. This works on every client, including ones that cannot refresh their tool list mid-session
+# (the transport is stateless, so the server cannot push tools/list_changed). Hidden tools stay callable by name,
+# so the hooks, the executor and older clients that call them directly keep working. "all" lists every tool.
+# ---------------------------------------------------------------------------
+
+CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "report_result", "discover_tools", "use_tool"})
+DISCOVERY_TOOLS: frozenset[str] = frozenset({"discover_tools", "use_tool"})
+
+
+def _deferred_tools() -> list[Any]:
+    return [t for t in server._tool_manager.list_tools() if t.name in V1_TOOLS and t.name not in CORE_TOOLS]
+
+
+def _summary(description: str) -> str:
+    text = " ".join((description or "").split())
+    end = text.find(". ")
+    return text if end < 0 else text[: end + 1]
+
+
+def _tool_entry(info: Any, full: bool) -> dict[str, Any]:
+    ann = getattr(info, "annotations", None)
+    entry: dict[str, Any] = {"name": info.name,
+                             "title": getattr(info, "title", None) or getattr(ann, "title", None) or info.name,
+                             "summary": _summary(info.description or "")}
+    if ann is not None:
+        entry["read_only"] = bool(getattr(ann, "read_only_hint", False))
+    if full:
+        entry["description"] = (info.description or "").strip()
+        entry["arguments"] = info.parameters
+        entry["call_with"] = f"use_tool(name={info.name!r}, arguments={{...}})"
+    return entry
+
+
+@server.tool()
+async def discover_tools(ctx: Context, need: str = "", names: list[str] | None = None) -> str:
+    """
+    Find more StealthLab tools when you need them. Only the core tools are listed up front; this returns the others
+    that match what you need to do, with their full arguments. Run one with use_tool(name, arguments).
+
+    need: what you want to do in plain words ("run a prompt on another model", "propose a new way", "report a
+      fix", "pick a model for this task", "report a model attempt"). Leave both empty for the short catalog.
+    names: exact tool names, for their full descriptions and arguments.
+
+    Example: discover_tools(need="run this sub-task on a cheaper model") -> call_model with its arguments.
+    """
+    deferred = _deferred_tools()
+    if names:
+        wanted = [t for t in deferred if t.name in set(names)]
+        unknown = sorted(set(names) - {t.name for t in wanted})
+        return json.dumps({"tools": [_tool_entry(t, True) for t in wanted],
+                           **({"unknown": unknown} if unknown else {})}, default=str)
+    if not need.strip():
+        return json.dumps({"tools": [_tool_entry(t, False) for t in deferred],
+                           "next": "discover_tools(names=[...]) for a tool's arguments, then use_tool(name, arguments)"},
+                          default=str)
+    words = {w for w in re.findall(r"[a-z0-9]+", need.lower()) if len(w) > 2}
+    scored = []
+    for t in deferred:
+        text = f"{t.name.replace('_', ' ')} {t.description or ''}".lower()
+        score = sum(1 for w in words if w in text) + (3 if any(w in t.name for w in words) else 0)
+        if score:
+            scored.append((score, t))
+    scored.sort(key=lambda st: (-st[0], st[1].name))
+    matches = [t for _, t in scored[:3]]
+    if not matches:
+        return json.dumps({"tools": [_tool_entry(t, False) for t in deferred],
+                           "note": "nothing matched closely; this is every additional tool"}, default=str)
+    return json.dumps({"tools": [_tool_entry(t, True) for t in matches]}, default=str)
+
+
+@server.tool()
+async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = None) -> str:
+    """
+    Run a tool you found with discover_tools: use_tool(name, arguments) -- arguments exactly as discover_tools
+    listed them. The tool's own permissions and checks apply as if you had called it directly.
+
+    Example: use_tool(name="call_model", arguments={"prompt": "Summarise this log: ...", "model": "deepseek-v3.2"})
+    """
+    if name in DISCOVERY_TOOLS:
+        return f"REFUSED: {name!r} is called directly, not through use_tool"
+    if name not in V1_TOOLS:
+        return f"REFUSED: no tool named {name!r}; call discover_tools(need=...) to find one"
+    try:
+        result = await server.call_tool(name, dict(arguments or {}), ctx)
+    except PermissionError:
+        raise                                   # the tool's own scope check: surface it exactly as a direct call would
+    except Exception as exc:  # noqa: BLE001 -- bad arguments come back as text the agent can act on
+        return f"FAILED: {name}: {exc}"
+    parts = [getattr(c, "text", None) for c in getattr(result, "content", None) or []]
+    text = "\n".join(p for p in parts if p)
+    if getattr(result, "is_error", False) or getattr(result, "isError", False):
+        return f"FAILED: {name}: {text}"
+    return text
+
+
+_ALL_LIST_TOOLS = server.list_tools
+
+
+async def _list_tools_progressively():
+    tools = await _ALL_LIST_TOOLS()
+    if settings.mcp_tool_discovery == "all":
+        return [t for t in tools if t.name not in DISCOVERY_TOOLS]
+    return [t for t in tools if t.name in CORE_TOOLS]
+
+
+server.list_tools = _list_tools_progressively  # type: ignore[method-assign]
+
+
+async def _mark_availability(plan: dict[str, Any], scope: Any) -> None:
+    """Annotate a recommendation / model plan with which ladder units have a working endpoint right now
+    (providers/health.py). The ladder itself is a quality decision and is left as it is; `availability` and
+    `next_available` say what to run first when a rung's endpoints are all down. Units the deployment does not
+    serve (the caller runs them) are "not_served": their health is unknown here. Never fails the reply."""
+    ladder = [str(u) for u in (plan.get("ladder") or (plan.get("recommended") or {}).get("ladder") or [])]
+    if not ladder:
+        return
+    try:
+        from app.providers import unit_availability
+
+        status = await unit_availability(scope, ladder)
+    except Exception:  # noqa: BLE001 -- availability is an annotation, never a reason to fail the plan
+        return
+    down = {u: s for u, s in status.items() if s["status"] == "unavailable"}
+    slow = {u: s for u, s in status.items() if s["status"] == "slow"}
+    if slow and not down:
+        plan["availability"] = status
+        plan["availability_note"] = (f"{', '.join(slow)} is answering slowly right now; pass max_latency_ms to "
+                                     "call_model to move on to the next model when it does not answer in time.")
+        return
+    if not down:
+        return
+    plan["availability"] = status
+    first = next((u for u in ladder if status.get(u, {}).get("status") != "unavailable"), None)
+    plan["next_available"] = first
+    plan["availability_note"] = (
+        f"{', '.join(down)} has no working endpoint right now (an outage, not a judgment of the model); "
+        + (f"run {first!r} first. call_model(model='auto') skips it by itself." if first else
+           "no rung of this ladder is reachable now; retry later.")
+        + " Do not report a skipped model to report_result.")
 
 
 def _library_context(repo_identity: Any, library_rows: str) -> Any:
