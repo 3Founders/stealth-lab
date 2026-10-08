@@ -258,10 +258,11 @@ use; **(C)** = Chaitanya; **(Agent)** = an agent session. Details for each item 
 - [x] 1. (Agent, 2026-10-09, 93380e5) Semantic codes for Ways: 192-code codebook from 20,731 Ways; bundle refit
       with code parents (117,731 results, 70 models). Codes separate difficulty (pass rate 0.09-0.27 by group);
       whether they separate WHICH model is better is untested (coded results are mostly SWE-agent Llama runs).
-- [ ] 2. (Agent) An experiment runner that routes. It calls find_ways with candidate models, runs the first rung,
+- [x] 2. (Agent, 2026-10-09, 43dd982: experiments/local_eval/route_run.py) An experiment runner that routes. It calls find_ways with candidate models, runs the first rung,
       runs the check, calls report_result and escalates, and records cost and pass/fail per attempt. Fork D's
       harness runs one fixed model.
-- [ ] 3. (Agent drafts, Owner approves) Pre-registration for the routing test, frozen before any run:
+- [ ] 3. (Agent drafted 2026-10-09: experiments/local_eval/ROUTING_PREREGISTRATION.md + routing.json; Owner fills the
+      [bracketed] choices and approves) Pre-registration for the routing test, frozen before any run:
       - **arms:** none / .stealth knowledge / knowledge + routing at targets 0.7, 0.8, 0.9 / always-strong /
         always-cheap;
       - **models;**
