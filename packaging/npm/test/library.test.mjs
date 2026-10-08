@@ -328,3 +328,20 @@ test("share drafts a submit_way call from an entry, never the diff or paths", ()
   assert.throws(() => L.shareDraft(root, "L-77d3e0"), /failed attempt/);
   assert.throws(() => L.shareDraft(root, "L-ffffff"), /no library entry/);
 });
+
+test("task_features: fix sizes per entry and the repo median, numbers only", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-tf-"));
+  fs.mkdirSync(path.join(root, ".stealth", "library", "solutions"), { recursive: true });
+  const diff = (n) => [`diff --git a/src/a${n}.py b/src/a${n}.py`, "@@ -1 +1 @@", "-x", "+y", "+z",
+                       "diff --git a/pkg/b.ts b/pkg/b.ts", "@@ -1 +1 @@", "+w"].join("\n");
+  fs.writeFileSync(path.join(root, ".stealth", "library", "solutions", "L-0a91f2.diff"), diff(1));
+  fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+    "GOAL|L-0a91f2|Fix it|unit=.|g=-|outcome=pass|status=current|verified_at=2026-08-02|route=-|tags=-",
+    "PROC|L-0a91f2.p1|Way|p=-|solution=solutions/L-0a91f2.diff|touches=-",
+    "GOAL|L-77d3e0|Failed|unit=.|g=-|outcome=fail|status=current|verified_at=2026-08-02|route=-|tags=-", ""].join("\n"));
+  const tf = L.taskFeatures(root);
+  assert.deepEqual(tf.entries["L-0a91f2"], { files: 2, hunks: 2, lines_added: 3, lines_removed: 1, languages: 2, packages: 2 });
+  assert.deepEqual(tf.repo, tf.entries["L-0a91f2"]);
+  assert.ok(!JSON.stringify(tf).includes("src/"));
+  assert.equal(L.requestPayload(root).task_features.entries["L-0a91f2"].files, 2);
+});

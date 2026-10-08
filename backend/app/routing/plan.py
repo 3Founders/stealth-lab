@@ -169,9 +169,12 @@ async def _model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_
                       candidates: Sequence[Any] = (), check_kind: Optional[str] = None,
                       constraints: Optional[Mapping[str, Any]] = None,
                       cfg: RoutingDefaults = DEFAULTS,
-                      local_obs: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+                      local_obs: Sequence[Mapping[str, Any]] = (),
+                      virtual: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """`local_obs`: the caller's own attempt counts on this Goal ([{unit, n, ok}], from the OBS lines of
-    `.stealth/routing.md`); they condition the plan on what happened in the caller's repository."""
+    `.stealth/routing.md`); they condition the plan on what happened in the caller's repository.
+    `virtual`: the task has no global Goal; `goal_id` is its virtual key (service.virtual_goal_id) and this says
+    which case it is ({kind, ref?, features?, parents?}), which sets its prior (service.prior_draws_for_case)."""
     constraints = {k: v for k, v in dict(constraints or {}).items() if k != CALLER_KEY}
     units, problems = await gather_candidates(pool, scope=scope, goal_id=goal_id, constraints=constraints,
                                               explicit=candidates)
@@ -185,7 +188,8 @@ async def _model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_
             pool, goal_id=goal_id, candidates=units, access_scope=scope, procedure_id=procedure_id,
             check_kind=check_kind, instance_key=new_instance_key(goal_id),
             constraints={**constraints, CALLER_KEY: scope.viewer_id}, cfg=cfg,
-            **({"local_obs": list(local_obs)} if local_obs else {}))
+            **({"local_obs": list(local_obs)} if local_obs else {}),
+            **({"virtual": dict(virtual)} if virtual else {}))
     except RoutingError as exc:
         return {"status": "unavailable", "reason": str(exc), **extra}
     return {**_compact(rec), **extra}
@@ -208,6 +212,8 @@ def _compact(rec: Mapping[str, Any]) -> dict[str, Any]:
                    "ladder": [{"unit": u, **units.get(u, {})} for u in ladder]}],
         "model_basis": evidence.get("models") or {},
         "instance_key": rec["instance_key"], "recommendation_id": rec["recommendation_id"],
+        "goal_id": rec.get("goal_id"),
+        **({"case": evidence["case"]} if evidence.get("case") else {}),
         "ladder": ladder, "meets_reliability_target": rec.get("meets_reliability_target"),
         "reliability_target": rec.get("reliability_target"), "check_kind": rec.get("check_kind"),
         "recommended": rec.get("recommended"), "alternatives": rec.get("alternatives") or [],
@@ -247,11 +253,16 @@ async def _load_instance(pool: Any, scope: AccessScope, instance_key: str) -> In
     if goal_id is None:
         raise RoutingError("this instance_key did not come from find_ways / report_result; for keys from "
                            "recommend_models use report_model_run")
-    goal = await store.visible_goal(pool, goal_id, scope)
-    if goal is None:
-        raise unknown
     decision = await store.instance_decision(pool, goal_id, instance_key)
     if decision is None:
+        raise unknown
+    # a virtual key (no stored Goal) is reachable only through its own decision, which the RLS scope already
+    # limited to the caller; a real Goal must also still be visible
+    if (decision.get("constraints") or {}).get(service.VIRTUAL_KEY):
+        goal = {"visibility": decision.get("visibility"), "owner_id": decision.get("owner_id")}
+    else:
+        goal = await store.visible_goal(pool, goal_id, scope)
+    if goal is None:
         raise unknown
     # The binding is the EARLIEST decision's caller, so a later decision made under the same key (recommend_models
     # lets a caller reuse a key) can neither take the instance over nor clear its owner.

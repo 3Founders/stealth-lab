@@ -27,12 +27,64 @@ def _globals_cached(version: int, blob: bytes, meta_json: str) -> predict.Global
 
 
 async def _globals(pool: Any, version: Optional[int] = None) -> Optional[predict.Globals]:
+    """The fitted global draws: the database's (a given version, or the active one), else the bundled public
+    prior (app/routing/prior_bundle.py) -- so routing works before any production fit has run."""
     import json
 
+    from app.routing import prior_bundle
+
+    if version == prior_bundle.BUNDLE_VERSION:
+        return prior_bundle.load_globals()
     row = await (store.params_version(pool, version) if version is not None else store.active_params(pool))
     if row is None:
-        return None
+        return prior_bundle.load_globals() if version is None else None
     return _globals_cached(row["version"], row["draws"], json.dumps(row["meta"], sort_keys=True))
+
+
+async def _card_rows(pool: Any) -> list[dict]:
+    """Model cards: the bundled ones, with the database's rows taking precedence for the same model."""
+    from app.routing import prior_bundle
+
+    rows = {r["model_key"]: r for r in prior_bundle.card_rows()}
+    rows.update({r["model_key"]: r for r in await store.model_cards(pool)})
+    return list(rows.values())
+
+
+# A plan without a stored Goal ("virtual"): the task resolved to no global Goal, so it is routed on a key of its own
+# -- this repository's library entry, this repository as a whole, or the generic coding task -- with a prior made
+# for that case (prior_draws_for_case). Its decisions and attempts are logged under that key like any Goal's, so
+# report_result, the repository's routing.md counts and later fits all work the same way.
+VIRTUAL_KEY = "_virtual"
+VIRTUAL_KINDS = ("library", "repo", "generic")
+
+
+def virtual_goal_id(kind: str, ref: str = "") -> str:
+    """A stable UUID for a virtual key (uuid5), so the same library entry or repository always maps to one log."""
+    if kind not in VIRTUAL_KINDS:
+        raise RoutingError(f"virtual goal kind must be one of {VIRTUAL_KINDS}")
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"stealthlab:routing:{kind}:{ref}"))
+
+
+async def prior_draws_for_case(pool: Any, g: predict.Globals, virtual: Mapping[str, Any],
+                               rng: np.random.Generator) -> np.ndarray:
+    """(S, D) prior draws of a virtual Goal, set by its case:
+      * its structural features (the fix size of the library entry, or this repository's typical fix) move the
+        difficulty through the fitted regression W -- no features means the population mean;
+      * `parents` (global Goals it is close to: find_ways' suggested candidate) pull it toward what is known
+        about them, exactly as a Goal's parents do."""
+    from app.routing.fit import aligned_goal_draws
+
+    parents = []
+    for pid in list(virtual.get("parents") or [])[:3]:
+        try:
+            row = (await store.goal_rows(pool, [str(pid)])).get(str(pid))
+        except Exception:  # noqa: BLE001 -- a parent that cannot be read only weakens the prior
+            row = None
+        if row is None:
+            continue
+        parents.append((await aligned_goal_draws(pool, g, str(pid), rng=rng),
+                        g.phi1(row.get("embedding"), row.get("features"))))
+    return predict.goal_prior_draws(g, g.phi1(None, virtual.get("features")), parents, rng)
 
 
 def _seed(*parts: Any) -> int:
@@ -68,7 +120,8 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
                     step_order: Optional[int] = None, step_role: Optional[str] = None,
                     previous_steps: Sequence[Mapping[str, Any]] = (),
                     remaining_steps: Sequence[Mapping[str, Any]] = (),
-                    local_obs: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+                    local_obs: Sequence[Mapping[str, Any]] = (),
+                    virtual: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """The ladder to run for one instance of `goal_id` (docs/model_routing_plan.md §6-§7, §10).
 
     Task level (step_order None): a ladder for the whole task.
@@ -80,7 +133,14 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     `local_obs` ([{unit, n, ok}], the caller's `.stealth/routing.md` OBS counts) are earlier
     instances of this Goal in the caller's own repository: see `local_obs_loglik`."""
     constraints = dict(constraints or {})
-    goal = await store.visible_goal(pool, goal_id, access_scope)
+    virtual = virtual or constraints.pop(VIRTUAL_KEY, None)
+    if virtual is not None:
+        if virtual.get("kind") not in VIRTUAL_KINDS:
+            raise RoutingError(f"virtual goal kind must be one of {VIRTUAL_KINDS}")
+        viewer = None if access_scope.viewer_id is None else str(access_scope.viewer_id)
+        goal = {"visibility": "private" if viewer else "public", "owner_id": viewer, "tenant_id": None}
+    else:
+        goal = await store.visible_goal(pool, goal_id, access_scope)
     if goal is None:
         raise RoutingError(f"goal {goal_id} not found")
     units = _parse_units(candidates)
@@ -97,7 +157,8 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     if not step_level and (previous_steps or remaining_steps):
         raise RoutingError("previous_steps / remaining_steps need step_order (the step being routed)")
 
-    stored_goal = (await store.load_posteriors(pool, "goal", [goal_id])).get(goal_id)
+    stored_goal = None if virtual is not None else (
+        await store.load_posteriors(pool, "goal", [goal_id])).get(goal_id)
     # Use the global draws the Goal's posterior was fitted against, so every quantity
     # below comes from one consistent joint posterior.
     g = await _globals(pool, stored_goal["version"]) if stored_goal else await _globals(pool)
@@ -114,8 +175,11 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
 
     from app.routing.fit import aligned_goal_draws
 
-    goal_x = (predict.unpack(stored_goal["draws"])["x"] if stored_goal and stored_goal["version"] == g.version
-              else await aligned_goal_draws(pool, g, goal_id, rng=rng))
+    if virtual is not None:
+        goal_x = await prior_draws_for_case(pool, g, virtual, rng)
+    else:
+        goal_x = (predict.unpack(stored_goal["draws"])["x"] if stored_goal and stored_goal["version"] == g.version
+                  else await aligned_goal_draws(pool, g, goal_id, rng=rng))
     proc_c, stored_steps = None, None
     if procedure_id:
         posts = await store.load_posteriors(pool, "procedure", [procedure_id])
@@ -130,7 +194,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     registry = await store.model_registry(pool)
     from app.routing.cards import load_cards, resolve
 
-    cards = load_cards(await store.model_cards(pool))
+    cards = load_cards(await _card_rows(pool))
     prices = await store.current_prices(pool, [m for m, _ in units])
     list_priced = []
     for m, _s in units:                  # no contracted price yet: the card's public list price
@@ -289,7 +353,11 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
         "value_usd": value, "wrong_penalty_usd": wrong_penalty, "check_kind": check_kind,
         "propensity": result.propensity, "excluded": excluded,
         "evidence": {"goal_observations": stored_goal["n_observations"] if stored_goal else 0,
-                     "goal_posterior": (stored_goal or {}).get("method") or "prior (parents + embedding)",
+                     "goal_posterior": (stored_goal or {}).get("method") or (
+                         _case_label(virtual) if virtual is not None else "prior (parents + embedding)"),
+                     **({"case": {k: virtual.get(k) for k in ("kind", "ref") if virtual.get(k)}}
+                        if virtual is not None else {}),
+                     **({"prior": "bundled public prior"} if g.meta.get("bundled") else {}),
                      "models": {unit_id(m, s): _model_basis(g, m, registry, cards) for m, s in usable},
                      **({"list_priced": list_priced} if list_priced else {}),
                      **({"local": local_evidence} if local_evidence else {})},
@@ -313,11 +381,20 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
                             "previous_steps": len(previous_steps), "remaining_steps": len(later),
                             # counts only (unit, n, ok): report_result re-solves the next rung with them
                             **({"local_obs": [dict(o) for o in list(local_obs)[:cfg.max_candidates]]}
-                               if local_obs else {})},
+                               if local_obs else {}),
+                            # carried into every re-decision of this instance (report_result)
+                            **({VIRTUAL_KEY: dict(virtual)} if virtual is not None else {})},
             "visibility": goal["visibility"],
             "owner_id": store.routing_owner(goal["visibility"], goal["owner_id"], goal.get("tenant_id")),
             "step_order": current})
     return response
+
+
+def _case_label(virtual: Mapping[str, Any]) -> str:
+    parts = ["fix-size features" if virtual.get("features") else "population mean"]
+    if virtual.get("parents"):
+        parts.append("near global Goals")
+    return f"case prior ({virtual.get('kind')}: {' + '.join(parts)})"
 
 
 def local_obs_loglik(p: np.ndarray, eps_w: np.ndarray, alpha: np.ndarray, beta: np.ndarray,

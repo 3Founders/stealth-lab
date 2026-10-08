@@ -236,7 +236,11 @@ def test_private_visibility_is_kept_on_the_observation(monkeypatch):
 def test_load_instance_refuses_foreign_unknown_and_invisible(monkeypatch):
     async def none_goal(pool, goal_id, scope):
         return None
+
+    async def real_goal_decision(pool, goal_id, key):     # a decision on a REAL Goal the caller cannot see
+        return {"id": "rec-1", "goal_id": goal_id, "constraints": {}, "visibility": "private", "owner_id": "u2"}
     monkeypatch.setattr(store, "visible_goal", none_goal)
+    monkeypatch.setattr(store, "instance_decision", real_goal_decision)
     with pytest.raises(service.RoutingError, match="did not come from find_ways"):
         run(plan.load_instance(None, SCOPE, "plain-key"))
     with pytest.raises(service.RoutingError, match="unknown instance_key"):
@@ -380,10 +384,83 @@ def test_find_ways_attaches_the_plan_for_a_resolved_goal(monkeypatch):
     assert (seen["goal_id"], seen["procedure_id"], seen["candidates"]) == (GOAL, PROC, ["a|h"])
 
 
-def test_find_ways_says_no_goal_when_nothing_resolved_and_ignores_refusals():
-    body = json.loads(_attach(json.dumps({"outcome": "ambiguous"}), candidates=["a|h"]))
-    assert body["model_plan"]["status"] == "no_goal" and body["outcome"] == "ambiguous"
+def test_find_ways_plans_an_unresolved_task_on_a_virtual_key_and_ignores_refusals(monkeypatch):
+    monkeypatch.setattr(srv, "_caller_access_scope", lambda: SCOPE)
+    seen = {}
+
+    async def fake_plan(pool, **kw):
+        seen.update(kw)
+        return {"status": "ok", "ladder": ["a|h"], "instance_key": f"{kw['goal_id']}.k"}
+    monkeypatch.setattr(plan, "model_plan", fake_plan)
+    body = json.loads(_attach(json.dumps({"outcome": "ambiguous", "suggested": {"goal_id": GOAL}}),
+                              candidates=["a|h"]))
+    assert body["outcome"] == "ambiguous" and body["model_plan"]["status"] == "ok"
+    assert seen["goal_id"] == service.virtual_goal_id("generic")
+    assert seen["virtual"] == {"kind": "generic", "parents": [GOAL]}     # the suggested Goal pulls the prior
+    assert seen.get("procedure_id") is None
     assert _attach("REFUSED: bad json", candidates=["a|h"]) == "REFUSED: bad json"
+
+
+class _Lib:
+    def __init__(self, repo_id):
+        self.identity = type("I", (), {"repo_id": repo_id})() if repo_id else None
+        self.rows = []
+
+
+def test_plan_case_order_global_then_library_then_repo_then_generic():
+    stats = {"files": 2, "hunks": 3, "lines_added": 10, "lines_removed": 4, "languages": 1, "packages": 1}
+    repo = {"files": 1, "hunks": 1, "lines_added": 3, "lines_removed": 1, "languages": 1, "packages": 1}
+    tf = {"entries": {"L-0a91f2": stats}, "repo": repo}
+    resolved = {"outcome": "resolved", "procedures": [{"goal_id": GOAL, "procedure_id": PROC}]}
+    root, virtual = srv._plan_case(resolved, _Lib("r:0123456789abcdef"), tf)
+    assert root["goal_id"] == GOAL and virtual is None
+
+    matched = {"outcome": "no_match", "library_matches": [
+        {"id": "L-77d3e0", "judged": True, "relation": "matches", "outcome": "fail"},      # a failed attempt: skip
+        {"id": "L-0a91f2", "judged": True, "relation": "matches", "outcome": "pass"}]}
+    root, virtual = srv._plan_case(matched, _Lib("r:0123456789abcdef"), tf)
+    assert root is None and virtual["kind"] == "library" and virtual["ref"] == "L-0a91f2"
+    assert virtual["features"] == stats
+    assert virtual["id"] == service.virtual_goal_id("library", "r:0123456789abcdef:L-0a91f2")
+
+    partial = {"outcome": "no_match", "library_matches": [{"id": "L-0a91f2", "judged": True, "relation": "partial"}]}
+    _, virtual = srv._plan_case(partial, _Lib("r:0123456789abcdef"), tf)
+    assert virtual["kind"] == "repo" and virtual["features"] == repo
+    assert virtual["id"] == service.virtual_goal_id("repo", "r:0123456789abcdef")
+
+    _, virtual = srv._plan_case({"outcome": "no_match"}, None, None)
+    assert virtual == {"id": service.virtual_goal_id("generic"), "kind": "generic", "parents": []}
+
+
+def test_virtual_keys_are_stable_and_distinct():
+    assert service.virtual_goal_id("repo", "r:1") == service.virtual_goal_id("repo", "r:1")
+    assert len({service.virtual_goal_id("repo", "r:1"), service.virtual_goal_id("library", "r:1"),
+                service.virtual_goal_id("generic")}) == 3
+    with pytest.raises(service.RoutingError):
+        service.virtual_goal_id("other")
+
+
+def test_a_virtual_instance_loads_through_its_own_decision(monkeypatch):
+    vid = service.virtual_goal_id("repo", "r:1")
+
+    async def never(pool, goal_id, scope):
+        raise AssertionError("a virtual key has no Goal row to look up")
+
+    async def decision(pool, goal_id, key):
+        return {"id": "rec-1", "goal_id": goal_id, "procedure_id": None, "candidates": ["a|h"], "ladder": ["a|h"],
+                "constraints": {"_virtual": {"kind": "repo"}}, "visibility": "private", "owner_id": "u1"}
+
+    async def attempts(pool, goal_id, key):
+        return []
+
+    async def issuer(pool, goal_id, key):
+        return str(SCOPE.viewer_id) if SCOPE.viewer_id is not None else None
+    monkeypatch.setattr(store, "visible_goal", never)
+    monkeypatch.setattr(store, "instance_decision", decision)
+    monkeypatch.setattr(store, "instance_attempts", attempts)
+    monkeypatch.setattr(store, "instance_issuer", issuer)
+    inst = run(plan.load_instance(None, SCOPE, f"{vid}.abc"))
+    assert inst.decision["constraints"]["_virtual"]["kind"] == "repo"
 
 
 def test_a_plan_failure_never_breaks_find_ways(monkeypatch):

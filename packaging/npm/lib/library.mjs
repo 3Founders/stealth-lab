@@ -802,6 +802,59 @@ function capBytes(text, max) {
   return cut.slice(0, cut.lastIndexOf("\n") + 1);
 }
 
+// ---- task_features: the fix size of each solved entry, and of this repository's typical fix (numbers only).
+// The routing model learned how a fix's size moves a task's difficulty (backend/app/routing/goal_features.py); a
+// plan keyed to a library entry or to this repository uses these to set its prior. Same counting as patch_stats.
+const LANG = {
+  py: "python", pyi: "python", js: "js", jsx: "js", mjs: "js", ts: "ts", tsx: "ts", go: "go", rs: "rust",
+  java: "java", kt: "kotlin", scala: "scala", c: "c", h: "c", cc: "cpp", cpp: "cpp", hpp: "cpp", cs: "csharp",
+  rb: "ruby", php: "php", swift: "swift", m: "objc", sh: "shell", sql: "sql", yml: "yaml", yaml: "yaml",
+  toml: "toml", json: "json", md: "docs", rst: "docs", txt: "docs", cfg: "config", ini: "config", html: "html",
+  css: "css",
+};
+
+export function patchStats(patch) {
+  const files = [...String(patch || "").matchAll(/^diff --git a\/(\S+) b\/(\S+)/gm)].map((m) => m[2]);
+  let hunks = 0, added = 0, removed = 0;
+  for (const line of String(patch || "").split("\n")) {
+    if (line.startsWith("@@")) hunks++;
+    else if (line.startsWith("+") && !line.startsWith("+++")) added++;
+    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  const langs = new Set(files.filter((f) => f.split("/").pop().includes("."))
+    .map((f) => LANG[f.split(".").pop().toLowerCase()] || "other"));
+  const tops = new Set(files.map((f) => (f.includes("/") ? f.split("/")[0] : ".")));
+  return { files: files.length, hunks, lines_added: added, lines_removed: removed, languages: langs.size,
+           packages: tops.size };
+}
+
+const MAX_FEATURE_ENTRIES = 200;
+
+export function taskFeatures(root) {
+  const entries = {};
+  let n = 0;
+  for (const e of loadLibrary(root).entries) {
+    if (n >= MAX_FEATURE_ENTRIES) break;
+    if (e.outcome === "fail") continue;
+    const sol = e.procs.map((p) => p.solution).find(Boolean);
+    const diff = sol ? read(P(root, sol.startsWith("library/") ? sol : `library/${sol}`)) : null;
+    if (!diff) continue;
+    const st = patchStats(diff);
+    if (!st.files) continue;
+    entries[e.id] = st;
+    n++;
+  }
+  const all = Object.values(entries);
+  if (!all.length) return null;
+  const median = (k) => {
+    const v = all.map((x) => x[k]).sort((a, b) => a - b);
+    return v[Math.floor((v.length - 1) / 2)];
+  };
+  const repo = Object.fromEntries(["files", "hunks", "lines_added", "lines_removed", "languages", "packages"]
+    .map((k) => [k, median(k)]));
+  return { entries, repo };
+}
+
 export function requestPayload(root, { env = process.env } = {}) {
   const out = {};
   try {
@@ -816,6 +869,10 @@ export function requestPayload(root, { env = process.env } = {}) {
   }
   const ident = repoIdentityPayload(root, env);
   if (ident) out.repo_identity = ident;
+  try {
+    const tf = taskFeatures(root);
+    if (tf) out.task_features = tf;
+  } catch { /* no diffs: the plan uses the population prior */ }
   return out;
 }
 

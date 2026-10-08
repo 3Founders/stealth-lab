@@ -80,6 +80,43 @@ model stayed with that Goal. `model_update.py` closes this:
 - The next nightly fit absorbs the same data, and the update starts again from zero.
 - Private observations never enter it. They still update their own Goal through the local refit, as before.
 
+## Routing without a production fit or a global Goal (2026-10-08)
+
+**The bundled prior.**
+- `scripts/build_prior_bundle.py` fits the model once on the public files only:
+  - SWE-bench experiment results;
+  - the benchmark items' fix sizes;
+  - the OpenRouter cards.
+
+  It uses no database and no link to our Goals.
+- The result ships in `backend/app/routing/data/` (`prior_bundle.npz`, `prior_bundle.json`, `prior_cards.json`).
+- The service uses it whenever the database has no fitted parameters, and its cards fill in any model the database
+  has no card for. A database fit, once one exists, always wins. Bundle version 0 never collides with a database
+  version.
+
+**Every task gets a plan.**
+- When `find_ways` resolves no global Goal, the task is planned on a key of its own, in this order
+  (`server._plan_case`):
+
+  | case | when | key | prior set by |
+  |---|---|---|---|
+  | global Goal | `resolved` with a Procedure | the Goal | its stored posterior, or its parents + embedding |
+  | `library` | a `.stealth` library entry the judge says *matches* (not a failed attempt) | uuid5(repo id + entry id) | that entry's own fix size |
+  | `repo` | no match, but the repository has an identity | uuid5(repo id) | this repository's median fix size |
+  | `generic` | nothing else | one shared key | the population mean |
+
+- In every non-Goal case, `find_ways`' `suggested` Goal (on `ambiguous`) is added as a parent. It pulls the prior
+  toward what is known about that Goal.
+- **Fix sizes:** `stealthlab-mcp library payload` sends them as `task_features`, counted from
+  `library/solutions/*.diff` (files, hunks, lines added/removed, languages, packages). Only numbers are sent,
+  never the diff. They go through the fitted regression `W`, the same way a Goal's features do.
+- **Logging:** a virtual key's decisions and attempts are logged like a Goal's, so these all work unchanged:
+  - `report_result` and its next-model replies;
+  - the repository's `routing.md` ROUTE/OBS lines, keyed to the virtual id (and naming the library entry);
+  - later fits.
+- **The plan reports its case:** `model_plan.case = {kind, ref}`, and `evidence.goal_posterior` says
+  `case prior (...)`.
+
 ## Defaults the plan uses
 
 - **The caller's own model.** `find_ways(..., my_model="claude-sonnet-4-5")` makes it a candidate, on the

@@ -1638,7 +1638,7 @@ async def find_ways(
     candidates: list[Any] | None = None, check_kind: str | None = None,
     model_constraints: dict[str, Any] | None = None, detail: str = "full",
     repo_identity: dict[str, Any] | None = None, library_rows: str = "", route_obs: str = "",
-    my_model: str | None = None,
+    my_model: str | None = None, task_features: dict[str, Any] | None = None,
 ) -> str:
     """
     Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
@@ -1714,6 +1714,11 @@ async def find_ways(
     MCP client), so the plan says whether to keep the task yourself or hand it to a cheaper / stronger
     model. Each rung carries p_ok (mean and 90% interval) and expected cost; `basis` says whether that
     rests on observed runs ("posterior") or on public benchmarks and model cards only ("prior").
+    A task with no global Goal is still planned, on a key of its own: the matched `.stealth` library entry,
+    else this repository, else the generic coding task (`model_plan.case` says which), each with its own prior.
+    task_features: {"entries": {"<L-id>": stats}, "repo": stats}, stats = {files, hunks, lines_added,
+      lines_removed, languages, tests?, packages} counted from the library's diffs (`stealthlab-mcp library
+      payload` sends them; numbers only, never the diff). They set the case's difficulty prior.
 
     detail: "full" (default) returns every step in full. "summary" shortens step text, checks and
     example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and
@@ -1766,6 +1771,8 @@ async def find_ways(
     # the library arguments only reach the plan when the caller sent them: without them, exactly as before
     local = {} if library is None and not (route_obs or "").strip() else {
         "route_obs": route_obs, "library": library, "local_args": True}
+    if task_features:
+        local["task_features"] = task_features
     own = _routing_plan.caller_unit(my_model, (_find_ways_client(ctx) or {}).get("name"))
     if own is not None:
         candidates = [*(candidates or []), own]
@@ -1820,9 +1827,41 @@ def _mark_untrusted(reply: str) -> str:
     return json.dumps(body, default=str)
 
 
+def _plan_case(body: dict[str, Any], library: Any, task_features: Any) -> tuple[Optional[dict[str, Any]],
+                                                                               Optional[dict[str, Any]]]:
+    """(root, virtual) for the model plan. `root` is a resolved global Goal (with its Procedure); otherwise the
+    task is planned on a virtual key, in this order:
+      library -- the best `library_matches` entry the judge said matches (its own fix size sets the prior);
+      repo    -- this repository (its typical fix size; find_ways' suggested Goal, if any, as a parent);
+      generic -- no repository identity either (population prior; the suggested Goal as a parent)."""
+    from app.routing import service as _rs
+
+    root = next((p for p in body.get("procedures") or [] if isinstance(p, dict) and p.get("goal_id")), None)
+    if body.get("outcome") == "resolved" and root is not None:
+        return root, None
+    tf = task_features if isinstance(task_features, dict) else {}
+    entries = tf.get("entries") if isinstance(tf.get("entries"), dict) else {}
+    repo_stats = tf.get("repo") if isinstance(tf.get("repo"), dict) else None
+    ident = getattr(library, "identity", None)
+    repo_id = ident.repo_id if ident is not None else None
+    suggested = (body.get("suggested") or {}).get("goal_id")
+    parents = [str(suggested)] if suggested else []
+    best = next((m for m in body.get("library_matches") or []
+                 if m.get("judged") and m.get("relation") == "matches" and m.get("outcome") != "fail"), None)
+    if best is not None and repo_id:
+        ref = f"{repo_id}:{best['id']}"
+        return None, {"id": _rs.virtual_goal_id("library", ref), "kind": "library", "ref": best["id"],
+                      "features": entries.get(best["id"]) or repo_stats, "parents": parents}
+    if repo_id:
+        return None, {"id": _rs.virtual_goal_id("repo", repo_id), "kind": "repo", "features": repo_stats,
+                      "parents": parents}
+    return None, {"id": _rs.virtual_goal_id("generic"), "kind": "generic", "parents": parents}
+
+
 async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] | None,
                              check_kind: str | None, constraints: dict[str, Any] | None,
-                             route_obs: str = "", library: Any = None, local_args: bool = False) -> str:
+                             route_obs: str = "", library: Any = None, local_args: bool = False,
+                             task_features: Any = None) -> str:
     """Add `model_plan` to a find_ways reply when the caller (or a registered provider) can supply
     candidates. The plan never changes the knowledge and never breaks the reply: any failure
     becomes a status inside the block.
@@ -1840,22 +1879,20 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
         return reply                                       # a REFUSED: ... text
     if not isinstance(body, dict):
         return reply
-    root = next((p for p in body.get("procedures") or [] if isinstance(p, dict) and p.get("goal_id")), None)
-    if body.get("outcome") != "resolved" or root is None:
-        body["model_plan"] = {"status": "no_goal", "reason": "routing needs one resolved Goal with a Procedure; "
-                                                              f"find_ways answered {body.get('outcome')!r}"}
-        return json.dumps(body, default=str)
+    root, virtual = _plan_case(body, library, task_features)
+    goal_id = str(root["goal_id"]) if root is not None else virtual["id"]
     try:
         pool = ctx.request_context.lifespan_context["pool"]
-        routes, local_obs = _route_obs_for(route_obs, str(root["goal_id"])) if local_args else ([], [])
+        routes, local_obs = _route_obs_for(route_obs, goal_id) if local_args else ([], [])
         body["model_plan"] = await _plan.model_plan(
-            pool, scope=_caller_access_scope(), goal_id=str(root["goal_id"]),
-            procedure_id=str(root["procedure_id"]) if root.get("procedure_id") else None,
+            pool, scope=_caller_access_scope(), goal_id=goal_id,
+            procedure_id=str(root["procedure_id"]) if root is not None and root.get("procedure_id") else None,
             candidates=candidates or (), check_kind=check_kind, constraints=constraints,
-            **({"local_obs": local_obs} if local_obs else {}))
+            **({"local_obs": local_obs} if local_obs else {}),
+            **({"virtual": {k: v for k, v in virtual.items() if k != "id" and v}} if virtual else {}))
         await _mark_availability(body["model_plan"], _caller_access_scope())
         if local_args:
-            rows = _routing_rows(body["model_plan"], routes, library, str(root["goal_id"]))
+            rows = _routing_rows(body["model_plan"], routes, library, goal_id)
             if rows:
                 body["routing_rows"] = rows
     except Exception as exc:  # noqa: BLE001 -- the plan is an addition; the knowledge still stands
@@ -2043,7 +2080,8 @@ def _routing_rows(plan: dict[str, Any], routes: list[Any], library: Any, goal_id
     if not isinstance(plan, dict) or (plan.get("status") != "ok" and not plan.get("steps")):
         return []
     route_id = next((r.id for r in routes if r.g == goal_id), None) or f"R-{_secrets.token_hex(3)}"
-    entry = next((r.id for r in (library.rows if library is not None else []) if r.g == goal_id), None)
+    entry = next((r.id for r in (library.rows if library is not None else []) if r.g == goal_id), None) or (
+        (plan.get("case") or {}).get("ref"))           # a plan keyed to a library entry names that entry
     return [_lib.render_route_line(r) for r in _lib.routes_from_model_plan(
         plan, route_id=route_id, goal=entry, g=goal_id, as_of=_date.today().isoformat())]
 

@@ -45,3 +45,12 @@ test("with a plan, the captured outcome goes to report_result for that instance"
   assert.equal(plain.via, undefined);
   assert.match(plain.instance_key, /^cc-/);
 });
+
+test("a plan on a virtual key (no global Goal) is still remembered and reported", () => {
+  const reply = { outcome: "no_match", model_plan: { ...PLAN, goal_id: "v-goal", case: { kind: "repo" } } };
+  const lookup = lookupIdentity(reply);
+  assert.deepEqual(lookup, { outcome: "planned", goal_id: "v-goal", procedure_id: null, instance_key: "g1.ab12" });
+  const r = buildReport({ lookup, prompt_key: "k", tests: [{ verdict: true }] }, { sessionId: "s", model: "m" });
+  assert.equal(r.via, "report_result");
+  assert.equal(lookupIdentity({ outcome: "no_match" }), null);
+});

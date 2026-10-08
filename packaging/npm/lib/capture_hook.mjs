@@ -90,7 +90,12 @@ export function lookupIdentity(reply) {
   if (!reply || typeof reply !== "object") return null;
   const id = lookupIdentityOnly(reply);
   const key = planKey(reply);
-  return id && key ? { ...id, instance_key: key } : id;
+  if (id && key) return { ...id, instance_key: key };
+  // no global Goal, but a plan on a virtual key (this repo's library entry, this repo, or the generic task)
+  if (!id && key && reply.model_plan.goal_id) {
+    return { outcome: "planned", goal_id: reply.model_plan.goal_id, procedure_id: null, instance_key: key };
+  }
+  return id;
 }
 
 function lookupIdentityOnly(reply) {
@@ -235,7 +240,8 @@ function spawnDetachedWorker(file, env) {
 // Stop: decide in milliseconds, hand the network call to a detached worker, never print anything.
 // The local half: one OBS count in .stealth/routing.md per resolved prompt with a known verdict and model.
 export function recordLocalObs(s, model, { now = new Date() } = {}) {
-  if (!s || s.obs_recorded || s.lookup?.outcome !== "resolved" || !s.lookup.goal_id || !model || !s.cwd) return false;
+  if (!s || s.obs_recorded || !["resolved", "planned"].includes(s.lookup?.outcome) || !s.lookup.goal_id || !model ||
+      !s.cwd) return false;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last || !fs.existsSync(path.join(s.cwd, ".stealth"))) return false;
   const route = s.route || ensureRoute(s.cwd, s.lookup.goal_id, { now });
