@@ -818,3 +818,33 @@ export function requestPayload(root, { env = process.env } = {}) {
   if (ident) out.repo_identity = ident;
   return out;
 }
+
+// ---- share: draft the submit_way call that offers one entry to everyone (plan_and_run step 8)
+// Only what a stranger can use without this repository: the problem, the way's name and its steps with their
+// checks. Never the diff, touched paths, unit path or route -- those describe this repository's code. The agent
+// fills the three judgement fields (rationale, preconditions, expected outcome) and calls submit_way itself,
+// so nothing is sent from here.
+export function shareDraft(root, id, { procIndex = 0 } = {}) {
+  const e = loadLibrary(root).entries.find((x) => x.id === id);
+  if (!e) throw new Error(`no library entry ${id}`);
+  if (e.outcome === "fail") throw new Error(`${id} records a failed attempt; only a way that passed can be shared`);
+  const p = e.procs[procIndex];
+  if (!p || !p.steps.length) throw new Error(`${id} has no steps to share (add them with --step when recording it)`);
+  const steps = p.steps.map((st) => (st.check ? `${st.do} (check: ${st.check})` : st.do));
+  const args = {
+    name: p.name || e.title,
+    steps_json: JSON.stringify(steps),
+    rationale: "<why this works, in plain sentences>",
+    preconditions_json: JSON.stringify(["<what must be true first, e.g. the stack and versions it needs>"]),
+    expected_outcome_json: JSON.stringify(["<what is true when it worked>"]),
+    ...(e.g ? { goal_id: e.g } : { goal: e.title, goal_objective: "<what counts as done>" }),
+  };
+  return {
+    entry: id, status: e.status, call: "submit_way", arguments: args,
+    left_out: ["the diff", "touched paths", "unit", "route"],
+    next: "Replace every <...> placeholder, remove anything specific to this repository (names, paths, secrets), " +
+      "then call submit_way with these arguments (use_tool(\"submit_way\", ...) if it is not in your tool list). " +
+      "It is screened and then public.",
+  };
+}
+

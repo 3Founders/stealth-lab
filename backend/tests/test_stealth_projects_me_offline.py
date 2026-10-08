@@ -209,8 +209,36 @@ class FakePool:
             return sorted(rows, key=lambda r: r["synced_at"], reverse=True)
         raise AssertionError(f"unexpected fetch: {flat[:100]}")
 
+    # access.scoped_transaction (migration 150): one connection, one transaction, the RLS scope bound first.
+    # The fake is the connection too; the owner binding is recorded so a test can see it was set.
+    def acquire(self):
+        pool = self
+
+        class _Acquire:
+            async def __aenter__(self):
+                return pool
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Acquire()
+
+    def transaction(self):
+        class _Tx:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Tx()
+
     async def execute(self, sql, *params):
         flat = " ".join(sql.split())
+        if flat.startswith("SELECT set_config("):
+            self.bound = getattr(self, "bound", {})
+            self.bound[params[0]] = params[1] if len(params) > 1 else "on"
+            return "SELECT 1"
         if flat.startswith("INSERT INTO raw_objects"):
             sha256, locator, backend, size_bytes, content_type = params
             self.raw_objects[sha256] = {
@@ -282,8 +310,7 @@ def test_record_sync_upload_stores_ciphertext_and_advances_revision():
         pid = str(uuid4())
         _run(sync_project(pool, project_id=pid, owner_subject=ME))
 
-        row = _run(record_sync_upload(
-            pool, project_id=pid, revision=1, ciphertext=b"opaque-bytes-not-json",
+        row = _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=1, ciphertext=b"opaque-bytes-not-json",
             wrapped_p_dek="wrappedkey==", recovery_salt="salt==", kdf_params={"m": 65536, "t": 3, "p": 1},
         ))
         assert row["revision"] == 1
@@ -303,12 +330,12 @@ def test_record_sync_upload_is_idempotent_on_stale_revision():
         pool = FakePool()
         pid = str(uuid4())
         _run(sync_project(pool, project_id=pid, owner_subject=ME))
-        _run(record_sync_upload(pool, project_id=pid, revision=5, ciphertext=b"v5"))
+        _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=5, ciphertext=b"v5"))
 
         with pytest.raises(StaleRevision):
-            _run(record_sync_upload(pool, project_id=pid, revision=5, ciphertext=b"v5-again"))
+            _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=5, ciphertext=b"v5-again"))
         with pytest.raises(StaleRevision):
-            _run(record_sync_upload(pool, project_id=pid, revision=3, ciphertext=b"older"))
+            _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=3, ciphertext=b"older"))
 
         # unchanged -- the stale attempts never overwrote the stored ciphertext
         fetched = _run(get_synced_project(pool, project_id=pid, owner_subject=ME))
@@ -320,7 +347,7 @@ def test_record_sync_upload_is_idempotent_on_stale_revision():
 def test_record_sync_upload_refuses_for_an_unsynced_project():
     pool = FakePool()
     with pytest.raises(ValueError):
-        _run(record_sync_upload(pool, project_id=str(uuid4()), revision=1, ciphertext=b"x"))
+        _run(record_sync_upload(pool, owner_subject=ME, project_id=str(uuid4()), revision=1, ciphertext=b"x"))
 
 
 def test_ciphertext_is_never_json_parsed_stays_opaque_bytes():
@@ -332,7 +359,7 @@ def test_ciphertext_is_never_json_parsed_stays_opaque_bytes():
         pid = str(uuid4())
         _run(sync_project(pool, project_id=pid, owner_subject=ME))
         garbage = bytes(range(256))
-        _run(record_sync_upload(pool, project_id=pid, revision=1, ciphertext=garbage))
+        _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=1, ciphertext=garbage))
         fetched = _run(get_synced_project(pool, project_id=pid, owner_subject=ME))
         assert _run(read_ciphertext(fetched)) == garbage
     finally:
@@ -348,7 +375,7 @@ def test_unsync_deletes_row_and_ciphertext_blob():
         pool = FakePool()
         pid = str(uuid4())
         _run(sync_project(pool, project_id=pid, owner_subject=ME))
-        _run(record_sync_upload(pool, project_id=pid, revision=1, ciphertext=b"data"))
+        _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=1, ciphertext=b"data"))
 
         sha = pool.synced[pid]["snapshot_sha256"]
         assert sha in pool.raw_objects or True  # store_blob writes via the real object store, not pool.raw_objects here
@@ -470,8 +497,7 @@ def test_stealth_project_detail_returns_ciphertext_and_key_metadata_never_plaint
         pool = FakePool()
         pid = str(uuid4())
         _run(sync_project(pool, project_id=pid, owner_subject=ME))
-        _run(record_sync_upload(
-            pool, project_id=pid, revision=1, ciphertext=b"real-ciphertext-bytes",
+        _run(record_sync_upload(pool, owner_subject=ME, project_id=pid, revision=1, ciphertext=b"real-ciphertext-bytes",
             wrapped_p_dek="wrapped==", recovery_salt="salt==", kdf_params={"m": 65536, "t": 3, "p": 1},
         ))
 

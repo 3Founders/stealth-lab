@@ -189,7 +189,9 @@ own every file in `.stealth/`.
    .stealth/claims/<unit>.md pages of the units the task touches (index/units.idx maps a path
    to its page)>, ...)` once, adding this repo's library arguments when they exist:
    `stealthlab-mcp library payload` prints exactly `library_rows`, `route_obs` and `repo_identity`
-   (pass them as they are).
+   (pass them as they are). Also pass `my_model=<the model you are>`, plus `candidates=<other
+   "model|scaffold" units you can run>` if you can delegate to other models: the reply then carries a
+   `model_plan`.
    - `library_matches` (if any) come first: problems already solved IN THIS REPO. Read each one
      (`rg '^(GOAL|PROC|STEP)\\|<id>' .stealth/library.md`) and its diff (`.stealth/library/solutions/<id>.diff`)
      before anything global. A `stale` one touched files that changed since: re-check it before reuse.
@@ -220,24 +222,25 @@ own every file in `.stealth/`.
    - `check=` must be concrete (a command, a file that must exist, a test).
      If the Procedure gives none, write one.
    - status: ready | blocked | running | done | failed | skipped.
+   Then run `npx -y stealthlab-mcp plan validate` (local, reads only): it checks both files'
+   lines, that every step=, claims= and deps= points at something real, no dependency cycle,
+   and a concrete check= on every node. Fix what it reports, and run it again after you edit run.md.
    Show the plan to the user and get an OK before changing their code.
 6. Do. For each ready node whose deps are done, either do it yourself
    (short plans) or give a subagent ONE line and nothing else:
    `Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.`
    Use subagents for long plans, independent steps in parallel, or when you
    want the work checked by someone who didn't do it.
-   Optional, to keep cost down: before a node, call `recommend_models(procedure_id,
-   candidates=<the models you can run, "model|scaffold">, step_order=<the node's step>,
-   step_role=plan|edit|verify|other, instance_key=<one key for this whole run>,
-   previous_steps=<earlier nodes: step_order, unit, accepted>, remaining_steps=<nodes still
-   to come>)` and run the node (or its subagent) with the first model of the returned
-   ladder; after its check, if the ladder has a next model, that is the retry.
+   Model choice: if find_ways returned a `model_plan` with status `ok`, its `recommended.ladder`
+   says which model does the work first (yourself, or a subagent on that model). That is the only
+   routing call: the server keeps the plan's state under its `instance_key`.
 7. Check. Run the node's `check` yourself. Pass: mark `done` and note the
    proof. Fail: retry once with the error, else try an alternative
-   Procedure, else ask the user. If you used recommend_models, call
-   `report_model_run(model, scaffold, accepted=<check passed>, instance_key, procedure_id,
-   step_order, step_role, check_kind="tests" or "procedure_check", tokens_in, tokens_out)`
-   after every attempt, pass or fail, and count it locally too:
+   Procedure, else ask the user. With a model plan, once the whole task's final check has run,
+   call `report_result(instance_key, accepted=<check passed>, tokens_in, tokens_out)` -- after
+   EVERY attempt, pass or fail. A failed attempt's reply names `next_model`: redo the failed work
+   with it, check again, report again. The StealthLab hooks count the outcome in
+   `.stealth/routing.md` themselves; without the hooks, count it with
    `stealthlab-mcp library obs <R-id from routing.md> --model <m> --scaffold <s> --ok|--fail`.
 8. Learn. When a step needed a fix or there was a better way:
    - rewrite the remaining nodes in `run.md` now;
@@ -252,14 +255,16 @@ own every file in `.stealth/`.
      `stealthlab-mcp library add --title "<the problem, as a goal>" --check "<the command that proved it>"
      [--g <goal_id from find_ways>] [--p <procedure_id>] [--unit <package path>] [--step "<kind>|<do>|<check>"]...`
      (it re-runs the check and refuses if it fails; it saves the diff and rebuilds the indexes);
+   - to offer a solved entry to everyone, `stealthlab-mcp library share <L-id>` drafts the
+     submit_way call (problem, way, steps and checks only; never the diff or paths): fill its
+     placeholders, remove anything specific to this repo, then send it;
    - if it would help anyone doing this Procedure, not just this repo, call
      `report_discovery(kind, procedure_id, problem, solution, step_order, proof, repo)`
      with kind = fix | missing_step | precondition | better_way | correction | filled_gap.
      Pass `repo` when it only holds for this repository.
 9. Finish: tell the user what was done, the proof, and what was learned.
 
-Tools named above that are not in your tool list (recommend_models, report_model_run, report_discovery,
-call_model, submit_way) are run with `use_tool(name, arguments)`; `discover_tools(names=[...])` shows their
+Tools named above that are not in your tool list (report_discovery, call_model, submit_way) are run with `use_tool(name, arguments)`; `discover_tools(names=[...])` shows their
 arguments."""
 
 

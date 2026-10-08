@@ -239,7 +239,20 @@ def test_select_local_preselects_by_overlap_when_over_budget():
     rows = "\n".join(f"L-{i:06x}|current|pass|.|-|2026-10-0{i % 9 + 1}|1|1|x|entry about topic{i}" for i in range(20))
     ctx = lc.build(None, rows + "\nL-0000ff|current|pass|.|-|-|1|1|x|csv quoting export\n")
     ctx.select_local("fix csv quoting", lc.make_local_hit_factory(Hit), k=6)
-    assert [h.id for h in ctx.local_hits] == ["L-0000ff"]
+    ids = [h.id for h in ctx.local_hits]
+    # the overlapping entry first, then the most recently verified to fill the judge budget
+    assert ids[0] == "L-0000ff" and len(ids) == 6
+    assert all(i != "L-0000ff" for i in ids[1:])
+
+
+def test_select_local_stems_and_splits_identifiers():
+    from app.services import library_context as lc
+    from app.services.retrieval_service import Hit
+
+    rows = "\n".join(f"L-{i:06x}|current|pass|.|-|2026-10-09|1|1|x|entry about topic{i}" for i in range(20))
+    ctx = lc.build(None, rows + "\nL-0000aa|current|pass|.|-|2026-01-01|1|1|x|throttle loginHandler requests\n")
+    ctx.select_local("add throttling to the login handler", lc.make_local_hit_factory(Hit), k=6)
+    assert ctx.local_hits[0].id == "L-0000aa"      # older than all the others, but it shares stemmed words
 
 
 def test_matches_order_and_unjudged_labelling():

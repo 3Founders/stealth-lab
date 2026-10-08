@@ -308,3 +308,23 @@ test("findStealthRoot finds .stealth from a sub-directory, and null outside one"
   assert.equal(L.findStealthRoot(sub), path.resolve(root));
   assert.equal(L.findStealthRoot(fs.mkdtempSync(path.join(os.tmpdir(), "none-"))), null);
 });
+
+test("share drafts a submit_way call from an entry, never the diff or paths", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-share-"));
+  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+    "GOAL|L-0a91f2|Fix KeyError when the config has no db section|unit=services/api|g=-|outcome=pass|status=current|verified_at=2026-08-02|route=R-00aa11|tags=config",
+    "PROC|L-0a91f2.p1|Default the section|p=-|solution=solutions/L-0a91f2.diff|touches=src/secret_loader.py#sha=77aa001",
+    "STEP|L-0a91f2.p1:1|action|Use config.get(\"db\", {})|check=pytest -q tests/test_config.py",
+    "GOAL|L-77d3e0|Speed up the slow test|unit=.|g=-|outcome=fail|status=current|verified_at=2026-10-01|route=-|tags=-",
+    "",
+  ].join("\n"));
+  const d = L.shareDraft(root, "L-0a91f2");
+  assert.equal(d.call, "submit_way");
+  assert.equal(d.arguments.goal, "Fix KeyError when the config has no db section");
+  assert.deepEqual(JSON.parse(d.arguments.steps_json), ["Use config.get(\"db\", {}) (check: pytest -q tests/test_config.py)"]);
+  const text = JSON.stringify(d.arguments);
+  for (const leak of ["secret_loader", "services/api", "R-00aa11", ".diff", "77aa001"]) assert.ok(!text.includes(leak), leak);
+  assert.throws(() => L.shareDraft(root, "L-77d3e0"), /failed attempt/);
+  assert.throws(() => L.shareDraft(root, "L-ffffff"), /no library entry/);
+});

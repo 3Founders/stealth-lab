@@ -44,10 +44,13 @@ Usage:
   stealthlab-mcp logout                      forget the saved token
   stealthlab-mcp config                      print the saved config (token masked)
   stealthlab-mcp hook-prompt                 Claude Code UserPromptSubmit hook (installed by "install"):
-                                             looks each task up with find_ways and adds what Kel knows
+                                             looks each task up with find_ways and adds what Kel knows,
+                                             with a model plan for this session's model (STEALTHLAB_HOOK_ROUTING=off
+                                             skips it; STEALTHLAB_HOOK_CANDIDATES="model|scaffold,..." sets the list)
   stealthlab-mcp hook capture-tool           Claude Code PostToolUse (Bash) / Stop hooks (installed with
   stealthlab-mcp hook capture-stop           hook-prompt; active only with a saved token): read test verdicts
-                                             and report one outcome per prompt with report_model_run
+                                             and report one outcome per prompt: report_result on the
+                                             prompt's model plan when there is one, else report_model_run
                                              (ids, model, pass/fail only; STEALTHLAB_CAPTURE=off disables)
   stealthlab-mcp hook cursor-session        Cursor hooks (installed with Cursor; --no-hooks skips them):
   stealthlab-mcp hook cursor-prompt          sessionStart, beforeSubmitPrompt, postToolUse, stop -- look each
@@ -67,6 +70,8 @@ Usage:
   stealthlab-mcp library <command>           keep .stealth/library.md (this repo's solved problems), its
                                              indexes, SUMMARY.md and routing.md up to date; local only
                                              ("stealthlab-mcp library help" for the commands)
+  stealthlab-mcp plan validate [--root <repo>] check .stealth/procedures.md and .stealth/run.md (the plan_and_run
+                                             format): ids, step/claim/dep references, no cycles, concrete checks
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
@@ -248,6 +253,11 @@ async function main() {
     // its own flags and positionals (lib/library_cli.mjs); imported lazily like exec
     const { runLibraryCli } = await import("../lib/library_cli.mjs");
     return runLibraryCli(argv);
+  }
+  if (cmd === "plan") {
+    const { runPlanCli } = await import("../lib/plan_check.mjs");
+    process.exitCode = runPlanCli(argv);
+    return;
   }
   // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
   const sub = (cmd === "hook" || cmd === "survey") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;

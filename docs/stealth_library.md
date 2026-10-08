@@ -64,7 +64,18 @@ reused for a library request. No diff, step text or check command ever leaves th
 
 - Quality not yet measured end to end with the library in place: that is Workstream D's job (local-only vs
   +enterprise vs +global arms).
-- `library_matches` preselection is lexical (word overlap) before the judge; a paraphrased title with no shared
-  words is not judged when the library has more than 6 usable entries.
-- `ALLOWED_SNAPSHOT_FILES` (encrypted project sync) does not include `library.md` yet — a product decision.
-- Syncing a library entry to the global corpus is still `report_discovery` / `submit_way`, by hand.
+- Done 2026-10-08:
+  - `library_matches` preselection stems words and splits camelCase / snake_case / paths. When the overlap
+    leaves room, the judge budget is filled with the most recently verified entries, so a paraphrased title is
+    still judged. The judge decides; overlap only orders the budget.
+  - `library.md` is in `ALLOWED_SNAPSHOT_FILES` (encrypted project sync). Its diffs and `routing.md` are not.
+  - `stealthlab-mcp library share <L-id>` drafts the `submit_way` call that offers an entry to everyone: the
+    problem, the way and its steps with checks. It never includes the diff, touched paths, unit or route. The
+    agent fills the judgement fields and sends it.
+  - `stealthlab-mcp plan validate` checks `procedures.md` and `run.md`: ids, `step=` / `claims=` / `deps=`
+    references, no cycles, and a concrete `check=` on every node.
+  - One routing path. The prompt hook sends `my_model` (the session's model) and `candidates` (the other Claude
+    models a Claude Code subagent can run; `STEALTHLAB_HOOK_CANDIDATES` replaces the list,
+    `STEALTHLAB_HOOK_ROUTING=off` turns it off). The plan is shown to the agent, and the capture hook reports the
+    outcome with `report_result` on that plan's `instance_key`. `plan_and_run` no longer mentions
+    `recommend_models` / `report_model_run`; they stay callable for existing callers.

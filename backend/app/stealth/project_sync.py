@@ -63,9 +63,10 @@ from app.stealth.legacy_context import STEALTH_DIRNAME
 # The single allow-list of `.stealth/*.md` files a bootstrap snapshot may
 # ever contain -- see module docstring. Anything else in the workspace
 # (source code, .env, the rest of the repository) is never read by this
-# module.
+# module. `library.md` (this repo's solved problems: titles, steps, checks, touched paths) is included; its
+# diffs under `library/solutions/` are code and never leave the machine, and `routing.md` is per machine.
 ALLOWED_SNAPSHOT_FILES: tuple[str, ...] = (
-    "goals.md", "claims.md", "procedures.md", "run.md", "exploration.md", "ledger.md",
+    "goals.md", "claims.md", "procedures.md", "run.md", "exploration.md", "ledger.md", "library.md",
 )
 
 

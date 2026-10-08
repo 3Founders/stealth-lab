@@ -80,8 +80,20 @@ function sweep(env, now) {
 
 // The Goal/Procedure a find_ways reply identified, or null: a resolved way, else the suggested candidate.
 // Related examples are NOT an identity (they are other Goals, "not verified to apply").
+// The instance_key of an ok model plan in a find_ways reply, or null.
+function planKey(reply) {
+  const p = reply?.model_plan;
+  return p && p.status === "ok" && typeof p.instance_key === "string" ? p.instance_key : null;
+}
+
 export function lookupIdentity(reply) {
   if (!reply || typeof reply !== "object") return null;
+  const id = lookupIdentityOnly(reply);
+  const key = planKey(reply);
+  return id && key ? { ...id, instance_key: key } : id;
+}
+
+function lookupIdentityOnly(reply) {
   if (reply.outcome === "resolved") {
     const p = (reply.procedures || []).find((x) => x?.procedure_id);
     const goal = p?.goal_id || reply.goal?.goal_id || reply.goal?.id;
@@ -195,6 +207,12 @@ export function buildReport(session, { sessionId, model }) {
   if (!session || session.reported || !session.lookup || !model) return null;
   const last = [...(session.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last) return null;
+  // With a model plan, the outcome goes to that plan (report_result): the server keeps the instance and answers
+  // with the next model. Without one, it is a standalone observation (report_model_run).
+  if (session.lookup.instance_key) {
+    return { via: "report_result", instance_key: session.lookup.instance_key, model, scaffold: "claude-code",
+             accepted: last.verdict === true, check_kind: "tests" };
+  }
   const key = crypto.createHash("sha256").update(`${sessionId}|${session.prompt_key}`).digest("hex").slice(0, 24);
   return {
     model, scaffold: "claude-code", accepted: last.verdict === true, instance_key: `cc-${key}`,
@@ -257,11 +275,19 @@ export async function runCaptureWorker(file, { env = process.env, report } = {})
   } finally {
     fs.rmSync(file, { force: true });
   }
-  const send = report || (await import("./exec/evidence.mjs")).reportModelRun;
+  const send = report || (job.report?.via === "report_result" ? sendPlanResult
+    : (await import("./exec/evidence.mjs")).reportModelRun);
   const timer = new Promise((_, rej) => setTimeout(() => rej(new Error("capture worker timed out")), WORKER_TIMEOUT_MS).unref());
   const r = await Promise.race([send(job.report, { env }), timer]);
   logHook(env, "capture-stop", `reported=${Boolean(r?.reported)} queued=${Boolean(r?.queued)} accepted=${job.report.accepted}`);
   return r;
+}
+
+async function sendPlanResult(rep, { env }) {
+  const { callHostedTool } = await import("./exec/hosted.mjs");
+  const { via, ...args } = rep;
+  const text = await callHostedTool("report_result", args, { env });
+  return { reported: !String(text || "").startsWith("REFUSED"), queued: false };
 }
 
 // CLI entry for `hook capture-tool` / `hook capture-stop` (payload on stdin). Never throws, never prints.

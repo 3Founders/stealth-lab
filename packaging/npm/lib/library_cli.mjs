@@ -21,6 +21,8 @@ export const LIBRARY_HELP = `stealthlab-mcp library <command> [--root <repo>]   
   route --from-reply <file|->   write find_ways' routing_rows into routing.md (or --line <ROUTE line>...)
   obs <R-id> --model <m> --scaffold <s> (--ok | --fail)
                                 count one attempt on a route (what find_ways' route_obs sends back)
+  share <L-id>                  draft the submit_way call that offers this entry to everyone: problem, way and
+                                steps with checks only (never the diff or paths); you fill the rest and send it
   payload                       the find_ways arguments the knowledge hook sends (library_rows, route_obs,
                                 repo_identity) -- to see exactly what leaves this machine
 `;
@@ -97,6 +99,8 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
     }
     case "payload":
       return print(L.requestPayload(root));
+    case "share":
+      return print(L.shareDraft(root, positionals[0]));
     default:
       throw new Error(`unknown library command "${command}"\n\n${LIBRARY_HELP}`);
   }

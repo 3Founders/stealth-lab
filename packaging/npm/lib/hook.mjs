@@ -47,11 +47,33 @@ export function hookPolicy(env = process.env) {
     timeoutMs: Number(env.STEALTHLAB_HOOK_TIMEOUT_MS || 25000),
     triage: (env.STEALTHLAB_HOOK_TRIAGE || "on").toLowerCase() !== "off",
     triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 4000),
+    routing: (env.STEALTHLAB_HOOK_ROUTING || "on").toLowerCase() !== "off",
+    candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES),
     maxChars: Number(env.STEALTHLAB_HOOK_MAX_CHARS || 8000),
     mode,
     strongMode: env.STEALTHLAB_HOOK_MODE_STRONG ? modeOf(env.STEALTHLAB_HOOK_MODE_STRONG, mode) : null,
     strongModels: strong,
   };
+}
+
+// Model plan (on by default; STEALTHLAB_HOOK_ROUTING=off skips it). The hook tells find_ways which model this
+// session runs (`my_model`) and which other models the client can hand work to (`candidates`), so the reply can
+// say "keep it" or "give it to a cheaper/stronger model" and remember the plan under an instance_key. In Claude
+// Code those are the Claude models a subagent can run; STEALTHLAB_HOOK_CANDIDATES="model|scaffold,..." replaces
+// the list (an empty value sends my_model only). The server drops any unit it cannot price.
+export const CLAUDE_CODE_CANDIDATES = ["claude-haiku-4-5|claude-code", "claude-sonnet-5-5|claude-code", "claude-opus-5-5|claude-code"];
+
+function parseCandidates(raw) {
+  if (raw === undefined) return CLAUDE_CODE_CANDIDATES;
+  return String(raw).split(",").map((x) => x.trim()).filter((x) => /^[^|\s]+\|[^|\s]+$/.test(x));
+}
+
+// The find_ways arguments that ask for a model plan, or {} when routing is off or the model is unknown.
+export function routingArgs(policy, model, scaffold = "claude-code") {
+  if (!policy.routing || !model) return {};
+  const mine = `${model}|${scaffold}`;
+  const others = policy.candidates.filter((c) => c !== mine);
+  return { my_model: mine, ...(others.length ? { candidates: others } : {}) };
 }
 
 // The session's model, best effort: the transcript's last assistant message (from the 2nd prompt on), else
@@ -260,6 +282,22 @@ function libraryParts(reply, root, mode, budget) {
 // The knowledge block added to the agent's context, or "" when find_ways had nothing usable.
 // mode "lean": only a resolved way (the exact Goal); near misses and related examples are left out.
 // `root`: the repo whose .stealth/library.md holds the library matches (none -> they are not shown).
+// One short paragraph for an ok model plan: who does the work first, the fallback, and how to report.
+export function planPart(plan) {
+  if (!plan || plan.status !== "ok" || !Array.isArray(plan.ladder) || !plan.ladder.length) return "";
+  const rung = (u) => {
+    const st = (plan.steps?.[0]?.ladder || []).find((x) => x.unit === u);
+    const p = typeof st?.p_ok_mean === "number" ? ` (p_ok ${st.p_ok_mean.toFixed(2)})` : "";
+    return `${u.split("|")[0]}${p}`;
+  };
+  const [first, ...rest] = plan.ladder;
+  return `Model plan (${plan.basis || "prior"}): do this with ${rung(first)}` +
+    (rest.length ? `; if its check fails, ${rest.map(rung).join(", then ")}` : "") +
+    ". A model other than yours means: hand the work to a subagent on that model. " +
+    `After the check, call report_result(instance_key="${plan.instance_key}", accepted=<passed?>) -- ` +
+    "its reply names the next model if it failed.";
+}
+
 export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = null } = {}) {
   if (!reply || typeof reply !== "object" || mode === "off") return "";
   const parts = libraryParts(reply, root, mode, 2000);
@@ -292,6 +330,8 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
     parts.push(`Similar solved problem (NOT verified to apply -- a worked example to adapt, never copy): ` +
       `${ex.goal_name || ex.goal_id}${credit(ex)}\n${solution(ex.verified_solution, 1500)}`);
   }
+  const plan = planPart(reply.model_plan);
+  if (plan) parts.push(plan);
   if (!parts.length) return "";
   const head = "StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +
     "don't call it again for the same request). What it knows:\n\n";
@@ -307,7 +347,8 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     return;
   }
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
-  const mode = deliveryMode(policy, policy.strongMode ? detectModel(payload, env) : null);
+  const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
+  const mode = deliveryMode(policy, policy.strongMode ? model : null);
   if (mode === "off") return;
   if (policy.triage) {
     const verdict = await callTriage({
@@ -325,6 +366,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     const root = findStealthRoot(payload.cwd || process.cwd());   // null: no .stealth here, a plain lookup
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
+    extra = { ...extra, ...routingArgs(policy, model) };
     const reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
       repoClaims: readClaims(payload.cwd, payload.prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl,

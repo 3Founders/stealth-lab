@@ -90,8 +90,24 @@ def pin_rank(hit: Any) -> int:
     return _PIN_RANK.get((getattr(hit, "extra", None) or {}).get("pin"), 0)
 
 
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_SUFFIXES = ("ations", "ation", "ings", "ing", "ers", "ies", "ied", "ed", "es", "er", "s")
+
+
+def _stem(t: str) -> str:
+    """A crude, deterministic stem so "throttling" meets "throttle" and "limits" meets "limit". Only used to size
+    the judge budget, never to decide a match."""
+    for suf in _SUFFIXES:
+        if t.endswith(suf) and len(t) - len(suf) >= 4:
+            t = t[: -len(suf)]
+            break
+    return t[:-1] if len(t) > 4 and t.endswith("e") else t
+
+
 def _tokens(text: str) -> set[str]:
-    return {t for t in _TOK.findall(text.lower()) if len(t) > 2 and t not in _STOP}
+    """Words of `text`, with camelCase, snake_case and path pieces split, stop words dropped, each stemmed."""
+    text = _CAMEL.sub(" ", text or "")
+    return {_stem(t) for t in _TOK.findall(text.lower()) if len(t) > 2 and t not in _STOP}
 
 
 @dataclass
@@ -117,15 +133,16 @@ class LibraryContext:
 
     def select_local(self, query: str, make_hit: Any, k: int = LOCAL_JUDGE_K) -> None:
         """Preselect the library rows worth a judge call: every usable row when there are at most `k`,
-        otherwise the `k` sharing the most words with the request (most recently verified first on
-        ties). Entries recorded as failed attempts are not candidate solutions. Lexical overlap only
-        sizes the judge budget; the judge decides."""
+        otherwise the rows sharing the most (stemmed) words with the request, then the most recently
+        verified rows to fill the `k` slots -- so a paraphrased title with no shared word is still judged
+        when the overlap leaves room. Entries recorded as failed attempts are not candidate solutions.
+        Lexical overlap only orders the judge budget; the judge decides."""
         usable = [r for r in self.rows if r.outcome != "fail"]
         q = _tokens(query)
         if len(usable) > k:
             scored = sorted(usable, key=lambda r: (-len(q & _tokens(f"{r.title} {r.unit}")),
                                                    _neg(r.verified_at), r.id))
-            usable = [r for r in scored[:k] if q & _tokens(f"{r.title} {r.unit}")] or scored[:0]
+            usable = scored[:k]
         self.local_hits = [make_hit(r) for r in usable]
         for r in usable:
             if r.g:
