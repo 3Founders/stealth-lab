@@ -99,6 +99,7 @@ def openrouter_cards(path: str) -> list[cardlib.ModelCard]:
             reasoning=effort if effort is not None else (0.67 if "reasoning" in params else 0.0),
             context_k=(m.get("context_length") or 0) / 1000 or None,
             price_in=per_mtok("prompt"), price_out=per_mtok("completion"),
+            price_cached=per_mtok("input_cache_read"),
             aliases=tuple(sorted({mid, m.get("canonical_slug") or mid, m.get("name") or mid})), source="openrouter"))
     return out
 
@@ -116,7 +117,7 @@ def merge_cards(*sources: Iterable[cardlib.ModelCard]) -> dict[str, cardlib.Mode
                 continue
             fields = {f: getattr(card, f) for f in ("family", "provider", "release_date", "training_cutoff",
                                                     "open_weights", "params_b", "active_params_b", "reasoning",
-                                                    "context_k", "price_in", "price_out")
+                                                    "context_k", "price_in", "price_out", "price_cached")
                       if getattr(have, f) is None and getattr(card, f) is not None}
             merged[have.model_key] = cardlib.with_aliases(replace(have, **fields), card.model_key, *card.aliases)
     return merged

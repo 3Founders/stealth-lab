@@ -12,6 +12,7 @@
 "context_k": 131.072,
 "price_in": 0.7999999999999999,
 "price_out": 1.5999999999999999,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "AionLabs: Aion-2.0",
 "aion-labs/aion-2.0",
@@ -32,6 +33,7 @@
 "context_k": 131.072,
 "price_in": 3.0,
 "price_out": 6.0,
+"price_cached": 0.75,
 "aliases": [
 "AionLabs: Aion-3.0",
 "aion-labs/aion-3.0",
@@ -52,6 +54,7 @@
 "context_k": 131.072,
 "price_in": 0.7,
 "price_out": 1.4,
+"price_cached": 0.18,
 "aliases": [
 "AionLabs: Aion-3.0-Mini",
 "aion-labs/aion-3.0-mini",
@@ -72,6 +75,7 @@
 "context_k": 262.144,
 "price_in": 3.0,
 "price_out": 6.0,
+"price_cached": 0.75,
 "aliases": [
 "AionLabs: Aion 3.5",
 "aion-labs/aion-3.5",
@@ -92,6 +96,7 @@
 "context_k": 262.144,
 "price_in": 0.7,
 "price_out": 1.4,
+"price_cached": 0.18,
 "aliases": [
 "AionLabs: Aion 3.5 Mini",
 "aion-labs/aion-3.5-mini",
@@ -112,6 +117,7 @@
 "context_k": 32.768,
 "price_in": 0.7999999999999999,
 "price_out": 1.5999999999999999,
+"price_cached": null,
 "aliases": [
 "AionLabs: Aion-RP 1.0 (8B)",
 "aion-labs/aion-rp-llama-3.1-8b"
@@ -131,6 +137,7 @@
 "context_k": 2000.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Auto Router",
 "openrouter/auto"
@@ -150,6 +157,7 @@
 "context_k": 2000.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Auto Router (Beta)",
 "openrouter/auto-beta"
@@ -169,6 +177,7 @@
 "context_k": 128.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Body Builder (beta)",
 "openrouter/bodybuilder"
@@ -188,6 +197,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Claude 2"
 ],
@@ -206,6 +216,7 @@
 "context_k": 1000.0,
 "price_in": 10.0,
 "price_out": 50.0,
+"price_cached": 0.25,
 "aliases": [
 "Anthropic: Claude Fable Latest",
 "~anthropic/claude-fable-latest"
@@ -225,6 +236,7 @@
 "context_k": 1000.0,
 "price_in": 10.0,
 "price_out": 50.0,
+"price_cached": 1.0,
 "aliases": [
 "Anthropic: Claude Fable 5",
 "anthropic/claude-5-fable-20260609",
@@ -247,6 +259,7 @@
 "context_k": 1000.0,
 "price_in": 10.0,
 "price_out": 50.0,
+"price_cached": 0.25,
 "aliases": [
 "Anthropic: Claude Fable 5.1",
 "anthropic/claude-fable-5.1",
@@ -269,6 +282,7 @@
 "context_k": 200.0,
 "price_in": 1.0,
 "price_out": 5.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Anthropic: Claude Haiku Latest",
 "~anthropic/claude-haiku-latest"
@@ -288,6 +302,7 @@
 "context_k": 200.0,
 "price_in": 1.0,
 "price_out": 5.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Anthropic: Claude Haiku 4.5",
 "anthropic/claude-4.5-haiku-20251001",
@@ -311,6 +326,7 @@
 "context_k": 1000.0,
 "price_in": 4.0,
 "price_out": 20.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Anthropic: Claude Opus Latest",
 "~anthropic/claude-opus-latest"
@@ -330,6 +346,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Claude 3 Opus"
 ],
@@ -348,6 +365,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Claude 4 Opus"
 ],
@@ -366,6 +384,7 @@
 "context_k": 200.0,
 "price_in": 15.0,
 "price_out": 75.0,
+"price_cached": 1.5,
 "aliases": [
 "Anthropic: Claude Opus 4.1",
 "anthropic/claude-4.1-opus-20250805",
@@ -388,6 +407,7 @@
 "context_k": 200.0,
 "price_in": 5.0,
 "price_out": 25.0,
+"price_cached": 0.5,
 "aliases": [
 "Anthropic: Claude Opus 4.5",
 "anthropic/claude-4.5-opus-20251124",
@@ -411,6 +431,7 @@
 "context_k": 1000.0,
 "price_in": 5.0,
 "price_out": 25.0,
+"price_cached": 0.5,
 "aliases": [
 "Anthropic: Claude Opus 4.6",
 "anthropic/claude-4.6-opus-20260205",
@@ -434,6 +455,7 @@
 "context_k": 1000.0,
 "price_in": 5.0,
 "price_out": 25.0,
+"price_cached": 0.5,
 "aliases": [
 "Anthropic: Claude Opus 4.7",
 "anthropic/claude-4.7-opus-20260416",
@@ -456,6 +478,7 @@
 "context_k": 1000.0,
 "price_in": 5.0,
 "price_out": 25.0,
+"price_cached": 0.5,
 "aliases": [
 "Anthropic: Claude Opus 4.8",
 "anthropic/claude-4.8-opus-20260528",
@@ -478,6 +501,7 @@
 "context_k": 1000.0,
 "price_in": 5.0,
 "price_out": 25.0,
+"price_cached": 0.5,
 "aliases": [
 "Anthropic: Claude Opus 5",
 "anthropic/claude-opus-5",
@@ -500,6 +524,7 @@
 "context_k": 1000.0,
 "price_in": 4.0,
 "price_out": 20.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Anthropic: Claude Opus 5.5",
 "anthropic/claude-opus-5.5",
@@ -522,6 +547,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Anthropic: Claude Sonnet Latest",
 "~anthropic/claude-sonnet-latest"
@@ -541,6 +567,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Claude 3.5 Sonnet"
 ],
@@ -559,6 +586,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Claude 3.7 Sonnet"
 ],
@@ -577,6 +605,7 @@
 "context_k": 200.0,
 "price_in": 3.0,
 "price_out": 15.0,
+"price_cached": 0.3,
 "aliases": [
 "Anthropic: Claude Sonnet 4",
 "anthropic/claude-4-sonnet-20250522",
@@ -598,6 +627,7 @@
 "context_k": 1000.0,
 "price_in": 3.0,
 "price_out": 15.0,
+"price_cached": 0.3,
 "aliases": [
 "Anthropic: Claude Sonnet 4.5",
 "anthropic/claude-4.5-sonnet-20250929",
@@ -621,6 +651,7 @@
 "context_k": 1000.0,
 "price_in": 3.0,
 "price_out": 15.0,
+"price_cached": 0.3,
 "aliases": [
 "Anthropic: Claude Sonnet 4.6",
 "anthropic/claude-4.6-sonnet-20260217",
@@ -643,6 +674,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Anthropic: Claude Sonnet 5",
 "anthropic/claude-sonnet-5",
@@ -665,6 +697,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Anthropic: Claude Sonnet 5.5",
 "anthropic/claude-sonnet-5.5",
@@ -687,6 +720,7 @@
 "context_k": 256.0,
 "price_in": 0.3,
 "price_out": 0.8999999999999999,
+"price_cached": 0.03,
 "aliases": [
 "Mistral: Codestral 2508",
 "mistralai/codestral-2508",
@@ -708,6 +742,7 @@
 "context_k": 256.0,
 "price_in": 2.5,
 "price_out": 10.0,
+"price_cached": null,
 "aliases": [
 "Cohere: Command A",
 "cohere/command-a",
@@ -728,6 +763,7 @@
 "context_k": 192.0,
 "price_in": 0.3,
 "price_out": 1.5,
+"price_cached": 0.15,
 "aliases": [
 "Cohere: Command A+",
 "cohere/command-a-plus",
@@ -748,6 +784,7 @@
 "context_k": 128.0,
 "price_in": 0.15,
 "price_out": 0.6,
+"price_cached": null,
 "aliases": [
 "Cohere: Command R (08-2024)",
 "cohere/command-r-08-2024"
@@ -767,6 +804,7 @@
 "context_k": 128.0,
 "price_in": 2.5,
 "price_out": 10.0,
+"price_cached": null,
 "aliases": [
 "Cohere: Command R+ (08-2024)",
 "cohere/command-r-plus-08-2024"
@@ -786,6 +824,7 @@
 "context_k": 128.0,
 "price_in": 0.0375,
 "price_out": 0.15,
+"price_cached": null,
 "aliases": [
 "Cohere: Command R7B (12-2024)",
 "cohere/command-r7b-12-2024"
@@ -805,6 +844,7 @@
 "context_k": 131.072,
 "price_in": 0.3,
 "price_out": 0.5,
+"price_cached": 0.15,
 "aliases": [
 "TheDrummer: Cydonia 24B V4.1",
 "thedrummer/cydonia-24b-v4.1"
@@ -824,6 +864,7 @@
 "context_k": 163.84,
 "price_in": 0.2574,
 "price_out": 1.0287,
+"price_cached": null,
 "aliases": [
 "DeepSeek: DeepSeek V3",
 "deepseek/deepseek-chat",
@@ -845,6 +886,7 @@
 "context_k": 163.84,
 "price_in": 0.29,
 "price_out": 1.1400000000000001,
+"price_cached": 0.11,
 "aliases": [
 "DeepSeek: DeepSeek V3 0324",
 "deepseek/deepseek-chat-v3-0324"
@@ -864,6 +906,7 @@
 "context_k": 163.84,
 "price_in": 0.25,
 "price_out": 0.95,
+"price_cached": 0.13,
 "aliases": [
 "DeepSeek: DeepSeek V3.1",
 "deepseek/deepseek-chat-v3.1"
@@ -883,6 +926,7 @@
 "context_k": 1048.576,
 "price_in": 0.045,
 "price_out": 0.3,
+"price_cached": 0.015,
 "aliases": [
 "DeepSeek: DeepSeek Flash Latest",
 "~deepseek/deepseek-flash-latest"
@@ -902,6 +946,7 @@
 "context_k": 1048.576,
 "price_in": 0.2514,
 "price_out": 4.199999999999999,
+"price_cached": 0.25,
 "aliases": [
 "DeepSeek: DeepSeek Pro Latest",
 "~deepseek/deepseek-pro-latest"
@@ -921,6 +966,7 @@
 "context_k": 64.0,
 "price_in": 0.7,
 "price_out": 2.5,
+"price_cached": null,
 "aliases": [
 "DeepSeek: R1",
 "deepseek/deepseek-r1"
@@ -940,6 +986,7 @@
 "context_k": 163.84,
 "price_in": 0.5,
 "price_out": 2.1500000000000004,
+"price_cached": 0.35,
 "aliases": [
 "DeepSeek: R1 0528",
 "deepseek/deepseek-r1-0528"
@@ -959,6 +1006,7 @@
 "context_k": 163.84,
 "price_in": 0.27,
 "price_out": 1.0,
+"price_cached": null,
 "aliases": [
 "DeepSeek: DeepSeek V3.1 Terminus",
 "deepseek/deepseek-v3.1-terminus"
@@ -978,6 +1026,7 @@
 "context_k": 163.84,
 "price_in": 0.28,
 "price_out": 0.42,
+"price_cached": 0.028,
 "aliases": [
 "DeepSeek: DeepSeek V3.2",
 "deepseek/deepseek-v3.2",
@@ -1001,6 +1050,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "DeepSeek V3.2 Reasoner"
 ],
@@ -1019,6 +1069,7 @@
 "context_k": 1048.576,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": 0.006,
 "aliases": [
 "DeepSeek: DeepSeek V4.1 Flash",
 "deepseek/deepseek-v4.1-flash",
@@ -1041,6 +1092,7 @@
 "context_k": 1048.576,
 "price_in": 0.012299999999999998,
 "price_out": 1.28,
+"price_cached": 0.012299999999999998,
 "aliases": [
 "DeepSeek: DeepSeek V4 Flash Latest",
 "~deepseek/deepseek-v4-flash-latest",
@@ -1063,6 +1115,7 @@
 "context_k": 1048.576,
 "price_in": 0.012299999999999998,
 "price_out": 1.28,
+"price_cached": 0.012299999999999998,
 "aliases": [
 "DeepSeek: DeepSeek V4 Flash 0731",
 "deepseek/deepseek-v4-flash-0731",
@@ -1083,6 +1136,7 @@
 "context_k": 1048.576,
 "price_in": 0.21559999999999999,
 "price_out": 0.6468,
+"price_cached": 0.00686,
 "aliases": [
 "DeepSeek: DeepSeek V4 Flash Vision Exp",
 "deepseek/deepseek-v4-flash-vision-exp",
@@ -1103,6 +1157,7 @@
 "context_k": 1048.576,
 "price_in": 0.66,
 "price_out": 1.9800000000000002,
+"price_cached": 0.022,
 "aliases": [
 "DeepSeek: DeepSeek V4 Pro 0813",
 "deepseek/deepseek-v4-pro-0813",
@@ -1127,6 +1182,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "DeepSWE-Preview"
 ],
@@ -1145,6 +1201,7 @@
 "context_k": 262.144,
 "price_in": 0.39999999999999997,
 "price_out": 2.0,
+"price_cached": 0.04,
 "aliases": [
 "Mistral: Devstral 2 2512",
 "mistralai/devstral-2512",
@@ -1165,6 +1222,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "DevStral Small 2505"
 ],
@@ -1183,6 +1241,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "DevStral Small 2507"
 ],
@@ -1201,6 +1260,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Devstral Small (2512)"
 ],
@@ -1219,6 +1279,7 @@
 "context_k": 128.0,
 "price_in": 0.19999999999999998,
 "price_out": 0.8999999999999999,
+"price_cached": null,
 "aliases": [
 "Venice: Uncensored",
 "cognitivecomputations/dolphin-mistral-24b-venice-edition",
@@ -1239,6 +1300,7 @@
 "context_k": 1048.576,
 "price_in": 3.0,
 "price_out": 15.0,
+"price_cached": 0.3,
 "aliases": [
 "Fireworks: Ember-1",
 "fireworks/ember-1",
@@ -1259,6 +1321,7 @@
 "context_k": 123.0,
 "price_in": 0.42,
 "price_out": 1.25,
+"price_cached": null,
 "aliases": [
 "Baidu: ERNIE 4.5 VL 424B A47B ",
 "baidu/ernie-4.5-vl-424b-a47b"
@@ -1278,6 +1341,7 @@
 "context_k": 200.0,
 "price_in": 0.0,
 "price_out": 0.0,
+"price_cached": null,
 "aliases": [
 "Free Models Router",
 "openrouter/free"
@@ -1297,6 +1361,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Frogboss 32B 2510"
 ],
@@ -1315,6 +1380,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Frogmini 14B 2510"
 ],
@@ -1333,6 +1399,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.25,
 "aliases": [
 "Sakana: Fugu Max",
 "sakana/fugu-max",
@@ -1353,6 +1420,7 @@
 "context_k": 1000.0,
 "price_in": 5.0,
 "price_out": 30.0,
+"price_cached": 0.5,
 "aliases": [
 "Sakana: Fugu Ultra",
 "sakana/fugu-ultra",
@@ -1373,6 +1441,7 @@
 "context_k": 1000.0,
 "price_in": 5.0,
 "price_out": 30.0,
+"price_cached": 0.5,
 "aliases": [
 "Sakana: Fugu Ultra v2",
 "sakana/fugu-ultra-v2",
@@ -1393,6 +1462,7 @@
 "context_k": 1000.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "OpenRouter: Fusion",
 "openrouter/fusion"
@@ -1412,6 +1482,7 @@
 "context_k": 1048.576,
 "price_in": 0.3,
 "price_out": 2.5,
+"price_cached": 0.03,
 "aliases": [
 "Google: Gemini 2.5 Flash",
 "google/gemini-2.5-flash",
@@ -1433,6 +1504,7 @@
 "context_k": 32.768,
 "price_in": 0.3,
 "price_out": 2.5,
+"price_cached": 0.03,
 "aliases": [
 "Google: Nano Banana (Gemini 2.5 Flash Image)",
 "google/gemini-2.5-flash-image"
@@ -1452,6 +1524,7 @@
 "context_k": 1048.576,
 "price_in": 0.09999999999999999,
 "price_out": 0.39999999999999997,
+"price_cached": 0.01,
 "aliases": [
 "Google: Gemini 2.5 Flash Lite",
 "google/gemini-2.5-flash-lite",
@@ -1473,6 +1546,7 @@
 "context_k": 1048.576,
 "price_in": 1.25,
 "price_out": 10.0,
+"price_cached": 0.125,
 "aliases": [
 "Google: Gemini 2.5 Pro",
 "google/gemini-2.5-pro",
@@ -1498,6 +1572,7 @@
 "context_k": 131.072,
 "price_in": 0.5,
 "price_out": 3.0,
+"price_cached": null,
 "aliases": [
 "Google: Nano Banana 2 (Gemini 3.1 Flash Image)",
 "google/gemini-3.1-flash-image",
@@ -1521,6 +1596,7 @@
 "context_k": 1048.576,
 "price_in": 0.25,
 "price_out": 1.5,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "Google: Gemini 3.1 Flash Lite",
 "google/gemini-3.1-flash-lite",
@@ -1546,6 +1622,7 @@
 "context_k": 65.536,
 "price_in": 0.25,
 "price_out": 1.5,
+"price_cached": null,
 "aliases": [
 "Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
 "google/gemini-3.1-flash-lite-image",
@@ -1566,6 +1643,7 @@
 "context_k": 1048.576,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Google: Gemini 3.1 Pro Preview",
 "google/gemini-3.1-pro-preview",
@@ -1588,6 +1666,7 @@
 "context_k": 1048.576,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Google: Gemini 3.1 Pro Preview Custom Tools",
 "google/gemini-3.1-pro-preview-customtools",
@@ -1608,6 +1687,7 @@
 "context_k": 1048.576,
 "price_in": 1.5,
 "price_out": 9.0,
+"price_cached": 0.15,
 "aliases": [
 "Google: Gemini 3.5 Flash",
 "google/gemini-3.5-flash",
@@ -1631,6 +1711,7 @@
 "context_k": 1048.576,
 "price_in": 0.3,
 "price_out": 2.5,
+"price_cached": 0.03,
 "aliases": [
 "Google: Gemini 3.5 Flash Lite",
 "google/gemini-3.5-flash-lite",
@@ -1653,6 +1734,7 @@
 "context_k": 1048.576,
 "price_in": 0.75,
 "price_out": 3.75,
+"price_cached": 0.075,
 "aliases": [
 "Google: Gemini 3.6 Flash",
 "google/gemini-3.6-flash",
@@ -1675,6 +1757,7 @@
 "context_k": 1048.576,
 "price_in": 0.75,
 "price_out": 3.75,
+"price_cached": 0.075,
 "aliases": [
 "Google: Gemini 3.7 Flash",
 "google/gemini-3.7-flash",
@@ -1697,6 +1780,7 @@
 "context_k": 1048.576,
 "price_in": 0.75,
 "price_out": 3.75,
+"price_cached": 0.075,
 "aliases": [
 "Google: Gemini 3.8 Flash",
 "google/gemini-3.8-flash",
@@ -1719,6 +1803,7 @@
 "context_k": 1048.576,
 "price_in": 0.5,
 "price_out": 3.0,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Google: Gemini 3 Flash Preview",
 "google/gemini-3-flash-preview",
@@ -1742,6 +1827,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Gemini 3 Pro Preview"
 ],
@@ -1760,6 +1846,7 @@
 "context_k": 131.072,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Google: Nano Banana Pro (Gemini 3 Pro Image)",
 "google/gemini-3-pro-image",
@@ -1783,6 +1870,7 @@
 "context_k": 1048.576,
 "price_in": 0.75,
 "price_out": 3.75,
+"price_cached": 0.075,
 "aliases": [
 "Google: Gemini Flash Latest",
 "~google/gemini-flash-latest"
@@ -1802,6 +1890,7 @@
 "context_k": 65.536,
 "price_in": 1.5,
 "price_out": 7.5,
+"price_cached": null,
 "aliases": [
 "Google: Nano Banana 2.1",
 "google/gemini-nano-banana-2.1",
@@ -1822,6 +1911,7 @@
 "context_k": 1048.576,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Google: Gemini Pro Latest",
 "~google/gemini-pro-latest"
@@ -1841,6 +1931,7 @@
 "context_k": 8.192,
 "price_in": 0.65,
 "price_out": 0.65,
+"price_cached": null,
 "aliases": [
 "Google: Gemma 2 27B",
 "google/gemma-2-27b-it"
@@ -1860,6 +1951,7 @@
 "context_k": 131.072,
 "price_in": 0.049999999999999996,
 "price_out": 0.15,
+"price_cached": null,
 "aliases": [
 "Google: Gemma 3 12B",
 "google/gemma-3-12b-it"
@@ -1879,6 +1971,7 @@
 "context_k": 131.072,
 "price_in": 0.08,
 "price_out": 0.44999999999999996,
+"price_cached": 0.04,
 "aliases": [
 "Google: Gemma 3 27B",
 "google/gemma-3-27b-it"
@@ -1898,6 +1991,7 @@
 "context_k": 131.072,
 "price_in": 0.049999999999999996,
 "price_out": 0.09999999999999999,
+"price_cached": null,
 "aliases": [
 "Google: Gemma 3 4B",
 "google/gemma-3-4b-it"
@@ -1917,6 +2011,7 @@
 "context_k": 262.144,
 "price_in": 0.0765,
 "price_out": 0.255,
+"price_cached": 0.042499999999999996,
 "aliases": [
 "Google: Gemma 4 26B A4B ",
 "google/gemma-4-26b-a4b-it",
@@ -1937,6 +2032,7 @@
 "context_k": 262.144,
 "price_in": 0.09,
 "price_out": 0.33999999999999997,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Google: Gemma 4 31B",
 "google/gemma-4-31b-it",
@@ -1957,6 +2053,7 @@
 "context_k": 1048.576,
 "price_in": 0.03,
 "price_out": 12.0,
+"price_cached": 0.03,
 "aliases": [
 "Z.ai: GLM Latest",
 "~z-ai/glm-latest"
@@ -1976,6 +2073,7 @@
 "context_k": 131.072,
 "price_in": 0.6,
 "price_out": 2.2,
+"price_cached": 0.11,
 "aliases": [
 "Z.ai: GLM 4.5",
 "z-ai/glm-4.5",
@@ -1996,6 +2094,7 @@
 "context_k": 131.072,
 "price_in": 0.13,
 "price_out": 0.85,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "Z.ai: GLM 4.5 Air",
 "z-ai/glm-4.5-air"
@@ -2015,6 +2114,7 @@
 "context_k": 65.536,
 "price_in": 0.6,
 "price_out": 1.7999999999999998,
+"price_cached": 0.11,
 "aliases": [
 "Z.ai: GLM 4.5V",
 "z-ai/glm-4.5v"
@@ -2034,6 +2134,7 @@
 "context_k": 131.072,
 "price_in": 0.3,
 "price_out": 0.8999999999999999,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Z.ai: GLM 4.6V",
 "z-ai/glm-4.6-20251208",
@@ -2058,6 +2159,7 @@
 "context_k": 204.8,
 "price_in": 0.6,
 "price_out": 2.2,
+"price_cached": 0.11,
 "aliases": [
 "Z.ai: GLM 4.7",
 "z-ai/glm-4.7",
@@ -2078,6 +2180,7 @@
 "context_k": 200.0,
 "price_in": 0.060500000000000005,
 "price_out": 0.39999999999999997,
+"price_cached": null,
 "aliases": [
 "Z.ai: GLM 4.7 Flash",
 "z-ai/glm-4.7-flash",
@@ -2098,6 +2201,7 @@
 "context_k": 204.8,
 "price_in": 0.6,
 "price_out": 1.92,
+"price_cached": 0.12,
 "aliases": [
 "Z.ai: GLM 5",
 "z-ai/glm-5",
@@ -2119,6 +2223,7 @@
 "context_k": 204.8,
 "price_in": 1.4,
 "price_out": 4.4,
+"price_cached": 0.26,
 "aliases": [
 "Z.ai: GLM 5.1",
 "z-ai/glm-5.1",
@@ -2139,6 +2244,7 @@
 "context_k": 1048.576,
 "price_in": 0.15200000000000002,
 "price_out": 12.0,
+"price_cached": 0.15,
 "aliases": [
 "Z.ai: GLM 5.2",
 "z-ai/glm-5.2",
@@ -2159,6 +2265,7 @@
 "context_k": 1048.576,
 "price_in": 0.07,
 "price_out": 7.0,
+"price_cached": 0.065,
 "aliases": [
 "Z.ai: GLM 5.3",
 "z-ai/glm-5.3",
@@ -2181,6 +2288,7 @@
 "context_k": 1048.576,
 "price_in": 0.15,
 "price_out": 0.5,
+"price_cached": 0.03,
 "aliases": [
 "Z.ai: GLM 5.3 Flash",
 "z-ai/glm-5.3-flash",
@@ -2203,6 +2311,7 @@
 "context_k": 1048.576,
 "price_in": 0.37,
 "price_out": 1.25,
+"price_cached": 0.09,
 "aliases": [
 "Z.ai: GLM 5.3 FlashX",
 "z-ai/glm-5.3-flashx",
@@ -2223,6 +2332,7 @@
 "context_k": 1000.0,
 "price_in": 2.8,
 "price_out": 8.8,
+"price_cached": 0.56,
 "aliases": [
 "Z.ai: GLM 5.3 Prime",
 "z-ai/glm-5.3-prime",
@@ -2243,6 +2353,7 @@
 "context_k": 202.752,
 "price_in": 1.2,
 "price_out": 4.0,
+"price_cached": 0.24,
 "aliases": [
 "Z.ai: GLM 5 Turbo",
 "z-ai/glm-5-turbo",
@@ -2263,6 +2374,7 @@
 "context_k": 202.752,
 "price_in": 1.2,
 "price_out": 4.0,
+"price_cached": 0.24,
 "aliases": [
 "Z.ai: GLM 5V Turbo",
 "z-ai/glm-5v-turbo",
@@ -2283,6 +2395,7 @@
 "context_k": 1048.576,
 "price_in": 0.03058,
 "price_out": 0.6875,
+"price_cached": 0.02013,
 "aliases": [
 "Z.ai: GLM Flash Latest",
 "~z-ai/glm-flash-latest"
@@ -2302,6 +2415,7 @@
 "context_k": 4.095,
 "price_in": 1.5,
 "price_out": 2.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-3.5 Turbo Instruct",
 "openai/gpt-3.5-turbo-instruct",
@@ -2325,6 +2439,7 @@
 "context_k": 4.095,
 "price_in": 1.0,
 "price_out": 2.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-3.5 Turbo (older v0613)",
 "openai/gpt-3.5-turbo-0613"
@@ -2344,6 +2459,7 @@
 "context_k": 16.385,
 "price_in": 3.0,
 "price_out": 4.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-3.5 Turbo 16k",
 "openai/gpt-3.5-turbo-16k"
@@ -2363,6 +2479,7 @@
 "context_k": 8.191,
 "price_in": 30.0,
 "price_out": 60.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-4",
 "openai/gpt-4"
@@ -2382,6 +2499,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "GPT-4 (0125)"
 ],
@@ -2400,6 +2518,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "GPT-4 (0613)"
 ],
@@ -2418,6 +2537,7 @@
 "context_k": 1047.576,
 "price_in": 2.0,
 "price_out": 8.0,
+"price_cached": 0.5,
 "aliases": [
 "OpenAI: GPT-4.1",
 "openai/gpt-4.1",
@@ -2440,6 +2560,7 @@
 "context_k": 1047.576,
 "price_in": 0.39999999999999997,
 "price_out": 1.5999999999999999,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "OpenAI: GPT-4.1 Mini",
 "openai/gpt-4.1-mini",
@@ -2462,6 +2583,7 @@
 "context_k": 1047.576,
 "price_in": 0.09999999999999999,
 "price_out": 0.39999999999999997,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "OpenAI: GPT-4.1 Nano",
 "openai/gpt-4.1-nano",
@@ -2484,6 +2606,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "GPT-4 (1106)"
 ],
@@ -2502,6 +2625,7 @@
 "context_k": 128.0,
 "price_in": 10.0,
 "price_out": 30.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-4 Turbo",
 "openai/gpt-4-turbo",
@@ -2523,6 +2647,7 @@
 "context_k": 128.0,
 "price_in": 2.5,
 "price_out": 10.0,
+"price_cached": 1.25,
 "aliases": [
 "OpenAI: GPT-4o (2024-11-20)",
 "openai/gpt-4o-2024-11-20",
@@ -2551,6 +2676,7 @@
 "context_k": 128.0,
 "price_in": 0.15,
 "price_out": 0.6,
+"price_cached": 0.075,
 "aliases": [
 "OpenAI: GPT-4o-mini",
 "openai/gpt-4o-mini",
@@ -2574,6 +2700,7 @@
 "context_k": 400.0,
 "price_in": 1.25,
 "price_out": 10.0,
+"price_cached": 0.125,
 "aliases": [
 "OpenAI: GPT-5",
 "openai/gpt-5",
@@ -2597,6 +2724,7 @@
 "context_k": 400.0,
 "price_in": 1.25,
 "price_out": 10.0,
+"price_cached": 0.125,
 "aliases": [
 "OpenAI: GPT-5.1",
 "openai/gpt-5.1",
@@ -2620,6 +2748,7 @@
 "context_k": 400.0,
 "price_in": 1.25,
 "price_out": 10.0,
+"price_cached": 0.13,
 "aliases": [
 "OpenAI: GPT-5.1-Codex",
 "openai/gpt-5.1-codex",
@@ -2641,6 +2770,7 @@
 "context_k": 400.0,
 "price_in": 1.25,
 "price_out": 10.0,
+"price_cached": 0.125,
 "aliases": [
 "OpenAI: GPT-5.1-Codex-Max",
 "openai/gpt-5.1-codex-max",
@@ -2661,6 +2791,7 @@
 "context_k": 400.0,
 "price_in": 0.25,
 "price_out": 2.0,
+"price_cached": 0.03,
 "aliases": [
 "OpenAI: GPT-5.1-Codex-Mini",
 "openai/gpt-5.1-codex-mini",
@@ -2681,6 +2812,7 @@
 "context_k": 400.0,
 "price_in": 1.75,
 "price_out": 14.0,
+"price_cached": 0.175,
 "aliases": [
 "OpenAI: GPT-5.2",
 "openai/gpt-5.2",
@@ -2704,6 +2836,7 @@
 "context_k": 128.0,
 "price_in": 1.75,
 "price_out": 14.0,
+"price_cached": 0.175,
 "aliases": [
 "OpenAI: GPT-5.2 Chat",
 "openai/gpt-5.2-chat",
@@ -2724,6 +2857,7 @@
 "context_k": 400.0,
 "price_in": 1.75,
 "price_out": 14.0,
+"price_cached": 0.175,
 "aliases": [
 "OpenAI: GPT-5.2-Codex",
 "openai/gpt-5.2-codex",
@@ -2745,6 +2879,7 @@
 "context_k": 400.0,
 "price_in": 21.0,
 "price_out": 168.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-5.2 Pro",
 "openai/gpt-5.2-pro",
@@ -2767,6 +2902,7 @@
 "context_k": 400.0,
 "price_in": 1.75,
 "price_out": 14.0,
+"price_cached": 0.175,
 "aliases": [
 "OpenAI: GPT-5.3-Codex",
 "openai/gpt-5.3-codex",
@@ -2787,6 +2923,7 @@
 "context_k": 1050.0,
 "price_in": 2.5,
 "price_out": 15.0,
+"price_cached": 0.25,
 "aliases": [
 "OpenAI: GPT-5.4",
 "openai/gpt-5.4",
@@ -2809,6 +2946,7 @@
 "context_k": 272.0,
 "price_in": 8.0,
 "price_out": 15.0,
+"price_cached": 2.0,
 "aliases": [
 "OpenAI: GPT-5.4 Image 2",
 "openai/gpt-5.4-image-2",
@@ -2829,6 +2967,7 @@
 "context_k": 400.0,
 "price_in": 0.75,
 "price_out": 4.5,
+"price_cached": 0.075,
 "aliases": [
 "OpenAI: GPT-5.4 Mini",
 "openai/gpt-5.4-mini",
@@ -2851,6 +2990,7 @@
 "context_k": 400.0,
 "price_in": 0.19999999999999998,
 "price_out": 1.25,
+"price_cached": 0.02,
 "aliases": [
 "OpenAI: GPT-5.4 Nano",
 "openai/gpt-5.4-nano",
@@ -2873,6 +3013,7 @@
 "context_k": 1050.0,
 "price_in": 30.0,
 "price_out": 180.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-5.4 Pro",
 "openai/gpt-5.4-pro",
@@ -2895,6 +3036,7 @@
 "context_k": 1050.0,
 "price_in": 5.0,
 "price_out": 30.0,
+"price_cached": 0.5,
 "aliases": [
 "OpenAI: GPT-5.5",
 "openai/gpt-5.5",
@@ -2917,6 +3059,7 @@
 "context_k": 1050.0,
 "price_in": 30.0,
 "price_out": 180.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-5.5 Pro",
 "openai/gpt-5.5-pro",
@@ -2939,6 +3082,7 @@
 "context_k": 1050.0,
 "price_in": 0.19999999999999998,
 "price_out": 1.2,
+"price_cached": 0.02,
 "aliases": [
 "OpenAI: GPT-5.6 Luna",
 "openai/gpt-5.6-luna",
@@ -2961,6 +3105,7 @@
 "context_k": 1050.0,
 "price_in": 0.19999999999999998,
 "price_out": 1.2,
+"price_cached": 0.02,
 "aliases": [
 "OpenAI: GPT-5.6 Luna Pro",
 "openai/gpt-5.6-luna-pro",
@@ -2983,6 +3128,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT-5.6 Sol",
 "openai/gpt-5.6-sol",
@@ -3005,6 +3151,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT-5.6 Sol Pro",
 "openai/gpt-5.6-sol-pro",
@@ -3027,6 +3174,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT-5.6 Terra",
 "openai/gpt-5.6-terra",
@@ -3049,6 +3197,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT-5.6 Terra Pro",
 "openai/gpt-5.6-terra-pro",
@@ -3071,6 +3220,7 @@
 "context_k": 400.0,
 "price_in": 10.0,
 "price_out": 10.0,
+"price_cached": 1.25,
 "aliases": [
 "OpenAI: GPT-5 Image",
 "openai/gpt-5-image"
@@ -3090,6 +3240,7 @@
 "context_k": 400.0,
 "price_in": 2.5,
 "price_out": 2.0,
+"price_cached": 0.25,
 "aliases": [
 "OpenAI: GPT-5 Image Mini",
 "openai/gpt-5-image-mini"
@@ -3109,6 +3260,7 @@
 "context_k": 400.0,
 "price_in": 0.25,
 "price_out": 2.0,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "OpenAI: GPT-5 Mini",
 "openai/gpt-5-mini",
@@ -3132,6 +3284,7 @@
 "context_k": 400.0,
 "price_in": 0.049999999999999996,
 "price_out": 0.39999999999999997,
+"price_cached": 0.005,
 "aliases": [
 "OpenAI: GPT-5 Nano",
 "openai/gpt-5-nano",
@@ -3155,6 +3308,7 @@
 "context_k": 400.0,
 "price_in": 15.0,
 "price_out": 120.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT-5 Pro",
 "openai/gpt-5-pro",
@@ -3177,6 +3331,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "OpenAI: GPT-6.1 Sol",
 "openai/gpt-6.1-sol",
@@ -3197,6 +3352,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "OpenAI: GPT-6.1 Sol Pro",
 "openai/gpt-6.1-sol-pro",
@@ -3217,6 +3373,7 @@
 "context_k": 1050.0,
 "price_in": 10.0,
 "price_out": 50.0,
+"price_cached": 1.0,
 "aliases": [
 "OpenAI: GPT-6 Astra",
 "openai/gpt-6-astra",
@@ -3239,6 +3396,7 @@
 "context_k": 1050.0,
 "price_in": 10.0,
 "price_out": 50.0,
+"price_cached": 1.0,
 "aliases": [
 "OpenAI: GPT-6 Astra Pro",
 "openai/gpt-6-astra-pro",
@@ -3261,6 +3419,7 @@
 "context_k": 1050.0,
 "price_in": 0.09999999999999999,
 "price_out": 0.5,
+"price_cached": 0.01,
 "aliases": [
 "OpenAI: GPT-6 Luna",
 "openai/gpt-6-luna",
@@ -3283,6 +3442,7 @@
 "context_k": 1050.0,
 "price_in": 0.09999999999999999,
 "price_out": 0.5,
+"price_cached": 0.01,
 "aliases": [
 "OpenAI: GPT-6 Luna Pro",
 "openai/gpt-6-luna-pro",
@@ -3305,6 +3465,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT-6 Sol",
 "openai/gpt-6-sol",
@@ -3327,6 +3488,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT-6 Sol Pro",
 "openai/gpt-6-sol-pro",
@@ -3349,6 +3511,7 @@
 "context_k": 1050.0,
 "price_in": 10.0,
 "price_out": 50.0,
+"price_cached": 1.0,
 "aliases": [
 "OpenAI: GPT Astra Latest",
 "~openai/gpt-astra-latest"
@@ -3368,6 +3531,7 @@
 "context_k": 128.0,
 "price_in": 2.5,
 "price_out": 10.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT Audio",
 "openai/gpt-audio"
@@ -3387,6 +3551,7 @@
 "context_k": 128.0,
 "price_in": 0.6,
 "price_out": 2.4,
+"price_cached": null,
 "aliases": [
 "OpenAI: GPT Audio Mini",
 "openai/gpt-audio-mini"
@@ -3406,6 +3571,7 @@
 "context_k": 400.0,
 "price_in": 5.0,
 "price_out": 30.0,
+"price_cached": 0.5,
 "aliases": [
 "OpenAI: GPT Chat Latest",
 "openai/gpt-chat-latest",
@@ -3426,6 +3592,7 @@
 "context_k": 1050.0,
 "price_in": 0.09999999999999999,
 "price_out": 0.5,
+"price_cached": 0.01,
 "aliases": [
 "OpenAI: GPT Luna Latest",
 "~openai/gpt-luna-latest"
@@ -3445,6 +3612,7 @@
 "context_k": 400.0,
 "price_in": 0.75,
 "price_out": 4.5,
+"price_cached": 0.075,
 "aliases": [
 "OpenAI: GPT Mini Latest",
 "~openai/gpt-mini-latest"
@@ -3464,6 +3632,7 @@
 "context_k": 131.072,
 "price_in": 0.037,
 "price_out": 0.16999999999999998,
+"price_cached": null,
 "aliases": [
 "OpenAI: gpt-oss-120b",
 "openai/gpt-oss-120b",
@@ -3485,6 +3654,7 @@
 "context_k": 131.072,
 "price_in": 0.018,
 "price_out": 0.09,
+"price_cached": 0.009,
 "aliases": [
 "OpenAI: gpt-oss-20b",
 "openai/gpt-oss-20b",
@@ -3506,6 +3676,7 @@
 "context_k": 131.072,
 "price_in": 0.075,
 "price_out": 0.3,
+"price_cached": 0.0375,
 "aliases": [
 "OpenAI: gpt-oss-safeguard-20b",
 "openai/gpt-oss-safeguard-20b"
@@ -3525,6 +3696,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 10.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "OpenAI: GPT Sol Latest",
 "~openai/gpt-sol-latest"
@@ -3544,6 +3716,7 @@
 "context_k": 1050.0,
 "price_in": 2.0,
 "price_out": 12.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "OpenAI: GPT Terra Latest",
 "~openai/gpt-terra-latest"
@@ -3563,6 +3736,7 @@
 "context_k": 131.0,
 "price_in": 0.017,
 "price_out": 0.112,
+"price_cached": null,
 "aliases": [
 "IBM: Granite 4.0 Micro",
 "ibm-granite/granite-4.0-h-micro"
@@ -3582,6 +3756,7 @@
 "context_k": 131.072,
 "price_in": 0.06,
 "price_out": 0.25,
+"price_cached": 0.015,
 "aliases": [
 "IBM: Granite 4.2 8B",
 "ibm-granite/granite-4.2-8b",
@@ -3602,6 +3777,7 @@
 "context_k": 500.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.5,
 "aliases": [
 "xAI: Grok Latest",
 "~x-ai/grok-latest"
@@ -3621,6 +3797,7 @@
 "context_k": 2000.0,
 "price_in": 1.25,
 "price_out": 2.5,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "SpaceXAI: Grok 4.20",
 "x-ai/grok-4.20",
@@ -3641,6 +3818,7 @@
 "context_k": 2000.0,
 "price_in": 1.25,
 "price_out": 2.5,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "SpaceXAI: Grok 4.20 Multi-Agent",
 "x-ai/grok-4.20-multi-agent",
@@ -3661,6 +3839,7 @@
 "context_k": 1000.0,
 "price_in": 1.25,
 "price_out": 2.5,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "SpaceXAI: Grok 4.3",
 "x-ai/grok-4.3",
@@ -3683,6 +3862,7 @@
 "context_k": 500.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.3,
 "aliases": [
 "SpaceXAI: Grok 4.5",
 "x-ai/grok-4.5",
@@ -3703,6 +3883,7 @@
 "context_k": 500.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.5,
 "aliases": [
 "SpaceXAI: Grok 4.6",
 "x-ai/grok-4.6",
@@ -3723,6 +3904,7 @@
 "context_k": 500.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.5,
 "aliases": [
 "SpaceXAI: Grok 4.7",
 "x-ai/grok-4.7",
@@ -3743,6 +3925,7 @@
 "context_k": 256.0,
 "price_in": 1.0,
 "price_out": 2.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "SpaceXAI: Grok Build 0.1",
 "x-ai/grok-build-0.1",
@@ -3763,6 +3946,7 @@
 "context_k": 131.072,
 "price_in": 1.0,
 "price_out": 1.0,
+"price_cached": null,
 "aliases": [
 "Nous: Hermes 3 405B Instruct",
 "nousresearch/hermes-3-llama-3.1-405b"
@@ -3782,6 +3966,7 @@
 "context_k": 131.072,
 "price_in": 0.7,
 "price_out": 0.7,
+"price_cached": null,
 "aliases": [
 "Nous: Hermes 3 70B Instruct",
 "nousresearch/hermes-3-llama-3.1-70b"
@@ -3801,6 +3986,7 @@
 "context_k": 131.072,
 "price_in": 1.0,
 "price_out": 3.0,
+"price_cached": null,
 "aliases": [
 "Nous: Hermes 4 405B",
 "nousresearch/hermes-4-405b"
@@ -3820,6 +4006,7 @@
 "context_k": 131.072,
 "price_in": 0.14,
 "price_out": 0.5700000000000001,
+"price_cached": null,
 "aliases": [
 "Tencent: Hunyuan A13B Instruct",
 "tencent/hunyuan-a13b-instruct"
@@ -3839,6 +4026,7 @@
 "context_k": 8.192,
 "price_in": 0.044,
 "price_out": 0.17700000000000002,
+"price_cached": null,
 "aliases": [
 "Tencent: Hy-MT2-1.8B",
 "tencent/hy-mt2-1.8b",
@@ -3859,6 +4047,7 @@
 "context_k": 8.192,
 "price_in": 0.074,
 "price_out": 0.295,
+"price_cached": null,
 "aliases": [
 "Tencent: Hy-MT2-30B-A3B",
 "tencent/hy-mt2-30b-a3b",
@@ -3879,6 +4068,7 @@
 "context_k": 8.192,
 "price_in": 0.074,
 "price_out": 0.295,
+"price_cached": null,
 "aliases": [
 "Tencent: Hy-MT2-7B",
 "tencent/hy-mt2-7b",
@@ -3899,6 +4089,7 @@
 "context_k": 262.144,
 "price_in": 0.0825,
 "price_out": 0.33,
+"price_cached": 0.020625,
 "aliases": [
 "Tencent: Hy3",
 "tencent/hy3",
@@ -3922,6 +4113,7 @@
 "context_k": 1048.576,
 "price_in": 0.7505999999999999,
 "price_out": 2.2509,
+"price_cached": 0.0378,
 "aliases": [
 "Tencent: Hy4 preview",
 "tencent/hy4-preview",
@@ -3942,6 +4134,7 @@
 "context_k": 524.288,
 "price_in": 0.95,
 "price_out": 4.05,
+"price_cached": 0.16,
 "aliases": [
 "Thinking Machines: Inkling",
 "thinkingmachines/inkling",
@@ -3962,6 +4155,7 @@
 "context_k": 524.288,
 "price_in": 0.44999999999999996,
 "price_out": 1.2,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Thinking Machines: Inkling Small",
 "thinkingmachines/inkling-small",
@@ -3982,6 +4176,7 @@
 "context_k": 1000.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "TypeSafe: Jev Router",
 "typesafe/jev-router"
@@ -4001,6 +4196,7 @@
 "context_k": 262.144,
 "price_in": 0.74,
 "price_out": 2.96,
+"price_cached": 0.15,
 "aliases": [
 "Kwaipilot: KAT-Coder-Pro V2.5",
 "kwaipilot/kat-coder-pro-v2.5",
@@ -4021,6 +4217,7 @@
 "context_k": 1048.576,
 "price_in": 0.69,
 "price_out": 15.0,
+"price_cached": 0.22999999999999998,
 "aliases": [
 "MoonshotAI: Kimi Latest",
 "~moonshotai/kimi-latest"
@@ -4040,6 +4237,7 @@
 "context_k": 131.072,
 "price_in": 0.5700000000000001,
 "price_out": 2.3,
+"price_cached": null,
 "aliases": [
 "MoonshotAI: Kimi K2 0711",
 "moonshotai/kimi-k2",
@@ -4060,6 +4258,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Kimi K2"
 ],
@@ -4078,6 +4277,7 @@
 "context_k": 262.144,
 "price_in": 0.6,
 "price_out": 2.5,
+"price_cached": null,
 "aliases": [
 "MoonshotAI: Kimi K2 0905",
 "moonshotai/kimi-k2-0905",
@@ -4098,6 +4298,7 @@
 "context_k": 262.144,
 "price_in": 0.44999999999999996,
 "price_out": 2.25,
+"price_cached": 0.07,
 "aliases": [
 "MoonshotAI: Kimi K2.5",
 "moonshotai/kimi-k2.5",
@@ -4119,6 +4320,7 @@
 "context_k": 262.144,
 "price_in": 0.95,
 "price_out": 4.0,
+"price_cached": 0.16,
 "aliases": [
 "MoonshotAI: Kimi K2.6",
 "moonshotai/kimi-k2.6",
@@ -4139,6 +4341,7 @@
 "context_k": 262.144,
 "price_in": 0.6712,
 "price_out": 3.35,
+"price_cached": 0.18,
 "aliases": [
 "MoonshotAI: Kimi K2.7 Code",
 "moonshotai/kimi-k2.7-code",
@@ -4159,6 +4362,7 @@
 "context_k": 262.144,
 "price_in": 0.6,
 "price_out": 2.5,
+"price_cached": null,
 "aliases": [
 "MoonshotAI: Kimi K2 Thinking",
 "moonshotai/kimi-k2-thinking",
@@ -4180,6 +4384,7 @@
 "context_k": 1048.576,
 "price_in": 0.69,
 "price_out": 15.0,
+"price_cached": 0.22999999999999998,
 "aliases": [
 "MoonshotAI: Kimi K3",
 "moonshotai/kimi-k3",
@@ -4202,6 +4407,7 @@
 "context_k": 131.072,
 "price_in": 0.85,
 "price_out": 0.85,
+"price_cached": null,
 "aliases": [
 "Sao10K: Llama 3.1 Euryale 70B v2.2",
 "sao10k/l3.1-euryale-70b"
@@ -4221,6 +4427,7 @@
 "context_k": 131.072,
 "price_in": 0.65,
 "price_out": 0.75,
+"price_cached": null,
 "aliases": [
 "Sao10K: Llama 3.3 Euryale 70B",
 "sao10k/l3.3-euryale-70b",
@@ -4241,6 +4448,7 @@
 "context_k": 8.192,
 "price_in": 0.04,
 "price_out": 0.049999999999999996,
+"price_cached": null,
 "aliases": [
 "Sao10K: Llama 3 8B Lunaris",
 "sao10k/l3-lunaris-8b"
@@ -4260,6 +4468,7 @@
 "context_k": 1048.576,
 "price_in": 0.09,
 "price_out": 0.18,
+"price_cached": 0.009,
 "aliases": [
 "Poolside: Laguna S 2.1",
 "poolside/laguna-s-2.1",
@@ -4280,6 +4489,7 @@
 "context_k": 262.144,
 "price_in": 0.06,
 "price_out": 0.12,
+"price_cached": 0.03,
 "aliases": [
 "Poolside: Laguna XS 2.1",
 "poolside/laguna-xs-2.1",
@@ -4300,6 +4510,7 @@
 "context_k": 262.144,
 "price_in": 0.020999999999999998,
 "price_out": 0.063,
+"price_cached": 0.004200000000000001,
 "aliases": [
 "inclusionAI: Ling 3.0 Flash",
 "inclusionai/ling-3.0-flash",
@@ -4320,6 +4531,7 @@
 "context_k": 262.144,
 "price_in": 0.041999999999999996,
 "price_out": 0.12319999999999999,
+"price_cached": 0.008400000000000001,
 "aliases": [
 "inclusionAI: Ling 3.0 Flash Fin",
 "inclusionai/ling-3.0-flash-fin",
@@ -4340,6 +4552,7 @@
 "context_k": 262.144,
 "price_in": 0.020999999999999998,
 "price_out": 0.061599999999999995,
+"price_cached": 0.004200000000000001,
 "aliases": [
 "inclusionAI: Ling 3.0 Flash VL",
 "inclusionai/ling-3.0-flash-vl",
@@ -4360,6 +4573,7 @@
 "context_k": 262.144,
 "price_in": 0.0,
 "price_out": 0.0,
+"price_cached": null,
 "aliases": [
 "inclusionAI: Ling 3.1 Flash",
 "inclusionai/ling-3.1-flash",
@@ -4380,6 +4594,7 @@
 "context_k": 131.072,
 "price_in": 0.39999999999999997,
 "price_out": 0.39999999999999997,
+"price_cached": null,
 "aliases": [
 "Meta: Llama 3.1 70B Instruct",
 "meta-llama/llama-3.1-70b-instruct"
@@ -4399,6 +4614,7 @@
 "context_k": 131.072,
 "price_in": 0.049999999999999996,
 "price_out": 0.08,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "Meta: Llama 3.1 8B Instruct",
 "meta-llama/llama-3.1-8b-instruct"
@@ -4418,6 +4634,7 @@
 "context_k": 60.0,
 "price_in": 0.027,
 "price_out": 0.201,
+"price_cached": null,
 "aliases": [
 "Meta: Llama 3.2 1B Instruct",
 "meta-llama/llama-3.2-1b-instruct"
@@ -4437,6 +4654,7 @@
 "context_k": 131.072,
 "price_in": 0.049999999999999996,
 "price_out": 0.33,
+"price_cached": null,
 "aliases": [
 "Meta: Llama 3.2 3B Instruct",
 "meta-llama/llama-3.2-3b-instruct"
@@ -4456,6 +4674,7 @@
 "context_k": 131.072,
 "price_in": 0.22,
 "price_out": 0.5,
+"price_cached": 0.11,
 "aliases": [
 "Meta: Llama 3.3 70B Instruct",
 "meta-llama/llama-3.3-70b-instruct"
@@ -4475,6 +4694,7 @@
 "context_k": 1048.576,
 "price_in": 0.1875,
 "price_out": 0.6525,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Meta: Llama 4 Maverick",
 "meta-llama/llama-4-maverick",
@@ -4496,6 +4716,7 @@
 "context_k": 1310.72,
 "price_in": 0.09999999999999999,
 "price_out": 0.3,
+"price_cached": null,
 "aliases": [
 "Meta: Llama 4 Scout",
 "meta-llama/llama-4-scout",
@@ -4516,6 +4737,7 @@
 "context_k": 163.84,
 "price_in": 0.18,
 "price_out": 0.18,
+"price_cached": null,
 "aliases": [
 "Meta: Llama Guard 4 12B",
 "meta-llama/llama-guard-4-12b"
@@ -4535,6 +4757,7 @@
 "context_k": 1048.756,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": 0.006,
 "aliases": [
 "Meituan: LongCat 2.0",
 "meituan/longcat-2.0",
@@ -4555,6 +4778,7 @@
 "context_k": 1048.576,
 "price_in": 0.0,
 "price_out": 0.0,
+"price_cached": null,
 "aliases": [
 "Google: Lyria 3 Clip Preview",
 "google/lyria-3-clip-preview",
@@ -4575,6 +4799,7 @@
 "context_k": 1048.576,
 "price_in": 0.0,
 "price_out": 0.0,
+"price_cached": null,
 "aliases": [
 "Google: Lyria 3 Pro Preview",
 "google/lyria-3-pro-preview",
@@ -4595,6 +4820,7 @@
 "context_k": 32.768,
 "price_in": 2.5,
 "price_out": 5.0,
+"price_cached": null,
 "aliases": [
 "Magnum v4 72B",
 "anthracite-org/magnum-v4-72b"
@@ -4614,6 +4840,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "MCTS Refine 7B"
 ],
@@ -4632,6 +4859,7 @@
 "context_k": 128.0,
 "price_in": 0.25,
 "price_out": 0.75,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "Inception: Mercury 2",
 "inception/mercury-2",
@@ -4652,6 +4880,7 @@
 "context_k": 260.0,
 "price_in": 0.04,
 "price_out": 0.15,
+"price_cached": 0.004,
 "aliases": [
 "Inception: Mercury 2.5",
 "inception/mercury-2.5",
@@ -4672,6 +4901,7 @@
 "context_k": 1050.0,
 "price_in": 0.14,
 "price_out": 0.28,
+"price_cached": 0.0028,
 "aliases": [
 "Xiaomi: MiMo-V2.5",
 "xiaomi/mimo-v2.5",
@@ -4692,6 +4922,7 @@
 "context_k": 1050.0,
 "price_in": 0.435,
 "price_out": 0.87,
+"price_cached": 0.0036,
 "aliases": [
 "Xiaomi: MiMo-V2.5-Pro",
 "xiaomi/mimo-v2.5-pro",
@@ -4712,6 +4943,7 @@
 "context_k": 1050.0,
 "price_in": 0.14,
 "price_out": 0.28,
+"price_cached": 0.0028,
 "aliases": [
 "Xiaomi: MiMo-V2.6-Flash",
 "xiaomi/mimo-v2.6-flash",
@@ -4732,6 +4964,7 @@
 "context_k": 1050.0,
 "price_in": 0.435,
 "price_out": 0.87,
+"price_cached": 0.0036,
 "aliases": [
 "Xiaomi: MiMo-V2.6-Pro",
 "xiaomi/mimo-v2.6-pro",
@@ -4752,6 +4985,7 @@
 "context_k": 1048.576,
 "price_in": 4.35,
 "price_out": 8.7,
+"price_cached": 0.036,
 "aliases": [
 "Xiaomi: MiMo-V2.6-Pro-UltraSpeed",
 "xiaomi/mimo-v2.6-pro-ultraspeed",
@@ -4772,6 +5006,7 @@
 "context_k": 1000.192,
 "price_in": 0.19999999999999998,
 "price_out": 1.1,
+"price_cached": null,
 "aliases": [
 "MiniMax: MiniMax-01",
 "minimax/minimax-01"
@@ -4791,6 +5026,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "MiniMax M2.5"
 ],
@@ -4809,6 +5045,7 @@
 "context_k": 1000.0,
 "price_in": 0.55,
 "price_out": 2.2,
+"price_cached": null,
 "aliases": [
 "MiniMax: MiniMax M1",
 "minimax/minimax-m1"
@@ -4828,6 +5065,7 @@
 "context_k": 204.8,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": null,
 "aliases": [
 "MiniMax: MiniMax M2",
 "minimax/minimax-m2",
@@ -4848,6 +5086,7 @@
 "context_k": 204.8,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": 0.03,
 "aliases": [
 "MiniMax: MiniMax M2.1",
 "minimax/minimax-m2.1"
@@ -4867,6 +5106,7 @@
 "context_k": 204.8,
 "price_in": 0.27,
 "price_out": 1.08,
+"price_cached": 0.027,
 "aliases": [
 "MiniMax: MiniMax M2.5",
 "minimax/minimax-m2.5",
@@ -4888,6 +5128,7 @@
 "context_k": 204.8,
 "price_in": 0.21,
 "price_out": 0.84,
+"price_cached": 0.041999999999999996,
 "aliases": [
 "MiniMax: MiniMax M2.7",
 "minimax/minimax-m2.7",
@@ -4908,6 +5149,7 @@
 "context_k": 65.536,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": 0.03,
 "aliases": [
 "MiniMax: MiniMax M2-her",
 "minimax/minimax-m2-her",
@@ -4928,6 +5170,7 @@
 "context_k": 1048.576,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": 0.06,
 "aliases": [
 "MiniMax: MiniMax M3",
 "minimax/minimax-m3",
@@ -4948,6 +5191,7 @@
 "context_k": 262.144,
 "price_in": 0.19999999999999998,
 "price_out": 0.19999999999999998,
+"price_cached": 0.02,
 "aliases": [
 "Mistral: Ministral 3 14B 2512",
 "mistralai/ministral-14b-2512"
@@ -4967,6 +5211,7 @@
 "context_k": 131.072,
 "price_in": 0.09999999999999999,
 "price_out": 0.09999999999999999,
+"price_cached": 0.01,
 "aliases": [
 "Mistral: Ministral 3 3B 2512",
 "mistralai/ministral-3b-2512"
@@ -4986,6 +5231,7 @@
 "context_k": 262.144,
 "price_in": 0.15,
 "price_out": 0.15,
+"price_cached": 0.015,
 "aliases": [
 "Mistral: Ministral 3 8B 2512",
 "mistralai/ministral-8b-2512",
@@ -5007,6 +5253,7 @@
 "context_k": 128.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Mistral Large",
 "mistralai/mistral-large"
@@ -5026,6 +5273,7 @@
 "context_k": 131.072,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Mistral Large 2407",
 "mistralai/mistral-large-2407"
@@ -5045,6 +5293,7 @@
 "context_k": 262.144,
 "price_in": 0.5,
 "price_out": 1.5,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Mistral: Mistral Large 3 2512",
 "mistralai/mistral-large-2512",
@@ -5066,6 +5315,7 @@
 "context_k": 524.288,
 "price_in": 0.6799999999999999,
 "price_out": 2.09,
+"price_cached": 0.07,
 "aliases": [
 "Mistral: Mistral Large 4",
 "mistralai/mistral-large-4-0",
@@ -5086,6 +5336,7 @@
 "context_k": 131.072,
 "price_in": 0.39999999999999997,
 "price_out": 2.0,
+"price_cached": 0.04,
 "aliases": [
 "Mistral: Mistral Medium 3",
 "mistralai/mistral-medium-3"
@@ -5105,6 +5356,7 @@
 "context_k": 131.072,
 "price_in": 0.39999999999999997,
 "price_out": 2.0,
+"price_cached": 0.04,
 "aliases": [
 "Mistral: Mistral Medium 3.1",
 "mistralai/mistral-medium-3.1",
@@ -5126,6 +5378,7 @@
 "context_k": 262.144,
 "price_in": 1.5,
 "price_out": 7.5,
+"price_cached": null,
 "aliases": [
 "Mistral: Mistral Medium 3.5",
 "mistralai/mistral-medium-3-5",
@@ -5148,6 +5401,7 @@
 "context_k": 131.072,
 "price_in": 0.019000000000000003,
 "price_out": 0.03,
+"price_cached": null,
 "aliases": [
 "Mistral: Mistral Nemo",
 "mistralai/mistral-nemo"
@@ -5167,6 +5421,7 @@
 "context_k": 32.768,
 "price_in": 0.19999999999999998,
 "price_out": 0.6,
+"price_cached": 0.02,
 "aliases": [
 "Mistral: Saba",
 "mistralai/mistral-saba",
@@ -5187,6 +5442,7 @@
 "context_k": 32.768,
 "price_in": 0.049999999999999996,
 "price_out": 0.08,
+"price_cached": null,
 "aliases": [
 "Mistral: Mistral Small 3",
 "mistralai/mistral-small-24b-instruct-2501"
@@ -5206,6 +5462,7 @@
 "context_k": 262.144,
 "price_in": 0.15,
 "price_out": 0.6,
+"price_cached": 0.015,
 "aliases": [
 "Mistral: Mistral Small 4",
 "mistralai/mistral-small-2603",
@@ -5227,6 +5484,7 @@
 "context_k": 128.0,
 "price_in": 0.351,
 "price_out": 0.5549999999999999,
+"price_cached": null,
 "aliases": [
 "Mistral: Mistral Small 3.1 24B",
 "mistralai/mistral-small-3.1-24b-instruct",
@@ -5247,6 +5505,7 @@
 "context_k": 256.0,
 "price_in": 0.09375,
 "price_out": 0.25,
+"price_cached": null,
 "aliases": [
 "Mistral: Mistral Small 3.2 24B",
 "mistralai/mistral-small-3.2-24b-instruct",
@@ -5267,6 +5526,7 @@
 "context_k": 65.536,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Mistral: Mixtral 8x22B Instruct",
 "mistralai/mixtral-8x22b-instruct"
@@ -5286,6 +5546,7 @@
 "context_k": 81.92,
 "price_in": 0.7999999999999999,
 "price_out": 1.2,
+"price_cached": null,
 "aliases": [
 "Morph: Morph V3 Fast",
 "morph/morph-v3-fast"
@@ -5305,6 +5566,7 @@
 "context_k": 262.144,
 "price_in": 0.8999999999999999,
 "price_out": 1.9,
+"price_cached": null,
 "aliases": [
 "Morph: Morph V3 Large",
 "morph/morph-v3-large"
@@ -5324,6 +5586,7 @@
 "context_k": 131.072,
 "price_in": 0.3,
 "price_out": 1.2,
+"price_cached": 0.04,
 "aliases": [
 "Meta: Muse Glimmer 30B",
 "meta/muse-glimmer-30b",
@@ -5344,6 +5607,7 @@
 "context_k": 1048.576,
 "price_in": 1.25,
 "price_out": 4.25,
+"price_cached": 0.15,
 "aliases": [
 "Meta: Muse Spark 1.1",
 "meta/muse-spark-1.1",
@@ -5364,6 +5628,7 @@
 "context_k": 1048.576,
 "price_in": 1.25,
 "price_out": 4.25,
+"price_cached": 0.15,
 "aliases": [
 "Meta: Muse Spark 1.2",
 "meta/muse-spark-1.2",
@@ -5384,6 +5649,7 @@
 "context_k": 1048.576,
 "price_in": 0.09999999999999999,
 "price_out": 0.19999999999999998,
+"price_cached": 0.002,
 "aliases": [
 "Meta: Muse Spark 1.2 Contributor",
 "meta/muse-spark-1.2-contributor",
@@ -5404,6 +5670,7 @@
 "context_k": 1048.576,
 "price_in": 1.25,
 "price_out": 4.25,
+"price_cached": 0.15,
 "aliases": [
 "Meta: Muse Spark 1.3",
 "meta/muse-spark-1.3",
@@ -5424,6 +5691,7 @@
 "context_k": 1048.576,
 "price_in": 0.09999999999999999,
 "price_out": 0.19999999999999998,
+"price_cached": 0.002,
 "aliases": [
 "Meta: Muse Spark 1.3 Contributor",
 "meta/muse-spark-1.3-contributor",
@@ -5444,6 +5712,7 @@
 "context_k": 8.192,
 "price_in": 0.08,
 "price_out": 0.11,
+"price_cached": null,
 "aliases": [
 "MythoMax 13B",
 "gryphe/mythomax-l2-13b"
@@ -5463,6 +5732,7 @@
 "context_k": 131.072,
 "price_in": 0.19999999999999998,
 "price_out": 0.19999999999999998,
+"price_cached": null,
 "aliases": [
 "NVIDIA: Nemotron 3.5 Content Safety",
 "nvidia/nemotron-3.5-content-safety",
@@ -5483,6 +5753,7 @@
 "context_k": 262.144,
 "price_in": 0.06,
 "price_out": 0.16,
+"price_cached": 0.03,
 "aliases": [
 "NVIDIA: Nemotron 3.5 Lightning",
 "nvidia/nemotron-3.5-lightning",
@@ -5503,6 +5774,7 @@
 "context_k": 262.144,
 "price_in": 0.049999999999999996,
 "price_out": 0.19999999999999998,
+"price_cached": 0.03,
 "aliases": [
 "NVIDIA: Nemotron 3 Nano 30B A3B",
 "nvidia/nemotron-3-nano-30b-a3b"
@@ -5522,6 +5794,7 @@
 "context_k": 262.144,
 "price_in": 0.08,
 "price_out": 0.44999999999999996,
+"price_cached": null,
 "aliases": [
 "NVIDIA: Nemotron 3 Super",
 "nvidia/nemotron-3-super-120b-a12b",
@@ -5542,6 +5815,7 @@
 "context_k": 262.144,
 "price_in": 0.5,
 "price_out": 2.2,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "NVIDIA: Nemotron 3 Ultra",
 "nvidia/nemotron-3-ultra-550b-a55b",
@@ -5562,6 +5836,7 @@
 "context_k": 262.144,
 "price_in": 0.024999999999999998,
 "price_out": 0.09999999999999999,
+"price_cached": 0.0025,
 "aliases": [
 "Nex AGI: Nex-N2.5-Mini",
 "nex-agi/nex-n2.5-mini",
@@ -5582,6 +5857,7 @@
 "context_k": 262.144,
 "price_in": 0.075,
 "price_out": 0.25,
+"price_cached": 0.015,
 "aliases": [
 "Nex AGI: Nex-N2.5-Pro",
 "nex-agi/nex-n2.5-pro",
@@ -5602,6 +5878,7 @@
 "context_k": 1000.0,
 "price_in": 0.3,
 "price_out": 2.5,
+"price_cached": null,
 "aliases": [
 "Amazon: Nova 2 Lite",
 "amazon/nova-2-lite-v1"
@@ -5621,6 +5898,7 @@
 "context_k": 300.0,
 "price_in": 0.06,
 "price_out": 0.24,
+"price_cached": null,
 "aliases": [
 "Amazon: Nova Lite 1.0",
 "amazon/nova-lite-v1"
@@ -5640,6 +5918,7 @@
 "context_k": 128.0,
 "price_in": 0.035,
 "price_out": 0.14,
+"price_cached": null,
 "aliases": [
 "Amazon: Nova Micro 1.0",
 "amazon/nova-micro-v1"
@@ -5659,6 +5938,7 @@
 "context_k": 1000.0,
 "price_in": 2.5,
 "price_out": 12.5,
+"price_cached": 0.625,
 "aliases": [
 "Amazon: Nova Premier 1.0",
 "amazon/nova-premier-v1"
@@ -5678,6 +5958,7 @@
 "context_k": 300.0,
 "price_in": 0.7999999999999999,
 "price_out": 3.1999999999999997,
+"price_cached": null,
 "aliases": [
 "Amazon: Nova Pro 1.0",
 "amazon/nova-pro-v1"
@@ -5697,6 +5978,7 @@
 "context_k": 200.0,
 "price_in": 15.0,
 "price_out": 60.0,
+"price_cached": 7.5,
 "aliases": [
 "OpenAI: o1",
 "openai/o1",
@@ -5717,6 +5999,7 @@
 "context_k": 200.0,
 "price_in": 150.0,
 "price_out": 600.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: o1-pro",
 "openai/o1-pro"
@@ -5736,6 +6019,7 @@
 "context_k": 200.0,
 "price_in": 2.0,
 "price_out": 8.0,
+"price_cached": 0.5,
 "aliases": [
 "OpenAI: o3",
 "openai/o3",
@@ -5758,6 +6042,7 @@
 "context_k": 200.0,
 "price_in": 1.1,
 "price_out": 4.4,
+"price_cached": 0.55,
 "aliases": [
 "OpenAI: o3 Mini",
 "openai/o3-mini",
@@ -5781,6 +6066,7 @@
 "context_k": 200.0,
 "price_in": 1.1,
 "price_out": 4.4,
+"price_cached": 0.55,
 "aliases": [
 "OpenAI: o3 Mini High",
 "openai/o3-mini-high",
@@ -5801,6 +6087,7 @@
 "context_k": 200.0,
 "price_in": 20.0,
 "price_out": 80.0,
+"price_cached": null,
 "aliases": [
 "OpenAI: o3 Pro",
 "openai/o3-pro",
@@ -5821,6 +6108,7 @@
 "context_k": 200.0,
 "price_in": 1.1,
 "price_out": 4.4,
+"price_cached": 0.275,
 "aliases": [
 "OpenAI: o4 Mini",
 "openai/o4-mini",
@@ -5843,6 +6131,7 @@
 "context_k": 200.0,
 "price_in": 1.1,
 "price_out": 4.4,
+"price_cached": 0.275,
 "aliases": [
 "OpenAI: o4 Mini High",
 "openai/o4-mini-high",
@@ -5863,6 +6152,7 @@
 "context_k": 1040.0,
 "price_in": 0.6,
 "price_out": 6.0,
+"price_cached": null,
 "aliases": [
 "Writer: Palmyra X5",
 "writer/palmyra-x5",
@@ -5883,6 +6173,7 @@
 "context_k": 262.144,
 "price_in": 2.5,
 "price_out": 7.5,
+"price_cached": 0.25,
 "aliases": [
 "Pareto",
 "unbiased/pareto",
@@ -5903,6 +6194,7 @@
 "context_k": 1048.576,
 "price_in": 0.7999999999999999,
 "price_out": 3.1999999999999997,
+"price_cached": 0.03,
 "aliases": [
 "Pareto 26.10 Preview",
 "unbiased/pareto-26.10-preview",
@@ -5923,6 +6215,7 @@
 "context_k": 2000.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Pareto Code Router",
 "openrouter/pareto-code"
@@ -5942,6 +6235,7 @@
 "context_k": 32.768,
 "price_in": 0.15,
 "price_out": 1.5,
+"price_cached": null,
 "aliases": [
 "Perceptron: Perceptron Mk1",
 "perceptron/perceptron-mk1",
@@ -5962,6 +6256,7 @@
 "context_k": 36.864,
 "price_in": 0.15,
 "price_out": 1.5,
+"price_cached": null,
 "aliases": [
 "Perceptron: Perceptron Mk1.5",
 "perceptron/perceptron-mk1.5",
@@ -5982,6 +6277,7 @@
 "context_k": 16.384,
 "price_in": 0.07,
 "price_out": 0.14,
+"price_cached": null,
 "aliases": [
 "Microsoft: Phi 4",
 "microsoft/phi-4"
@@ -6001,6 +6297,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Qwen2.5 (7B + 72B)"
 ],
@@ -6019,6 +6316,7 @@
 "context_k": 32.768,
 "price_in": 0.36,
 "price_out": 0.39999999999999997,
+"price_cached": null,
 "aliases": [
 "Qwen2.5 72B Instruct",
 "qwen/qwen-2.5-72b-instruct"
@@ -6038,6 +6336,7 @@
 "context_k": 32.768,
 "price_in": 0.09999999999999999,
 "price_out": 0.19999999999999998,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen2.5 7B Instruct",
 "qwen/qwen-2.5-7b-instruct"
@@ -6057,6 +6356,7 @@
 "context_k": 32.768,
 "price_in": 0.66,
 "price_out": 1.0,
+"price_cached": null,
 "aliases": [
 "Qwen2.5 Coder 32B Instruct",
 "qwen/qwen-2.5-coder-32b-instruct",
@@ -6078,6 +6378,7 @@
 "context_k": 1000.0,
 "price_in": 0.26,
 "price_out": 0.78,
+"price_cached": 0.052000000000000005,
 "aliases": [
 "Qwen: Qwen Plus 0728",
 "qwen/qwen-plus-2025-07-28",
@@ -6100,6 +6401,7 @@
 "context_k": 128.0,
 "price_in": 0.7999999999999999,
 "price_out": 1.0,
+"price_cached": 0.39999999999999997,
 "aliases": [
 "Qwen: Qwen2.5 VL 72B Instruct",
 "qwen/qwen2.5-vl-72b-instruct"
@@ -6119,6 +6421,7 @@
 "context_k": 131.072,
 "price_in": 0.12,
 "price_out": 0.24,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 14B",
 "qwen/qwen3-14b",
@@ -6139,6 +6442,7 @@
 "context_k": 131.072,
 "price_in": 0.45499999999999996,
 "price_out": 1.8199999999999998,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 235B A22B",
 "qwen/qwen3-235b-a22b",
@@ -6159,6 +6463,7 @@
 "context_k": 262.144,
 "price_in": 0.09,
 "price_out": 0.55,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 235B A22B Instruct 2507",
 "qwen/qwen3-235b-a22b-07-25",
@@ -6179,6 +6484,7 @@
 "context_k": 131.072,
 "price_in": 0.22999999999999998,
 "price_out": 2.3,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 235B A22B Thinking 2507",
 "qwen/qwen3-235b-a22b-thinking-2507"
@@ -6198,6 +6504,7 @@
 "context_k": 131.072,
 "price_in": 0.12,
 "price_out": 0.5,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 30B A3B",
 "qwen/qwen3-30b-a3b",
@@ -6218,6 +6525,7 @@
 "context_k": 262.144,
 "price_in": 0.09999999999999999,
 "price_out": 0.3,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 30B A3B Instruct 2507",
 "qwen/qwen3-30b-a3b-instruct-2507"
@@ -6237,6 +6545,7 @@
 "context_k": 81.92,
 "price_in": 0.19999999999999998,
 "price_out": 2.4,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 30B A3B Thinking 2507",
 "qwen/qwen3-30b-a3b-thinking-2507"
@@ -6256,6 +6565,7 @@
 "context_k": 131.072,
 "price_in": 0.08,
 "price_out": 0.28,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 32B",
 "qwen/qwen3-32b",
@@ -6276,6 +6586,7 @@
 "context_k": 262.144,
 "price_in": 0.26,
 "price_out": 2.08,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5-122B-A10B",
 "qwen/qwen3.5-122b-a10b",
@@ -6296,6 +6607,7 @@
 "context_k": 262.144,
 "price_in": 0.195,
 "price_out": 1.56,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5-27B",
 "qwen/qwen3.5-27b",
@@ -6316,6 +6628,7 @@
 "context_k": 262.144,
 "price_in": 0.08,
 "price_out": 0.75,
+"price_cached": 0.04,
 "aliases": [
 "Qwen: Qwen3.5-35B-A3B",
 "qwen/qwen3.5-35b-a3b",
@@ -6336,6 +6649,7 @@
 "context_k": 262.144,
 "price_in": 0.44999999999999996,
 "price_out": 3.0,
+"price_cached": 0.22,
 "aliases": [
 "Qwen: Qwen3.5 397B A17B",
 "qwen/qwen3.5-397b-a17b",
@@ -6356,6 +6670,7 @@
 "context_k": 262.144,
 "price_in": 0.09999999999999999,
 "price_out": 0.15,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5-9B",
 "qwen/qwen3.5-9b",
@@ -6376,6 +6691,7 @@
 "context_k": 1000.0,
 "price_in": 0.065,
 "price_out": 0.26,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5-Flash",
 "qwen/qwen3.5-flash-02-23",
@@ -6396,6 +6712,7 @@
 "context_k": 1000.0,
 "price_in": 0.3,
 "price_out": 1.7999999999999998,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5 Plus 2026-04-20",
 "qwen/qwen3.5-plus-20260420"
@@ -6415,6 +6732,7 @@
 "context_k": 1000.0,
 "price_in": 0.26,
 "price_out": 1.56,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5 Plus 2026-02-15",
 "qwen/qwen3.5-plus-02-15",
@@ -6435,6 +6753,7 @@
 "context_k": 262.144,
 "price_in": 0.32,
 "price_out": 3.25,
+"price_cached": 0.03,
 "aliases": [
 "Qwen: Qwen3.6 27B",
 "qwen/qwen3.6-27b",
@@ -6455,6 +6774,7 @@
 "context_k": 262.144,
 "price_in": 0.15,
 "price_out": 1.0,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Qwen: Qwen3.6 35B A3B",
 "qwen/qwen3.6-35b-a3b",
@@ -6475,6 +6795,7 @@
 "context_k": 1000.0,
 "price_in": 0.1875,
 "price_out": 1.125,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.6 Flash",
 "qwen/qwen3.6-flash"
@@ -6494,6 +6815,7 @@
 "context_k": 262.144,
 "price_in": 1.0270000000000001,
 "price_out": 6.162,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.6 Max Preview",
 "qwen/qwen3.6-max-preview",
@@ -6514,6 +6836,7 @@
 "context_k": 1000.0,
 "price_in": 0.325,
 "price_out": 1.95,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.6 Plus",
 "qwen/qwen3.6-plus",
@@ -6534,6 +6857,7 @@
 "context_k": 1000.0,
 "price_in": 0.03,
 "price_out": 0.13,
+"price_cached": 0.006,
 "aliases": [
 "Qwen: Qwen3.7 Flash",
 "qwen/qwen3.7-flash",
@@ -6554,6 +6878,7 @@
 "context_k": 1000.0,
 "price_in": 1.475,
 "price_out": 4.425,
+"price_cached": 0.295,
 "aliases": [
 "Qwen: Qwen3.7 Max",
 "qwen/qwen3.7-max",
@@ -6574,6 +6899,7 @@
 "context_k": 1000.0,
 "price_in": 0.32,
 "price_out": 1.28,
+"price_cached": 0.064,
 "aliases": [
 "Qwen: Qwen3.7 Plus",
 "qwen/qwen3.7-plus",
@@ -6594,6 +6920,7 @@
 "context_k": 1048.576,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.25,
 "aliases": [
 "Qwen: Qwen3.8 2.4T A95B",
 "qwen/qwen3.8-2.4t-a95b",
@@ -6614,6 +6941,7 @@
 "context_k": 1000.0,
 "price_in": 0.425,
 "price_out": 2.5500000000000003,
+"price_cached": 0.08499999999999999,
 "aliases": [
 "Qwen: Qwen3.8 27B",
 "qwen/qwen3.8-27b",
@@ -6634,6 +6962,7 @@
 "context_k": 1000.0,
 "price_in": 0.15,
 "price_out": 0.47,
+"price_cached": 0.016,
 "aliases": [
 "Qwen: Qwen3.8 Flash",
 "qwen/qwen3.8-flash",
@@ -6654,6 +6983,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 6.0,
+"price_cached": 0.25,
 "aliases": [
 "Qwen: Qwen3.8 Max (0902)",
 "qwen/qwen3.8-max-0902",
@@ -6674,6 +7004,7 @@
 "context_k": 1000.0,
 "price_in": 4.0,
 "price_out": 12.0,
+"price_cached": 0.5,
 "aliases": [
 "Qwen: Qwen3.8 Max Prime",
 "qwen/qwen3.8-max-prime",
@@ -6694,6 +7025,7 @@
 "context_k": 1000.0,
 "price_in": 0.15,
 "price_out": 0.47,
+"price_cached": 0.016,
 "aliases": [
 "Qwen: Qwen3.8 Omni Flash",
 "qwen/qwen3.8-omni-flash",
@@ -6714,6 +7046,7 @@
 "context_k": 131.072,
 "price_in": 0.117,
 "price_out": 0.45499999999999996,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 8B",
 "qwen/qwen3-8b",
@@ -6734,6 +7067,7 @@
 "context_k": 262.144,
 "price_in": 0.3,
 "price_out": 1.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Qwen: Qwen3 Coder 480B A35B",
 "qwen/qwen3-coder",
@@ -6754,6 +7088,7 @@
 "context_k": 262.144,
 "price_in": 0.07,
 "price_out": 0.28,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 Coder 30B A3B Instruct",
 "qwen/qwen3-coder-30b-a3b-instruct",
@@ -6774,6 +7109,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "Qwen3-Coder 480B/A35B Instruct"
 ],
@@ -6792,6 +7128,7 @@
 "context_k": 1000.0,
 "price_in": 0.195,
 "price_out": 0.975,
+"price_cached": 0.039,
 "aliases": [
 "Qwen: Qwen3 Coder Flash",
 "qwen/qwen3-coder-flash"
@@ -6811,6 +7148,7 @@
 "context_k": 262.144,
 "price_in": 0.12,
 "price_out": 0.7999999999999999,
+"price_cached": 0.07,
 "aliases": [
 "Qwen: Qwen3 Coder Next",
 "qwen/qwen3-coder-next",
@@ -6831,6 +7169,7 @@
 "context_k": 1000.0,
 "price_in": 0.65,
 "price_out": 3.25,
+"price_cached": 0.13,
 "aliases": [
 "Qwen: Qwen3 Coder Plus",
 "qwen/qwen3-coder-plus"
@@ -6850,6 +7189,7 @@
 "context_k": 262.144,
 "price_in": 0.78,
 "price_out": 3.9,
+"price_cached": 0.156,
 "aliases": [
 "Qwen: Qwen3 Max",
 "qwen/qwen3-max"
@@ -6869,6 +7209,7 @@
 "context_k": 262.144,
 "price_in": 0.78,
 "price_out": 3.9,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 Max Thinking",
 "qwen/qwen3-max-thinking",
@@ -6889,6 +7230,7 @@
 "context_k": 262.144,
 "price_in": 0.09999999999999999,
 "price_out": 1.1,
+"price_cached": 0.07,
 "aliases": [
 "Qwen: Qwen3 Next 80B A3B Instruct",
 "qwen/qwen3-next-80b-a3b-instruct",
@@ -6909,6 +7251,7 @@
 "context_k": 262.144,
 "price_in": 0.15,
 "price_out": 1.2,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 Next 80B A3B Thinking",
 "qwen/qwen3-next-80b-a3b-thinking",
@@ -6929,6 +7272,7 @@
 "context_k": 262.144,
 "price_in": 0.21,
 "price_out": 1.9,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Qwen: Qwen3 VL 235B A22B Instruct",
 "qwen/qwen3-vl-235b-a22b-instruct"
@@ -6948,6 +7292,7 @@
 "context_k": 131.072,
 "price_in": 0.39999999999999997,
 "price_out": 4.0,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 235B A22B Thinking",
 "qwen/qwen3-vl-235b-a22b-thinking"
@@ -6967,6 +7312,7 @@
 "context_k": 262.144,
 "price_in": 0.15,
 "price_out": 0.6,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 30B A3B Instruct",
 "qwen/qwen3-vl-30b-a3b-instruct"
@@ -6986,6 +7332,7 @@
 "context_k": 262.144,
 "price_in": 0.19999999999999998,
 "price_out": 2.4,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 30B A3B Thinking",
 "qwen/qwen3-vl-30b-a3b-thinking"
@@ -7005,6 +7352,7 @@
 "context_k": 131.072,
 "price_in": 0.10400000000000001,
 "price_out": 0.41600000000000004,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 32B Instruct",
 "qwen/qwen3-vl-32b-instruct"
@@ -7024,6 +7372,7 @@
 "context_k": 262.144,
 "price_in": 0.117,
 "price_out": 0.45499999999999996,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 8B Instruct",
 "qwen/qwen3-vl-8b-instruct"
@@ -7043,6 +7392,7 @@
 "context_k": 131.072,
 "price_in": 0.18,
 "price_out": 2.0999999999999996,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 8B Thinking",
 "qwen/qwen3-vl-8b-thinking"
@@ -7062,6 +7412,7 @@
 "context_k": 16.384,
 "price_in": 0.09999999999999999,
 "price_out": 0.09999999999999999,
+"price_cached": null,
 "aliases": [
 "Reka Edge",
 "rekaai/reka-edge",
@@ -7082,6 +7433,7 @@
 "context_k": 65.536,
 "price_in": 0.09999999999999999,
 "price_out": 0.19999999999999998,
+"price_cached": null,
 "aliases": [
 "Reka Flash 3",
 "rekaai/reka-flash-3"
@@ -7101,6 +7453,7 @@
 "context_k": 256.0,
 "price_in": 0.85,
 "price_out": 1.25,
+"price_cached": null,
 "aliases": [
 "Relace: Relace Apply 3",
 "relace/relace-apply-3"
@@ -7120,6 +7473,7 @@
 "context_k": 256.0,
 "price_in": 1.0,
 "price_out": 3.0,
+"price_cached": null,
 "aliases": [
 "Relace: Relace Search",
 "relace/relace-search",
@@ -7140,6 +7494,7 @@
 "context_k": 6.144,
 "price_in": 0.35,
 "price_out": 0.65,
+"price_cached": null,
 "aliases": [
 "ReMM SLERP 13B",
 "undi95/remm-slerp-l2-13b"
@@ -7159,6 +7514,7 @@
 "context_k": 262.144,
 "price_in": 0.95,
 "price_out": 4.0,
+"price_cached": 0.15,
 "aliases": [
 "Sakana: Sakana Namazu",
 "sakana/namazu-20260811",
@@ -7179,6 +7535,7 @@
 "context_k": 128.0,
 "price_in": 0.049999999999999996,
 "price_out": 0.22999999999999998,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Inference.net: Schematron V2 Small",
 "inference-net/schematron-v2-small",
@@ -7199,6 +7556,7 @@
 "context_k": 128.0,
 "price_in": 0.03,
 "price_out": 0.15,
+"price_cached": 0.03,
 "aliases": [
 "Inference.net: Schematron V2 Turbo",
 "inference-net/schematron-v2-turbo",
@@ -7219,6 +7577,7 @@
 "context_k": 262.144,
 "price_in": 0.25,
 "price_out": 2.0,
+"price_cached": null,
 "aliases": [
 "ByteDance Seed: Seed 1.6",
 "bytedance-seed/seed-1.6",
@@ -7239,6 +7598,7 @@
 "context_k": 262.144,
 "price_in": 0.075,
 "price_out": 0.3,
+"price_cached": null,
 "aliases": [
 "ByteDance Seed: Seed 1.6 Flash",
 "bytedance-seed/seed-1.6-flash",
@@ -7259,6 +7619,7 @@
 "context_k": 262.144,
 "price_in": 0.5,
 "price_out": 3.0,
+"price_cached": null,
 "aliases": [
 "ByteDance Seed: Seed-2.0-Code",
 "bytedance-seed/seed-2.0-code",
@@ -7279,6 +7640,7 @@
 "context_k": 262.144,
 "price_in": 0.25,
 "price_out": 2.0,
+"price_cached": null,
 "aliases": [
 "ByteDance Seed: Seed-2.0-Lite",
 "bytedance-seed/seed-2.0-lite",
@@ -7299,6 +7661,7 @@
 "context_k": 262.144,
 "price_in": 0.09999999999999999,
 "price_out": 0.39999999999999997,
+"price_cached": null,
 "aliases": [
 "ByteDance Seed: Seed-2.0-Mini",
 "bytedance-seed/seed-2.0-mini",
@@ -7319,6 +7682,7 @@
 "context_k": 262.144,
 "price_in": 0.5,
 "price_out": 2.5,
+"price_cached": null,
 "aliases": [
 "ByteDance Seed: Seed 2.1 Turbo",
 "bytedance-seed/seed-2-1-turbo",
@@ -7339,6 +7703,7 @@
 "context_k": 32.768,
 "price_in": 0.55,
 "price_out": 0.7999999999999999,
+"price_cached": 0.25,
 "aliases": [
 "TheDrummer: Skyfall 36B V2",
 "thedrummer/skyfall-36b-v2"
@@ -7358,6 +7723,7 @@
 "context_k": 524.288,
 "price_in": 0.049999999999999996,
 "price_out": 0.19999999999999998,
+"price_cached": 0.005,
 "aliases": [
 "Upstage: Solar Mini 4",
 "upstage/solar-mini4",
@@ -7378,6 +7744,7 @@
 "context_k": 131.072,
 "price_in": 0.15,
 "price_out": 0.6,
+"price_cached": 0.015,
 "aliases": [
 "Upstage: Solar Pro 3",
 "upstage/solar-pro-3"
@@ -7397,6 +7764,7 @@
 "context_k": 524.288,
 "price_in": 0.09,
 "price_out": 0.36,
+"price_cached": 0.018,
 "aliases": [
 "Upstage: Solar Pro 4",
 "upstage/solar-pro4",
@@ -7417,6 +7785,7 @@
 "context_k": 127.072,
 "price_in": 1.0,
 "price_out": 1.0,
+"price_cached": null,
 "aliases": [
 "Perplexity: Sonar",
 "perplexity/sonar"
@@ -7436,6 +7805,7 @@
 "context_k": 128.0,
 "price_in": 2.0,
 "price_out": 8.0,
+"price_cached": null,
 "aliases": [
 "Perplexity: Sonar Deep Research",
 "perplexity/sonar-deep-research"
@@ -7455,6 +7825,7 @@
 "context_k": 200.0,
 "price_in": 3.0,
 "price_out": 15.0,
+"price_cached": null,
 "aliases": [
 "Perplexity: Sonar Pro",
 "perplexity/sonar-pro"
@@ -7474,6 +7845,7 @@
 "context_k": 200.0,
 "price_in": 3.0,
 "price_out": 15.0,
+"price_cached": null,
 "aliases": [
 "Perplexity: Sonar Pro Search",
 "perplexity/sonar-pro-search"
@@ -7493,6 +7865,7 @@
 "context_k": 128.0,
 "price_in": 2.0,
 "price_out": 8.0,
+"price_cached": null,
 "aliases": [
 "Perplexity: Sonar Reasoning Pro",
 "perplexity/sonar-reasoning-pro"
@@ -7512,6 +7885,7 @@
 "context_k": 262.144,
 "price_in": 0.09999999999999999,
 "price_out": 0.3,
+"price_cached": null,
 "aliases": [
 "StepFun: Step 3.5 Flash",
 "stepfun/step-3.5-flash"
@@ -7531,6 +7905,7 @@
 "context_k": 262.144,
 "price_in": 0.19999999999999998,
 "price_out": 1.15,
+"price_cached": 0.04,
 "aliases": [
 "StepFun: Step 3.7 Flash",
 "stepfun/step-3.7-flash",
@@ -7551,6 +7926,7 @@
 "context_k": null,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "SWE-Llama 7B"
 ],
@@ -7569,6 +7945,7 @@
 "context_k": 1000.0,
 "price_in": null,
 "price_out": null,
+"price_cached": null,
 "aliases": [
 "NVIDIA: Switchyard",
 "nvidia/switchyard"
@@ -7588,6 +7965,7 @@
 "context_k": 262.144,
 "price_in": 0.075,
 "price_out": 0.5,
+"price_cached": 0.0375,
 "aliases": [
 "PrismML: Ternary Bonsai 2 27B",
 "prism-ml/ternary-bonsai-2-27b",
@@ -7608,6 +7986,7 @@
 "context_k": 262.144,
 "price_in": 0.25,
 "price_out": 0.7999999999999999,
+"price_cached": 0.06,
 "aliases": [
 "Arcee AI: Trinity Large Thinking",
 "arcee-ai/trinity-large-thinking"
@@ -7627,6 +8006,7 @@
 "context_k": 128.0,
 "price_in": 0.09999999999999999,
 "price_out": 0.19999999999999998,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "ByteDance: UI-TARS 7B ",
 "bytedance/ui-tars-1.5-7b"
@@ -7646,6 +8026,7 @@
 "context_k": 1024.0,
 "price_in": 0.39999999999999997,
 "price_out": 0.39999999999999997,
+"price_cached": null,
 "aliases": [
 "TheDrummer: UnslopNemo 12B",
 "thedrummer/unslopnemo-12b"
@@ -7665,6 +8046,7 @@
 "context_k": 32.768,
 "price_in": 0.09999999999999999,
 "price_out": 0.3,
+"price_cached": 0.01,
 "aliases": [
 "Mistral: Voxtral Small 24B 2507",
 "mistralai/voxtral-small-24b-2507"
@@ -7684,6 +8066,7 @@
 "context_k": 8.0,
 "price_in": 0.39999999999999997,
 "price_out": 0.75,
+"price_cached": null,
 "aliases": [
 "Mancer: Weaver (alpha)",
 "mancer/weaver"
@@ -7703,6 +8086,7 @@
 "context_k": 65.535,
 "price_in": 0.62,
 "price_out": 0.62,
+"price_cached": null,
 "aliases": [
 "WizardLM-2 8x22B",
 "microsoft/wizardlm-2-8x22b"

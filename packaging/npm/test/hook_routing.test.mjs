@@ -54,3 +54,10 @@ test("a plan on a virtual key (no global Goal) is still remembered and reported"
   assert.equal(r.via, "report_result");
   assert.equal(lookupIdentity({ outcome: "no_match" }), null);
 });
+
+test("the reliability target is a setting the hook passes as model_constraints", () => {
+  const a = routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "0.7", STEALTHLAB_HOOK_RELIABILITY_CONFIDENCE: "0.8" }), "m");
+  assert.deepEqual(a.model_constraints, { reliability_target: 0.7, reliability_confidence: 0.8 });
+  assert.equal(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "2" }), "m").model_constraints, undefined);
+  assert.equal(routingArgs(hookPolicy({}), "m").model_constraints, undefined);
+});

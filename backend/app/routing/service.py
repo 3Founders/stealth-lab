@@ -45,8 +45,10 @@ async def _card_rows(pool: Any) -> list[dict]:
     """Model cards: the bundled ones, with the database's rows taking precedence for the same model."""
     from app.routing import prior_bundle
 
-    rows = {r["model_key"]: r for r in prior_bundle.card_rows()}
-    rows.update({r["model_key"]: r for r in await store.model_cards(pool)})
+    rows = {r["model_key"]: dict(r) for r in prior_bundle.card_rows()}
+    for r in await store.model_cards(pool):            # field by field: a database row lacks the cache-read price
+        merged = rows.setdefault(r["model_key"], {})
+        merged.update({k: v for k, v in dict(r).items() if v is not None})
     return list(rows.values())
 
 
@@ -200,7 +202,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     for m, _s in units:                  # no contracted price yet: the card's public list price
         card = resolve(m, cards)
         if m not in prices and card is not None and card.price_in is not None and card.price_out is not None:
-            prices[m] = costs.Price(card.price_in, card.price_out, None)
+            prices[m] = costs.Price(card.price_in, card.price_out, card.price_cached)
             list_priced.append(m)
     usable, excluded = [], []
     for m, s in units:
@@ -279,7 +281,8 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
         key = unit_id(*u)
         for outcome, target in (("1", cost_ok), ("0", cost_fail)):
             target[i] = costs.dollars(prices[u[0]], *costs.expected_tokens(
-                outcome, token_meta.get("global", {}), token_meta.get("units", {}).get(key), goal_tokens.get(key), cfg))
+                outcome, token_meta.get("global", {}), _unit_tokens(token_meta, u[0], key, cards), goal_tokens.get(key),
+                cfg))
 
     alpha, beta = predict.check_rates(g, check_kind)
     attempts = []
@@ -388,6 +391,21 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
             "owner_id": store.routing_owner(goal["visibility"], goal["owner_id"], goal.get("tenant_id")),
             "step_order": current})
     return response
+
+
+def _unit_tokens(token_meta: Mapping[str, Any], model: str, unit: str, cards: Mapping[str, Any]) -> Optional[dict]:
+    """A unit's own token stats, else its MODEL's (calibrated from published per-task costs, any scaffold: a model
+    that writes long answers does so in every harness), else None (the global level only)."""
+    own = (token_meta.get("units") or {}).get(unit)
+    if own:
+        return own
+    models = token_meta.get("models") or {}
+    if model in models:
+        return models[model]
+    from app.routing.cards import resolve
+
+    card = resolve(model, cards)
+    return models.get(card.model_key) if card is not None else None
 
 
 def _case_label(virtual: Mapping[str, Any]) -> str:

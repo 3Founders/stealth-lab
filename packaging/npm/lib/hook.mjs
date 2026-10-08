@@ -49,6 +49,10 @@ export function hookPolicy(env = process.env) {
     triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 4000),
     routing: (env.STEALTHLAB_HOOK_ROUTING || "on").toLowerCase() !== "off",
     candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES),
+    // how sure a plan must be before it trusts a cheaper model (server defaults: 0.90 / 0.90). Lower = cheaper
+    // first rungs, more escalations; the local-only experiment varies it.
+    reliability: num01(env.STEALTHLAB_HOOK_RELIABILITY),
+    reliabilityConfidence: num01(env.STEALTHLAB_HOOK_RELIABILITY_CONFIDENCE),
     maxChars: Number(env.STEALTHLAB_HOOK_MAX_CHARS || 8000),
     mode,
     strongMode: env.STEALTHLAB_HOOK_MODE_STRONG ? modeOf(env.STEALTHLAB_HOOK_MODE_STRONG, mode) : null,
@@ -63,6 +67,11 @@ export function hookPolicy(env = process.env) {
 // the list (an empty value sends my_model only). The server drops any unit it cannot price.
 export const CLAUDE_CODE_CANDIDATES = ["claude-haiku-4-5|claude-code", "claude-sonnet-5-5|claude-code", "claude-opus-5-5|claude-code"];
 
+function num01(raw) {
+  const v = Number(raw);
+  return raw !== undefined && raw !== "" && Number.isFinite(v) && v > 0 && v < 1 ? v : null;
+}
+
 function parseCandidates(raw) {
   if (raw === undefined) return CLAUDE_CODE_CANDIDATES;
   return String(raw).split(",").map((x) => x.trim()).filter((x) => /^[^|\s]+\|[^|\s]+$/.test(x));
@@ -73,7 +82,13 @@ export function routingArgs(policy, model, scaffold = "claude-code") {
   if (!policy.routing || !model) return {};
   const mine = `${model}|${scaffold}`;
   const others = policy.candidates.filter((c) => c !== mine);
-  return { my_model: mine, ...(others.length ? { candidates: others } : {}) };
+  const constraints = {
+    ...(policy.reliability !== null && policy.reliability !== undefined ? { reliability_target: policy.reliability } : {}),
+    ...(policy.reliabilityConfidence !== null && policy.reliabilityConfidence !== undefined
+      ? { reliability_confidence: policy.reliabilityConfidence } : {}),
+  };
+  return { my_model: mine, ...(others.length ? { candidates: others } : {}),
+           ...(Object.keys(constraints).length ? { model_constraints: constraints } : {}) };
 }
 
 // The session's model, best effort: the transcript's last assistant message (from the 2nd prompt on), else

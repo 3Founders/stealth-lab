@@ -26,9 +26,14 @@ STEP_ROLES = ("plan", "edit", "verify", "other")
 
 # Prior Beta(a, b) on each check's false-accept (alpha) and false-reject (beta) rate.
 # 'benchmark' DEFINES correctness (plan §0.4): both rates are exactly 0 and not learned.
+# (false accept, false reject) Beta priors per check kind. "tests" and "procedure_check" were measured on our own
+# runs (DS-1000 rounds 1-7, 2026-09/10): a check that runs the task's first visible test passed 594 of 2,963 wrong
+# answers (20%; 11-36% across rounds) and rejected 0 of 6,238 right ones; a check that only runs the code passed
+# 911 of 1,470 wrong answers (62%). A repository's own tests are a partial suite like the first; a Procedure's
+# check= sits between the two. The spread keeps room for repositories whose tests are better or worse.
 CHECK_PRIORS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
-    "tests":           ((1.0, 19.0), (1.0, 19.0)),   # ~5% false accept, ~5% false reject
-    "procedure_check": ((2.0, 18.0), (1.0, 19.0)),   # ~10% / ~5%
+    "tests":           ((4.0, 16.0), (1.0, 49.0)),   # ~20% false accept, ~2% false reject (flaky tests)
+    "procedure_check": ((3.0, 7.0), (1.0, 19.0)),    # ~30% / ~5%
     "judge":           ((2.0, 8.0),  (2.0, 8.0)),    # ~20% / ~20%
     "self_report":     ((3.0, 7.0),  (1.0, 9.0)),    # ~30% / ~10%
 }

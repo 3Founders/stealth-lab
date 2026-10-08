@@ -53,6 +53,7 @@ class ModelCard:
     context_k: Optional[float] = None
     price_in: Optional[float] = None
     price_out: Optional[float] = None
+    price_cached: Optional[float] = None     # cache-read price per Mtok (agent sessions are mostly cache reads)
     aliases: tuple[str, ...] = ()
     source: str = ""
     extra: Mapping[str, Any] = field(default_factory=dict)
@@ -86,7 +87,8 @@ class ModelCard:
                 "release_date": self.release_date, "training_cutoff": self.training_cutoff,
                 "open_weights": self.open_weights, "params_b": self.params_b,
                 "active_params_b": self.active_params_b, "reasoning": self.reasoning, "context_k": self.context_k,
-                "price_in": self.price_in, "price_out": self.price_out, "aliases": list(self.aliases),
+                "price_in": self.price_in, "price_out": self.price_out, "price_cached": self.price_cached,
+                "aliases": list(self.aliases),
                 "source": self.source}
 
 
@@ -106,7 +108,8 @@ def card_from_row(row: Mapping[str, Any]) -> ModelCard:
                      open_weights=row.get("open_weights"), params_b=f(row.get("params_b")),
                      active_params_b=f(row.get("active_params_b")), reasoning=f(row.get("reasoning")),
                      context_k=f(row.get("context_k")), price_in=f(row.get("price_in")),
-                     price_out=f(row.get("price_out")), aliases=tuple(row.get("aliases") or ()),
+                     price_out=f(row.get("price_out")), price_cached=f(row.get("price_cached")),
+                     aliases=tuple(row.get("aliases") or ()),
                      source=row.get("source") or "")
 
 
