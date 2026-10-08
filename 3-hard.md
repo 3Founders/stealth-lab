@@ -248,6 +248,71 @@ It has:
 - A plaintext database password sits in `.scratch/research/v0.1-honest-scope.md` (line ~305). Flagged to the owner;
   rotate it if still live, and do not copy it anywhere.
 
+## Road to the first deal (checklist, 2026-10-09)
+
+Tick items as they are done (`[x]`) and add the date. **(Owner)** = a decision or an account only the owner can
+use; **(C)** = Chaitanya; **(Agent)** = an agent session. Details for each item are in the sections below and in
+`legal/README.md`.
+
+### Stage 1: prove the product works (the local-only test)
+- [ ] 1. (Agent) Semantic codes for Ways: codebook built (192 codes from 20,731 Ways), bundle refit with code
+      parents is running; then check that codes separate model performance, test and push.
+- [ ] 2. (Agent) An experiment runner that routes. It calls find_ways with candidate models, runs the first rung,
+      runs the check, calls report_result and escalates, and records cost and pass/fail per attempt. Fork D's
+      harness runs one fixed model.
+- [ ] 3. (Agent drafts, Owner approves) Pre-registration for the routing test, frozen before any run:
+      - **arms:** none / .stealth knowledge / knowledge + routing at targets 0.7, 0.8, 0.9 / always-strong /
+        always-cheap;
+      - **models;**
+      - **budget;**
+      - **main metric:** cost at an equal pass rate, plus how many wrong answers got through.
+- [ ] 4. (C) call_model: open models get repository access.
+- [ ] 5. (Owner) API keys for any non-Claude models; a machine with >= 16 GB RAM.
+- [ ] 6. (Agent / C) Smoke run (~5 tasks through every arm), then the real run.
+- [ ] 7. (Agent) Results written up, losses included -- the evidence shown to customers.
+- Optional later: per-step routing (the hook sets each subagent's model); a second test with the global library.
+
+### Stage 2: usable by outside people (hosted)
+- [ ] 8. (Owner) Host the MCP server on Railway; give the URL.
+- [ ] 9. (Agent) Put the URL in the npm package (3 places); (Owner) confirm the NPM_TOKEN secret; publish
+      stealthlab-mcp.
+- [ ] 10. (Owner) Switch production to the stealth_app role: Railway variables, see "Decisions to be taken" 1.
+      Set up S005/S006 first: migrations 134-150 and stealth_app; their URLs are needed.
+- [ ] 11. (Owner) Rotate the database password in .scratch/research/v0.1-honest-scope.md (~line 305).
+- [ ] 12. (Agent) Hosted test with 2 test organisations: sign-in, isolation, latency, a redeploy.
+- [ ] 13. (Agent + Owner's Railway setup) Background worker and nightly refit (global learning). Needed before
+      many users; optional for a pilot.
+
+### Stage 3: legal for a pilot (unpaid or small fee) -- legal/
+- [ ] 14. (Owner) Mutual NDA, Option B, signed personally:
+      - fill Schedule 1, the subprocessors (Neon us-east-2, Railway, Supabase, Cloudflare R2, Google Vertex);
+      - short lawyer review;
+      - e-stamp.
+- [ ] 15. (Owner, with the agent's redlines) Pilot agreement:
+      - narrow 4.3 "no training" to content;
+      - 7.2 deletion: "delete or irreversibly anonymise";
+      - no repository sync or contributions during the pilot;
+      - then a short lawyer review and signature.
+- [ ] 16. (Owner) Ask a chartered accountant whether GST registration is needed if the pilot is paid.
+- After 14-16 plus Stages 1 and 2: **a pilot can start.**
+
+### Stage 4: a paid enterprise contract
+- [ ] 17. (Owner) Incorporate (private limited if raising money). Each founder signs the IP assignment deed;
+      check institute or employer claims first. Novation notices for the NDA and pilot.
+- [ ] 18. (Owner) Lawyer review of the MSA, DPA and order form, with:
+      - real subprocessors and regions;
+      - liability fallbacks (nominal pilot cap, super-cap);
+      - retention periods.
+- [ ] 19. (Agent) Security questionnaire answer pack; remaining security addendum fixes.
+- [ ] 20. (Owner) Cyber and professional-liability insurance quotes (MSA 17.3).
+- [ ] 21. Before a savings-based fee: (Agent) build the random 20% control group with an assignment log; a
+      measured baseline from the pilot.
+- [ ] 22. Before signing the 99.9% SLA (MSA Exhibit A): a second server instance and an external uptime monitor
+      (Owner's accounts); on-call (Owner).
+
+**Critical path to a first pilot:** Stage 1 results; items 8-9 (hosting and npm); items 14-15 (NDA and pilot
+signatures).
+
 ## Ground rules for whoever continues
 - **Secrets:** never print or commit keys or DSNs. Never commit `.env`, `.env.bak*` or `.neon_shards.env*`.
 - **Data use:** no Vertex/GCP. Keep Neon egress minimal: export once to local files.
