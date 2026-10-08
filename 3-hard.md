@@ -75,6 +75,20 @@ How the merge was done:
 - The SWE-agent trajectories overlap 2,275 of our Goals.
 
 ### Remaining for A, in order
+
+**Status 2026-10-08, evening (see `docs/routing_priors_eval.md`):**
+- Item 1: lomo, temporal, lobo and routing ran. **Cards pass both cold-start conditions** (vs old prior +0.130
+  nats/obs [0.066, 0.195]; vs family average +0.053 [0.009, 0.110]). The **corrected APGR run** (`apgr_v2/`, with
+  item-bootstrap CIs and random = mean of 500 orderings) shows **no router, ours included, distinguishable from random**
+  on the one strong/weak pair (ours 0.463 [0.308, 0.604]; random 0.501). The APGR ship condition is not met; the owner
+  decides between a bigger routing test and shipping the prior for its cold-start gain only.
+  SBC is re-running, now checkpointed (`--sims-per-process 3`, `sbc_ranks.json`).
+- Item 2: the `--fast` NUTS run did not converge (R-hat 2.66), so VI-better-than-NUTS is not evidence yet; the
+  full-budget run (`routing_vi_nuts_agreement.py --out docs/routing_priors_eval/full`) is queued after SBC.
+- Item 3: **done**, 6/6 passed (one process per test).
+- Item 4: owner (writes to Neon). S005/S006 connection strings were missing locally and are now in
+  `backend/.neon_shards.env`.
+
 1. **Run the evaluation** (`backend/scripts/routing_priors_eval.py`) and write
    `docs/routing_priors_eval.md` with the numbers, losses included. It never finished on the 8 GB laptop.
    - Use a machine with ≥16 GB RAM and ≥8 cores.
@@ -139,9 +153,9 @@ How the merge was done:
 
 **Remaining:**
 1. **End-to-end quality is not measured.** That is fork D's job (below).
-2. **Survey → library:** pass `meta.json` `repo_identity` from the survey into `find_ways` (the
+2. **Done 2026-10-08** (`tests/test_survey_library_identity_offline.py`: the real scanner and payload builder, read by the server's parser). It found a bug, now fixed: the survey sends `github.com/owner/name`, the benchmark lookup wanted `owner/name` (`RepoIdentity.benchmark_repo`). **Survey → library:** pass `meta.json` `repo_identity` from the survey into `find_ways` (the
    `stealthlab-mcp library payload` path), and make sure `strength: weak` identities never match other
-   repos. A merged test that covers both forks together is still missing.
+   repos. The test above is that merged test: it covers fork B (library payload, server parser) and fork C (survey scanner) together.
 3. **Tests in a worktree** need `STEALTHLAB_MCP_TOKEN=offline-test-dummy` (there is no `.env`). The
    `exec_runtime` timing tests fail under heavy CPU load; that is unrelated.
 
@@ -154,10 +168,10 @@ How the merge was done:
 - the gold/held-out scripts `packaging/npm/scripts/survey-gold.mjs` and `survey-*-truth.json`.
 
 **Remaining:**
-1. **Bug: history mining is anchored to today.** It uses `--since=2.years.ago`, relative to TODAY, so an
+1. **Done 2026-10-08.** **Bug: history mining is anchored to today.** It uses `--since=2.years.ago`, relative to TODAY, so an
    older checkout or a repo idle for 2+ years mines nothing. Fix: anchor `since` to HEAD's commit date.
    Fork D passes `since` explicitly, so it is unaffected.
-2. **Each held-out round has found new repo-shape gaps.** Run another held-out set:
+2. **Done 2026-10-08: held-out set 3** (`survey-heldout3-truth.json`, six new shapes; results and fixes in `docs/survey_eval_2026-10.md`; no regression on gold, set 1 or set 2). **Each held-out round has found new repo-shape gaps.** Run another held-out set:
 
    ```bash
    node scripts/survey-gold.mjs <dir> --set heldout2 --seed N
@@ -183,12 +197,56 @@ It has:
 - 20+ offline tests.
 
 **Remaining:**
-1. **Write `experiments/local_eval/PREREGISTRATION.md`.** `experiment.json` and `valid_tasks.py` refer to
+1. **Done 2026-10-08** (its hash is frozen into `kel_frozen.json`; `DEVIATIONS.md` logs the switch to the `survey` provider and an `analyze.py` syntax fix). **Write `experiments/local_eval/PREREGISTRATION.md`.** `experiment.json` and `valid_tasks.py` refer to
    it, but only `experiments/ds1000/PREREGISTRATION.md` exists. Hypotheses, sample size, primary metric
    and analysis plan must be frozen **before** any arm is run.
 2. **Not run end to end.** Run the build, then the arms, then grading, then analysis, on a machine with
    enough RAM: `build_tasks.py` alone used about 2 GB on the laptop.
 3. **Report** effect sizes with confidence intervals and p-values, negative results included.
+
+## Handoff notes from the 2026-10-08 session (for the next agent)
+
+**Built and committed this session (beyond the fork items above):**
+- **Model failover** (`backend/app/providers/health.py`, `service.py`; doc `docs/provider_connections.md`):
+  per-endpoint circuit breaker (30 s doubling to 5 min; 401/402/403 = 15 min), same-model failover across
+  connections, several keys per endpoint (`credential_refs`, rotated on 429/401/402/403), per-endpoint `timeout_s`,
+  latency EWMA (slow endpoints tried last; `slow_ms`), caller budget `call_model(max_latency_ms=...)`.
+  `call_model` switches **model** only with `model="auto"` (next plan rung) or `fallback_models=[...]`, never on its
+  own. Plans/`recommend_models` mark rungs `unavailable` / `slow` / `not_served`. State is **per process**.
+  Tests: `tests/test_provider_failover_offline.py` (34). Not yet run against a live provider.
+- **Progressive tool discovery** (`server.py`, `settings.mcp_tool_discovery`, env `MCP_TOOL_DISCOVERY`):
+  tools/list shows only `find_ways`, `report_result`, `discover_tools`, `use_tool`; the rest are found with
+  `discover_tools(need|names)` and run with `use_tool(name, arguments)` (same scope checks), and stay callable by name
+  (hooks and the executor rely on that). `all` restores the full list. Tests:
+  `tests/test_mcp_progressive_discovery_offline.py` (14). The server has no session state, so it cannot send
+  `tools/list_changed`; that is why discovery is a tool, not a changing list.
+- **Cursor hooks** (`packaging/npm/lib/cursor_hooks.mjs`, README section): sessionStart / beforeSubmitPrompt /
+  postToolUse / stop. Cursor cannot add context at prompt time, so knowledge arrives at the first tool call.
+- **Migrations as the owner role** (`Dockerfile.mcp-server`): `MIGRATE_DATABASE_URL` when set (Decision 1 step 3a).
+- **RLS wording** corrected in the Security Addendum §1, DPA Annex 2 and the security overviews: RLS is in effect
+  only after the switch to `stealth_app`.
+
+**Running or unfinished when this was written:**
+- A background chain on the owner's laptop: SBC (3 simulations per process until `docs/routing_priors_eval/sbc.json`
+  exists), then the full-budget VI vs NUTS run, then a re-run of the routing experiment (already done once; the
+  re-run only reproduces `apgr_v2/`). If it was stopped, restart from `backend/` with the commands in fork A; SBC
+  resumes from `sbc_ranks.json`. Then write the SBC histograms and the NUTS comparison into
+  `docs/routing_priors_eval.md` and the status above.
+- Not committed on purpose: `docs/routing_priors_eval/lomo_fold*.json` (5 MB of intermediates; `lomo.json` is the
+  merge), `sbc_ranks.json` (in progress), `routing_scores.npz`.
+
+**Things that will bite you on this machine:**
+- 16 GB RAM with ~2 GB free. Claude Code kills idle background jobs under memory pressure; run heavy jobs one at a
+  time, one test per process for `tests/test_routing_fit_offline.py`, under a memory guard.
+- `STEALTHLAB_MCP_TOKEN`: do **not** export a dummy in this checkout; `backend/.env` has one and the server refuses a
+  mismatch at import. (In a worktree without `.env`, the dummy is required instead.)
+- The working tree is shared with other sessions: stage files by name, never `git add -A`. Untracked files that are
+  not yours (for example `.opencode/`, `run_step0_pilot.py`, `backend/tests/test_judge_batching_offline.py`) are
+  someone else's work in progress.
+- Pre-existing offline failures, not caused by this work: `test_unenforced_posture_exists_only_in_test_without_identity`,
+  the `b32_required_operation` test, `apply_change_set` x3, `supabase_service_role`.
+- A plaintext database password sits in `.scratch/research/v0.1-honest-scope.md` (line ~305). Flagged to the owner;
+  rotate it if still live, and do not copy it anywhere.
 
 ## Ground rules for whoever continues
 - **Secrets:** never print or commit keys or DSNs. Never commit `.env`, `.env.bak*` or `.neon_shards.env*`.
@@ -227,7 +285,8 @@ connect as it.
    (the app is fine, the migration is refused). Pick one:
    - **(a)** Set a separate owner URL for migrations (for example `MIGRATE_DATABASE_URL`, the old owner value), and
      change the container command to `python scripts/migrate.py --dsn "$MIGRATE_DATABASE_URL" && exec uvicorn ...`.
-     This is a one-line code change; ask for it.
+     **Done in code (2026-10-08):** the container now runs `migrate.py --dsn "${MIGRATE_DATABASE_URL:-$DATABASE_URL}"`,
+     so setting `MIGRATE_DATABASE_URL` in Railway (to the old owner URL) is the whole step; unset, nothing changes.
    - **(b)** Run migrations by hand from a trusted machine before each deploy (`python scripts/migrate.py` with the
      owner URL) and remove `migrate.py` from the container command.
 4. Redeploy, then check:

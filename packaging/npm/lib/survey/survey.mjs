@@ -224,7 +224,7 @@ export function runSurvey(rootArg, opts = {}) {
     const t4 = performance.now();
     const fileUnit = (f) => nearestFromPath(f, unitPaths);
     const res = mineHistory(root, sdir, {
-      since: o.since || HISTORY_DEFAULTS.since, maxCommits: o.maxCommits || HISTORY_DEFAULTS.maxCommits,
+      since: o.since || HISTORY_DEFAULTS.since,   // null: two years before HEAD (history.mjs) maxCommits: o.maxCommits || HISTORY_DEFAULTS.maxCommits,
       maxEntries: o.historyMax || HISTORY_DEFAULTS.maxEntries, fromHead: prevState.history?.head,
       unitOf: fileUnit, excluded: (f) => Boolean(resolved.zoneOf(posixDir(f))),
     });

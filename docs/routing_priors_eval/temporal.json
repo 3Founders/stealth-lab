@@ -1,0 +1,133 @@
+{
+ "experiment": "temporal",
+ "seconds": 751,
+ "config": {
+  "latent_dims": 3,
+  "embedding_dims": 0,
+  "draws": 128,
+  "nightly_warmup": 250,
+  "nightly_chains": 2,
+  "nightly_samples": 150,
+  "nuts_max_latents": 1000000000,
+  "nuts_max_work": 150000,
+  "vi_steps": 6000,
+  "vi_rank": 32,
+  "local_global_draws": 16,
+  "local_warmup": 300,
+  "gh_eps_nodes": 12,
+  "max_rungs": 3,
+  "max_candidates": 16,
+  "reliability_target": 0.9,
+  "reliability_confidence": 0.9,
+  "value_multiplier": 5.0,
+  "wrong_penalty_ratio": 1.0,
+  "default_check_kind": "tests",
+  "prior_tokens_in": 60000.0,
+  "prior_tokens_out": 6000.0,
+  "prior_log_sd": 1.0,
+  "token_pooling_strength": 5.0
+ },
+ "released_on_or_after": "2025-10-01",
+ "folds": [
+  {
+   "fold": 0,
+   "held_out": [
+    "claude-haiku-4-5",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "deepseek-v3-2",
+    "deepseek-v3-2-reasoner",
+    "devstral-2512",
+    "devstral-small-2512",
+    "gemini-3-5-flash",
+    "gemini-3-flash",
+    "gemini-3-pro",
+    "glm-4-6",
+    "glm-5",
+    "gpt-5-1",
+    "gpt-5-1-codex",
+    "gpt-5-2",
+    "kimi-k2-5",
+    "kimi-k2-thinking",
+    "minimax-m2",
+    "minimax-m2-5"
+   ],
+   "train_obs": 26000,
+   "test_obs": 13441,
+   "fit_seconds": {
+    "cards": 394,
+    "no_cards": 286
+   },
+   "diagnostics": {
+    "cards": {
+     "final_elbo_loss": 9192.182509586166,
+     "svi_steps": 6000,
+     "rank": 32,
+     "elbo_tail_rel_change": 0.001123949049243616
+    },
+    "no_cards": {
+     "final_elbo_loss": 9108.926243115051,
+     "svi_steps": 6000,
+     "rank": 32,
+     "elbo_tail_rel_change": 0.0010259941278964828
+    }
+   }
+  }
+ ],
+ "metrics": {
+  "cards": {
+   "loglik": -0.5269742294264331,
+   "brier": 0.1758654504893504,
+   "auc": 0.8907894901840402,
+   "n": 13441
+  },
+  "no_cards (old prior)": {
+   "loglik": -0.6631189960408388,
+   "brier": 0.23653370935660242,
+   "auc": 0.8765750955161937,
+   "n": 13441
+  },
+  "family_average": {
+   "loglik": -0.5994774901466078,
+   "brier": 0.20425024369195702,
+   "auc": 0.8653187309049122,
+   "n": 13441
+  }
+ },
+ "rate_error": {
+  "cards": {
+   "mean_abs_error_of_model_resolve_rate": 0.2192391005472144,
+   "models": 19
+  },
+  "no_cards (old prior)": {
+   "mean_abs_error_of_model_resolve_rate": 0.3138019362466836,
+   "models": 19
+  },
+  "family_average": {
+   "mean_abs_error_of_model_resolve_rate": 0.24809033279253664,
+   "models": 19
+  }
+ },
+ "cards_vs": {
+  "no_cards (old prior)": {
+   "loglik_gain_per_obs": {
+    "mean": 0.13614476661440558,
+    "ci95": [
+     0.1071133061288265,
+     0.17377852745250819
+    ],
+    "p_le_0": 0.0
+   }
+  },
+  "family_average": {
+   "loglik_gain_per_obs": {
+    "mean": 0.07250326072017453,
+    "ci95": [
+     0.020410551554704486,
+     0.1253957746209548
+    ],
+    "p_le_0": 0.0015
+   }
+  }
+ }
+}

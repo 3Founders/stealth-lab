@@ -21,8 +21,12 @@ export function tmpDir(prefix = "sl-survey-") {
 const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t",
   GIT_COMMITTER_EMAIL: "t@example.com", GIT_CONFIG_NOSYSTEM: "1" };
 export function git(dir, ...args) {
+  return gitEnv(dir, {}, ...args);
+}
+
+function gitEnv(dir, extraEnv, ...args) {
   return execFileSync("git", ["-c", "core.autocrlf=false", "-c", "init.defaultBranch=main", "-c", "protocol.file.allow=always", ...args],
-    { cwd: dir, env: GIT_ENV, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    { cwd: dir, env: { ...GIT_ENV, ...extraEnv }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /** Write files (content string or Buffer) under dir. */
@@ -50,7 +54,8 @@ export function makeRepo(files, opts = {}) {
       writeFiles(dir, c.files);
       git(dir, "add", "-A");
       const env = c.date ? ["--date", c.date] : [];
-      git(dir, "commit", "-qm", c.message, ...env);
+      // `date` is the commit's date: author AND committer, as in a real old history (git log --since reads the latter).
+      gitEnv(dir, c.date ? { GIT_COMMITTER_DATE: c.date } : {}, "commit", "-qm", c.message, ...env);
     }
   }
   return dir;

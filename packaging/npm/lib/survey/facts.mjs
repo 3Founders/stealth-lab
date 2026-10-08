@@ -7,7 +7,7 @@
 import path from "node:path";
 import { GENERATED_FILE_RE } from "./units.mjs";
 import {
-  ciCommands, findLine, jsonKeyLine, lineAt, makeTargets, parseJsonLoose, parseToml, tomlGet, xmlTag, yamlScalar,
+  ciCommands, findLine, jsonKeyLine, lineAt, makeTargets, parseJsonLoose, parseToml, propertiesGet, tomlGet, xmlTag, yamlScalar,
 } from "./parse.mjs";
 
 const posixDir = (p) => { const d = path.posix.dirname(p); return d === "." ? "." : d; };
@@ -134,6 +134,8 @@ export function buildFacts(ctx) {
         else if (base === "composer.json") composerFacts(u, f, add, text, subject);
         else if (base.startsWith("deno.json")) denoFacts(u, f, add, text, subject);
         else if (base === "Gemfile") gemfileFacts(u, f, add, text, subject, ctx);
+        else if (/\.gemspec$/.test(base)) gemspecFacts(u, f, add, text, subject);
+        else if (base === "build.sbt") sbtFacts(u, f, add, text, subject, ctx);
         else if (base === "CMakeLists.txt") cmakeFacts(u, f, add, text, subject);
         else if (["BUILD", "BUILD.bazel", "BUCK", "TARGETS", "MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel", ".buckconfig", "pants.toml"].includes(base)) monoBuildFacts(u, f, add, text, subject, ctx);
       } catch { /* one unparseable manifest never stops the survey */ }
@@ -164,7 +166,7 @@ function repoLayout(ctx, add, addSearch, text) {
       "pdm-workspace": "PDM workspace", "gradle-settings": "Gradle multi-project build", "maven-modules": "Maven multi-module build",
       sln: ".NET solution", "mix-umbrella": "Elixir umbrella project", melos: "Melos (Dart) workspace", "pub-workspace": "Dart pub workspace",
       "cmake-subdirectories": "CMake project with subprojects", "bazel-packages": "Bazel monorepo", "buck-packages": "Buck monorepo",
-      "pants-packages": "Pants monorepo", "deno-workspace": "Deno workspace" }[w.by] || w.by;
+      "pants-packages": "Pants monorepo", "deno-workspace": "Deno workspace", "sbt-projects": "sbt multi-project build" }[w.by] || w.by;
     const where = w.root === "." ? "The repository" : tick(w.root);
     const sample = w.members.slice(0, 6).map(tick).join(", ") + (w.members.length > 6 ? `, and ${w.members.length - 6} more` : "");
     add(w.root, "layout", `workspace:${w.by}`, `${where} is a ${label} with ${w.members.length} member${w.members.length === 1 ? "" : "s"} declared in ${w.file}: ${sample}`, w.file, w.line);
@@ -215,6 +217,18 @@ function versionPins(ctx, add, text) {
       const val = rt.endsWith(".toml") ? (t.match(/channel\s*=\s*["']([^"']+)/)?.[1]) : t.trim().split(/\s+/)[0];
       if (val) add(u.path, "runtime", "rust-toolchain", `The Rust toolchain is pinned to ${val} in ${rt}`, f, line);
     }
+    // Gradle: the wrapper's distribution and the version catalog's Kotlin version (held-out okio).
+    const gw = at(u.path, "gradle/wrapper/gradle-wrapper.properties");
+    const dist = propertiesGet(text(gw), "distributionUrl");
+    const gv = dist && dist.value.match(/gradle-(\d+(?:\.\d+)+(?:-[\w.]+)?)-(?:bin|all)\.zip/);
+    if (gv) add(u.path, "build", "gradle-wrapper", `The Gradle wrapper pins Gradle ${gv[1]} for ${u.path === "." ? "the repository" : tick(u.path)}`, gw, dist.line);
+    const vc = at(u.path, "gradle/libs.versions.toml");
+    const vct = text(vc);
+    if (vct) {
+      const kl = findLine(vct, /^\s*kotlin\s*=\s*["']/);
+      const kv = kl && vct.split(/\r?\n/)[kl - 1].match(/=\s*["']([^"']+)/);
+      if (kv) add(u.path, "runtime", "kotlin-version", `Kotlin ${kv[1]} (gradle/libs.versions.toml version catalog)`, vc, kl);
+    }
     const gj = text(at(u.path, "global.json"));
     if (gj) {
       const v = parseJsonLoose(gj)?.sdk?.version;
@@ -260,7 +274,10 @@ function ciFacts(ctx, add, addSearch, text) {
       const m = s.action.match(/^actions\/setup-(node|python|go|java|dotnet|ruby)|^(dtolnay\/rust-toolchain|actions-rs\/toolchain|subosito\/flutter-action|erlef\/setup-beam|pnpm\/action-setup|oven-sh\/setup-bun|astral-sh\/setup-uv)/);
       if (!m) continue;
       const w = Object.entries(s.with)[0];
-      const tool = m[1] ? { node: "Node.js", python: "Python", go: "Go", java: "Java", dotnet: ".NET", ruby: "Ruby" }[m[1]] : s.action.split("@")[0];
+      // The `with` key says what is set up: astral-sh/setup-uv `python-version: 3.14` sets up Python 3.14, not setup-uv 3.14.
+      const KEY_TOOL = { "python-version": "Python", "node-version": "Node.js", "go-version": "Go", "java-version": "Java",
+        "dotnet-version": ".NET", "ruby-version": "Ruby", "bun-version": "Bun", "otp-version": "Erlang/OTP", "elixir-version": "Elixir" };
+      const tool = (w && KEY_TOOL[w[0]]) || (m[1] ? { node: "Node.js", python: "Python", go: "Go", java: "Java", dotnet: ".NET", ruby: "Ruby" }[m[1]] : s.action.split("@")[0]);
       if (w && /\$\{\{\s*matrix\.([\w-]+)\s*\}\}/.test(w[1].value)) {
         // A build matrix: cite the matrix line and list its values instead of the ${{ }} expression.
         const key = w[1].value.match(/matrix\.([\w-]+)/)[1];
@@ -390,7 +407,10 @@ function conventionFacts(ctx, add, text) {
 function unitIdentity(u, ctx, add, text) {
   const subject = u.path === "." ? "This repository" : tick(u.path);
   // Cite the manifest the name actually comes from (petclinic: name from pom.xml, not build.gradle).
-  const m = (u.name && u.manifests.find((f) => (text(f) || "").includes(u.name))) || u.manifests[0];
+  // A project declared by its build's settings file (sbt build.sbt, Gradle settings) with no manifest of its own
+  // carries that settings file as its manifest: cite the declaring line, not the file's first line.
+  const ownManifests = u.manifests.filter((f) => posixDir(f) === u.path);
+  const m = (u.name && ownManifests.find((f) => (text(f) || "").includes(u.name))) || ownManifests[0];
   const decl = u.declaredBy?.[0];
   const ecos = u.ecosystems.join(", ") || "no package manifest";
   const KIND_WORD = { package: "package", root: "package", mobile: "mobile app", embedded: "embedded project", data: "data project",
@@ -400,7 +420,7 @@ function unitIdentity(u, ctx, add, text) {
   const nameLine = m ? manifestNameLine(m, text) : 0;
   const otherTags = (u.tags || []).filter((t) => t !== u.kind);
   const tags = otherTags.length ? ` (also: ${otherTags.join(", ")})` : "";
-  const named = u.name && u.name !== u.path ? ` named ${tick(u.name)}` : "";
+  const named = u.name && u.name !== u.path && !u.nameFromPath ? ` named ${tick(u.name)}` : "";
   if (m && nameLine) {
     add(u.path, "layout", "unit", `${subject} is a ${kindWord}${named} (${ecos})${member}${tags}`, m, nameLine);
   } else if (decl) {
@@ -762,6 +782,43 @@ function gemfileFacts(u, f, add, text, subject, ctx) {
   if (rails) add(u.path, "stack", "rails", `${cap(subject(u))} is a Ruby on Rails application (Gemfile)`, f, rails);
   const rspec = findLine(t, /^\s*gem\s+["']rspec(-rails)?["']/);
   if (rspec && ctx.files.some((p) => p.startsWith(u.path === "." ? "spec/" : `${u.path}/spec/`))) add(u.path, "test", "rspec", `${cap(subject(u))} is tested with RSpec; run ${tick("bundle exec rspec")}`, f, rspec);
+}
+
+function gemspecFacts(u, f, add, text, subject) {
+  const t = text(f) || "";
+  const r = findLine(t, /\.required_ruby_version\s*=/);
+  const v = r && t.split(/\r?\n/)[r - 1].match(/required_ruby_version\s*=\s*\[?\s*["']([^"']+)["']/);
+  if (v) add(u.path, "runtime", "ruby", `${cap(subject(u))} requires Ruby ${v[1]} (${f.slice(f.lastIndexOf("/") + 1)})`, f, r);
+}
+
+// sbt: the sbt version (project/build.properties), the Scala versions the build names, and how its tests run. A
+// project declared in a multi-project build.sbt is tested from the build root (held-out zio).
+function sbtFacts(u, f, add, text, subject, ctx) {
+  const buildRoot = posixDir(f);
+  const isRoot = u.path === buildRoot;
+  if (!isRoot) {
+    const decl = u.declaredBy?.find((d) => d.by === "sbt-projects");
+    if (decl) add(u.path, "test", "sbt-test", `${cap(subject(u))} is a project of the sbt build in ${decl.file}; run ${tick("sbt test")} from ${buildRoot === "." ? "the repository root" : tick(buildRoot)} (it tests every project) or the project's own ${tick("<id>/test")} task`, decl.file, decl.line);
+    return;
+  }
+  const props = at(buildRoot, "project/build.properties");
+  const sv = propertiesGet(text(props), "sbt.version");
+  if (sv) add(u.path, "build", "sbt-version", `${cap(subject(u))} builds with sbt ${sv.value} (project/build.properties)`, props, sv.line);
+  const t = text(f) || "";
+  const lit = t.match(/scalaVersion\s*:=\s*"(\d+\.\d+\.\d+[^"]*)"/);
+  if (lit) add(u.path, "runtime", "scala-version", `${cap(subject(u))} compiles with Scala ${lit[1]} (build.sbt scalaVersion)`, f, lineAt(t, lit.index));
+  else {
+    // Versions named in project/*.scala (`val Scala3: String = "3.3.8"`), as many builds keep them.
+    const dir = buildRoot === "." ? "project/" : `${buildRoot}/project/`;
+    for (const pf of ctx.files.filter((p) => p.startsWith(dir) && /^[^/]+\.scala$/.test(p.slice(dir.length))).sort()) {
+      const pt = text(pf) || "";
+      const vals = [...pt.matchAll(/\bval\s+Scala\w*\s*(?::\s*String\s*)?=\s*"(\d+\.\d+\.\d+[^"]*)"/g)];
+      if (!vals.length) continue;
+      add(u.path, "runtime", "scala-version", `${cap(subject(u))} cross-builds for Scala ${vals.map((m) => m[1]).join(", ")} (${pf.slice(pf.lastIndexOf("/") + 1)})`, pf, lineAt(pt, vals[0].index));
+      break;
+    }
+  }
+  add(u.path, "test", "sbt-test", `${cap(subject(u))} is tested with ${tick("sbt test")} (standard sbt task)`, f, 1);
 }
 
 function cmakeFacts(u, f, add, text, subject) {

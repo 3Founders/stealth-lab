@@ -150,6 +150,49 @@ Remaining after the fixes:
 
 **Honest reading.** Across the two held-out sets, before any fixes, deterministic fact precision was 94.4% and 96.9%. Unit detection was 0.994–1.0 on the first set but 0.94 / 0.90 on the second, because it hit three shapes I had not implemented: Deno workspaces, fixture batches and undeclared real packages. Each held-out round found new parser gaps, and fixing them did not regress the earlier sets: all three sets were re-run after every change. Expect the next unseen shape to cost a few points the same way. 72 + 64 facts is a small sample, and one annotator is a limitation.
 
+## Held-out set 3 (6 repositories, 2026-10-07): sbt, Kotlin Multiplatform, SwiftPM, uv, many Go modules
+
+pydantic-ai (uv workspace with members under `src/`), grpc-go (10 Go modules, no `go.work`), zio (one sbt build whose
+projects live in sub-folders, plus a Docusaurus site), okio (Kotlin Multiplatform Gradle with nested and conditional
+includes and an `includeBuild`), swift-argument-parser (SwiftPM that also builds with CMake), rubocop (one gem with
+an Antora docs component); see `survey-heldout3-truth.json`. Truth was written from each repository's own build
+configuration before the scanner ever ran on it; key facts match the value (a version, a tool), not the wording.
+
+| metric | held-out run | after the fixes it triggered |
+|---|---|---|
+| unit precision | **0.900** | 1.000 |
+| unit recall | **0.823** | 0.979 |
+| key-fact recall | **0.750** (15/20) | 1.000 |
+| fact precision (70 sampled, hand-checked, seed 99) | not sampled before the fixes | **98.6% (69/70)**; the one error is fixed |
+
+What it found, each fixed with a regression test in `test/survey.test.mjs`:
+- **No sbt support.** zio's 29 projects (`project.in(file("core"))`, `crossProject(...).in(file("streams"))`) were
+  invisible, so 2 of 31 units were found. build.sbt projects are now declared members (aggregate-only projects
+  such as `target/rootJVM` have no folder and are skipped); `sbt.version`, the Scala versions in
+  `project/*.scala`, and `sbt test` are facts. Each project is cited at its own declaration line.
+- **Fixtures under `*-tests` / `*-examples` folders.** zio's `test-junit-tests/maven/pom.xml` (a Maven project
+  the tests drive) and the stand-alone `zio-examples/` build became units. The fixture rule now also matches
+  those names as a suffix (`core-tests`, `zio-examples`); a declared member keeps its unit whatever its name.
+- **Missing version facts:** the Gradle wrapper's version (`gradle-wrapper.properties`), Kotlin from the version
+  catalog (`gradle/libs.versions.toml`), and a gemspec's `required_ruby_version`.
+- **Fact errors:**
+  - text inside a heredoc opened on an assignment line (`body=$(cat <<EOF`) was read as CI commands;
+  - `astral-sh/setup-uv` with `python-version: 3.14` was reported as "sets up astral-sh/setup-uv 3.14"; it now
+    says Python 3.14;
+  - a project with no manifest of its own was cited at line 1 of its build's settings file, and described as
+    "named" after its folder. It is now cited at its declaration and gets no invented name.
+
+Remaining: grpc-go `test/tools` (a Go tools module) is still dropped by the "test" folder rule. Making Go modules
+under `test/` units fixed it but added two units the gold truth deliberately excludes (otel-go's
+`bridge/opencensus/test`, rules_go `tests`), so I kept the earlier policy and left it as the one recall miss.
+
+**No regression.** All 23 gold repositories and both earlier held-out sets were re-run with the old scanner
+(`HEAD`, `git archive`) and the new one on the same clones: identical units and key facts on every repository
+(gold 23/23, set 1 6/6, set 2 6/6); only new version facts were added. The clones were made on 2026-10-07, so
+set 2's absolute numbers (unit precision 0.854, recall 0.970) differ from the table above: those repositories
+have changed since; the comparison is old vs new scanner on identical trees. ruff and flutter/samples needed a
+second clone attempt; stealth-lab (a `local` entry) was not re-run.
+
 ## End to end: the agent half
 
 I followed the new `survey_repo` prompt on ky as the agent: read only the worklist's files, wrote facts, ran `--validate`.

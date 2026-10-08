@@ -61,7 +61,7 @@
   },
   "providers": {
     "_doc": "Pluggable sources for each tier. 'stub' = the deterministic stand-ins in history.py until workstream C (feat/survey) merges; switch to 'survey' then and log it in DEVIATIONS.md BEFORE building the scored notes. 'replica' = local retrieval over the exported corpus with the same embedding model find_ways uses; 'find_ways' = the real server tool (needs STEALTH_MCP_URL).",
-    "local": "stub",
+    "local": "survey",
     "global": "replica"
   },
   "grading": {

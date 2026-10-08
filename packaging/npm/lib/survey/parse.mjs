@@ -497,8 +497,10 @@ export function logicalCommands(lines) {
     if (!t || t.startsWith("#")) continue;
     if (/^([|&;)(}{\]"'<>-]|\|\||&&|then\b|else\b|elif\b|fi\b|do\b|done\b|esac\b)/.test(t)) continue;
     // An assignment, not a command: `x=1`, `x=$(ls)`, `title="Update docs for ${name}"` (held-out ruff CI).
-    if (/^[A-Za-z_]\w*=("[^"]*"|'[^']*'|\S*|\$\(.*)\s*(#.*)?$/.test(t)) continue;
+    // A heredoc opened on such a line (`body=$(cat <<EOF`) still has a body that is text, not commands
+    // (held-out 3, pydantic-ai docs-navigation.yml).
     const hd = t.match(/<<-?\s*['"]?(\w+)['"]?/);
+    if (/^[A-Za-z_]\w*=("[^"]*"|'[^']*'|\S*|\$\(.*)\s*(#.*)?$/.test(t)) { if (hd) heredoc = hd[1]; continue; }
     const q = quoteState(t, null);
     if (q) { openQuote = q; continue; } // the command continues inside a string: never report half of it
     if (hd) heredoc = hd[1];
@@ -651,4 +653,39 @@ export function linguistPatterns(text) {
     }
   }
   return { vendored, generated };
+}
+
+/**
+ * sbt projects a build.sbt declares, by directory: `project.in(file("core"))`, `(project in file("core"))`,
+ * `crossProject(JVMPlatform, JSPlatform).in(file("streams"))`, `Project("id", file("x"))`. Comments are ignored.
+ * @returns {{value: string, line: number}[]} directories as written (relative to the build), first line of each
+ */
+export function sbtProjects(text) {
+  const out = [];
+  const seen = new Set();
+  const lines = String(text || "").split(/\r?\n/);
+  let inBlock = false;
+  for (let i = 0; i < lines.length; i++) {
+    let t = lines[i];
+    if (inBlock) { const e = t.indexOf("*/"); if (e < 0) continue; t = t.slice(e + 2); inBlock = false; }
+    t = t.replace(/\/\*.*?\*\//g, "");
+    const b = t.indexOf("/*");
+    if (b >= 0) { t = t.slice(0, b); inBlock = true; }
+    t = t.replace(/\/\/.*$/, "");
+    for (const m of t.matchAll(/(?:\.in\s*\(\s*|\bin\s+|Project\s*\(\s*"[^"]*"\s*,\s*)file\(\s*"([^"]+)"\s*\)/g)) {
+      const v = m[1].replace(/^\.\//, "").replace(/\/+$/, "") || ".";
+      if (!seen.has(v)) { seen.add(v); out.push({ value: v, line: i + 1 }); }
+    }
+  }
+  return out;
+}
+
+/** `key=value` from a Java properties file (project/build.properties, gradle-wrapper.properties). */
+export function propertiesGet(text, key) {
+  const lines = String(text || "").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*([^#!=:\s]+)\s*[=:]\s*(.*?)\s*$/);
+    if (m && m[1] === key) return { value: m[2].replace(/\:/g, ":"), line: i + 1 };
+  }
+  return null;
 }

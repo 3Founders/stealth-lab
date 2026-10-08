@@ -214,11 +214,7 @@ def main() -> None:
     if res["task_set"] == "valid":   # right cause does not need the tests: also report it on every designed task
         full = run(a.part, "design")
         write_json(RUNS / "analysis_all_tasks.json", full)
-        text += "
-
-# Sensitivity: every designed task (including tasks whose tests failed the validity check)
-
-"
+        text += "\n\n# Sensitivity: every designed task (including tasks whose tests failed the validity check)\n\n"
         text += report(full)
     (RUNS / "REPORT.md").write_text(text, encoding="utf-8")
     print(text)

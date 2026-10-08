@@ -1,0 +1,53 @@
+{
+  "_comment": "HELD-OUT set 3: truth written from each repository's own build configuration BEFORE the scanner was ever run on it (2026-10-07, shallow clones of the default branch that day). New shapes: a uv workspace with members under src/ (pydantic-ai), many Go modules without go.work (grpc-go), an sbt build whose projects live in sub-directories plus a Docusaurus site (zio), a Kotlin Multiplatform Gradle build with nested and conditional includes and an includeBuild (okio), a SwiftPM package that also builds with CMake (swift-argument-parser), and a single Ruby gem with an Antora docs component (rubocop). Units are what the repository's own build declares or ships. Stand-alone example builds that the main build does not include are not units (zio-examples/*, grpc-go examples/ and security/advancedtls/examples/), as for ecto in set 2. Key facts are matched on the VALUE (version numbers, tool names), not on the scanner's wording.",
+  "pydantic-ai": {
+    "units": [".", "pydantic_ai_slim", "pydantic_evals", "pydantic_graph", "clai", "examples", "src/pydantic_ai_harness", "src/pydantic_clai2"],
+    "keys": [
+      {"name": "python version", "any": [">=\\s*3\\.11", "3\\.11"]},
+      {"name": "uv workspace", "any": ["uv workspace"]},
+      {"name": "build backend", "any": ["hatchling"]},
+      {"name": "test runner", "any": ["pytest"]},
+      {"name": "linter", "any": ["ruff"]}
+    ]
+  },
+  "grpc-go": {
+    "units": [".", "cmd/protoc-gen-go-grpc", "gcp/observability", "interop/observability", "interop/xds", "security/advancedtls", "stats/opencensus", "test/tools"],
+    "keys": [
+      {"name": "go version", "any": ["Go 1\\.26", "go 1\\.26"]},
+      {"name": "test command", "any": ["go test"]}
+    ]
+  },
+  "zio": {
+    "units": [".", "concurrent", "core", "core-tests", "documentation/guides/tutorials/make-a-zio-app-configurable", "examples", "internal-macros", "macros", "macros-tests", "managed", "managed-tests", "scalafix/input", "scalafix/output", "scalafix/rules", "scalafix/tests", "stacktracer", "streams", "streams-tests", "test", "test-junit", "test-junit-engine", "test-junit-engine-tests", "test-junit-tests", "test-magnolia", "test-magnolia-tests", "test-refined", "test-sbt", "test-scalacheck", "test-tests", "zio-docs", "website"],
+    "keys": [
+      {"name": "sbt version", "any": ["sbt 1\\.13", "1\\.13\\.0"]},
+      {"name": "scala versions", "any": ["3\\.3\\.8", "2\\.13\\.18"]},
+      {"name": "test command", "any": ["sbt[^\\n]*test"]},
+      {"name": "docs site", "any": ["docusaurus"]}
+    ]
+  },
+  "okio": {
+    "units": [".", "okio", "okio-assetfilesystem", "okio-bom", "okio-fakefilesystem", "okio-nodefilesystem", "okio-testing-support", "okio/jvm/jmh", "okio-wasifilesystem", "samples", "android-test", "build-support"],
+    "keys": [
+      {"name": "kotlin version", "any": ["2\\.2\\.21"]},
+      {"name": "gradle version", "any": ["Gradle 9\\.8", "9\\.8\\.0"]},
+      {"name": "test command", "any": ["gradlew[^\\n]*(test|check|build)"]}
+    ]
+  },
+  "swift-argument-parser": {
+    "units": ["."],
+    "keys": [
+      {"name": "swift tools version", "any": ["6\\.0"]},
+      {"name": "test command", "any": ["swift test"]},
+      {"name": "cmake build", "any": ["CMake"]}
+    ]
+  },
+  "rubocop": {
+    "units": [".", "docs"],
+    "keys": [
+      {"name": "ruby version", "any": [">=\\s*2\\.7"]},
+      {"name": "test command", "any": ["rspec", "rake spec", "bundle exec rake"]},
+      {"name": "bundler", "any": ["Gemfile", "Bundler"]}
+    ]
+  }
+}

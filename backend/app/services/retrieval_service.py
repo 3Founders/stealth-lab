@@ -377,7 +377,7 @@ async def _library_goal_hits(
 
     if ident is not None and not ident.weak:
         repo_goal_ids = _uuids(await lc.same_repo_goal_ids(pool, ident))
-        scope_ids = [ident.repo_id] + ([ident.public_name] if ident.public_name else [])
+        scope_ids = list(dict.fromkeys(x for x in (ident.repo_id, ident.public_name, ident.benchmark_repo) if x))
         vis_sql, vis_params = visibility_predicate(scope, param_index=3)
         where = (f"({_GOAL_LIVE}) AND {vis_sql} AND (goal_id = ANY($1::uuid[]) "
                  f"OR (scope_type = 'repository' AND scope_entity_id = ANY($2::text[])))")

@@ -2,8 +2,8 @@
 //
 //   node survey_runner.mjs <survey.mjs path> <checkout> <since ISO date> <max commits>
 //
-// `since` is passed explicitly (two years before the BASE commit), because the CLI's default "2.years.ago" is
-// relative to today and would truncate the history of an older checkout. Prints the summary as one JSON line.
+// `since` is passed explicitly (two years before the BASE commit). The scanner's default is now the same window
+// (two years before HEAD's commit date); passing it keeps the frozen design independent of that default. Prints the summary as one JSON line.
 import { pathToFileURL } from "node:url";
 
 const [surveyPath, root, since, maxCommits] = process.argv.slice(2);

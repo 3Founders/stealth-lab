@@ -1,0 +1,476 @@
+{
+ "experiment": "routing",
+ "seconds": 775,
+ "config": {
+  "latent_dims": 3,
+  "embedding_dims": 0,
+  "draws": 128,
+  "nightly_warmup": 250,
+  "nightly_chains": 2,
+  "nightly_samples": 150,
+  "nuts_max_latents": 1000000000,
+  "nuts_max_work": 150000,
+  "vi_steps": 6000,
+  "vi_rank": 32,
+  "local_global_draws": 16,
+  "local_warmup": 300,
+  "gh_eps_nodes": 12,
+  "max_rungs": 3,
+  "max_candidates": 16,
+  "reliability_target": 0.9,
+  "reliability_confidence": 0.9,
+  "value_multiplier": 5.0,
+  "wrong_penalty_ratio": 1.0,
+  "default_check_kind": "tests",
+  "prior_tokens_in": 60000.0,
+  "prior_tokens_out": 6000.0,
+  "prior_log_sd": 1.0,
+  "token_pooling_strength": 5.0
+ },
+ "units": [
+  "claude-haiku-4-5|mini-swe-agent",
+  "claude-opus-4|mini-swe-agent",
+  "claude-opus-4-5|mini-swe-agent",
+  "claude-opus-4-6|mini-swe-agent",
+  "claude-sonnet-3-7|mini-swe-agent",
+  "claude-sonnet-4|mini-swe-agent",
+  "claude-sonnet-4-5|mini-swe-agent",
+  "deepseek-v3-2|mini-swe-agent",
+  "deepseek-v3-2-reasoner|mini-swe-agent",
+  "devstral-2512|mini-swe-agent",
+  "devstral-small-2512|mini-swe-agent",
+  "gemini-2-5-pro|mini-swe-agent",
+  "gemini-3-flash|mini-swe-agent",
+  "gemini-3-pro|mini-swe-agent",
+  "glm-4-5|mini-swe-agent",
+  "glm-4-6|mini-swe-agent",
+  "glm-5|mini-swe-agent",
+  "gpt-5|mini-swe-agent",
+  "gpt-5-1|mini-swe-agent",
+  "gpt-5-1-codex|mini-swe-agent",
+  "gpt-5-2|mini-swe-agent",
+  "gpt-5-mini|mini-swe-agent",
+  "gpt-5-nano|mini-swe-agent",
+  "gpt-oss-120b|mini-swe-agent",
+  "kimi-k2|mini-swe-agent",
+  "kimi-k2-5|mini-swe-agent",
+  "kimi-k2-thinking|mini-swe-agent",
+  "llama-4-maverick|mini-swe-agent",
+  "minimax-m2|mini-swe-agent",
+  "minimax-m2-5|mini-swe-agent",
+  "o3|mini-swe-agent",
+  "o4-mini|mini-swe-agent",
+  "qwen2-5-coder-32b|mini-swe-agent",
+  "qwen3-coder-480b-a35b|mini-swe-agent"
+ ],
+ "test_items": 250,
+ "mean_cost_usd": {
+  "claude-haiku-4-5|mini-swe-agent": 0.3403,
+  "claude-opus-4|mini-swe-agent": 1.1492,
+  "claude-opus-4-5|mini-swe-agent": 0.7404,
+  "claude-opus-4-6|mini-swe-agent": 0.5431,
+  "claude-sonnet-3-7|mini-swe-agent": 0.3597,
+  "claude-sonnet-4|mini-swe-agent": 0.3683,
+  "claude-sonnet-4-5|mini-swe-agent": 0.659,
+  "deepseek-v3-2|mini-swe-agent": 0.434,
+  "deepseek-v3-2-reasoner|mini-swe-agent": 0.0287,
+  "devstral-2512|mini-swe-agent": 0.6769,
+  "devstral-small-2512|mini-swe-agent": 0.2444,
+  "gemini-2-5-pro|mini-swe-agent": 0.2796,
+  "gemini-3-flash|mini-swe-agent": 0.3524,
+  "gemini-3-pro|mini-swe-agent": 0.9699,
+  "glm-4-5|mini-swe-agent": 0.3078,
+  "glm-4-6|mini-swe-agent": 0.0897,
+  "glm-5|mini-swe-agent": 0.5318,
+  "gpt-5|mini-swe-agent": 0.2716,
+  "gpt-5-1|mini-swe-agent": 0.2882,
+  "gpt-5-1-codex|mini-swe-agent": 0.5721,
+  "gpt-5-2|mini-swe-agent": 0.4625,
+  "gpt-5-mini|mini-swe-agent": 0.047,
+  "gpt-5-nano|mini-swe-agent": 0.0372,
+  "gpt-oss-120b|mini-swe-agent": 0.052,
+  "kimi-k2|mini-swe-agent": 0.5234,
+  "kimi-k2-5|mini-swe-agent": 0.1448,
+  "kimi-k2-thinking|mini-swe-agent": 0.4321,
+  "llama-4-maverick|mini-swe-agent": 0.3333,
+  "minimax-m2|mini-swe-agent": 0.4252,
+  "minimax-m2-5|mini-swe-agent": 0.0713,
+  "o3|mini-swe-agent": 0.3364,
+  "o4-mini|mini-swe-agent": 0.2053,
+  "qwen2-5-coder-32b|mini-swe-agent": 0.0757,
+  "qwen3-coder-480b-a35b|mini-swe-agent": 0.2635
+ },
+ "accuracy": {
+  "claude-haiku-4-5|mini-swe-agent": 0.696,
+  "claude-opus-4|mini-swe-agent": 0.704,
+  "claude-opus-4-5|mini-swe-agent": 0.776,
+  "claude-opus-4-6|mini-swe-agent": 0.748,
+  "claude-sonnet-3-7|mini-swe-agent": 0.096,
+  "claude-sonnet-4|mini-swe-agent": 0.676,
+  "claude-sonnet-4-5|mini-swe-agent": 0.748,
+  "deepseek-v3-2|mini-swe-agent": 0.72,
+  "deepseek-v3-2-reasoner|mini-swe-agent": 0.62,
+  "devstral-2512|mini-swe-agent": 0.56,
+  "devstral-small-2512|mini-swe-agent": 0.56,
+  "gemini-2-5-pro|mini-swe-agent": 0.556,
+  "gemini-3-flash|mini-swe-agent": 0.788,
+  "gemini-3-pro|mini-swe-agent": 0.0,
+  "glm-4-5|mini-swe-agent": 0.564,
+  "glm-4-6|mini-swe-agent": 0.58,
+  "glm-5|mini-swe-agent": 0.748,
+  "gpt-5|mini-swe-agent": 0.672,
+  "gpt-5-1|mini-swe-agent": 0.684,
+  "gpt-5-1-codex|mini-swe-agent": 0.672,
+  "gpt-5-2|mini-swe-agent": 0.764,
+  "gpt-5-mini|mini-swe-agent": 0.588,
+  "gpt-5-nano|mini-swe-agent": 0.352,
+  "gpt-oss-120b|mini-swe-agent": 0.24,
+  "kimi-k2|mini-swe-agent": 0.452,
+  "kimi-k2-5|mini-swe-agent": 0.74,
+  "kimi-k2-thinking|mini-swe-agent": 0.656,
+  "llama-4-maverick|mini-swe-agent": 0.22,
+  "minimax-m2|mini-swe-agent": 0.632,
+  "minimax-m2-5|mini-swe-agent": 0.784,
+  "o3|mini-swe-agent": 0.584,
+  "o4-mini|mini-swe-agent": 0.448,
+  "qwen2-5-coder-32b|mini-swe-agent": 0.092,
+  "qwen3-coder-480b-a35b|mini-swe-agent": 0.572
+ },
+ "prediction_quality": {
+  "ours": {
+   "loglik": -0.5523089538967733,
+   "brier": 0.18574942500499142,
+   "auc": 0.7852755564384712,
+   "n": 8500
+  },
+  "ours_no_features": {
+   "loglik": -0.5970256691949938,
+   "brier": 0.20479174801760364,
+   "auc": 0.7239750874173932,
+   "n": 8500
+  },
+  "knn_features": {
+   "loglik": -0.5531993411057998,
+   "brier": 0.18588844413505046,
+   "auc": 0.7587692145293964,
+   "n": 8500
+  },
+  "routellm_sw_ranking": {
+   "loglik": -0.5504220234541881,
+   "brier": 0.1861066696474252,
+   "auc": 0.7862699079646858,
+   "n": 8500
+  },
+  "routellm_mf": {
+   "loglik": -0.535299561616411,
+   "brier": 0.17905188463287958,
+   "auc": 0.7955159561729725,
+   "n": 8500
+  },
+  "train_rate (best-single scorer)": {
+   "loglik": -0.5884808295665014,
+   "brier": 0.20311058823532352,
+   "auc": 0.7041757407211197,
+   "n": 8500
+  }
+ },
+ "pairs": {
+  "ours": {
+   "APGR": 0.46362499999999995,
+   "CPT50": 0.448,
+   "CPT80": 0.908,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  },
+  "ours_no_features": {
+   "APGR": 0.47600000000000003,
+   "CPT50": 0.532,
+   "CPT80": 0.836,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  },
+  "knn_features": {
+   "APGR": 0.3825000000000002,
+   "CPT50": 0.56,
+   "CPT80": 0.924,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  },
+  "routellm_sw_ranking": {
+   "APGR": 0.39050000000000007,
+   "CPT50": 0.656,
+   "CPT80": 0.876,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  },
+  "routellm_mf": {
+   "APGR": 0.44825000000000004,
+   "CPT50": 0.536,
+   "CPT80": 0.828,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  },
+  "train_rate (best-single scorer)": {
+   "APGR": 0.48962500000000014,
+   "CPT50": 0.556,
+   "CPT80": 0.816,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  },
+  "random": {
+   "APGR": 0.41900000000000004,
+   "CPT50": 0.628,
+   "CPT80": 0.776,
+   "strong_acc": 0.748,
+   "weak_acc": 0.62
+  }
+ },
+ "pair": {
+  "strong": "claude-opus-4-6|mini-swe-agent",
+  "weak": "deepseek-v3-2-reasoner|mini-swe-agent"
+ },
+ "frontier": {
+  "ours": {
+   "AIQ": 0.7782110552763818,
+   "max_quality": 0.784,
+   "points": [
+    [
+     0.0287,
+     0.62
+    ],
+    [
+     0.0359,
+     0.64
+    ],
+    [
+     0.0554,
+     0.712
+    ],
+    [
+     0.0662,
+     0.764
+    ],
+    [
+     0.0688,
+     0.776
+    ],
+    [
+     0.071,
+     0.784
+    ]
+   ]
+  },
+  "ours_no_features": {
+   "AIQ": 0.7770251256281406,
+   "max_quality": 0.784,
+   "points": [
+    [
+     0.0287,
+     0.62
+    ],
+    [
+     0.0662,
+     0.772
+    ],
+    [
+     0.0713,
+     0.784
+    ]
+   ]
+  },
+  "knn_features": {
+   "AIQ": 0.7588442211055275,
+   "max_quality": 0.764,
+   "points": [
+    [
+     0.0287,
+     0.62
+    ],
+    [
+     0.0315,
+     0.624
+    ],
+    [
+     0.0366,
+     0.644
+    ],
+    [
+     0.0452,
+     0.656
+    ],
+    [
+     0.0538,
+     0.66
+    ],
+    [
+     0.0605,
+     0.704
+    ],
+    [
+     0.0644,
+     0.728
+    ],
+    [
+     0.0668,
+     0.736
+    ],
+    [
+     0.067,
+     0.748
+    ],
+    [
+     0.0681,
+     0.76
+    ],
+    [
+     0.0695,
+     0.764
+    ]
+   ]
+  },
+  "routellm_sw_ranking": {
+   "AIQ": 0.7809346733668343,
+   "max_quality": 0.788,
+   "points": [
+    [
+     0.0287,
+     0.62
+    ],
+    [
+     0.0518,
+     0.676
+    ],
+    [
+     0.0712,
+     0.776
+    ],
+    [
+     0.0713,
+     0.784
+    ],
+    [
+     0.0748,
+     0.788
+    ]
+   ]
+  },
+  "routellm_mf": {
+   "AIQ": 0.7855879396984923,
+   "max_quality": 0.792,
+   "points": [
+    [
+     0.0287,
+     0.62
+    ],
+    [
+     0.0343,
+     0.624
+    ],
+    [
+     0.0445,
+     0.64
+    ],
+    [
+     0.0525,
+     0.692
+    ],
+    [
+     0.0598,
+     0.744
+    ],
+    [
+     0.0689,
+     0.768
+    ],
+    [
+     0.0706,
+     0.784
+    ],
+    [
+     0.0822,
+     0.788
+    ],
+    [
+     0.1239,
+     0.792
+    ]
+   ]
+  },
+  "train_rate (best-single scorer)": {
+   "AIQ": 0.7762613065326632,
+   "max_quality": 0.784,
+   "points": [
+    [
+     0.0287,
+     0.62
+    ],
+    [
+     0.0713,
+     0.784
+    ]
+   ]
+  },
+  "oracle": {
+   "AIQ": 0.9021708542713566,
+   "max_quality": 0.904,
+   "points": [
+    [
+     0.0275,
+     0.688
+    ],
+    [
+     0.0297,
+     0.756
+    ],
+    [
+     0.0301,
+     0.764
+    ],
+    [
+     0.0358,
+     0.836
+    ],
+    [
+     0.0371,
+     0.844
+    ],
+    [
+     0.0401,
+     0.856
+    ],
+    [
+     0.042,
+     0.864
+    ],
+    [
+     0.0437,
+     0.872
+    ],
+    [
+     0.0462,
+     0.88
+    ],
+    [
+     0.0524,
+     0.896
+    ],
+    [
+     0.0546,
+     0.904
+    ]
+   ]
+  }
+ },
+ "baselines": {
+  "best_single": {
+   "unit": "gemini-3-flash|mini-swe-agent",
+   "accuracy": 0.788,
+   "cost": 0.3523523531999999
+  },
+  "cheapest": {
+   "unit": "deepseek-v3-2-reasoner|mini-swe-agent",
+   "accuracy": 0.62,
+   "cost": 0.02873093607999999
+  }
+ }
+}

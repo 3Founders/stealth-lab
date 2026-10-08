@@ -1,0 +1,90 @@
+{
+ "experiment": "lobo",
+ "seconds": 2398,
+ "config": {
+  "latent_dims": 3,
+  "embedding_dims": 0,
+  "draws": 128,
+  "nightly_warmup": 250,
+  "nightly_chains": 2,
+  "nightly_samples": 150,
+  "nuts_max_latents": 1000000000,
+  "nuts_max_work": 150000,
+  "vi_steps": 6000,
+  "vi_rank": 32,
+  "local_global_draws": 16,
+  "local_warmup": 300,
+  "gh_eps_nodes": 12,
+  "max_rungs": 3,
+  "max_candidates": 16,
+  "reliability_target": 0.9,
+  "reliability_confidence": 0.9,
+  "value_multiplier": 5.0,
+  "wrong_penalty_ratio": 1.0,
+  "default_check_kind": "tests",
+  "prior_tokens_in": 60000.0,
+  "prior_tokens_out": 6000.0,
+  "prior_log_sd": 1.0,
+  "token_pooling_strength": 5.0
+ },
+ "verified": {
+  "train_obs": 13889,
+  "test_obs": 21941,
+  "with_features": {
+   "loglik": -0.6710212259913688,
+   "brier": 0.23867150164180886,
+   "auc": 0.7324559164272777,
+   "n": 21941,
+   "mean_abs_error_of_model_resolve_rate": 0.20020977542425844,
+   "fit_seconds": 312
+  },
+  "no_features": {
+   "loglik": -0.736920770701289,
+   "brier": 0.2697684786856795,
+   "auc": 0.6603370455764933,
+   "n": 21941,
+   "mean_abs_error_of_model_resolve_rate": 0.22348887378015386,
+   "fit_seconds": 248
+  }
+ },
+ "lite": {
+  "train_obs": 36263,
+  "test_obs": 11763,
+  "with_features": {
+   "loglik": -0.5636549644510326,
+   "brier": 0.19244513750772974,
+   "auc": 0.6898087045270975,
+   "n": 11763,
+   "mean_abs_error_of_model_resolve_rate": 0.09901428569086566,
+   "fit_seconds": 408
+  },
+  "no_features": {
+   "loglik": -0.5874191041504753,
+   "brier": 0.20170786386546619,
+   "auc": 0.6334692952482726,
+   "n": 11763,
+   "mean_abs_error_of_model_resolve_rate": 0.10727564850494802,
+   "fit_seconds": 376
+  }
+ },
+ "multilingual": {
+  "train_obs": 52704,
+  "test_obs": 3564,
+  "with_features": {
+   "loglik": -0.6409232644896224,
+   "brier": 0.2250869371007201,
+   "auc": 0.5808102360393299,
+   "n": 3564,
+   "mean_abs_error_of_model_resolve_rate": 0.09623987715432854,
+   "fit_seconds": 500
+  },
+  "no_features": {
+   "loglik": -0.6512150702632515,
+   "brier": 0.2294432066443085,
+   "auc": 0.5724799320032523,
+   "n": 3564,
+   "mean_abs_error_of_model_resolve_rate": 0.07867188678532337,
+   "fit_seconds": 513
+  }
+ }
+}

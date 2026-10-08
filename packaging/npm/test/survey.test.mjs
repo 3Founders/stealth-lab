@@ -658,3 +658,73 @@ test("held-out-2 regressions: deno workspaces, fixture batches, undeclared real 
   assert.match(statements(dir), /`lib` is a package named `ecto`/);
   assert.match(statements(dir), /Deno workspace|deno-workspace/);
 });
+
+test("history: the default window is two years before HEAD's commit, not before today (an idle repo still mines)", async () => {
+  const { sinceBeforeHead } = await import("../lib/survey/history.mjs");
+  const commits = [
+    { message: "fix: very old fix outside the window", files: { "src/old.py": "x = 1\n" }, date: "2017-01-01T10:00:00Z" },
+    { message: "fix: off-by-one in the pager when the last page is empty", files: { "src/pager.py": "def last():\n    return 1\n" }, date: "2019-03-01T10:00:00Z" },
+    { message: "fix: crash on an empty config file at startup", files: { "src/config.py": "def load():\n    return {}\n" }, date: "2020-05-01T10:00:00Z" },
+  ];
+  const dir = makeRepo({ "pyproject.toml": "[project]\nname='idle'\n", "src/pager.py": "x = 0\n" }, { commits });
+  const since = sinceBeforeHead(dir);
+  assert.ok(since && since.startsWith("2018-05-01"), `since=${since}`);
+  const r = runSurvey(dir, {});
+  assert.equal(r.history.added, 2, "the two fixes within two years of HEAD are mined; the 2017 one is not");
+  // An explicit since is passed through as given.
+  const dir2 = makeRepo({ "pyproject.toml": "[project]\nname='idle2'\n", "src/pager.py": "x = 0\n" }, { commits });
+  assert.equal(runSurvey(dir2, { since: "2020-01-01" }).history.added, 1);
+});
+
+test("held-out 3: an sbt build's projects are units (folders that exist), its versions and test task are facts", () => {
+  const dir = makeRepo({
+    "build.sbt": [
+      'lazy val root = project.in(file(".")).aggregate(core.jvm, streams)',
+      'lazy val core = crossProject(JVMPlatform, JSPlatform).in(file("core"))',
+      'lazy val streams = (project in file("streams"))',
+      'lazy val rootJVM = project.in(file("target/rootJVM"))   // an aggregate: no folder',
+      '// lazy val old = project.in(file("old"))',
+      "scalaVersion := Scala213",
+    ].join("\n") + "\n",
+    "project/build.properties": "sbt.version=1.13.0\n",
+    "project/BuildHelper.scala": 'object BuildHelper {\n  val Scala213: String = "2.13.18"\n  val Scala3: String = "3.3.8"\n}\n',
+    "core/jvm/src/main/scala/A.scala": "object A\n", "streams/src/main/scala/B.scala": "object B\n",
+    "old/src/main/scala/C.scala": "object C\n",
+    // a Maven project the tests of `streams-tests` run against: a fixture, not a unit
+    "streams-tests/maven/pom.xml": "<project><artifactId>fixture</artifactId></project>\n",
+    "zio-examples/build.sbt": 'lazy val ex = project.in(file("ex"))\n', "zio-examples/ex/src/main/scala/E.scala": "object E\n",
+  });
+  const r = survey(dir);
+  const units = r.units.map((u) => u.path).sort();
+  assert.deepEqual(units, [".", "core", "streams"]);
+  const s = statements(dir);
+  assert.match(s, /sbt multi-project build with 2 members/);
+  assert.match(s, /builds with sbt 1\.13\.0 \(project\/build\.properties\)/);
+  assert.match(s, /cross-builds for Scala 2\.13\.18, 3\.3\.8 \(BuildHelper\.scala\)/);
+  assert.match(s, /tested with `sbt test`/);
+});
+
+test("held-out 3: Gradle wrapper version, version-catalog Kotlin and a gemspec's Ruby requirement are facts", () => {
+  const g = makeRepo({
+    "settings.gradle.kts": 'include(":okio")\n', "gradlew": "", "okio/build.gradle.kts": 'plugins { kotlin("multiplatform") }\n',
+    "gradle/wrapper/gradle-wrapper.properties": "distributionBase=GRADLE_USER_HOME\ndistributionUrl=https\://services.gradle.org/distributions/gradle-9.8.0-bin.zip\n",
+    "gradle/libs.versions.toml": '[versions]\nkotlin = "2.2.21"\n',
+  });
+  survey(g);
+  const gs = statements(g);
+  assert.match(gs, /Gradle wrapper pins Gradle 9\.8\.0/);
+  assert.match(gs, /Kotlin 2\.2\.21 \(gradle\/libs\.versions\.toml/);
+  const rb = makeRepo({
+    "rubocop.gemspec": "Gem::Specification.new do |s|\n  s.name = 'rubocop'\n  s.required_ruby_version = '>= 2.7.0'\nend\n",
+    "Gemfile": "source 'https://rubygems.org'\ngemspec\n", "lib/rubocop.rb": "module RuboCop; end\n",
+  });
+  survey(rb);
+  assert.match(statements(rb), /requires Ruby >= 2\.7\.0 \(rubocop\.gemspec\)/);
+});
+
+test("held-out 3: the body of a heredoc opened on an assignment line is text, not commands", async () => {
+  const { logicalCommands } = await import("../lib/survey/parse.mjs");
+  const lines = ["body=$(cat <<EOF", "## Docs check failed", "The navigation check could not be queued.", "EOF", ")",
+    'gh pr comment 1 --body "$body"'].map((text, i) => ({ text, line: i + 1 }));
+  assert.deepEqual(logicalCommands(lines).map((c) => c.text), ['gh pr comment 1 --body "$body"']);
+});

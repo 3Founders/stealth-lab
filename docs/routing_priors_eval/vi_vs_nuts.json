@@ -1,0 +1,76 @@
+{
+ "experiment": "vi_vs_nuts",
+ "config": {
+  "latent_dims": 3,
+  "embedding_dims": 0,
+  "draws": 128,
+  "nightly_warmup": 250,
+  "nightly_chains": 2,
+  "nightly_samples": 150,
+  "nuts_max_latents": 1000000000,
+  "nuts_max_work": 150000,
+  "vi_steps": 6000,
+  "vi_rank": 32,
+  "local_global_draws": 16,
+  "local_warmup": 300,
+  "gh_eps_nodes": 12,
+  "max_rungs": 3,
+  "max_candidates": 16,
+  "reliability_target": 0.9,
+  "reliability_confidence": 0.9,
+  "value_multiplier": 5.0,
+  "wrong_penalty_ratio": 1.0,
+  "default_check_kind": "tests",
+  "prior_tokens_in": 60000.0,
+  "prior_tokens_out": 6000.0,
+  "prior_log_sd": 1.0,
+  "token_pooling_strength": 5.0
+ },
+ "items": 120,
+ "models": 51,
+ "train_obs": 7574,
+ "test_obs": 1894,
+ "seed": 0,
+ "metrics": {
+  "nuts": {
+   "loglik": -0.46497272424038155,
+   "brier": 0.15192878880489552,
+   "auc": 0.8691455536346124,
+   "n": 1894
+  },
+  "vi_lowrank": {
+   "loglik": -0.38837749440239583,
+   "brier": 0.12147423827437613,
+   "auc": 0.9140638391341906,
+   "n": 1894
+  }
+ },
+ "loglik_vi_minus_nuts_per_obs": {
+  "mean": 0.07659522983798567,
+  "ci95": [
+   0.06466349311211592,
+   0.08887772183392616
+  ],
+  "p_le_0": 0.0
+ },
+ "prediction_correlation": 0.9281703993962892,
+ "mean_abs_prediction_gap": 0.08999654602421966,
+ "theta_mean_correlation": 0.8264466958372795,
+ "fit_seconds": {
+  "nuts": 3245,
+  "vi_lowrank": 247
+ },
+ "diagnostics": {
+  "nuts": {
+   "max_r_hat": 2.655476529374308,
+   "min_ess": 1.1261201211377336,
+   "divergences": 0
+  },
+  "vi_lowrank": {
+   "final_elbo_loss": 2926.599539624788,
+   "svi_steps": 6000,
+   "rank": 32,
+   "elbo_tail_rel_change": 0.001471443100887884
+  }
+ }
+}

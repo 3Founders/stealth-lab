@@ -16,7 +16,7 @@ import crypto from "node:crypto";
 import { gitGlobToRegExp } from "./files.mjs";
 import {
   cmakeInfo, gitmodulesPaths, goWorkUses, gradleSettings, jsonKeyLine, linguistPatterns, mavenModules,
-  mixAppsPath, parseJsonLoose, parseToml, slnProjects, tomlGet, yamlTopList, xmlTag,
+  mixAppsPath, parseJsonLoose, parseToml, sbtProjects, slnProjects, tomlGet, yamlTopList, xmlTag,
 } from "./parse.mjs";
 
 const posixDir = (p) => { const d = path.posix.dirname(p); return d === "." ? "." : d; };
@@ -45,6 +45,9 @@ const AUX_DIRS = new Set(["test", "tests", "__tests__", "testdata", "test-data",
   // ("playground" is deliberately absent: ruff's playground/ is a real app with its own workspace.)
   "templates", "template", "scaffold", "scaffolds", "boilerplate", "integration_test", "integration_tests",
   "integration-tests"]);
+// The same roles as a name suffix: `zio-examples`, `core-tests`, `test-junit-tests` (held-out set 3). A DECLARED
+// member keeps its unit whatever its name; only undeclared manifests under such a folder are dropped.
+const AUX_SUFFIX_RE = /[-_](tests?|specs?|fixtures?|examples?|samples?|demos?)$/i;
 // Tracked build output.
 const GENERATED_DIRS = new Set(["dist", "out", "__generated__", "generated", ".next", ".nuxt", "coverage", "site-packages"]);
 export const GENERATED_FILE_RE = /(_pb2(_grpc)?\.pyi?|\.pb\.go|\.pb\.(cc|h)|_grpc\.pb\.go|\.g\.dart|\.freezed\.dart|\.min\.(js|css)|\.generated\.\w+|_generated\.\w+|\.designer\.cs|\.lock|lock\.json|-lock\.ya?ml|\.snap)$/i;
@@ -138,7 +141,9 @@ export function resolveUnits(files, read, opts = {}) {
   };
   // Fixture/example directories, and hidden tool directories (.claude/, .vercel/, .devcontainer/, ...):
   // manifests there describe tooling or copies, not packages of this repository.
-  const isAux = (dir) => segs(dir).some((s) => AUX_DIRS.has(s.toLowerCase()) || (s.startsWith(".") && s.length > 1));
+  const auxSeg = (s) => AUX_DIRS.has(s.toLowerCase()) || AUX_SUFFIX_RE.test(s) || (s.startsWith(".") && s.length > 1);
+  const isAux = (dir) => segs(dir).some(auxSeg);
+
 
   // ---------------- manifests ----------------
   const manifests = new Map(); // dir -> [{file, eco}]
@@ -299,6 +304,26 @@ export function resolveUnits(files, read, opts = {}) {
     const members = new Set(mods.map((m) => join(d, m.value.replace(/\/pom\.xml$/, ""))).filter((p) => has(at(p, "pom.xml"))));
     declare(d, "maven", "maven-modules", f, mods[0].line, members);
   }
+  // Scala: the projects a build.sbt declares by directory (a project with no build.sbt of its own is still one).
+  for (const f of byBase.get("build.sbt") || []) {
+    const d = posixDir(f);
+    if (zoneOf(d)) continue;
+    const projs = sbtProjects(text(f) || "");
+    const members = new Set();
+    const memberLines = new Map();   // each project is cited at its own declaration
+    for (const p of projs) {
+      const dir = join(d, p.value);
+      if (dir === d || !dirs.has(dir) || zoneOf(dir)) continue;   // `in(file("target/root3"))` aggregates: no folder
+      members.add(dir);
+      memberLines.set(dir, p.line);
+      if (!manifests.has(dir)) addManifestDir(manifests, dir, f, "sbt");
+    }
+    if (members.size) {
+      declare(d, "sbt", "sbt-projects", f, Math.min(...memberLines.values()), members);
+      const w = workspaces[workspaces.length - 1];
+      if (w && w.file === f) w.memberLines = memberLines;   // declare() skips a build inside an example folder
+    }
+  }
   // .NET solutions
   for (const [base, paths] of byBase) {
     if (!/\.slnx?$/.test(base)) continue; // classic .sln and the XML .slnx format
@@ -388,7 +413,7 @@ export function resolveUnits(files, read, opts = {}) {
   for (const w of workspaces) for (const m of w.members) {
     let arr = declaredMembers.get(m);
     if (!arr) declaredMembers.set(m, (arr = []));
-    arr.push({ by: w.by, file: w.file, line: w.line, root: w.root, eco: w.eco });
+    arr.push({ by: w.by, file: w.file, line: w.memberLines?.get(m) ?? w.line, root: w.root, eco: w.eco });
   }
   // A manifest inside a declared workspace of the same ecosystem that no pattern matched is not a unit.
   const insideSameEcoWorkspace = (dir, ecos) => workspaces.some((w) =>
@@ -529,7 +554,9 @@ export function resolveUnits(files, read, opts = {}) {
   for (const dir of sorted) {
     const u = units.get(dir);
     u.parent = dir === "." ? null : parentOf(dir);
-    u.name = unitName(u, json, toml, text) || (dir === "." ? "root" : dir.slice(dir.lastIndexOf("/") + 1));
+    const named = unitName(u, json, toml, text);
+    u.name = named || (dir === "." ? "root" : dir.slice(dir.lastIndexOf("/") + 1));
+    if (!named) u.nameFromPath = true;   // no manifest names it: facts must not claim a name
     u.slug = prev.get(dir) || mintSlug(dir, usedSlugs);
     usedSlugs.add(u.slug);
     out.push(u);

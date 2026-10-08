@@ -46,6 +46,10 @@ from app.routing.config import RoutingDefaults  # noqa: E402
 from app.routing.predict import Globals, goal_prior_draws, success_given_eps, unit_terms  # noqa: E402
 from app.routing.quadrature import standard_normal_rule  # noqa: E402
 
+# How every fit in this evaluation runs (--method): "nuts" (the original design), or "auto" = what production would
+# choose for the same data (fit.choose_method: NUTS while affordable, else low-rank VI). Fits that only make sense
+# with NUTS (sbc) always use NUTS.
+FIT_METHOD = "nuts"
 BENCH = "swe-bench"                    # one item identity across Verified / Lite / full test
 STAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)   # one week: abilities do not drift inside the evaluation
 SPLITS = {"verified": "verified.parquet", "lite": "lite.parquet", "multilingual": "multilingual.parquet"}
@@ -100,12 +104,13 @@ def goal_inputs(items: Mapping[str, dict], features: bool) -> tuple[dict, dict]:
 # ---------------------------------------------------------------- fitting
 
 def fit(obs: Sequence[dict], items: Mapping[str, dict], *, cards: Optional[Mapping[str, Any]], features: bool,
-        conf: RoutingDefaults, seed: int = 0, method: str = "nuts") -> dict[str, Any]:
+        conf: RoutingDefaults, seed: int = 0, method: Optional[str] = None) -> dict[str, Any]:
     from app.routing import fit as fitlib
 
     goal_meta, parents = goal_inputs(items, features)
     data, meta = fitlib.build_joint_data(obs, goal_meta, parents, {}, conf, cards=cards)
     t0 = time.time()
+    method = method or (None if FIT_METHOD == "auto" else FIT_METHOD)
     samples, used, diag = fitlib.run_joint(data, conf, seed=seed, method=method)
     arrays = fitlib.global_arrays(samples, meta)
     g = Globals(version=1, arrays=arrays, meta={**fitlib.public_meta(meta), "tokens": {}})
@@ -380,8 +385,34 @@ def routing(data: Data, conf: RoutingDefaults, seed: int = 0) -> dict:
     weak = int(np.argmin(np.where(train_acc > 0.25, mean_cost, np.inf)))
     for name, s in scorers.items():
         out["pairs"][name] = pair_metrics(s[:, strong] - s[:, weak], truth[:, strong], truth[:, weak])
-    out["pairs"]["random"] = pair_metrics(np.random.default_rng(seed).random(len(test_items)), truth[:, strong],
-                                          truth[:, weak])
+    # A constant score (the best-single scorer) cannot route item by item: its APGR is whatever order the tie-break
+    # leaves the items in, i.e. one random ordering. Random routing's EXPECTED APGR is exactly 0.5 (quality grows
+    # linearly with the strong-call fraction), so 0.5 -- with the spread of random orderings -- is the bar.
+    rng_perm = np.random.default_rng(seed + 1)
+    rand_apgr = np.array([pair_metrics(rng_perm.random(len(test_items)), truth[:, strong], truth[:, weak])["APGR"]
+                          for _ in range(500)])
+    out["pairs"]["random"] = {"APGR": float(rand_apgr.mean()), "APGR_q025": float(np.quantile(rand_apgr, 0.025)),
+                              "APGR_q975": float(np.quantile(rand_apgr, 0.975)), "orderings": len(rand_apgr),
+                              "note": "expected APGR of random routing is 0.5"}
+    out["pairs"]["train_rate (best-single scorer)"]["note"] = (
+        "a constant score: its APGR is one arbitrary ordering of the items (tie-break), not a routing decision")
+    # Item bootstrap: APGR of each router on resampled items, and its difference from 0.5 (random's expectation).
+    boot = np.random.default_rng(seed + 2)
+    idx_sets = [boot.integers(0, len(test_items), len(test_items)) for _ in range(500)]
+    for name, sc in scorers.items():
+        d = sc[:, strong] - sc[:, weak]
+        vals = []
+        for idx in idx_sets:
+            m = pair_metrics(d[idx], truth[idx, strong], truth[idx, weak])["APGR"]
+            if np.isfinite(m):
+                vals.append(m)
+        vals = np.asarray(vals)
+        if len(vals):
+            out["pairs"][name]["APGR_ci95"] = [float(np.quantile(vals, 0.025)), float(np.quantile(vals, 0.975))]
+            out["pairs"][name]["p_APGR_le_0.5"] = float(np.mean(vals <= 0.5))
+    np.savez_compressed(os.path.join(os.environ.get("ROUTING_EVAL_SCORES_DIR", "."), "routing_scores.npz"),
+                        truth=truth, cost=cost, strong=strong, weak=weak,
+                        **{k.replace(" ", "_").replace("(", "").replace(")", ""): v for k, v in scorers.items()})
     out["pair"] = {"strong": out["units"][strong], "weak": out["units"][weak]}
     out["frontier"] = {name: frontier(s, truth, cost) for name, s in scorers.items()}
     out["frontier"]["oracle"] = frontier(truth, truth, cost)
@@ -544,9 +575,15 @@ def frontier(score: np.ndarray, truth: np.ndarray, cost: np.ndarray, n_lambda: i
 
 # ---------------------------------------------------------------- SBC
 
-def sbc(conf: RoutingDefaults, sims: int, seed: int = 0) -> dict:
+def sbc(conf: RoutingDefaults, sims: int, seed: int = 0, *, checkpoint: Optional[str] = None,
+        batch: Optional[int] = None) -> Optional[dict]:
     """Simulate from the prior of the card model on a small design (12 models with cards, 30 items,
-    every model on every item), refit, rank the truth. Uniform ranks <=> correct computation."""
+    every model on every item), refit, rank the truth. Uniform ranks <=> correct computation.
+
+    Memory grows with every refit inside one process (about 3 GB after 12 on a 16 GB laptop), so with
+    `checkpoint` each simulation's ranks are saved as it finishes and a rerun skips them; `batch` stops
+    after that many new simulations (returns None until all `sims` are done). Each simulation draws its
+    data from its own seed, so the result does not depend on how the run was split."""
     import jax
     from numpyro.infer import Predictive
 
@@ -576,19 +613,38 @@ def sbc(conf: RoutingDefaults, sims: int, seed: int = 0) -> dict:
         "theta_hist", "z", "gamma", "delta", "goal_x", "proc_c", "step_d", "step_e", "card_beta"])(
         jax.random.PRNGKey(seed), {**data, "n_attempts": 0}, k, conf.gh_eps_nodes)
     prior = {key: np.asarray(v) for key, v in prior.items()}
-    ranks = defaultdict(list)
     draws = conf.draws
+    done: dict = {}
+    if checkpoint and os.path.exists(checkpoint):
+        with open(checkpoint, encoding="utf-8") as fh:
+            done = json.load(fh)
+        if done.get("draws") != draws:
+            raise SystemExit(f"{checkpoint} was made with draws={done.get('draws')}, not {draws}")
+    per_sim = done.get("ranks", {})
+    new = 0
     for s in range(sims):
+        if str(s) in per_sim:
+            continue
+        if batch is not None and new >= batch:
+            return None
         sim = dict(data)
-        sim["att_accepted"] = fitlib.simulate(rng, data, prior, s, k)
+        sim["att_accepted"] = fitlib.simulate(np.random.default_rng([seed, s]), data, prior, s, k)
         post, _, _ = fitlib.run_joint(sim, conf, seed=seed + 1 + s, num_draws=draws, method="nuts")
         tracked = {"beta_release_years": (prior["card_beta"][s, 0], post["card_beta"][:, 0]),
                    "beta_log_price_out": (prior["card_beta"][s, 2], post["card_beta"][:, 2]),
                    "model0_ability": (prior["theta_hist"][s, 0, -1], post["theta_hist"][:, 0, -1]),
                    "goal_difficulty": (prior["goal_x"][s, -1, 0], post["goal_x"][:, -1, 0])}
-        for name, (truth, d) in tracked.items():
-            ranks[name].append(int((np.asarray(d) < truth).sum()))
-        print(f"[sbc] {s + 1}/{sims}", flush=True)
+        per_sim[str(s)] = {name: int((np.asarray(d) < truth).sum()) for name, (truth, d) in tracked.items()}
+        new += 1
+        if checkpoint:
+            with open(checkpoint, "w", encoding="utf-8") as fh:
+                json.dump({"draws": draws, "ranks": per_sim}, fh)
+        jax.clear_caches()
+        print(f"[sbc] {len(per_sim)}/{sims}", flush=True)
+    ranks = defaultdict(list)
+    for s in range(sims):
+        for name, r in per_sim[str(s)].items():
+            ranks[name].append(r)
     report = {}
     for name, r in ranks.items():
         hist, _ = np.histogram(r, bins=10, range=(0, draws + 1))
@@ -608,10 +664,16 @@ def main() -> int:
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--fast", action="store_true")
     ap.add_argument("--sims", type=int, default=40)
+    ap.add_argument("--sims-per-process", type=int,
+                    help="sbc: stop after this many new simulations (checkpointed in sbc_ranks.json); rerun to continue")
     ap.add_argument("--temporal-after", default="2025-10-01")
     ap.add_argument("--fold", type=int, help="lomo: run only this fold, write lomo_fold<K>.json (resumable)")
     ap.add_argument("--merge", action="store_true", help="lomo: merge the lomo_fold*.json files into lomo.json")
+    ap.add_argument("--method", default="nuts", choices=["nuts", "vi_lowrank", "auto"],
+                    help="inference for every fit except sbc; auto = what production chooses (fit.choose_method)")
     args = ap.parse_args()
+    global FIT_METHOD
+    FIT_METHOD = args.method
     os.makedirs(args.out, exist_ok=True)
     conf = cfg(args.fast)
     exps = ["lomo", "temporal", "lobo", "routing", "sbc"] if args.exp == "all" else [args.exp]
@@ -663,7 +725,11 @@ def main() -> int:
         elif exp == "routing":
             result = routing(_restrict(data, "verified"), conf)
         else:
-            result = sbc(conf, args.sims)
+            result = sbc(conf, args.sims, checkpoint=os.path.join(args.out, "sbc_ranks.json"),
+                         batch=args.sims_per_process)
+            if result is None:
+                print("sbc: batch done, rerun to continue", flush=True)
+                continue
         result = {"experiment": exp, "seconds": round(time.time() - t0), "config": conf.__dict__, **result}
         with open(os.path.join(args.out, f"{exp}.json"), "w", encoding="utf-8") as fh:
             json.dump(result, fh, indent=1, default=str)

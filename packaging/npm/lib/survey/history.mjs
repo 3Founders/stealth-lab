@@ -2,7 +2,7 @@
 // repository's own past fixes, with their real diffs, as `library.md` entries (`outcome=historical`).
 // The experiment's winning setting -- same-repo past fixes with diffs -- built locally, no server.
 //
-// Bounded by design: the last 2 years, at most 5,000 commits, one `git log --name-only` pass, the
+// Bounded by design: the 2 years before HEAD's commit date, at most 5,000 commits, one `git log --name-only` pass, the
 // fix-commit filter applied BEFORE any diff is read, then at most `maxEntries` diffs. Files that look
 // like secrets, lockfiles, generated or vendored code never enter a solution; a hunk with a secret-looking
 // value is dropped and the entry says `redacted=1`.
@@ -40,7 +40,18 @@ export function isFixCommit(subject, body = "") {
 }
 
 export const LIBRARY_MAX_BYTES = 64 * 1024;
-export const HISTORY_DEFAULTS = { since: "2.years.ago", maxCommits: 5000, maxEntries: 150, maxFilesPerFix: 20, maxDiffBytes: 64 * 1024 };
+// `since` unset means `sinceYears` before HEAD's own commit date, not before today: "2.years.ago" mined nothing in an
+// older checkout or a repository idle for two years. An explicit `since` (any git date) is passed through as given.
+export const HISTORY_DEFAULTS = { since: null, sinceYears: 2, maxCommits: 5000, maxEntries: 150, maxFilesPerFix: 20, maxDiffBytes: 64 * 1024 };
+
+/** ISO date `years` before HEAD's committer date, or null when HEAD has no readable date. */
+export function sinceBeforeHead(root, years = HISTORY_DEFAULTS.sinceYears) {
+  const iso = (git(root, ["log", "-1", "--format=%cI", "HEAD"]) || "").trim();
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return null;
+  d.setUTCFullYear(d.getUTCFullYear() - years);
+  return d.toISOString();
+}
 
 /**
  * Fix commits since `since` (or since `fromHead` when incremental), scored and capped.
@@ -52,7 +63,8 @@ export function findFixCommits(root, opts = {}) {
   if (!head) return { candidates: [], scanned: 0, head: null };
   const range = o.fromHead && o.fromHead !== head ? [`${o.fromHead}..HEAD`] : o.fromHead === head ? null : ["HEAD"];
   if (!range) return { candidates: [], scanned: 0, head };
-  const out = git(root, ["log", ...range, `--since=${o.since}`, `--max-count=${o.maxCommits}`, "--no-merges", "--no-renames",
+  const since = o.since || sinceBeforeHead(root, o.sinceYears);
+  const out = git(root, ["log", ...range, ...(since ? [`--since=${since}`] : []), `--max-count=${o.maxCommits}`, "--no-merges", "--no-renames",
     "--format=%x1e%H%x1f%cs%x1f%an%x1f%s%x1f%b%x1d", "--name-only", "--", "."]);
   if (out == null) return { candidates: [], scanned: 0, head };
   const candidates = [];

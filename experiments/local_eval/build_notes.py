@@ -232,7 +232,13 @@ def build(ids: list[str], inst: dict, workers: int, freeze: bool = True) -> None
         write_json(prev, merged)
     prev_meta = RUNS / "notes_meta.json"
     write_json(prev_meta, {**(read_json(prev_meta) if prev_meta.exists() else {}), **meta})
+    prereg = Path(__file__).parent / "PREREGISTRATION.md"
+    if freeze and not prereg.exists():
+        raise SystemExit("PREREGISTRATION.md is missing: the plan is frozen before any notes are built")
     frozen = {"config_sha256": stable_hash((Path(__file__).parent / "experiment.json").read_text(encoding="utf-8")),
+              # LF-normalised: a Windows autocrlf checkout must hash the same plan to the same value
+              "preregistration_sha256": (stable_hash(prereg.read_text(encoding="utf-8").replace("\r\n", "\n"))
+                                         if prereg.exists() else None),
               "providers": prov, "memory": mem, "embedding_compat_min_cos": round(compat, 4),
               "notes_sha256": {arm: stable_hash(json.dumps(read_json(RUNS / f"notes_{arm}.json"), sort_keys=True))
                                for arm in NOTE_ARMS},

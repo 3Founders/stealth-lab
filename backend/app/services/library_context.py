@@ -52,6 +52,21 @@ class RepoIdentity:
     def weak(self) -> bool:
         return self.strength == "weak" or self.repo_id.startswith("p:")
 
+    @property
+    def benchmark_repo(self) -> Optional[str]:
+        """`owner/name` as public benchmarks spell their repository, or None. The survey scanner sends the
+        normalised remote (`github.com/owner/name`, `gitlab.com/group/sub/project`); public benchmarks are
+        GitHub repositories named `owner/name`, so only a github.com remote (or a bare owner/name) maps to one.
+        A GitHub owner never contains a dot, so a dotted first segment is a host, not an owner."""
+        if not self.public_name:
+            return None
+        parts = self.public_name.split("/")
+        if len(parts) == 3 and parts[0] == "github.com":
+            return f"{parts[1]}/{parts[2]}"
+        if len(parts) == 2 and "." not in parts[0]:
+            return self.public_name
+        return None
+
 
 def parse_repo_identity(raw: Any) -> tuple[Optional[RepoIdentity], Optional[str]]:
     """(identity, problem). A malformed identity is ignored (with the reason reported), never guessed."""
@@ -164,13 +179,13 @@ async def same_repo_goal_ids(pool: Any, identity: Optional[RepoIdentity]) -> lis
     ->> 'repo'` = owner/name). Only for a strong identity whose owner sent `public_name`. One indexed
     read of ids (db/146_benchmarks_repo_index.sql); private Goals scoped to the hashed repo_id are
     matched inside the search query itself, without this lookup."""
-    if identity is None or identity.weak or not identity.public_name:
+    if identity is None or identity.weak or not identity.benchmark_repo:
         return []
     rows = await pool.fetch(
         "SELECT DISTINCT goal_id::text AS goal_id FROM benchmarks "
         "WHERE environment_specification ? 'repo' AND lower(environment_specification ->> 'repo') = $1 "
         "AND goal_id IS NOT NULL LIMIT $2",
-        identity.public_name, SAME_REPO_MAX_GOALS)
+        identity.benchmark_repo, SAME_REPO_MAX_GOALS)
     return [r["goal_id"] for r in rows]
 
 
