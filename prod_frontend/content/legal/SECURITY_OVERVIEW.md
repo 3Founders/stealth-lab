@@ -40,8 +40,10 @@ deployment doesn't actually have.** Confirm which mode is live before publishing
   visibility/tenancy predicates before content is returned — not an ad-hoc per-endpoint check.
 - Private content is scoped to the owning user (and, where organization scoping is live,
   the owning organization); public Global Commons content is visible to anyone.
-- PostgreSQL row-level security acts as an additional backstop layer beneath the application-level
-  checks.
+- PostgreSQL row-level security policies are written as a backstop beneath the application-level
+  checks, but they are **not yet in force in production**: the services still connect with a database role
+  that bypasses them. They take effect once the services connect with the restricted database role. Until
+  then, isolation rests on the application-level checks.
 - **Known limitation, stated plainly:** as of this audit, organization-level (`org`) visibility
   enforcement was not yet reachable from the live HTTP path in every case, and some
   cross-tenant/IDOR test coverage was still partial per the internal compliance ledger. Treat

@@ -40,7 +40,7 @@ We do not claim India-only or any single-country processing. The database and so
 ## Access control and isolation **[code]**
 
 - Every request is authenticated by an OAuth bearer token. The shared token works only in single-user mode.
-- Private and organisation content is filtered by one shared function, `scope_predicates()`, and Postgres row-level security is the second layer. An end-to-end test (`backend/tests/test_routing_isolation_e2e.py`) checks that one user cannot read or report on another's instance.
+- Private and organisation content is filtered by one shared function, `scope_predicates()`. Postgres row-level security is written as a second layer but is **not in force in production yet**: the services connect as the Neon owner role, which has `BYPASSRLS`. It takes effect when Railway switches to the restricted `stealth_app` login (3-hard.md, Decision 1). An end-to-end test (`backend/tests/test_routing_isolation_e2e.py`) checks that one user cannot read or report on another's instance.
 - A model-plan handle (`instance_key`) is bound to the caller who received it.
 - Retrieved content is screened for links, hidden characters and instruction phrases, escaped, and marked as untrusted data in tool results.
 - `call_model`: egress policy, server-address checks against SSRF, a worst-case cost cap before each call, per-organisation budgets, a kill switch and an audit ledger (migration 136).

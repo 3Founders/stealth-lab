@@ -9,7 +9,7 @@ Attached to the MSA between **[COMPANY LEGAL NAME]** (**Company**) and **[CUSTOM
 | Area | Control |
 |---|---|
 | Authentication | OAuth 2.1 sign-in; every request carries a bearer token; the shared operator token is restricted to single-user deployments |
-| Authorisation and isolation | One shared access function filters private and organisation content; row-level security beneath it; automated tests that one user cannot read or report on another's data |
+| Authorisation and isolation | One shared access function filters private and organisation content in the application; automated tests that one user cannot read or report on another's data. Row-level security policies are written in the database, but the services do not yet connect with a role they apply to, so isolation rests on the application checks today (see §2) |
 | Session handles | A model-plan handle (`instance_key`) works only for the caller it was issued to |
 | Untrusted content | Retrieved procedure text is screened (links, hidden characters, instruction phrases), escaped and marked as data, not instructions |
 | Model calls (`call_model`) | Customer's own keys by reference; egress policy; server-address (SSRF) checks; worst-case cost reserved before each call; per-organisation and per-user budgets; kill switch; audit ledger of calls (without prompt text) |
@@ -20,7 +20,7 @@ Attached to the MSA between **[COMPANY LEGAL NAME]** (**Company**) and **[CUSTOM
 
 ## 2. Planned, not yet in place
 
-Independent penetration test; SOC 2 or ISO 27001; least-privilege database roles (documented, not created); more than one running instance and failover; status page and staffed on-call; single sign-on and SCIM for Customer staff; hard-delete and export path; customer-visible audit export; a tested backup restore.
+Independent penetration test; SOC 2 or ISO 27001; row-level security in force: the services connecting as the restricted least-privilege database role (created, not yet used by the services), which is what makes the database's row-level security policies apply; more than one running instance and failover; status page and staffed on-call; single sign-on and SCIM for Customer staff; hard-delete and export path; customer-visible audit export; a tested backup restore.
 
 ## 3. Customer's responsibilities
 

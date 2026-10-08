@@ -16,7 +16,7 @@
 | Automatic failover between Anthropic and OpenAI | "With several configured connections, a rule can fall back" once built | Automatic failover today | Build and test it |
 | Independent penetration test, no high or critical findings | "Planned after deployment" | Any statement of results | A completed test and retest |
 | SOC 2 or ISO 27001 | "In progress" only if we have started | "Compliant", "certified" | A report |
-| Tenant isolation | "Enforced in the application and in row-level security, tested end to end" | "Guaranteed", "cannot leak" | Run the live isolation suites against production; create least-privilege database roles |
+| Tenant isolation | "Enforced in the application, tested end to end"; add "and in row-level security" only after the services connect as `stealth_app` (3-hard.md Decision 1) | "Guaranteed", "cannot leak" | Switch the services to the `stealth_app` role (already created on every database), then run the live isolation suites against production |
 | Savings (for example 50%) | The measured figure, with its method, baseline and sample, stated as a measurement | A promise of future savings | A measurement on a customer's real sessions in cache-aware dollars with a control |
 | Right to delete / export | "Withdraw and export on request" only after it is built | "Fully deletable" | The hard-delete and export path (document 02) |
 | Single sign-on / SCIM | "Not yet" | Anything else | Build, or use an identity provider that supplies it |

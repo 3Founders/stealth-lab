@@ -94,7 +94,7 @@ Term as the MSA. If this DPA conflicts with the MSA on personal data, this DPA c
 
 ## Annexure 2: Security measures
 
-Authenticated access to every request; tenant isolation by application checks and database row-level security; encryption in transit and at rest by providers **[confirm]**; screening of retrieved content; no storage of `call_model` prompts or outputs; audit ledger of model calls; organisation budgets and kill switch; access limits for staff; incident procedure (`legal/dpdp/incident_procedure.md`); vulnerability handling policy. Planned, not yet in place: independent penetration test, single sign-on for customer staff, hard-delete path.
+Authenticated access to every request; tenant isolation by application checks (database row-level security policies are written but not yet in force, because the services do not yet connect with the restricted role they apply to); encryption in transit and at rest by providers **[confirm]**; screening of retrieved content; no storage of `call_model` prompts or outputs; audit ledger of model calls; organisation budgets and kill switch; access limits for staff; incident procedure (`legal/dpdp/incident_procedure.md`); vulnerability handling policy. Planned, not yet in place: database row-level security in force (services connecting as the restricted database role), independent penetration test, single sign-on for customer staff, hard-delete path.
 
 ## Annexure 3: Subprocessors and locations
 

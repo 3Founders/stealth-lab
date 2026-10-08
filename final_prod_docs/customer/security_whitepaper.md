@@ -37,7 +37,7 @@ The full list is the Subprocessor Schedule. Processing locations are set out in 
 
 ## How we protect it
 
-Every request carries an OAuth token. Private and organisation content is filtered by one shared access function and, beneath it, database row-level security; an end-to-end test checks that one user cannot act on another's data. Retrieved text is screened, escaped and marked as untrusted. For `call_model`, an organisation admin sets allowed data classes, budgets and a kill switch, and every call is entered in an audit ledger.
+Every request carries an OAuth token. Private and organisation content is filtered by one shared access function in the application (database row-level security policies are written beneath it but are not yet in force, because the services do not yet connect with the restricted role they apply to); an end-to-end test checks that one user cannot act on another's data. Retrieved text is screened, escaped and marked as untrusted. For `call_model`, an organisation admin sets allowed data classes, budgets and a kill switch, and every call is entered in an audit ledger.
 
 ## What we do not yet have
 
