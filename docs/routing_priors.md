@@ -117,6 +117,31 @@ model stayed with that Goal. `model_update.py` closes this:
 - **The plan reports its case:** `model_plan.case = {kind, ref}`, and `evidence.goal_posterior` says
   `case prior (...)`.
 
+## Semantic codes for Ways (2026-10-08)
+
+A Way's embedding maps to a short code, such as `c07.3`, from a two-level code tree: 24 coarse groups, each with up
+to 8 sub-codes (`app/routing/semantic_codes.py`). Ways with the same code do similar work.
+
+- **In the fit:**
+  - each benchmark task's Goal gets its Way's code as a parent, and the code gets its coarse group;
+  - the bundle stores the draws of every code node (`code_x`, meta `code_nodes`);
+  - a plan for a Way with a code adds that node as a parent of its case prior (`service._code_parent`). The code
+    itself is used when the fit saw it, else its coarse group.
+- **Building:** `scripts/build_prior_bundle.py --codes <procedure_vectors.npz>` builds the codebook from the
+  embeddings of the Ways that achieve our benchmark Goals, which were exported once read-only. It then fits on
+  every public source the production import reads.
+- **Coding a repository's Ways:** `stealthlab-mcp library link` sends each uncoded Way's name and steps to
+  `POST /routing/codes` once (signed in). The server embeds them with the codebook's model, answers with the code
+  and the vector, and stores nothing. The code is written on the `W` line (`code=`); the vector stays in
+  `.stealth/index/way_vectors.json` (gitignored). A later codebook version re-codes from the kept vectors, so the
+  text is not sent again.
+- **Updating:**
+  - **a Way's embedding:** never; new text is a new Way;
+  - **the codebook:** a rare, versioned rebuild; `semantic_codes.remap` maps old codes to new ones;
+  - **outcomes per code:** every result, through the repository's `routing.md` counts and the refits.
+- **Model mismatch:** if the deployment's embedding model differs from the codebook's, no code is given rather
+  than a wrong one.
+
 ## Defaults the plan uses
 
 - **The caller's own model.** `find_ways(..., my_model="claude-sonnet-4-5")` makes it a candidate, on the

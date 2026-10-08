@@ -105,8 +105,19 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
     }
     case "payload":
       return print(L.requestPayload(root));
-    case "link":
-      return print(L.linkLibrary(root));
+    case "link": {
+      const linked = L.linkLibrary(root);
+      let settings = {};
+      try {
+        const { resolveSettings } = await import("./config.mjs");
+        settings = resolveSettings({});
+        if (settings.token) {
+          const { freshToken } = await import("./oauth.mjs");
+          settings.token = (await freshToken(settings).catch(() => null)) || settings.token;
+        }
+      } catch { /* not configured: Ways stay uncoded */ }
+      return print({ ...linked, codes: await L.codeWays(root, { url: settings.url, token: settings.token }) });
+    }
     case "goal":
       if (!v.parent) throw new Error("library goal <G-id> --parent <G-id or ->");
       return print(L.setGoalParent(root, positionals[0], v.parent));

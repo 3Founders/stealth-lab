@@ -77,6 +77,9 @@ async def prior_draws_for_case(pool: Any, g: predict.Globals, virtual: Mapping[s
     from app.routing.fit import aligned_goal_draws
 
     parents = []
+    code_draws = _code_parent(g, virtual.get("code"))
+    if code_draws is not None:          # the Ways like this one (same semantic code) -- semantic_codes.py
+        parents.append((code_draws, g.phi1(None, None)))
     for pid in list(virtual.get("parents") or [])[:3]:
         try:
             row = (await store.goal_rows(pool, [str(pid)])).get(str(pid))
@@ -393,6 +396,20 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     return response
 
 
+def _code_parent(g: predict.Globals, code: Any) -> Optional[np.ndarray]:
+    """(S, D) draws of a semantic code's node in the fitted hierarchy: the code itself when the fit saw it, else its
+    coarse group, else None. Only a fit built with codes (the bundle's `code_x`) has them."""
+    if not isinstance(code, str) or "code_x" not in g.arrays:
+        return None
+    from app.routing import semantic_codes
+
+    names = list(g.meta.get("code_nodes") or [])
+    for name in (code, semantic_codes.coarse(code)):
+        if name in names:
+            return g.arrays["code_x"][:, names.index(name), :]
+    return None
+
+
 def _unit_tokens(token_meta: Mapping[str, Any], model: str, unit: str, cards: Mapping[str, Any]) -> Optional[dict]:
     """A unit's own token stats, else its MODEL's (calibrated from published per-task costs, any scaffold: a model
     that writes long answers does so in every harness), else None (the global level only)."""
@@ -410,6 +427,8 @@ def _unit_tokens(token_meta: Mapping[str, Any], model: str, unit: str, cards: Ma
 
 def _case_label(virtual: Mapping[str, Any]) -> str:
     parts = ["fix-size features" if virtual.get("features") else "population mean"]
+    if virtual.get("code"):
+        parts.append(f"Ways like it ({virtual['code']})")
     if virtual.get("parents"):
         parts.append("near global Goals")
     return f"case prior ({virtual.get('kind')}: {' + '.join(parts)})"

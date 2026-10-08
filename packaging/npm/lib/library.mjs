@@ -45,10 +45,11 @@ const PROC_ID = /^(L-[0-9a-f]{4,16})\.p([0-9]+)$/;
 const STEP_ID = /^(L-[0-9a-f]{4,16})\.p([0-9]+):([0-9]+)$/;
 const COUNT = /^[0-9]+$/;
 const KGOAL_ID = /^G-[0-9a-f]{6,16}$/;
+const CODE = /^c[0-9]{2}\.[0-9]+$/;
 const WAY_ID = /^W-[0-9a-f]{6,16}$/;
 const WAY_STEP_ID = /^(W-[0-9a-f]{6,16}):([0-9]+)$/;
 const KGOAL_KEYS = new Set(["parent", "g", "unit", "tags"]);
-const WAY_KEYS = new Set(["goal", "p", "v"]);
+const WAY_KEYS = new Set(["goal", "p", "v", "code"]);
 const OUTCOMES = ["pass", "historical", "fail"];
 const STATUSES = ["current", "stale"];
 const RAW_KEYS = new Set(["touches", "tags", "ladder"]);
@@ -160,7 +161,8 @@ export function renderKGoalLine(g) {
 }
 
 export function renderWayLine(w) {
-  return ["W", w.id, esc(pyStrip(w.name)), kv("goal", w.goal), kv("p", w.p), kv("v", w.v || 1), ...(w.extra || [])].join(SEP);
+  return ["W", w.id, esc(pyStrip(w.name)), kv("goal", w.goal), kv("p", w.p), kv("v", w.v || 1),
+    ...(w.code ? [kv("code", w.code)] : []), ...(w.extra || [])].join(SEP);
 }
 
 export function renderWayStepLine(wayId, s) {
@@ -297,7 +299,8 @@ export function parseLibrary(text) {
   for (const [id, { fields: f }] of [...ways.entries()].sort((a, b) => cmp(a[0], b[0]))) {
     const k = splitKv(f.slice(3));
     wayMap.set(id, { id, name: unesc(f[2]), goal: KGOAL_ID.test(k.goal || "") ? k.goal : null, p: dash(k.p),
-      v: COUNT.test(k.v || "") ? Number(k.v) : 1, steps: [], extra: extraFields(f.slice(3), WAY_KEYS) });
+      v: COUNT.test(k.v || "") ? Number(k.v) : 1, steps: [], extra: extraFields(f.slice(3), WAY_KEYS),
+      ...(CODE.test(k.code || "") ? { code: k.code } : {}) });
   }
   for (const [key, { fields: f }] of [...wsteps.entries()].sort((a, b) => cmp(a[0], b[0]))) {
     const [wid, order] = key.split(" ");
@@ -403,6 +406,63 @@ function pruneKnowledge(lib) {
     for (const g of lib.goals || []) if (used.has(g.id) && g.parent && !used.has(g.parent)) { used.add(g.parent); grew = true; }
   }
   lib.goals = (lib.goals || []).filter((g) => used.has(g.id));
+}
+
+// ---- semantic codes: what kind of work a Way is (the server's codebook; backend/app/routing/semantic_codes.py)
+
+// The text a Way is embedded as: its name and its steps, the way the server's procedures are described.
+export function wayText(w) {
+  return [w.name, ...(w.steps || []).map((st) => `${st.order}. ${st.do}${st.check ? ` (check: ${st.check})` : ""}`)]
+    .join("\n").slice(0, 4000);
+}
+
+const VECTORS = ["index", "way_vectors.json"];        // kept locally (gitignored): re-coding never resends the text
+
+// Ask the server for the codes of the Ways that have none (POST <server>/routing/codes, one call, at most 50 Ways),
+// write them onto the W lines and keep the vectors in index/way_vectors.json. Needs a signed-in token; any
+// failure leaves the Ways uncoded (routing then uses fix size alone) and is reported, never thrown.
+export async function codeWays(root, { url, token, fetchImpl = globalThis.fetch, userAgent = "stealthlab-mcp" } = {}) {
+  const lib = loadLibrary(root);
+  const todo = (lib.ways || []).filter((w) => !w.code).slice(0, 50);
+  if (!todo.length) return { coded: 0 };
+  if (!url || !token) return { coded: 0, skipped: "not signed in (stealthlab-mcp login): Ways stay uncoded" };
+  let target;
+  try {
+    const u = new URL(url);
+    u.pathname = u.pathname.replace(/\/mcp\/?$/, "").replace(/\/$/, "") + "/routing/codes";
+    target = u.toString();
+  } catch {
+    return { coded: 0, skipped: "bad server URL" };
+  }
+  let body;
+  try {
+    const res = await fetchImpl(target, {
+      method: "POST", signal: AbortSignal.timeout(20000),
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "user-agent": userAgent },
+      body: JSON.stringify({ items: todo.map((w) => ({ id: w.id, text: wayText(w) })) }),
+    });
+    body = await res.json().catch(() => ({}));
+    if (!res.ok) return { coded: 0, skipped: `server answered ${res.status}${body.error ? `: ${body.error}` : ""}` };
+  } catch (err) {
+    return { coded: 0, skipped: `server unreachable (${err.name || "error"})` };
+  }
+  let coded = 0;
+  for (const w of lib.ways) {
+    const c = body.codes?.[w.id];
+    if (typeof c === "string" && CODE.test(c)) { w.code = c; coded++; }
+  }
+  if (coded) {
+    writeIfChanged(P(root, "library.md"), renderLibrary(lib));
+    const file = P(root, ...VECTORS);
+    let kept = {};
+    try { kept = JSON.parse(read(file) || "{}"); } catch { kept = {}; }
+    kept.version = body.version;
+    kept.embedding_model_id = body.embedding_model_id;
+    kept.vectors = { ...(kept.vectors || {}), ...(body.vectors || {}) };
+    writeIfChanged(file, JSON.stringify(kept));
+    buildIndex(root);
+  }
+  return { coded, version: body.version };
 }
 
 // `library goal <G-id> --parent <G-id>`: set (or clear with "-") a Goal's parent. A cycle is refused.
@@ -586,7 +646,7 @@ function writeIfChanged(file, text) {
 // .stealth/.gitignore: the generated files, rebuilt from library.md / the server. library.md, library/solutions
 // and SUMMARY's sources stay committable -- whether .stealth/ is committed at all is the repo owner's choice.
 const GITATTRIBUTES = "library.md merge=union\n";
-const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md"];
+const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json"];
 
 export function ensureGitFiles(root) {
   const attr = P(root, ".gitattributes");
@@ -1059,10 +1119,14 @@ export function taskFeatures(root) {
   const repo = Object.fromEntries(FIELDS.map((k) => [k, median(k)]));
   const byWay = new Map();
   for (const st of all) if (st.way) byWay.set(st.way, [...(byWay.get(st.way) || []), st]);
-  const ways = Object.fromEntries([...byWay.entries()].map(([w, rows]) => [w, Object.fromEntries(FIELDS.map((k) => {
-    const v = rows.map((r) => r[k]).sort((a, b) => a - b);
-    return [k, v[Math.floor((v.length - 1) / 2)]];
-  }))]));
+  const codeOf = new Map((loadLibrary(root).ways || []).filter((w) => w.code).map((w) => [w.id, w.code]));
+  const ways = Object.fromEntries([...byWay.entries()].map(([w, rows]) => [w, {
+    ...Object.fromEntries(FIELDS.map((k) => {
+      const v = rows.map((r) => r[k]).sort((a, b) => a - b);
+      return [k, v[Math.floor((v.length - 1) / 2)]];
+    })),
+    ...(codeOf.has(w) ? { code: codeOf.get(w) } : {}),
+  }]));
   return { entries, repo, ...(byWay.size ? { ways } : {}) };
 }
 

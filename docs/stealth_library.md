@@ -37,7 +37,7 @@ line ranges are disposable (the idx is trusted only while its `source_sha` and e
 | line | what |
 |---|---|
 | `G|G-…|<title>|parent=<G-id or ->|g=|unit=|tags=` | a Goal; `parent=` builds a hierarchy (`stealthlab-mcp library goal <G> --parent <G>`) |
-| `W|W-…|<name>|goal=<G-id>|p=|v=` | a Way (procedure) that achieves the Goal, reusable across problems |
+| `W|W-…|<name>|goal=<G-id>|p=|v=|code=` | a Way (procedure) that achieves the Goal, reusable across problems; `code=` its semantic code (docs/routing_priors.md) |
 | `S|W-…:<k>|<kind>|<do>|check=` | the Way's steps |
 
 - **Links:** each solved entry links to the layer: `goal=<G-id>` on its `GOAL` line, `way=<W-id>` on its `PROC` line.

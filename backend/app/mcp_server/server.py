@@ -907,6 +907,70 @@ MCP_STATELESS = os.environ.get("STEALTHLAB_MCP_STATELESS", "1").strip() in ("1",
 # event. Its warnings and errors still show.
 logging.getLogger("mcp.server.streamable_http").setLevel(logging.WARNING)
 
+ROUTING_CODES_MAX_ITEMS = 50
+ROUTING_CODES_MAX_CHARS = 4000
+
+
+@server.custom_route("/routing/codes", methods=["POST"], include_in_schema=False)
+async def routing_codes_route(request: Request) -> JSONResponse:
+    """Semantic codes for a repository's own Ways (`stealthlab-mcp library link` calls it once per new Way).
+
+    Body `{"items": [{"id": "<W-id>", "text": "<name and steps>"}, ...]}` (at most 50, each at most 4,000
+    characters). Reply `{"version", "embedding_model_id", "codes": {id: code}, "vectors": {id: [...]}}`: the text is
+    embedded with the model the codebook was built with and given the nearest code (app/routing/semantic_codes.py).
+    Nothing is stored: not the text, not the vector -- the client keeps the vector locally, so a later codebook
+    version can re-code it without sending the text again (`{"vectors": {id: [...]}}` instead of `items`).
+
+    A verified bearer is required (each item is a paid embedding call); rate limited like /triage."""
+    from app.mcp_server import find_ways_triage as _ft
+    from app.routing import semantic_codes as _sc
+
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    token = await _route_token(request)
+    if token is None or not token.subject:
+        return JSONResponse({"error": "sign in first: routing codes need a verified token"}, status_code=401)
+    if not _ft.WINDOW.allow(f"codes:{token.subject}"):
+        return JSONResponse({"error": "rate limited; try again in a minute"}, status_code=429)
+    cb = _sc.load()
+    if cb is None:
+        return JSONResponse({"error": "this deployment has no codebook"}, status_code=503)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "send JSON {items: [{id, text}]} or {vectors: {id: [...]}}"}, status_code=400)
+    out: dict[str, Any] = {"version": cb.version, "embedding_model_id": cb.embedding_model_id, "codes": {}}
+    if isinstance(body.get("vectors"), dict):                          # re-code kept vectors: no embedding call
+        for wid, vec in list(body["vectors"].items())[:ROUTING_CODES_MAX_ITEMS]:
+            if isinstance(vec, list) and len(vec) == cb.dim:
+                out["codes"][str(wid)] = cb.assign(vec)
+        return JSONResponse(out)
+    items = [it for it in (body.get("items") or [])[:ROUTING_CODES_MAX_ITEMS]
+             if isinstance(it, dict) and isinstance(it.get("id"), str) and isinstance(it.get("text"), str)
+             and it["text"].strip()]
+    if not items:
+        return JSONResponse({"error": "no {id, text} items"}, status_code=400)
+    from app.services.embeddings import Embedder
+
+    embedder = Embedder()
+    if embedder.embedding_model_id() != cb.embedding_model_id:
+        return JSONResponse({**out, "error": "the embedding model differs from the codebook's; no codes"},
+                            status_code=409)
+    try:
+        vectors = await embedder.embed([it["text"][:ROUTING_CODES_MAX_CHARS] for it in items], input_type="document")
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("routing codes: embedding failed: %s", type(exc).__name__)
+        return JSONResponse({**out, "error": "embedding failed; try again later"}, status_code=502)
+    out["vectors"] = {}
+    for it, vec in zip(items, vectors):
+        out["codes"][it["id"]] = cb.assign(vec)
+        out["vectors"][it["id"]] = [round(float(x), 6) for x in vec]
+    return JSONResponse(out)
+
+
 @server.custom_route("/triage", methods=["POST"], include_in_schema=False)
 async def triage_route(request: Request) -> JSONResponse:
     """The Claude Code / Cursor hook's first question, in ONE round trip: does this prompt need a lookup?
@@ -1855,8 +1919,11 @@ def _plan_case(body: dict[str, Any], library: Any, task_features: Any) -> tuple[
         way = entry.get("way") if isinstance(entry.get("way"), str) else None
         ways = tf.get("ways") if isinstance(tf.get("ways"), dict) else {}
         ref = way or best["id"]
+        way_info = ways.get(way) if way and isinstance(ways.get(way), dict) else {}
+        code = way_info.get("code") or entry.get("code")
         return None, {"id": _rs.virtual_goal_id("library", f"{repo_id}:{ref}"), "kind": "library", "ref": ref,
-                      "features": (ways.get(way) if way else None) or entry or repo_stats, "parents": parents}
+                      "features": way_info or entry or repo_stats, "parents": parents,
+                      **({"code": code} if isinstance(code, str) else {})}
     if repo_id:
         return None, {"id": _rs.virtual_goal_id("repo", repo_id), "kind": "repo", "features": repo_stats,
                       "parents": parents}

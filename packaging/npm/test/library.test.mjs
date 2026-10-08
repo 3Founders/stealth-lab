@@ -420,3 +420,38 @@ test("survey history mining keeps the knowledge lines", async () => {
   assert.ok(got.knowledge.some((l) => l.startsWith("G|")) && got.knowledge.some((l) => l.startsWith("S|")));
   assert.ok(got.blocks.size >= 2);
 });
+
+test("codeWays: uncoded Ways get the server's code on their W line; vectors stay local; failures leave them uncoded", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-codes-"));
+  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("linked.md"));
+  const ways = L.loadLibrary(root).ways;
+  let sent;
+  const fetchImpl = async (url, init) => {
+    sent = { url, body: JSON.parse(init.body), auth: init.headers.authorization };
+    return { ok: true, status: 200, json: async () => ({ version: "cb1-test", embedding_model_id: "m",
+      codes: Object.fromEntries(sent.body.items.map((it, i) => [it.id, `c0${i}.1`])),
+      vectors: Object.fromEntries(sent.body.items.map((it) => [it.id, [0.1, 0.2]])) }) };
+  };
+  assert.deepEqual((await L.codeWays(root, { url: "https://h/mcp" })).coded, 0);      // no token: nothing sent
+  const r = await L.codeWays(root, { url: "https://h/mcp", token: "t", fetchImpl });
+  assert.equal(r.coded, ways.length);
+  assert.equal(sent.url, "https://h/routing/codes");
+  assert.equal(sent.auth, "Bearer t");
+  assert.ok(sent.body.items.every((it) => it.text.length > 0 && it.text.length <= 4000));
+  const after = L.loadLibrary(root);
+  assert.ok(after.ways.every((w) => /^c0\d\.1$/.test(w.code)));
+  assert.match(fs.readFileSync(path.join(root, ".stealth", "library.md"), "utf8"), /^W\|W-[0-9a-f]{8}\|.*\|code=c0\d\.1/m);
+  const kept = JSON.parse(fs.readFileSync(path.join(root, ".stealth", "index", "way_vectors.json"), "utf8"));
+  assert.equal(kept.version, "cb1-test");
+  assert.equal(Object.keys(kept.vectors).length, ways.length);
+  assert.match(fs.readFileSync(path.join(root, ".stealth", ".gitignore"), "utf8"), /index\/way_vectors\.json/);
+  assert.equal((await L.codeWays(root, { url: "https://h/mcp", token: "t", fetchImpl })).coded, 0);   // all coded
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), "lib-codes2-"));
+  fs.mkdirSync(path.join(root2, ".stealth"), { recursive: true });
+  fs.writeFileSync(path.join(root2, ".stealth", "library.md"), fx("linked.md"));
+  const down = await L.codeWays(root2, { url: "https://h/mcp", token: "t",
+    fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({ error: "no codebook" }) }) });
+  assert.equal(down.coded, 0);
+  assert.match(down.skipped, /503: no codebook/);
+});

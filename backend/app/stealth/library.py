@@ -184,6 +184,7 @@ class Way:
     v: int = 1
     steps: list[LibStep] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
+    code: Optional[str] = None                            # semantic code (app/routing/semantic_codes.py)
 
 
 @dataclass
@@ -250,7 +251,8 @@ def render_kgoal_line(g: KGoal) -> str:
 
 
 def render_way_line(w: Way) -> str:
-    return SEP.join(["W", w.id, esc(w.name.strip()), _kv("goal", w.goal), _kv("p", w.p), _kv("v", w.v or 1), *w.extra])
+    return SEP.join(["W", w.id, esc(w.name.strip()), _kv("goal", w.goal), _kv("p", w.p), _kv("v", w.v or 1),
+                     *([_kv("code", w.code)] if w.code else []), *w.extra])
 
 
 def render_way_step_line(way_id: str, s: LibStep) -> str:
@@ -297,7 +299,8 @@ def _parse_touches(raw: str) -> list[Touch]:
 _GOAL_KEYS = frozenset(("unit", "g", "outcome", "status", "verified_at", "route", "tags", "goal"))
 _PROC_KEYS = frozenset(("p", "solution", "touches", "way"))
 _KGOAL_KEYS = frozenset(("parent", "g", "unit", "tags"))
-_WAY_KEYS = frozenset(("goal", "p", "v"))
+_WAY_KEYS = frozenset(("goal", "p", "v", "code"))
+_CODE = re.compile(r"^c[0-9]{2}\.[0-9]+$")
 _STEP_KEYS = frozenset(("check",))
 
 
@@ -407,7 +410,8 @@ def parse_library(text: str) -> Library:
         kv = _split_kv(f[3:])
         way_map[wid] = Way(id=wid, name=unesc(f[2]), goal=kv["goal"] if KGOAL_ID.match(kv.get("goal") or "") else None,
                            p=_dash(kv.get("p")), v=int(kv["v"]) if _COUNT.match(kv.get("v") or "") else 1,
-                           extra=_extra_fields(f[3:], _WAY_KEYS))
+                           extra=_extra_fields(f[3:], _WAY_KEYS),
+                           code=kv["code"] if _CODE.match(kv.get("code") or "") else None)
     for (wid, order), (_line, f) in sorted(wsteps.items()):
         w = way_map.get(wid)
         if w is None:
