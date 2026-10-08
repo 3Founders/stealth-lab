@@ -111,6 +111,15 @@ function lookupIdentityOnly(reply) {
   return null;
 }
 
+// The model plan the guard follows (lib/model_guard.mjs): its ladder, the step in force, p_ok per unit.
+export function planState(reply) {
+  const p = reply?.model_plan;
+  if (!p || p.status !== "ok" || !Array.isArray(p.ladder) || !p.ladder.length) return null;
+  const pOk = {};
+  for (const r of p.steps?.[0]?.ladder || []) if (typeof r.p_ok_mean === "number") pOk[r.unit] = Number(r.p_ok_mean.toFixed(2));
+  return { ladder: p.ladder, current: p.ladder[0], p_ok: pOk, denials: 0, done: false };
+}
+
 // Called by the UserPromptSubmit hook after its lookup. Every prompt starts a fresh record: one report per prompt.
 export function rememberLookup(payload, reply, { env = process.env, now = Date.now() } = {}) {
   if (!captureEnabled(env)) return false;
@@ -125,7 +134,7 @@ export function rememberLookup(payload, reply, { env = process.env, now = Date.n
   const route = /^ROUTE\|(R-[0-9a-f]{4,16})\|/.exec(reply?.routing_rows?.[0] || "")?.[1] || null;
   writeSession(file, {
     prompt_key: String(payload.prompt_id || now), at: now, lookup: identity, tests: [], reported: false,
-    cwd: typeof payload.cwd === "string" ? findStealthRoot(payload.cwd) : null, route,
+    cwd: typeof payload.cwd === "string" ? findStealthRoot(payload.cwd) : null, route, plan: planState(reply),
   });
   return true;
 }

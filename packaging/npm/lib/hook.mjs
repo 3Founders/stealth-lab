@@ -72,9 +72,12 @@ function num01(raw) {
   return raw !== undefined && raw !== "" && Number.isFinite(v) && v > 0 && v < 1 ? v : null;
 }
 
+export function parseCandidateList(raw) {
+  return String(raw || "").split(",").map((x) => x.trim()).filter((x) => /^[^|\s]+\|[^|\s]+$/.test(x));
+}
+
 function parseCandidates(raw) {
-  if (raw === undefined) return CLAUDE_CODE_CANDIDATES;
-  return String(raw).split(",").map((x) => x.trim()).filter((x) => /^[^|\s]+\|[^|\s]+$/.test(x));
+  return raw === undefined ? CLAUDE_CODE_CANDIDATES : parseCandidateList(raw);
 }
 
 // The find_ways arguments that ask for a model plan, or {} when routing is off or the model is unknown.

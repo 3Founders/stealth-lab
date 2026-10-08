@@ -35,9 +35,11 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./config.mjs";
-import { callFindWays, deliveryMode, formatKnowledge, hookPolicy, readClaims, shouldLookUp } from "./hook.mjs";
+import { callFindWays, deliveryMode, formatKnowledge, hookPolicy, parseCandidateList, readClaims, routingArgs,
+  shouldLookUp } from "./hook.mjs";
 import { buildReport, captureEnabled, looksLikeTest, rememberLookup, sessionFile, testVerdict } from "./capture_hook.mjs";
 import { logHook } from "./subagent_hook.mjs";
+import { onCursorPreToolUse } from "./model_guard.mjs";
 import { findStealthRoot, requestPayload } from "./library.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
@@ -51,6 +53,7 @@ export const CURSOR_HOOKS = {
   beforeSubmitPrompt: { mark: "hook cursor-prompt", timeout: 10 },
   postToolUse: { mark: "hook cursor-tool", timeout: 40 },
   stop: { mark: "hook cursor-stop", timeout: 10 },
+  preToolUse: { mark: "hook cursor-pretool", timeout: 5 },   // the model guard, on Task only (lib/model_guard.mjs)
 };
 
 export function cursorPolicy(env = process.env) {
@@ -112,6 +115,7 @@ export function onBeforeSubmitPrompt(payload, { env = process.env, settings, now
   writeJson(job, {
     conversation_id: payload.conversation_id, generation_id: payload.generation_id || null,
     prompt: String(payload.prompt).trim().slice(0, 1500), workspace: workspaceOf(payload), mode,
+    model: typeof payload.model === "string" ? payload.model : null,
   });
   spawnWorker(job, env);
   return ok;
@@ -136,6 +140,12 @@ export async function runCursorLookupWorker(jobFile, { env = process.env, settin
       const root = job.workspace ? findStealthRoot(job.workspace) : null;
       if (root) extra = requestPayload(root, { env });
     } catch { /* no library: a plain lookup */ }
+    // Cursor cannot switch models from a hook, so a plan is asked for only when the user names the models to
+    // plan over (STEALTHLAB_CURSOR_CANDIDATES="model|scaffold,..."); the guard then refuses a Task asking for another.
+    if (env.STEALTHLAB_CURSOR_CANDIDATES) {
+      extra = { ...extra, ...routingArgs({ ...policy, candidates: parseCandidateList(env.STEALTHLAB_CURSOR_CANDIDATES) },
+                                         job.model, "cursor") };
+    }
     const reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: job.prompt,
       repoClaims: readClaims(job.workspace, job.prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl,
@@ -251,6 +261,7 @@ export async function runCursorHook(event, { stdinText, env = process.env, setti
     return event === "prompt" ? { continue: true } : {};
   }
   try {
+    if (event === "pretool") return onCursorPreToolUse(payload, { env });
     if (event === "session") return cursorPolicy(env).sessionContext ? { additional_context: SESSION_CONTEXT } : {};
     if (event === "prompt") return onBeforeSubmitPrompt(payload, { env, settings });
     if (event === "tool") return await onPostToolUse(payload, { env });

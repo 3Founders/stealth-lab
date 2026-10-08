@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { addCaptureHooks, removeCaptureHooks } from "./capture_hook.mjs";
+import { addRouteHooks, removeRouteHooks } from "./model_guard.mjs";
 import { uninstallCursorHooks, upsertCursorHooks } from "./cursor_hooks.mjs";
 
 export const SERVER_NAME = "stealthlab";
@@ -163,7 +164,9 @@ export function upsertClaudeHook(file, commandSpec, timeoutSec = 30) {
   groups.push({ hooks: [{ type: "command", command: shellJoin(commandSpec), timeout: timeoutSec }] });
   doc.hooks.UserPromptSubmit = groups;
   const args = commandSpec.args || [];
-  addCaptureHooks(doc, { command: commandSpec.command, args: args[args.length - 1] === HOOK_MARK ? args.slice(0, -1) : args });
+  const launch = { command: commandSpec.command, args: args[args.length - 1] === HOOK_MARK ? args.slice(0, -1) : args };
+  addCaptureHooks(doc, launch);
+  addRouteHooks(doc, launch);                     // the model guard (lib/model_guard.mjs)
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
 }
@@ -179,7 +182,8 @@ export function removeClaudeHook(file) {
     else delete doc.hooks.UserPromptSubmit;
   }
   const capture = removeCaptureHooks(doc);
-  if (!prompt && !capture) return false;
+  const route = removeRouteHooks(doc);
+  if (!prompt && !capture && !route) return false;
   fs.copyFileSync(file, `${file}.bak`);
   if (doc.hooks && !Object.keys(doc.hooks).length) delete doc.hooks;
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");

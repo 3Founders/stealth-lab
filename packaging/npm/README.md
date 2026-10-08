@@ -102,6 +102,25 @@ The hooks make knowledge flow both ways without the model having to decide to ca
   question. The server needs `triage` in `JEV_CAPABILITIES` to use JEV for it (otherwise the OpenAI-compatible
   fallbacks answer it); the verdict is remembered for two minutes, so the lookup that follows is not judged twice.
 
+### The model guard (model plans that bind)
+
+The knowledge hook asks for a **model plan** (`find_ways`' `model_plan`) and shows it to the agent. A hook cannot
+switch your main session's model, but the guard makes the plan bind wherever work is **handed to a subagent**:
+
+- **Claude Code:**
+  - **`PreToolUse` on `Agent|Task`:** a subagent call that does not ask for the plan's model (`haiku`, `sonnet`
+    or `opus`) is refused with "call again with `model: "<alias>"`", and the agent does. After 2 refusals for
+    one step, the call goes through as asked, so the guard never stops work.
+    `STEALTHLAB_MODEL_GUARD=rewrite` sets the model through `updatedInput` instead, for Claude Code versions that
+    apply it to the Agent tool (reported ignored in 2026-04). `STEALTHLAB_MODEL_GUARD=off` disables it.
+  - **`PostToolUse` on `report_result`:** a failed attempt's `next_model` becomes the plan's step; a pass ends it.
+  - **Not enforced:** a step whose model is not a Claude model (an open model); a Claude Code subagent cannot
+    run it.
+- **Cursor:**
+  - **`preToolUse` on `Task`:** refuses a Task that names a different model, with `agent_message`. Cursor has no
+    documented model argument on Task and ignores `updated_input` for it, so a Task with no model is let through.
+  - **Plans:** Cursor plans only when `STEALTHLAB_CURSOR_CANDIDATES="model|scaffold,..."` names the models.
+
 ## Cursor hooks (installed with Cursor; `--no-hooks` skips them)
 
 The same two jobs as the Claude Code hooks, written to `~/.cursor/hooks.json` next to your own hooks (`uninstall`

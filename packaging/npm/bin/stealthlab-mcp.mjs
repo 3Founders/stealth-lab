@@ -52,6 +52,10 @@ Usage:
                                              and report one outcome per prompt: report_result on the
                                              prompt's model plan when there is one, else report_model_run
                                              (ids, model, pass/fail only; STEALTHLAB_CAPTURE=off disables)
+  stealthlab-mcp hook route-subagent        Claude Code PreToolUse (Agent|Task) / PostToolUse (report_result) hooks
+  stealthlab-mcp hook route-report           (installed with hook-prompt): hand delegated work to the model plan's
+                                             model -- refuse a subagent call that asks for another, follow next_model
+                                             (STEALTHLAB_MODEL_GUARD=deny|rewrite|off)
   stealthlab-mcp hook cursor-session        Cursor hooks (installed with Cursor; --no-hooks skips them):
   stealthlab-mcp hook cursor-prompt          sessionStart, beforeSubmitPrompt, postToolUse, stop -- look each
   stealthlab-mcp hook cursor-tool            task up in the background, hand what Kel knows to the agent at
@@ -364,6 +368,12 @@ async function main() {
           }
         } else if (sub === "capture-stop" && process.env.STEALTHLAB_CAPTURE_JOB) {
           await runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
+        } else if (sub === "route-subagent" || sub === "route-report") {
+          const chunks = [];
+          for await (const c of process.stdin) chunks.push(c);
+          const { runRouteHook } = await import("../lib/model_guard.mjs");
+          const r = runRouteHook(sub, { stdinText: Buffer.concat(chunks).toString("utf8") });
+          if (r) process.stdout.write(JSON.stringify(r) + "\n");
         } else if (sub === "capture-tool" || sub === "capture-stop") {
           const chunks = [];
           for await (const c of process.stdin) chunks.push(c);

@@ -183,8 +183,10 @@ test("install adds PostToolUse(Bash) and Stop next to the knowledge hook; uninst
   upsertClaudeHook(file, spec);   // idempotent
   const doc = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.equal(doc.hooks.UserPromptSubmit.length, 1);
-  assert.equal(doc.hooks.PostToolUse.length, 2);
+  assert.equal(doc.hooks.PostToolUse.length, 3);              // the user's, capture, and the model guard's report hook
   assert.equal(doc.hooks.PostToolUse[1].matcher, CAPTURE_HOOKS.PostToolUse.matcher);
+  assert.match(doc.hooks.PostToolUse[2].hooks[0].command, /hook route-report$/);
+  assert.match(doc.hooks.PreToolUse[0].hooks[0].command, /hook route-subagent$/);
   assert.match(doc.hooks.PostToolUse[1].hooks[0].command, /stealthlab-mcp\.mjs hook capture-tool$/);
   assert.match(doc.hooks.Stop[1].hooks[0].command, /stealthlab-mcp\.mjs hook capture-stop$/);
   assert.equal(removeClaudeHook(file), true);
