@@ -703,6 +703,7 @@ async def get_goal(
     procedure_rows = sorted(
         await fetch_goal_procedures(
             pool, [goal_id], columns="id, procedure_id, name, verification_state, availability, t_created",
+            scope=scope,
         ),
         key=lambda r: (r.get("t_created") is not None, r.get("t_created") or 0), reverse=True,
     )[:50]

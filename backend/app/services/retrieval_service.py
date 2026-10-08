@@ -1238,7 +1238,8 @@ async def rank_goal_procedures(
 
     meta = meta if meta is not None else RetrievalMeta()
     source_goals = [str(g) for g in (candidate_goal_ids or [goal_id])]
-    rows = await fetch_goal_procedures(pool, source_goals, columns=_hydrate_cols(), where=_CANDIDATE_BASE_WHERE)
+    rows = await fetch_goal_procedures(pool, source_goals, columns=_hydrate_cols(), where=_CANDIDATE_BASE_WHERE,
+                                       scope=scope)
     if not rows:
         return ProcedureSearchResult([], None, [], [], "no procedure is linked to the goal")
     rows.sort(key=lambda r: (r.get("verification_state") != "verified",
@@ -1667,7 +1668,7 @@ async def related_examples(
     if not goals or limit <= 0:
         return []
     rows = await fetch_goal_procedures(pool, [g.id for g in goals], columns=_hydrate_cols(),
-                                       where=_CANDIDATE_BASE_WHERE)
+                                       where=_CANDIDATE_BASE_WHERE, scope=scope)
     excluded = {str(x) for x in exclude_procedure_ids}
     by_goal: dict[str, list[dict]] = {}
     for row in rows:

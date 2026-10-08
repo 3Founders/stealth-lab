@@ -59,5 +59,10 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=5 \
 # Migration failure must stop the container, not silently serve against a
 # half-migrated database -- `&&`, not `;`.
 # $PORT is set by hosted platforms (Railway, Cloud Run, Render); 8765 locally.
-# --workers 1 is load-bearing (TasksExtension keeps task state in memory).
-CMD ["sh", "-c", "python scripts/migrate.py && exec uvicorn app.mcp_server.server:app --host 0.0.0.0 --port ${PORT:-8765} --workers 1 --timeout-graceful-shutdown 25 --proxy-headers --forwarded-allow-ips='*'"]
+# Worker processes: WEB_CONCURRENCY (default 1, unchanged). The one reason this was pinned to 1 -- an in-memory
+# TasksExtension store for the removed find_best_way tool -- no longer exists (the v1 transport is stateless), so more
+# workers are safe. What each worker keeps for itself: the find_ways governor's repeat/rate windows and reply cache,
+# the triage verdict memo and /triage rate window, and its own DB pool (DB_POOL_MAX_SIZE connections EACH: keep
+# WEB_CONCURRENCY x DB_POOL_MAX_SIZE x replicas under the database's connection limit, or use the -pooler endpoint).
+# Per-process limits therefore become per-worker, which is looser by a factor of WEB_CONCURRENCY, never tighter.
+CMD ["sh", "-c", "python scripts/migrate.py && exec uvicorn app.mcp_server.server:app --host 0.0.0.0 --port ${PORT:-8765} --workers ${WEB_CONCURRENCY:-1} --timeout-graceful-shutdown 25 --proxy-headers --forwarded-allow-ips='*'"]

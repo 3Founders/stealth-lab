@@ -94,6 +94,13 @@ The hooks make knowledge flow both ways without the model having to decide to ca
   `STEALTHLAB_HOOK_STRONG_MODELS` (default `opus|sonnet|fable`), for example `off` to skip the lookup for frontier
   models. The model is read from the session transcript, `$ANTHROPIC_MODEL` or `settings.json`. Only `full` has
   been shown to help (open-model agents on DS-1000); the other modes exist for testing and cost control.
+- Triage first: before a lookup, the hook asks the server one question in a single request (`POST <server>/triage`,
+  one JEV judgment): does this prompt need a lookup at all? "Explain this function", "rename foo to bar" and
+  "thanks, continue" don't, so they skip it (no search, no judge calls, and no MCP handshake). Only an explicit
+  "no lookup needed" skips: a timeout (`STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS`, default 4000), an error, an older
+  server without the route, or any other answer runs the lookup as before. `STEALTHLAB_HOOK_TRIAGE=off` skips the
+  question. The server needs `triage` in `JEV_CAPABILITIES` to use JEV for it (otherwise the OpenAI-compatible
+  fallbacks answer it); the verdict is remembered for two minutes, so the lookup that follows is not judged twice.
 
 ## Endpoint and token
 

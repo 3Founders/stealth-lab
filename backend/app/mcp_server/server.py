@@ -619,10 +619,12 @@ server.tool = _traced_tool  # type: ignore[method-assign]
 # Serve with (from backend/):
 #   uvicorn app.mcp_server.server:app --host 127.0.0.1 --port 8765 --workers 1
 #
-# --workers 1 is load-bearing, not incidental: TasksExtension's backing
-# store (tasks_extension.py) is in-memory, so a second worker process
-# would serve a tasks/get poll from a process that never saw the task
-# find_best_way created -- the call would appear to hang.
+# --workers is no longer pinned to 1 by anything in this file. It was, while TasksExtension's in-memory store
+# served find_best_way's tasks/get polls; that tool and the extension's wiring are gone (v1 is stateless, see
+# MCP_STATELESS below) and nothing calls tasks_extension.assert_single_worker any more. Scale with WEB_CONCURRENCY
+# (backend/Dockerfile.mcp-server). Each worker keeps its own find_ways governor windows/cache, triage memo and
+# DB pool, so per-process limits become per-worker (looser by the worker count) and the pool total is
+# workers x DB_POOL_MAX_SIZE.
 # The SECOND ASGI app in this project -- instrumenting only main.py would
 # leave all 9 MCP tools dark, which is the surface external agents
 # actually call. No-op without SENTRY_DSN.
@@ -880,6 +882,49 @@ MCP_STATELESS = os.environ.get("STEALTHLAB_MCP_STATELESS", "1").strip() in ("1",
 # "Terminating session: None" at INFO for every one of them -- noise, not an
 # event. Its warnings and errors still show.
 logging.getLogger("mcp.server.streamable_http").setLevel(logging.WARNING)
+
+@server.custom_route("/triage", methods=["POST"], include_in_schema=False)
+async def triage_route(request: Request) -> JSONResponse:
+    """The Claude Code / Cursor hook's first question, in ONE round trip: does this prompt need a lookup?
+
+    Body `{"query": "<the prompt>"}`; reply `{"needs_retrieval": bool, "kind"?, "confidence"?, "provider"?,
+    "reason"?, "latency_ms"}` (find_ways_triage.Triage). Without it the hook pays the whole MCP handshake
+    (initialize, initialized, tools/call) to learn "skip" -- this answers that with one POST and one judge
+    call. It is the same judgment `find_ways` makes (JEV first), and its verdict is remembered briefly so
+    the `find_ways` call that follows a "yes" does not judge the text again.
+
+    Same gate as the other data routes: a verified bearer, the anonymous-read posture, or loopback in
+    single-user mode. Every failure answers `needs_retrieval: true` (a skipped lookup costs the agent
+    knowledge; a wasted one costs only time); only a malformed body is a 400. Rate limited per caller in
+    memory (FIND_WAYS_TRIAGE_RATE_PER_MIN, default 30/min) because each miss is a paid judge call.
+    """
+    from app.mcp_server import find_ways_triage as _ft
+
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    query = body.get("query") if isinstance(body, dict) else None
+    if not isinstance(query, str) or not query.strip():
+        return JSONResponse({"error": "send JSON with a non-empty string `query`"}, status_code=400)
+    query = query.strip()[: _ft.QUERY_MAX]
+    token = await _route_token(request)
+    key = (token.subject if token is not None and token.subject else None) or (
+        request.client.host if request.client else "unknown")
+    if not _ft.WINDOW.allow(key):
+        return JSONResponse(_ft.Triage(True, reason="triage rate limit").as_dict())
+    try:
+        verdict = await _find_ways_triage(query)
+    except Exception:  # noqa: BLE001 -- a classifier problem must never keep the agent from its knowledge
+        logging.getLogger(__name__).warning("triage route failed", exc_info=True)
+        verdict = None
+    if verdict is None:
+        verdict = _ft.Triage(True, reason="triage off")
+    return JSONResponse(verdict.as_dict())
+
 
 app = _oauth.wrap_app(
     server.streamable_http_app(transport_security=_transport_security(), stateless_http=MCP_STATELESS),
@@ -1553,6 +1598,10 @@ async def find_ways(
       Used for this request only -- never stored or logged.
 
     What happens:
+      0. Triage. One quick judgment decides whether this is a reusable task
+         worth a lookup. A question about this repo, a trivial edit, a
+         general question or conversation gets `outcome: "not_needed"` at
+         once (with `next`); when unsure, the lookup runs.
       1. Goal search. Hybrid (lexical + vector) candidates, each judged by
          the JEV/NLI judge against your query AND your repo facts; accepted
          Goal-hierarchy neighbours of a match are judged the same way and
@@ -1630,12 +1679,25 @@ async def find_ways(
         await _record_find_ways(ctx, query, decision.reply, {}, (_time.monotonic() - t0) * 1000,
                                 governor=decision.action)
         return _mark_untrusted(shape(decision.reply))
+    triaged = await _find_ways_triage(query)
+    if triaged is not None and not triaged.needs_retrieval:
+        from app.mcp_server.find_ways_triage import not_needed_reply
+
+        reply = not_needed_reply(triaged)
+        if decision is not None:
+            gov.remember(caller, decision.key, reply)
+        await _record_find_ways(ctx, query, reply, {}, (_time.monotonic() - t0) * 1000, governor="triage")
+        return reply
     with track_shard_requests() as shard_stats:
         reply = await _find_ways_impl(
             query, ctx, repo_claims=repo_claims, current_scope_json=current_scope_json, max_depth=max_depth,
             semantic=semantic, use_llm=use_llm, top_k=top_k,
             **({"library": library} if library is not None else {}),
         )
+    if triaged is not None:
+        from app.mcp_server.find_ways_triage import with_triage
+
+        reply = with_triage(reply, triaged)
     if decision is not None:
         gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
     # the library arguments only reach the plan when the caller sent them: without them, exactly as before
@@ -1649,6 +1711,27 @@ async def find_ways(
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it
     await _record_find_ways(ctx, query, final, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return final
+
+
+async def _find_ways_triage(query: str):
+    """The triage verdict for this request (app/mcp_server/find_ways_triage.py), or None when triage is off.
+    Runs only for a request the governor admitted: a cached or refused request never reaches it."""
+    if not settings.find_ways_triage:
+        return None
+    from app.mcp_server.find_ways_triage import CACHE, triage
+    from app.services import retrieval_service as _rs
+
+    hit = CACHE.get(query)      # the hook's `POST /triage` just judged this exact text: do not judge it twice
+    if hit is not None:
+        return hit
+    try:
+        judge = _rs.default_judge()
+    except Exception:  # noqa: BLE001 -- no judge is no triage; the lookup runs
+        judge = None
+    verdict = await triage(query, judge, timeout_s=settings.find_ways_triage_timeout_ms / 1000.0,
+                           min_confidence=settings.find_ways_triage_min_confidence)
+    CACHE.put(query, verdict)
+    return verdict
 
 
 CONTENT_TRUST = (

@@ -13,7 +13,10 @@ endpoint up.
    one replica, and health-checks `GET /readyz` (readiness: the database answers,
    migrations are current, and the process is not shutting down).
 2. The container runs migrations first and then starts uvicorn on `$PORT`
-   with `--workers 1`. That setting is required: task state is in-memory.
+   with `--workers ${WEB_CONCURRENCY:-1}`. One worker is the default and the tested
+   configuration. It was pinned to 1 while an in-memory task store existed; that is
+   gone (the transport is stateless), so more workers are allowed -- see
+   "Concurrency" below before raising it.
    `--timeout-graceful-shutdown 25` lets in-flight requests finish on SIGTERM.
    Keep the host's stop grace period above 25 s.
 
@@ -38,8 +41,8 @@ re-runs the live drain test.
 3. Add a custom domain, for example `mcp.<your-domain>`.
 
 Any other container host (Cloud Run, Render, Fly) works the same way: build
-`backend/Dockerfile.mcp-server` from the repo root, give it `PORT`, and run a
-single instance.
+`backend/Dockerfile.mcp-server` from the repo root, give it `PORT`, and start with
+one instance.
 
 ## 2. Environment
 
@@ -51,7 +54,8 @@ single instance.
 | `DEPLOYMENT_MODE` | `shared` | Multi-user posture; requires the two OIDC variables below |
 | `OIDC_ISSUER` | `https://<project>.supabase.co/auth/v1` | Signed-in users (needed by `report_discovery`) |
 | `OIDC_AUDIENCE` | `authenticated` | same |
-| `MCP_WORKER_COUNT` | `1` | Must match `--workers 1` |
+| `WEB_CONCURRENCY` | `1` (default) | Worker processes; see "Concurrency" |
+| `DB_POOL_MAX_SIZE` | `20`-`40` behind a `-pooler` endpoint | Connections **per worker**. One `find_ways` uses several at once (search legs run concurrently), so the default of 10 starves at about ten simultaneous calls |
 | `JEV_BASE_URL` and/or `GEMINI_API_KEY` | judge provider | Contextual Goal and Procedure judgment. Without it, `find_ways` still answers, but with `goal_judgment.mode = "lexical_fallback"` |
 | `VOYAGE_API_KEY` (or `GEMINI_API_KEY`) | embeddings | vector leg of Goal and Procedure search |
 
@@ -94,3 +98,24 @@ workers need the same `DATABASE_URL` and the judge and embedding providers
 listed above. Without a judge or embedder they refuse to start instead of
 guessing. Each worker loop also re-enqueues Goal placement for any recent Goal
 whose placement job was lost.
+
+## 4. Concurrency
+
+`find_ways` is I/O-bound: one process serves hundreds of requests in flight as long as nothing blocks the event
+loop. What limits it, in the order it bites:
+
+1. **Provider quota and billing**, long before anything here. At 2,000 users every `find_ways` that passes triage makes
+   one embedding call and several judge calls.
+2. **Judge capacity.** JEV is the primary judge and is called first -- before any embedding -- by `find_ways`
+   (the triage judgment) and by the hook's `POST /triage`. Its connection pool is `JEV_HTTP_MAX_CONNECTIONS` (default
+   200). Each fallback provider (Vertex, Gemini, Gemma) serves `SEMANTIC_PROVIDER_CONCURRENCY` calls at once per
+   process (default 16; it was a fixed 4).
+3. **Database connections**: workers x `DB_POOL_MAX_SIZE` x replicas must stay under the database's limit; use the
+   pooler endpoint.
+4. **One event loop per worker.** CPU-bound work (JSON building, the routing plan) shares it. When a profile shows the
+   loop saturated, raise `WEB_CONCURRENCY`.
+
+Per-process state, which `WEB_CONCURRENCY` > 1 makes per-worker: the `find_ways` governor's repeat/rate windows and
+reply cache, the triage verdict memo and the `/triage` rate window. Limits are therefore up to `WEB_CONCURRENCY` times
+looser, never tighter, and a repeated query may miss a cache another worker holds. Nothing else is shared in memory.
+Not yet load tested.

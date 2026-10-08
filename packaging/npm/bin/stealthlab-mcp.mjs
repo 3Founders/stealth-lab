@@ -17,6 +17,7 @@ import { clients, launchSpec, SERVER_NAME } from "../lib/clients.mjs";
 import { configPath, readConfig, readPackage, resolveSettings, writeConfig } from "../lib/config.mjs";
 import { runStdioRelay } from "../lib/proxy.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
+import { freshToken, login as oauthLogin, logoutConfig } from "../lib/oauth.mjs";
 import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs";
 import { runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
 import { runCaptureHook, runCaptureWorker } from "../lib/capture_hook.mjs";
@@ -36,7 +37,9 @@ Usage:
                                              tell the agents in a repo when to use StealthLab: a marked block in
                                              AGENTS.md (Cursor, Codex, opencode read it) and, for Cursor,
                                              .cursor/rules/stealthlab.mdc. Edit or remove it any time.
-  stealthlab-mcp login --token <token>       save a token (only report_discovery needs one)
+  stealthlab-mcp login [--no-browser]        sign in through your browser (OAuth); the hooks then keep their token
+                                             fresh on their own. Add --token <token> to save a token you already have
+                                             instead (it is not refreshed).
   stealthlab-mcp logout                      forget the saved token
   stealthlab-mcp config                      print the saved config (token masked)
   stealthlab-mcp hook-prompt                 Claude Code UserPromptSubmit hook (installed by "install"):
@@ -252,6 +255,7 @@ async function main() {
         client: { type: "string", multiple: true },
         url: { type: "string" },
         token: { type: "string" },
+        "no-browser": { type: "boolean" },
         "dry-run": { type: "boolean" },
         dir: { type: "string" },
         remove: { type: "boolean" },
@@ -284,18 +288,31 @@ async function main() {
       }
       return;
     }
-    case "login":
-      if (!v.token) die("pass --token <token>", 2);
-      writeConfig({ token: v.token });
-      return out(`token saved to ${configPath()}`);
+    case "login": {
+      if (v.token) {
+        // A token you already hold: saved as is. Any earlier sign-in's refresh data goes, so it can't replace this one.
+        writeConfig({ token: v.token, refresh_token: undefined, expires_at: undefined, oauth: undefined });
+        return out(`token saved to ${configPath()}`);
+      }
+      const settings = resolveSettings(v);
+      if (!settings.url) die("no server URL: pass --url <https://host/mcp> or run `install` first", 2);
+      try {
+        await oauthLogin({ url: settings.url, noBrowser: Boolean(v["no-browser"]), print: out });
+      } catch (err) {
+        die(`sign-in failed: ${err.message}`);
+      }
+      return out(`signed in; token saved to ${configPath()} (the hooks refresh it themselves)`);
+    }
     case "logout":
-      writeConfig({ token: undefined });
-      return out("token removed");
+      logoutConfig();
+      return out("signed out: token and refresh token removed");
     case "hook-prompt": {
       const chunks = [];
       for await (const c of process.stdin) chunks.push(c);
+      const settings = resolveSettings(v);
+      settings.token = await freshToken(settings);          // a signed-in token is renewed shortly before it expires
       return runPromptHook({
-        stdinText: Buffer.concat(chunks).toString("utf8"), settings: resolveSettings(v), userAgent: UA,
+        stdinText: Buffer.concat(chunks).toString("utf8"), settings, userAgent: UA,
         write: (s) => process.stdout.write(s + "\n"), log: out,
       });
     }

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { callFindWays, formatKnowledge, hookPolicy, runPromptHook, shouldLookUp } from "../lib/hook.mjs";
+import { callFindWays, callTriage, formatKnowledge, hookPolicy, runPromptHook, shouldLookUp, triageUrl } from "../lib/hook.mjs";
 import { removeClaudeHook, upsertClaudeHook } from "../lib/clients.mjs";
 
 const policy = hookPolicy({});
@@ -134,4 +134,102 @@ test("a way graded by its source's own tests says so", () => {
   const out = formatKnowledge({ outcome: "resolved", procedures: [{ name: "Fix it", tested_by_source: true, steps: [{ do: "edit" }] }] });
   assert.match(out, /Fix it \[its solution passed the source task's own tests\]:/);
   assert.doesNotMatch(formatKnowledge({ outcome: "resolved", procedures: [{ name: "Fix it", steps: [{ do: "edit" }] }] }), /own tests/);
+});
+
+// ---- triage: one cheap question before the lookup ---------------------------------------------------------
+
+const TASK = "add a DOCX export to the report page please";
+
+// A server that answers /triage with `verdict` (a function of the request, or a status/throw) and the MCP calls as above.
+function triageServer(verdict, reply, calls) {
+  const mcp = fakeServer(reply, calls);
+  return async (url, init) => {
+    if (String(url).endsWith("/triage")) {
+      calls.push({ triage: true, url: String(url), method: init.method, body: JSON.parse(init.body), auth: init.headers.authorization });
+      return verdict();
+    }
+    return mcp(url, init);
+  };
+}
+const json = (obj, status = 200) => ({ ok: status < 400, status, text: async () => JSON.stringify(obj) });
+
+test("triageUrl: the route sits next to /mcp, keeping origin and base path", () => {
+  assert.equal(triageUrl("https://mcp.example.com/mcp"), "https://mcp.example.com/triage");
+  assert.equal(triageUrl("http://127.0.0.1:8765/mcp/"), "http://127.0.0.1:8765/triage");
+  assert.equal(triageUrl("https://h/base/mcp?x=1#y"), "https://h/base/triage");
+  assert.equal(triageUrl("not a url"), null);
+});
+
+test("triage says no lookup needed: find_ways is never called and the prompt is left alone", async () => {
+  const calls = [], out = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "explain what parse_args does in cli.py please", cwd: os.tmpdir() }),
+    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: {},
+    fetchImpl: triageServer(() => json({ needs_retrieval: false, kind: "knowledge_question" }), RESOLVED, calls),
+    write: (s) => out.push(s), log: () => {} });
+  assert.equal(out.length, 0);
+  assert.equal(calls.length, 1);                       // the triage POST only: no initialize, no tools/call
+  assert.deepEqual([calls[0].triage, calls[0].url, calls[0].method, calls[0].auth], [true, "http://x/triage", "POST", "Bearer tok"]);
+  assert.match(calls[0].body.query, /parse_args/);
+});
+
+test("triage says look it up: the lookup runs as before", async () => {
+  const calls = [], out = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: TASK, cwd: os.tmpdir() }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: {},
+    fetchImpl: triageServer(() => json({ needs_retrieval: true, kind: "reusable_task" }), RESOLVED, calls),
+    write: (s) => out.push(s), log: () => {} });
+  assert.deepEqual(calls.filter((c) => !c.triage).map((c) => c.rpc).slice(0, 3), ["initialize", "notifications/initialized", "tools/call"]);
+  assert.match(JSON.parse(out[0]).hookSpecificOutput.additionalContext, /Export DOCX/);
+});
+
+for (const [name, verdict] of [
+  ["a server error", () => json({ error: "boom" }, 500)],
+  ["an older server without the route", () => json({ detail: "Not Found" }, 404)],
+  ["a body that is not JSON", () => ({ ok: true, status: 200, text: async () => "<html>" })],
+  ["a verdict without the field", () => json({ kind: "conversation" })],
+  ["a non-boolean answer", () => json({ needs_retrieval: "no" })],
+  ["a network failure", () => { throw new Error("down"); }],
+]) {
+  test(`triage unavailable (${name}): fails toward the lookup`, async () => {
+    const calls = [], out = [];
+    await runPromptHook({ stdinText: JSON.stringify({ prompt: TASK, cwd: os.tmpdir() }),
+      settings: { url: "http://x/mcp" }, userAgent: "t", env: {},
+      fetchImpl: triageServer(verdict, RESOLVED, calls), write: (s) => out.push(s), log: () => {} });
+    assert.ok(calls.some((c) => c.rpc === "tools/call"), "find_ways must still run");
+    assert.equal(out.length, 1);
+  });
+}
+
+test("triage: STEALTHLAB_HOOK_TRIAGE=off never asks; the question has its own short timeout", async () => {
+  const calls = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: TASK, cwd: os.tmpdir() }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOOK_TRIAGE: "off" },
+    fetchImpl: triageServer(() => json({ needs_retrieval: false }), RESOLVED, calls), write: () => {}, log: () => {} });
+  assert.equal(calls.filter((c) => c.triage).length, 0);
+  assert.ok(calls.some((c) => c.rpc === "tools/call"));
+  assert.equal(hookPolicy({ STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS: "1500" }).triageTimeoutMs, 1500);
+  assert.equal(hookPolicy({}).triageTimeoutMs, 4000);
+  // a hung triage call is abandoned at its own timeout, not the lookup's 25 s
+  const t0 = Date.now();
+  const hung = (_u, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));
+  assert.equal(await callTriage({ url: "http://x/mcp", userAgent: "t", query: TASK, timeoutMs: 80, fetchImpl: hung }), null);
+  assert.ok(Date.now() - t0 < 2000);
+});
+
+test("triage: a skipped prompt clears the previous prompt's remembered lookup", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "slhook-"));
+  const env = { STEALTHLAB_HOME: dir, STEALTHLAB_CAPTURE: "on" };
+  const payload = { session_id: "S-triage-1", prompt: TASK, cwd: dir };
+  const { rememberLookup, lookupIdentity } = await import("../lib/capture_hook.mjs");
+  const resolved = { outcome: "resolved", procedures: [{ procedure_id: "p1", goal_id: "g1" }] };
+  assert.ok(lookupIdentity(resolved));
+  const before = rememberLookup(payload, resolved, { env });
+  const calls = [];
+  await runPromptHook({ stdinText: JSON.stringify({ ...payload, prompt: "thanks, that looks right to me, continue please" }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env,
+    fetchImpl: triageServer(() => json({ needs_retrieval: false, kind: "conversation" }), RESOLVED, calls),
+    write: () => {}, log: () => {} });
+  // remembering "nothing" for the same session removes the file, so a second clear reports no record
+  assert.equal(rememberLookup(payload, null, { env }), false);
+  assert.ok(before === true || before === false);
 });

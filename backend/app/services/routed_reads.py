@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional, Sequence
 
+from app.services.access import AccessScope, visibility_predicate
 from app.services.shards import HOME_SHARD, home_pool, hydrate_rows, lookup_routes, multi_shard, pools_for, search_pool
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ async def find_goals_by_exact_names(
 
 async def fetch_goal_procedures(
     pool: Any, goal_ids: Sequence[str], *, columns: str, where: str = "t_invalid IS NULL",
+    scope: Optional[AccessScope] = None,
 ) -> list[dict]:
     """Live Procedure rows whose `achieves_goal_id` is one of `goal_ids`.
 
@@ -110,12 +112,19 @@ async def fetch_goal_procedures(
     on remote shards are located through `procedure_search_index.goal_id` (remote
     writes project immediately, see procedures.capture_procedure) and read with
     one batched query per involved shard -- instead of asking every shard.
-    `where` is applied on the canonical rows, so the caller's filter is exact."""
+    `where` is applied on the canonical rows, so the caller's filter is exact.
+
+    `scope` is WHO is asking. A Goal can be public while a Procedure attached to it is private (a user's own way,
+    a synced one): without a scope every caller was handed every viewer's private Procedures for the Goal.
+    Callers that answer a person or an agent MUST pass it; the predicate comes from `visibility_predicate`, applied
+    to the control query and to each shard query alike. Omitting it is for internal, unrestricted jobs only."""
     ids = list(dict.fromkeys(str(goal_id) for goal_id in goal_ids if goal_id))
     if not ids:
         return []
+    vis_sql, vis_params = visibility_predicate(scope, param_index=2) if scope is not None else ("TRUE", [])
     rows = [dict(row) for row in await pool.fetch(
-        f"SELECT {columns} FROM procedures WHERE achieves_goal_id = ANY($1::uuid[]) AND {where}", ids)]
+        f"SELECT {columns} FROM procedures WHERE achieves_goal_id = ANY($1::uuid[]) AND {where} AND {vis_sql}",
+        ids, *vis_params)]
     if not await multi_shard(pool):
         return rows
     from app.services import search_group
@@ -125,11 +134,13 @@ async def fetch_goal_procedures(
         "WHERE goal_id = ANY($1::uuid[]) AND home_shard_id <> $2", ids, HOME_SHARD)
     if not refs:
         return rows
+    shard_vis_sql, shard_vis_params = visibility_predicate(scope, param_index=3) if scope is not None else ("TRUE", [])
 
     async def fetch(shard_pool: Any, row_ids: list[str]):
         return await shard_pool.fetch(
             f"SELECT {columns} FROM procedures WHERE id = ANY($1::uuid[]) "
-            f"AND achieves_goal_id = ANY($2::uuid[]) AND {where}", row_ids, ids)
+            f"AND achieves_goal_id = ANY($2::uuid[]) AND {where} AND {shard_vis_sql}",
+            row_ids, ids, *shard_vis_params)
 
     hydration = await hydrate_rows(pools_for(pool), {r["id"]: r["home_shard_id"] for r in refs}, fetch)
     if hydration.partial:

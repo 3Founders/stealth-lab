@@ -12,6 +12,13 @@
 // nothing when find_ways has nothing usable. Fail open: any error means no injection, never a blocked prompt.
 // STEALTHLAB_HOOK=off disables it.
 //
+// Triage first: the lookup is the expensive part (a search, several judge calls), and many prompts are not
+// reusable tasks at all ("explain this function", "rename foo to bar", "thanks, continue"). Before it, the hook
+// asks the server one question over ONE request (POST <server>/triage, a single JEV judgment, not the three-step
+// MCP handshake): does this prompt need a lookup? Only an explicit `needs_retrieval: false` skips it. A timeout
+// (STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS), an error, an older server without the route, or any other answer runs the
+// lookup exactly as before. STEALTHLAB_HOOK_TRIAGE=off skips the question.
+//
 // Delivery mode (STEALTHLAB_HOOK_MODE, default "full"): full = everything below; lean = only a resolved (exact)
 // way, nothing for near misses or related examples; off = no lookup. STEALTHLAB_HOOK_MODE_STRONG overrides the
 // mode when the session's model matches STEALTHLAB_HOOK_STRONG_MODELS (default /opus|sonnet|fable/i), e.g.
@@ -38,6 +45,8 @@ export function hookPolicy(env = process.env) {
     enabled: (env.STEALTHLAB_HOOK || "on").toLowerCase() !== "off",
     minWords: Number(env.STEALTHLAB_HOOK_MIN_WORDS || 6),
     timeoutMs: Number(env.STEALTHLAB_HOOK_TIMEOUT_MS || 25000),
+    triage: (env.STEALTHLAB_HOOK_TRIAGE || "on").toLowerCase() !== "off",
+    triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 4000),
     maxChars: Number(env.STEALTHLAB_HOOK_MAX_CHARS || 8000),
     mode,
     strongMode: env.STEALTHLAB_HOOK_MODE_STRONG ? modeOf(env.STEALTHLAB_HOOK_MODE_STRONG, mode) : null,
@@ -159,6 +168,38 @@ export async function callFindWays({ url, token, userAgent, query, repoClaims, t
   return text.startsWith("{") ? JSON.parse(text) : null;
 }
 
+// The triage route sits next to the MCP endpoint: https://host/mcp -> https://host/triage.
+export function triageUrl(mcpUrl) {
+  try {
+    const u = new URL(mcpUrl);
+    u.pathname = u.pathname.replace(/\/mcp\/?$/, "").replace(/\/$/, "") + "/triage";
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+// Does this prompt need a lookup? One POST, one judgment. Returns the server's verdict object, or null when there is
+// none (timeout, error, a server without the route): the caller then looks the prompt up, as it always did.
+export async function callTriage({ url, token, userAgent, query, timeoutMs, fetchImpl = globalThis.fetch }) {
+  const target = triageUrl(url);
+  if (!target) return null;
+  try {
+    const res = await fetchImpl(target, {
+      method: "POST", signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify({ query: String(query).slice(0, 1500) }),
+      headers: { accept: "application/json", "content-type": "application/json", "user-agent": userAgent,
+                 ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!res.ok) return null;
+    const body = JSON.parse(await res.text());
+    return body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+
 const cut = (s, n) => {
   const t = String(s || "");
   return t.length <= n ? t : t.slice(0, n - 15) + "\n[... truncated]";
@@ -268,6 +309,18 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
   const mode = deliveryMode(policy, policy.strongMode ? detectModel(payload, env) : null);
   if (mode === "off") return;
+  if (policy.triage) {
+    const verdict = await callTriage({
+      url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
+      timeoutMs: policy.triageTimeoutMs, fetchImpl,
+    });
+    if (verdict && verdict.needs_retrieval === false) {
+      // No lookup for this prompt. Clear the previous prompt's remembered Goal so the capture hooks
+      // (lib/capture_hook.mjs) never report this prompt's outcome against it.
+      try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
+      return;
+    }
+  }
   try {
     const root = findStealthRoot(payload.cwd || process.cwd());   // null: no .stealth here, a plain lookup
     let extra = {};

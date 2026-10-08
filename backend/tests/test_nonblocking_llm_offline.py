@@ -159,7 +159,5 @@ def test_v1_mcp_transport_is_stateless_so_any_instance_can_serve_any_request():
     """In-memory Mcp-Session-Id state pinned the server to one process and one Cloud Run instance."""
     import app.mcp_server.server as srv
 
-    if srv.MCP_SURFACE != "v1":
-        return   # v2 keeps the stateful default (TasksExtension's in-process store)
-    assert srv.MCP_STATELESS is True
+    assert srv.MCP_STATELESS is True      # v1 is the only surface now; the stateful v2 default went with its tools
     assert srv.server.session_manager.stateless is True

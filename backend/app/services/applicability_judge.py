@@ -38,6 +38,7 @@ import asyncio
 
 import hashlib
 import json
+import os
 import logging
 import time
 from dataclasses import dataclass, field
@@ -373,7 +374,15 @@ async def _shared_client(timeout_seconds: float):
     per_loop = _SHARED_CLIENTS.setdefault(id(loop), (weakref.ref(loop), {}))[1]
     client = per_loop.get(timeout_seconds)
     if client is None or client.is_closed:
-        client = per_loop[timeout_seconds] = async_http_client(timeout=timeout_seconds)
+        import httpx
+
+        # httpx's default pool is 100 connections / 20 kept alive: under load the 101st concurrent judgment waits for
+        # a free connection and fails with PoolTimeout. Sized by JEV_HTTP_MAX_CONNECTIONS (default 200).
+        limit = max(1, int(os.environ.get("JEV_HTTP_MAX_CONNECTIONS", "200") or 200))
+        client = per_loop[timeout_seconds] = async_http_client(
+            timeout=timeout_seconds,
+            limits=httpx.Limits(max_connections=limit, max_keepalive_connections=max(20, limit // 4)),
+        )
     return client
 
 

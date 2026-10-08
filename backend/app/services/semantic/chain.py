@@ -36,6 +36,7 @@ from app.services.semantic.providers import (
     CAP_RELATION,
     CAP_RETENTION,
     CAP_SUMMARY,
+    CAP_TRIAGE,
     SemanticProvider,
 )
 
@@ -162,6 +163,10 @@ class SemanticJudge:
         prompts.IDENTITY_RELATIONS). Never heuristic: on total failure the
         result is ok=False and the caller must fail closed / retry."""
         return await self._run("identity", CAP_IDENTITY, lambda p: p.identity(kind, a, b))
+
+    async def judge_triage(self, query: str) -> ChainResult:
+        """What kind of request `query` is (prompts.TRIAGE_KINDS): whether a find_ways lookup is worth it."""
+        return await self._run("triage", CAP_TRIAGE, lambda p: p.triage(query))
 
     async def judge_identity_batch(self, kind: str, a: str, candidates: list) -> ChainResult:
         if not candidates:

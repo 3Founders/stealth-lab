@@ -134,6 +134,13 @@ def pytest_configure(config):
                 _cfg.settings.deployment_mode = "single_user"
             except Exception:  # noqa: BLE001 - frozen model: leave it
                 pass
+        # find_ways triage calls the real semantic chain (JEV/Vertex/Gemini from backend/.env); the
+        # offline suite never reaches a real provider. Triage tests turn it back on with a fake judge.
+        if "FIND_WAYS_TRIAGE" not in os.environ and hasattr(_cfg.settings, "find_ways_triage"):
+            try:
+                _cfg.settings.find_ways_triage = False
+            except Exception:  # noqa: BLE001 - frozen model: leave it
+                pass
     except Exception:  # noqa: BLE001 - config import failure surfaces elsewhere
         pass
 

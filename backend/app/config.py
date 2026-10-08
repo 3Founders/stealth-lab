@@ -161,6 +161,13 @@ class Settings(BaseSettings):
     find_ways_identical_limit: int = 3
     find_ways_max_calls_per_window: int = 30
     find_ways_min_words: int = 3
+    # find_ways triage (app/mcp_server/find_ways_triage.py): one semantic-chain judgment (JEV first -- add
+    # "triage" to JEV_CAPABILITIES -- then the fallbacks) decides before any search whether the request is a
+    # reusable task worth a lookup. Other kinds get `outcome: "not_needed"` at once. Fails toward the lookup:
+    # no verdict within `find_ways_triage_timeout_ms`, or a skip below `find_ways_triage_min_confidence`, runs it.
+    find_ways_triage: bool = True
+    find_ways_triage_timeout_ms: int = 4000
+    find_ways_triage_min_confidence: float = 0.6
     # How find_ways fits a Goal's candidate Procedures to the caller's repo facts (.stealth/claims.md):
     # "pairwise" = the claim-conditioned judge scores each candidate on its own (repo_facts.py);
     # "listwise" = one LLM ranks all candidates together over numbered fact sentences
@@ -271,6 +278,11 @@ class Settings(BaseSettings):
     local_model_provider: str = "ollama"
     local_model_name: Optional[str] = None
     semantic_provider_timeout_ms: int = 15000
+    # How many calls ONE fallback provider (Vertex / Gemini / Gemma) serves at once, across every request in this
+    # process. The provider objects live as long as the process, so this is a process-wide cap: at the old fixed 4,
+    # the fifth concurrent judgment waited behind four others. JEV is not capped here (it has its own connection
+    # pool: JEV_HTTP_MAX_CONNECTIONS). Raise it only as far as the provider's own rate limit allows.
+    semantic_provider_concurrency: int = 16
     semantic_provider_retries: int = 2      # attempts per provider
     semantic_job_max_retries: int = 3       # requeue rounds
     semantic_backoff_base_ms: int = 500
