@@ -7,6 +7,7 @@ import { track } from "@/lib/analytics";
 import { getMyProfile } from "@/lib/kel-api";
 import { getSession } from "@/lib/session";
 import AccountMenu from "@/components/AccountMenu";
+import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 
 const links = [
   { href: "/", label: "Home" },
@@ -147,7 +148,7 @@ export default function Header() {
               {username ? (
                 <>
                   <Link href={`/u/${encodeURIComponent(username)}`} onClick={() => setOpen(false)}>View profile</Link>
-                  <Link href="/account" onClick={() => setOpen(false)}>Projects</Link>
+                  {PROJECT_SYNC_ENABLED && <Link href="/account" onClick={() => setOpen(false)}>Projects</Link>}
                   <Link href="/account/credits" onClick={() => setOpen(false)}>Credits &amp; Standing</Link>
                   <Link href="/account/connections" onClick={() => setOpen(false)}>Connected apps</Link>
                   <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>

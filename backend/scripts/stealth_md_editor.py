@@ -55,7 +55,7 @@ from app.stealth.edit_ledger import (
     record_stealth_edit,
     write_ledger_projection,
 )
-from app.stealth.generator import CONTENT_PAGE_FILES, OPTIONAL_CONTENT_PAGE_FILES
+from app.stealth.legacy_context import CONTENT_PAGE_FILES, OPTIONAL_CONTENT_PAGE_FILES
 from app.stealth.legacy_context import STEALTH_DIRNAME
 
 # Same "real known content pages" list edit_ledger.py itself uses --

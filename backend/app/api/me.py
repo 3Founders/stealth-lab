@@ -29,6 +29,15 @@ async def get_pool(request: Request):
     return request.app.state.pool
 
 
+def _project_sync_enabled() -> None:
+    """Project sync (the /stealth-projects, /sync-devices and /synced-projects routes) is off unless
+    PROJECT_SYNC_ENABLED=true: since 2026-10-08 nothing registers local projects, so it is retired, not deleted."""
+    from app.config import settings
+
+    if not settings.project_sync_enabled:
+        raise HTTPException(404, "project sync is not enabled on this deployment")
+
+
 @router.get("")
 async def get_me(
     pool=Depends(get_pool),
@@ -111,7 +120,7 @@ async def request_my_deletion(
 # by design.
 
 
-@router.get("/stealth-projects")
+@router.get("/stealth-projects", dependencies=[Depends(_project_sync_enabled)])
 async def list_my_stealth_projects(
     pool=Depends(get_pool),
     principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
@@ -135,7 +144,7 @@ async def list_my_stealth_projects(
     }
 
 
-@router.get("/stealth-projects/{project_id}")
+@router.get("/stealth-projects/{project_id}", dependencies=[Depends(_project_sync_enabled)])
 async def get_my_stealth_project(
     project_id: str,
     pool=Depends(get_pool),
@@ -174,7 +183,7 @@ async def get_my_stealth_project(
     }
 
 
-@router.delete("/stealth-projects/{project_id}")
+@router.delete("/stealth-projects/{project_id}", dependencies=[Depends(_project_sync_enabled)])
 async def unsync_my_stealth_project(
     project_id: str,
     pool=Depends(get_pool),
@@ -247,7 +256,7 @@ async def require_sync_device_token(request: Request, pool=Depends(get_pool)):
         raise HTTPException(401, f"invalid sync device token: {exc.reason}") from exc
 
 
-@router.post("/sync-devices")
+@router.post("/sync-devices", dependencies=[Depends(_project_sync_enabled)])
 async def issue_my_sync_device(
     body: dict,
     pool=Depends(get_pool),
@@ -279,7 +288,7 @@ async def issue_my_sync_device(
     return {"token": token, "project_id": project_id, "ttl_seconds": cfg.max_ttl_seconds}
 
 
-@router.post("/sync-devices/rotate")
+@router.post("/sync-devices/rotate", dependencies=[Depends(_project_sync_enabled)])
 async def rotate_my_sync_device(
     request: Request,
     pool=Depends(get_pool),
@@ -306,7 +315,7 @@ async def rotate_my_sync_device(
     return {"token": new_token}
 
 
-@router.delete("/sync-devices/{credential_id}")
+@router.delete("/sync-devices/{credential_id}", dependencies=[Depends(_project_sync_enabled)])
 async def revoke_my_sync_device(
     credential_id: str,
     body: Optional[dict] = None,
@@ -332,7 +341,7 @@ async def revoke_my_sync_device(
 # --- Ciphertext upload ---------------------------------------------------
 
 
-@router.post("/synced-projects/{project_id}/sync")
+@router.post("/synced-projects/{project_id}/sync", dependencies=[Depends(_project_sync_enabled)])
 async def upload_sync_ciphertext(
     project_id: str,
     body: dict,

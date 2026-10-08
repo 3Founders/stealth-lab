@@ -479,6 +479,9 @@ class Settings(BaseSettings):
     # account, scoped to sync:upload only. Own issuer/audience/keys so a
     # token minted here can never verify against either other domain.
     # See docs/local_project_sync_security.md's Implementation Closure §1.
+    # Project sync is retired by default (2026-10-08): the /v1/me sync routes answer 404 and the MCP server's
+    # /local-sync/* bridge refuses, unless this is true. The frontend needs NEXT_PUBLIC_PROJECT_SYNC=on as well.
+    project_sync_enabled: bool = False
     sync_device_token_issuer: Optional[str] = None
     sync_device_token_audience: Optional[str] = None
     sync_device_token_keys: Optional[str] = None

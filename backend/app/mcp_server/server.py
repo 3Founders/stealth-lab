@@ -846,26 +846,36 @@ from app.mcp_server import local_sync_bridge as _bridge
 
 @server.custom_route("/.well-known/stealthlab-local", methods=["GET"], include_in_schema=False)
 async def local_sync_discover(request: Request) -> Response:
+    if not settings.project_sync_enabled:
+        return Response(status_code=404)
     return await _bridge.handle_discover(request, port=_MCP_PORT)
 
 
 @server.custom_route("/local-sync/start-handshake", methods=["POST"], include_in_schema=False)
 async def local_sync_start_handshake(request: Request) -> Response:
+    if not settings.project_sync_enabled:
+        return Response(status_code=404)
     return await _bridge.handle_start_handshake(request, settings=settings, port=_MCP_PORT)
 
 
 @server.custom_route("/local-sync/list-projects", methods=["POST"], include_in_schema=False)
 async def local_sync_list_projects(request: Request) -> Response:
+    if not settings.project_sync_enabled:
+        return Response(status_code=404)
     return await _bridge.handle_list_projects(request, settings=settings, port=_MCP_PORT)
 
 
 @server.custom_route("/local-sync/prepare-payload", methods=["POST"], include_in_schema=False)
 async def local_sync_prepare_payload(request: Request) -> Response:
+    if not settings.project_sync_enabled:
+        return Response(status_code=404)
     return await _bridge.handle_prepare_payload(request, settings=settings, port=_MCP_PORT)
 
 
 @server.custom_route("/local-sync/register-local-key", methods=["POST"], include_in_schema=False)
 async def local_sync_register_local_key(request: Request) -> Response:
+    if not settings.project_sync_enabled:
+        return Response(status_code=404)
     return await _bridge.handle_register_local_key(request, settings=settings, port=_MCP_PORT)
 
 
@@ -879,6 +889,8 @@ async def local_sync_register_local_key(request: Request) -> Response:
 @server.custom_route("/local-sync/prepare-payload", methods=["OPTIONS"], include_in_schema=False)
 @server.custom_route("/local-sync/register-local-key", methods=["OPTIONS"], include_in_schema=False)
 async def local_sync_preflight(request: Request) -> Response:
+    if not settings.project_sync_enabled:
+        return Response(status_code=404)
     return await _bridge.handle_preflight(request, settings=settings, port=_MCP_PORT)
 
 

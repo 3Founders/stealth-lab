@@ -6,6 +6,7 @@ import AnimatedHeading from "@/components/AnimatedHeading";
 import StateNotice from "@/components/NotConnected";
 import { getMyStealthProject, unsyncStealthProject, timeAgo, type StealthProjectDetail, type DecryptedProjectContent } from "@/lib/kel-api";
 import { getSession, type Session } from "@/lib/session";
+import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 import { decryptJson, deriveRecoveryKek, unwrapProjectKey } from "@/lib/sync-crypto";
 import { getCachedProjectKey, setCachedProjectKey } from "@/lib/sync-key-cache";
 import { enableLocalSyncOnThisDevice, type EnableLocalSyncResult } from "@/lib/sync";
@@ -22,6 +23,12 @@ type DecryptState =
   | { kind: "ok"; data: DecryptedProjectContent };
 
 export default function StealthProjectDetailPage() {
+  const router = useRouter();
+  useEffect(() => { if (!PROJECT_SYNC_ENABLED) router.replace("/account"); }, [router]);
+  return PROJECT_SYNC_ENABLED ? <ProjectDetail /> : null;
+}
+
+function ProjectDetail() {
   const { projectId } = useParams<{ projectId: string }>();
   const router = useRouter();
   const [session, setSession] = useState<Session | null | undefined>(undefined);

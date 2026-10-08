@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Avatar from "@/components/Avatar";
 import { signOut } from "@/lib/session";
+import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 
 /**
  * Header account menu (V1 identity spec §20). The avatar never navigates
@@ -64,7 +65,7 @@ export default function AccountMenu({ username }: { username: string }) {
           <Link ref={firstItemRef} href={`/u/${encodeURIComponent(username)}`} role="menuitem" onClick={() => setOpen(false)}>
             View profile
           </Link>
-          <Link href="/account" role="menuitem" onClick={() => setOpen(false)}>Projects</Link>
+          {PROJECT_SYNC_ENABLED && <Link href="/account" role="menuitem" onClick={() => setOpen(false)}>Projects</Link>}
           <Link href="/account/credits" role="menuitem" onClick={() => setOpen(false)}>Credits &amp; Standing</Link>
           <Link href="/account/settings" role="menuitem" onClick={() => setOpen(false)}>Settings</Link>
           <hr />

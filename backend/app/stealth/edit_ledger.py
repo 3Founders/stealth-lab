@@ -44,7 +44,7 @@ from typing import Optional
 import asyncpg
 
 from app.stealth.atomic import atomic_write
-from app.stealth.generator import CONTENT_PAGE_FILES, OPTIONAL_CONTENT_PAGE_FILES
+from app.stealth.legacy_context import CONTENT_PAGE_FILES, OPTIONAL_CONTENT_PAGE_FILES
 from app.stealth.legacy_context import STEALTH_DIRNAME
 
 VALID_FILES: tuple[str, ...] = CONTENT_PAGE_FILES + OPTIONAL_CONTENT_PAGE_FILES

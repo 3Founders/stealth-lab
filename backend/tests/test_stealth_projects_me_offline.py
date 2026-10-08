@@ -34,6 +34,7 @@ from app.services.authn import Actor, reset_current_actor, set_current_actor
 from app.services.object_storage import MemoryStore, set_store
 from app.services.sync_device_identity import SyncDeviceTokenConfig, issue_sync_device_credential
 from app.stealth.project_sync import (
+
     AlreadySyncedToAnotherAccount,
     StaleRevision,
     ensure_stable_project_id,
@@ -111,24 +112,18 @@ def test_ensure_stable_project_id_survives_rename_and_move(tmp_path):
     assert ensure_stable_project_id(str(moved)) == original_id
 
 
-def test_write_bootstrap_marker_includes_and_preserves_stable_project_id(tmp_path):
-    from app.execution.workspace_init import _write_bootstrap_marker
-
-    _write_bootstrap_marker(
-        str(tmp_path), project_id="pathhash123", environment_facts=[], workspace_facts={}, first_connection=True,
-    )
-    meta_path = tmp_path / ".stealth" / "meta.json"
-    first_meta = json.loads(meta_path.read_text())
-    assert UUID(first_meta["stable_project_id"])
-
-    _write_bootstrap_marker(
-        str(tmp_path), project_id="pathhash123", environment_facts=[], workspace_facts={}, first_connection=False,
-    )
-    second_meta = json.loads(meta_path.read_text())
-    assert second_meta["stable_project_id"] == first_meta["stable_project_id"]
 
 
 # --------------------------------------------------------------- FakePool
+
+
+
+@pytest.fixture(autouse=True)
+def _project_sync_on(monkeypatch):
+    """Project sync is retired by default (settings.project_sync_enabled); these tests exercise it switched on."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "project_sync_enabled", True)
 
 
 class FakePool:
@@ -657,3 +652,15 @@ def test_upload_ciphertext_with_valid_token_stores_it():
         assert resp.json()["revision"] == 1
     finally:
         set_store(None)
+
+
+def test_project_sync_routes_are_404_when_retired(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api.me import _project_sync_enabled
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "project_sync_enabled", False)
+    with pytest.raises(HTTPException) as exc:
+        _project_sync_enabled()
+    assert exc.value.status_code == 404

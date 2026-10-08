@@ -7,8 +7,43 @@ import { getMyStealthProjects, timeAgo, type StealthProjectSummary } from "@/lib
 import { getSession, type Session } from "@/lib/session";
 import { discoverLocalProjects, syncSelectedProjects, type DiscoveryResult, type SyncProgress } from "@/lib/sync";
 import type { ApiState } from "@/lib/api";
+import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 
 export default function AccountPage() {
+  return PROJECT_SYNC_ENABLED ? <ProjectSyncPage /> : <AccountIndex />;
+}
+
+// The account landing page while project sync is off (lib/features.ts).
+function AccountIndex() {
+  const items: [string, string, string][] = [
+    ["/account/connections", "Connected apps", "Apps and agents you have allowed to act for you."],
+    ["/account/credits", "Credits & Standing", "Your contribution credits and their history."],
+    ["/account/settings", "Settings", "Your profile, data export and account deletion."],
+  ];
+  return (
+    <>
+      <section className="page-hero frame grid">
+        <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>ACCOUNT</b></div>
+        <h1 className="display"><AnimatedHeading>Your account</AnimatedHeading></h1>
+      </section>
+      <section className="frame grid" style={{ paddingBottom: 120 }}>
+        <ul className="list" style={{ gridColumn: "1 / span 12" }} aria-label="Account pages">
+          {items.map(([href, title, desc], i) => (
+            <li key={href}>
+              <Link href={href}>
+                <span className="n">{String(i + 1).padStart(3, "0")}</span>
+                <div><h3>{title}</h3><p className="desc">{desc}</p></div>
+                <span className="caption dim" aria-hidden="true">→</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </>
+  );
+}
+
+function ProjectSyncPage() {
   // Same "resolve the session client-side first" shape as /account/credits —
   // this page is entirely the signed-in visitor's own private data.
   const [session, setSession] = useState<Session | null | undefined>(undefined);
