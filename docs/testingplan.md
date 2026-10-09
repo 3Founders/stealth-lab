@@ -19,7 +19,7 @@ Use the existing rig (`experiments/harness/`, three-arm sweeps, McNemar power) i
 ## 2. What the customer works on
 
 Per the founders, the customer's work is: **SQL; debugging; Git; data science, Python, HTML, JS and Node.js;
-SuperGLUE-style evals; HTML pages; Figma (design) and reporting (GitHub Pages sites or Tableau workbooks); building validation frameworks**, and similar. The 8 domains of the
+SuperGLUE-style evals; HTML pages; Figma (design) and reporting (Tableau workbooks; a GitHub reporting task was dropped for now); building validation frameworks**, and similar. The 8 domains of the
 original draft match this list, so the domain mix stays. (An earlier revision of this file cut several of them after
 judging them against the company's public profile; that was a mistake.)
 
@@ -46,9 +46,8 @@ Verification is executable or exact-match; no model judges correctness.
 | 4c | Node.js | Authored (no public benchmark found) | 5 authored | 5 | Node test runner | Small services, route handlers, streams. |
 | 5 | SuperGLUE-style evals | IFEval Mini + BoolQ (a SuperGLUE task) | small | 10 | Strict format match / exact answer | Measures language ability, not agentic coding; keep small as a sanity check. |
 | 6 | HTML pages | [Design2Code](https://github.com/NoviScl/Design2Code) (484 pages; Hard adds 80) | 484 / 80 | 15 | Headless Playwright DOM checks + axe-core accessibility | |
-| 7a | Figma (design to code) | [WebSight](https://huggingface.co/blog/websight) (synthetic screenshot-to-HTML, v0.2 Tailwind) and Design2Code screenshots as a proxy for Figma frames; real Figma frames authored from exported frame JSON + PNG of public community files (*verify licences*) | 2M / authored | 5 | SSIM visual diff + Tailwind token parity | **I found nothing called "Screen2Code"**; confirm what was meant. A screenshot is not a Figma file, so the authored frames are the closer match. |
-| 7b | Reporting: GitHub Pages sites (read from "git page"; confirm) | Authored: a report page built from a seeded CSV as a static site | authored | 3 | Site builds; expected sections and charts present (Playwright DOM checks); links resolve; axe-core | No public benchmark found. |
-| 7c | Reporting: Tableau workbooks | Authored: build a workbook from a given data spec (worksheets, calculated fields, filters) | authored | 2 | The workbook XML is parsed and checked: data source, field names, calculation formulas, mark types; formulas that translate are evaluated against a pandas reference on seeded data | Tableau cannot render or publish offline, so appearance and Server/Cloud publishing are not checked. Only 2 tasks, so this domain cannot support its own claim. |
+| 7a | Figma (design to code) | [WebSight](https://huggingface.co/blog/websight) (synthetic screenshot-to-HTML, v0.2 Tailwind) and Design2Code screenshots as a proxy for Figma frames; real Figma frames authored from exported frame JSON + PNG of public community files (*verify licences*) | 2M / authored | 6 | SSIM visual diff + Tailwind token parity | **I found nothing called "Screen2Code"**; confirm what was meant. A screenshot is not a Figma file, so the authored frames are the closer match. |
+| 7c | Reporting: Tableau workbooks | Authored: build a workbook from a given data spec (worksheets, calculated fields, filters) | authored | 4 | The workbook XML is parsed and checked: data source, field names, calculation formulas, mark types; formulas that translate are evaluated against a pandas reference on seeded data | Tableau cannot render or publish offline, so appearance and Server/Cloud publishing are not checked. Only 4 tasks, so this domain cannot support its own claim. |
 | 8 | Building validation frameworks | APIs-guru OpenAPI registry | public specs | 15 | Property-based fuzzing (Hypothesis / fast-check) against the generated validator | The task is to build the validator; fuzzing checks it. |
 | | **Core total** | | | **140** | | |
 
@@ -116,6 +115,6 @@ Changes in this section follow the proposals in `docs/research/llm-judge-vs-exec
   redistributing. We run everything locally.
 - **Providers and data.** Use only connections with a signed DPA; nothing here is customer data.
 - **Claude Code arm.** Parked until Anthropic answers the written question about non-Claude endpoints.
-- **Unconfirmed names.** "MergeEval" and "Screen2Code" were not found; tasks 3 and 7a depend on the answer. "git page" is read as GitHub Pages.
+- **Unconfirmed names.** "MergeEval" and "Screen2Code" were not found; tasks 3 and 7a depend on the answer. The GitHub reporting task was dropped for now (its tasks moved to 7a and 7c).
   Tableau workbook tasks are checked structurally only (no rendering, no publishing).
 - **Not ready to freeze.** Still open: the baseline model, the margin, the dataset names above, and the customer's identity.
