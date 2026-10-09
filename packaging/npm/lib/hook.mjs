@@ -382,6 +382,10 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
       (p.verified_solution ? `\n${solution(p.verified_solution, 2400)}` : ""));
   }
   if (mode === "lean") {
+    // lean (strong session models) keeps the knowledge short, but never drops the model plan: a strong model is
+    // exactly where handing work to a cheaper one saves the most
+    const leanPlan = planPart(reply.model_plan, process.env, mine);
+    if (leanPlan) parts.push(leanPlan);
     if (!parts.length) return "";
     return cut("StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +
       "don't call it again for the same request). What it knows:\n\n" + parts.join("\n\n"), maxChars);

@@ -98,3 +98,11 @@ test("by default the plan is matched to this session's own model: no less reliab
   assert.equal(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "match:7" }), "m").model_constraints, undefined,
     "a malformed tolerance asks for no target at all (server default)");
 });
+
+test("lean delivery (strong session models) still carries the model plan", () => {
+  const reply = { outcome: "no_match", model_plan: PLAN };
+  const text = formatKnowledge(reply, 8000, { mode: "lean", mine: "claude-opus-5-5|claude-code" });
+  assert.match(text, /Model plan \(prior\) -- follow it/);
+  assert.match(text, /model: "haiku"/);
+  assert.equal(formatKnowledge({ outcome: "no_match" }, 8000, { mode: "lean" }), "", "nothing to say: nothing shown");
+});
