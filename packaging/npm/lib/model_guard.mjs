@@ -35,6 +35,11 @@
 //                a verified run ends the plan, a failed one moves the guard to the reply's next_model.
 // With no local executor for the model the guard stands aside, as before. STEALTHLAB_MODEL_GUARD=off disables it all.
 // State lives in the capture session file (lib/capture_hook.mjs): the plan's ladder, current step and instance_key.
+//
+// Verified live 2026-10-09, Claude Code 2.1.292 (headless, seeded plan "sonnet first", main session on Haiku): the
+// deny reached the agent, which called Agent again with model "sonnet"; the subagent ran on claude-sonnet-5-5.
+// Hooks see a subagent's own tool calls under the PARENT session_id (plus agent_id / agent_type), which is what the
+// achieve / run_result hooks rely on. Not yet run live: rewrite mode, report_result, the executor path.
 import fs from "node:fs";
 import { logHook } from "./subagent_hook.mjs";
 import { sessionFile } from "./capture_hook.mjs";
