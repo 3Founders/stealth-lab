@@ -31,6 +31,8 @@ import {
 } from "./worktree.mjs";
 
 export const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
+// an executor run stopped by its own account's usage limit (not the model failing the task)
+export const USAGE_LIMIT = /hit your (session|usage|weekly) limit|usage_limit_reached|usage limit reached/i;
 const ORDER = { queued: 0, running: 1, verifying: 2 };
 const KEEP_MS = 7 * 24 * 3600 * 1000;
 const OUT_KEEP = 1024 * 1024;
@@ -388,7 +390,12 @@ export class ExecRuntime {
   }
 
   async finishAttempt(run, a) {
-    if (a.spawned && run.input.instance_key) {
+    if (a.spawned && USAGE_LIMIT.test(a.summary || "")) {
+      // the executor's own account hit a usage limit (headless Claude Code: "You've hit your session limit"): not a
+      // verdict on the model -- nothing is reported, and the attempt is marked so callers do not count it either
+      a.usageLimited = true;
+      a.evidence = { reported: false, queued: false, skipped: "usage limit: not a model outcome" };
+    } else if (a.spawned && run.input.instance_key) {
       a.evidence = await reportPlanResult({
         instance_key: run.input.instance_key, accepted: a.state === "verified", model: a.model, scaffold: a.executor,
         check_kind: a.checks.length ? "tests" : "self_report", latency_ms: a.finishedAt - a.startedAt,
@@ -474,6 +481,7 @@ export class ExecRuntime {
       tokens: a.tokens, cost_usd: a.costUsd,
       evidence: { ...(a.evidence || { reported: false, queued: false }), instance_key: run.instanceKey || null },
       executor_exit: a.exitCode, ...(a.reason && a.reason !== "exit" ? { stop_reason: a.reason } : {}),
+      ...(a.usageLimited ? { usage_limited: true } : {}),
       ...(a.error ? { error: a.error } : {}),
     };
   }

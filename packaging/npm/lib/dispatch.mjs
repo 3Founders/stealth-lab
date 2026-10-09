@@ -88,6 +88,10 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       continue;
     }
     const ok = result.state === "verified";
+    if (result.usage_limited) {            // the executor's account hit its limit: no verdict on the model
+      tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id });
+      continue;
+    }
     try {
       if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), rung.model, rung.executor, ok);
     } catch { /* the record is best-effort */ }

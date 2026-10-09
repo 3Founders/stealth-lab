@@ -161,7 +161,8 @@ def mcp_config(secrets: dict[str, str]) -> Path:
 
 # ---------------------------------------------------------------- one session
 
-LIMIT_WORDS = ("usage limit", "limit reached", "rate limit", "weekly limit", "5-hour limit", "out of extra usage")
+LIMIT_WORDS = ("usage limit", "limit reached", "rate limit", "weekly limit", "5-hour limit", "out of extra usage",
+               "session limit", "usage_limit_reached", "hit your")
 
 
 def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log_path: Path) -> dict:
