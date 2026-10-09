@@ -924,7 +924,7 @@ export function diffPaths(diffText) {
 }
 
 export function diffFromGit(root, base = "HEAD", { gitImpl = git } = {}) {
-  let text = gitImpl(root, ["diff", "--no-color", base, "--"]);
+  let text = gitImpl(root, ["diff", "--no-color", base, "--", ".", ":(exclude).stealth"]);
   const untracked = gitImpl(root, ["ls-files", "--others", "--exclude-standard"]).split(/\r?\n/)
     .filter((f) => f && !f.startsWith(".stealth/"));
   for (const f of untracked) {
@@ -942,14 +942,18 @@ export function runCheck(root, command) {
   return { ok: r.status === 0, status: r.status, tail: `${r.stdout || ""}${r.stderr || ""}`.slice(-2000) };
 }
 
-// opts: {title, unit, g, p, name, outcome, tags, steps: [{kind, do, check}], diff (text), check, verify, route}
+// opts: {title, unit, g, p, name, outcome, tags, steps: [{kind, do, check}], diff (text), check, verify, route, observed}
+// observed: the check is known to have passed already (the capture hook saw this session's test run pass), so it is
+// recorded as verified today without running it again.
 export function addEntry(root, opts, { gitImpl = git, now = new Date(), check = runCheck } = {}) {
   const title = String(opts.title || "").trim();
   if (!title) throw new Error("an entry needs a title (the problem it solved, as a goal)");
   const outcome = opts.outcome || "pass";
   if (!OUTCOMES.includes(outcome)) throw new Error(`outcome must be one of ${OUTCOMES.join(", ")}`);
   let verifiedAt = null;
-  if (opts.check && opts.verify !== false) {
+  if (opts.check && opts.observed === true) {
+    verifiedAt = today(now);
+  } else if (opts.check && opts.verify !== false) {
     const r = check(root, opts.check);
     if (!r.ok && outcome === "pass") throw new Error(`the check failed (exit ${r.status}); nothing written:\n${r.tail}`);
     if (r.ok) verifiedAt = today(now);

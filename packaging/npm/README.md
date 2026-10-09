@@ -89,6 +89,20 @@ The hooks make knowledge flow both ways without the model having to decide to ca
 - Locally, capture keeps only ids, verdicts and times (`~/.stealthlab/hooks/sessions/`, mode 0600, deleted after
   24 h). Failures go to `~/.stealthlab/hooks.log`, never to your session.
 - Switches: `STEALTHLAB_HOOK=off` (no lookups), `STEALTHLAB_CAPTURE=off` (no outcome reports).
+- **The library grows by itself** (`STEALTHLAB_LIBRARY_AUTO`, on by default). A turn can end with:
+  - the last recognised test run **passing**;
+  - a diff in the repo;
+  - no library entry already matched by the lookup.
+
+  When all three hold, Stop adds one entry to `.stealth/library.md`:
+  - **title:** the prompt's first line;
+  - **check:** that test command, recorded as verified;
+  - **solution:** the diff, kept;
+  - **links:** to the library's Goals and Ways.
+
+  A background step then asks the server for the new Ways' semantic codes, when you're signed in. Set it to `off`
+  to keep the library hand-curated, or for a side-by-side test. The prompt line and test commands are kept in the
+  local session file only when they'll be used this way.
 - Delivery mode: `STEALTHLAB_HOOK_MODE` = `full` (default: the exact way, near misses and related examples),
   `lean` (the exact way only) or `off`. `STEALTHLAB_HOOK_MODE_STRONG` overrides it for models matching
   `STEALTHLAB_HOOK_STRONG_MODELS` (default `opus|sonnet|fable`), for example `off` to skip the lookup for frontier

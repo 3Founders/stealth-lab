@@ -192,3 +192,73 @@ test("install adds PostToolUse(Bash) and Stop next to the knowledge hook; uninst
   assert.equal(removeClaudeHook(file), true);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), user);
 });
+
+// --- the library grows by itself (STEALTHLAB_LIBRARY_AUTO) ----------------------------------------
+
+import { execFileSync } from "node:child_process";
+
+function stealthRepo() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sl-autolib-"));
+  const g = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "pipe" });
+  g("init", "-q");
+  g("config", "user.email", "t@example.com");
+  g("config", "user.name", "t");
+  fs.writeFileSync(path.join(dir, "calc.py"), "def add(a, b):\n    return a - b\n");
+  fs.mkdirSync(path.join(dir, ".stealth"));
+  fs.writeFileSync(path.join(dir, ".stealth", "routing.md"), "");
+  g("add", "-A");
+  g("commit", "-q", "-m", "init");
+  return dir;
+}
+
+function solvedTurn(env, repo, { sid = "auto-1", verdictOut = "3 passed in 0.2s", change = true, reply = RESOLVED } = {}) {
+  const base = { session_id: sid, prompt_id: "p", cwd: repo, prompt: "Fix add() in calc.py\nit subtracts instead of adding" };
+  rememberLookup(base, reply, { env });
+  if (change) fs.writeFileSync(path.join(repo, "calc.py"), "def add(a, b):\n    return a + b\n");
+  onPostToolUse({ ...base, tool_name: "Bash", tool_input: { command: "pytest -q tests/test_calc.py" }, tool_response: { stdout: verdictOut } }, { env });
+  return onStop({ ...base, transcript_path: transcript(env.STEALTHLAB_HOME) }, { env, hasToken: false });
+}
+
+test("library auto: a passing turn with a diff adds one verified entry (title, check, solution), once", () => {
+  const env = tmpEnv();
+  const repo = stealthRepo();
+  const out = solvedTurn(env, repo);
+  assert.match(out.library_entry, /^L-[0-9a-f]+$/);
+  const lib = fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8");
+  assert.ok(lib.includes("Fix add() in calc.py"), "the prompt's first line is the title");
+  assert.ok(!lib.includes("subtracts instead"), "only the first line");
+  assert.ok(lib.includes("pytest -q tests/test_calc.py"), "the passing test command is the check");
+  const diff = fs.readFileSync(path.join(repo, ".stealth", "library", "solutions", `${out.library_entry}.diff`), "utf8");
+  assert.match(diff, /\+    return a \+ b/);
+  assert.ok(!diff.includes(".stealth/"), "the solution never includes .stealth's own files");
+  const again = onStop({ session_id: "auto-1", transcript_path: transcript(env.STEALTHLAB_HOME) }, { env, hasToken: false });
+  assert.equal(again.library_entry, undefined, "one entry per prompt");
+});
+
+test("library auto: nothing is added for a failing or unknown verdict, no diff, an entry the lookup matched, or when off", () => {
+  assert.equal(solvedTurn(tmpEnv(), stealthRepo(), { verdictOut: "1 failed, 2 passed in 0.3s" }).library_entry, undefined);
+  assert.equal(solvedTurn(tmpEnv(), stealthRepo(), { verdictOut: "hmm" }).library_entry, undefined);
+  assert.equal(solvedTurn(tmpEnv(), stealthRepo(), { change: false }).library_entry, undefined);
+  const matched = { ...RESOLVED, library_matches: [{ id: "L-abcd", relation: "matches" }] };
+  assert.equal(solvedTurn(tmpEnv(), stealthRepo(), { reply: matched }).library_entry, undefined);
+  const env = { ...tmpEnv(), STEALTHLAB_LIBRARY_AUTO: "off" };
+  const repo = stealthRepo();
+  assert.equal(solvedTurn(env, repo, { sid: "off-1" }).library_entry, undefined);
+  assert.equal(fs.existsSync(path.join(repo, ".stealth", "library.md")), false);
+  const text = fs.readFileSync(sessionFile(env, "off-1"), "utf8");
+  for (const s of ["Fix add", "pytest"]) assert.ok(!text.includes(s), `off: the session file keeps no ${s}`);
+});
+
+test("library auto: the worker asks for the new Ways' codes, and a token-less run still adds the entry", async () => {
+  const env = tmpEnv();
+  const repo = stealthRepo();
+  const base = { session_id: "w-1", prompt_id: "p", cwd: repo, prompt: "Fix add() in calc.py" };
+  rememberLookup(base, RESOLVED, { env });
+  fs.writeFileSync(path.join(repo, "calc.py"), "def add(a, b):\n    return a + b\n");
+  onPostToolUse({ ...base, tool_name: "Bash", tool_input: { command: "pytest -q" }, tool_response: { stdout: "1 passed in 0.1s" } }, { env });
+  let job = null;
+  const out = onStop({ ...base, transcript_path: transcript(env.STEALTHLAB_HOME) }, { env, hasToken: true, spawnWorker: (f) => { job = f; } });
+  assert.equal(out.status, "detached");
+  assert.ok(out.library_entry);
+  assert.equal(JSON.parse(fs.readFileSync(job, "utf8")).code_ways, repo);
+});

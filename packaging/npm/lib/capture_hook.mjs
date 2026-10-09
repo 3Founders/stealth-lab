@@ -21,6 +21,14 @@
 // Locally, too (no token needed, nothing sent): a RESOLVED lookup's final test verdict is counted as one OBS
 // attempt on that Goal's route in the repo's .stealth/routing.md (lib/library.mjs) -- the counts find_ways'
 // route_obs sends back so the next model plan reflects what worked in THIS repo. Only when .stealth/ exists.
+// Locally, also: the library grows by itself (STEALTHLAB_LIBRARY_AUTO, on by default; "off" for a side-by-side
+// test). When the turn ends with the session's last recognised test run PASSING, a diff in the repo, and no library
+// entry this lookup already matched, Stop adds one entry to .stealth/library.md: the prompt's first line as its
+// title, that test command as its check (recorded as verified: the hook saw it pass), the diff kept as its solution,
+// linked to the library's Goals and Ways. The Ways' semantic codes are then asked for by the detached worker
+// (POST /routing/codes, signed in only). For this the session file also keeps the prompt's first line and the test
+// commands, locally, for the same 24 h -- only in that case (growth on and a repo with .stealth/); otherwise the
+// session file stays ids, verdicts and times only.
 // Off unless a token is saved (a report needs one; without it nothing is queued). STEALTHLAB_CAPTURE=off
 // disables it. Every hook exits 0 and prints nothing: exit 2 on Stop would keep Claude from stopping.
 import crypto from "node:crypto";
@@ -30,7 +38,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./config.mjs";
 import { logHook } from "./subagent_hook.mjs";
-import { ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
+import { addEntry, codeWays, diffFromGit, ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
 const SESSION_TTL_MS = 24 * 3600 * 1000;
@@ -46,6 +54,17 @@ export const CAPTURE_HOOKS = {
 
 export function captureEnabled(env = process.env) {
   return (env.STEALTHLAB_CAPTURE || "on").toLowerCase() !== "off";
+}
+
+export function libraryAutoEnabled(env = process.env) {
+  return (env.STEALTHLAB_LIBRARY_AUTO || "on").toLowerCase() !== "off";
+}
+
+const TITLE_MAX = 200;
+// The prompt's first non-empty line, as an entry title (kept in the local session file only).
+export function promptTitle(prompt) {
+  const line = String(prompt || "").split(/\r?\n/).map((x) => x.trim()).find(Boolean) || "";
+  return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 3)}...` : line;
 }
 
 // --- session state -------------------------------------------------------------------------------
@@ -133,9 +152,14 @@ export function rememberLookup(payload, reply, { env = process.env, now = Date.n
     return false;
   }
   const route = /^ROUTE\|(R-[0-9a-f]{4,16})\|/.exec(reply?.routing_rows?.[0] || "")?.[1] || null;
+  const cwd = typeof payload.cwd === "string" ? findStealthRoot(payload.cwd) : null;
+  // the prompt's first line is kept only where the library will use it: growth on and a repo with .stealth/
+  const grow = libraryAutoEnabled(env) && cwd && fs.existsSync(path.join(cwd, ".stealth"));
+  const matched = (reply?.library_matches || []).find((m) => m?.relation === "matches" && m.id)?.id || null;
   writeSession(file, {
     prompt_key: String(payload.prompt_id || now), at: now, lookup: identity, tests: [], reported: false,
-    cwd: typeof payload.cwd === "string" ? findStealthRoot(payload.cwd) : null, route, plan: planState(reply),
+    cwd, route, plan: planState(reply),
+    ...(grow ? { title: promptTitle(payload.prompt), library_match: matched } : {}),
   });
   return true;
 }
@@ -187,7 +211,9 @@ export function onPostToolUse(payload, { env = process.env, now = Date.now() } =
   const s = file && readSession(file);
   if (!s || s.reported) return null;
   const verdict = testVerdict(toolOutput(payload.tool_response));
-  s.tests = [...(s.tests || []), { verdict, at: now }].slice(-MAX_TESTS);
+  // the command is kept only when the library will use it as the new entry's check (see rememberLookup)
+  s.tests = [...(s.tests || []), { verdict, at: now, ...(s.title ? { command: String(payload.tool_input?.command || "").slice(0, 500) } : {}) }]
+    .slice(-MAX_TESTS);
   writeSession(file, s);
   return verdict;
 }
@@ -260,6 +286,21 @@ export function recordLocalObs(s, model, { now = new Date() } = {}) {
   return true;
 }
 
+// The local library half: one new .stealth/library.md entry for a turn that ended with its tests passing and a diff.
+// Returns the entry id, or null (nothing to add, or growth switched off). Never throws to the hook.
+export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl } = {}) {
+  if (!libraryAutoEnabled(env) || !s || s.library_added || s.library_match || !s.cwd || !s.title) return null;
+  if (!fs.existsSync(path.join(s.cwd, ".stealth"))) return null;
+  const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
+  if (!last || last.verdict !== true || !last.command) return null;
+  const diff = gitImpl ? diffFromGit(s.cwd, "HEAD", { gitImpl }) : diffFromGit(s.cwd);
+  if (!diff.trim()) return null;                    // nothing changed: not a solved problem
+  const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null },
+                         { now, ...(gitImpl ? { gitImpl } : {}) });
+  s.library_added = entry.id;
+  return entry.id;
+}
+
 export function onStop(payload, { env = process.env, hasToken, spawnWorker = spawnDetachedWorker } = {}) {
   if (!captureEnabled(env)) return { status: "disabled" };
   const file = sessionFile(env, payload?.session_id);
@@ -270,17 +311,24 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
   } catch (err) {
     logHook(env, "capture-stop", `local OBS not recorded (${err.message})`);
   }
-  if (!hasToken) return { status: "no-token" };
+  let added = null;
+  try {
+    added = recordLibraryEntry(s, { env });
+    if (added) { writeSession(file, s); logHook(env, "capture-stop", `library entry ${added} added`); }
+  } catch (err) {
+    logHook(env, "capture-stop", `library entry not added (${err.message})`);
+  }
+  if (!hasToken) return { status: "no-token", ...(added ? { library_entry: added } : {}) };
   if (!s) return { status: "no-lookup" };
   const report = buildReport(s, { sessionId: payload.session_id, model });
-  if (!report) return { status: "nothing-to-report" };
-  s.reported = true;
+  if (!report && !added) return { status: "nothing-to-report" };
+  if (report) s.reported = true;
   writeSession(file, s);
   const job = path.join(jobsDir(env), `${Date.now()}-${crypto.randomUUID()}.json`);
   fs.mkdirSync(path.dirname(job), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(job, JSON.stringify({ report }), { mode: 0o600 });
+  fs.writeFileSync(job, JSON.stringify({ ...(report ? { report } : {}), ...(added ? { code_ways: s.cwd } : {}) }), { mode: 0o600 });
   spawnWorker(job, env);
-  return { status: "detached", report };
+  return { status: "detached", ...(report ? { report } : {}), ...(added ? { library_entry: added } : {}) };
 }
 
 // The detached worker: `stealthlab-mcp hook capture-stop` with STEALTHLAB_CAPTURE_JOB set.
@@ -291,11 +339,29 @@ export async function runCaptureWorker(file, { env = process.env, report } = {})
   } finally {
     fs.rmSync(file, { force: true });
   }
-  const send = report || (job.report?.via === "report_result" ? sendPlanResult
-    : (await import("./exec/evidence.mjs")).reportModelRun);
-  const timer = new Promise((_, rej) => setTimeout(() => rej(new Error("capture worker timed out")), WORKER_TIMEOUT_MS).unref());
-  const r = await Promise.race([send(job.report, { env }), timer]);
-  logHook(env, "capture-stop", `reported=${Boolean(r?.reported)} queued=${Boolean(r?.queued)} accepted=${job.report.accepted}`);
+  const timer = () => new Promise((_, rej) => setTimeout(() => rej(new Error("capture worker timed out")), WORKER_TIMEOUT_MS).unref());
+  let r = null;
+  if (job.report) {
+    const send = report || (job.report.via === "report_result" ? sendPlanResult
+      : (await import("./exec/evidence.mjs")).reportModelRun);
+    try {
+      r = await Promise.race([send(job.report, { env }), timer()]);
+      logHook(env, "capture-stop", `reported=${Boolean(r?.reported)} queued=${Boolean(r?.queued)} accepted=${job.report.accepted}`);
+    } catch (err) {
+      logHook(env, "capture-stop", `report failed (${err.message})`);
+    }
+  }
+  if (job.code_ways) {
+    // the new entry's Ways get their semantic codes (signed in only; a failure leaves them uncoded)
+    try {
+      const { hostedSettings } = await import("./exec/hosted.mjs");
+      const { url, token } = hostedSettings(env);
+      const c = await Promise.race([codeWays(job.code_ways, { url, token }), timer()]);
+      logHook(env, "capture-stop", `ways coded=${c.coded}${c.skipped ? ` (${c.skipped})` : ""}`);
+    } catch (err) {
+      logHook(env, "capture-stop", `ways not coded (${err.message})`);
+    }
+  }
   return r;
 }
 
