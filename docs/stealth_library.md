@@ -56,6 +56,35 @@ line ranges are disposable (the idx is trusted only while its `source_sha` and e
   Way, plus the Way's median fix size. Every problem this repo solved the same way therefore shares one routing
   record and one prior.
 
+## Keeping it clean: `lint`, `tidy`, `drop`, `merge-goals` (2026-10-09)
+
+A library that only grows fills with near-duplicates and dangling links (the same fix recorded from two sessions, a
+Goal whose parent was dropped), and the 64 KB cap then archives by age, not by redundancy. Agent memories that stay
+useful do one thing on a schedule: merge duplicates, drop what is outdated, repair broken links, keep the entry file
+short (supermemoryai/memoryrepo's periodic "dream"). This is the deterministic half of that, local and with no server
+or extra spend. It finds the work and shows the evidence; **the agent decides** and runs the commands. Nothing in
+`lint` or `tidy` edits `library.md`.
+
+| command | what |
+|---|---|
+| `library lint` | errors: dangling `goal=` / `way=` / `parent=` links, a Way with no Goal, parent cycles, parse problems (orphan lines, conflicts); warnings: a missing diff file, library.md over 90% of its cap; info: unused Goals / Ways. Exit 1 on an error. |
+| `library tidy [--write]` | the worklist, each item with its evidence and the command to run: duplicate entries (same unit, title overlap ≥ 0.7, or ≥ 0.4 when the touched files overlap ≥ 0.5; failed attempts never), duplicate Goals (title overlap ≥ 0.75), Goals that look like a narrower version of another (give them a parent), stale entries, and, from 75% of the cap, what to archive first (failed and stale entries; current mined history is not a reason). `--write` saves it as `.stealth/library/TIDY.md` (generated; not committed). |
+| `library drop <L-id> [--superseded-by <L-id>]` | move an entry to `library/archive-superseded.md` (same grammar, greppable, not in the index, so find_ways never offers it), recording what replaced it and when. Its diff stays. Goals and Ways nothing uses any more go with it. |
+| `library merge-goals <keep> <drop>` | the same problem under two titles: entries, Ways and child Goals move to `<keep>`; the global goal link and tags are carried over; a merge that would make a Goal its own ancestor is refused. |
+
+Rules the worklist (and `instructions`) tell the agent: search `terms.idx` / `library.idx` before writing and attach with
+`--goal` / `--way` instead of adding a near-duplicate; keep each fact in one place; the most recent verified entry wins
+unless its diff shows the older one is the correct one; change `library.md` only through these commands; finish with
+`library check` then `library lint`.
+
+Honest limit: `library.md` merges by union, which keeps every line from both sides, so a `drop` or `merge-goals` made on
+one branch is undone when the other branch's copy is merged in. Nothing breaks: the duplicate is listed by `tidy`
+again and the same command removes it again. Run `tidy` after merging.
+
+On this repository's own mined history (1,053 commits, 136 fix entries) `lint` is clean apart from the 100%-of-cap
+warning and `tidy` finds one duplicate pair (two Gemini small-budget headroom fixes), no noise. Thresholds are
+candidate filters, not verdicts: tune them against a real library before trusting a count.
+
 ## find_ways (all optional; without them the reply is unchanged)
 
 - `library_rows` (the idx, ≤ 64 KB): up to 6 entries (preselected by word overlap; failed attempts skipped) are
@@ -84,7 +113,7 @@ reused for a library request. No diff, step text or check command ever leaves th
   entry's steps and its local diff, and saves `routing_rows` into `routing.md`.
 - The capture hook counts the final test verdict of a resolved prompt as one OBS on that Goal's route (no token
   needed, local only, only where `.stealth/` exists).
-- `stealthlab-mcp library index|check|show|refresh|add|route|obs|payload` (see `library help`).
+- `stealthlab-mcp library index|check|show|refresh|add|route|obs|payload|lint|tidy|drop|merge-goals` (see `library help`).
 
 ## Not done / open
 

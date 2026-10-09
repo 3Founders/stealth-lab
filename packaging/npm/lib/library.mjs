@@ -1180,3 +1180,66 @@ export function shareDraft(root, id, { procIndex = 0 } = {}) {
   };
 }
 
+
+// ------------------------------------------------------------------ tidy: drop a duplicate, merge two Goals
+//
+// `library tidy` (lib/library_tidy.mjs) finds what to clean; these two are the only edits it asks the agent to make,
+// so library.md is never hand-edited. Both are idempotent, and both are honest about `merge=union`: a union merge
+// keeps every line from both sides, so a deletion made on one branch comes back when the other branch's copy is
+// merged in. Nothing breaks when that happens -- the entry shows up as a duplicate again and the same command
+// removes it again -- but a clean state is only clean until the next merge.
+
+export const SUPERSEDED_ARCHIVE = "archive-superseded.md";
+
+// Move one entry out of library.md into library/archive-superseded.md (still greppable, same grammar, out of the
+// index so find_ways never offers it). `supersededBy` names the entry that replaces it and is recorded on the
+// archived GOAL line, with the date (unknown fields survive canonicalising). The diff stays in library/solutions/.
+export function dropEntry(root, id, { supersededBy = null, now = new Date() } = {}) {
+  const lib = loadLibrary(root);
+  const e = lib.entries.find((x) => x.id === id);
+  if (!e) throw new Error(`no library entry ${id}`);
+  if (supersededBy) {
+    if (supersededBy === id) throw new Error("an entry cannot supersede itself");
+    if (!lib.entries.some((x) => x.id === supersededBy)) throw new Error(`no library entry ${supersededBy} to supersede ${id}`);
+  }
+  const archived = {
+    ...e, extra: [...(e.extra || []).filter((f) => !/^(superseded_by|dropped_at)=/.test(f)),
+      ...(supersededBy ? [kv("superseded_by", supersededBy)] : []), kv("dropped_at", today(now))],
+  };
+  const file = P(root, "library", SUPERSEDED_ARCHIVE);
+  const old = parseLibrary(read(file) || "").entries.filter((x) => x.id !== id);
+  writeIfChanged(file, renderLibrary([...old, archived]));
+  lib.entries = lib.entries.filter((x) => x.id !== id);
+  pruneKnowledge(lib);
+  writeIfChanged(P(root, "library.md"), renderLibrary(lib));
+  buildIndex(root);
+  return { dropped: id, superseded_by: supersededBy, archived_in: `library/${SUPERSEDED_ARCHIVE}`, entries: lib.entries.length };
+}
+
+// Two knowledge Goals that are the same problem under different titles: every entry, Way and child Goal that named
+// `dropId` names `keepId` instead, the dropped Goal's global link and tags are carried over where the kept Goal has
+// none, and the dropped Goal's line goes. A merge that would make a Goal its own ancestor is refused.
+export function mergeGoals(root, keepId, dropId) {
+  if (keepId === dropId) throw new Error("a goal cannot be merged into itself");
+  const lib = loadLibrary(root);
+  const byId = new Map(lib.goals.map((g) => [g.id, g]));
+  const keep = byId.get(keepId);
+  const drop = byId.get(dropId);
+  if (!keep) throw new Error(`no knowledge goal ${keepId}`);
+  if (!drop) throw new Error(`no knowledge goal ${dropId}`);
+  for (let cur = keep.parent; cur; cur = byId.get(cur)?.parent) {
+    if (cur === dropId) throw new Error(`${keepId} is under ${dropId}: merging would make a goal its own ancestor`);
+  }
+  let entries = 0;
+  let ways = 0;
+  let children = 0;
+  for (const e of lib.entries) if (e.goal === dropId) { e.goal = keepId; entries++; }
+  for (const w of lib.ways) if (w.goal === dropId) { w.goal = keepId; ways++; }
+  for (const g of lib.goals) if (g.parent === dropId) { g.parent = keep.parent === g.id ? null : keepId; children++; }
+  if (!keep.g && drop.g) keep.g = drop.g;
+  keep.tags = [...new Set([...(keep.tags || []), ...(drop.tags || [])])];
+  lib.goals = lib.goals.filter((g) => g.id !== dropId);
+  writeIfChanged(P(root, "library.md"), renderLibrary(lib));
+  buildIndex(root);
+  return { kept: keepId, merged: dropId, entries_moved: entries, ways_moved: ways, children_moved: children };
+}
