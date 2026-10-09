@@ -51,8 +51,11 @@ export const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 export const DELEGATOR = "stealth-delegator";
 export const ACHIEVE_TOOL = "mcp__stealthlab-exec__achieve";
 export const RUN_RESULT_TOOL = "mcp__stealthlab-exec__run_result";
+// The main session's own editing tools: while the plan's current rung is another model, the session hands the step
+// over instead of editing (reads, searches and test runs stay free; subagents -- payload.agent_id -- are never held).
+export const MAIN_EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 export const ROUTE_HOOKS = {
-  PreToolUse: { matcher: `Agent|Task|${ACHIEVE_TOOL}`, mark: "hook route-subagent" },
+  PreToolUse: { matcher: `Agent|Task|${ACHIEVE_TOOL}|Edit|Write|MultiEdit|NotebookEdit`, mark: "hook route-subagent" },
   PostToolUse: { matcher: `mcp__stealthlab__report_result|mcp__stealthlab__use_tool|${RUN_RESULT_TOOL}`, mark: "hook route-report" },
 };
 
@@ -125,9 +128,32 @@ function onOpenModelStep(payload, step, local, input, mode, env) {
     `check and reports to the plan; apply the verified run afterwards.`, env, `asked ${input.subagent_type || "default"}, plan says ${local.model}|${local.executor}`);
 }
 
+// The main session about to edit while the plan says another model runs this step: refuse once or twice with the
+// exact hand-over call. A subagent's edit (agent_id set), a rung on the session's own model, or a finished plan
+// pass; after MAX_DENIALS refusals the edit goes through, so the guard never stops work.
+function onMainEdit(payload, step, env) {
+  const plan = step.plan;
+  if (payload.agent_id || !plan.mine || plan.current.split("|")[0] === plan.mine.split("|")[0]) return null;
+  const alias = claudeAlias(plan.current);
+  const local = alias ? null : executorFor(plan.current, env);
+  const key = plan.instance_key || "";
+  const how = alias ? `call the Agent tool with model: "${alias}" and the whole task`
+    : local ? `call the Agent tool with subagent_type: "${DELEGATOR}", the whole task and the line "Run it with ` +
+        `executor=${local.executor} model=${local.model}${key ? ` instance_key=${key}` : ""}."`
+      : null;
+  if (!how) return null;                                            // nothing here can run that model
+  return deny(step, `StealthLab's model plan runs this step on ${plan.current.split("|")[0]}${pOkNote(plan)}, not ` +
+    `in this session. Hand it over instead of editing: ${how}. Then check its result and call report_result.`,
+  env, `main session ${payload.tool_name} while the plan says ${plan.current}`);
+}
+
 export function onClaudePreToolUse(payload, { env = process.env } = {}) {
   const mode = guardMode(env);
   const tool = payload?.tool_name;
+  if (mode !== "off" && MAIN_EDIT_TOOLS.has(tool)) {
+    const step = currentStep(env, payload.session_id);
+    return step ? onMainEdit(payload, step, env) : null;
+  }
   if (mode === "off" || !(SUBAGENT_TOOLS.has(tool) || tool === ACHIEVE_TOOL)) return null;
   const step = currentStep(env, payload.session_id);
   if (!step) return null;

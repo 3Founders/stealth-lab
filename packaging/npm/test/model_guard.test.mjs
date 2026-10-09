@@ -88,7 +88,7 @@ test("Cursor: a Task naming another model is refused with agent_message; no mode
 test("hook installation: route hooks added and removed; Cursor gets preToolUse", () => {
   const launch = { command: "node", args: ["/x/stealthlab-mcp.mjs"] };
   const doc = addRouteHooks({ hooks: { PostToolUse: [{ matcher: "Bash", hooks: [{ command: "other" }] }] } }, launch);
-  assert.equal(doc.hooks.PreToolUse[0].matcher, "Agent|Task|mcp__stealthlab-exec__achieve");
+  assert.equal(doc.hooks.PreToolUse[0].matcher, "Agent|Task|mcp__stealthlab-exec__achieve|Edit|Write|MultiEdit|NotebookEdit");
   assert.match(doc.hooks.PostToolUse[1].matcher, /mcp__stealthlab-exec__run_result$/);
   assert.match(doc.hooks.PreToolUse[0].hooks[0].command, /hook route-subagent$/);
   assert.equal(doc.hooks.PostToolUse.length, 2);
@@ -169,4 +169,35 @@ test("the plan text sends an open-model step to the delegator, with its exact li
   assert.match(text, /no report_result for it/);
   assert.doesNotMatch(planPart(OPEN_PLAN, envWithOpenPlan(null)), /delegator/, "no local executor: nothing to say");
   assert.doesNotMatch(planPart(PLAN, env), /delegator/);
+});
+
+// --- the main session's own edits ------------------------------------------------------------
+
+test("main session: an edit while the plan says another model is refused with the hand-over call; subagents pass", () => {
+  const env = { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "guard-")) };
+  rememberLookup({ session_id: "m1", prompt_id: "p" }, REPLY, { env, mine: "claude-opus-5-5|claude-code" });
+  const edit = (extra = {}) => ({ session_id: "m1", tool_name: "Write", tool_input: { file_path: "a.py", content: "x" }, ...extra });
+  const out = onClaudePreToolUse(edit(), { env });
+  assert.equal(out.hookSpecificOutput.permissionDecision, "deny");
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /Hand it over instead of editing: call the Agent tool with model: "haiku"/);
+  assert.equal(onClaudePreToolUse(edit({ agent_id: "sub-1" }), { env }), null, "a subagent's edit is never held");
+  assert.equal(onClaudePreToolUse({ ...edit(), tool_name: "Read" }, { env }), null, "reads are free");
+  for (let i = 1; i < MAX_DENIALS; i++) assert.ok(onClaudePreToolUse(edit(), { env }));
+  assert.equal(onClaudePreToolUse(edit(), { env }), null, "never blocks work for good");
+});
+
+test("main session: a rung on the session's own model, a finished plan, or guard off lets edits through", () => {
+  const env = { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "guard-")) };
+  rememberLookup({ session_id: "m2", prompt_id: "p" }, REPLY, { env, mine: "claude-haiku-4-5|claude-code" });
+  const edit = { session_id: "m2", tool_name: "Edit", tool_input: {} };
+  assert.equal(onClaudePreToolUse(edit, { env }), null, "the plan's rung is this session's own model");
+  const env2 = { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "guard-")) };
+  rememberLookup({ session_id: "m2", prompt_id: "p" }, REPLY, { env: env2, mine: "claude-opus-5-5|claude-code" });
+  assert.ok(onClaudePreToolUse(edit, { env: env2 }));
+  assert.equal(onClaudePreToolUse(edit, { env: { ...env2, STEALTHLAB_MODEL_GUARD: "off" } }), null);
+  onPlanReport({ session_id: "m2", tool_name: "mcp__stealthlab__report_result",
+    tool_response: [{ type: "text", text: JSON.stringify({ status: "accepted" }) }] }, { env: env2 });
+  assert.equal(onClaudePreToolUse(edit, { env: env2 }), null, "plan finished");
+  const legacy = envWithPlan("m3");                                 // no `mine` recorded: never held
+  assert.equal(onClaudePreToolUse({ ...edit, session_id: "m3" }, { env: legacy }), null);
 });
