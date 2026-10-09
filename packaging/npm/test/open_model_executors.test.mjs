@@ -59,6 +59,8 @@ test("claude in open-model mode points at the vendor and carries none of the use
   assert.equal(spec.env.STEALTHLAB_TOKEN, undefined);
   for (const a of ["HAIKU", "SONNET", "OPUS"]) assert.equal(spec.env[`ANTHROPIC_DEFAULT_${a}_MODEL`], "glm-5.3");
   assert.equal(spec.env.CLAUDE_CONFIG_DIR, cfgDir);
+  assert.equal(spec.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+  assert.equal(spec.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, "1");
   assert.ok(spec.args.includes("-p") && spec.args.join(" ").includes("--model glm-5.3"));
   assert.ok(!spec.args.join(" ").includes(KEY), "the key must never appear in argv");
 });

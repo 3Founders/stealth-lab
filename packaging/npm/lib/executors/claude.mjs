@@ -69,6 +69,11 @@ export function openModelEnv(profile, env = process.env, { configDir } = {}) {
     ANTHROPIC_DEFAULT_OPUS_MODEL: profile.model_id,
     API_TIMEOUT_MS: env.API_TIMEOUT_MS || "3000000",
     CLAUDE_CONFIG_DIR: dir,
+    // Anthropic's gateway guide (https://code.claude.com/docs/en/llm-gateway-connect.md): with a custom base URL Claude
+    // Code still sends background traffic (updates, telemetry) to Anthropic, so turn it off; and a provider that
+    // rejects unrecognised request fields needs the experimental betas off.
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+    CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
   };
 }
 
