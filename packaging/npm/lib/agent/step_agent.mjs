@@ -234,7 +234,13 @@ async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
     if (res) {
       const text = await res.text();
       if (res.status === 429 || res.status >= 500) lastErr = new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 200)}`);
-      else if (res.status >= 300) throw new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 300)}`);   // 4xx: retrying will not help
+      else if (res.status === 400 && /parse tool call|tool call.*pars|invalid tool call/i.test(text)) {
+        // the PROVIDER could not parse the model's tool call (General Compute + gpt-oss, deep into a run): the model
+        // sampled a malformed call, and at temperature 0 the same request returns the same one -- so ask again with
+        // a little sampling variation instead of ending the run
+        lastErr = new Error(`HTTP 400: ${redactKey(text, key).slice(0, 200)}`);
+        body = { ...body, temperature: 0.4 + 0.2 * attempt };
+      } else if (res.status >= 300) throw new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 300)}`);   // 4xx: retrying will not help
       else {
         try { return JSON.parse(text); } catch { throw new Error("the endpoint did not return JSON"); }
       }
@@ -290,10 +296,17 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   while (step < maxSteps) {
     compact(messages);
     log(`step ${step + 1}: asking ${cfg.model_id}`);
-    const reply = await chat({
-      baseUrl: cfg.base_url, key, fetchImpl, sleep, log,
-      body: { ...extras, model: cfg.model_id, messages, tools: TOOLS, tool_choice: "auto", temperature: 0, max_tokens: Number(cfg.max_tokens) || 4096 },
-    });
+    let reply;
+    try {
+      reply = await chat({
+        baseUrl: cfg.base_url, key, fetchImpl, sleep, log,
+        body: { ...extras, model: cfg.model_id, messages, tools: TOOLS, tool_choice: "auto", temperature: 0, max_tokens: Number(cfg.max_tokens) || 4096 },
+      });
+    } catch (err) {
+      // a provider error mid-run: the tokens already spent are real cost, so they leave with the error
+      err.spent = { tokens: { in: tin, out: tout }, costUsd: costOf(cfg, tin, tout), steps: step };
+      throw err;
+    }
     const usage = reply.usage || {};
     tin += Number(usage.prompt_tokens) || 0;
     tout += Number(usage.completion_tokens) || 0;
@@ -356,7 +369,8 @@ async function main() {
     finish(0);
   } catch (err) {
     const key = process.env[KEY_ENV];
-    console.log(JSON.stringify({ type: "final", message: `error: ${redactKey(err.message, key)}`, error: true, tokens: null }));
+    console.log(JSON.stringify({ type: "final", message: `error: ${redactKey(err.message, key)}`, error: true,
+                                 tokens: err.spent?.tokens ?? null, costUsd: err.spent?.costUsd ?? null, steps: err.spent?.steps }));
     finish(1);
   }
 }

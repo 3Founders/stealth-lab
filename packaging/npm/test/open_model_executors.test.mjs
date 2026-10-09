@@ -266,3 +266,20 @@ test("end to end: the adapter's command runs the real agent process and parseOut
     assert.equal(fs.readFileSync(path.join(repo, "calc.py"), "utf8"), "return a + b\n");
   } finally { p.close(); }
 });
+
+test("a provider that cannot parse the model's tool call (HTTP 400) is asked again with sampling variation", async () => {
+  const repo = tmpRepo({ "a.txt": "x" });
+  let n = 0;
+  const p = await provider((body) => {
+    n += 1;
+    if (n === 1) return { status: 400, body: { error: { message: "Failed to parse tool call from GPT OSS output: Expecting ',' delimiter" } } };
+    return reply({ role: "assistant", content: "done" });
+  });
+  try {
+    const out = await runAgent({ task: "t", base_url: p.url, model_id: "gpt-oss-120b" }, { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
+    assert.equal(out.stop !== undefined, true);
+    assert.equal(p.seen.length, 2);
+    assert.equal(p.seen[0].body.temperature, 0);
+    assert.ok(p.seen[1].body.temperature > 0, "the retry samples differently");
+  } finally { p.close(); }
+});

@@ -323,13 +323,16 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
                 outcome, token_meta.get("global", {}), _unit_tokens(token_meta, u[0], key, cards),
                 goal_tokens.get(key) or pooled_tokens, cfg))
 
-    # the caller's own session pays to hand an attempt to any other unit (see RoutingDefaults.handoff_cost_usd)
+    # the caller's session pays to hand an attempt to a SUBAGENT of its own scaffold (another Claude Code model): it
+    # reads, delegates and checks. A unit on another scaffold (an open model through the local executor) is
+    # dispatched before the session runs (lib/dispatch.mjs) and costs the session nothing.
     baseline_unit = constraints.get("reliability_baseline")
     if baseline_unit:
         handoff = float(constraints["handoff_cost_usd"] if constraints.get("handoff_cost_usd") is not None
                         else cfg.handoff_cost_usd)
+        own_scaffold = split_unit(str(baseline_unit))[1]
         for i, (u, _order) in enumerate(columns[:len(usable)]):
-            if unit_id(*u) != str(baseline_unit):
+            if unit_id(*u) != str(baseline_unit) and u[1] == own_scaffold:
                 cost_ok[i] += handoff
                 cost_fail[i] += handoff
 
