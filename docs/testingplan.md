@@ -19,7 +19,7 @@ Use the existing rig (`experiments/harness/`, three-arm sweeps, McNemar power) i
 ## 2. What the customer works on
 
 Per the founders, the customer's work is: **SQL; debugging; Git; data science, Python, HTML, JS and Node.js;
-SuperGLUE-style evals; HTML pages; Figma reporting; building validation frameworks**, and similar. The 8 domains of the
+SuperGLUE-style evals; HTML pages; Figma (design) and reporting (GitHub Pages sites or Tableau workbooks); building validation frameworks**, and similar. The 8 domains of the
 original draft match this list, so the domain mix stays. (An earlier revision of this file cut several of them after
 judging them against the company's public profile; that was a mistake.)
 
@@ -56,7 +56,7 @@ Only if the pitch needs it; it is not in the Core score. Built by us on public d
 PySpark rewrites (join salting, broadcast, window partitioning), Delta-style merges and dbt-style models on DuckDB
 (checked against a SQL reference on seeded data), and CPG promo / pricing tasks on public retail data (Dunnhumby Complete
 Journey, M5; *verify data licences*). Dashboard-logic items such as LTTB downsampling use unit tests.
-Tableau and Power BI embedding cannot be checked offline, so they are excluded.
+Power BI and embedding APIs cannot be checked offline and are excluded. Tableau workbooks are in Core (7c) because the customer builds them.
 
 Left out: Instacart / Favorita (no prices or promotions), ELT-Bench (needs a cloud warehouse), BEAVER (gated access),
 InsightBench (LLM-scored, which breaks the correctness rule).
@@ -114,6 +114,6 @@ Changes in this section follow the proposals in `docs/research/llm-judge-vs-exec
   redistributing. We run everything locally.
 - **Providers and data.** Use only connections with a signed DPA; nothing here is customer data.
 - **Claude Code arm.** Parked until Anthropic answers the written question about non-Claude endpoints.
-- **Unconfirmed names.** "MergeEval" and "Screen2Code" were not found; tasks 3 and 7 depend on the answer. "Figma reporting"
-  is assumed to mean design-to-code with a report.
+- **Unconfirmed names.** "MergeEval" and "Screen2Code" were not found; tasks 3 and 7a depend on the answer. "git page" is read as GitHub Pages.
+  Tableau workbook tasks are checked structurally only (no rendering, no publishing).
 - **Not ready to freeze.** Still open: the baseline model, the margin, the dataset names above, and the customer's identity.
