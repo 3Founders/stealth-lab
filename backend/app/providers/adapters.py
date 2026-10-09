@@ -72,6 +72,26 @@ def _json(conn: Connection, response, secret: Optional[str]) -> Any:
 
 # ------------------------------------------------------------------ openai_compatible
 
+def parse_usage(usage: Any, spec: UnitSpec) -> tuple[Optional[int], Optional[int], Optional[int], Optional[float], Optional[str]]:
+    """(fresh input tokens, output tokens, cache-read tokens, cost USD, cost source) from an OpenAI-shaped `usage`.
+    Shared by the one-shot adapter and the chat-completions passthrough (providers/chat.py), so both account alike."""
+    usage = usage if isinstance(usage, dict) else {}
+    prompt, tokens_out = usage.get("prompt_tokens"), usage.get("completion_tokens")
+    # The OpenAI shape counts cached tokens INSIDE prompt_tokens and reports them as a subset; split them so
+    # `tokens_in` is always fresh input (Anthropic-style endpoints already report them separately).
+    cached = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+              if isinstance(usage.get("prompt_tokens_details"), dict) else None)
+    cached = cached if isinstance(cached, int) and cached >= 0 else None
+    tokens_in = prompt if prompt is None or cached is None else max(prompt - cached, 0)
+    reported = usage.get("cost")
+    if isinstance(reported, (int, float)) and not isinstance(reported, bool) and reported >= 0:
+        cost, source = float(reported), "provider"
+    else:
+        cost = tokens_cost(spec, tokens_in, tokens_out, cached)
+        source = "declared" if cost is not None else None
+    return tokens_in, tokens_out, cached, cost, source
+
+
 class OpenAICompatAdapter:
     async def call(self, conn, spec, request, secret):
         cap = min(request.max_tokens, spec.max_output_tokens or request.max_tokens)
@@ -97,20 +117,7 @@ class OpenAICompatAdapter:
         if not text and finish == "length":
             raise ProviderCallFailed(f"{conn.connection_id}: empty reply (finish_reason=length): the model used its "
                                      "token budget before answering; raise max_tokens")
-        usage = data.get("usage") or {}
-        prompt, tokens_out = usage.get("prompt_tokens"), usage.get("completion_tokens")
-        # The OpenAI shape counts cached tokens INSIDE prompt_tokens and reports them as a subset; split them so
-        # `tokens_in` is always fresh input (Anthropic-style endpoints already report them separately).
-        cached = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens")
-                  if isinstance(usage.get("prompt_tokens_details"), dict) else None)
-        cached = cached if isinstance(cached, int) and cached >= 0 else None
-        tokens_in = prompt if prompt is None or cached is None else max(prompt - cached, 0)
-        reported = usage.get("cost")
-        if isinstance(reported, (int, float)) and not isinstance(reported, bool) and reported >= 0:
-            cost, source = float(reported), "provider"
-        else:
-            cost = tokens_cost(spec, tokens_in, tokens_out, cached)
-            source = "declared" if cost is not None else None
+        tokens_in, tokens_out, cached, cost, source = parse_usage(data.get("usage"), spec)
         return CallResult(unit=spec.unit, connection_id=conn.connection_id, text=text, tokens_in=tokens_in,
                           tokens_out=tokens_out, tokens_cache_read=cached, cost_usd=cost, cost_source=source,
                           latency_ms=_ms(t0), finish_reason=finish)

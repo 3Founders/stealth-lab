@@ -11,6 +11,7 @@ from app import observability
 from app.api import admin, agent_store, agents, approval, chat, decompose, graph, ingest
 from app.api import claims, goals, me, procedures, projects, repositories, search, solutions, tasks
 from app.api import runs
+from app.api import chat_completions
 from app.api import org_admin
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
@@ -170,6 +171,9 @@ app.include_router(profile_api.router)
 app.include_router(profile_avatar_api)
 app.include_router(economy.router)
 app.include_router(goal_review_api.router)
+# OpenAI-compatible /v1/chat/completions and /v1/models over the governed provider connections, so a coding
+# harness can use a routed model as its main model (app/providers/chat.py).
+app.include_router(chat_completions.router)
 
 
 @app.get("/health")

@@ -36,6 +36,33 @@ never read as "yes". They are declarations by whoever configured the connection,
 (`docs/providers/model_catalog.example.json`). `units_for(connection_id, entries)` produces the `units` list for a connection from priced
 offerings; unpriced offerings produce no unit, because the recommender cannot rank them and org budgets refuse them.
 
+## Using a routed model as a harness's main model: `/v1/chat/completions`
+
+The API serves an OpenAI-compatible `POST /v1/chat/completions` (tools, streaming) and `GET /v1/models`
+(`app/api/chat_completions.py`, `app/providers/chat.py`). Point a harness at `{server}/v1` with a StealthLab bearer
+token; the connections the caller can see are its models. Every call goes through the same checks and organisation
+ledger as `call_model`: visibility, data class, egress policy, cost cap, endpoint safety, key rotation and failover,
+reserve-then-settle against the org's budgets.
+
+- The org policy must list the tool `chat_completions` in `allowed_tools`.
+- Per-request controls are headers: `X-Stealthlab-Org`, `X-Stealthlab-Data-Class` (default `USER_PRIVATE`),
+  `X-Stealthlab-Max-Cost-Usd`, `X-Stealthlab-Fallback-Models`. The reply carries `x-stealthlab-unit` and
+  `x-stealthlab-connection`.
+- Only an allowlist of body fields is forwarded (messages, tools, tool_choice, sampling controls, response_format, stop,
+  seed). `n` must be 1.
+- Streaming asks the provider for `stream_options.include_usage`. A provider that sends no usage is settled at the
+  reserved worst case, never zero. Failover happens only before the first byte.
+- Not done: the OpenAI Responses API and Anthropic Messages shapes (Codex may need the first, Claude Code the second),
+  token counting of our own, and a run against a live provider. The tests use a fake provider.
+
+Example harness config (OpenCode, project `opencode.json`; keys stay in the environment):
+
+```json
+{ "provider": { "stealthlab": { "npm": "@ai-sdk/openai-compatible", "name": "StealthLab",
+  "options": { "baseURL": "https://your-server.example.com/v1", "apiKey": "{env:STEALTHLAB_TOKEN}" },
+  "models": { "glm-5.3": {} } } } }
+```
+
 ## Before a customer's code goes through a provider
 
 1. A signed DPA, and written confirmation of retention, training, region and sub-processors.

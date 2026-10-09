@@ -198,6 +198,34 @@ async def _call_one(pool: Any, scope: AccessScope, unit: str, conn: Connection, 
                     instance_key: Optional[str], max_latency_ms: Optional[int] = None) -> CallResult:
     """Every check, then the call, on ONE connection (checks 2-5 of the module docstring)."""
     started = time.monotonic()
+    adapter = await pre_checks(pool, unit, conn, spec, request, actor=actor, tenant_id=tenant_id,
+                               max_cost_usd=max_cost_usd)
+
+    async def run() -> CallResult:
+        return await _call_with_keys(adapter, conn, spec, request, max_latency_ms)
+
+    reservation, gate_ms = await hold_budget(pool, scope, unit, conn, spec, request, actor=actor, org_id=org_id,
+                                             governed=governed, tool=tool, instance_key=instance_key, started=started)
+    if reservation is None:
+        return await run()
+    try:
+        result = await run()
+    except BaseException as exc:
+        await release_hold(pool, reservation, exc)
+        raise
+    await settle_hold(pool, reservation, spec, tokens_in=result.tokens_in, tokens_cache_read=result.tokens_cache_read,
+                      tokens_cache_write=result.tokens_cache_write, tokens_out=result.tokens_out,
+                      cost_usd=result.cost_usd, cost_source=result.cost_source, latency_ms=result.latency_ms,
+                      gate_ms=gate_ms)
+    return result
+
+
+# The pieces of a governed call, shared with providers/chat.py (the chat-completions passthrough), which must run the
+# SAME checks and ledger steps around a request that is not a prompt/answer pair.
+
+async def pre_checks(pool: Any, unit: str, conn: Connection, spec: UnitSpec, request: CallRequest, *,
+                     actor: Optional[str], tenant_id: Optional[str], max_cost_usd: Optional[float]) -> Any:
+    """Checks 2-5 of the module docstring on one connection. Returns the adapter for the connection's kind."""
     if request.data_class not in conn.allowed_data_classes:
         raise ProviderCallDenied(f"connection {conn.connection_id!r} is not approved for {request.data_class} data "
                                  f"(allowed: {', '.join(conn.allowed_data_classes) or 'none'})")
@@ -222,13 +250,17 @@ async def _call_one(pool: Any, scope: AccessScope, unit: str, conn: Connection, 
     if adapter is None:
         raise ProviderCallDenied(f"connection {conn.connection_id!r} has unsupported kind {conn.kind!r}")
     await check_endpoint(conn.base_url, allow_http_loopback=conn.allow_http_loopback)
+    return adapter
 
-    async def run() -> CallResult:
-        return await _call_with_keys(adapter, conn, spec, request, max_latency_ms)
 
+async def hold_budget(pool: Any, scope: AccessScope, unit: str, conn: Connection, spec: UnitSpec,
+                      request: CallRequest, *, actor: Optional[str], org_id: Optional[str], governed: bool, tool: str,
+                      instance_key: Optional[str], started: float) -> tuple[Any, Optional[int]]:
+    """Reserve the worst case against the owning organisation's policy and budgets. Returns (reservation, gate_ms), or
+    (None, None) when no organisation governs the call (single-operator deployment)."""
     org = governing_org(conn, scope, org_id, governed=governed)
     if org is None:
-        return await run()
+        return None, None
     if not actor:
         raise ProviderCallDenied("a governed call needs an identified caller")
     from app.services import org_governance as gov
@@ -249,26 +281,37 @@ async def _call_one(pool: Any, scope: AccessScope, unit: str, conn: Connection, 
                                          f"{record_error}") from exc
         raise ProviderCallDenied(str(exc)) from exc
     gate_ms = int((time.monotonic() - started) * 1000)      # everything OUR code did before the provider was called
+    return reservation, gate_ms
+
+
+async def release_hold(pool: Any, reservation: Any, exc: BaseException) -> None:
+    """The call did not complete: release its hold (the cost is recorded as unknown, not zero)."""
+    from app.services import org_governance as gov
+
     try:
-        result = await run()
-    except BaseException as exc:
-        try:
-            await gov.fail_call(pool, reservation, error_type=type(exc).__name__)
-        except gov.GovernanceError as release_error:
-            raise ProviderCallFailed(f"the call failed and its budget hold could not be released: {release_error}") from exc
-        raise
+        await gov.fail_call(pool, reservation, error_type=type(exc).__name__)
+    except gov.GovernanceError as release_error:
+        raise ProviderCallFailed(f"the call failed and its budget hold could not be released: {release_error}") from exc
+
+
+async def settle_hold(pool: Any, reservation: Any, spec: UnitSpec, *, tokens_in: Optional[int],
+                      tokens_cache_read: Optional[int], tokens_cache_write: Optional[int], tokens_out: Optional[int],
+                      cost_usd: Optional[float], cost_source: Optional[str], latency_ms: Optional[int],
+                      gate_ms: Optional[int]) -> None:
+    """Record what the call cost. With no usable cost the reserved worst case is recorded (org_governance.settle_call)."""
+    from app.services import org_governance as gov
+
     try:
         await gov.settle_call(
-            pool, reservation, tokens_input_fresh=result.tokens_in, tokens_cache_read=result.tokens_cache_read,
-            tokens_cache_write=result.tokens_cache_write, tokens_output=result.tokens_out, cost_usd=result.cost_usd,
-            cost_source=result.cost_source, latency_ms=result.latency_ms,
+            pool, reservation, tokens_input_fresh=tokens_in, tokens_cache_read=tokens_cache_read,
+            tokens_cache_write=tokens_cache_write, tokens_output=tokens_out, cost_usd=cost_usd,
+            cost_source=cost_source, latency_ms=latency_ms,
             gate_ms=gate_ms, tier=spec.tier,
             prices={"input": spec.input_per_mtok, "output": spec.output_per_mtok,
                     "cache_read": spec.cached_input_per_mtok, "cache_write": spec.cache_write_input_per_mtok})
     except gov.GovernanceError as exc:
         raise ProviderCallFailed(f"the call completed but its cost could not be recorded, so the result is withheld: "
                                  f"{exc}") from exc
-    return result
 
 
 def _key_id(conn: Connection, index: int) -> str:
@@ -280,6 +323,15 @@ async def _call_with_keys(adapter: Any, conn: Connection, spec: UnitSpec, reques
     """One call on one endpoint, trying its keys in turn. A key that is rate-limited (429) or refused (401/402/403)
     is rested (providers/health.py) and the next key is used; any other failure is the endpoint's, and is raised.
     Keys are tried in configured order, rested ones last. The latency of a successful call is recorded."""
+    async def attempt(secret: Optional[str]) -> CallResult:
+        return await _within_budget(adapter.call(conn, spec, request, secret), max_latency_ms, conn)
+
+    return await with_keys(conn, spec, attempt)
+
+
+async def with_keys(conn: Connection, spec: UnitSpec, attempt: Any) -> Any:
+    """Run `attempt(secret)` on one endpoint, trying the connection's keys in turn (see _call_with_keys). Shared with
+    providers/chat.py, whose request is not a one-shot prompt."""
     keys = list(enumerate(conn.keys))
     multi = len(keys) > 1
     if multi:
@@ -298,7 +350,7 @@ async def _call_with_keys(adapter: Any, conn: Connection, spec: UnitSpec, reques
             raise
         started = time.monotonic()
         try:
-            result = await _within_budget(adapter.call(conn, spec, request, secret), max_latency_ms, conn)
+            result = await attempt(secret)
         except ProviderCallFailed as exc:
             key_problem = exc.status == 429 or exc.status in (401, 402, 403)
             if multi and key_problem and n < len(keys) - 1:
@@ -306,8 +358,9 @@ async def _call_with_keys(adapter: Any, conn: Connection, spec: UnitSpec, reques
                 last = exc
                 continue
             raise
+        reported_ms = getattr(result, "latency_ms", None)
         HEALTH.record_latency(conn.connection_id, spec.unit,
-                              result.latency_ms if result.latency_ms is not None else (time.monotonic() - started) * 1000)
+                              reported_ms if reported_ms is not None else (time.monotonic() - started) * 1000)
         if multi:
             HEALTH.record_success(_key_id(conn, index))
         return result
