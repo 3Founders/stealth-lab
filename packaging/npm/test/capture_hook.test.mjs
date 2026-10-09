@@ -262,3 +262,13 @@ test("library auto: the worker asks for the new Ways' codes, and a token-less ru
   assert.ok(out.library_entry);
   assert.equal(JSON.parse(fs.readFileSync(job, "utf8")).code_ways, repo);
 });
+
+test("Windows: a test run through Claude Code's PowerShell tool is captured like one through Bash", () => {
+  const env = tmpEnv();
+  const base = { session_id: "ps-1", prompt_id: "p" };
+  rememberLookup(base, RESOLVED, { env });
+  assert.equal(onPostToolUse({ ...base, tool_name: "PowerShell", tool_input: { command: "python -m pytest -q test_check.py" },
+    tool_response: { stdout: "1 passed in 1.29s" } }, { env }), true);
+  assert.equal(onPostToolUse({ ...base, tool_name: "Read", tool_input: { command: "pytest" }, tool_response: {} }, { env }), null);
+  assert.equal(CAPTURE_HOOKS.PostToolUse.matcher, "Bash|PowerShell");
+});

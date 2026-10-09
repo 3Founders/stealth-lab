@@ -337,27 +337,42 @@ function libraryParts(reply, root, mode, budget) {
 // mode "lean": only a resolved way (the exact Goal); near misses and related examples are left out.
 // `root`: the repo whose .stealth/library.md holds the library matches (none -> they are not shown).
 // One short paragraph for an ok model plan: who does the work first, the fallback, and how to report.
-export function planPart(plan, env = process.env) {
+// The plan as instructions. A hook cannot switch the session's own model, so a plan whose first rung is another
+// model only saves anything if the agent hands the work over: say so plainly, per rung, with the exact call.
+// `mine` is the session's own unit ("model|scaffold"); a rung on it means "do it yourself".
+export function planPart(plan, env = process.env, mine = null) {
   if (!plan || plan.status !== "ok" || !Array.isArray(plan.ladder) || !plan.ladder.length) return "";
-  const open = plan.ladder.map((u) => [u, claudeAlias(u) ? null : executorFor(u, env)]).filter(([, l]) => l);
-  const rung = (u) => {
+  const p = (u) => {
     const st = (plan.steps?.[0]?.ladder || []).find((x) => x.unit === u);
-    const p = typeof st?.p_ok_mean === "number" ? ` (p_ok ${st.p_ok_mean.toFixed(2)})` : "";
-    return `${u.split("|")[0]}${p}`;
+    return typeof st?.p_ok_mean === "number" ? ` (p_ok ${st.p_ok_mean.toFixed(2)})` : "";
+  };
+  const name = (u) => u.split("|")[0];
+  const own = (u) => mine && name(u) === name(mine);
+  const how = (u) => {
+    if (own(u)) return `do it yourself${p(u)}`;
+    const alias = claudeAlias(u);
+    if (alias) return `call the Agent tool with model: "${alias}" and the whole task${p(u)} -- ${name(u)}`;
+    const l = executorFor(u, env);
+    if (l) {
+      return `call the Agent tool with subagent_type: "${DELEGATOR}", the whole task and the line "Run it with ` +
+        `executor=${l.executor} model=${l.model} instance_key=${plan.instance_key}."${p(u)} -- ${name(u)}, an open ` +
+        "model; it runs and checks the work in a worktree and reports to the plan itself (no report_result for " +
+        "it); apply a verified run with the command its reply gives";
+    }
+    return `use ${name(u)}${p(u)}`;
   };
   const [first, ...rest] = plan.ladder;
-  return `Model plan (${plan.basis || "prior"}): do this with ${rung(first)}` +
-    (rest.length ? `; if its check fails, ${rest.map(rung).join(", then ")}` : "") +
-    ". A model other than yours means: hand the work to a subagent on that model. " +
-    `After the check, call report_result(instance_key="${plan.instance_key}", accepted=<passed?>) -- ` +
-    "its reply names the next model if it failed." +
-    open.map(([u, l]) => ` ${u.split("|")[0]} is an open model: give that step to the ${DELEGATOR} subagent with the ` +
-      `line "Run it with executor=${l.executor} model=${l.model} instance_key=${plan.instance_key}." -- it runs and ` +
-      "checks it in a worktree and reports to the plan itself (no report_result for it); apply a verified run with " +
-      "the command its reply gives.").join("");
+  const lead = own(first) ? `Model plan (${plan.basis || "prior"}): ${how(first)}.`
+    : `Model plan (${plan.basis || "prior"}) -- follow it: start by handing this task over, do not solve it ` +
+      `yourself first: ${how(first)}.`;
+  return lead +
+    (rest.map((u, i) => ` If that fails its check, ${i ? "then " : "next "}${how(u)}.`).join("")) +
+    ` After each attempt you ran or delegated to a Claude subagent, check it and call ` +
+    `report_result(instance_key="${plan.instance_key}", accepted=<passed?>) -- its reply names the next model if it ` +
+    "failed.";
 }
 
-export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = null } = {}) {
+export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = null, mine = null } = {}) {
   if (!reply || typeof reply !== "object" || mode === "off") return "";
   const parts = libraryParts(reply, root, mode, 2000);
   const procs = reply.outcome === "resolved" ? (reply.procedures || []) : [];
@@ -389,7 +404,7 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
     parts.push(`Similar solved problem (NOT verified to apply -- a worked example to adapt, never copy): ` +
       `${ex.goal_name || ex.goal_id}${credit(ex)}\n${solution(ex.verified_solution, 1500)}`);
   }
-  const plan = planPart(reply.model_plan);
+  const plan = planPart(reply.model_plan, process.env, mine);
   if (plan) parts.push(plan);
   if (!parts.length) return "";
   const head = "StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +
@@ -436,7 +451,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     } catch { /* routing.md is best-effort */ }
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env }); } catch { /* capture is best-effort */ }
-    const context = formatKnowledge(reply, policy.maxChars, { mode, root });
+    const context = formatKnowledge(reply, policy.maxChars, { mode, root, mine: model ? `${model}|claude-code` : null });
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }

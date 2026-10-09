@@ -49,9 +49,11 @@ export const WORKER_TIMEOUT_MS = 30_000;
 
 // settings.json entries this package owns (event -> {matcher?, command suffix}); see installCaptureHooks.
 export const CAPTURE_HOOKS = {
-  PostToolUse: { matcher: "Bash", mark: "hook capture-tool" },
+  PostToolUse: { matcher: "Bash|PowerShell", mark: "hook capture-tool" },   // Windows Claude Code has both
   Stop: { mark: "hook capture-stop" },
 };
+
+const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
 
 export function captureEnabled(env = process.env) {
   return (env.STEALTHLAB_CAPTURE || "on").toLowerCase() !== "off";
@@ -206,7 +208,7 @@ function toolOutput(resp) {
 }
 
 export function onPostToolUse(payload, { env = process.env, now = Date.now() } = {}) {
-  if (!captureEnabled(env) || payload?.tool_name !== "Bash") return null;
+  if (!captureEnabled(env) || !SHELL_TOOLS.has(payload?.tool_name)) return null;
   if (!looksLikeTest(payload.tool_input?.command)) return null;
   const file = sessionFile(env, payload.session_id);
   const s = file && readSession(file);
