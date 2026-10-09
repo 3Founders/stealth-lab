@@ -446,7 +446,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
     extra = { ...extra, ...routingArgs(policy, model) };
-    const reply = await callFindWays({
+    let reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
       repoClaims: readClaims(payload.cwd, payload.prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl,
     });
@@ -454,9 +454,28 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     try {
       if (root && Array.isArray(reply?.routing_rows) && reply.routing_rows.length) upsertRoutes(root, reply.routing_rows);
     } catch { /* routing.md is best-effort */ }
+    // Dispatch (lib/dispatch.mjs): the plan's cheap rungs run here, before the session's model. A verified pass is
+    // applied and the prompt is stopped with its report -- the session's model never runs.
+    const mine = model ? `${model}|claude-code` : null;
+    let note = "";
+    try {
+      const { dispatch, triedNote } = await import("./dispatch.mjs");
+      const d = await dispatch({ payload, reply, root, mine, env, fetchImpl, log });
+      if (d?.handled) {
+        try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
+        write(JSON.stringify({ decision: "block", reason: d.text }));
+        return;
+      }
+      if (d && reply?.model_plan) {
+        reply = { ...reply, model_plan: { ...reply.model_plan, ladder: d.remaining.length ? d.remaining : [mine].filter(Boolean) } };
+        note = triedNote(d);
+      }
+    } catch (err) {
+      log(`stealthlab hook: dispatch skipped (${err.message})`);
+    }
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
-    try { rememberLookup(payload, reply, { env, mine: model ? `${model}|claude-code` : null }); } catch { /* capture is best-effort */ }
-    const context = formatKnowledge(reply, policy.maxChars, { mode, root, mine: model ? `${model}|claude-code` : null });
+    try { rememberLookup(payload, reply, { env, mine }); } catch { /* capture is best-effort */ }
+    const context = [note, formatKnowledge(reply, policy.maxChars, { mode, root, mine })].filter(Boolean).join("\n\n");
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }

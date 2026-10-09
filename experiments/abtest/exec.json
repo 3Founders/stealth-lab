@@ -1,0 +1,14 @@
+{
+  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges.",
+  "executors": { "stealth": { "models": ["gemma-4-31b-it", "gpt-oss-120b", "minimax-m2-7"] } },
+  "profiles": {
+    "gemma-4-31b-it": { "model_id": "gemma-4-31B-it", "key_env": "GENERAL_COMPUTE_API_KEY",
+      "openai_base_url": "https://api.generalcompute.com/v1", "input_per_mtok": 0.09, "output_per_mtok": 0.34,
+      "no_system_role": true },
+    "gpt-oss-120b": { "model_id": "gpt-oss-120b", "key_env": "GENERAL_COMPUTE_API_KEY",
+      "openai_base_url": "https://api.generalcompute.com/v1", "input_per_mtok": 0.037, "output_per_mtok": 0.17 },
+    "minimax-m2-7": { "model_id": "minimax-m2.7", "key_env": "GENERAL_COMPUTE_API_KEY",
+      "openai_base_url": "https://api.generalcompute.com/v1", "input_per_mtok": 0.21, "output_per_mtok": 0.84 }
+  },
+  "max_concurrent_runs": 2
+}

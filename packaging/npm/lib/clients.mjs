@@ -154,7 +154,9 @@ function isOurs(group) {
 // The knowledge hook (UserPromptSubmit) and its capture hooks (PostToolUse on Bash, Stop; lib/capture_hook.mjs)
 // are installed and removed together. commandSpec is the hook-prompt command; the capture commands are the
 // same launcher with their own subcommand.
-export function upsertClaudeHook(file, commandSpec, timeoutSec = 30) {
+// 900 s: Claude Code's kill timer for the prompt hook, a ceiling -- the lookup itself gives up after its own timeout,
+// but dispatch (lib/dispatch.mjs) runs the plan's cheap rungs to completion inside this hook.
+export function upsertClaudeHook(file, commandSpec, timeoutSec = 900) {
   const doc = readJsonOrThrow(file);
   if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
   doc.hooks = doc.hooks || {};

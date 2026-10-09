@@ -31,6 +31,10 @@ for name in ("DATABASE_URL", "DATABASE_URL_DIRECT", "CONTROL_DATABASE_URL", "DAT
 os.environ["SEARCH_DATABASE_URL"] = ""
 os.environ.pop("DATABASE_URL_PREVIOUS", None)
 os.environ.setdefault("STEALTHLAB_ENV", "TEST")
+# find_ways' per-user abuse limiter (30 calls / 3 identical per 10 min) would refuse a test that runs a short task
+# every ~30 s, or repeats one task while checking the plumbing; one local test user is not the abuse it guards against
+os.environ.setdefault("FIND_WAYS_MAX_CALLS_PER_WINDOW", "1000")
+os.environ.setdefault("FIND_WAYS_IDENTICAL_LIMIT", "100")
 
 # sign-in: trust only the local test identity (local_identity.py), never Supabase -- so the test user is a real,
 # verified user (report_result, routing codes) whose token cannot be used against any hosted server
