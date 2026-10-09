@@ -34,12 +34,16 @@ def problems() -> dict[str, dict]:
 def sample(n: int, seed: int) -> list[dict]:
     """n tasks, round-robin over LIBRARIES, original (unperturbed) problems, in a seeded order."""
     rng = random.Random(seed)
+    # only problems with a REAL visible test (test case 1 of >= 2): a single-case problem leaves the agent a smoke run
+    # ("the code runs"), which checks nothing -- dispatch (and any agent) would accept an unchecked answer
     pools = {lib: [p for p in problems().values() if p["metadata"]["library"] == lib
-                   and p["metadata"]["perturbation_type"] == "Origin"] for lib in LIBRARIES}
+                   and p["metadata"]["perturbation_type"] == "Origin"
+                   and evaluate.check_kind(p["code_context"], int(p["metadata"]["test_case_cnt"])) == "case1"]
+             for lib in LIBRARIES}
     for pool in pools.values():
         rng.shuffle(pool)
     picked = []
-    while len(picked) < n:
+    while len(picked) < n and any(pools.values()):              # stops when every pool is used up
         for lib in LIBRARIES:
             if len(picked) < n and pools[lib]:
                 picked.append(pools[lib].pop())
