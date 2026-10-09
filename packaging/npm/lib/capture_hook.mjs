@@ -279,7 +279,8 @@ function spawnDetachedWorker(file, env) {
 // Stop: decide in milliseconds, hand the network call to a detached worker, never print anything.
 // The local half: one OBS count in .stealth/routing.md per resolved prompt with a known verdict and model.
 export function recordLocalObs(s, model, { now = new Date() } = {}) {
-  if (!s || s.obs_recorded || !["resolved", "planned"].includes(s.lookup?.outcome) || !s.lookup.goal_id || !model ||
+  // with a model plan, the guard records each attempt with the unit that ran it (model_guard recordAttempts)
+  if (!s || s.obs_recorded || s.plan_obs || !["resolved", "planned"].includes(s.lookup?.outcome) || !s.lookup.goal_id || !model ||
       !s.cwd) return false;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last || !fs.existsSync(path.join(s.cwd, ".stealth"))) return false;

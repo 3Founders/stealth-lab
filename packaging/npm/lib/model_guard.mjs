@@ -44,6 +44,8 @@ import { shellJoin } from "./claude_exec.mjs";
 import fs from "node:fs";
 import { logHook } from "./subagent_hook.mjs";
 import { sessionFile } from "./capture_hook.mjs";
+import path from "node:path";
+import { ensureRoute, recordObs } from "./library.mjs";
 import { localUnit, readExecConfig } from "./exec/store.mjs";
 
 export const MAX_DENIALS = 2;
@@ -214,11 +216,55 @@ export function runReply(payload, plan) {
 }
 
 // After report_result: follow the ladder (next_model), or stop guarding once a result passed.
+// The attempts a report_result / finished run_result payload stands for, as [{model, scaffold, accepted}]: the
+// unit that REALLY ran each one (the reported model, else the plan's rung; each executor attempt's model and
+// executor), so the workspace's record credits Gemma's pass to Gemma, not to the session's model.
+export function reportedAttempts(payload, plan) {
+  const name = String(payload?.tool_name || "");
+  if (name === RUN_RESULT_TOOL) {
+    const texts = jsonTexts(payload?.tool_response ?? payload?.tool_output);
+    const r = texts.find((j) => "state" in j);
+    if (!r || !["verified", "failed", "timed_out"].includes(r.state)) return [];
+    const rows = Array.isArray(r.race) && r.race.length ? r.race : [r];
+    return rows.filter((a) => a.model && a.executor)
+      .map((a) => ({ model: String(a.model), scaffold: String(a.executor), accepted: a.state === "verified" || a.verified === true,
+                     key: `${r.run_id || ""}#${a.attempt || 1}` }));
+  }
+  if (!reportReply(payload)) return [];
+  const input = name.endsWith("__use_tool") ? (payload?.tool_input?.arguments || {}) : (payload?.tool_input || {});
+  if (typeof input.accepted !== "boolean") return [];
+  const [m, s] = input.model && input.scaffold ? [String(input.model), String(input.scaffold)]
+    : String(plan?.current || "").split("|");
+  return m && s ? [{ model: m, scaffold: s, accepted: input.accepted }] : [];
+}
+
+// One OBS line per attempt in the workspace's .stealth/routing.md (what the next plan learns from), once each.
+function recordAttempts(step, attempts) {
+  const s = step.session;
+  if (!attempts.length || !s?.cwd || !s.lookup?.goal_id || !fs.existsSync(path.join(s.cwd, ".stealth"))) return 0;
+  s.obs_keys = s.obs_keys || [];
+  let n = 0;
+  for (const a of attempts) {
+    if (a.key && s.obs_keys.includes(a.key)) continue;
+    const route = s.route || (s.route = ensureRoute(s.cwd, s.lookup.goal_id));
+    recordObs(s.cwd, route, a.model, a.scaffold, a.accepted);
+    if (a.key) s.obs_keys.push(a.key);
+    n++;
+  }
+  if (n) s.plan_obs = true;                     // the Stop hook then adds no session-model line of its own
+  return n;
+}
+
 export function onPlanReport(payload, { env = process.env } = {}) {
   const step = currentStep(env, payload?.session_id);
   if (!step) return null;
   const reply = reportReply(payload) || runReply(payload, step.plan);
   if (!reply) return null;
+  try {
+    recordAttempts(step, reportedAttempts(payload, step.plan));
+  } catch (err) {
+    logHook(env, "route-report", `OBS not recorded (${err.message})`);
+  }
   if (reply.status === "accepted") step.plan.done = true;
   else if (typeof reply.next_model === "string") {
     step.plan.current = reply.next_model;

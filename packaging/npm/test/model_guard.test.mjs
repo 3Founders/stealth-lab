@@ -201,3 +201,35 @@ test("main session: a rung on the session's own model, a finished plan, or guard
   const legacy = envWithPlan("m3");                                 // no `mine` recorded: never held
   assert.equal(onClaudePreToolUse({ ...edit, session_id: "m3" }, { env: legacy }), null);
 });
+
+// --- the workspace's record credits each attempt to the unit that ran it ----------------------
+
+import { recordLocalObs } from "../lib/capture_hook.mjs";
+
+function stealthWorkspace() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-ws-"));
+  fs.mkdirSync(path.join(dir, ".stealth"));
+  return dir;
+}
+
+test("report_result and finished executor runs write one OBS line per attempt, with the unit that ran it", () => {
+  const env = { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "guard-")) };
+  const ws = stealthWorkspace();
+  rememberLookup({ session_id: "o1", prompt_id: "p", cwd: ws }, { ...REPLY, model_plan: OPEN_PLAN },
+                 { env, mine: "claude-opus-5-5|claude-code" });
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["glm-5.3"] } } }));
+  const run = { state: "failed", run_id: "r-1", evidence: { instance_key: "g1.cd34" }, next_model: "claude-sonnet-4-5|claude-code",
+    race: [{ executor: "stealth", model: "glm-5.3", state: "failed", attempt: 1 }] };
+  const polled = { ...runResult(run), session_id: "o1" };
+  onPlanReport(polled, { env });
+  onPlanReport(polled, { env });                                            // polled again: no second line
+  onPlanReport({ session_id: "o1", tool_name: "mcp__stealthlab__report_result",
+    tool_input: { instance_key: "g1.cd34", accepted: true },                // the rung now in force: Sonnet
+    tool_response: [{ type: "text", text: JSON.stringify({ status: "accepted" }) }] }, { env });
+  const obs = fs.readFileSync(path.join(ws, ".stealth", "routing.md"), "utf8").split("\n").filter((l) => l.startsWith("OBS|"));
+  assert.equal(obs.length, 2);
+  assert.ok(obs.some((l) => l.includes("|glm-5.3|stealth|n=1|ok=0|")));
+  assert.ok(obs.some((l) => l.includes("|claude-sonnet-4-5|claude-code|n=1|ok=1|")));
+  const s = JSON.parse(fs.readFileSync(path.join(env.STEALTHLAB_HOME, "hooks", "sessions", "o1.json"), "utf8"));
+  assert.equal(recordLocalObs(s, "claude-opus-5-5"), false, "the Stop hook adds no session-model line on top");
+});
