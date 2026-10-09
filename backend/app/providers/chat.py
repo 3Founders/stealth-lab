@@ -104,8 +104,11 @@ def parse_chat_body(raw: Any) -> ChatParams:
     cap = raw.get("max_tokens", raw.get("max_completion_tokens"))
     if cap is None:
         cap = DEFAULT_MAX_TOKENS
-    if isinstance(cap, bool) or not isinstance(cap, int) or not 1 <= cap <= service.MAX_OUTPUT_TOKENS:
-        raise ChatRequestInvalid(f"max_tokens must be an integer between 1 and {service.MAX_OUTPUT_TOKENS}")
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+        raise ChatRequestInvalid("max_tokens must be a positive integer")
+    # A client's max_tokens is a ceiling, not a request for that many (Claude Code sends 32000 and more). Lowering it to
+    # the server's limit keeps the worst-case cost estimate honest without refusing a normal client.
+    cap = min(cap, service.MAX_OUTPUT_TOKENS)
     try:
         prompt_text = json.dumps(messages, default=str) + (json.dumps(tools, default=str) if tools else "")
     except (TypeError, ValueError) as exc:

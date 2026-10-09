@@ -115,12 +115,16 @@ def test_only_allowlisted_fields_are_forwarded_and_the_rest_is_dropped():
     ({"n": 2}, "n must be 1"),
     ({"temperature": "hot"}, "temperature"),
     ({"max_tokens": 0}, "max_tokens"),
-    ({"max_tokens": 10**9}, "max_tokens"),
     ({"stream": "yes"}, "stream"),
 ])
 def test_bad_bodies_are_refused_with_a_reason(patch, message):
     with pytest.raises(chat.ChatRequestInvalid, match=message):
         _params(**patch)
+
+
+def test_a_huge_max_tokens_is_lowered_to_the_server_limit_not_refused():
+    """Claude Code sends max_tokens above 16000; a ceiling from the client must not make the request fail."""
+    assert _params(max_tokens=10**9).max_tokens == chat.service.MAX_OUTPUT_TOKENS
     with pytest.raises(chat.ChatRequestInvalid):
         chat.parse_chat_body(["not", "an", "object"])
 

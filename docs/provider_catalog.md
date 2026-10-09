@@ -52,8 +52,15 @@ reserve-then-settle against the org's budgets.
   seed). `n` must be 1.
 - Streaming asks the provider for `stream_options.include_usage`. A provider that sends no usage is settled at the
   reserved worst case, never zero. Failover happens only before the first byte.
-- Not done: the OpenAI Responses API and Anthropic Messages shapes (Codex may need the first, Claude Code the second),
-  token counting of our own, and a run against a live provider. The tests use a fake provider.
+- Other client shapes, translated onto the same path (`app/providers/shims.py`): `POST /v1/responses` (OpenAI Responses,
+  stateless; `previous_response_id` is refused) for Codex CLI, and `POST /v1/messages` plus `/v1/messages/count_tokens`
+  (an estimate) for Claude Code via `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` (sent as a Bearer token; a key sent
+  only as `x-api-key` is not read). Images, reasoning/thinking blocks, server-side tools (web search) and prompt-cache
+  markers are dropped or refused, not faked.
+- A client's `max_tokens` is a ceiling: values above the server limit (16000) are lowered to it, not refused.
+- Verified: a real `claude -p` run against the Messages shape with a fake provider behind it returned the model's text
+  (this found two bugs, system turns inside `messages` and `max_tokens` above 16000, both fixed). The Responses shape
+  has not been run against Codex. Not done: our own token counting and a run against a live provider.
 
 Example harness config (OpenCode, project `opencode.json`; keys stay in the environment):
 
