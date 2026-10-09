@@ -63,38 +63,57 @@ InsightBench (LLM-scored, which breaks the correctness rule).
 
 ## 4. Scoring and statistics
 
+Changes in this section follow the proposals in `docs/research/llm-judge-vs-execution-and-equivalence-methodology.md`
+(section 4 of that file); the reasons and citations are there.
+
 - **Per task:** one attempt, pass or fail by the checker. Harness errors are counted separately and are not failures.
-- **Cost:** dollars per task = every model call in the arm (planner, workers, retries, failed attempts) at list price on
-  the run date, including the main agent's relay tokens in arm C. Report cost per resolved task and the ratio vs A.
-- **Equivalence:** report the pass-rate difference (A minus candidate) with a paired bootstrap interval; also a
-  per-domain table for information. At 140 tasks only the pooled result is interpretable; domains of 5-25 tasks are too
-  small to claim parity.
-- **Repeats and power:** run the full suite at least 3 times; compute power from the pilot's discordance rate before
-  fixing the size (the literature review says a 140-150 task paired comparison is probably underpowered for small margins).
-- **Decision rule, fixed before the run:** the lower bound of the candidate's pass rate relative to A is at least 85%
-  and the upper bound of the cost ratio is at most 50%. Otherwise report "not shown". The 50-70% saving is a hypothesis
-  until this exists.
-- **No judge decides correctness.** The reasoning and the one place a judge could be allowed are in
-  `docs/research/llm-judge-vs-execution-and-equivalence-methodology.md` (its recommendation: keep the rule for Core, audit
-  the checkers by hand on a sample, allow a calibrated judge only for a separate open-ended section).
+- **No model judges Core correctness, and every checker is itself audited** (section 5, step 3). The one exception is an
+  optional open-ended section (narrative analysis, code-review comments), scored by a judge from a model family not used
+  in any arm, version pinned, both answer orders, 3 repeats, calibrated on a human-labelled sample (at least 100 items, two
+  annotators, rubric written first; the 100 is a suggestion, not from a paper) with kappa reported. Its result is reported
+  on its own and never merged into the Core numbers.
+- **SQL comparison policy:** each SQL task states ordered, multiset or set comparison: ordered when ORDER BY is part of the
+  intent, multiset otherwise, never plain set. Check Spider 2.0's own comparison script before trusting its numbers.
+- **Primary measure:** pass@1 averaged over repeats. Secondary: pass^3 (all three repeats pass) for reliability. pass@k is
+  not a headline.
+- **Equivalence (primary claim):** a paired non-inferiority test on the pooled pass-rate difference (A minus candidate).
+  Fix the margin before the run (for example 8 or 10 points); report the one-sided 95% lower bound from a paired bootstrap
+  over tasks (resample tasks, keep arms paired) and the exact McNemar discordant counts. No LLM-specific non-inferiority
+  paper was found; this is borrowed from clinical-trial practice and should be described that way. The earlier capped
+  per-domain ratio is kept only as a descriptive table, because domains of 5-25 tasks are too small to claim parity.
+- **Power:** after the 30-task pilot, estimate the A-vs-C discordance rate and compute the number of tasks needed for the
+  chosen margin. Do not assume 140 is enough; the review warns the common unpaired shortcut is off by about 2x.
+- **Repeats:** run every task in every arm at least 3 times, resample over tasks and runs, and report the per-task flip rate.
+- **Cost:** log input, output and cached tokens per call; cost per resolved task and per attempted task; prices pinned to
+  the run date; planner, worker, retry and relay tokens all counted (the relay tokens of the main agent in arm C included).
+- **Decision rule, fixed before the run:** go if the lower bound of the non-inferiority test clears the pre-registered
+  margin and the upper bound of the cost ratio (candidate / baseline, per resolved task) is at most 50%. Otherwise report
+  "not shown". The 50-70% saving is a hypothesis until this exists.
 
 ## 5. Run plan
 
-1. Choose the baseline and open models; fix prompts, attempt limit, timeouts; commit the task list and the decision rule.
-2. Wire the public sources into `experiments/harness/`; author the Node.js tasks and any Python / SQL Git conflicts;
-   check each checker against a reference solution, and hand-audit a sample of checkers (the review found published
-   benchmarks with high annotation-error rates).
-3. Pilot on 30 tasks, all arms: flaky checkers, cost accounting, run time, discordance. Drop tasks whose reference fails.
-4. Full Core run (3 repeats); report the pooled difference, cost ratio, per-domain table, harness-error count and every
-   deviation from step 1.
+1. Choose the baseline and open models; fix prompts, attempt limit, timeouts, the margin and the decision rule; commit the
+   task list with them.
+2. Wire the public sources into `experiments/harness/`; author the Node.js tasks and any Python / SQL Git conflicts. Give the
+   agents no benchmark-lookup tools and keep authored tasks and answers out of any retrievable store.
+3. **Checker audit before any scored run:** for each source run its checker on (a) the gold solution, (b) an empty or no-op
+   answer, (c) a hand-built near miss. After the pilot, hand-review 20 randomly chosen passes and 20 failures per source and
+   report checker false-positive and false-negative counts. Use ELT-Bench-Verified, not the original, if ELT-Bench is ever added.
+4. Pilot on 30 tasks, all arms: flaky checkers, cost accounting, run time, discordance. Drop tasks whose reference fails.
+5. Full Core run (3 repeats); report the non-inferiority result, cost ratio, the descriptive per-domain table, flip rates,
+   harness-error count and every deviation from step 1.
+6. Read a sample of agent logs for shortcut behaviour (benchmark lookup, editing the tests, hard-coding expected answers).
 
 ## 6. Risks
 
-- **Contamination.** BIRD, SWE-bench, DS-1000, Design2Code and the others are public; report them separately from the
-  authored tasks.
-- **Checker quality.** Executable does not mean correct (see the review); budget time for the audit.
-- **Licences.** Only DABstep's CC-BY-4.0 was confirmed (it is not used here); check each dataset and model licence
-  before redistributing. We run everything locally.
+- **Contamination.** BIRD, SWE-bench, DS-1000, Design2Code and the others are public. Report public and authored tasks
+  separately and compare their pass rates; keep SWE-bench Verified Mini as a control only.
+- **Checker quality.** Executable does not mean correct: published benchmarks have high annotation-error rates (the review
+  cites audits of BIRD Mini-Dev and Spider 2.0-Snow). Budget time for step 3; verify those figures against the papers before quoting them.
+- **Licences.** Only DABstep's CC-BY-4.0 was confirmed (it is not used here); check each dataset and model licence before
+  redistributing. We run everything locally.
 - **Providers and data.** Use only connections with a signed DPA; nothing here is customer data.
 - **Claude Code arm.** Parked until Anthropic answers the written question about non-Claude endpoints.
-- **Unconfirmed names.** "MergeEval" and "Screen2Code" are not found; tasks 3 and 7 depend on your answer.
+- **Unconfirmed names.** "MergeEval" and "Screen2Code" were not found; tasks 3 and 7 depend on the answer. "Figma reporting"
+  is assumed to mean design-to-code with a report.
+- **Not ready to freeze.** Still open: the baseline model, the margin, the dataset names above, and the customer's identity.
