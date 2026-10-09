@@ -64,6 +64,20 @@ export function readExecConfig(env = process.env) {
   };
 }
 
+// A model plan unit "model|scaffold" -> the local {executor, model} that runs it, or null. The scaffold is used as the
+// executor when exec.json configures that executor for the model; otherwise the first executor configured for it.
+export function localUnit(unit, cfg) {
+  const s = String(unit || "");
+  const i = s.lastIndexOf("|");
+  if (i <= 0) return null;
+  const model = s.slice(0, i);
+  const scaffold = s.slice(i + 1);
+  const has = (id) => Array.isArray(cfg?.executors?.[id]?.models) && cfg.executors[id].models.map(String).includes(model);
+  if (has(scaffold)) return { executor: scaffold, model };
+  for (const id of Object.keys(cfg?.executors || {})) if (has(id)) return { executor: id, model };
+  return null;
+}
+
 export function newRunId(now = new Date()) {
   const ts = now.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
   return `r-${ts}-${Math.random().toString(16).slice(2, 8)}`;

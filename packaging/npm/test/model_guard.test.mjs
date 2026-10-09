@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { rememberLookup } from "../lib/capture_hook.mjs";
 import {
-  MAX_DENIALS, addRouteHooks, claudeAlias, currentStep, onClaudePreToolUse, onCursorPreToolUse, onPlanReport,
+  ACHIEVE_TOOL, DELEGATOR, MAX_DENIALS, RUN_RESULT_TOOL, addRouteHooks, claudeAlias, currentStep, onClaudePreToolUse, onCursorPreToolUse, onPlanReport,
   removeRouteHooks, reportReply,
 } from "../lib/model_guard.mjs";
 import { addCursorHooks } from "../lib/cursor_hooks.mjs";
@@ -87,7 +87,8 @@ test("Cursor: a Task naming another model is refused with agent_message; no mode
 test("hook installation: route hooks added and removed; Cursor gets preToolUse", () => {
   const launch = { command: "node", args: ["/x/stealthlab-mcp.mjs"] };
   const doc = addRouteHooks({ hooks: { PostToolUse: [{ matcher: "Bash", hooks: [{ command: "other" }] }] } }, launch);
-  assert.equal(doc.hooks.PreToolUse[0].matcher, "Agent|Task");
+  assert.equal(doc.hooks.PreToolUse[0].matcher, "Agent|Task|mcp__stealthlab-exec__achieve");
+  assert.match(doc.hooks.PostToolUse[1].matcher, /mcp__stealthlab-exec__run_result$/);
   assert.match(doc.hooks.PreToolUse[0].hooks[0].command, /hook route-subagent$/);
   assert.equal(doc.hooks.PostToolUse.length, 2);
   assert.ok(removeRouteHooks(doc));
@@ -95,4 +96,65 @@ test("hook installation: route hooks added and removed; Cursor gets preToolUse",
   assert.equal(doc.hooks.PreToolUse, undefined);
   const cur = addCursorHooks({}, launch, "linux");
   assert.match(cur.hooks.preToolUse[0].command, /hook cursor-pretool$/);
+});
+
+// --- an open-model step: handed to the local executor through the delegator ---------------------
+
+const OPEN_PLAN = { ...PLAN, instance_key: "g1.cd34", ladder: ["glm-5.3|stealth", "claude-sonnet-4-5|claude-code"],
+  steps: [{ step: "*", ladder: [{ unit: "glm-5.3|stealth", p_ok_mean: 0.64 }] }] };
+
+function envWithOpenPlan(execConfig = { executors: { stealth: { models: ["glm-5.3"] } } }) {
+  const env = envWithPlan("s1", { ...REPLY, model_plan: OPEN_PLAN });
+  if (execConfig) fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify(execConfig));
+  return env;
+}
+const achieveCall = (extra = {}) => ({ session_id: "s1", tool_name: ACHIEVE_TOOL,
+  tool_input: { repo_path: "/r", task: "t", checks: ["true"], scope: ["a"], ...extra } });
+const runResult = (r) => ({ session_id: "s1", tool_name: RUN_RESULT_TOOL,
+  tool_response: [{ type: "text", text: JSON.stringify(r) }] });
+
+test("open-model step: a subagent call is sent to the delegator with the plan's executor, model and instance_key", () => {
+  const env = envWithOpenPlan();
+  assert.equal(currentStep(env, "s1").plan.instance_key, "g1.cd34");
+  const out = onClaudePreToolUse(agentCall("haiku"), { env });
+  assert.equal(out.hookSpecificOutput.permissionDecision, "deny");
+  const why = out.hookSpecificOutput.permissionDecisionReason;
+  assert.match(why, new RegExp(`subagent_type: "${DELEGATOR}"`));
+  assert.match(why, /executor=stealth model=glm-5\.3 instance_key=g1\.cd34/);
+  assert.match(why, /p_ok 0\.64/);
+  const delegated = agentCall(null, { subagent_type: DELEGATOR, prompt: "Do N-1. Run it with executor=stealth model=glm-5.3 instance_key=g1.cd34." });
+  assert.equal(onClaudePreToolUse(delegated, { env }), null);
+});
+
+test("open-model step: achieve must name the plan's unit and key (deny, or rewrite in rewrite mode)", () => {
+  const env = envWithOpenPlan();
+  const out = onClaudePreToolUse(achieveCall(), { env });
+  assert.match(out.hookSpecificOutput.permissionDecisionReason, /executor=stealth model=glm-5\.3 instance_key=g1\.cd34/);
+  assert.equal(onClaudePreToolUse(achieveCall({ executor: "stealth", model: "glm-5.3", instance_key: "g1.cd34" }), { env }), null);
+  const rw = onClaudePreToolUse(achieveCall({ escalate: 2 }), { env: { ...env, STEALTHLAB_MODEL_GUARD: "rewrite" } });
+  assert.equal(rw.hookSpecificOutput.permissionDecision, "allow");
+  assert.deepEqual(rw.hookSpecificOutput.updatedInput,
+    { ...achieveCall().tool_input, escalate: 2, executor: "stealth", model: "glm-5.3", instance_key: "g1.cd34" });
+});
+
+test("open-model step: the guard stands aside with no local executor for the model, and on a Claude step's achieve", () => {
+  assert.equal(onClaudePreToolUse(agentCall(), { env: envWithOpenPlan(null) }), null);
+  assert.equal(onClaudePreToolUse(agentCall(), { env: envWithOpenPlan({ executors: { opencode: { models: ["kimi-k2"] } } }) }), null);
+  assert.equal(onClaudePreToolUse(achieveCall(), { env: envWithPlan() }), null);
+  // a scaffold that is not an executor id still runs on whichever executor exec.json configures for the model
+  const env = envWithOpenPlan({ executors: { opencode: { models: ["glm-5.3"] } } });
+  assert.match(onClaudePreToolUse(agentCall(), { env }).hookSpecificOutput.permissionDecisionReason, /executor=opencode/);
+});
+
+test("run_result moves the guard: failed -> next_model, verified -> done; another plan's run is ignored", () => {
+  const env = envWithOpenPlan();
+  assert.equal(onPlanReport(runResult({ state: "running", evidence: { instance_key: "g1.cd34" } }), { env }), null);
+  assert.equal(onPlanReport(runResult({ state: "failed", evidence: { instance_key: "other.1" }, next_model: "x|y" }), { env }), null);
+  const moved = onPlanReport(runResult({ state: "failed", evidence: { instance_key: "g1.cd34" },
+    next_model: "claude-sonnet-4-5|claude-code" }), { env });
+  assert.equal(moved.current, "claude-sonnet-4-5|claude-code");
+  assert.match(onClaudePreToolUse(agentCall("haiku"), { env }).hookSpecificOutput.permissionDecisionReason, /"sonnet"/);
+  const env2 = envWithOpenPlan();
+  assert.equal(onPlanReport(runResult({ state: "verified", evidence: { instance_key: "g1.cd34" } }), { env: env2 }).done, true);
+  assert.equal(onClaudePreToolUse(agentCall(), { env: env2 }), null);
 });

@@ -39,6 +39,8 @@ export const TOOLS = [
         scope: { type: "array", items: { type: "string" }, description: "Globs (repo-relative, anchored) the run may modify." },
         goal_id: str("StealthLab Goal id (enables recommend_models and evidence)."),
         procedure_id: str("StealthLab Procedure id."),
+        instance_key: str("The model plan's instance_key (find_ways model_plan), when this run is one of its steps: each " +
+          "attempt is reported with report_result, and escalate follows the plan's next model."),
         step_order: { type: "integer", description: "The Procedure step this node runs." },
         executor: str("Executor id (see list_executors). Default: chosen from evidence."),
         model: str("Model for the executor. Default: from exec.json / recommend_models."),

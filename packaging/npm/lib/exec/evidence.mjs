@@ -22,9 +22,17 @@ export const REPORT_FIELDS = [
   "cost_usd", "latency_ms", "step_order", "step_role",
 ];
 
-export function sanitizeReport(payload, { secrets = [] } = {}) {
+// report_result: an attempt of a model plan find_ways gave (instance_key from model_plan). Its reply names the
+// plan's next model, which the run passes on (run_result.next_model) and follows when it escalates.
+export const PLAN_REPORT_FIELDS = [
+  "instance_key", "accepted", "model", "scaffold", "check_kind", "tokens_in", "tokens_out", "tokens_cached",
+  "cost_usd", "latency_ms", "pass_fraction",
+];
+const FIELDS = { report_model_run: REPORT_FIELDS, report_result: PLAN_REPORT_FIELDS };
+
+export function sanitizeReport(payload, { secrets = [], tool = "report_model_run" } = {}) {
   const out = {};
-  for (const k of REPORT_FIELDS) {
+  for (const k of FIELDS[tool]) {
     const v = payload?.[k];
     if (v === undefined || v === null || v === "") continue;
     out[k] = typeof v === "string" ? redact(v, { secrets }).slice(0, 300) : v;
@@ -32,8 +40,9 @@ export function sanitizeReport(payload, { secrets = [] } = {}) {
   return out;
 }
 
-function holdReason(args) {
+function holdReason(args, tool = "report_model_run") {
   if (!args.model) return "no model is known for this run (configure models in exec.json)";
+  if (tool === "report_result") return args.instance_key ? null : "no instance_key";
   if (!args.goal_id && !args.procedure_id) return "report_model_run needs goal_id or procedure_id";
   if (!args.instance_key) return "no instance_key";
   return null;
@@ -50,14 +59,14 @@ function secretsFor(env) {
   return token ? [token] : [];
 }
 
-async function send(args, { env, fetchImpl, timeoutMs }) {
+async function send(args, { env, fetchImpl, timeoutMs, tool = "report_model_run" }) {
   const { token } = hostedSettings(env);
   if (!token) {
     const e = new Error("not logged in (run `stealthlab-mcp login --token <token>`)");
     e.transient = true;
     throw e;
   }
-  const text = await callHostedTool("report_model_run", args, { env, fetchImpl, timeoutMs });
+  const text = await callHostedTool(tool, args, { env, fetchImpl, timeoutMs });
   try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200) }; }
 }
 
@@ -84,6 +93,12 @@ export function reportModelRun(payload, opts = {}) {
   return serialized(opts.env || process.env, () => reportUnlocked(payload, opts));
 }
 
+// One attempt of a model plan -> {reported, queued, ..., next_model?, status?}. Queued like report_model_run when
+// the server is unreachable; a queued report gives no next_model, so the run does not escalate on a guess.
+export function reportPlanResult(payload, opts = {}) {
+  return serialized(opts.env || process.env, () => reportUnlocked(payload, { ...opts, tool: "report_result" }));
+}
+
 async function flushUnlocked({ env = process.env, fetchImpl, timeoutMs = 10000 } = {}) {
   const dir = outboxDir(env);
   let files = [];
@@ -94,9 +109,9 @@ async function flushUnlocked({ env = process.env, fetchImpl, timeoutMs = 10000 }
     const file = path.join(dir, files[i]);
     let entry;
     try { entry = readJson(file); } catch { continue; }
-    if (!entry || entry.tool !== "report_model_run") continue;
+    if (!entry || !FIELDS[entry.tool]) continue;
     try {
-      await send(entry.args, { env, fetchImpl, timeoutMs });
+      await send(entry.args, { env, fetchImpl, timeoutMs, tool: entry.tool });
       fs.rmSync(file, { force: true });
       sent++;
     } catch (err) {
@@ -116,31 +131,35 @@ async function flushUnlocked({ env = process.env, fetchImpl, timeoutMs = 10000 }
 }
 
 // reportModelRun -> {reported, queued, held?, rejected?, error?, outbox_file?}
-async function reportUnlocked(payload, { env = process.env, fetchImpl, timeoutMs = 10000 } = {}) {
-  const args = sanitizeReport(payload, { secrets: secretsFor(env) });
+async function reportUnlocked(payload, { env = process.env, fetchImpl, timeoutMs = 10000, tool = "report_model_run" } = {}) {
+  const args = sanitizeReport(payload, { secrets: secretsFor(env), tool });
   const dir = outboxDir(env);
-  const held = holdReason(args);
+  const held = holdReason(args, tool);
   if (held) {
-    const file = writeEntry(path.join(dir, "held"), { tool: "report_model_run", args, held: held, queued_at: new Date().toISOString() });
+    const file = writeEntry(path.join(dir, "held"), { tool, args, held: held, queued_at: new Date().toISOString() });
     return { reported: false, queued: false, held, outbox_file: file };
   }
   // Earlier failures go first, so the server sees attempts in order.
   const flushed = await flushUnlocked({ env, fetchImpl, timeoutMs }).catch(() => ({ remaining: 1 }));
   if (flushed.remaining === 0) {
     try {
-      const reply = await send(args, { env, fetchImpl, timeoutMs });
+      const reply = await send(args, { env, fetchImpl, timeoutMs, tool });
+      if (tool === "report_result") {
+        return { reported: true, queued: false, status: reply?.status ?? null,
+                 ...(typeof reply?.next_model === "string" ? { next_model: reply.next_model } : {}) };
+      }
       return { reported: true, queued: false, observation_id: reply?.observation_id };
     } catch (err) {
       if (err.transient === false) {
-        const file = writeEntry(path.join(dir, "rejected"), { tool: "report_model_run", args, error: err.message, rejected_at: new Date().toISOString() });
+        const file = writeEntry(path.join(dir, "rejected"), { tool, args, error: err.message, rejected_at: new Date().toISOString() });
         return { reported: false, queued: false, rejected: redact(err.message).slice(0, 300), outbox_file: file };
       }
-      const file = writeEntry(dir, { tool: "report_model_run", args, queued_at: new Date().toISOString(), attempts: 1,
+      const file = writeEntry(dir, { tool, args, queued_at: new Date().toISOString(), attempts: 1,
                                      last_error: redact(err.message).slice(0, 300) });
       return { reported: false, queued: true, error: redact(err.message).slice(0, 300), outbox_file: file };
     }
   }
-  const file = writeEntry(dir, { tool: "report_model_run", args, queued_at: new Date().toISOString(), attempts: 0,
+  const file = writeEntry(dir, { tool, args, queued_at: new Date().toISOString(), attempts: 0,
                                  last_error: "outbox not drained (hosted server unavailable)" });
   return { reported: false, queued: true, error: "hosted server unavailable; queued behind earlier entries", outbox_file: file };
 }

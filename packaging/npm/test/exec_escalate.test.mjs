@@ -118,3 +118,64 @@ test("escalate is validated like every numeric input: clamped to 0..3, non-numbe
     await s.hosted.close();
   }
 });
+
+// A model plan's step (find_ways model_plan): achieve(instance_key) reports each attempt with report_result and
+// escalates along the plan's next_model, not the local ladder; recommend_models is never asked.
+test("plan step: attempts report to report_result, escalation follows next_model, run_result names the next model", async () => {
+  const repo = makeRepo();
+  const replies = { c1: "m1|mid", m1: "s1|strong" };
+  const hosted = await mockHosted((name, args) => {
+    if (name !== "report_result") return { status: 500, text: "unexpected" };
+    if (args.accepted) return { text: JSON.stringify({ status: "accepted" }) };
+    return { text: JSON.stringify({ status: "rejected", next_model: replies[args.model] }) };
+  });
+  const env = testEnv({ url: hosted.url });
+  writeExecConfig(env, { executors: { cheap: { models: ["c1"] }, mid: { models: ["m1"] } } });   // no local "strong"
+  const rt = new ExecRuntime({ env, adapters: {
+    cheap: stubAdapter({ id: "cheap", scenario: WRONG }),
+    mid: stubAdapter({ id: "mid", scenario: WRONG }),
+  } });
+  try {
+    const { run_id } = await rt.achieve({ repo_path: repo, task: TASK, checks: ["node check.mjs"], scope: ["calc.txt"],
+      executor: "cheap", model: "c1", instance_key: "g-1.ab12", escalate: 3 });
+    const res = await rt.runResult(run_id, 50);
+    assert.equal(res.state, "failed");
+    assert.deepEqual(res.race.map((r) => [r.executor, r.model]), [["cheap", "c1"], ["mid", "m1"]],
+      "the plan's third model has no local executor, so the run stops there");
+    assert.equal(res.next_model, "s1|strong");
+    assert.equal(res.evidence.instance_key, "g-1.ab12");
+    const sent = hosted.calls.filter((c) => c.name === "report_result").map((c) => c.args);
+    assert.deepEqual(sent.map((a) => [a.instance_key, a.model, a.scaffold, a.accepted, a.check_kind]),
+      [["g-1.ab12", "c1", "cheap", false, "tests"], ["g-1.ab12", "m1", "mid", false, "tests"]]);
+    assert.ok(!hosted.calls.some((c) => c.name === "recommend_models" || c.name === "report_model_run"));
+    await rt.cancelRun(run_id);
+  } finally {
+    await hosted.close();
+  }
+});
+
+test("plan step: an unreachable server queues the report_result and the run does not escalate on a guess", async () => {
+  const repo = makeRepo();
+  const hosted = await mockHosted(() => ({ status: 500, text: "down" }));
+  const env = testEnv({ url: hosted.url });
+  writeExecConfig(env, { executors: { cheap: { models: ["c1"] }, mid: { models: ["m1"] } } });
+  const rt = new ExecRuntime({ env, adapters: { cheap: stubAdapter({ id: "cheap", scenario: WRONG }),
+                                                 mid: stubAdapter({ id: "mid", scenario: FIX }) } });
+  try {
+    const { run_id } = await rt.achieve({ repo_path: repo, task: TASK, checks: ["node check.mjs"], scope: ["calc.txt"],
+      executor: "cheap", model: "c1", instance_key: "g-1.ab12", escalate: 2 });
+    const res = await rt.runResult(run_id, 50);
+    assert.equal(res.state, "failed");
+    assert.equal(res.race, undefined);
+    assert.equal(res.next_model, undefined);
+    const queued = outboxFiles(env);
+    assert.equal(queued.length, 1);
+    assert.equal(queued[0].tool, "report_result");
+    assert.equal(queued[0].args.instance_key, "g-1.ab12");
+    await assert.rejects(rt.achieve({ repo_path: repo, task: TASK, checks: ["x"], scope: ["calc.txt"], instance_key: "bad key" }),
+      /instance_key/);
+    await rt.cancelRun(run_id);
+  } finally {
+    await hosted.close();
+  }
+});

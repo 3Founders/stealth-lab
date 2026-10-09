@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLAUDE_CODE_CANDIDATES, formatKnowledge, hookPolicy, planPart, routingArgs } from "../lib/hook.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { CLAUDE_CODE_CANDIDATES, execCandidates, formatKnowledge, hookPolicy, planPart, routingArgs } from "../lib/hook.mjs";
+
+// A home with no ~/.claude and no ~/.stealthlab, so the user's own exec setup never leaks into a test.
+const bareEnv = () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hook-home-"));
+  return { STEALTHLAB_TEST_HOME: home, STEALTHLAB_HOME: path.join(home, ".stealthlab") };
+};
 import { buildReport, lookupIdentity } from "../lib/capture_hook.mjs";
 
 const PLAN = {
@@ -11,9 +20,25 @@ const PLAN = {
 };
 
 test("routing is on by default: my_model plus the other Claude Code models", () => {
-  const a = routingArgs(hookPolicy({}), "claude-sonnet-5-5");
+  const a = routingArgs(hookPolicy(bareEnv()), "claude-sonnet-5-5");
   assert.equal(a.my_model, "claude-sonnet-5-5|claude-code");
   assert.deepEqual(a.candidates, CLAUDE_CODE_CANDIDATES.filter((c) => c !== "claude-sonnet-5-5|claude-code"));
+});
+
+test("with the local executor installed, the models exec.json configures are candidates too", () => {
+  const env = bareEnv();
+  fs.mkdirSync(env.STEALTHLAB_HOME, { recursive: true });
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"),
+    JSON.stringify({ executors: { stealth: { models: ["glm-5.3", "kimi-k2"] }, opencode: { models: ["glm-5.3"] } } }));
+  assert.deepEqual(execCandidates(env), [], "no stealth-delegator agent: the executor is not installed");
+  fs.mkdirSync(path.join(env.STEALTHLAB_TEST_HOME, ".claude", "agents"), { recursive: true });
+  fs.writeFileSync(path.join(env.STEALTHLAB_TEST_HOME, ".claude", "agents", "stealth-delegator.md"), "x");
+  assert.deepEqual(execCandidates(env), ["glm-5.3|stealth", "kimi-k2|stealth", "glm-5.3|opencode"]);
+  const a = routingArgs(hookPolicy(env), "claude-sonnet-5-5");
+  assert.ok(a.candidates.includes("glm-5.3|stealth") && a.candidates.includes("claude-haiku-4-5|claude-code"));
+  assert.deepEqual(routingArgs(hookPolicy({ ...env, STEALTHLAB_HOOK_CANDIDATES: "x|y" }), "m1").candidates, ["x|y"]);
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), "{ not json");
+  assert.deepEqual(execCandidates(env), []);
 });
 
 test("routing off, unknown model, or a custom list", () => {

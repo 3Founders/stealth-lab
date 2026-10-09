@@ -29,6 +29,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { claudeDir } from "./claude_exec.mjs";
+import { execConfigPath } from "./exec/store.mjs";
 import { modelFromTranscript, rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
 
@@ -48,7 +49,7 @@ export function hookPolicy(env = process.env) {
     triage: (env.STEALTHLAB_HOOK_TRIAGE || "on").toLowerCase() !== "off",
     triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 4000),
     routing: (env.STEALTHLAB_HOOK_ROUTING || "on").toLowerCase() !== "off",
-    candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES),
+    candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES, env),
     // how sure a plan must be before it trusts a cheaper model (server defaults: 0.90 / 0.90). Lower = cheaper
     // first rungs, more escalations; the local-only experiment varies it.
     reliability: num01(env.STEALTHLAB_HOOK_RELIABILITY),
@@ -76,8 +77,28 @@ export function parseCandidateList(raw) {
   return String(raw || "").split(",").map((x) => x.trim()).filter((x) => /^[^|\s]+\|[^|\s]+$/.test(x));
 }
 
-function parseCandidates(raw) {
-  return raw === undefined ? CLAUDE_CODE_CANDIDATES : parseCandidateList(raw);
+function parseCandidates(raw, env) {
+  return raw === undefined ? [...CLAUDE_CODE_CANDIDATES, ...execCandidates(env)] : parseCandidateList(raw);
+}
+
+// With the local executor installed (`install --with-exec`: the stealth-delegator agent exists), every model
+// ~/.stealthlab/exec.json configures for an executor is a unit a plan may choose: "model|executor". The model guard
+// hands such a step to the delegator (lib/model_guard.mjs). A malformed exec.json adds nothing.
+export function execCandidates(env = process.env) {
+  try {
+    if (!fs.existsSync(path.join(claudeDir(env), "agents", "stealth-delegator.md"))) return [];
+    const cfg = JSON.parse(fs.readFileSync(execConfigPath(env), "utf8"));
+    const out = [];
+    for (const [id, spec] of Object.entries(cfg?.executors || {})) {
+      for (const m of Array.isArray(spec?.models) ? spec.models : []) {
+        const u = `${m}|${id}`;
+        if (/^[^|\s]+\|[^|\s]+$/.test(u) && !out.includes(u)) out.push(u);
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 // The find_ways arguments that ask for a model plan, or {} when routing is off or the model is unknown.

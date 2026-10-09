@@ -30,6 +30,16 @@ Three executors can run an open model (GLM, DeepSeek, Kimi, ...) through `stealt
 `key_env` is the NAME of the environment variable holding the user's own provider key; the key is never stored here.
 Compliance fields are declarations, absent = unknown. A profile is keyed by the model name a run asks for.
 
+## How a model plan reaches them
+- With the executor installed, every `executors.<id>.models` entry is offered to `find_ways` as a candidate
+  `model|<id>` (`lib/hook.mjs` `execCandidates`).
+- When the plan's step is one of them, the model guard (`lib/model_guard.mjs`) sends the work to the
+  `stealth-delegator` subagent, with `executor`, `model` and the plan's `instance_key`.
+- `achieve(instance_key=...)` reports each attempt with `report_result` (queued in the outbox when offline).
+  `escalate` follows the reply's `next_model` while a local executor can run it, and `run_result.next_model` names
+  the model after that. The guard then follows it, e.g. back to a Claude subagent.
+- Not yet run end to end: a live Claude Code session, the hosted `report_result` and a real provider key.
+
 ## What the code guarantees (and tests)
 - The provider key goes only into the child that talks to that provider, never into argv, logs or the config text.
 - `claude` and `stealth` children have the user's other vendors' credentials removed; `claude` also gets an empty

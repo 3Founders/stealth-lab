@@ -23,19 +23,37 @@
 //                input it lets the call through: there is nothing it can set. Cursor routes only when
 //                STEALTHLAB_CURSOR_CANDIDATES names models to plan over (its hook sends my_model as well).
 //
-// A plan step whose model is not a Claude model (an open model through call_model or the executor) is never
-// enforced on a Claude Code subagent: the Agent tool cannot run it. STEALTHLAB_MODEL_GUARD=off disables it all.
-// State lives in the capture session file (lib/capture_hook.mjs): the plan's ladder and the current step.
+// A plan step whose model is NOT a Claude model (GLM, DeepSeek, ...) cannot run as a Claude Code subagent. When the
+// local executor is installed (`install --with-exec`) and ~/.stealthlab/exec.json configures an executor for that
+// model, the guard hands the step to it:
+//   PreToolUse on Agent|Task: refuse a call that is not the `stealth-delegator` subagent carrying the plan's
+//                instance_key, with the exact arguments to use (executor, model, instance_key);
+//   PreToolUse on the executor's `achieve`: the same refusal (or, in rewrite mode, updatedInput) when the call
+//                does not name the plan's unit and instance_key -- the delegator is a subagent, and Claude Code
+//                hooks see its tool calls under the same session;
+//   PostToolUse on `run_result`: the runtime has already reported each attempt with report_result (lib/exec);
+//                a verified run ends the plan, a failed one moves the guard to the reply's next_model.
+// With no local executor for the model the guard stands aside, as before. STEALTHLAB_MODEL_GUARD=off disables it all.
+// State lives in the capture session file (lib/capture_hook.mjs): the plan's ladder, current step and instance_key.
 import fs from "node:fs";
 import { logHook } from "./subagent_hook.mjs";
 import { sessionFile } from "./capture_hook.mjs";
+import { localUnit, readExecConfig } from "./exec/store.mjs";
 
 export const MAX_DENIALS = 2;
 export const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
+export const DELEGATOR = "stealth-delegator";
+export const ACHIEVE_TOOL = "mcp__stealthlab-exec__achieve";
+export const RUN_RESULT_TOOL = "mcp__stealthlab-exec__run_result";
 export const ROUTE_HOOKS = {
-  PreToolUse: { matcher: "Agent|Task", mark: "hook route-subagent" },
-  PostToolUse: { matcher: "mcp__stealthlab__report_result|mcp__stealthlab__use_tool", mark: "hook route-report" },
+  PreToolUse: { matcher: `Agent|Task|${ACHIEVE_TOOL}`, mark: "hook route-subagent" },
+  PostToolUse: { matcher: `mcp__stealthlab__report_result|mcp__stealthlab__use_tool|${RUN_RESULT_TOOL}`, mark: "hook route-report" },
 };
+
+// The local {executor, model} for a plan unit, or null (no exec.json, malformed, or nothing configured for it).
+export function executorFor(unit, env = process.env) {
+  try { return localUnit(unit, readExecConfig(env)); } catch { return null; }
+}
 
 export function guardMode(env = process.env) {
   const v = String(env.STEALTHLAB_MODEL_GUARD || "deny").toLowerCase();
@@ -64,19 +82,7 @@ export function currentStep(env, sessionId) {
 
 // --- Claude Code ------------------------------------------------------------------------------
 
-export function onClaudePreToolUse(payload, { env = process.env } = {}) {
-  const mode = guardMode(env);
-  if (mode === "off" || !SUBAGENT_TOOLS.has(payload?.tool_name)) return null;
-  const step = currentStep(env, payload.session_id);
-  if (!step) return null;
-  const alias = claudeAlias(step.plan.current);
-  const input = payload.tool_input && typeof payload.tool_input === "object" ? payload.tool_input : {};
-  if (!alias || String(input.model || "").toLowerCase() === alias) return null;
-  if (mode === "rewrite") {
-    logHook(env, "route-subagent", `rewrite model -> ${alias}`);
-    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow",
-                                   updatedInput: { ...input, model: alias } } };
-  }
+function deny(step, reason, env, what) {
   const denials = Number(step.plan.denials || 0);
   if (denials >= MAX_DENIALS) {
     logHook(env, "route-subagent", `let through after ${denials} refusals`);
@@ -84,11 +90,75 @@ export function onClaudePreToolUse(payload, { env = process.env } = {}) {
   }
   step.plan.denials = denials + 1;
   writeJson(step.file, step.session);
-  logHook(env, "route-subagent", `refused: asked ${input.model || "default"}, plan says ${alias}`);
-  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny",
-    permissionDecisionReason: `StealthLab's model plan for this task runs this step on ${alias}` +
-      (step.plan.p_ok?.[step.plan.current] !== undefined ? ` (p_ok ${step.plan.p_ok[step.plan.current]})` : "") +
-      `. Call the ${payload.tool_name} tool again with the same arguments and model: "${alias}".` } };
+  logHook(env, "route-subagent", `refused: ${what}`);
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } };
+}
+
+const pOkNote = (plan) => (plan.p_ok?.[plan.current] !== undefined ? ` (p_ok ${plan.p_ok[plan.current]})` : "");
+
+// A non-Claude step with a local executor: the work goes to the delegator, which calls achieve with these.
+function onOpenModelStep(payload, step, local, input, mode, env) {
+  const key = step.plan.instance_key || "";
+  const args = `executor=${local.executor} model=${local.model}${key ? ` instance_key=${key}` : ""}`;
+  if (payload.tool_name === ACHIEVE_TOOL) {
+    if (input.executor === local.executor && input.model === local.model && (!key || input.instance_key === key)) return null;
+    if (mode === "rewrite") {
+      logHook(env, "route-subagent", `rewrite achieve -> ${local.model}|${local.executor}`);
+      return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow",
+        updatedInput: { ...input, executor: local.executor, model: local.model, ...(key ? { instance_key: key } : {}) } } };
+    }
+    return deny(step, `StealthLab's model plan runs this step on ${local.model} through the local ${local.executor} ` +
+      `executor${pOkNote(step.plan)}. Call achieve again with the same arguments plus ${args}.`, env,
+      `achieve without the plan's unit (${local.model}|${local.executor})`);
+  }
+  const prompt = String(input.prompt || "");
+  if (input.subagent_type === DELEGATOR && (!key || prompt.includes(key))) return null;
+  return deny(step, `StealthLab's model plan runs this step on ${local.model}, an open model a Claude subagent cannot ` +
+    `run${pOkNote(step.plan)}. Call the ${payload.tool_name} tool with subagent_type: "${DELEGATOR}" and the same ` +
+    `task, adding this line to the prompt: "Run it with ${args}." It runs in a worktree, is verified by the node's ` +
+    `check and reports to the plan; apply the verified run afterwards.`, env, `asked ${input.subagent_type || "default"}, plan says ${local.model}|${local.executor}`);
+}
+
+export function onClaudePreToolUse(payload, { env = process.env } = {}) {
+  const mode = guardMode(env);
+  const tool = payload?.tool_name;
+  if (mode === "off" || !(SUBAGENT_TOOLS.has(tool) || tool === ACHIEVE_TOOL)) return null;
+  const step = currentStep(env, payload.session_id);
+  if (!step) return null;
+  const alias = claudeAlias(step.plan.current);
+  const input = payload.tool_input && typeof payload.tool_input === "object" ? payload.tool_input : {};
+  if (!alias) {
+    const local = executorFor(step.plan.current, env);
+    return local ? onOpenModelStep(payload, step, local, input, mode, env) : null;   // nothing local can run it
+  }
+  if (tool === ACHIEVE_TOOL) return null;                           // a Claude step: achieve is the caller's own choice
+  if (String(input.model || "").toLowerCase() === alias) return null;
+  if (mode === "rewrite") {
+    logHook(env, "route-subagent", `rewrite model -> ${alias}`);
+    return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow",
+                                   updatedInput: { ...input, model: alias } } };
+  }
+  return deny(step, `StealthLab's model plan for this task runs this step on ${alias}${pOkNote(step.plan)}. ` +
+    `Call the ${tool} tool again with the same arguments and model: "${alias}".`, env,
+    `asked ${input.model || "default"}, plan says ${alias}`);
+}
+
+function jsonTexts(raw) {
+  const texts = [];
+  const walk = (v) => {
+    if (typeof v === "string") texts.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") { if (typeof v.text === "string") texts.push(v.text); else Object.values(v).forEach(walk); }
+  };
+  walk(raw);
+  const out = [];
+  for (const t of texts) {
+    try {
+      const j = JSON.parse(t);
+      if (j && typeof j === "object") out.push(j);
+    } catch { /* not JSON */ }
+  }
+  return out;
 }
 
 // The JSON a report_result reply carries, from a PostToolUse payload (direct call or use_tool), or null.
@@ -97,29 +167,26 @@ export function reportReply(payload) {
   const viaUseTool = name.endsWith("__use_tool");
   if (viaUseTool && payload?.tool_input?.name !== "report_result") return null;
   if (!viaUseTool && !name.endsWith("__report_result")) return null;
-  const raw = payload?.tool_response ?? payload?.tool_output;
-  const texts = [];
-  const walk = (v) => {
-    if (typeof v === "string") texts.push(v);
-    else if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === "object") { if (typeof v.text === "string") texts.push(v.text); else Object.values(v).forEach(walk); }
-  };
-  walk(raw);
-  for (const t of texts) {
-    try {
-      const j = JSON.parse(t);
-      if (j && typeof j === "object" && ("next_model" in j || "status" in j)) return j;
-    } catch { /* not JSON */ }
-  }
-  return null;
+  return jsonTexts(payload?.tool_response ?? payload?.tool_output).find((j) => "next_model" in j || "status" in j) || null;
+}
+
+// A finished executor run of the plan's step (run_result), as a report_result-shaped reply, or null. The runtime
+// already reported every attempt; this only moves the guard. A run still going, or another plan's run, is ignored.
+export function runReply(payload, plan) {
+  if (payload?.tool_name !== RUN_RESULT_TOOL) return null;
+  const r = jsonTexts(payload?.tool_response ?? payload?.tool_output).find((j) => "state" in j);
+  if (!r || !["verified", "failed", "timed_out"].includes(r.state)) return null;
+  if (!plan?.instance_key || r.evidence?.instance_key !== plan.instance_key) return null;
+  if (r.state === "verified") return { status: "accepted" };
+  return typeof r.next_model === "string" ? { status: "rejected", next_model: r.next_model } : { status: "rejected" };
 }
 
 // After report_result: follow the ladder (next_model), or stop guarding once a result passed.
 export function onPlanReport(payload, { env = process.env } = {}) {
-  const reply = reportReply(payload);
-  if (!reply) return null;
-  const step = currentStep(env, payload.session_id);
+  const step = currentStep(env, payload?.session_id);
   if (!step) return null;
+  const reply = reportReply(payload) || runReply(payload, step.plan);
+  if (!reply) return null;
   if (reply.status === "accepted") step.plan.done = true;
   else if (typeof reply.next_model === "string") {
     step.plan.current = reply.next_model;

@@ -30,6 +30,8 @@ you never apply a run.
    - `scope`: globs for the files the node may change (as narrow as the node allows);
    - `procedure_id` and `step_order` when the node has `step=P-n:<order>` and `.stealth/procedures.md` maps
      `P-n` to a procedure id. Leave `executor` and `model` unset unless the task names them;
+   - if the task says "Run it with executor=<e> model=<m> instance_key=<k>" (StealthLab's model plan), pass exactly
+     those three as `executor`, `model` and `instance_key`: every attempt is then reported to that plan;
    - `escalate: 2`: if the first (cheapest) rung fails its checks, the executor tries up to two further rungs
      of the ladder by itself, each verified by the same checks. Use `escalate: 0` only if the task says so.
 3. Poll `run_result(run_id, wait_s=55)` until `state` is terminal (verified, failed, timed_out, cancelled).

@@ -14,7 +14,7 @@
 // "no change expected"). The executor's own claims, and its exit code, never set it.
 import fs from "node:fs";
 import path from "node:path";
-import { reportModelRun } from "./evidence.mjs";
+import { reportModelRun, reportPlanResult } from "./evidence.mjs";
 import { hostedSettings } from "./hosted.mjs";
 import { childEnv, spawnManaged } from "./proc.mjs";
 import { redact } from "./redact.mjs";
@@ -23,6 +23,7 @@ import {
   appendPrivate, ensureDir, newRunId, readExecConfig, readJson, redactingLog, RUN_ID_RE, runDir, runsDir, writePrivate,
 } from "./store.mjs";
 import { NO_CHANGE_RE, parseNodeLines } from "./task.mjs";
+import { localUnit } from "./store.mjs";
 import { runChecks, scopeViolations } from "./verify.mjs";
 import {
   applyToCheckout, assertNoMergeState, collectDiff, createWorktree, defaultWorktreeRoot, headCommit, removeWorktree,
@@ -85,6 +86,11 @@ export class ExecRuntime {
     const race = input.race === undefined || input.race === null ? undefined : Number(input.race);
     if (race !== undefined && race !== 1 && race !== 2) throw new Error("race must be 1 or 2");
     const escalate = clampInt(input.escalate, 0, 3, 0);
+    // A model plan's step (find_ways model_plan): its instance_key ties every attempt to that plan, so each one is
+    // reported with report_result and escalation follows the plan's next_model instead of the local ladder.
+    const planKey = input.instance_key === undefined || input.instance_key === null || input.instance_key === "" ? null
+      : String(input.instance_key);
+    if (planKey !== null && !/^[A-Za-z0-9_.:-]{1,200}$/.test(planKey)) throw new Error("instance_key is not a model plan key");
     const base = input.base || "HEAD";
     if (base !== "HEAD" && base !== "working-tree") throw new Error('base must be "HEAD" or "working-tree"');
     if (input.executor) await this.registry.get(String(input.executor));
@@ -103,7 +109,7 @@ export class ExecRuntime {
       input: {
         task: input.task, checks, scope, goal_id: input.goal_id || null, procedure_id: input.procedure_id || null,
         step_order: stepOrder, executor: input.executor || null, model: input.model || null, timeoutS, hangS,
-        checkTimeoutS, race, escalate, base, noChangeExpected: NO_CHANGE_RE.test(input.task),
+        checkTimeoutS, race, escalate, base, noChangeExpected: NO_CHANGE_RE.test(input.task), instance_key: planKey,
       },
       attempts: [], winner: null, error: null, selection: null, applied: null, discarded: false,
       cancelRequested: false, lastEvent: "queued", waiters: new Set(),
@@ -220,7 +226,7 @@ export class ExecRuntime {
       env: this.env, fetchImpl: this.fetchImpl,
     });
     run.selection = { source: sel.source, race: sel.race, note: sel.note, recommendation: sel.recommendation };
-    run.instanceKey = sel.recommendation?.instance_key || `stealth-${run.id}`;
+    run.instanceKey = run.input.instance_key || sel.recommendation?.instance_key || `stealth-${run.id}`;
     run.attempts = sel.units.map((u, i) => this.newAttempt(run, u, i));
     this.event(run, { event: "selected", source: sel.source, race: sel.race, units: sel.units, note: sel.note });
     this.persist(run);
@@ -230,8 +236,16 @@ export class ExecRuntime {
     // Check-and-escalate: while nothing is verified, climb to the next untried rung, one at a time.
     const tried = new Set(run.attempts.map((a) => `${a.model}|${a.executor}`));
     const rungs = (sel.ladder || []).filter((u) => !tried.has(`${u.model}|${u.executor}`));
-    for (let i = 0; i < (run.input.escalate || 0) && i < rungs.length; i++) {
+    for (let i = 0; i < (run.input.escalate || 0) && (run.input.instance_key || i < rungs.length); i++) {
       if (run.winner !== null || run.cancelRequested) break;
+      if (run.input.instance_key) {
+        // the plan names the next model; run it here only if a configured local executor can
+        const last = run.attempts[run.attempts.length - 1];
+        const next = localUnit(last?.evidence?.next_model, cfg);
+        if (!next || tried.has(`${next.model}|${next.executor}`)) break;
+        tried.add(`${next.model}|${next.executor}`);
+        rungs.splice(i, 0, next);
+      }
       const failed = run.attempts.map((a) => ({ executor: a.executor, model: a.model, state: a.state }));
       const a = this.newAttempt(run, rungs[i], run.attempts.length);
       a.escalated = true;
@@ -374,7 +388,13 @@ export class ExecRuntime {
   }
 
   async finishAttempt(run, a) {
-    if (a.spawned) {
+    if (a.spawned && run.input.instance_key) {
+      a.evidence = await reportPlanResult({
+        instance_key: run.input.instance_key, accepted: a.state === "verified", model: a.model, scaffold: a.executor,
+        check_kind: a.checks.length ? "tests" : "self_report", latency_ms: a.finishedAt - a.startedAt,
+        tokens_in: a.tokens.in, tokens_out: a.tokens.out, cost_usd: a.costUsd,
+      }, { env: this.env, fetchImpl: this.fetchImpl }).catch((err) => ({ reported: false, queued: false, error: this.red(err.message) }));
+    } else if (a.spawned) {
       a.evidence = await reportModelRun({
         model: a.model, scaffold: a.executor, accepted: a.state === "verified", instance_key: run.instanceKey,
         goal_id: run.input.goal_id, procedure_id: run.input.procedure_id, step_order: run.input.step_order,
@@ -480,6 +500,11 @@ export class ExecRuntime {
       if (n) view.escalated = n;
     }
     if (run.selection) view.selection = { source: run.selection.source, note: run.selection.note || undefined };
+    if (run.input.instance_key) {
+      // the model plan's next model after this run's last attempt (absent when it passed, or the report is queued)
+      const last = run.attempts[run.attempts.length - 1];
+      if (view.state !== "verified" && last?.evidence?.next_model) view.next_model = last.evidence.next_model;
+    }
     if (run.applied) view.applied = run.applied;
     return view;
   }

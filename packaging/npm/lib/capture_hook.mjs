@@ -117,7 +117,8 @@ export function planState(reply) {
   if (!p || p.status !== "ok" || !Array.isArray(p.ladder) || !p.ladder.length) return null;
   const pOk = {};
   for (const r of p.steps?.[0]?.ladder || []) if (typeof r.p_ok_mean === "number") pOk[r.unit] = Number(r.p_ok_mean.toFixed(2));
-  return { ladder: p.ladder, current: p.ladder[0], p_ok: pOk, denials: 0, done: false };
+  return { ladder: p.ladder, current: p.ladder[0], p_ok: pOk, denials: 0, done: false,
+           instance_key: typeof p.instance_key === "string" ? p.instance_key : null };
 }
 
 // Called by the UserPromptSubmit hook after its lookup. Every prompt starts a fresh record: one report per prompt.
