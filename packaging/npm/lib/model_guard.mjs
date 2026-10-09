@@ -40,6 +40,7 @@
 // deny reached the agent, which called Agent again with model "sonnet"; the subagent ran on claude-sonnet-5-5.
 // Hooks see a subagent's own tool calls under the PARENT session_id (plus agent_id / agent_type), which is what the
 // achieve / run_result hooks rely on. Not yet run live: rewrite mode, report_result, the executor path.
+import { shellJoin } from "./claude_exec.mjs";
 import fs from "node:fs";
 import { logHook } from "./subagent_hook.mjs";
 import { sessionFile } from "./capture_hook.mjs";
@@ -227,9 +228,6 @@ const isOursFor = (mark) => (group) => (group?.hooks || []).some((h) => {
   return cmd.includes("stealthlab-mcp") && cmd.endsWith(mark);
 });
 
-function shellJoin(spec) {
-  return [spec.command, ...spec.args].map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
-}
 
 export function addRouteHooks(doc, launch, timeoutSec = 10) {
   doc.hooks = doc.hooks || {};

@@ -286,7 +286,7 @@ const isOurs = (mark) => (entry) => {
 // A command line every shell Cursor may use can run. On Windows a quoted program path ("C:\Program Files\...")
 // is a string, not a command, in PowerShell, so there we call `node` from PATH instead of node's full path.
 export function cursorCommand(launch, mark, platform = process.platform) {
-  const quote = (a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
+  const quote = (a) => (/[\s"\\]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);   // backslash: see claude_exec shellJoin
   const program = platform === "win32" && /\s/.test(launch.command) && /node(\.exe)?$/i.test(launch.command) ? "node" : launch.command;
   return [quote(program), ...launch.args.map(quote), ...mark.split(" ")].join(" ");
 }

@@ -2,6 +2,7 @@
 // under the server name "stealthlab". JSON configs are edited in place: other servers
 // and keys are preserved, a .bak copy is written first, and a file that
 // doesn't parse is left untouched (we never clobber a config we can't read).
+import { shellJoin } from "./claude_exec.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -131,9 +132,6 @@ export function claudeSettingsPath(env = process.env) {
   return path.join(env.CLAUDE_CONFIG_DIR || path.join(home(env), ".claude"), "settings.json");
 }
 
-function shellJoin(spec) {
-  return [spec.command, ...spec.args].map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
-}
 
 function readJsonOrThrow(file) {
   if (!fs.existsSync(file)) return {};

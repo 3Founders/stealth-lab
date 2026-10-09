@@ -283,3 +283,16 @@ test("CLI: exec apply needs a run id, and refuses an unknown run with exit 1", (
   assert.equal(unknown.status, 1);
   assert.match(unknown.stderr, /unknown run/);
 });
+
+test("hook commands run through bash with Windows backslash paths (Claude Code on Windows uses Git Bash)", (t) => {
+  const bash = spawnSync("bash", ["-c", "echo ok"], { encoding: "utf8" });
+  if (bash.status !== 0) return t.skip("no bash on this machine");
+  const dir = tmp();
+  const script = path.join(dir, "hook probe.mjs");           // path.join: backslashes on Windows, and a space
+  fs.writeFileSync(script, "process.stdout.write('ran:' + process.argv.slice(2).join(','))\n");
+  const cmd = shellJoin({ command: process.execPath, args: [script, "hook", "prompt"] });
+  assert.ok(cmd.includes(`"${script}"`), "a path with backslashes or spaces is quoted");
+  const r = spawnSync("bash", ["-c", cmd], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "ran:hook,prompt");
+});

@@ -52,8 +52,12 @@ export function execPaths(env = process.env) {
 }
 
 // Same quoting as lib/clients.mjs so a Windows path with spaces survives the shell Claude Code uses.
+// One command line for the hooks and agents we write. A part with whitespace, a quote or a BACKSLASH is
+// double-quoted: on Windows Claude Code runs hook commands through Git Bash, which reads an unquoted
+// C:\Users\... as C:Users... (the script is not found and every hook fails silently); inside double quotes bash
+// keeps the backslashes, and cmd.exe and PowerShell accept quoted arguments too.
 export function shellJoin(spec) {
-  return [spec.command, ...spec.args].map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
+  return [spec.command, ...spec.args].map((a) => (/[\s"\\]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
 }
 
 // JSON strings are valid YAML double-quoted scalars (backslashes in Windows paths stay escaped).

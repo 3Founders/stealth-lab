@@ -199,7 +199,7 @@ test("hooks.json that does not parse is left untouched", () => {
 test("Windows: a node path with spaces becomes `node` so PowerShell and cmd can both run it", () => {
   const launch = { command: "C:\\Program Files\\nodejs\\node.exe", args: ["C:\\Users\\a\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs"] };
   assert.equal(cursorCommand(launch, "hook cursor-tool", "win32"),
-    "node C:\\Users\\a\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs hook cursor-tool");
+    'node "C:\\Users\\a\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs" hook cursor-tool');   // quoted: bash keeps the backslashes
   const doc = addCursorHooks({}, { command: "/usr/bin/node", args: ["/x/stealthlab-mcp.mjs"] }, "linux");
   assert.equal(doc.version, 1);
   assert.ok(removeCursorHooks(doc));

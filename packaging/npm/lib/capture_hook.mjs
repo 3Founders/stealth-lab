@@ -31,6 +31,7 @@
 // session file stays ids, verdicts and times only.
 // Off unless a token is saved (a report needs one; without it nothing is queued). STEALTHLAB_CAPTURE=off
 // disables it. Every hook exits 0 and prints nothing: exit 2 on Stop would keep Claude from stopping.
+import { shellJoin } from "./claude_exec.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -397,9 +398,6 @@ const isOursFor = (mark) => (group) => (group?.hooks || []).some((h) => {
   return cmd.includes("stealthlab-mcp") && cmd.endsWith(mark);
 });
 
-function shellJoin(spec) {
-  return [spec.command, ...spec.args].map((a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a)).join(" ");
-}
 
 // Adds (or refreshes) our PostToolUse/Stop entries inside an already-parsed settings document; the caller
 // reads and writes the file. Nothing else in `doc` is touched.
