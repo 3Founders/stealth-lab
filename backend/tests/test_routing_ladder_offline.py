@@ -235,3 +235,19 @@ def test_a_measured_model_without_a_price_takes_its_twin_cards_price():
     assert (out["qwen3-coder-480b-a35b"]["price_in"], out["qwen3-coder-480b-a35b"]["price_out"]) == (0.3, 1.0)
     assert out["qwen3-coder-480b-a35b"]["context_k"] == 262.0
     assert out["other-model"]["price_in"] is None, "no twin: stays unpriced"
+
+
+def test_a_per_draw_target_moves_with_the_posterior():
+    """rho may be an (S,) array (the matched-to-baseline target): a draw in which the baseline itself is unlikely
+    asks less of the ladder, so a ladder can be feasible under a per-draw target and not under its average."""
+    rng = np.random.default_rng(5)
+    p, ew = _p(np.array([[0.0, 0.5]] * 20 + [[3.0, 3.5]] * 20), np.full(40, 0.5), 10)
+    zero = np.zeros(40)
+    common = dict(cost_check=0.0, value=5.0, wrong_penalty=5.0, candidates=[0, 1], max_rungs=1, confidence=0.9, rng=rng)
+    base = (ladder.ladder_node_ok(p, zero, zero, [1]) * ew[None, :]).sum(axis=1)       # unit 1 alone, per draw
+    matched = ladder.choose(p, ew, zero, zero, np.array([0.1, 1.0]), np.array([0.1, 1.0]), rho=base - 0.03, **common)
+    fixed = ladder.choose(p, ew, zero, zero, np.array([0.1, 1.0]), np.array([0.1, 1.0]), rho=float(base.mean()) - 0.03,
+                          **common)
+    assert matched.meets_target, "unit 1 alone always clears its own target minus the tolerance"
+    assert matched.feasible[matched.ladders.index((1,))]
+    assert not fixed.feasible[fixed.ladders.index((1,))], "the averaged target is out of reach in the hard draws"

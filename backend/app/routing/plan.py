@@ -216,6 +216,7 @@ def _compact(rec: Mapping[str, Any]) -> dict[str, Any]:
         **({"case": evidence["case"]} if evidence.get("case") else {}),
         "ladder": ladder, "meets_reliability_target": rec.get("meets_reliability_target"),
         "reliability_target": rec.get("reliability_target"), "check_kind": rec.get("check_kind"),
+        **({"reliability": rec["reliability"]} if rec.get("reliability") else {}),
         "recommended": rec.get("recommended"), "alternatives": rec.get("alternatives") or [],
         "excluded": rec.get("excluded") or [],
         **({"local_evidence": rec["evidence"]["local"]} if (rec.get("evidence") or {}).get("local") else {}),

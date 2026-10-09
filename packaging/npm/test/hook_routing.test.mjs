@@ -44,7 +44,8 @@ test("with the local executor installed, the models exec.json configures are can
 test("routing off, unknown model, or a custom list", () => {
   assert.deepEqual(routingArgs(hookPolicy({ STEALTHLAB_HOOK_ROUTING: "off" }), "claude-sonnet-5-5"), {});
   assert.deepEqual(routingArgs(hookPolicy({}), null), {});
-  assert.deepEqual(routingArgs(hookPolicy({ STEALTHLAB_HOOK_CANDIDATES: "" }), "m1"), { my_model: "m1|claude-code" });
+  assert.deepEqual(routingArgs(hookPolicy({ STEALTHLAB_HOOK_CANDIDATES: "" }), "m1"),
+    { my_model: "m1|claude-code", model_constraints: { reliability_baseline: "m1|claude-code" } });
   const custom = routingArgs(hookPolicy({ STEALTHLAB_HOOK_CANDIDATES: "gpt-oss-120b|kel, bad entry ,x|y" }), "m1");
   assert.deepEqual(custom.candidates, ["gpt-oss-120b|kel", "x|y"]);
 });
@@ -84,5 +85,12 @@ test("the reliability target is a setting the hook passes as model_constraints",
   const a = routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "0.7", STEALTHLAB_HOOK_RELIABILITY_CONFIDENCE: "0.8" }), "m");
   assert.deepEqual(a.model_constraints, { reliability_target: 0.7, reliability_confidence: 0.8 });
   assert.equal(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "2" }), "m").model_constraints, undefined);
-  assert.equal(routingArgs(hookPolicy({}), "m").model_constraints, undefined);
+});
+
+test("by default the plan is matched to this session's own model: no less reliable than it alone, minus a tolerance", () => {
+  assert.deepEqual(routingArgs(hookPolicy({}), "m").model_constraints, { reliability_baseline: "m|claude-code" });
+  assert.deepEqual(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "match:0.05" }), "m").model_constraints,
+    { reliability_baseline: "m|claude-code", reliability_tolerance: 0.05 });
+  assert.equal(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "match:7" }), "m").model_constraints, undefined,
+    "a malformed tolerance asks for no target at all (server default)");
 });

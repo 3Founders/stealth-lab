@@ -18,6 +18,7 @@ marginal likelihood. The re-solved ladder is therefore the Bayes-optimal continu
 
 Choice: among ladders meeting the reliability chance constraint
     Pr_posterior( P(ok) >= rho ) >= confidence
+    (rho may be a per-draw (S,) array: a target that moves with the posterior, e.g. a baseline unit's own P(ok))
 Thompson sampling picks one draw s* ~ weights and the ladder maximising U under s*;
 its propensity is EXACT (the fraction of draw-weight whose argmax is that ladder).
 If no ladder meets the constraint, the ladder with the highest (1 - confidence)
@@ -183,7 +184,7 @@ def ladder_node_ok(p: np.ndarray, alpha: np.ndarray, beta: np.ndarray, lad: Sequ
 
 def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.ndarray,
            cost_ok: np.ndarray, cost_fail: np.ndarray, *, cost_check: float, value: float,
-           wrong_penalty: float, candidates: Sequence[int], max_rungs: int, rho: float,
+           wrong_penalty: float, candidates: Sequence[int], max_rungs: int, rho: "float | np.ndarray",
            confidence: float, attempts: Sequence[Attempt] = (), max_cost: Optional[float] = None,
            rng: np.random.Generator, continuation: Optional[np.ndarray] = None,
            node_weights_after: Optional[tuple[np.ndarray, np.ndarray]] = None,

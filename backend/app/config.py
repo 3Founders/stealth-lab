@@ -350,6 +350,10 @@ class Settings(BaseSettings):
     # down substrate_search mid-phaseH when Voyage's 3-RPM free tier ran dry.
     embedding_provider_chain: str = "gemini,voyage"
     gemini_embedding_model: str = "gemini-embedding-001"
+    # EMBEDDING_PROVIDER_CHAIN=openrouter: the same Google model through OpenRouter's /embeddings (OPENROUTER_API_KEY).
+    # Empty = "google/" + gemini_embedding_model.
+    openrouter_embedding_model: str = ""
+    openrouter_embed_max_retries: int = 4
     # Vertex embedding pacing (app/services/embeddings.py::_VertexBatcher). Measured on a new project 2026-09-29:
     # the published `gemini-embedding` quota is 5 requests/min, ~17/min was sustained, and 429s follow beyond that.
     # Every text goes through one queue that sends up to `vertex_embed_max_batch` texts per request, so the quota

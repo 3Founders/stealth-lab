@@ -54,6 +54,9 @@ export function hookPolicy(env = process.env) {
     // how sure a plan must be before it trusts a cheaper model (server defaults: 0.90 / 0.90). Lower = cheaper
     // first rungs, more escalations; the local-only experiment varies it.
     reliability: num01(env.STEALTHLAB_HOOK_RELIABILITY),
+    // default: the plan must be about as reliable as this session's own model alone ("match", tolerance 0.03 --
+    // "match:0.05" sets another); a number in (0,1) is a fixed target instead (the server's default is 0.90)
+    reliabilityMatch: matchTolerance(env.STEALTHLAB_HOOK_RELIABILITY),
     reliabilityConfidence: num01(env.STEALTHLAB_HOOK_RELIABILITY_CONFIDENCE),
     maxChars: Number(env.STEALTHLAB_HOOK_MAX_CHARS || 8000),
     mode,
@@ -68,6 +71,13 @@ export function hookPolicy(env = process.env) {
 // Code those are the Claude models a subagent can run; STEALTHLAB_HOOK_CANDIDATES="model|scaffold,..." replaces
 // the list (an empty value sends my_model only). The server drops any unit it cannot price.
 export const CLAUDE_CODE_CANDIDATES = ["claude-haiku-4-5|claude-code", "claude-sonnet-5-5|claude-code", "claude-opus-5-5|claude-code"];
+
+function matchTolerance(raw) {
+  const v = String(raw ?? "match").trim().toLowerCase();
+  if (v === "" || v === "match") return { tolerance: null };
+  const m = /^match:(0(?:\.\d+)?|1(?:\.0+)?)$/.exec(v);
+  return m ? { tolerance: Number(m[1]) } : null;               // a number (fixed target) or anything else: no match
+}
 
 function num01(raw) {
   const v = Number(raw);
@@ -109,6 +119,10 @@ export function routingArgs(policy, model, scaffold = "claude-code") {
   const others = policy.candidates.filter((c) => c !== mine);
   const constraints = {
     ...(policy.reliability !== null && policy.reliability !== undefined ? { reliability_target: policy.reliability } : {}),
+    ...(policy.reliabilityMatch && (policy.reliability === null || policy.reliability === undefined)
+      ? { reliability_baseline: mine,
+          ...(policy.reliabilityMatch.tolerance !== null ? { reliability_tolerance: policy.reliabilityMatch.tolerance } : {}) }
+      : {}),
     ...(policy.reliabilityConfidence !== null && policy.reliabilityConfidence !== undefined
       ? { reliability_confidence: policy.reliabilityConfidence } : {}),
   };

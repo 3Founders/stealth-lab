@@ -351,11 +351,31 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     step_scale = 1 + len(later)
     value = float(constraints.get("value_usd") or cfg.value_multiplier * max(cost_ok[:len(usable)]) * step_scale)
     wrong_penalty = float(constraints.get("wrong_penalty_usd") or cfg.wrong_penalty_ratio * value)
+    rho: Any = float(constraints.get("reliability_target") or cfg.reliability_target)
+    target_info: dict[str, Any] = {"mode": "fixed", "target": rho}
+    baseline = constraints.get("reliability_baseline")
+    if baseline:
+        # matched to baseline: per draw, the baseline unit alone (one attempt, judged by the same check, times the
+        # rest of the run) minus the tolerance. A baseline that is not a usable candidate falls back to the fixed rho.
+        b = next((i for i, (m, s) in enumerate(usable) if unit_id(m, s) == str(baseline)), None)
+        if b is not None:
+            tol = float(constraints.get("reliability_tolerance") if constraints.get("reliability_tolerance")
+                        is not None else cfg.reliability_tolerance)
+            base_nodes = ladder.ladder_node_ok(p, alpha, beta, [b])
+            if continuation is not None:
+                base_nodes = base_nodes * continuation
+            base_ok = (base_nodes * node_w).sum(axis=1)                                   # (S,)
+            rho = np.clip(base_ok - tol, 0.0, 1.0)
+            target_info = {"mode": "matched", "baseline": str(baseline), "tolerance": tol,
+                           "baseline_p_ok": round(float(draw_w @ base_ok), 4),
+                           "target": round(float(draw_w @ rho), 4)}
+        else:
+            target_info = {"mode": "fixed", "target": rho, "note": f"baseline {baseline} is not a usable candidate"}
     try:
         result = ladder.choose(
             p, eps_w, alpha, beta, cost_ok, cost_fail, cost_check=float(constraints.get("check_cost_usd") or 0.0),
             value=value, wrong_penalty=wrong_penalty, candidates=range(len(usable)), max_rungs=max_rungs,
-            rho=float(constraints.get("reliability_target") or cfg.reliability_target),
+            rho=rho,
             confidence=float(constraints.get("reliability_confidence") or cfg.reliability_confidence),
             attempts=attempts, rng=rng, continuation=continuation, node_weights_after=(node_w, draw_w),
             allow_repeats=bool(constraints.get("allow_retries", True)),
@@ -387,7 +407,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
         "status": "ok", "recommendation_id": recommendation_id, "instance_key": instance_key, "goal_id": goal_id,
         "procedure_id": procedure_id, "params_version": g.version, "as_of": g.meta.get("fitted_at"),
         "recommended": chosen, "meets_reliability_target": result.meets_target,
-        "reliability_target": float(constraints.get("reliability_target") or cfg.reliability_target),
+        "reliability_target": target_info["target"], "reliability": target_info,
         "alternatives": alternatives, "p_correct_single_attempt": single, "units": unit_stats,
         "value_usd": value, "wrong_penalty_usd": wrong_penalty, "check_kind": check_kind,
         "propensity": result.propensity, "excluded": excluded,

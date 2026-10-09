@@ -68,6 +68,10 @@ class RoutingDefaults:
     max_repeats: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_REPEATS", 2))
     max_candidates: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_CANDIDATES", 16))
     reliability_target: float = field(default_factory=lambda: _f("STEALTH_ROUTING_RHO", 0.90))       # rho
+    # Matched-to-baseline target (constraints.reliability_baseline = "model|scaffold"): instead of a fixed rho, a
+    # ladder must be, in each posterior draw, at most this much less likely to end correct than the baseline unit
+    # run alone -- "no worse than just using my model", with the shared uncertainty cancelling draw by draw.
+    reliability_tolerance: float = field(default_factory=lambda: _f("STEALTH_ROUTING_RELIABILITY_TOLERANCE", 0.03))
     reliability_confidence: float = field(default_factory=lambda: _f("STEALTH_ROUTING_CONFIDENCE", 0.90))  # 1 - delta
     value_multiplier: float = field(default_factory=lambda: _f("STEALTH_ROUTING_VALUE_MULTIPLIER", 5.0))
     wrong_penalty_ratio: float = field(default_factory=lambda: _f("STEALTH_ROUTING_WRONG_PENALTY_RATIO", 1.0))  # L / V

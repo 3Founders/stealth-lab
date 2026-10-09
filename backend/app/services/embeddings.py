@@ -450,6 +450,13 @@ class Embedder:
             return f"gemini:{settings.gemini_embedding_model}"
         if provider == "vertex":
             return f"vertex:{settings.gemini_embedding_model}"
+        if provider == "openrouter":
+            if self._is_gen2():
+                # OpenRouter (upstream Google AI Studio) returned the Gemini API's vectors exactly for the same document
+                # form (cosine 1.000000 at 1024 dims, 2026-10-09), and the Gemini API returns the stored Vertex ones
+                # (2026-10-03): one space, one label, so the routing codebook's codes stay valid.
+                return f"vertex:{settings.gemini_embedding_model}"
+            return f"openrouter:{self._openrouter_model()}"
         if provider == "voyage":
             return f"voyage:{self.model}"
         if provider == "local":
@@ -579,6 +586,8 @@ class Embedder:
                     vectors = await self._embed_gemini(texts, input_type)
                 elif provider == "vertex":
                     vectors = await self._embed_vertex(texts, input_type)
+                elif provider == "openrouter":
+                    vectors = await self._embed_openrouter(texts, input_type)
                 elif provider == "voyage":
                     vectors = await self._embed_voyage(texts, input_type)
                 else:
@@ -618,6 +627,52 @@ class Embedder:
         vectors = list(vectors)
         self._check_dimension(vectors, self.embedding_model_id())
         return vectors
+
+    @staticmethod
+    def _openrouter_model() -> str:
+        return settings.openrouter_embedding_model or f"google/{settings.gemini_embedding_model}"
+
+    async def _embed_openrouter(self, texts: Sequence[str], input_type: InputType) -> list[list[float]]:
+        """OpenRouter's OpenAI-compatible /embeddings: one batched request, `dimensions` for the Matryoshka size, the
+        gemini-embedding-2 document/query form in the text (it takes no task_type). Retried on 429/5xx/transport errors
+        with backoff, honouring Retry-After; EmbeddingError once the retries are spent."""
+        import random
+
+        import httpx
+
+        if not settings.openrouter_api_key:
+            raise EmbeddingError("no OPENROUTER_API_KEY configured")
+        inputs = [self._gen2_text(t, input_type) for t in texts] if self._is_gen2() else list(texts)
+        url = settings.openrouter_base_url.rstrip("/") + "/embeddings"
+        payload = {"model": self._openrouter_model(), "input": inputs, "dimensions": self.dimension}
+        retries = max(0, settings.openrouter_embed_max_retries)
+        for attempt in range(retries + 1):
+            try:
+                client = await _vertex_http_client()          # the shared keep-alive httpx client
+                resp = await client.post(url, json=payload,
+                                         headers={"Authorization": f"Bearer {settings.openrouter_api_key}"})
+                if resp.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+                    try:
+                        wait = float(resp.headers.get("retry-after", ""))
+                    except ValueError:
+                        wait = min(60.0, 2.0 * (2 ** attempt))
+                    await asyncio.sleep(wait * (0.75 + 0.5 * random.random()))
+                    continue
+                resp.raise_for_status()
+                body = resp.json()
+            except httpx.TransportError as exc:
+                if attempt < retries:
+                    await asyncio.sleep(min(30.0, 2.0 * (2 ** attempt)))
+                    continue
+                raise EmbeddingError(f"OpenRouter embedding failed: {exc!r}") from exc
+            except Exception as exc:  # noqa: BLE001
+                raise EmbeddingError(f"OpenRouter embedding failed: {exc}") from exc
+            data = sorted(body.get("data") or [], key=lambda d: d.get("index", 0))
+            vectors = [list(d.get("embedding") or []) for d in data]
+            if len(vectors) != len(texts) or any(not v for v in vectors):
+                raise EmbeddingError(f"OpenRouter returned {len(vectors)} embeddings for {len(texts)} texts")
+            return vectors
+        raise EmbeddingError("OpenRouter embedding failed: retries spent")
 
     def _is_gen2(self) -> bool:
         """`gemini-embedding-2` is served at location=global through `:embedContent` (not `:predict`), takes no
