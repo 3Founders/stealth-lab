@@ -1,11 +1,16 @@
 {
-  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation.",
+  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: headless Claude Code on Sonnet with the person's own login (a dispatched rung, no in-session delegation).",
   "executors": {
     "stealth": {
       "models": [
         "gemma-4-31b-it",
         "gpt-oss-120b",
         "minimax-m2-7"
+      ]
+    },
+    "claude": {
+      "models": [
+        "claude-sonnet-5-5"
       ]
     }
   },

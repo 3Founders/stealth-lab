@@ -83,3 +83,12 @@ test("no check (none configured, no matched library entry), dispatch off, or no 
   assert.equal(rt.calls.length, 0);
   assert.equal(dispatchCheck({ check: null }, { library_matches: [] }, repo), null);
 });
+
+test("a Claude model run by the claude executor is a dispatched rung too; the session's own model never is", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "disp-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {
+    stealth: { models: ["gemma-4-31b-it"] }, claude: { models: ["claude-sonnet-5-5"] } } }));
+  const plan = { ladder: ["gemma-4-31b-it|stealth", "claude-sonnet-5-5|claude", "claude-opus-5-5|claude-code"] };
+  assert.deepEqual(dispatchableRungs(plan, MINE, { STEALTHLAB_HOME: home }).map((r) => [r.executor, r.model]),
+    [["stealth", "gemma-4-31b-it"], ["claude", "claude-sonnet-5-5"]]);
+});

@@ -103,6 +103,10 @@ const adapter = {
       "--no-session-persistence",
       "--permission-mode", "acceptEdits",
       "--permission-prompts", "none",
+      // the worktree is a copy of the project, StealthLab hooks included: project settings must not load here, or
+      // the run would look the task up and dispatch it again (and no MCP server is needed for one step's work)
+      "--setting-sources", "user",
+      "--strict-mcp-config",
     ];
     if (profile) args.push("--model", profile.model_id);
     else if (model) args.push("--model", String(model));

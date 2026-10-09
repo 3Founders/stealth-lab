@@ -169,7 +169,8 @@ test("buildCommand: exact argv per adapter (task as one argv element or stdin, n
   assert.deepEqual(cx.args, ["exec", "--json", "--color", "never", "--sandbox", "workspace-write", "--cd", "/tmp/wt", "--model", "prov/model-1", "-"]);
   assert.equal(cx.stdinText, "Fix add() in calc.py");
   assert.deepEqual(build("claude").args, ["-p", "Fix add() in calc.py", "--output-format", "json", "--no-session-persistence",
-    "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--model", "prov/model-1", "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep"]);
+    "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--setting-sources", "user", "--strict-mcp-config",
+    "--model", "prov/model-1", "--allowedTools", "Read,Edit,Write,Bash,Glob,Grep"]);
   assert.deepEqual(build("cline").args, ["--json", "--auto-approve", "true", "--cwd", "/tmp/wt", "--model", "prov/model-1", "--timeout", "120", "Fix add() in calc.py"]);
   assert.deepEqual(build("gemini").args, ["--output-format", "json", "--approval-mode", "yolo", "--model", "prov/model-1", "--prompt", "Fix add() in calc.py"]);
   const oh = build("openhands");

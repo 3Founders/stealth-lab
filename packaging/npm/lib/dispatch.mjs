@@ -14,7 +14,7 @@
 // It needs a CHECK -- an unverified result never goes in: STEALTHLAB_DISPATCH_CHECK (the project's test command), or
 // the check of the library entry the lookup matched. No check, no dispatch. STEALTHLAB_DISPATCH=off turns it off.
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
-import { claudeAlias, executorFor } from "./model_guard.mjs";
+import { executorFor } from "./model_guard.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -23,17 +23,19 @@ export function dispatchPolicy(env = process.env) {
   return {
     enabled: (env.STEALTHLAB_DISPATCH || "on").toLowerCase() !== "off",
     check: (env.STEALTHLAB_DISPATCH_CHECK || "").trim() || null,
-    maxRungs: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS || 2)),
+    maxRungs: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS || 3)),
     scope: String(env.STEALTHLAB_DISPATCH_SCOPE || "*,**/*").split(",").map((s) => s.trim()).filter(Boolean),
   };
 }
 
-// The plan's rungs, in order, that a local executor can run, up to the session's own model or a Claude rung.
+// The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count
+// too when an executor runs them (headless Claude Code on Sonnet, say -- the `claude` executor): nothing cheaper
+// than the session's model ever runs inside the session.
 export function dispatchableRungs(plan, mine, env = process.env) {
   const out = [];
   for (const unit of plan?.ladder || []) {
     const model = String(unit).split("|")[0];
-    if ((mine && model === String(mine).split("|")[0]) || claudeAlias(unit)) break;
+    if (mine && model === String(mine).split("|")[0]) break;
     const local = executorFor(unit, env);
     if (!local) break;
     if (!out.some((r) => r.unit === unit)) out.push({ unit, ...local });

@@ -39,7 +39,9 @@ MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
 HANG_S = 30 * 60
 # Claude subagents the plan may use besides the session's own model; open models come from exec.json
-CLAUDE_CANDIDATES = ["claude-sonnet-5-5|claude-code", f"{MODEL}|claude-code"]
+# the session model is the last rung; every cheaper rung (open models, Sonnet via the claude executor) comes from
+# exec.json and is dispatched before the session starts -- nothing is delegated inside the session
+CLAUDE_CANDIDATES = [f"{MODEL}|claude-code"]
 TOOLS = ["Read", "Edit", "Write", "Bash", "PowerShell", "Glob", "Grep", "Agent", "TodoWrite"]
 # files a session must not open: the graders and the datasets (reference solutions). A transcript that touches one
 # is flagged `peeked` and excluded from the scored comparison.
