@@ -42,7 +42,7 @@ Compliance fields are declarations, absent = unknown. A profile is keyed by the 
 ## What it does not guarantee
 - Quality: the step agent is a re-implementation of the loop in `backend/app/execution/coding_agent.py` and is unmeasured.
 - Containment: `run_shell` runs as the user inside a throwaway worktree; it is not a sandbox.
-- The OpenCode provider block follows its published docs but was not run against the installed binary, and Z.ai's
-  endpoint was not called. A real run with a real key is the check.
+- The OpenCode inline provider block (`OPENCODE_CONFIG_CONTENT`, `@ai-sdk/openai-compatible`, `{env:...}` key) was run against the installed OpenCode 1.18.35 with a fake endpoint and honoured the baseURL and key (2026-10-09). Z.ai's endpoint was not called; a real run with a real key is still the check.
+
 - Claude Code is the user's own install, used under their terms; we do not bundle it. Confirm Anthropic's terms for
   pointing it at a non-Anthropic endpoint before offering this as a feature.

@@ -58,9 +58,7 @@ reserve-then-settle against the org's budgets.
   only as `x-api-key` is not read). Images, reasoning/thinking blocks, server-side tools (web search) and prompt-cache
   markers are dropped or refused, not faked.
 - A client's `max_tokens` is a ceiling: values above the server limit (16000) are lowered to it, not refused.
-- Verified: a real `claude -p` run against the Messages shape with a fake provider behind it returned the model's text
-  (this found two bugs, system turns inside `messages` and `max_tokens` above 16000, both fixed). The Responses shape
-  has not been run against Codex. Not done: our own token counting and a run against a live provider.
+- Verified (2026-10-09, fake provider behind the endpoints, no keys; script: `backend/scripts/smoke_real_clients.py`): four real clients, each with a plain reply and, for three of them, a tool-call round trip where the client ran the tool and sent its result back, all streaming: Claude Code `claude -p` on `/v1/messages` (text only; this run found two bugs, system turns inside `messages` and `max_tokens` above 16000, both fixed), OpenCode 1.18.35 (inline `OPENCODE_CONFIG_CONTENT` provider block) and Cline 3.0.61 on `/v1/chat/completions`, Codex CLI 0.153.4 with `wire_api = "responses"` on `/v1/responses`. The Responses shim also converted Codex's function_call / function_call_output turns correctly. Not done: our own token counting and a run against a live provider.
 
 Example harness config (OpenCode, project `opencode.json`; keys stay in the environment):
 

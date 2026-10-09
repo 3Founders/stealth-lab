@@ -92,8 +92,8 @@ position. [unverified: provider facts come from vendor pages and secondary sourc
    and `docs/research/llm-judge-vs-execution-and-equivalence-methodology.md` (keep correctness executable; audit the
    checkers; a calibrated judge only for open-ended extras).
 
-Not verified: any live provider; Codex against `/v1/responses`; OpenCode's inline provider block against the binary;
-the step agent's quality; Anthropic's position on pointing Claude Code at a non-Claude endpoint.
+Verified against a fake provider, no keys (2026-10-09): Claude Code (`/v1/messages`), OpenCode and Cline (`/v1/chat/completions`) and Codex (`/v1/responses`) each completed a plain reply and, for the last three, a tool-call round trip; OpenCode's inline provider block works. Not verified: any live provider; the step agent's quality; Anthropic's position on pointing Claude Code at a non-Claude endpoint.
+
 
 ## 5. How the MCP should work in the ideal case [proposal]
 
@@ -172,8 +172,8 @@ Aggregates only on the executive view.
 
 **Before a company pilot**
 1. A live probe with real provider keys (base URLs, zero-retention option, cost and usage reporting, streaming usage).
-2. Run the real clients against the endpoints: Codex against `/v1/responses`, OpenCode and Cline against
-   `/v1/chat/completions`.
+2. Real clients against the endpoints: done against a fake provider (see section 4); repeat once with a live provider.
+
 3. Developer tokens for harnesses (SSO login that issues short-lived keys). Not built.
 4. Org policies must list `chat_completions` in `allowed_tools`; the admin policy page should show it.
 5. Provider paperwork: DPAs, retention and region in writing, OpenRouter's resale clause, model licences, Anthropic's
