@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import uuid
 from datetime import datetime
 from functools import lru_cache
@@ -49,7 +50,38 @@ async def _card_rows(pool: Any) -> list[dict]:
     for r in await store.model_cards(pool):            # field by field: a database row lacks the cache-read price
         merged = rows.setdefault(r["model_key"], {})
         merged.update({k: v for k, v in dict(r).items() if v is not None})
-    return list(rows.values())
+    return fill_twin_prices(list(rows.values()))
+
+
+PRICE_FIELDS = ("price_in", "price_out", "price_cached", "context_k")
+
+
+def fill_twin_prices(rows: list[dict]) -> list[dict]:
+    """One model can have two cards: one from the public results that measured it (no price) and one from a price
+    list, spelled differently (`qwen3-coder-480b-a35b` vs OpenRouter's `qwen/qwen3-coder` with the alias
+    `qwen/qwen3-coder-480b-a35b-07-25`). A card without a price takes the missing fields from a priced card whose key
+    or aliases name the same model, so the measured model is not dropped as unpriceable."""
+    from app.routing.cards import canonical_key
+
+    def names(r: dict) -> set[str]:
+        out = set()
+        for n in [r.get("model_key"), *(r.get("aliases") or [])]:
+            if n:
+                k = canonical_key(str(n))
+                out |= {k, re.sub(r"-\d{2}-\d{2}$", "", k)}     # a short "-07-25" release suffix too
+        return out
+
+    priced = [(names(r), r) for r in rows if r.get("price_in") is not None and r.get("price_out") is not None]
+    for r in rows:
+        if r.get("price_in") is not None:
+            continue
+        mine = names(r)
+        twin = next((p for n, p in priced if mine & n), None)
+        if twin is not None:
+            for f in PRICE_FIELDS:
+                if r.get(f) is None and twin.get(f) is not None:
+                    r[f] = twin[f]
+    return rows
 
 
 # A plan without a stored Goal ("virtual"): the task resolved to no global Goal, so it is routed on a key of its own
@@ -327,6 +359,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
             confidence=float(constraints.get("reliability_confidence") or cfg.reliability_confidence),
             attempts=attempts, rng=rng, continuation=continuation, node_weights_after=(node_w, draw_w),
             allow_repeats=bool(constraints.get("allow_retries", True)),
+            max_repeats=int(constraints.get("max_repeats") or cfg.max_repeats),
             exclude_units=[col for a, col in attempts_cols if col < len(usable)] if not constraints.get(
                 "allow_retries", True) else (),
             max_cost=None if constraints.get("max_cost_usd") is None else float(constraints["max_cost_usd"]))

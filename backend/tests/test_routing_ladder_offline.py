@@ -202,3 +202,36 @@ def test_no_retry_mode_never_repeats_a_unit_or_retries_a_tried_one():
     assert all(0 not in lad for lad in after.ladders)
     with pytest.raises(ValueError):
         ladder.choose(p, ew, zero, zero, costs_, costs_, allow_repeats=False, exclude_units=[0, 1, 2], **kwargs)
+
+
+def test_max_repeats_caps_how_often_one_unit_runs_on_an_instance():
+    """A cheap, likely unit would otherwise fill the whole ladder with retries of itself; with max_repeats=2 it runs
+    at most twice (earlier attempts included), and the rest of the ladder moves to another unit."""
+    rng = np.random.default_rng(3)
+    p, ew = _p(np.array([[1.0, 1.5]] * 20), np.full(20, 0.5), 10)
+    zero = np.zeros(20)
+    common = dict(cost_check=0.0, value=5.0, wrong_penalty=5.0, candidates=[0, 1], max_rungs=3, rho=0.5,
+                  confidence=0.5, rng=rng)
+    res = ladder.choose(p, ew, zero, zero, np.array([0.1, 1.0]), np.array([0.1, 1.0]), max_repeats=2, **common)
+    assert all(res.ladders[i].count(0) <= 2 and res.ladders[i].count(1) <= 2 for i in range(len(res.ladders)))
+    tried = [ladder.Attempt(unit=0, accepted=False, alpha=zero, beta=zero)] * 2
+    after = ladder.choose(p, ew, zero, zero, np.array([0.1, 1.0]), np.array([0.1, 1.0]), max_repeats=2,
+                          attempts=tried, **common)
+    assert 0 not in after.ladders[after.chosen], "unit 0 already ran twice"
+    with pytest.raises(ValueError):
+        ladder.choose(p, ew, zero, zero, np.array([0.1, 1.0]), np.array([0.1, 1.0]), max_repeats=1,
+                      attempts=[ladder.Attempt(unit=u, accepted=False, alpha=zero, beta=zero) for u in (0, 1)], **common)
+
+
+def test_a_measured_model_without_a_price_takes_its_twin_cards_price():
+    from app.routing.service import fill_twin_prices
+
+    rows = [{"model_key": "qwen3-coder-480b-a35b", "aliases": ["Qwen3-Coder 480B/A35B Instruct"], "price_in": None,
+             "price_out": None, "context_k": None},
+            {"model_key": "qwen3-coder", "aliases": ["qwen/qwen3-coder-480b-a35b-07-25"], "price_in": 0.3,
+             "price_out": 1.0, "price_cached": 0.1, "context_k": 262.0},
+            {"model_key": "other-model", "aliases": [], "price_in": None, "price_out": None}]
+    out = {r["model_key"]: r for r in fill_twin_prices(rows)}
+    assert (out["qwen3-coder-480b-a35b"]["price_in"], out["qwen3-coder-480b-a35b"]["price_out"]) == (0.3, 1.0)
+    assert out["qwen3-coder-480b-a35b"]["context_k"] == 262.0
+    assert out["other-model"]["price_in"] is None, "no twin: stays unpriced"

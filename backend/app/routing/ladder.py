@@ -39,6 +39,7 @@ with the updated belief. With continuation = 1 it is exactly the task-level ladd
 """
 from __future__ import annotations
 
+import collections
 import itertools
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
@@ -186,7 +187,8 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
            confidence: float, attempts: Sequence[Attempt] = (), max_cost: Optional[float] = None,
            rng: np.random.Generator, continuation: Optional[np.ndarray] = None,
            node_weights_after: Optional[tuple[np.ndarray, np.ndarray]] = None,
-           allow_repeats: bool = True, exclude_units: Sequence[int] = ()) -> LadderResult:
+           allow_repeats: bool = True, exclude_units: Sequence[int] = (),
+           max_repeats: Optional[int] = None) -> LadderResult:
     """Evaluate every ladder over `candidates` (indices into p's unit axis; earlier
     attempts may use other units) and choose one."""
     node_w, draw_w = node_weights_after if node_weights_after is not None else belief(node_weights, p, attempts)
@@ -201,6 +203,13 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
         ladders = [lad for lad in ladders if len(set(lad)) == len(lad) and not banned & set(lad)]
         if not ladders:
             raise ValueError("every candidate has already been tried on this instance")
+    if max_repeats is not None:
+        # no unit runs more than max_repeats times on this instance, counting the attempts already made
+        tried = collections.Counter(a.unit for a in attempts)
+        ladders = [lad for lad in ladders
+                   if all(tried[u] + c <= max_repeats for u, c in collections.Counter(lad).items())]
+        if not ladders:
+            raise ValueError(f"every candidate has already run {max_repeats} times on this instance")
     ok, wrong, cost, util, step_ok = evaluate(p, node_w, alpha, beta, cost_ok, cost_fail, cost_check,
                                               value, wrong_penalty, ladders, continuation)
     step_ok = None if continuation is None else step_ok

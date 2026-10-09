@@ -62,6 +62,10 @@ class RoutingDefaults:
     gh_eps_nodes: int = 20        # Gauss-Hermite nodes over the instance difficulty eps
     # --- decision
     max_rungs: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_RUNGS", 3))
+    # times one unit may run on one instance, earlier attempts included: 2 = one retry, then a different unit.
+    # The model treats a retry as independent given the instance's difficulty, but a model that just failed tends
+    # to fail the same way again, so an unlimited count over-trusts retries of a cheap unit.
+    max_repeats: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_REPEATS", 2))
     max_candidates: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_CANDIDATES", 16))
     reliability_target: float = field(default_factory=lambda: _f("STEALTH_ROUTING_RHO", 0.90))       # rho
     reliability_confidence: float = field(default_factory=lambda: _f("STEALTH_ROUTING_CONFIDENCE", 0.90))  # 1 - delta
