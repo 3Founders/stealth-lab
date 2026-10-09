@@ -15,7 +15,7 @@
 //    runtime's worktree + scope check is the containment; this is not a sandbox.
 //  * No streaming, no parallel tool calls beyond running a returned batch in order, no image input.
 //
-// Input (stdin, JSON): { task, base_url, model_id, input_per_mtok?, output_per_mtok?, request_extras?, max_steps?,
+// Input (stdin, JSON): { task, base_url, model_id, input_per_mtok?, output_per_mtok?, request_extras?, no_system_role?, max_steps?,
 //   max_cost_usd?, max_tokens?, hang_s? }. The provider key arrives in env OPEN_MODEL_API_KEY only.
 // Output (stdout): one progress line per step (so the runtime's hang detector sees life), then one final JSON line:
 //   {"type":"final","message","learned":[],"tokens":{"in","out"},"costUsd","steps","stop"}.
@@ -279,10 +279,12 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   for (const [k, v] of Object.entries(cfg.request_extras || {})) { if (!PROTECTED.has(k)) extras[k] = v; }
   const maxSteps = Math.min(100, Math.max(1, Number(cfg.max_steps) || 30));
   const maxCost = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
-  const messages = [
-    { role: "system", content: SYSTEM.replace("{max_steps}", String(maxSteps)) },
-    { role: "user", content: cfg.task.trim() },
-  ];
+  const system = SYSTEM.replace("{max_steps}", String(maxSteps));
+  // Some endpoints reject a system turn (General Compute's Gemma 4 answers 400 "invalid base64 image data",
+  // checked 2026-10-09); for them the instructions open the first user turn instead.
+  const messages = cfg.no_system_role
+    ? [{ role: "user", content: `${system}\n\n---\n\nTask:\n${cfg.task.trim()}` }]
+    : [{ role: "system", content: system }, { role: "user", content: cfg.task.trim() }];
   let tin = 0, tout = 0, step = 0, stop = "max_steps", finalMessage = "";
 
   while (step < maxSteps) {

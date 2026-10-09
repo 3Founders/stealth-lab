@@ -166,6 +166,24 @@ test("request_extras are sent but cannot displace the fields the agent owns", as
   } finally { p.close(); }
 });
 
+test("no_system_role: the instructions open the first user turn instead of a system turn (GC's Gemma rejects one)", async () => {
+  const repo = tmpRepo({ "a.txt": "x" });
+  const p = await provider(() => reply({ role: "assistant", content: "done" }));
+  try {
+    await runAgent({ task: "fix add", base_url: p.url, model_id: "gemma-4-31B-it", no_system_role: true },
+      { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
+    const msgs = p.seen[0].body.messages;
+    assert.ok(!msgs.some((m) => m.role === "system"));
+    assert.equal(msgs[0].role, "user");
+    assert.match(msgs[0].content, /You are a coding agent[\s\S]*Task:\nfix add$/);
+    await runAgent({ task: "fix add", base_url: p.url, model_id: "m" }, { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
+    assert.equal(p.seen[p.seen.length - 1].body.messages[0].role, "system", "default unchanged");
+  } finally { p.close(); }
+  assert.equal(normaliseProfile("g", { key_env: "K", openai_base_url: "https://x.example/v1", no_system_role: true }).no_system_role, true);
+  assert.equal(normaliseProfile("g", { key_env: "K", openai_base_url: "https://x.example/v1" }).no_system_role, false);
+  assert.throws(() => normaliseProfile("g", { key_env: "K", openai_base_url: "https://x.example/v1", no_system_role: "yes" }), /true or false/);
+});
+
 test("paths cannot leave the repository, .git is off limits, symlinks that escape are refused", async () => {
   const repo = tmpRepo({ "ok.txt": "hi", ".git/config": "secret" });
   const outside = tmpRepo({ "secret.txt": "nope" });

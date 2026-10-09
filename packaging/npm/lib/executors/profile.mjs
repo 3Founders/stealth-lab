@@ -8,7 +8,8 @@
 //       "openai_base_url": "https://api.example.com/v1",          // for the opencode and stealth executors
 //       "input_per_mtok": 0.6, "output_per_mtok": 2.2,            // USD, optional; without them cost is unknown
 //       "zdr": true, "no_training": true, "region": "us", "dpa_signed": true,   // declarations, see below
-//       "request_extras": { "provider": { "zdr": true } } } } }
+//       "request_extras": { "provider": { "zdr": true } },
+//       "no_system_role": true } } }      // the endpoint rejects a system turn: its text opens the first user turn
 //
 // Boundary (same as common.mjs): the provider key is the USER'S OWN key for that provider, read from the user's own
 // environment and handed only to the process that talks to that provider. It is never written to disk by us, never
@@ -80,6 +81,7 @@ export function normaliseProfile(name, raw) {
     zdr: flag(name, "zdr", raw.zdr), no_training: flag(name, "no_training", raw.no_training),
     dpa_signed: flag(name, "dpa_signed", raw.dpa_signed) ?? false, region,
     request_extras: Object.freeze(extras),
+    no_system_role: flag(name, "no_system_role", raw.no_system_role) ?? false,
   });
 }
 

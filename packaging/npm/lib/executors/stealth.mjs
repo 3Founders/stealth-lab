@@ -35,7 +35,7 @@ const adapter = {
     const input = {
       task: safeTaskArg(task), base_url: profile.openai_base_url, model_id: profile.model_id,
       input_per_mtok: profile.input_per_mtok, output_per_mtok: profile.output_per_mtok,
-      request_extras: profile.request_extras, ...(limits || {}),
+      request_extras: profile.request_extras, ...(profile.no_system_role ? { no_system_role: true } : {}), ...(limits || {}),
     };
     void worktree; void timeoutS;
     return { cmd: process.execPath, args: [STEP_AGENT], env: childEnv, stdinText: JSON.stringify(input) };
