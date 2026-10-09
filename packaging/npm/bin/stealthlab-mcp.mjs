@@ -60,6 +60,7 @@ Usage:
   stealthlab-mcp hook cursor-prompt          sessionStart, beforeSubmitPrompt, postToolUse, stop -- look each
   stealthlab-mcp hook cursor-tool            task up in the background, hand what Kel knows to the agent at
   stealthlab-mcp hook cursor-stop            its first tool call, and report one outcome per prompt
+  stealthlab-mcp exec apply <run_id>        apply a VERIFIED executor run to its checkout (refuses otherwise)
   stealthlab-mcp exec                       run the local executor MCP server (stdio; installed only by
                                              "install --with-exec"): drives YOUR locally installed agents
                                              in git worktrees and verifies their work with your checks
@@ -262,6 +263,18 @@ async function main() {
     const { runPlanCli } = await import("../lib/plan_check.mjs");
     process.exitCode = runPlanCli(argv);
     return;
+  }
+  if (cmd === "exec" && argv[0] === "apply") {
+    // Apply a VERIFIED executor run to the checkout. The executor's MCP tools live only inside the delegator
+    // subagent (which may not apply), so the main agent applies from the shell; same checks as apply_run.
+    const runId = argv[1];
+    if (!runId) die("usage: stealthlab-mcp exec apply <run_id>", 2);
+    const { ExecRuntime } = await import("../lib/exec/runtime.mjs");
+    try {
+      return out(JSON.stringify(await new ExecRuntime({}).applyRun(runId)));
+    } catch (err) {
+      die(err.message, 1);
+    }
   }
   // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
   const sub = (cmd === "hook" || cmd === "survey") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;

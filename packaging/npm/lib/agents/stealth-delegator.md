@@ -38,8 +38,11 @@ you never apply a run.
    Use `run_status` only if you need progress. If the task is abandoned, call `cancel_run`.
 4. Reply with only: `verified` (true/false), the `summary`, `diff.stat`, the failing check's tail if not
    verified, `scope_violations` if any, which rungs ran (`race`: executor, model, state; `escalated`: how many
-   were escalations), and the `run_id`. Say that the change is NOT applied and that the
-   caller applies it with `apply_run(run_id)` only if it wants to.
+   were escalations), and the `run_id`. Say that the change is NOT applied yet. If `verified` is true, end with
+   this line for the caller, who applies it from the shell only if it wants to:
+   `Apply with: {{APPLY_COMMAND}} <run_id>`
+   When the task carried an instance_key, also say: "Every attempt was already reported to the model plan; do not
+   call report_result for them" and give `next_model` if the reply has one.
 
 Never call apply_run. Never paste secrets, tokens or `.env` values. `verified` comes from the executor's own
 checks, never from what the executor said about itself.

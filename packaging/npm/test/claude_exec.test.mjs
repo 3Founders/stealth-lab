@@ -164,6 +164,9 @@ test("Windows launch paths: quoted in the hook command, JSON-escaped in the agen
   const args = /args: (.*)/.exec(fm)[1];
   assert.equal(JSON.parse(cmd), launch.command);   // a JSON string is a valid YAML double-quoted scalar
   assert.deepEqual(JSON.parse(args), [...launch.args, "exec"]);
+  const body = renderAgent("stealth-delegator", launch);
+  assert.ok(!body.includes("{{"), "every placeholder is filled");
+  assert.ok(body.includes(`Apply with: ${shellJoin({ command: launch.command, args: [...launch.args, "exec", "apply"] })} <run_id>`));
 
   const { env } = tempEnv();
   const { settings } = execPaths(env);
@@ -269,4 +272,14 @@ test("--help lists every dispatched subcommand (dispatch <-> help parity)", () =
   for (const ev of ["subagent-start", "subagent-stop"]) assert.match(help, new RegExp(`hook ${ev}`));
   const opts = [...src.matchAll(/^\s*"?([\w-]+)"?: \{ type: "(?:string|boolean)"/gm)].map((m) => m[1]);
   for (const o of opts) assert.match(help, new RegExp(`--${o}\\b`), `HELP is missing option --${o}`);
+});
+
+test("CLI: exec apply needs a run id, and refuses an unknown run with exit 1", () => {
+  const home = tmp();
+  const env = { ...process.env, STEALTHLAB_HOME: path.join(home, ".stealthlab"), STEALTHLAB_TEST_HOME: home };
+  const none = spawnSync(process.execPath, [BIN, "exec", "apply"], { env, encoding: "utf8", timeout: 30000 });
+  assert.equal(none.status, 2);
+  const unknown = spawnSync(process.execPath, [BIN, "exec", "apply", "r-20261009120000-abc123"], { env, encoding: "utf8", timeout: 30000 });
+  assert.equal(unknown.status, 1);
+  assert.match(unknown.stderr, /unknown run/);
 });

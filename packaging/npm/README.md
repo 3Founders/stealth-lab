@@ -123,6 +123,8 @@ switch your main session's model, but the guard makes the plan bind wherever wor
       mode). The run reports every attempt with `report_result`, and its `escalate` follows the plan's
       `next_model` while a local executor can run it;
     - **`PostToolUse` on `run_result`:** a verified run ends the plan, a failed one moves it to `next_model`.
+    - The plan text already names the delegator and that line, and the delegator's reply ends with the command
+      that applies a verified run: `stealthlab-mcp exec apply <run_id>`.
     - With no local executor for the model, the guard stands aside.
 - **Cursor:**
   - **`preToolUse` on `Task`:** refuses a Task that names a different model, with `agent_message`. Cursor has no

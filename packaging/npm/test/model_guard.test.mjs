@@ -9,6 +9,7 @@ import {
   removeRouteHooks, reportReply,
 } from "../lib/model_guard.mjs";
 import { addCursorHooks } from "../lib/cursor_hooks.mjs";
+import { planPart } from "../lib/hook.mjs";
 
 const PLAN = {
   status: "ok", basis: "prior", instance_key: "g1.ab12", goal_id: "g1",
@@ -157,4 +158,14 @@ test("run_result moves the guard: failed -> next_model, verified -> done; anothe
   const env2 = envWithOpenPlan();
   assert.equal(onPlanReport(runResult({ state: "verified", evidence: { instance_key: "g1.cd34" } }), { env: env2 }).done, true);
   assert.equal(onClaudePreToolUse(agentCall(), { env: env2 }), null);
+});
+
+test("the plan text sends an open-model step to the delegator, with its exact line, and no second report", () => {
+  const env = envWithOpenPlan();
+  const text = planPart(OPEN_PLAN, env);
+  assert.match(text, /glm-5\.3 is an open model: give that step to the stealth-delegator subagent/);
+  assert.match(text, /"Run it with executor=stealth model=glm-5\.3 instance_key=g1\.cd34\."/);
+  assert.match(text, /no report_result for it/);
+  assert.doesNotMatch(planPart(OPEN_PLAN, envWithOpenPlan(null)), /delegator/, "no local executor: nothing to say");
+  assert.doesNotMatch(planPart(PLAN, env), /delegator/);
 });

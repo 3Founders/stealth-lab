@@ -29,6 +29,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { claudeDir } from "./claude_exec.mjs";
+import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
 import { execConfigPath } from "./exec/store.mjs";
 import { modelFromTranscript, rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
@@ -322,8 +323,9 @@ function libraryParts(reply, root, mode, budget) {
 // mode "lean": only a resolved way (the exact Goal); near misses and related examples are left out.
 // `root`: the repo whose .stealth/library.md holds the library matches (none -> they are not shown).
 // One short paragraph for an ok model plan: who does the work first, the fallback, and how to report.
-export function planPart(plan) {
+export function planPart(plan, env = process.env) {
   if (!plan || plan.status !== "ok" || !Array.isArray(plan.ladder) || !plan.ladder.length) return "";
+  const open = plan.ladder.map((u) => [u, claudeAlias(u) ? null : executorFor(u, env)]).filter(([, l]) => l);
   const rung = (u) => {
     const st = (plan.steps?.[0]?.ladder || []).find((x) => x.unit === u);
     const p = typeof st?.p_ok_mean === "number" ? ` (p_ok ${st.p_ok_mean.toFixed(2)})` : "";
@@ -334,7 +336,11 @@ export function planPart(plan) {
     (rest.length ? `; if its check fails, ${rest.map(rung).join(", then ")}` : "") +
     ". A model other than yours means: hand the work to a subagent on that model. " +
     `After the check, call report_result(instance_key="${plan.instance_key}", accepted=<passed?>) -- ` +
-    "its reply names the next model if it failed.";
+    "its reply names the next model if it failed." +
+    open.map(([u, l]) => ` ${u.split("|")[0]} is an open model: give that step to the ${DELEGATOR} subagent with the ` +
+      `line "Run it with executor=${l.executor} model=${l.model} instance_key=${plan.instance_key}." -- it runs and ` +
+      "checks it in a worktree and reports to the plan itself (no report_result for it); apply a verified run with " +
+      "the command its reply gives.").join("");
 }
 
 export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = null } = {}) {

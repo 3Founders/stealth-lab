@@ -64,7 +64,8 @@ export function renderAgent(name, launch) {
   return text
     .replaceAll("{{MANAGED_MARK}}", MANAGED_MARK)
     .replaceAll("{{EXEC_COMMAND}}", JSON.stringify(String(launch.command)))
-    .replaceAll("{{EXEC_ARGS}}", JSON.stringify([...launch.args.map(String), "exec"]));
+    .replaceAll("{{EXEC_ARGS}}", JSON.stringify([...launch.args.map(String), "exec"]))
+    .replaceAll("{{APPLY_COMMAND}}", shellJoin({ command: String(launch.command), args: [...launch.args.map(String), "exec", "apply"] }));
 }
 
 function readJsonOrThrow(file) {
