@@ -251,3 +251,33 @@ def test_a_per_draw_target_moves_with_the_posterior():
     assert matched.meets_target, "unit 1 alone always clears its own target minus the tolerance"
     assert matched.feasible[matched.ladders.index((1,))]
     assert not fixed.feasible[fixed.ladders.index((1,))], "the averaged target is out of reach in the hard draws"
+
+
+def _two_units():
+    rng = np.random.default_rng(11)
+    p, ew = _p(np.array([[1.0, 2.0]] * 30), np.full(30, 0.5), 10)     # unit 0 cheap and decent, unit 1 dear and strong
+    zero = np.zeros(30)
+    return rng, p, ew, zero
+
+
+def test_per_draw_rule_takes_the_cheapest_ladder_good_enough_in_the_sampled_draw():
+    rng, p, ew, zero = _two_units()
+    res = ladder.choose(p, ew, zero, zero, np.array([0.01, 1.0]), np.array([0.01, 1.0]), cost_check=0.0, value=5.0,
+                        wrong_penalty=5.0, candidates=[0, 1], max_rungs=2, rho=0.5, confidence=0.9, rng=rng,
+                        feasibility="draw")
+    chosen = res.ladders[res.chosen]
+    assert chosen[0] == 0, "the cheap unit goes first when it is good enough in that draw"
+    s = res.thompson_draw
+    ok_here = [i for i in range(len(res.ladders)) if res.p_ok[i, s] >= 0.5]
+    assert res.cost[res.chosen, s] <= min(res.cost[i, s] for i in ok_here) + 1e-9
+
+
+def test_end_with_keeps_only_ladders_that_finish_on_the_session_model_and_explore_first_forces_the_opening():
+    rng, p, ew, zero = _two_units()
+    common = dict(cost_check=0.0, value=5.0, wrong_penalty=5.0, candidates=[0, 1], max_rungs=2, rho=0.5,
+                  confidence=0.5, rng=rng, feasibility="draw")
+    res = ladder.choose(p, ew, zero, zero, np.array([0.01, 1.0]), np.array([0.01, 1.0]), end_with=1, **common)
+    assert all(lad[-1] == 1 for lad in res.ladders)
+    forced = ladder.choose(p, ew, zero, zero, np.array([5.0, 1.0]), np.array([5.0, 1.0]), end_with=1, explore_first=0,
+                           **common)
+    assert forced.ladders[forced.chosen][0] == 0, "exploration opens with the under-tried unit even when it looks dear"

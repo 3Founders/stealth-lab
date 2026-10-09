@@ -66,6 +66,19 @@ class RoutingDefaults:
     # The model treats a retry as independent given the instance's difficulty, but a model that just failed tends
     # to fail the same way again, so an unlimited count over-trusts retries of a cheap unit.
     max_repeats: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_REPEATS", 2))
+    # "posterior": a ladder must meet the target in >= confidence of the posterior (never tries what it is unsure of);
+    # "draw": Thompson -- meet it in one sampled draw (tries an uncertain model as often as it is plausibly enough).
+    feasibility: str = field(default_factory=lambda: os.environ.get("STEALTH_ROUTING_FEASIBILITY", "draw"))
+    # Hand-off overhead: what the CALLER's session spends to delegate one attempt to another unit (reading the task,
+    # the hand-over, reading the result) -- paid on top of the delegate's own cost, never for the caller's own unit.
+    # Sent per request (constraints.handoff_cost_usd); this is the fallback. Measured once (2026-10-10, an Opus 5.5
+    # Claude Code session handing a DS-1000 task to a Sonnet subagent: ~$0.07 of extra Opus); refine with data.
+    handoff_cost_usd: float = field(default_factory=lambda: _f("STEALTH_ROUTING_HANDOFF_COST_USD", 0.07))
+    # How many attempts the public prior is worth against this workspace's own record (shift_to_local_rates).
+    local_prior_strength: float = field(default_factory=lambda: _f("STEALTH_ROUTING_LOCAL_PRIOR_STRENGTH", 4.0))
+    # Forced exploration: a cheaper unit with fewer than this many attempts in this workspace is tried first (the
+    # session's own model as the fallback rung) before the estimates are relied on. 0 turns it off.
+    explore_min_attempts: int = field(default_factory=lambda: _i("STEALTH_ROUTING_EXPLORE_MIN_ATTEMPTS", 3))
     max_candidates: int = field(default_factory=lambda: _i("STEALTH_ROUTING_MAX_CANDIDATES", 16))
     reliability_target: float = field(default_factory=lambda: _f("STEALTH_ROUTING_RHO", 0.90))       # rho
     # Matched-to-baseline target (constraints.reliability_baseline = "model|scaffold"): instead of a fixed rho, a

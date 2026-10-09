@@ -163,7 +163,7 @@ test("run_result moves the guard: failed -> next_model, verified -> done; anothe
 test("the plan text sends an open-model step to the delegator, with its exact line, and no second report", () => {
   const env = envWithOpenPlan();
   const text = planPart(OPEN_PLAN, env);
-  assert.match(text, /do not solve it yourself first: call the Agent tool with subagent_type: "stealth-delegator", the whole task/);
+  assert.match(text, /FIRST action, before reading files or trying anything yourself: call the Agent tool with subagent_type: "stealth-delegator", the whole task/);
   assert.match(text, /glm-5\.3, an open model/);
   assert.match(text, /"Run it with executor=stealth model=glm-5\.3 instance_key=g1\.cd34\."/);
   assert.match(text, /no report_result for it/);

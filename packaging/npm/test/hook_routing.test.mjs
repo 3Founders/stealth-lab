@@ -52,12 +52,12 @@ test("routing off, unknown model, or a custom list", () => {
 
 test("the plan reaches the agent: first model, fallback, and report_result with the key", () => {
   const p = planPart(PLAN, {}, "claude-opus-5-5|claude-code");
-  assert.match(p, /follow it: start by handing this task over, do not solve it yourself first: call the Agent tool with model: "haiku" and the whole task \(p_ok 0\.71\)/);
+  assert.match(p, /follow it: make the hand-over your FIRST action, before reading files or trying anything yourself: call the Agent tool with model: "haiku" and the whole task \(p_ok 0\.71\)/);
   assert.match(p, /If that fails its check, next call the Agent tool with model: "sonnet" and the whole task \(p_ok 0\.88\)/);
   assert.match(p, /report_result\(instance_key="g1\.ab12"/);
   const self = planPart(PLAN, {}, "claude-haiku-4-5|claude-code");
   assert.match(self, /^Model plan \(prior\): do it yourself \(p_ok 0\.71\)\. If that fails its check, next call the Agent tool with model: "sonnet"/);
-  assert.doesNotMatch(self, /do not solve it yourself/);
+  assert.doesNotMatch(self, /FIRST action/);
   assert.equal(planPart({ status: "not_ready" }), "");
   assert.match(formatKnowledge({ outcome: "no_match", model_plan: PLAN }), /Model plan \(prior\)/);
 });

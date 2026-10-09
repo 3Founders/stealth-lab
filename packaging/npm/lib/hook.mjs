@@ -363,8 +363,9 @@ export function planPart(plan, env = process.env, mine = null) {
   };
   const [first, ...rest] = plan.ladder;
   const lead = own(first) ? `Model plan (${plan.basis || "prior"}): ${how(first)}.`
-    : `Model plan (${plan.basis || "prior"}) -- follow it: start by handing this task over, do not solve it ` +
-      `yourself first: ${how(first)}.`;
+    : `Model plan (${plan.basis || "prior"}) -- follow it: make the hand-over your FIRST action, before reading ` +
+      `files or trying anything yourself: ${how(first)}. Pass the task as given; the delegate reads the files. ` +
+      "When it returns, run the check once to confirm -- do not redo its work.";
   return lead +
     (rest.map((u, i) => ` If that fails its check, ${i ? "then " : "next "}${how(u)}.`).join("")) +
     ` After each attempt you ran or delegated to a Claude subagent, check it and call ` +

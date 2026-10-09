@@ -311,13 +311,27 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
 
     token_meta = g.meta.get("tokens_step" if step_level else "tokens", {})
     goal_tokens = await store.goal_token_stats(pool, goal_id, steps=step_level)
+    # This Goal's attempts pooled over every unit: how big ITS tasks are. A unit with no attempts here is sized from
+    # this, not from the public benchmark's task size -- otherwise a unit that ran once on small tasks looks far
+    # cheaper than every untried one, which is then never tried (and never learned).
+    pooled_tokens = _pool_unit_stats(goal_tokens)
     cost_ok, cost_fail = np.zeros(len(columns)), np.zeros(len(columns))
     for i, (u, _order) in enumerate(columns[:len(usable)]):          # earlier attempts' costs are sunk
         key = unit_id(*u)
         for outcome, target in (("1", cost_ok), ("0", cost_fail)):
             target[i] = costs.dollars(prices[u[0]], *costs.expected_tokens(
-                outcome, token_meta.get("global", {}), _unit_tokens(token_meta, u[0], key, cards), goal_tokens.get(key),
-                cfg))
+                outcome, token_meta.get("global", {}), _unit_tokens(token_meta, u[0], key, cards),
+                goal_tokens.get(key) or pooled_tokens, cfg))
+
+    # the caller's own session pays to hand an attempt to any other unit (see RoutingDefaults.handoff_cost_usd)
+    baseline_unit = constraints.get("reliability_baseline")
+    if baseline_unit:
+        handoff = float(constraints["handoff_cost_usd"] if constraints.get("handoff_cost_usd") is not None
+                        else cfg.handoff_cost_usd)
+        for i, (u, _order) in enumerate(columns[:len(usable)]):
+            if unit_id(*u) != str(baseline_unit):
+                cost_ok[i] += handoff
+                cost_fail[i] += handoff
 
     alpha, beta = predict.check_rates(g, check_kind)
     attempts = []
@@ -330,6 +344,12 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
         draw_w, local_evidence = reweight_by_local_obs(draw_w, local_obs_loglik(p, eps_w, alpha, beta, local_cols))
         local_evidence.update(attempts=sum(n for _, n, _ in local_cols), accepted=sum(k for _, _, k in local_cols),
                               units=len(local_cols))
+        # Re-weighting can only choose among the prior's draws, so when this workspace's truth lies outside them
+        # (a model much better here than on the public benchmarks) it cannot get there. Each unit's level is also
+        # moved to a Beta-binomial posterior in which the prior counts as `local_prior_strength` attempts: with
+        # no local data the prior decides; after ~10 attempts this workspace's own record does.
+        p = shift_to_local_rates(p, eps_w, draw_w, alpha, beta, local_cols,
+                                 float(constraints.get("local_prior_strength") or cfg.local_prior_strength))
     max_rungs = int(constraints.get("max_rungs") or cfg.max_rungs)
 
     # ---- the rest of the run: P(every later step succeeds | eps) under a base policy
@@ -380,6 +400,11 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
             attempts=attempts, rng=rng, continuation=continuation, node_weights_after=(node_w, draw_w),
             allow_repeats=bool(constraints.get("allow_retries", True)),
             max_repeats=int(constraints.get("max_repeats") or cfg.max_repeats),
+            feasibility=str(constraints.get("feasibility") or cfg.feasibility),
+            end_with=(next((i for i, (m, s) in enumerate(usable) if unit_id(m, s) == str(baseline)), None)
+                      if baseline and constraints.get("end_with_baseline", True) else None),
+            explore_first=_explore_unit(usable, local_obs, baseline, cost_ok, rng,
+                                        int(constraints.get("explore_min_attempts", cfg.explore_min_attempts))),
             exclude_units=[col for a, col in attempts_cols if col < len(usable)] if not constraints.get(
                 "allow_retries", True) else (),
             max_cost=None if constraints.get("max_cost_usd") is None else float(constraints["max_cost_usd"]))
@@ -503,6 +528,66 @@ def local_obs_loglik(p: np.ndarray, eps_w: np.ndarray, alpha: np.ndarray, beta: 
         p_acc = np.clip(p_acc, 1e-12, 1 - 1e-12)
         ll += ok * np.log(p_acc) + (n - ok) * np.log1p(-p_acc)
     return ll
+
+
+def _explore_unit(usable: Sequence[Any], local_obs: Sequence[Mapping[str, Any]], baseline: Any,
+                  cost_ok: np.ndarray, rng: np.random.Generator, k: int) -> Optional[int]:
+    """The unit to try first for exploration, or None: among units cheaper than the baseline (the session's own
+    model) with fewer than k attempts in this workspace, one picked at random weighted to the least-tried. Only with
+    a baseline (so a failed exploratory attempt escalates to the session's model) and k > 0."""
+    if not baseline or k <= 0:
+        return None
+    b = next((i for i, (m, s) in enumerate(usable) if unit_id(m, s) == str(baseline)), None)
+    if b is None:
+        return None
+    tried = {str(o.get("unit")): int(o.get("n") or 0) for o in (local_obs or [])}
+    pool = [i for i, (m, s) in enumerate(usable) if i != b and cost_ok[i] < cost_ok[b] and tried.get(unit_id(m, s), 0) < k]
+    if not pool:
+        return None
+    least = min(tried.get(unit_id(*usable[i]), 0) for i in pool)
+    pool = [i for i in pool if tried.get(unit_id(*usable[i]), 0) == least]
+    return int(pool[int(rng.integers(len(pool)))])
+
+
+def _pool_unit_stats(stats: Mapping[str, Mapping[str, list]]) -> dict[str, list[float]]:
+    """The size an UNTRIED unit is priced at here: per outcome, the smallest (in, out) any unit has needed on this
+    Goal -- optimism under uncertainty, so its first try is cheap to justify and its real cost gets learned. A unit's
+    own record (goal_tokens[unit]) replaces this as soon as it has one. n is the pooled count (how much it weighs)."""
+    out: dict[str, list[float]] = {}
+    for by in stats.values():
+        for outcome, row in by.items():
+            if float(row[0]) <= 0:
+                continue
+            acc = out.setdefault(outcome, [0.0, float("inf"), float("inf"), float("inf")])
+            acc[0] += float(row[0])
+            for j in (1, 2, 3):
+                acc[j] = min(acc[j], float(row[j]))
+    return out
+
+
+def shift_to_local_rates(p: np.ndarray, eps_w: np.ndarray, draw_w: np.ndarray, alpha: np.ndarray, beta: np.ndarray,
+                         local_cols: Sequence[tuple[int, int, int]], strength: float) -> np.ndarray:
+    """p with each locally observed unit's logit shifted so its posterior-mean ACCEPT rate becomes the Beta-binomial
+    posterior mean (prior mean m counted as `strength` attempts, plus ok of n): (m*s + ok) / (s + n). The shift is
+    the same for every draw and node, so the prior's spread and its difficulty structure are kept."""
+    p = p.copy()
+    lo = lambda x: np.log(np.clip(x, 1e-6, 1 - 1e-6) / (1 - np.clip(x, 1e-6, 1 - 1e-6)))  # noqa: E731
+    for col, n, ok in local_cols:
+        if n <= 0:
+            continue
+        def accept(pu: np.ndarray) -> float:
+            per = ((pu * (1 - beta)[:, None] + (1 - pu) * alpha[:, None]) * eps_w[None, :]).sum(axis=1)
+            return float(draw_w @ per)
+        m = accept(p[:, col, :])
+        target = (m * strength + ok) / (strength + n)
+        shift, base = 0.0, lo(p[:, col, :])
+        for _ in range(30):                      # solve accept(sigmoid(logit p + shift)) = target (monotone in shift)
+            got = accept(1 / (1 + np.exp(-(base + shift))))
+            if abs(got - target) < 1e-4:
+                break
+            shift += (lo(np.array(target)) - lo(np.array(got))) * 1.5
+        p[:, col, :] = 1 / (1 + np.exp(-(base + shift)))
+    return p
 
 
 def reweight_by_local_obs(draw_w: np.ndarray, loglik: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:

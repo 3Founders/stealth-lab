@@ -189,7 +189,8 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
            rng: np.random.Generator, continuation: Optional[np.ndarray] = None,
            node_weights_after: Optional[tuple[np.ndarray, np.ndarray]] = None,
            allow_repeats: bool = True, exclude_units: Sequence[int] = (),
-           max_repeats: Optional[int] = None) -> LadderResult:
+           max_repeats: Optional[int] = None, feasibility: str = "posterior",
+           end_with: Optional[int] = None, explore_first: Optional[int] = None) -> LadderResult:
     """Evaluate every ladder over `candidates` (indices into p's unit axis; earlier
     attempts may use other units) and choose one."""
     node_w, draw_w = node_weights_after if node_weights_after is not None else belief(node_weights, p, attempts)
@@ -204,6 +205,15 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
         ladders = [lad for lad in ladders if len(set(lad)) == len(lad) and not banned & set(lad)]
         if not ladders:
             raise ValueError("every candidate has already been tried on this instance")
+    if end_with is not None and any(lad and lad[-1] == end_with for lad in ladders):
+        # every ladder ends with the session's own model: escalation to it is always there when the cheaper rungs
+        # fail their checks, so the plan cannot deliver less than the session would alone (up to check errors) --
+        # the router only decides which cheaper rungs to try first, or to go straight to it
+        ladders = [lad for lad in ladders if lad and lad[-1] == end_with]
+    if explore_first is not None and not attempts:
+        # forced exploration: start with this under-tried unit (then the cheapest continuation)
+        forced = [lad for lad in ladders if lad and lad[0] == explore_first]
+        ladders = forced or ladders
     if max_repeats is not None:
         # no unit runs more than max_repeats times on this instance, counting the attempts already made
         tried = collections.Counter(a.unit for a in attempts)
@@ -223,6 +233,26 @@ def choose(p: np.ndarray, node_weights: np.ndarray, alpha: np.ndarray, beta: np.
         affordable = worst <= max_cost
     else:
         affordable = np.ones(len(ladders), dtype=bool)
+
+    if feasibility == "draw":
+        # Thompson feasibility: sample ONE plausible world (a posterior draw) and take the best ladder that meets the
+        # target IN THAT WORLD. An uncertain cheap model is then tried in proportion to the probability that it is
+        # good enough -- the only way its evidence can ever accumulate -- while the target, the check and the
+        # escalation still guard each run. The posterior-mass rule above never tries what it is unsure of.
+        rho_s = np.broadcast_to(np.asarray(rho, dtype=float), (len(draw_w),))
+        per_draw_ok = (ok >= rho_s[None, :]) & affordable[:, None]                      # (L, S)
+        # the cheapest ladder that is good enough in that world (expected cost in the draw; ties: higher P(ok))
+        masked_all = np.where(per_draw_ok, -cost + 1e-9 * ok, -np.inf)
+        best = masked_all.argmax(axis=0)                                               # (S,)
+        any_ok = per_draw_ok.any(axis=0)
+        s_star = int(rng.choice(len(draw_w), p=draw_w))
+        if any_ok[s_star]:
+            chosen = int(best[s_star])
+            propensity = float(draw_w[any_ok & (best == chosen)].sum())
+            return LadderResult(ladders, ok, wrong, cost, util, draw_w, per_draw_ok.any(axis=1), chosen, propensity,
+                                True, s_star, p_step_ok=step_ok)
+        # no ladder meets the target in this world: fall through to the most reliable affordable ladder below
+        feasible = np.zeros(len(ladders), dtype=bool)
 
     if feasible.any():
         masked = np.where(feasible[:, None], util, -np.inf)
