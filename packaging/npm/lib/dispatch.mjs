@@ -101,6 +101,17 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     } catch (err) {
       log(`dispatch: library entry not added (${err.message})`);
     }
+    if (entry) {
+      // the new Way's semantic code (the capture Stop hook does this otherwise; a stopped prompt has no Stop)
+      try {
+        const { codeWays } = await import("./library.mjs");
+        const { hostedSettings } = await import("./exec/hosted.mjs");
+        const { url, token } = hostedSettings(env);
+        await codeWays(root, { url, token, ...(fetchImpl ? { fetchImpl } : {}) });
+      } catch (err) {
+        log(`dispatch: ways not coded (${err.message})`);
+      }
+    }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
     return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried,
       text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
