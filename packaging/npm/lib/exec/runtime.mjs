@@ -299,8 +299,10 @@ export class ExecRuntime {
       this.event(run, { event: "worktree", attempt: a.index + 1, path: a.worktree });
       if (a.cancelRequested) return this.setState(run, a, "cancelled");
 
+      // An open-model profile for this model (exec.json "profiles"), if any. Adapters that cannot use one ignore it.
+      const profile = readExecConfig(env).profiles[a.model] || undefined;
       const spec = adapter.buildCommand({ task: run.input.task, model: a.model, worktree: a.worktree, timeoutS: run.input.timeoutS,
-                                          env, bin: probe.bin || undefined });
+                                          env, bin: probe.bin || undefined, profile });
       if (!spec || !spec.cmd) throw new Error(`adapter "${a.executor}" returned no command`);
       const outLog = redactingLog(path.join(dir, `${tag}.stdout.log`), (s) => this.red(s));
       const errLog = redactingLog(path.join(dir, `${tag}.stderr.log`), (s) => this.red(s));

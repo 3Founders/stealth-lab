@@ -14,6 +14,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { normaliseProfiles } from "../executors/profile.mjs";
 
 export function execHome(env = process.env) {
   return env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab");
@@ -54,6 +55,8 @@ export function readExecConfig(env = process.env) {
   const cfg = readJson(execConfigPath(env), {}) || {};
   return {
     executors: cfg.executors && typeof cfg.executors === "object" ? cfg.executors : {},
+    // model name -> open-model profile (see lib/executors/profile.mjs); a malformed entry throws on read
+    profiles: normaliseProfiles(cfg.profiles),
     default_order: Array.isArray(cfg.default_order) ? cfg.default_order.map(String) : [],
     hang_s: Number(cfg.hang_s) > 0 ? Number(cfg.hang_s) : undefined,
     race_interval_width: Number(cfg.race_interval_width) > 0 ? Number(cfg.race_interval_width) : 0.5,

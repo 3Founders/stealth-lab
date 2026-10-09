@@ -21,11 +21,12 @@ import claude from "./claude.mjs";
 import gemini from "./gemini.mjs";
 import openhands from "./openhands.mjs";
 import cline from "./cline.mjs";
+import stealth from "./stealth.mjs";
 import fake from "./fake.mjs";
 
 export { runnable, assertRunnable, resolveBin, parseCmdShim, scrubEnv, extractLearned } from "./common.mjs";
 
-export const ADAPTERS = Object.freeze({ opencode, codex, claude, gemini, openhands, cline, fake });
+export const ADAPTERS = Object.freeze({ opencode, codex, claude, gemini, openhands, cline, stealth, fake });
 
 export function fakeAllowed(env = process.env) {
   return (env || {}).STEALTHLAB_EXEC_ALLOW_FAKE === "1";

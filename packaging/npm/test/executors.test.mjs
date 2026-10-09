@@ -21,8 +21,8 @@ const STUB_BIN = WIN ? "C:\\agents\\agent.exe" : "/opt/agents/agent";
 
 // --- registry -------------------------------------------------------------------
 
-test("registry: all seven adapters, each with the fixed interface", () => {
-  assert.deepEqual(Object.keys(ADAPTERS).sort(), [...REAL, "fake"].sort());
+test("registry: all eight adapters (stealth is our own, tested in open_model_executors.test.mjs), each with the fixed interface", () => {
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), [...REAL, "stealth", "fake"].sort());
   for (const [id, a] of Object.entries(ADAPTERS)) {
     assert.equal(a.id, id);
     assert.ok("VERIFIED_WITH" in a, `${id} VERIFIED_WITH`);

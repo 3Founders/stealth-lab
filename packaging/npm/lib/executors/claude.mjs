@@ -30,12 +30,47 @@
 // total_cost_usd, usage.{input_tokens,output_tokens,cache_read_input_tokens,
 // cache_creation_input_tokens}. The fixture test/fixtures/executors/claude.json
 // is a documented-shape example, not a captured run (a run would spend tokens).
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   VERIFIED_DATE, detectBin, healthOf, lastJsonObject, launchOrThrow, num, plainResult, safeTaskArg, scrubEnv, tailText, extractLearned,
 } from "./common.mjs";
+import { FOREIGN_CREDENTIAL_VARS, profileKey } from "./profile.mjs";
 
 const BIN = "claude";
 export const CLAUDE_ALLOWED_TOOLS = "Read,Edit,Write,Bash,Glob,Grep";
+
+// Open-model mode (a profile with anthropic_base_url): the same `claude -p`, but pointed at a third party's
+// Anthropic-compatible endpoint with THAT provider's key (the pattern Z.ai documents:
+// https://docs.z.ai/scenario-example/develop-tools/claude -- ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
+// API_TIMEOUT_MS, ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL).
+//
+// Three safeguards, because this child talks to someone who is not Anthropic:
+//  * every Anthropic / Claude / other-vendor credential is removed from the child's env, so the user's own keys
+//    are never sent to the third party;
+//  * CLAUDE_CONFIG_DIR points at an empty private directory, so the user's logged-in Claude session and their
+//    hooks (including StealthLab's own) are neither presented to the third party nor re-entered by this run;
+//  * all three model aliases are mapped to the open model, because Claude Code makes background calls on its
+//    small-model alias and a provider that does not know that name would fail them.
+// Claude Code itself is still the user's own installed binary. We do not bundle, wrap or redistribute it.
+export function openModelEnv(profile, env = process.env, { configDir } = {}) {
+  const out = {};
+  for (const k of Object.keys(env)) {
+    if (FOREIGN_CREDENTIAL_VARS.includes(k.toUpperCase()) || /^ANTHROPIC_/i.test(k) || /^CLAUDE_CODE_OAUTH/i.test(k)) out[k] = undefined;
+  }
+  const dir = configDir || fs.mkdtempSync(path.join(os.tmpdir(), "stealth-claude-cfg-"));
+  return {
+    ...out,
+    ANTHROPIC_BASE_URL: profile.anthropic_base_url,
+    ANTHROPIC_AUTH_TOKEN: profileKey(profile, env),
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: profile.model_id,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: profile.model_id,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: profile.model_id,
+    API_TIMEOUT_MS: env.API_TIMEOUT_MS || "3000000",
+    CLAUDE_CONFIG_DIR: dir,
+  };
+}
 
 const adapter = {
   id: "claude",
@@ -48,8 +83,14 @@ const adapter = {
     return detectBin(BIN, { env });
   },
 
-  buildCommand({ task, model, worktree, timeoutS, env = process.env, bin } = {}) {
+  buildCommand({ task, model, worktree, timeoutS, env = process.env, bin, profile, configDir } = {}) {
     const launch = launchOrThrow(BIN, { env, bin });
+    if (profile && !profile.anthropic_base_url) {
+      throw new Error(`profile ${profile.name} has no anthropic_base_url, so the claude executor cannot reach it (use opencode or stealth for its openai_base_url)`);
+    }
+    if (profile && Object.keys(profile.request_extras).length) {
+      throw new Error(`profile ${profile.name} sets request_extras, which the claude executor cannot send; use the stealth executor for it`);
+    }
     const args = [
       ...launch.prefix,
       "-p", safeTaskArg(task),
@@ -58,10 +99,13 @@ const adapter = {
       "--permission-mode", "acceptEdits",
       "--permission-prompts", "none",
     ];
-    if (model) args.push("--model", String(model));
+    if (profile) args.push("--model", profile.model_id);
+    else if (model) args.push("--model", String(model));
     args.push("--allowedTools", CLAUDE_ALLOWED_TOOLS); // variadic: kept last
     void worktree; void timeoutS; // cwd = worktree is set by the runtime; no timeout flag
-    return { cmd: launch.cmd, args, env: scrubEnv(env), stdinText: undefined };
+    // With a profile the overlay both adds the open-model variables and blanks (undefined) the user's own vendor
+    // credentials; the runtime's childEnv applies an overlay entry of undefined as a delete.
+    return { cmd: launch.cmd, args, env: profile ? { ...scrubEnv(env), ...openModelEnv(profile, env, { configDir }) } : scrubEnv(env), stdinText: undefined };
   },
 
   parseOutput({ stdout = "", stderr = "" } = {}) {
