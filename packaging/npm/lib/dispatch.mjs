@@ -155,7 +155,7 @@ function taskText(prompt) {
 
 // -> {handled: true, text} when a cheap rung's verified change was applied; else {handled: false, tried, remaining}
 //    (remaining: the plan's ladder after the rungs tried here), or null when dispatch does not apply.
-export async function dispatch({ payload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime }) {
+export async function dispatch({ payload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude }) {
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
@@ -167,7 +167,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   // test-first: the session model's tests join the project's check for every cheap rung
   let spec = null;
   if (policy.testFirst && /pytest/.test(check)) {
-    try { spec = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, env, log }); } catch (err) {
+    try { spec = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, env, log, runClaude }); } catch (err) {
       log(`test-first: ${err.message}`);
     }
   }
@@ -192,7 +192,10 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       continue;
     }
     let cross = null;
-    if (ok && policy.crosscheck !== "off") {
+    // The session model's own tests (test-first) are the independent judge when they exist: a cheap verifier's tests
+    // are weaker and, on code that is not a standalone module, can fail a correct answer. The cross-check covers only
+    // a task test-first could not write tests for.
+    if (ok && policy.crosscheck !== "off" && !spec) {
       cross = await crossCheck({ rt, rung, result, rungs: dispatchableRungs(plan, mine, env), env, payload, root, check,
                                  scope: policy.scope, log });
       if (cross.verdict === "disagree") ok = false;

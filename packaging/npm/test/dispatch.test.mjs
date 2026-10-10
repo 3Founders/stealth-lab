@@ -188,3 +188,17 @@ test("test-first: paths anchored on the spec file's own folder resolve from the 
   }
   assert.equal(rootRelative("from solution import f"), "from solution import f");
 });
+
+test("test-first replaces the cross-check: with the session model's tests in the check, no cheap verifier runs", async () => {
+  const { env, repo } = setup();
+  const rt = stubRuntime(repo, { "gemma-4-31b-it": "verified", "minimax-m2-7": "verified" });
+  const spec = "```python\ndef test_x():\n    assert True\n```";
+  const runClaude = () => ({ stdout: JSON.stringify({ result: spec, total_cost_usd: 0.02 }) });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo,
+    mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_TESTFIRST: "on", STEALTHLAB_DISPATCH_CROSSCHECK: "strict" },
+    runtime: rt, runClaude });
+  assert.equal(d.handled, true, "strict mode does not hold back an answer that passed the session model's tests");
+  assert.equal(rt.calls.length, 1, "one run: no verifier");
+  assert.match(rt.calls[0].checks[0], /test_spec\.py/);
+});
+
