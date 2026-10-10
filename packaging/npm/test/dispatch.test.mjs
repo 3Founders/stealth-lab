@@ -148,22 +148,22 @@ test("cross-check: an answer that passes the other model's tests is accepted; no
 
 import { writeSpecTests } from "../lib/dispatch.mjs";
 
-test("test-first: the session model's tests are saved outside the repo, sized, and the cost recorded", () => {
+test("test-first: the session model's tests are saved outside the repo, sized, and the cost recorded", async () => {
   const { env, repo } = setup();
   fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
   let asked = null;
   const runClaude = (args, input) => { asked = { args, input };
     return { stdout: JSON.stringify({ result: "```python\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```",
                                       total_cost_usd: 0.02 }) }; };
-  const spec = writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude });
+  const spec = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude });
   assert.ok(spec.file.startsWith(env.STEALTHLAB_HOME) && !spec.file.startsWith(repo), "outside the repo");
   assert.match(fs.readFileSync(spec.file, "utf8"), /sys\.path\.insert\(0, os\.getcwd\(\)\)[\s\S]*def test_neg/);
   assert.equal(spec.cost_usd, 0.02);
   assert.ok(asked.args.includes("--tools") && asked.args.includes("claude-opus-5-5"));
   assert.match(asked.input, /double x[\s\S]*solution\.py/, "the prompt and the project's files go on stdin");
   assert.match(fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8"), /"test-first"/);
-  assert.equal(writeSpecTests({ prompt: "x", root: repo, mine: "gpt-5|codex", env, runClaude }), null, "not a Claude session");
-  assert.equal(writeSpecTests({ prompt: "x", root: repo, mine: MINE, env,
+  assert.equal(await writeSpecTests({ prompt: "x", root: repo, mine: "gpt-5|codex", env, runClaude }), null, "not a Claude session");
+  assert.equal(await writeSpecTests({ prompt: "x", root: repo, mine: MINE, env,
     runClaude: () => ({ stdout: JSON.stringify({ result: "no tests here" }) }) }), null);
 });
 
@@ -201,7 +201,7 @@ test("test-first replaces the cross-check: with the session model's tests in the
     runtime: rt, runClaude });
   assert.equal(d.handled, true, "strict mode does not hold back an answer that passed the session model's tests");
   assert.equal(rt.calls.length, 1, "one run: no verifier");
-  assert.match(rt.calls[0].checks[0], /test_spec\.py/);
+  assert.match(rt.calls[0].checks[0], /&& python ".*run_spec\.py"$/, "the check ends with the tests' runner");
 });
 
 
@@ -217,14 +217,14 @@ test("by default Sonnet (the claude executor) is not tried, and the other config
   assert.deepEqual(cheapCandidates({ ladder: ["claude-opus-5-5|claude-code"] }, MINE, env), [], "the plan puts no cheap rung first");
 });
 
-test("test-first: a reply with a missing fence is cleaned; a file that does not parse is not used", { skip: !hasPytest }, () => {
+test("test-first: a reply with a missing fence is cleaned; a file that does not parse is not used", { skip: !hasPytest }, async () => {
   assert.equal(codeBlock("def test_a():\n    assert True\n```"), "def test_a():\n    assert True");
   assert.equal(codeBlock("Here:\n```python\ndef test_a():\n    pass\n```\nDone."), "def test_a():\n    pass");
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "spec-home-"));
   const runClaude = (code) => () => ({ stdout: JSON.stringify({ result: code, total_cost_usd: 0.01 }) });
   const args = { prompt: "x", root: home, mine: MINE, env: { STEALTHLAB_HOME: home } };
-  assert.equal(writeSpecTests({ ...args, runClaude: runClaude("def test_a(:\n    pass") }), null);
-  assert.ok(writeSpecTests({ ...args, runClaude: runClaude("def test_a():\n    pass") }).file);
+  assert.equal(await writeSpecTests({ ...args, runClaude: runClaude("def test_a(:\n    pass") }), null);
+  assert.ok((await writeSpecTests({ ...args, runClaude: runClaude("def test_a():\n    pass") })).file);
 });
 
 test("a plan with only Sonnet before the session model still gets the cheap open models; one that starts with it does not", () => {
@@ -235,4 +235,53 @@ test("a plan with only Sonnet before the session model still gets the cheap open
   assert.deepEqual(cheapCandidates({ ladder: ["claude-sonnet-5-5|claude", "claude-sonnet-5-5|claude", MINE] }, MINE, env)
     .map((r) => r.model), ["gemma-4-31b-it", "minimax-m2-7"]);
   assert.deepEqual(cheapCandidates({ ladder: [MINE] }, MINE, env), []);
+});
+
+test("test-first runs whatever the project's check is (a JS project here): the writer is told the check", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(repo, "sum.js"), "module.exports = (a, b) => a - b;\n");
+  const rt = stubRuntime(repo, { "gemma-4-31b-it": "verified", "minimax-m2-7": "verified" });
+  let asked = "";
+  const runClaude = (args, input) => { asked = input; return { stdout: JSON.stringify({ result: "def test_x():\n    assert True", total_cost_usd: 0.01 }) }; };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix sum.js" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_CHECK: "npx vitest run", STEALTHLAB_DISPATCH_TESTFIRST: "on" }, runtime: rt, runClaude });
+  assert.equal(d.handled, true);
+  assert.match(asked, /check command: npx vitest run/);
+  assert.match(asked, /--- sum\.js ---/, "the JS file is shown to the writer");
+  assert.match(rt.calls[0].checks[0], /^npx vitest run && python ".*run_spec\.py"$/);
+});
+
+test("latency: the tests are written while the cheap models run, and the check waits for them", { skip: !hasPytest }, async () => {
+  const { env, repo } = setup();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  // the writer finishes only after the cheap run has started: the run must not wait for it
+  const runClaude = async () => { await gate; return { stdout: JSON.stringify({ result: "def test_x():\n    assert True", total_cost_usd: 0.01 }) }; };
+  const rt = stubRuntime(repo, { "gemma-4-31b-it": "verified", "minimax-m2-7": "verified" });
+  const achieve = rt.achieve;
+  rt.achieve = async (input) => { setTimeout(release, 50); return achieve(input); };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_TESTFIRST: "on" }, runtime: rt, runClaude });
+  assert.equal(d.handled, true);
+  assert.ok(d.spec && fs.existsSync(d.spec.file), "the tests were written");
+  const runner = rt.calls[0].checks[0].match(/python "(.*run_spec\.py)"/)[1];
+  const r = spawnSync("python", [runner], { cwd: repo, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
+test("latency: no cheap pass within the time limit -- the runs are cancelled, not counted, and the session takes over", async () => {
+  const { env, repo } = setup();
+  const cancelled = [];
+  const calls = [];
+  const rt = {
+    calls,
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) { await new Promise((r) => setTimeout(r, 400)); return { run_id: id, state: cancelled.includes(id) ? "cancelled" : "running" }; },
+    async cancelRun(id) { cancelled.push(id); return {}; },
+  };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_TIMEOUT_S: "10", STEALTHLAB_DISPATCH_PARALLEL: "on" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.deepEqual(d.tried.map((t) => t.state), ["timed out", "timed out"]);
+  assert.equal(fs.existsSync(path.join(repo, ".stealth", "routing.md")), false, "no record against the models");
 });
