@@ -75,11 +75,20 @@ def env_file(path: Path) -> dict[str, str]:
 
 # ---------------------------------------------------------------- tasks
 
-def load_tasks(spec: str, seed: int) -> list[dict]:
+def load_tasks(spec: str, seed: int, exclude: frozenset = frozenset()) -> list[dict]:
     suites = {}
     for part in spec.split(","):
         name, _, n = part.partition(":")
         suites[name] = int(n or 0)
+    if exclude:   # tasks used before are skipped: each suite samples extra and keeps the first n new ones
+        want = dict(suites)
+        tasks = load_tasks(",".join(f"{k}:{v + len(exclude)}" for k, v in suites.items()), seed)
+        out, kept = [], {k: 0 for k in want}
+        for t in tasks:
+            if t["task_id"] not in exclude and kept[t["suite"]] < want[t["suite"]]:
+                out.append(t)
+                kept[t["suite"]] += 1
+        return out
     tasks = []
     if "ds1000" in suites:
         import ds1000_task
@@ -335,6 +344,7 @@ def main() -> int:
     ap.add_argument("--tasks", required=True, help="e.g. ds1000:5")
     ap.add_argument("--seed", type=int, default=20261009)
     ap.add_argument("--arms", default="A,C")
+    ap.add_argument("--exclude-runs", default="", help="comma-separated earlier runs whose tasks are skipped")
     ap.add_argument("--only", default="", help="comma-separated task ids: run just these from the sampled tasks")
     ap.add_argument("--testfirst-model", default="", help="arm C: the model that writes the test-first tests")
     args = ap.parse_args()
@@ -361,7 +371,9 @@ def main() -> int:
     only = {t.strip() for t in args.only.split(",") if t.strip()}
     if args.testfirst_model:
         os.environ["ABTEST_TESTFIRST_MODEL"] = args.testfirst_model
-    for task in load_tasks(args.tasks, args.seed):
+    seen = frozenset(json.loads(line)["task_id"] for r in args.exclude_runs.split(",") if r.strip()
+                     for line in (LOCAL / "results" / f"{r.strip()}.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
+    for task in load_tasks(args.tasks, args.seed, seen):
         if only and task["task_id"] not in only:
             continue
         order = sorted(arms, key=lambda a: hashlib.sha256(f"{args.seed}|{task['task_id']}|{a}".encode()).hexdigest())
