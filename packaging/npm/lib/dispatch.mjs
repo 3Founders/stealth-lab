@@ -67,9 +67,18 @@ function specContext(root) {
   return out.join("\n\n");
 }
 
-function codeBlock(text) {
-  const m = /```(?:python)?\s*\n([\s\S]*?)```/.exec(String(text || ""));
-  return (m ? m[1] : String(text || "")).trim();
+export function codeBlock(text) {
+  const m = /```(?:python|py)?[ \t]*\r?\n([\s\S]*?)```/.exec(String(text || ""));
+  if (m) return m[1].trim();
+  // no complete fenced block (an opening or closing fence missing): drop any fence lines left over
+  return String(text || "").split(/\r?\n/).filter((l) => !/^\s*```/.test(l)).join("\n").trim();
+}
+
+// A test file that does not parse would fail every answer: such a file is dropped (null when it parses).
+function pythonSyntaxError(file) {
+  const r = spawnSync("python", ["-c", "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())", file],
+    { encoding: "utf8", timeout: 60000, windowsHide: true });
+  return r.status === 0 ? null : String(r.stderr || "syntax error").trim().split(/\r?\n/).pop();
 }
 
 // The spec runs from outside the project, with the project root as the working directory: a path anchored on the
@@ -140,11 +149,13 @@ ${specContext(root)}
   // run from the worktree: the project's modules import from the current directory
   fs.writeFileSync(file, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + code + "\n");
   const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
+  const bad = pythonSyntaxError(file);
+  if (bad) log(`test-first: the tests do not parse (${bad}); dispatch goes on without them`);
   try {
     fs.appendFileSync(path.join(path.dirname(path.dirname(dir)), "dispatch_costs.jsonl"),
       JSON.stringify({ at: new Date().toISOString(), what: "test-first", model, cost_usd: cost }) + "\n");
   } catch { /* the ledger is best-effort */ }
-  return { file, cost_usd: cost };
+  return bad ? null : { file, cost_usd: cost };   // the call is paid (ledger) either way
 }
 
 // The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count

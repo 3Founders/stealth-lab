@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { cheapCandidates, dispatch, dispatchableRungs, dispatchCheck, rootRelative, triedNote } from "../lib/dispatch.mjs";
+import { cheapCandidates, codeBlock, dispatch, dispatchableRungs, dispatchCheck, rootRelative, triedNote } from "../lib/dispatch.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1",
   ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "claude-sonnet-5-5|claude-code", "claude-opus-5-5|claude-code"] };
@@ -215,4 +215,14 @@ test("by default Sonnet (the claude executor) is not tried, and the other config
   assert.deepEqual(cheapCandidates(plan, MINE, env, { claude: true }).map((r) => r.model),
     ["gemma-4-31b-it", "claude-sonnet-5-5", "gpt-oss-120b"], "STEALTHLAB_DISPATCH_CLAUDE=on keeps it");
   assert.deepEqual(cheapCandidates({ ladder: ["claude-opus-5-5|claude-code"] }, MINE, env), [], "the plan puts no cheap rung first");
+});
+
+test("test-first: a reply with a missing fence is cleaned; a file that does not parse is not used", { skip: !hasPytest }, () => {
+  assert.equal(codeBlock("def test_a():\n    assert True\n```"), "def test_a():\n    assert True");
+  assert.equal(codeBlock("Here:\n```python\ndef test_a():\n    pass\n```\nDone."), "def test_a():\n    pass");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "spec-home-"));
+  const runClaude = (code) => () => ({ stdout: JSON.stringify({ result: code, total_cost_usd: 0.01 }) });
+  const args = { prompt: "x", root: home, mine: MINE, env: { STEALTHLAB_HOME: home } };
+  assert.equal(writeSpecTests({ ...args, runClaude: runClaude("def test_a(:\n    pass") }), null);
+  assert.ok(writeSpecTests({ ...args, runClaude: runClaude("def test_a():\n    pass") }).file);
 });
