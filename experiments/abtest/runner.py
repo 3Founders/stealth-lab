@@ -89,12 +89,11 @@ def load_tasks(spec: str, seed: int, exclude: frozenset = frozenset()) -> list[d
     if exclude:   # tasks used before are skipped: each suite samples extra and keeps the first n new ones
         want = dict(suites)
         tasks = load_tasks(",".join(f"{k}:{v + len(exclude)}" for k, v in suites.items()), seed)
-        out, kept = [], {k: 0 for k in want}
+        per: dict[str, list[dict]] = {k: [] for k in want}
         for t in tasks:
-            if t["task_id"] not in exclude and kept[t["suite"]] < want[t["suite"]]:
-                out.append(t)
-                kept[t["suite"]] += 1
-        return out
+            if t["task_id"] not in exclude and len(per[t["suite"]]) < want[t["suite"]]:
+                per[t["suite"]].append(t)
+        return interleave(list(per.values()))
     unknown = set(suites) - set(SUITES)
     if unknown:
         raise SystemExit(f"unknown suites: {sorted(unknown)} (known: {sorted(SUITES)})")
@@ -102,7 +101,12 @@ def load_tasks(spec: str, seed: int, exclude: frozenset = frozenset()) -> list[d
     for name, n in suites.items():
         mod = __import__(SUITES[name])
         per.append([{**t, "module": SUITES[name]} for t in mod.sample(n, seed)])
-    # interleaved in proportion to each suite's size: a run stopped early is still a balanced sample of every suite
+    return interleave(per)
+
+
+def interleave(per: list[list[dict]]) -> list[dict]:
+    """The suites' tasks interleaved in proportion to each suite's size: a run stopped early is still a balanced
+    sample of every suite."""
     order = sorted(((i + 0.5) / len(p), k, i) for k, p in enumerate(per) for i in range(len(p)))
     return [per[k][i] for _, k, i in order]
 
