@@ -18,6 +18,9 @@
 //   stop               (`hook cursor-stop`)    if the lookup identified a Goal and a test verdict is known, ONE
 //                                              report_model_run per prompt (scaffold "cursor", the model Cursor
 //                                              names in the payload), sent by a detached worker.
+//   with dispatch      (`install --client cursor --with-exec`) beforeSubmitPrompt first runs the cheap models on
+//                      the task (lib/cursor_dispatch.mjs): a verified change applied stops the prompt with a message
+//                      ("Done by <model> ..."); otherwise the prompt goes on and the lookup it made is delivered here.
 //   sessionStart       (`hook cursor-session`) a few lines on what the hook does and when to call find_ways
 //                                              yourself (STEALTHLAB_CURSOR_SESSION=off leaves it out).
 //
@@ -41,6 +44,11 @@ import { buildReport, captureEnabled, looksLikeTest, rememberLookup, sessionFile
 import { logHook } from "./subagent_hook.mjs";
 import { onCursorPreToolUse } from "./model_guard.mjs";
 import { findStealthRoot, requestPayload } from "./library.mjs";
+
+// beforeSubmitPrompt's time limit in hooks.json when dispatch is installed (seconds). Dispatch bounds its own cheap
+// tries (STEALTHLAB_DISPATCH_TIMEOUT_S, default 150 s); the lookup, the test writer, applying the change and the
+// library entry come on top. Cursor lets the prompt through if the hook outlives this (fail open).
+export const CURSOR_DISPATCH_TIMEOUT_S = 600;
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
 const MAX_TESTS = 20;
@@ -263,7 +271,12 @@ export async function runCursorHook(event, { stdinText, env = process.env, setti
   try {
     if (event === "pretool") return onCursorPreToolUse(payload, { env });
     if (event === "session") return cursorPolicy(env).sessionContext ? { additional_context: SESSION_CONTEXT } : {};
-    if (event === "prompt") return onBeforeSubmitPrompt(payload, { env, settings });
+    if (event === "prompt") {
+      // with the local executor installed: dispatch first (lib/cursor_dispatch.mjs); null -> the plain hook below
+      const { runCursorDispatchPrompt } = await import("./cursor_dispatch.mjs");
+      const d = await runCursorDispatchPrompt(payload, { env, settings, userAgent, fetchImpl, log: (m) => logHook(env, "cursor-dispatch", m) });
+      return d || onBeforeSubmitPrompt(payload, { env, settings });
+    }
     if (event === "tool") return await onPostToolUse(payload, { env });
     if (event === "stop") {
       const r = onStop(payload, { env, hasToken });
@@ -291,12 +304,14 @@ export function cursorCommand(launch, mark, platform = process.platform) {
   return [quote(program), ...launch.args.map(quote), ...mark.split(" ")].join(" ");
 }
 
-export function addCursorHooks(doc, launch, platform = process.platform) {
+// dispatch: the prompt hook may run the cheap models (lib/cursor_dispatch.mjs), so its time limit is minutes, not seconds.
+export function addCursorHooks(doc, launch, platform = process.platform, { dispatch = false } = {}) {
   doc.version = doc.version || 1;
   doc.hooks = doc.hooks || {};
   for (const [event, { mark, timeout }] of Object.entries(CURSOR_HOOKS)) {
     const kept = (doc.hooks[event] || []).filter((e) => !isOurs(mark)(e));
-    kept.push({ command: cursorCommand(launch, mark, platform), timeout });
+    const limit = dispatch && event === "beforeSubmitPrompt" ? CURSOR_DISPATCH_TIMEOUT_S : timeout;
+    kept.push({ command: cursorCommand(launch, mark, platform), timeout: limit });
     doc.hooks[event] = kept;
   }
   return doc;
@@ -328,10 +343,10 @@ function readJsonOrThrow(file) {
   }
 }
 
-export function upsertCursorHooks(file, launch, platform = process.platform) {
+export function upsertCursorHooks(file, launch, platform = process.platform, { dispatch = false } = {}) {
   const doc = readJsonOrThrow(file);
   if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
-  addCursorHooks(doc, launch, platform);
+  addCursorHooks(doc, launch, platform, { dispatch });
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
 }

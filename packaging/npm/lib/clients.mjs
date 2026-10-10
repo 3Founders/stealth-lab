@@ -264,11 +264,17 @@ export function clients({ env = process.env, platform = process.platform } = {})
       detect: () => fs.existsSync(path.dirname(cursor)),
       where: () => `${cursor} + hooks in ${cursorHooks}`,
       // The hooks (lib/cursor_hooks.mjs) are Cursor's version of the Claude Code knowledge + capture hooks;
-      // --no-hooks registers the server only (and takes out hooks an earlier install added).
-      install: ({ url, token, hooks = true, launch }) => {
+      // --no-hooks registers the server only (and takes out hooks an earlier install added). --with-exec adds
+      // dispatch: the prompt hook runs the cheap open models first (lib/cursor_dispatch.mjs), with a longer time limit.
+      install: ({ url, token, hooks = true, launch, dispatch = false }) => {
         upsertJsonServer(cursor, withHeaders({ url }, token));
-        if (hooks && launch) upsertCursorHooks(cursorHooks, launch);
-        else uninstallCursorHooks(cursorHooks);
+        if (hooks && launch) {
+          upsertCursorHooks(cursorHooks, launch, platform, { dispatch });
+          if (dispatch) {
+            writeConfig({ dispatch: true }, env);   // the models in exec.json become plan candidates
+            return `${cursor} + hooks with dispatch in ${cursorHooks}`;
+          }
+        } else uninstallCursorHooks(cursorHooks);
       },
       uninstall: () => {
         const hooksRemoved = uninstallCursorHooks(cursorHooks);

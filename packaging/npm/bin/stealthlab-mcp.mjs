@@ -59,7 +59,8 @@ Usage:
   stealthlab-mcp hook cursor-session        Cursor hooks (installed with Cursor; --no-hooks skips them):
   stealthlab-mcp hook cursor-prompt          sessionStart, beforeSubmitPrompt, postToolUse, stop -- look each
   stealthlab-mcp hook cursor-tool            task up in the background, hand what Kel knows to the agent at
-  stealthlab-mcp hook cursor-stop            its first tool call, and report one outcome per prompt
+  stealthlab-mcp hook cursor-stop            its first tool call, and report one outcome per prompt; with
+                                             --with-exec the prompt hook runs dispatch first (cheap models)
   stealthlab-mcp exec apply <run_id>        apply a VERIFIED executor run to its checkout (refuses otherwise)
   stealthlab-mcp exec                       run the local executor MCP server (stdio; installed only by
                                              "install --with-exec"): drives YOUR locally installed agents
@@ -150,7 +151,12 @@ async function cmdInstall(v) {
     // Claude Code took the hooks-only dispatch install (clients.mjs installClaudeDispatch): no agents to write
   } else if (v["with-exec"]) {
     if (!chosen.some((c) => c.id === "claude-code")) {
-      out("\n--with-exec: Claude Code not selected, so no agents or hooks were written.");
+      if (chosen.some((c) => c.id === "cursor") && !v["no-hooks"]) {
+        out("\n--with-exec: Cursor's prompt hook runs dispatch (the open models in ~/.stealthlab/exec.json try each task");
+        out("  first; set STEALTHLAB_DISPATCH_CHECK to the project's test command). See docs/cursor_dispatch.md.");
+      } else {
+        out("\n--with-exec: Claude Code not selected, so no agents or hooks were written.");
+      }
       out("  Other MCP clients can run the executor server as a stdio command: stealthlab-mcp exec");
     } else if (v["dry-run"]) {
       for (const f of describeExec()) out(`  would write  ${f}`);
@@ -380,6 +386,8 @@ async function main() {
             const chunks = [];
             for await (const c of process.stdin) chunks.push(c);
             const settings = resolveSettings({});
+            // the prompt hook may call the server itself (dispatch): a signed-in token is renewed first
+            if (sub === "cursor-prompt") { try { settings.token = await freshToken(settings); } catch { /* as saved */ } }
             const r = await runCursorHook(sub.slice("cursor-".length), {
               stdinText: Buffer.concat(chunks).toString("utf8"), settings, userAgent: UA, hasToken: Boolean(settings.token),
             });
