@@ -457,7 +457,6 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     // Dispatch (lib/dispatch.mjs): the plan's cheap rungs run here, before the session's model. A verified pass is
     // applied and the prompt is stopped with its report -- the session's model never runs.
     const mine = model ? `${model}|claude-code` : null;
-    let note = "";
     try {
       const { dispatch, triedNote } = await import("./dispatch.mjs");
       const d = await dispatch({ payload, reply, root, mine, env, fetchImpl, log });
@@ -466,16 +465,23 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
         write(JSON.stringify({ decision: "block", reason: d.text }));
         return;
       }
-      if (d && reply?.model_plan) {
-        reply = { ...reply, model_plan: { ...reply.model_plan, ladder: d.remaining.length ? d.remaining : [mine].filter(Boolean) } };
-        note = triedNote(d);
+      if (d) {
+        // The cheap models tried and none passed: the session does the task as it would without StealthLab -- no
+        // plan, no hand-overs, no report to make (the capture hooks record the outcome). Anything more only adds
+        // turns to the one path that already costs the most.
+        // the plan as it now stands -- the session's own model is next -- so the model guard lets it work
+        const rest = reply?.model_plan ? { ...reply, model_plan: { ...reply.model_plan, ladder: [mine].filter(Boolean) } } : reply;
+        try { rememberLookup(payload, rest, { env, mine }); } catch { /* capture is best-effort */ }
+        const text = triedNote(d);
+        if (text) write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: text } }));
+        return;
       }
     } catch (err) {
       log(`stealthlab hook: dispatch skipped (${err.message})`);
     }
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env, mine }); } catch { /* capture is best-effort */ }
-    const context = [note, formatKnowledge(reply, policy.maxChars, { mode, root, mine })].filter(Boolean).join("\n\n");
+    const context = formatKnowledge(reply, policy.maxChars, { mode, root, mine });
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }

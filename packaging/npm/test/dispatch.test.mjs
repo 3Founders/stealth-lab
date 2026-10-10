@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { dispatch, dispatchableRungs, dispatchCheck, rootRelative, triedNote } from "../lib/dispatch.mjs";
+import { cheapCandidates, dispatch, dispatchableRungs, dispatchCheck, rootRelative, triedNote } from "../lib/dispatch.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1",
   ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "claude-sonnet-5-5|claude-code", "claude-opus-5-5|claude-code"] };
@@ -202,3 +202,15 @@ test("test-first replaces the cross-check: with the session model's tests in the
   assert.match(rt.calls[0].checks[0], /test_spec\.py/);
 });
 
+
+test("by default Sonnet (the claude executor) is not tried, and the other configured open models fill in up to 3", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "disp-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {
+    stealth: { models: ["gemma-4-31b-it", "gpt-oss-120b", "minimax-m2-7"] }, claude: { models: ["claude-sonnet-5-5"] } } }));
+  const plan = { ladder: ["gemma-4-31b-it|stealth", "claude-sonnet-5-5|claude", "claude-opus-5-5|claude-code"] };
+  const env = { STEALTHLAB_HOME: home };
+  assert.deepEqual(cheapCandidates(plan, MINE, env).map((r) => r.model), ["gemma-4-31b-it", "gpt-oss-120b", "minimax-m2-7"]);
+  assert.deepEqual(cheapCandidates(plan, MINE, env, { claude: true }).map((r) => r.model),
+    ["gemma-4-31b-it", "claude-sonnet-5-5", "gpt-oss-120b"], "STEALTHLAB_DISPATCH_CLAUDE=on keeps it");
+  assert.deepEqual(cheapCandidates({ ladder: ["claude-opus-5-5|claude-code"] }, MINE, env), [], "the plan puts no cheap rung first");
+});

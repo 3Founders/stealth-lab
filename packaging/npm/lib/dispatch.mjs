@@ -36,6 +36,12 @@ export function dispatchPolicy(env = process.env) {
     // test-first: the session's own model writes a few tests from the task before any cheap rung runs; every cheap
     // answer must pass them too. "off" turns it off.
     testFirst: (env.STEALTHLAB_DISPATCH_TESTFIRST || "on").toLowerCase() !== "off",
+    // "on": the cheap rungs run at once, the first answer that passes wins and the rest are cancelled (faster, same
+    // cost); default: one after another
+    parallel: (env.STEALTHLAB_DISPATCH_PARALLEL || "off").toLowerCase() === "on",
+    // Claude models run by the claude executor (headless Claude Code): off by default -- on a small task their cost is
+    // Claude Code's own overhead, about what the session model costs to do the task, so a failed try only adds cost
+    claude: (env.STEALTHLAB_DISPATCH_CLAUDE || "off").toLowerCase() === "on",
   };
 }
 
@@ -88,7 +94,10 @@ export function writeSpecTests({ prompt, root, mine, env = process.env, log = ()
   const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
     "Write 3-6 pytest tests that check the behaviour this task asks for, edge cases included (boundaries, empty or " +
     "invalid input, exact outputs, errors it implies). Test only what the task states or clearly implies -- not your " +
-    "own guesses about unspecified details. Import from the project's modules as the files above show. The test " +
+    "own guesses about unspecified details. Where the task could be misread (a count vs a fraction, inclusive vs " +
+    "exclusive bounds, in place vs a copy, the order of results), include an input on which the readings give " +
+    "different answers and assert the one the task means. Import from the project's modules as the files above " +
+    "show. The test " +
     "file is NOT inside the project: it runs with the project root as the current directory, so reach project files " +
     "through os.getcwd() or plain relative paths, never through __file__. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
@@ -122,16 +131,34 @@ export function writeSpecTests({ prompt, root, mine, env = process.env, log = ()
 // The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count
 // too when an executor runs them (headless Claude Code on Sonnet, say -- the `claude` executor): nothing cheaper
 // than the session's model ever runs inside the session.
-export function dispatchableRungs(plan, mine, env = process.env) {
+export function dispatchableRungs(plan, mine, env = process.env, { claude = true } = {}) {
   const out = [];
   for (const unit of plan?.ladder || []) {
     const model = String(unit).split("|")[0];
     if (mine && model === String(mine).split("|")[0]) break;
     const local = executorFor(unit, env);
     if (!local) break;
+    if (local.executor === "claude" && !claude) continue;
     if (!out.some((r) => r.unit === unit)) out.push({ unit, ...local });
   }
   return out;
+}
+
+// What dispatch tries: the plan's dispatchable rungs in its order, then the other open models this machine can run
+// (exec.json), up to `max`. Trying them all costs cents; one often solves what another gets wrong.
+export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude = false } = {}) {
+  const out = dispatchableRungs(plan, mine, env, { claude });
+  if (!out.length) return out;               // the plan puts no cheap rung first: nothing to add to
+  try {
+    const cfg = readExecConfig(env);
+    for (const [executor, spec] of Object.entries(cfg.executors || {})) {
+      if (executor === "claude") continue;
+      for (const m of (spec?.models || []).map(String)) {
+        if (!out.some((r) => r.model === m)) out.push({ unit: `${m}|${executor}`, executor, model: m });
+      }
+    }
+  } catch { /* no config: the plan's rungs only */ }
+  return out.slice(0, max);
 }
 
 // The check to verify a dispatched run with: the configured one, else the matched library entry's own check.
@@ -159,7 +186,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
-  const rungs = dispatchableRungs(plan, mine, env).slice(0, policy.maxRungs);
+  const rungs = cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude });
   const check = dispatchCheck(policy, reply, root);
   if (!rungs.length || !check) return null;
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
@@ -172,38 +199,50 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     }
   }
   const fullCheck = spec ? `${check} && python -m pytest -q -p no:cacheprovider "${spec.file}"` : check;
-  for (const rung of rungs) {
-    let result;
+
+  const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
+  // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
+  const runRung = async (rung) => {
+    let runId = null;
     try {
       const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskText(payload.prompt), checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
+      runId = started.run_id;
+      running.set(rung.unit, runId);
+      let result;
       do {
-        result = await rt.runResult(started.run_id, 55);
+        result = await rt.runResult(runId, 55);
       } while (!TERMINAL.has(result?.state));
+      return { rung, run_id: runId, result };
     } catch (err) {
-      log(`dispatch ${rung.unit}: ${err.message}`);
-      tried.push({ unit: rung.unit, state: "error", error: String(err.message).slice(0, 200) });
-      continue;
+      return { rung, run_id: runId, error: err };
+    }
+  };
+  // a finished rung -> true when its answer is accepted
+  const judge = async ({ rung, result, error }) => {
+    if (error) {
+      log(`dispatch ${rung.unit}: ${error.message}`);
+      tried.push({ unit: rung.unit, state: "error", error: String(error.message).slice(0, 200) });
+      return false;
     }
     let ok = result.state === "verified";
     if (result.usage_limited) {            // the executor's account hit its limit: no verdict on the model
       tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id });
-      continue;
+      return false;
     }
     let cross = null;
     // The session model's own tests (test-first) are the independent judge when they exist: a cheap verifier's tests
     // are weaker and, on code that is not a standalone module, can fail a correct answer. The cross-check covers only
     // a task test-first could not write tests for.
     if (ok && policy.crosscheck !== "off" && !spec) {
-      cross = await crossCheck({ rt, rung, result, rungs: dispatchableRungs(plan, mine, env), env, payload, root, check,
-                                 scope: policy.scope, log });
+      cross = await crossCheck({ rt, rung, result, rungs, env, payload, root, check, scope: policy.scope, log });
       if (cross.verdict === "disagree") ok = false;
       if (cross.verdict === "inconclusive" && policy.crosscheck === "strict") {
         // nothing could confirm the answer: not delivered, and not counted against the model either
         tried.push({ unit: rung.unit, state: "unconfirmed", run_id: result.run_id, cost_usd: result.cost_usd, cross });
         try { await rt.cancelRun(result.run_id); } catch { /* best effort */ }
-        continue;
+        return false;
       }
     }
     try {
@@ -213,10 +252,35 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
                  run_id: result.run_id, cost_usd: result.cost_usd, ...(cross ? { cross } : {}),
                  tail: ok ? "" : (cross?.verdict === "disagree" ? cross.tail
                    : String((result.checks || []).map((c) => c.tail || "").join("\n")).slice(-600)) });
-    if (!ok) {
-      if (cross?.verdict === "disagree") try { await rt.cancelRun(result.run_id); } catch { /* best effort */ }
-      continue;
+    if (!ok && cross?.verdict === "disagree") try { await rt.cancelRun(result.run_id); } catch { /* best effort */ }
+    return ok;
+  };
+
+  const queue = [...rungs];
+  const pending = new Map();               // unit -> promise of its finished run
+  const width = policy.parallel ? rungs.length : 1;
+  let winner = null;
+  while (!winner && (queue.length || pending.size)) {
+    while (queue.length && pending.size < width) {
+      const rung = queue.shift();
+      pending.set(rung.unit, runRung(rung));
     }
+    const done = await Promise.race([...pending.values()]);
+    pending.delete(done.rung.unit);
+    running.delete(done.rung.unit);
+    if (await judge(done)) winner = done;
+  }
+  if (winner) {
+    // the others still running: cancelled (not counted against their models), then awaited so their cost is known
+    for (const unit of pending.keys()) {
+      const runId = running.get(unit);
+      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+    }
+    for (const p of pending.values()) {
+      const r = await p;
+      tried.push({ unit: r.rung.unit, state: "cancelled", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    }
+    const { rung, result } = winner;
     const applied = await rt.applyRun(result.run_id);
     let entry = null;
     try {
@@ -310,9 +374,7 @@ export async function crossCheck({ rt, rung, result, rungs, env, payload, root, 
 // The note the session gets when dispatch ran but nothing passed.
 export function triedNote(d) {
   if (!d || d.handled || !d.tried?.length) return "";
-  return "StealthLab first ran this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
-    " in isolated worktrees; none passed the check, and nothing was applied. " +
-    (d.tried.find((t) => t.tail)?.tail ? `Last check output:\n${d.tried.find((t) => t.tail).tail}\n` : "") +
-    "The plan continues with the next rung below.";
+  return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
+    "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report.";
 }
 
