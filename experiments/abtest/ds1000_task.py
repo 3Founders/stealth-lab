@@ -19,6 +19,7 @@ import evaluate  # noqa: E402
 
 LIBRARIES = ("Pandas", "Numpy", "Sklearn", "Scipy")
 # not: Pytorch / Tensorflow (not in the eval env); Matplotlib (its grader fails even the reference solution here)
+PYTHON_DIR = evaluate.EVAL_PYTHON.parent   # the workspace's `python`: DS-1000's eval env (pandas, numpy, sklearn, scipy)
 TIMEOUT_S = 240.0   # cold imports in the eval env take up to ~80 s (sklearn)
 
 

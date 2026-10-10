@@ -289,6 +289,10 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "--allow-empty", "-m", f"task {task['task_id']}")
     env = arm_env(arm, secrets, getattr(mod, "CHECK", ""))
+    # the project's own Python (both arms): `python` in the workspace has the libraries the task uses, as in a real
+    # project -- so the agent, dispatch and the test-first tests all run where the code would
+    if getattr(mod, "PYTHON_DIR", None):
+        env["PATH"] = str(mod.PYTHON_DIR) + os.pathsep + env.get("PATH", "")
     extra = ["--mcp-config", str(mcp_config(secrets)), "--allowedTools", *C_TOOLS] if arm == "C" else []
     logs = LOCAL / "logs" / run
     logs.mkdir(parents=True, exist_ok=True)
