@@ -66,6 +66,20 @@ function codeBlock(text) {
   return (m ? m[1] : String(text || "")).trim();
 }
 
+// The spec runs from outside the project, with the project root as the working directory: a path anchored on the
+// test file's own location (the usual pytest habit) would point into the specs folder and fail every answer.
+const FILE_ANCHORS = [
+  /(?:pathlib\.)?Path\(\s*__file__\s*\)(?:\.resolve\(\)|\.absolute\(\))?\.parent/g,
+  /os\.path\.dirname\(\s*os\.path\.(?:abspath|realpath)\(\s*__file__\s*\)\s*\)/g,
+  /os\.path\.dirname\(\s*__file__\s*\)/g,
+];
+export function rootRelative(code) {
+  let out = String(code || "");
+  out = out.replace(FILE_ANCHORS[0], "__import__('pathlib').Path(__import__('os').getcwd())");
+  for (const re of FILE_ANCHORS.slice(1)) out = out.replace(re, "__import__('os').getcwd()");
+  return out;
+}
+
 // -> {file, cost_usd} (a pytest file outside the repo, run from the worktree) or null. One lean, tool-less call to
 // the session's model: a short system prompt, no tools, no project settings -- ~$0.02 with Opus, measured.
 export function writeSpecTests({ prompt, root, mine, env = process.env, log = () => {}, runClaude }) {
@@ -74,8 +88,9 @@ export function writeSpecTests({ prompt, root, mine, env = process.env, log = ()
   const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
     "Write 3-6 pytest tests that check the behaviour this task asks for, edge cases included (boundaries, empty or " +
     "invalid input, exact outputs, errors it implies). Test only what the task states or clearly implies -- not your " +
-    "own guesses about unspecified details. Import from the project's modules as the files above show. Reply with " +
-    "only the Python test file.";
+    "own guesses about unspecified details. Import from the project's modules as the files above show. The test " +
+    "file is NOT inside the project: it runs with the project root as the current directory, so reach project files " +
+    "through os.getcwd() or plain relative paths, never through __file__. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
   // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
   const run = runClaude || ((args, input) => {
@@ -88,7 +103,7 @@ export function writeSpecTests({ prompt, root, mine, env = process.env, log = ()
   let j;
   try { j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop()); } catch { log("test-first: no JSON reply"); return null; }
   if (j.is_error || !j.result) { log(`test-first: ${String(j.result || "error").slice(0, 120)}`); return null; }
-  const code = codeBlock(j.result);
+  const code = rootRelative(codeBlock(j.result));
   if (!/def test_/.test(code)) return null;
   const dir = path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
     "specs", `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);

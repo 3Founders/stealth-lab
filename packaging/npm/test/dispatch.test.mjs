@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { dispatch, dispatchableRungs, dispatchCheck, triedNote } from "../lib/dispatch.mjs";
+import { dispatch, dispatchableRungs, dispatchCheck, rootRelative, triedNote } from "../lib/dispatch.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1",
   ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "claude-sonnet-5-5|claude-code", "claude-opus-5-5|claude-code"] };
@@ -176,4 +176,15 @@ test("strict cross-check: an answer nothing could confirm is not delivered and n
   const lenient = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo,
     mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_CROSSCHECK: "on" }, runtime: stubRuntime(repo, { "gemma-4-31b-it": "verified" }) });
   assert.equal(lenient.handled, true, "'on' accepts an inconclusive cross-check");
+});
+
+test("test-first: paths anchored on the spec file's own folder resolve from the project root instead", () => {
+  // the spec lives outside the repo; `Path(__file__).parent / "solution.py"` would fail every answer
+  for (const src of ['P = pathlib.Path(__file__).parent / "solution.py"', 'P = Path(__file__).resolve().parent / "a.py"',
+                     "d = os.path.dirname(os.path.abspath(__file__))", "d = os.path.dirname(__file__)"]) {
+    const out = rootRelative(src);
+    assert.ok(!out.includes("__file__"), out);
+    assert.ok(out.includes("getcwd()"), out);
+  }
+  assert.equal(rootRelative("from solution import f"), "from solution import f");
 });
