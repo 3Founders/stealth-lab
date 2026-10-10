@@ -1,0 +1,37 @@
+ok experiments
+ok swe_agent_traj/train-00.parquet 86M
+ok swe_agent_traj/train-01.parquet 91M
+ok swe_agent_traj/train-02.parquet 87M
+ok swe_agent_traj/train-03.parquet 93M
+ok swe_agent_traj/train-04.parquet 89M
+ok swe_agent_traj/train-05.parquet 95M
+ok swe_agent_traj/train-06.parquet 82M
+ok swe_agent_traj/train-07.parquet 91M
+ok swe_agent_traj/train-08.parquet 90M
+ok swe_agent_traj/train-09.parquet 90M
+ok swe_agent_traj/train-10.parquet 85M
+ok swe_agent_traj/train-11.parquet 91M
+ok openhands/trajectories.parquet 2.0G
+ok swe_rebench/test-0.parquet 97M
+ok swe_rebench/test-1.parquet 105M
+ok swe_rebench_v2/train.parquet 409M
+ok routerbench/routerbench_0shot.pkl 96M
+ok rebench_lb/2025_01.parquet 516K
+ok rebench_lb/2025_02.parquet 396K
+ok rebench_lb/2025_03.parquet 296K
+ok rebench_lb/2025_04.parquet 188K
+ok rebench_lb/2025_05.parquet 200K
+ok rebench_lb/2025_06.parquet 256K
+ok rebench_lb/2025_07.parquet 204K
+ok rebench_lb/2025_08.parquet 272K
+ok rebench_lb/2025_09.parquet 332K
+ok rebench_lb/2025_10.parquet 300K
+curl: (56) Recv failure: Connection was reset
+du: cannot access 'rebench_lb/2025_11.parquet': No such file or directory
+ok rebench_lb/2025_11.parquet 
+ok rebench_lb/2025_12.parquet 372K
+ok rebench_lb/2026_01.parquet 664K
+ok rebench_lb/2026_02.parquet 356K
+ok rebench_lb/2026_03.parquet 780K
+ok rebench_lb/test.parquet 4.7M
+ALLDONE

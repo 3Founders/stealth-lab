@@ -1,0 +1,22 @@
+{
+"dwavesystems__dwave-cloud-client-455": {"A": 4, "B": 3, "better": "A"},
+"duartegroup__autodE-77": {"A": 3, "B": 4, "better": "B"},
+"petrobras__ross-966": {"A": 6, "B": 5, "better": "A"},
+"iterative__dvc-5906": {"A": 3, "B": 1, "better": "A"},
+"PyCQA__isort-1432": {"A": 1, "B": 1, "better": "tie"},
+"serverless__serverless-2748": {"A": 6, "B": 5, "better": "A"},
+"yannickcr__eslint-plugin-react-1527": {"A": 5, "B": 1, "better": "A"},
+"vaskoz__dailycodingproblem-go-12": {"A": 3, "B": 2, "better": "A"},
+"obsidian-tasks-group__obsidian-tasks-2486": {"A": 1, "B": 1, "better": "tie"},
+"pion__turn-243": {"A": 1, "B": 1, "better": "tie"},
+"julialinearalgebra__genericlinearalgebra.jl-125": {"A": 7, "B": 7, "better": "tie"},
+"theacodes__nox-310": {"A": 5, "B": 4, "better": "A"},
+"plexis-js__plexis-60": {"A": 2, "B": 7, "better": "B"},
+"mgechev__revive-876": {"A": 6, "B": 6, "better": "tie"},
+"urlaubsverwaltung__urlaubsverwaltung-4789": {"A": 4, "B": 3, "better": "A"},
+"doctrine__orm-11826": {"A": 2, "B": 5, "better": "B"},
+"kubernetes__kops-11816": {"A": 3, "B": 3, "better": "tie"},
+"ipython__traitlets-773": {"A": 7, "B": 5, "better": "A"},
+"zulko__moviepy-1768": {"A": 2, "B": 9, "better": "B"},
+"klothoplatform__klotho-354": {"A": 3, "B": 3, "better": "tie"}
+}

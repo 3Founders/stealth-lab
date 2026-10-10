@@ -1,0 +1,11 @@
+feat(routing): low-rank VI for large fits; resumable evaluation; migrations renumbered to 147/148
+
+- fit.choose_method: exact NUTS only while latents AND per-gradient work (attempts x quadrature nodes) are
+  small; otherwise low-rank Gaussian VI (rank 32, 6000 steps). NUTS on 39k public results ran >1 h per fit
+  without finishing; VI fits it in 817 s with the loss flat to 0.07% over the last tenth of steps.
+- scripts/routing_priors_eval.py: per-fold runs (--fold K, --merge) so the evaluation survives interruption;
+  RouteLLM SW-ranking baseline; the routing pair is chosen on training items only; contamination applied
+  when predicting benchmark items
+- migrations 136/137 -> 147/148 (main now uses 136-139; feat/library uses 146)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

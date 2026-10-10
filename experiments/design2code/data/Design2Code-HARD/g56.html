@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en-US">
+ <head>
+  <style>
+
+
+
+html, body, div, span, applet, object, iframe,
+h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+a, abbr, acronym, address, big, cite, code,
+del, dfn, em, img, ins, kbd, q, s, samp,
+small, strike, strong, sub, sup, tt, var,
+b, u, i, center,
+dl, dt, dd, ol, ul, li,
+fieldset, form, label, legend,
+table, caption, tbody, tfoot, thead, tr, th, td,
+article, aside, canvas, details, embed,
+figure, figcaption, footer, header, hgroup,
+menu, nav, output, ruby, section, summary,
+time, mark, audio, video {
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 100%;
+  vertical-align: baseline;
+  border: 0;
+}
+/* HTML5 display-role reset for older browsers */
+article, aside, details, figcaption, figure,
+footer, header, hgroup, menu, nav, section {
+  display: block;
+}
+body {
+  line-height: 1;
+}
+ol, ul {
+  list-style: none;
+}
+blockquote, q {
+  quotes: none;
+}
+blockquote:before, blockquote:after,
+q:before, q:after {
+  content: '';
+  content: none;
+}
+table {
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+body {
+  font-family: 'Helvetica Neue', Helvetica, Arial, serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #000;
+}
+
+a {
+  font-weight: bold;
+  color: #d5000d;
+}
+
+header {
+  padding-top: 35px;
+  padding-bottom: 10px;
+}
+
+header h1 {
+  font-size: 48px;
+  font-weight: bold;
+  line-height: 1.2;
+  color: #303030;
+  letter-spacing: -1px;
+}
+
+header h2 {
+  font-size: 24px;
+  font-weight: normal;
+  line-height: 1.3;
+  color: #aaa;
+  letter-spacing: -1px;
+}
+#downloads {
+  display: none;
+}
+#main_content {
+  padding-top: 20px;
+}
+
+code, pre {
+  margin-bottom: 30px;
+  font-family: Monaco, "Bitstream Vera Sans Mono", "Lucida Console", Terminal;
+  font-size: 12px;
+  color: #222;
+}
+
+code {
+  padding: 0 3px;
+}
+
+pre {
+  padding: 20px;
+  overflow: auto;
+  border: solid 1px #ddd;
+}
+pre code {
+  padding: 0;
+}
+
+ul, ol, dl {
+  margin-bottom: 20px;
+}
+
+
+/* COMMON STYLES */
+
+table {
+  width: 100%;
+  border: 1px solid #ebebeb;
+}
+
+th {
+  font-weight: 500;
+}
+
+td {
+  font-weight: 300;
+  text-align: center;
+  border: 1px solid #ebebeb;
+}
+
+form {
+  padding: 20px;
+  background: #f2f2f2;
+
+}
+
+
+/* GENERAL ELEMENT TYPE STYLES */
+
+h1 {
+  font-size: 2.8em;
+}
+
+h2 {
+  margin-bottom: 8px;
+  font-size: 22px;
+  font-weight: bold;
+  color: #303030;
+}
+
+h3 {
+  margin-bottom: 8px;
+  font-size: 18px;
+  font-weight: bold;
+  color: #d5000d;
+}
+
+h4 {
+  font-size: 16px;
+  font-weight: bold;
+  color: #303030;
+}
+
+h5 {
+  font-size: 1em;
+  color: #303030;
+}
+
+h6 {
+  font-size: .8em;
+  color: #303030;
+}
+
+p {
+  margin-bottom: 20px;
+  font-weight: 300;
+}
+
+a {
+  text-decoration: none;
+}
+
+p a {
+  font-weight: 400;
+}
+
+blockquote {
+  padding: 0 0 0 30px;
+  margin-bottom: 20px;
+  font-size: 1.6em;
+  border-left: 10px solid #e9e9e9;
+}
+
+ul li {
+  list-style-position: inside;
+  list-style: disc;
+  padding-left: 20px;
+}
+
+ol li {
+  list-style-position: inside;
+  list-style: decimal;
+  padding-left: 3px;
+}
+
+dl dd {
+  font-style: italic;
+  font-weight: 100;
+}
+
+footer {
+  padding-top: 20px;
+  padding-bottom: 30px;
+  margin-top: 40px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+footer a {
+  color: #666;
+}
+
+/* MISC */
+.clearfix:after {
+  display: block;
+  height: 0;
+  clear: both;
+  visibility: hidden;
+  content: '.';
+}
+
+.clearfix {display: inline-block;}
+* html .clearfix {height: 1%;}
+.clearfix {display: block;}
+  </style>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <meta content="IE=edge" http-equiv="X-UA-Compatible">
+  <!--[if lt IE 9]>
+    
+    <![endif]-->
+  <!-- Begin Jekyll SEO tag v2.8.0 -->
+  <title>
+   OWASP needs to evolve | owasp-change.github.io
+  </title>
+  <meta content="Jekyll v3.9.3" name="generator">
+  <meta content="OWASP needs to evolve" property="og:title">
+  <meta content="en_US" property="og:locale">
+  <meta content="An Open Letter to the OWASP Board" name="description">
+  <meta content="An Open Letter to the OWASP Board" property="og:description">
+  <meta content="" property="og:url">
+  <meta content="owasp-change.github.io" property="og:site_name">
+  <meta content="website" property="og:type">
+  <meta content="summary" name="twitter:card">
+  <meta content="OWASP needs to evolve" property="twitter:title">
+  <!-- End Jekyll SEO tag -->
+  <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+  <!-- Setup Google Analytics -->
+  <!-- You can set your favicon here -->
+  <!-- link rel="shortcut icon" type="image/x-icon"  -->
+  <!-- end custom head snippets -->
+ </head>
+ <body>
+  <div id="container">
+   <div class="inner">
+    <header>
+     <h1>
+      OWASP needs to evolve
+     </h1>
+     <h2>
+      An Open Letter to the OWASP Board
+     </h2>
+    </header>
+    <section class="clearfix" id="downloads">
+    </section>
+    <hr>
+    <section id="main_content">
+     <h1 id="owasp-needs-to-evolve">
+      OWASP needs to evolve
+     </h1>
+     <p>
+      To the
+      <a>
+       OWASP Board of Directors
+      </a>
+      and the Executive Director of the OWASP Foundation,
+     </p>
+     <p>
+      <a>
+       OWASP
+      </a>
+      was first set up over two decades ago. The Internet, the way we build software, and the security industry, has changed so much that those days are hardly recognizable today.
+     </p>
+     <p>
+      As a group of OWASP flagship project leaders and lifelong contributors, we believe that OWASP hasn&rsquo;t kept pace and evolved to support the needs of important parts of our community today, especially our flagship projects. What worked in the past simply isn&rsquo;t working now and OWASP needs to change.
+     </p>
+     <p>
+      We have written and published this open letter, knowing that other parts of the community also support our concerns, and are asking the OWASP Board of Directors to take action. Year after year, concerns have been raised and there have been promises of change, but year after year it hasn&rsquo;t happened.
+     </p>
+     <p>
+      Today, many projects operate independently, in some cases managing their own sponsorships, finance, websites, domains, communication platforms, and developer tools. Projects still operate on a best-efforts model that relies on a few individuals working in their spare time.
+     </p>
+     <p>
+      Without active world class projects, OWASP doesn&rsquo;t have a unique selling point and projects need constant guidance, mentoring, and investment for them to grow and keep the brand where it should be: First and foremost for all things application security.
+     </p>
+     <p>
+      There are five key areas that we feel if not addressed immediately, will result in important projects, like ours, leaving OWASP in search of, or creating a community that better meets their needs. We don&rsquo;t want that to happen.
+     </p>
+     <ol>
+      <li>
+       The Foundation should publish and maintain a community plan that should include its prioritized key project initiatives, along with a suitable funding plan to support them. The
+       <a>
+        OSSF plan
+       </a>
+       is a useful example to reference.
+      </li>
+      <li>
+       The Foundation&rsquo;s governance structure should better reflect the needs of the entire security community, increasing access and participation for corporate practitioners, governments, major sponsors, and key technology providers. We believe this can be achieved with vendor independence and is particularly necessary to attract financial sponsorship and key industry partnerships.
+      </li>
+      <li>
+       The Foundation&rsquo;s funding should reflect the needs of our and other flagship projects to both sustain and improve them. We believe this would likely be in the region of five to ten million dollars per year for our projects alone.
+      </li>
+      <li>
+       The Foundation should provide improved infrastructure and services to the community so that projects can focus on the projects themselves.
+      </li>
+     </ol>
+     <p>
+      This letter is written with positive intent and we believe is in the best interests of the OWASP community and those that rely on it. We appreciate that this is a change from how OWASP operates today, but have conviction that OWASP is at a tipping point and needs to evolve now.
+     </p>
+     <p>
+      We all want to be part of the OWASP community and for it to continue to be successful in the decades to come.
+     </p>
+     <p>
+      We ask that you respond within 30 days, with a plan of action to address the five points above.
+     </p>
+     <p>
+      Yours truly,
+     </p>
+     <p>
+      Simon Bennetts,
+      <a>
+       OWASP ZAP
+      </a>
+      founder and co-project leader,
+      <a>
+       OWASP VWAD
+      </a>
+      co-project leader
+      <br>
+      Ricardo Pereira,
+      <a>
+       OWASP ZAP
+      </a>
+      co-project leader
+      <br>
+      Glenn ten Cate,
+      <a>
+       Security Knowledge Framework
+      </a>
+      founder and co-project leader &amp; OWASP Board Member
+      <br>
+      Akshath Kothari,
+      <a>
+       OWASP ZAP
+      </a>
+      core team member
+      <br>
+      Mark Curphey, OWASP founder and 2023 board member
+      <br>
+      Daniel Cuthbert,
+      <a>
+       OWASP ASVS
+      </a>
+      <br>
+      Sebastien Deleersnyder,
+      <a>
+       OWASP SAMM
+      </a>
+      co-project leader and
+      <a>
+       OWASP Threat Modeling Playbook (OTMP)
+      </a>
+      founder and project leader
+      <br>
+      Bart De Win,
+      <a>
+       OWASP SAMM
+      </a>
+      co-project leader
+      <br>
+      Maxim Baele,
+      <a>
+       OWASP SAMM
+      </a>
+      core team member
+      <br>
+      Rick Mitchell,
+      <a>
+       OWASP ZAP
+      </a>
+      co-project leader,
+      <a>
+       OWASP Web Security Testing Guide
+      </a>
+      co-project leader,
+      <a>
+       OWASP VWAD
+      </a>
+      co-project leader
+      <br>
+      Steve Springett,
+      <a>
+       OWASP CycloneDX
+      </a>
+      and
+      <a>
+       OWASP Dependency-Track
+      </a>
+      founder and co-project leader
+      <br>
+      Patrick Dwyer,
+      <a>
+       OWASP CycloneDX
+      </a>
+      co-project leader
+      <br>
+      Bj&ouml;rn Kimminich,
+      <a>
+       OWASP Juice Shop
+      </a>
+      founder and project leader
+      <br>
+      Niklas D&uuml;ster,
+      <a>
+       OWASP Dependency-Track
+      </a>
+      co-project leader
+      <br>
+      Jeroen Willemsen,
+      <a>
+       OWASP WrongSecrets
+      </a>
+      project leader
+      <br>
+      Jeremy Long,
+      <a>
+       OWASP dependency-check
+      </a>
+      founder and project lead and
+      <a>
+       OWASP Java Encoder
+      </a>
+      contributor
+      <br>
+      Cole Cornford,
+      <a>
+       OWASP Code Review Guide
+      </a>
+      project lead and
+      <a>
+       OWASP XSS Prevention CheatSheet
+      </a>
+      author
+      <br>
+      Ben Gittins, OWASP Member and Contributor
+      <br>
+      Erwin Geirnaert, Creator of the first OWASP WebGoat Solutions Guide, first OWASP Top 10 for Java and part of the OWASP Community since 2000
+      <br>
+      Robin Wood, OWASP contributor and supporter
+      <br>
+      Rob Grant, OWASP contributor
+      <br>
+      Arkaprabha Chakraborty, OWASP contributor and
+      <a>
+       OWASP ZAP
+      </a>
+      extended team member
+      <br>
+      Curtis Koenig, Founding member OWASP Louisville, Former Chapter Leader OWASP Louisville, OWASP Member
+      <br>
+      Cl&aacute;udio Andr&eacute;,
+      <a>
+       OWASP MASTG
+      </a>
+      Top Contributer
+      <br>
+      Istv&aacute;n Albert-T&oacute;th,
+      <a>
+       OWASP CSRFGuard
+      </a>
+      project co-lead
+      <br>
+      Katie Paxton-Fear, educational web security YouTuber
+      <br>
+      Jakub Ma&cacute;kowski, OWASP contributor and
+      <a>
+       OWASP Cheat Sheet Series
+      </a>
+      co-project leader
+      <br>
+      Somdev Sangwan, Open Source Security Tools Developer
+      <br>
+      Edoardo Ottavianelli, Open Source Security Tools Developer
+      <br>
+      Aram Hovsepyan,
+      <a>
+       OWASP SAMM
+      </a>
+      core team member
+      <br>
+      Brian Glas,
+      <a>
+       OWASP Top 10
+      </a>
+      Co-Lead,
+      <a>
+       OWASP SAMM
+      </a>
+      Core team member, OWASP SAMM Benchmark Co-Lead
+      <br>
+      Jeff Williams, OWASP Chair from 2001-2011, Creator of OWASP Top Ten, WebGoat, ESAPI, ASVS, XSS Prevention Cheatsheet, OWASP Legal, Chapters Program, OWASP Foundation, the OWASP Wiki, and more
+      <br>
+      Dimitar Raichev,
+      <a>
+       OWASP SAMM
+      </a>
+      contributor &amp; tool developer
+      <br>
+      Dinis Cruz, Past OWASP Board member, organiser of multiple OWASP Conferences and Summits, lead multiple OWASP projects and chapters
+      <br>
+      Sachin Kumar Dhaka, OWASP Jaipur Member and Budding Security Researcher
+      <br>
+      Jessy Ayala, OWASP Member and Contributor
+      <br>
+      Paul McCann,
+      <a>
+       OWASP Security Shepherd
+      </a>
+      maintainer and contributor
+      <br>
+      Karan Preet Singh Sasan,
+      <a>
+       Owasp VulnerableApp
+      </a>
+      project leader and
+      <a>
+       OWASP ZAP
+      </a>
+      extended team member
+      <br>
+      Daniel Wood, OWASP Lifetime Member
+      <br>
+      Bharath, OWASP (Bangalore Chapter) Member and Contributor
+      <br>
+      John Viega, original OWASP advisory board member, OWASP Lifetime Member
+      <br>
+      Carol Valencia, Security cloud-native and open-source enthusiast
+      <br>
+      Jimmy Mesta,
+      <a>
+       OWASP Kubernetes Top Ten
+      </a>
+      Project Leader and Cheatsheet Contributor
+      <br>
+      Lewis Ardern,
+      <a>
+       OWASP Bay Area Chapter Leader (2019-2022)
+      </a>
+      , and created the
+      <a>
+       What is OWASP?
+      </a>
+      Video
+      <br>
+      Alvin Smith,
+      <a>
+       OWASP Juice Shop
+      </a>
+      Contributor
+      <br>
+      Sven Schleier,
+      <a>
+       OWASP Mobile Application Security
+      </a>
+      , Co-Project Leader of OWASP MASVS and MASTG
+      <br>
+      Carlos Holguera,
+      <a>
+       OWASP Mobile Application Security
+      </a>
+      , Co-Project Leader of OWASP MASVS and MASTG
+      <br>
+      Jeroen Beckers,
+      <a>
+       OWASP Mobile Application Security
+      </a>
+      , Co-Author of OWASP MASVS and MASTG
+      <br>
+      Shubham Palriwala,
+      <a>
+       OWASP Juice Shop
+      </a>
+      Core Team member
+      <br>
+      Pinaki Mondal, Open Source Security Tools Developer
+      <br>
+      Zsolt Imre, CTO at private company
+      <br>
+      Eoin Keary, Former OWASP Global Board Vice Chair (2010-2015), Former Testing and Code Review Guide lead
+      <br>
+      Deepayan Chanda, Principal Cybersecurity Architect
+      <br>
+      Mart&iacute;n Marsicano, OWASP Lifetime Member, Former Chapter Leader OWASP Uruguay and several projects contributor
+      <br>
+      Paul Schwarzenberger,
+      <a>
+       OWASP Domain Protect
+      </a>
+      creator and project leader
+      <br>
+      Abraham Aranguren,
+      <a>
+       OWASP OWTF Project
+      </a>
+      creator and project leader
+      <br>
+      Viyat Bhalodia,
+      <a>
+       OWASP OWTF Project
+      </a>
+      project leader
+      <br>
+      Dave Ferguson, Project contributor and former chapter leader
+      <br>
+      Josh Larsen, OWASP Lifetime Member
+      <br>
+      Sergey Pronin, Principal Security Architect, OWASP Lifetime Member
+      <br>
+      James, BugBounter, Pentester and OWASP passionate
+      <br>
+      Kevin W. Wall,
+      <a>
+       OWASP ESAPI
+      </a>
+      project co-lead, OWASP Lifetime Member, and
+      <a>
+       OWASP ZAP
+      </a>
+      and
+      <a>
+       OWASP Cheat Sheets Series
+      </a>
+      contributor
+      <br>
+      Cesar Kohl,
+      <a>
+       OWASP ASVS
+      </a>
+      and
+      <a>
+       OWASP Cheat Sheets Series
+      </a>
+      contributor
+      <br>
+      Simon Whittaker, OWASP Lifetime Member
+      <br>
+      Frank Catucci, CTO and Head of Security Research at Invicti, OWASP Member and former OWASP Chapter Leader
+      <br>
+      Ingo Struck, Former OWASP Leader, creator of the name
+      <a>
+       WebGoat
+      </a>
+      , OWASP Lifetime Member
+      <br>
+      Francesco Maria Ferazza, Director of IT, security lecturer and researcher
+      <br>
+      Antonio Montillo, OWASP enthusiast
+      <br>
+      Daniel Neagaru,
+      <a>
+       OWASP Raider
+      </a>
+      project leader
+      <br>
+      Rejah Rehim,
+      <a>
+       OWASP Kerala
+      </a>
+      Chapter leader
+      <br>
+      Grant Ongers, OWASP Lifetime Member,
+      <a>
+       OWASP Cornucopia
+      </a>
+      and
+      <a>
+       OWASP Application Security Curriculum
+      </a>
+      project co-lead
+      <br>
+      Patrick Reijnders, CISO, OWASP enthusiast; started using the Top Ten as a developer in 2004, now using it as a guideline for pentesting.
+      <br>
+      Jordan Pike, OWASP Member
+      <br>
+      Riotaro Okada, OWASP Lifetime member, OWASP Projects contributer, an OWASP Japan chapter lead
+      <br>
+      Magno Logan, OWASP Member since 2011, former
+      <a>
+       OWASP Paraiba Chapter Leader
+      </a>
+      2011-2016,
+      <a>
+       OWASP Paraiba Day 2012
+      </a>
+      Organizer, OWASP Portuguese Language Project contributor and
+      <a>
+       OWASP Top 10 Java EE
+      </a>
+      translator
+      <br>
+      Steven van der Baan, OWASP Member and OWASP Cambridge co-lead
+      <br>
+      David Hunt, OWASP Member and OWASP Columbus co-lead
+      <br>
+      Mauricio Harley, OWASP Member, former OWASP Fortaleza chapter founder and leader, OWASP MSTG/MASVS contributor
+      <br>
+      Wael Ghandour, OWASP Member
+      <br>
+      Yevgeniy Goncharov, Open Source Security Tools Developer
+      <br>
+     </p>
+     <!--
+Please:
+* Add your name at the end of the list.
+* Only link to OWASP projects or chapters
+* Do not include any company details
+Many thanks
+-->
+     <hr>
+     <p>
+      Published on 2023/02/13
+     </p>
+     <hr>
+     <p>
+      This &ldquo;Open Letter to the OWASP Board&rdquo; is no longer accepting any changes.
+     </p>
+    </section>
+    <footer>
+     This page was generated by
+     <a>
+      GitHub Pages
+     </a>
+     .
+    </footer>
+   </div>
+  </div>
+ </body>
+</html>

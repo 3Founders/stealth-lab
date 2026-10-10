@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <style>
+   /*  Austin Henley
+    Bare bones CSS template
+*/
+
+body {
+    font-family:Helvetica, sans-serif;
+    margin:auto;
+    padding:15px;
+    margin-top:-20px;
+    max-width:700px;
+    font-size:16px;
+    text-align:left;
+    background-color:white;
+    position:relative;
+}
+
+sup {
+    font-size: x-small;
+    line-height: 0.0;
+}
+
+sub {
+    font-size: x-small;
+} 
+
+a {
+    text-decoration:none;
+}
+
+li {
+    margin:0.25em;
+    font-size:96%;
+}
+
+h1 {
+    margin-top:0.8em;
+    margin-bottom:0.8em;
+    font-size:1.5em;
+}
+
+h1.blogtitle {
+    margin-bottom:0.0em;
+}
+
+h2 {
+    margin-top:1.4em;
+    margin-bottom:0.25em;
+    font-size:1.35em;
+}
+
+h3, h4 {
+    margin-top:1.4em;
+    margin-bottom:0.25em;
+}
+
+hr {
+    margin-top:0.75em;
+    margin-bottom:0.75em;
+}
+
+td {
+    border-bottom:2px solid #CCCCCC;
+}
+
+pre {
+    overflow-x:auto;
+}
+
+p {
+    line-height:1.15em;
+    margin-bottom:1.15em;
+}
+
+ul {
+    margin-bottom:1.35em;
+}
+
+blockquote {
+    color: navy;
+    text-align: center;
+    font-style: italic;
+    background: #dddddd;
+    border-radius: 8px;
+    margin: auto;
+    margin-top: 1.4em;
+    margin-bottom: 1.4em;
+    padding: 0.6em 8px;
+    width: 80%;
+}
+
+blockquote p {
+    display: inline;
+}
+
+.dense p {
+    margin-top:0.2em;
+    margin-bottom:0em;
+    line-height:1.3em;
+}
+
+.news li {
+    font-size:90%;
+}
+
+.right {
+    text-align:right;
+    margin-right:40px;
+}
+
+.center {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+.card {
+    padding: 12px;
+}
+
+.headshot {
+    width: 172px;
+    height: 200px; 
+    margin: 0px 0px 0 0;
+    border-radius: 10%;
+    object-fit: cover; 
+    object-position: 0% 8%;
+}
+
+.row {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.text-container {
+    flex: 2;
+    min-width: 250px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+.photo-container {
+    flex-basis: 100px;
+    margin: 20px 20px 10px 35px;
+}
+
+.links {
+    margin-bottom: 1em;
+}
+
+/* For mobile */
+@media only screen and (max-width: 540px) {
+    .photo-container {
+        margin-left: 0px;
+    }
+
+    .text-container {
+        margin-top: -1em;
+    }
+
+    .links {
+        margin-bottom: 0; 
+    }
+}
+  </style>
+  <title>
+   [Name Redacted]
+  </title>
+  <meta charset="utf-8">
+  <meta content="I work on AI + developer tools and blog my adventures." name="description">
+  <meta content="[Name Redacted]" name="author">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <meta content="[Name Redacted] - I work on AI + dev tools" property="og:title">
+  <meta content="I work on AI + developer tools and blog my adventures." property="og:description">
+  <meta content="" property="og:image">
+  <meta content="" property="og:url">
+  <meta content="summary_large_image" name="twitter:card">
+ </head>
+ <body>
+  <div class="card">
+   <div class="row">
+    <div class="photo-container">
+     <img class="headshot" src="rick.jpg">
+    </div>
+    <div class="text-container">
+     <div class="content">
+      <h2 class="name-header">
+        [Name Redacted]
+      </h2>
+      <p>
+       Associate Teaching Professor
+       <br>
+       Software and Societal Systems Department
+       <br>
+       School of Computer Science
+       <br>
+       Carnegie Mellon University
+      </p>
+     </div>
+     <div class="links">
+      <a>
+       [Email Redacted]
+      </a>
+      <br>
+      <a>
+       [Username Redacted]
+      </a>
+      <br>
+      <a>
+       [Github Redacted]
+      </a>
+      <br>
+     </div>
+    </div>
+   </div>
+  </div>
+  <hr>
+  <div style="text-align: center;">
+   <a style="text-decoration: underline;">
+    Home
+   </a>
+   |
+   <a>
+    Publications
+   </a>
+   |
+   <a>
+    Teaching
+   </a>
+   |
+   <a>
+    Blog
+   </a>
+  </div>
+  <hr>
+  <p>
+   I'm a computer scientist working on AI and developer tools.
+   <a>
+    declined
+   </a>
+   the NSF CAREER Award,
+   <a>
+    taught
+   </a>
+   amazing students, built novel
+   <a>
+    tools
+   </a>
+   for code and data, went through a startup
+   <a>
+    acquisition
+   </a>
+   , and learned valuable
+   <a>
+    lessons
+   </a>
+   . I also spend a lot of time
+   <a>
+    writing
+   </a>
+   about my side projects.
+  </p>
+  <ul>
+   <li>
+    2024&ndash;
+    <i>
+     present
+    </i>
+    , Associate Teaching Professor, Carnegie Mellon University
+   </li>
+   <li>
+    2023&ndash;2024, VP of Engineering, Swiftly
+   </li>
+   <li>
+    2023, CTO, BYBE (
+    <i>
+     acquired
+    </i>
+    )
+   </li>
+   <li>
+    2022&ndash;2023, Senior Researcher, Microsoft
+   </li>
+  </ul>
+  <br>
+  <br>
+ </body>
+</html>

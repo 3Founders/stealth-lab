@@ -1,0 +1,85 @@
+{
+  "operation": "POST /questions",
+  "method": "POST",
+  "path_template": "/questions",
+  "fingerprint": "beeaa3c2",
+  "case_id": "hO95ym",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{\"choices\": [\"Swift\", \"Python\", \"Objective-C\", \"Ruby\"], \"question\": \"Favourite programming language?\"}' http://127.0.0.1:65073/questions",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:65073/questions",
+      "url_template": "http://127.0.0.1:65073/questions",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "hO95ym",
+        "Content-Type": "application/json",
+        "Content-Length": "102"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:22:01 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 201"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.0008117999532260001,
+          "mode": "positive"
+        },
+        "components": {},
+        "phase": {
+          "name": "examples",
+          "data": {
+            "type": "ExamplesPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/questions",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "choices": [
+            "Swift",
+            "Python",
+            "Objective-C",
+            "Ruby"
+          ],
+          "question": "Favourite programming language?"
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

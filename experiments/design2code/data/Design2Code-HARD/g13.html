@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <style>
+   /*
+body {
+    font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji";
+    line-height: 1.5;
+    color: rgb(36, 41, 47);
+    font-size: 16px;
+    line-height: 24px;
+}
+
+h1, h2 {
+    font-weight: 600;
+    border-bottom-color: rgb(216, 222, 228);
+    border-bottom-style: solid;
+    border-bottom-width: 1px;
+    margin-top: 24px;
+}
+
+h1 {
+    font-size: 32px;
+    line-height: 40px;
+    padding-bottom: 9.6px;
+}
+
+h2 {
+    font-size: 24px;
+    line-height: 30px;
+    padding-bottom: 7.2px;
+}
+
+table {
+    border-collapse: collapse;
+    border-color: rgb(128, 128, 128);
+}
+
+table, tr {
+    border-top: 1px solid hsla(210,18%,87%,1);
+}
+
+tbody {
+    display: table-row-group;
+    vertical-align: middle;
+    border-color: inherit;
+}
+*/
+
+
+body {
+    box-sizing: border-box;
+    min-width: 200px;
+    max-width: 1110px;
+    margin: 0 auto;
+    padding: 45px;
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #0d1117;
+    }
+}
+
+
+.github-fork-ribbon:before {
+    background-color: #121612;
+}
+
+.banner-image {
+    border-radius: 50px;
+}
+  </style>
+  <!-- Google tag (gtag.js) -->
+  <meta charset="utf-8">
+  <title>
+   Animated AI
+  </title>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+ </head>
+ <body>
+  <article class="markdown-body">
+   <h1>
+    <div>
+     <img class="banner-image" src="rick.jpg" width="100%">
+    </div>
+   </h1>
+   <p>
+    I'm creating animations and instructional videos about neural networks.
+        Check out my
+    <a>
+     Patreon
+    </a>
+    and
+    <a>
+     YouTube channel
+    </a>
+    !
+   </p>
+   <h2>
+    Convolution
+   </h2>
+   <h3>
+    The Basic Algorithm
+   </h3>
+   Watch the companion YouTube video:
+   <a>
+    Fundamental Algorithm of Convolution in Neural Networks
+   </a>
+   .
+   <img alt="The process of convolution in neural networks with a 3x3 kernel size" height="auto" src="rick.jpg" width="960">
+   <h3>
+    Padding
+   </h3>
+   Companion video:
+   <a>
+    Convolution Padding - Neural Networks
+   </a>
+   <table>
+    <tbody>
+     <tr>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size" height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size and a padding of 'SAME', i.e., 1 pixel on the top, bottom, left, and right." height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+     <tr>
+      <td>
+       No Padding AKA "Valid"
+      </td>
+      <td>
+       [1,1,1,1] Padding AKA "Same"
+      </td>
+     </tr>
+    </tbody>
+   </table>
+   <h3>
+    Stride
+   </h3>
+   Companion video:
+   <a>
+    Stride - Convolution in Neural Networks
+   </a>
+   <table>
+    <thead>
+     <tr>
+      <th>
+       Stride 1
+      </th>
+      <th>
+       Stride 2
+      </th>
+     </tr>
+    </thead>
+    <tbody>
+     <tr>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size" height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size and a stride of 2x2" height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+     <tr>
+      <td>
+       No Padding AKA "Valid"; Stride of 1
+      </td>
+      <td>
+       No Padding AKA "Valid"; Stride of 2
+      </td>
+     </tr>
+     <tr>
+      <td>
+       <img height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size, a stride of 2x2, and a padding of 'SAME', i.e., 1 pixel on the top, bottom, left, and right." height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+    </tbody>
+   </table>
+   <h3>
+    Groups, Depthwise, and Depthwise-Separable
+   </h3>
+   Watch the companion YouTube video:
+   <a>
+    Groups, Depthwise, and Depthwise-Separable Convolution (Neural Networks)
+   </a>
+   .
+   <table>
+    <tbody>
+     <tr>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size" height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size and 2 groups" height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+     <tr>
+      <td>
+       1 Group
+      </td>
+      <td>
+       2 Groups
+      </td>
+     </tr>
+     <tr>
+      <td>
+       <img alt="The process of convolution in neural networks with a 3x3 kernel size and 8 groups making it a depthwise convolution" height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="A depthwise convolution layer followed by a pointwise convolution layer making the combined process a depthwise-separable convolution" height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+     <tr>
+      <td>
+       Depthwise (8 Groups)
+      </td>
+      <td>
+       Depthwise-separable (8 Groups followed by pointwise)
+      </td>
+     </tr>
+    </tbody>
+   </table>
+   <h2 id="pixel-shuffle">
+    Pixel Shuffle
+   </h2>
+   Watch the companion YouTube video:
+   <a>
+    Pixel Shuffle - Changing Resolution with Style
+   </a>
+   <h3>
+    2x2 Block Size
+   </h3>
+   <table>
+    <tbody>
+     <tr>
+      <td>
+       <img alt="Pixel shuffle animation in neural networks with a block size of 2x2" height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="Pixel unshuffle animation in neural networks with a block size of 2x2" height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+     <tr>
+      <td>
+       2x2 Pixel Shuffle
+      </td>
+      <td>
+       2x2 Pixel Unshuffle
+      </td>
+     </tr>
+     <tr>
+      <td colspan="2">
+       <img alt="Pixel shuffle and unshuffle in neural networks with a block size of 2x2 looping animation" height="auto" src="rick.jpg" width="960">
+      </td>
+     </tr>
+     <tr>
+      <td colspan="2">
+       2x2 Pixel Shuffle/Unshuffle Loop
+      </td>
+     </tr>
+    </tbody>
+   </table>
+   <h3>
+    3x3 Block Size
+   </h3>
+   <table>
+    <tbody>
+     <tr>
+      <td>
+       <img alt="Pixel shuffle animation in neural networks with a block size of 3x3" height="auto" src="rick.jpg" width="480">
+      </td>
+      <td>
+       <img alt="Pixel unshuffle animation in neural networks with a block size of 3x3" height="auto" src="rick.jpg" width="480">
+      </td>
+     </tr>
+     <tr>
+      <td>
+       3x3 Pixel Shuffle
+      </td>
+      <td>
+       3x3 Pixel Unshuffle
+      </td>
+     </tr>
+     <tr>
+      <td colspan="2">
+       <img alt="Pixel shuffle and unshuffle in neural networks with a block size of 3x3 looping animation" height="auto" src="rick.jpg" width="960">
+      </td>
+     </tr>
+     <tr>
+      <td colspan="2">
+       3x3 Pixel Shuffle/Unshuffle Loop
+      </td>
+     </tr>
+    </tbody>
+   </table>
+   <h2>
+   </h2>
+   <p>
+    Licensed under the
+    <a>
+     MIT License
+    </a>
+   </p>
+  </article>
+ </body>
+</html>

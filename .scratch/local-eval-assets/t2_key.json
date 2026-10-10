@@ -1,0 +1,226 @@
+{
+ "tensorly__tensorly-320": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "pyfar__pyfar-722": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "serverless__serverless-2748": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iodevs__pyresult-49": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-5378": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "laravel__framework-37487": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "crossbeam-rs__crossbeam-999": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "mantoni__eslint_d.js-323": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "casey__just-1809": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "sdv-dev__rdt-942": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "Adyen__adyen-python-api-library-102": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "duartegroup__autodE-242": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-9391": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "octokit__auth-app.js-689": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "bitshifter__glam-rs-187": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "compuives__codesandbox-client-321": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "BraeWebb__allocate-10": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pydantic__pydantic-817": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "duartegroup__autodE-77": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "sphinx-gallery__sphinx-gallery-511": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-2892": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "datalad__datalad-next-632": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyThaiNLP__pythainlp-399": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "timeoutdigital__treehugger-63": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-4045": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "ta4j__ta4j-1092": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kozea__weasyprint-2494": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "wikidata__wikidata-toolkit-748": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "jupyterhub__binderhub-1571": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "getmoto__moto-6049": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "statamic__cms-9800": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "yannickcr__eslint-plugin-react-1527": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "honeycombio__beeline-python-219": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "casey__just-2460": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "obsidian-tasks-group__obsidian-tasks-2486": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "phpactor__phpactor-2343": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "Axelrod-Python__Axelrod-653": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-5005": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "geopandas__geopandas-3591": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kubernetes-incubator__client-python-50": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "briannesbitt__carbon-2745": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "jtesta__ssh-audit-44": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "XKNX__xknx-271": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kubeclipper__kubeclipper-702": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kinnala__scikit-fem-667": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "ash-project__ash-821": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "equinor__webviz-config-656": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "hypothesisworks__hypothesis-2697": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "rsalmei__alive-progress-47": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "vaskoz__dailycodingproblem-go-366": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "macisamuele__language-formatters-pre-commit-hooks-160": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "nose-devs__nose2-410": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "eclipse__microprofile-open-api-677": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "helidon-io__helidon-7988": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "gleam-lang__gleam-3486": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyCQA__isort-1717": {
+  "A": "kel",
+  "B": "alone"
+ }
+}

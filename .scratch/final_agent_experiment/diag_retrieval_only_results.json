@@ -1,0 +1,66 @@
+{
+  "T1-v3": {
+    "require_verified_True_(B_default)": [],
+    "require_verified_False_(diagnostic)": [
+      {
+        "id": "01a069f2-3921-7f5f-ab8a-142e8a8a514b",
+        "procedure_id": "5af7ecbc-29bc-4618-a2f1-9f6098aabed1",
+        "version": 1,
+        "name": "Defer tool-schema loading until needed",
+        "goal": "Reduce fixed per-turn token cost of an agent's available tool surface by deferring full tool-schema loading until a tool is actually needed",
+        "verification_state": "candidate",
+        "similarity": 0.5298375767566227
+      },
+      {
+        "id": "01a069ef-8ed8-72a8-9237-54627bcddb0a",
+        "procedure_id": "1695f672-e620-46b9-8f1c-16aee6c67761",
+        "version": 1,
+        "name": "Structural-summary-before-full-read",
+        "goal": "Get a deterministic structural outline of a file before reading it in full, to reduce context cost on orientation",
+        "verification_state": "candidate",
+        "similarity": 0.5049234923765971
+      },
+      {
+        "id": "01a069f1-6a49-7ff8-963b-5e191756808e",
+        "procedure_id": "8539713c-787c-494d-87c3-64434e8ef705",
+        "version": 1,
+        "name": "Parallel-agent git-worktree isolation",
+        "goal": "Run multiple coding agents concurrently on one repository without their file/git operations colliding",
+        "verification_state": "candidate",
+        "similarity": 0.47574292195609635
+      }
+    ]
+  },
+  "T7-v2": {
+    "require_verified_True_(B_default)": [],
+    "require_verified_False_(diagnostic)": [
+      {
+        "id": "01a069f2-3921-7f5f-ab8a-142e8a8a514b",
+        "procedure_id": "5af7ecbc-29bc-4618-a2f1-9f6098aabed1",
+        "version": 1,
+        "name": "Defer tool-schema loading until needed",
+        "goal": "Reduce fixed per-turn token cost of an agent's available tool surface by deferring full tool-schema loading until a tool is actually needed",
+        "verification_state": "candidate",
+        "similarity": 0.5099102562612456
+      },
+      {
+        "id": "01a069ef-8ed8-72a8-9237-54627bcddb0a",
+        "procedure_id": "1695f672-e620-46b9-8f1c-16aee6c67761",
+        "version": 1,
+        "name": "Structural-summary-before-full-read",
+        "goal": "Get a deterministic structural outline of a file before reading it in full, to reduce context cost on orientation",
+        "verification_state": "candidate",
+        "similarity": 0.4794865536383729
+      },
+      {
+        "id": "01a069f1-6a49-7ff8-963b-5e191756808e",
+        "procedure_id": "8539713c-787c-494d-87c3-64434e8ef705",
+        "version": 1,
+        "name": "Parallel-agent git-worktree isolation",
+        "goal": "Run multiple coding agents concurrently on one repository without their file/git operations colliding",
+        "verification_state": "candidate",
+        "similarity": 0.4738115495870905
+      }
+    ]
+  }
+}

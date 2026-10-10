@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+ <head>
+  <style>
+   @font-face{font-family:'Noto Sans';font-weight:400;font-style:normal;src:url("../fonts/Noto-Sans-regular/Noto-Sans-regular.eot");src:url("../fonts/Noto-Sans-regular/Noto-Sans-regular.eot?#iefix") format("embedded-opentype"),local("Noto Sans"),local("Noto-Sans-regular"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.woff2") format("woff2"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.woff") format("woff"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.ttf") format("truetype"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.svg#NotoSans") format("svg")}@font-face{font-family:'Noto Sans';font-weight:700;font-style:normal;src:url("../fonts/Noto-Sans-700/Noto-Sans-700.eot");src:url("../fonts/Noto-Sans-700/Noto-Sans-700.eot?#iefix") format("embedded-opentype"),local("Noto Sans Bold"),local("Noto-Sans-700"),url("../fonts/Noto-Sans-700/Noto-Sans-700.woff2") format("woff2"),url("../fonts/Noto-Sans-700/Noto-Sans-700.woff") format("woff"),url("../fonts/Noto-Sans-700/Noto-Sans-700.ttf") format("truetype"),url("../fonts/Noto-Sans-700/Noto-Sans-700.svg#NotoSans") format("svg")}@font-face{font-family:'Noto Sans';font-weight:400;font-style:italic;src:url("../fonts/Noto-Sans-italic/Noto-Sans-italic.eot");src:url("../fonts/Noto-Sans-italic/Noto-Sans-italic.eot?#iefix") format("embedded-opentype"),local("Noto Sans Italic"),local("Noto-Sans-italic"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.woff2") format("woff2"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.woff") format("woff"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.ttf") format("truetype"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.svg#NotoSans") format("svg")}@font-face{font-family:'Noto Sans';font-weight:700;font-style:italic;src:url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.eot");src:url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.eot?#iefix") format("embedded-opentype"),local("Noto Sans Bold Italic"),local("Noto-Sans-700italic"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.woff2") format("woff2"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.woff") format("woff"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.ttf") format("truetype"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.svg#NotoSans") format("svg")}.highlight table td{padding:5px}.highlight table pre{margin:0}.highlight .cm{color:#999988;font-style:italic}.highlight .cp{color:#999999;font-weight:bold}.highlight .c1{color:#999988;font-style:italic}.highlight .cs{color:#999999;font-weight:bold;font-style:italic}.highlight .c,.highlight .cd{color:#999988;font-style:italic}.highlight .err{color:#a61717;background-color:#e3d2d2}.highlight .gd{color:#000000;background-color:#ffdddd}.highlight .ge{color:#000000;font-style:italic}.highlight .gr{color:#aa0000}.highlight .gh{color:#999999}.highlight .gi{color:#000000;background-color:#ddffdd}.highlight .go{color:#888888}.highlight .gp{color:#555555}.highlight .gs{font-weight:bold}.highlight .gu{color:#aaaaaa}.highlight .gt{color:#aa0000}.highlight .kc{color:#000000;font-weight:bold}.highlight .kd{color:#000000;font-weight:bold}.highlight .kn{color:#000000;font-weight:bold}.highlight .kp{color:#000000;font-weight:bold}.highlight .kr{color:#000000;font-weight:bold}.highlight .kt{color:#445588;font-weight:bold}.highlight .k,.highlight .kv{color:#000000;font-weight:bold}.highlight .mf{color:#009999}.highlight .mh{color:#009999}.highlight .il{color:#009999}.highlight .mi{color:#009999}.highlight .mo{color:#009999}.highlight .m,.highlight .mb,.highlight .mx{color:#009999}.highlight .sb{color:#d14}.highlight .sc{color:#d14}.highlight .sd{color:#d14}.highlight .s2{color:#d14}.highlight .se{color:#d14}.highlight .sh{color:#d14}.highlight .si{color:#d14}.highlight .sx{color:#d14}.highlight .sr{color:#009926}.highlight .s1{color:#d14}.highlight .ss{color:#990073}.highlight .s{color:#d14}.highlight .na{color:#008080}.highlight .bp{color:#999999}.highlight .nb{color:#0086B3}.highlight .nc{color:#445588;font-weight:bold}.highlight .no{color:#008080}.highlight .nd{color:#3c5d5d;font-weight:bold}.highlight .ni{color:#800080}.highlight .ne{color:#990000;font-weight:bold}.highlight .nf{color:#990000;font-weight:bold}.highlight .nl{color:#990000;font-weight:bold}.highlight .nn{color:#555555}.highlight .nt{color:#000080}.highlight .vc{color:#008080}.highlight .vg{color:#008080}.highlight .vi{color:#008080}.highlight .nv{color:#008080}.highlight .ow{color:#000000;font-weight:bold}.highlight .o{color:#000000;font-weight:bold}.highlight .w{color:#bbbbbb}.highlight{background-color:#f8f8f8}body{background-color:#fff;padding:50px;font:14px/1.5 "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;color:#727272;font-weight:400}h1,h2,h3,h4,h5,h6{color:#222;margin:0 0 20px}p,ul,ol,table,pre,dl{margin:0 0 20px}h1,h2,h3{line-height:1.1}h1{font-size:28px}h2{color:#393939}h3,h4,h5,h6{color:#494949}a{color:#267CB9;text-decoration:none}a:hover,a:focus{color:#069;font-weight:bold}a small{font-size:11px;color:#777;margin-top:-0.3em;display:block}a:hover small{color:#777}.wrapper{width:860px;margin:0 auto}blockquote{border-left:1px solid #e5e5e5;margin:0;padding:0 0 0 20px;font-style:italic}code,pre{font-family:Monaco, Bitstream Vera Sans Mono, Lucida Console, Terminal, Consolas, Liberation Mono, DejaVu Sans Mono, Courier New, monospace;color:#333}pre{padding:8px 15px;background:#f8f8f8;border-radius:5px;border:1px solid #e5e5e5;overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px 10px;border-bottom:1px solid #e5e5e5}dt{color:#444;font-weight:700}th{color:#444}img{max-width:100%}kbd{background-color:#fafbfc;border:1px solid #c6cbd1;border-bottom-color:#959da5;border-radius:3px;box-shadow:inset 0 -1px 0 #959da5;color:#444d56;display:inline-block;font-size:11px;line-height:10px;padding:3px 5px;vertical-align:middle}header{width:270px;float:left;position:fixed;-webkit-font-smoothing:subpixel-antialiased}ul.downloads{list-style:none;height:40px;padding:0;background:#f4f4f4;border-radius:5px;border:1px solid #e0e0e0;width:270px}.downloads li{width:89px;float:left;border-right:1px solid #e0e0e0;height:40px}.downloads li:first-child a{border-radius:5px 0 0 5px}.downloads li:last-child a{border-radius:0 5px 5px 0}.downloads a{line-height:1;font-size:11px;color:#676767;display:block;text-align:center;padding-top:6px;height:34px}.downloads a:hover,.downloads a:focus{color:#675C5C;font-weight:bold}.downloads ul a:active{background-color:#f0f0f0}strong{color:#222;font-weight:700}.downloads li+li+li{border-right:none;width:89px}.downloads a strong{font-size:14px;display:block;color:#222}section{width:500px;float:right;padding-bottom:50px}small{font-size:11px}hr{border:0;background:#e5e5e5;height:1px;margin:0 0 20px}footer{width:270px;float:left;position:fixed;bottom:50px;-webkit-font-smoothing:subpixel-antialiased}@media print, screen and (max-width: 960px){div.wrapper{width:auto;margin:0}header,section,footer{float:none;position:static;width:auto}header{padding-right:320px}section{border:1px solid #e5e5e5;border-width:1px 0;padding:20px 0;margin:0 0 20px}header a small{display:inline}header ul{position:absolute;right:50px;top:52px}}@media print, screen and (max-width: 720px){body{word-wrap:break-word}header{padding:0}header ul,header p.view{position:static}pre,code{word-wrap:normal}}@media print, screen and (max-width: 480px){body{padding:15px}.downloads{width:99%}.downloads li,.downloads li+li+li{width:33%}}@media print{body{padding:0.4in;font-size:12pt;color:#444}}
+  </style>
+  <meta charset="utf-8">
+  <meta content="IE=edge" http-equiv="X-UA-Compatible">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <!-- Begin Jekyll SEO tag v2.8.0 -->
+  <title>
+   About [Name Redacted] | [Name Redacted] @ GitHub
+  </title>
+  <meta content="Jekyll v3.9.2" name="generator">
+  <meta content="About [Name Redacted]" property="og:title">
+  <meta content="zh_CN" property="og:locale">
+  <meta content="[Name Redacted]&rsquo;s Profile Page at GitHub" name="description">
+  <meta content="[Name Redacted]&rsquo;s Profile Page at GitHub" property="og:description">
+  <meta content="" property="og:url">
+  <meta content="[Name Redacted] @ GitHub" property="og:site_name">
+  <meta content="website" property="og:type">
+  <meta content="summary" name="twitter:card">
+  <meta content="About [Name Redacted]" property="twitter:title">
+  <!-- End Jekyll SEO tag -->
+  <!--[if lt IE 9]>
+    
+    <![endif]-->
+  <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+  <!-- Setup Google Analytics -->
+  <!-- Global site tag (gtag.js) - Google Analytics -->
+  <!-- You can set your favicon here -->
+  <!-- end custom head snippets -->
+ </head>
+ <body>
+  <div class="wrapper">
+   <header>
+    <h1>
+     <a>
+      [Name Redacted] @ GitHub
+     </a>
+    </h1>
+    <img alt="Logo" src="rick.jpg">
+    <p>
+     [Name Redacted]'s Profile Page at GitHub
+    </p>
+    <p class="view">
+     <a>
+      View My GitHub Profile
+     </a>
+    </p>
+   </header>
+   <section>
+    <h2 id="about-[Name Redacted]">
+     About
+     <strong>
+      [Name Redacted]
+     </strong>
+    </h2>
+    <p>
+     Visit My Homepage
+     <strong>
+      @
+     </strong>
+     <strong>
+      <a>
+       [Name Redacted].Net
+      </a>
+     </strong>
+     (
+     <em>
+      🐽🎱 Powered By
+      <strong>
+       Hugo
+      </strong>
+      in
+      <strong>
+       Chinese
+      </strong>
+      .
+     </em>
+     )
+    </p>
+    <p>
+     More
+     <strong>
+      Contact
+     </strong>
+     info 📬
+     <strong>
+      @
+     </strong>
+     <a title="About [Name Redacted]">
+      About [Name Redacted].Net
+     </a>
+    </p>
+    <div class="language-json highlighter-rouge">
+     <div class="highlight">
+      <pre class="highlight"><code><span class="p">{</span><span class="w">
+  </span><span class="nl">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"[Name Redacted]"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"company"</span><span class="p">:</span><span class="w"> </span><span class="s2">"[Name Redacted] dot Net"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"blog"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"location"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Nanjing,China"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"bio"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Blogger @ [Name Redacted].Net"</span><span class="p">,</span><span class="w">
+  </span><span class="nl">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2014-06-04T12:52:00Z"</span><span class="w">
+</span><span class="p">}</span><span class="w">
+</span></code></pre>
+     </div>
+    </div>
+    <h3 id="out-of-date-sites">
+     <em>
+      Out of Date
+     </em>
+     Sites
+    </h3>
+    <p>
+     <a>
+      [Name Redacted].COM
+     </a>
+     (
+     <em>
+      <strong>
+       Without
+      </strong>
+      Maintenance 🚧 , Ready for
+      <strong>
+       Sell
+      </strong>
+      .
+     </em>
+     )
+    </p>
+    <h3 id="哥林多前书-134-8-cunpss-神">
+     哥林多前书 13:4-8 CUNPSS-神
+    </h3>
+    <blockquote>
+     <p>
+      爱是恒久忍耐，又有恩慈；
+     </p>
+     <p>
+      爱是不嫉妒；爱是不自夸，不张狂，不做害羞的事，不求自己的益处，不轻易发怒，不计算人的恶，不喜欢不义，只喜欢真理；
+     </p>
+     <p>
+      凡事包容，凡事相信，凡事盼望，凡事忍耐。
+     </p>
+     <p>
+      爱是永不止息。先知讲道之能终必归于无有；说方言之能终必停止；知识也终必归于无有。
+     </p>
+    </blockquote>
+   </section>
+   <footer>
+    <p>
+     <small>
+      Hosted on GitHub Pages &mdash; Theme by
+      <a>
+       orderedlist
+      </a>
+     </small>
+    </p>
+    <p>
+     <small>
+      &copy; 2022, [Name Redacted] @ GitHub |
+      <a>
+       Edit on GitHub
+      </a>
+     </small>
+    </p>
+   </footer>
+  </div>
+ </body>
+</html>

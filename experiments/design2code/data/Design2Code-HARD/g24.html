@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <style>
+   body {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    margin: 32px 0;
+}
+
+main {
+    position: relative;
+}
+
+.header-image {
+    transform: scaleX(-1);
+    width: 100%;
+}
+
+.event-image {
+    max-width: 488px;   
+}
+
+.header {
+    display: grid;
+    grid-template-columns: auto 1fr;
+}
+
+#hanging-noguchi {
+    margin-top: -15px;
+    margin-left: -15px;
+}
+
+#akari-noguchi {
+    float:right;
+    margin-top: -40px;
+}
+
+.lamp {
+    width: 80px;
+    background-color: transparent;
+    cursor: pointer;
+}
+
+.lamp:hover {
+    animation: jiggle 0.5s ease-in-out;
+}
+
+.lamp.clicked {
+    filter: brightness(1.2) saturate(1.6)
+    drop-shadow(0px 0px 50px rgba(247, 220, 156, 0.85));
+}
+
+@keyframes jiggle {
+  0% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(7deg);
+  }
+  50% {
+    transform: rotate(0deg);
+  }
+  66% {
+    transform: rotate(-5deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+main {
+    width: 100%;
+    max-width: 488px;
+}
+
+h2 {
+    display: flex;
+    margin-block-start: 1.75em;
+}
+
+h2:after {
+    content: '';
+    flex: 1;
+    margin: auto .5em;
+    height: 0;
+    border-top: dotted #ccc 1px;
+}
+
+table {
+    width: 100%;
+}
+section {
+    position: relative;
+}
+
+td:last-child {
+    text-align: right;
+}
+.cat{
+    position: absolute;
+    top: -10px;
+    right: 0px;
+    width: 48px;
+}
+
+/* Moving marquee that freeze on hover */
+.marquee-y {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.marquee-inner {
+    background-color: rgb(250, 177, 104);
+    width: fit-content;
+    font-size: 1.15rem;
+    text-align: center;
+    padding: 8px 12px;
+    pointer-events: auto;
+}
+
+/* Produces images on hover for each event heading */
+.image-container {
+  position: relative;
+  text-align: center;
+}
+
+.event-heading, &:visited {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-style: wavy;
+    text-decoration-color: rgb(250, 177, 104);
+    text-decoration-line: underline;
+    text-decoration-thickness: .05em;
+    text-underline-offset: .25em;
+    cursor: cell;
+}
+
+.event-heading:hover {
+    color: blue;
+    text-decoration-color: blue;
+    transition: 160ms linear all;
+}
+
+.event-image {
+  position: absolute;
+  display: none;
+  left: 10em;
+  bottom: 1em;
+  width: auto;
+  height: auto;
+  border-radius: 100%;
+}
+
+/* No horizontal overflow on mobile */
+@media (max-width: 600px) {
+    main {
+        padding: 0 16px;
+    }
+
+    .event-image {
+        bottom: 4rem;
+        left: 0;
+        right: 0;
+        margin: auto;
+        width: 100%;
+    }
+}
+
+
+
+@charset "UTF-8";.__playhtml-can-move{cursor:grab;transition:transform .15s;will-change:transform}.__playhtml-can-move.cursordown{cursor:grabbing}.__playhtml-can-spin{cursor:grab;transition:transform .25s;will-change:transform}.__playhtml-can-spin.cursordown{cursor:grabbing}.__playhtml-can-grow{cursor:pointer;transition:transform .25s;will-change:transform}.__playhtml-can-toggle,.__playhtml-can-draw{cursor:pointer}.__playhtml-can-draw .__playhtml-draw-container{position:relative;width:100%;height:100%;cursor:none}.__playhtml-can-draw .__playhtml-draw-container canvas{position:absolute;top:0;left:0;cursor:url("data:image/svg+xml;utf8,") 16 0,auto}body .__playhtml-element.editing:nth-child(2n){animation-name:jiggle1;animation-iteration-count:infinite;transform-origin:50% 10%;animation-duration:.25s;animation-delay:var(--jiggle-delay)}body .__playhtml-element.editing:nth-child(2n-1){animation-name:jiggle2;animation-iteration-count:infinite;animation-direction:alternate;transform-origin:30% 5%;animation-duration:.45s;animation-delay:var(--jiggle-delay)}@keyframes jiggle1{0%{transform:rotate(-1deg);animation-timing-function:ease-in}50%{transform:rotate(1.5deg);animation-timing-function:ease-out}}@keyframes jiggle2{0%{transform:rotate(1deg);animation-timing-function:ease-in}50%{transform:rotate(-1.5deg);animation-timing-function:ease-out}}
+
+
+
+#cursor-chat-layer{position:absolute;width:100%;height:100%;z-index:10;overflow:hidden;pointer-events:none;top:0px;left:0px}#cursor-chat-layer .cursor>svg{position:absolute;top:-17.5px;left:-17.5px;width:35px;height:35px}#cursor-chat-layer .cursor{transition:opacity 1s ease}#cursor-chat-layer .stale,#cursor-chat-layer .new{visibility:hidden}#cursor-chat-layer .expiring{opacity:0}#cursor-chat-layer .cursor>p,#cursor-chat-layer #cursor-chat-box{display:inline-block;margin-top:1rem;margin-left:.5rem;padding:.6rem 1rem;position:absolute;border-radius:0 20px 20px;border:2px solid #00000011;box-shadow:7px 15px 36px 4px #0000001a;max-width:250px;font-family:sans-serif;overflow-wrap:anywhere;font-size:1rem;min-height:calc(1rem + 4px)}#cursor-chat-layer #cursor-chat-box{display:none}#cursor-chat-layer .chat{transition:opacity .5s ease,visibility .5s ease;opacity:0;visibility:hidden}#cursor-chat-layer .chat.show{visibility:visible;opacity:1}
+  </style>
+  <meta charset="utf-8">
+  <meta content="IE=edge" http-equiv="X-UA-Compatible">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <title>
+   Demos &amp; Chill
+  </title>
+ </head>
+ <body>
+  <marquee behavior="alternate" class="marquee-y" direction="down" onmouseout="this.start();" onmouseover="this.stop();">
+   <marquee behavior="alternate" class="marquee-x" onmouseout="this.start();" onmouseover="this.stop();">
+    <div class="marquee-inner">
+     Demos &amp; Chill 9 coming soon!
+    </div>
+   </marquee>
+  </marquee>
+  <main>
+   <div class="header">
+    <img alt="a transparent cutout of a hanging Noguchi lamp." can-toggle class="lamp" id="hanging-noguchi" src="rick.jpg">
+    <img alt="stick figures demo'ing" class="header-image" src="rick.jpg">
+   </div>
+   <h1>
+    Demos &amp; Chill
+   </h1>
+   <img alt="a transparent cutout of the Noguchi Akari lamp." can-toggle class="lamp" id="akari-noguchi" src="rick.jpg">
+   <p>
+    Is a small event series put on by a group of friends,
+        once-a-month-or-two-ish, where people come show off cool stuff they've
+        made.
+   </p>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 8">
+     <h2>
+      Demos from event 8
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 8" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Smart watch for chess ranking
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Miegakura related stuff
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        AI Drawn Card deck
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        How to make film with AI
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 7">
+     <h2>
+      Demos from event 7
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 7" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Circuit Sculpture
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        3D Medley
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Dreams of Vision OS
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Dissecting magic eyes
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 6">
+     <h2>
+      Demos from event 6
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 6" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Slices of a book
+       </td>
+       <td>
+        Andy Matuschak &amp; Derrek Chow
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Retro horror game
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Stochastic parrot
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        AI Super Smash Coach
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 5">
+     <h2>
+      Demos from event 5
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 5" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Prayer App
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        The making of Orion
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Super wide interfaces 2
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        New interfaces for dynamic images over text
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 4">
+     <h2>
+      Demos from event 4
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 4" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Figma computer
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        playhtml
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Buffo - a documentary
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Tamagotchi spongey
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 3">
+     <h2>
+      Demos from event 3
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 3" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Light and shadow interfaces
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Reverse engineering chatgpt
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Silly pet game
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        AI quilt
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 2">
+     <h2>
+      Demos from event 2
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 2" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Playbit
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        A Personal Journaling App
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Reprocessing
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Shaders &amp; CSS
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <section>
+    <img alt="cute cat!" class="cat" src="rick.jpg">
+    <a class="event-heading" data-heading="Demos from event 1">
+     <h2>
+      Demos from event 1
+     </h2>
+     <div class="image-container">
+      <img alt="Images from event 1" class="event-image" src="rick.jpg">
+     </div>
+    </a>
+    <table>
+     <tbody>
+      <tr>
+       <td>
+        Documentary
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Poetry Camera
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        A Farsi Typeface
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+      <tr>
+       <td>
+        Super Wide Interfaces
+       </td>
+       <td>
+        [Name Redacted]
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </section>
+   <footer>
+    <p>
+     ---
+    </p>
+    <p>
+     Does this design offend your eyes?
+     <a>
+      Edit me!
+     </a>
+    </p>
+    <p>
+     Would you like to sponsor the event?
+     <a>
+      DM me!
+     </a>
+    </p>
+   </footer>
+  </main>
+  <div id="cursor-chat-layer">
+   <input id="cursor-chat-box" type="text">
+  </div>
+  <!-- install playhtml -->
+  <!-- install cursor chat -->
+ </body>
+</html>

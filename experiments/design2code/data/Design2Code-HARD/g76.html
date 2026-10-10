@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en-US" style>
+ <head>
+  <style>
+   /*! normalize.css 2012-02-07T12:37 UTC - https://github.com/necolas/normalize.css */article,aside,details,figcaption,figure,footer,header,hgroup,nav,section,summary{display:block}audio,canvas,video{display:inline-block;*display:inline;*zoom:1}audio:not([controls]){display:none}[hidden]{display:none}html{font-size:100%;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%}html,button,input,select,textarea{font-family:sans-serif}body{margin:0}a:focus{outline:thin dotted}a:hover,a:active{outline:0}h1{font-size:2em;margin:0.67em 0}h2{font-size:1.5em;margin:0.83em 0}h3{font-size:1.17em;margin:1em 0}h4{font-size:1em;margin:1.33em 0}h5{font-size:0.83em;margin:1.67em 0}h6{font-size:0.75em;margin:2.33em 0}abbr[title]{border-bottom:1px dotted}b,strong{font-weight:bold}blockquote{margin:1em 40px}dfn{font-style:italic}mark{background:#ff0;color:#000}p,pre{margin:1em 0}pre,code,kbd,samp{font-family:monospace, serif;_font-family:'courier new', monospace;font-size:1em}q{quotes:none}q:before,q:after{content:'';content:none}small{font-size:75%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sup{top:-0.5em}sub{bottom:-0.25em}dl,menu,ol,ul{margin:1em 0}dd{margin:0 0 0 40px}menu,ol,ul{padding:0 0 0 40px}nav ul,nav ol{list-style:none;list-style-image:none}img{border:0;-ms-interpolation-mode:bicubic}svg:not(:root){overflow:hidden}figure{margin:0}form{margin:0}fieldset{border:1px solid #c0c0c0;margin:0 2px;padding:0.35em 0.625em 0.75em}legend{border:0;padding:0;white-space:normal;*margin-left:-7px}button,input,select,textarea{font-size:100%;margin:0;vertical-align:baseline;*vertical-align:middle}button,input{line-height:normal}button,input[type="button"],input[type="reset"],input[type="submit"]{cursor:pointer;-webkit-appearance:button;*overflow:visible}button[disabled],input[disabled]{cursor:default}input[type="checkbox"],input[type="radio"]{box-sizing:border-box;padding:0;*height:13px;*width:13px}input[type="search"]{-webkit-appearance:textfield;-moz-box-sizing:content-box;-webkit-box-sizing:content-box;box-sizing:content-box}input[type="search"]::-webkit-search-decoration,input[type="search"]::-webkit-search-cancel-button{-webkit-appearance:none}button::-moz-focus-inner,input::-moz-focus-inner{border:0;padding:0}textarea{overflow:auto;vertical-align:top}table{border-collapse:collapse;border-spacing:0}@font-face{font-family:'OpenSansLight';src:url("../fonts/OpenSans-Light-webfont.eot");src:url("../fonts/OpenSans-Light-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-Light-webfont.woff") format("woff"),url("../fonts/OpenSans-Light-webfont.ttf") format("truetype"),url("../fonts/OpenSans-Light-webfont.svg#OpenSansLight") format("svg");font-weight:normal;font-style:normal}@font-face{font-family:'OpenSansLightItalic';src:url("../fonts/OpenSans-LightItalic-webfont.eot");src:url("../fonts/OpenSans-LightItalic-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-LightItalic-webfont.woff") format("woff"),url("../fonts/OpenSans-LightItalic-webfont.ttf") format("truetype"),url("../fonts/OpenSans-LightItalic-webfont.svg#OpenSansLightItalic") format("svg");font-weight:normal;font-style:normal}@font-face{font-family:'OpenSansRegular';src:url("../fonts/OpenSans-Regular-webfont.eot");src:url("../fonts/OpenSans-Regular-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-Regular-webfont.woff") format("woff"),url("../fonts/OpenSans-Regular-webfont.ttf") format("truetype"),url("../fonts/OpenSans-Regular-webfont.svg#OpenSansRegular") format("svg");font-weight:normal;font-style:normal;-webkit-font-smoothing:antialiased}@font-face{font-family:'OpenSansItalic';src:url("../fonts/OpenSans-Italic-webfont.eot");src:url("../fonts/OpenSans-Italic-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-Italic-webfont.woff") format("woff"),url("../fonts/OpenSans-Italic-webfont.ttf") format("truetype"),url("../fonts/OpenSans-Italic-webfont.svg#OpenSansItalic") format("svg");font-weight:normal;font-style:normal;-webkit-font-smoothing:antialiased}@font-face{font-family:'OpenSansSemibold';src:url("../fonts/OpenSans-Semibold-webfont.eot");src:url("../fonts/OpenSans-Semibold-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-Semibold-webfont.woff") format("woff"),url("../fonts/OpenSans-Semibold-webfont.ttf") format("truetype"),url("../fonts/OpenSans-Semibold-webfont.svg#OpenSansSemibold") format("svg");font-weight:normal;font-style:normal;-webkit-font-smoothing:antialiased}@font-face{font-family:'OpenSansSemiboldItalic';src:url("../fonts/OpenSans-SemiboldItalic-webfont.eot");src:url("../fonts/OpenSans-SemiboldItalic-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-SemiboldItalic-webfont.woff") format("woff"),url("../fonts/OpenSans-SemiboldItalic-webfont.ttf") format("truetype"),url("../fonts/OpenSans-SemiboldItalic-webfont.svg#OpenSansSemiboldItalic") format("svg");font-weight:normal;font-style:normal;-webkit-font-smoothing:antialiased}@font-face{font-family:'OpenSansBold';src:url("../fonts/OpenSans-Bold-webfont.eot");src:url("../fonts/OpenSans-Bold-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-Bold-webfont.woff") format("woff"),url("../fonts/OpenSans-Bold-webfont.ttf") format("truetype"),url("../fonts/OpenSans-Bold-webfont.svg#OpenSansBold") format("svg");font-weight:normal;font-style:normal;-webkit-font-smoothing:antialiased}@font-face{font-family:'OpenSansBoldItalic';src:url("../fonts/OpenSans-BoldItalic-webfont.eot");src:url("../fonts/OpenSans-BoldItalic-webfont.eot?#iefix") format("embedded-opentype"),url("../fonts/OpenSans-BoldItalic-webfont.woff") format("woff"),url("../fonts/OpenSans-BoldItalic-webfont.ttf") format("truetype"),url("../fonts/OpenSans-BoldItalic-webfont.svg#OpenSansBoldItalic") format("svg");font-weight:normal;font-style:normal;-webkit-font-smoothing:antialiased}.highlight table td{padding:5px}.highlight table pre{margin:0}.highlight,.highlight .w{color:#d0d0d0}.highlight .err{color:#151515;background-color:#ac4142}.highlight .c,.highlight .cd,.highlight .cm,.highlight .c1,.highlight .cs{color:#888}.highlight .cp{color:#f4bf75}.highlight .nt{color:#f4bf75}.highlight .o,.highlight .ow{color:#d0d0d0}.highlight .p,.highlight .pi{color:#d0d0d0}.highlight .gi{color:#90a959}.highlight .gd{color:#ac4142}.highlight .gh{color:#6a9fb5;font-weight:bold}.highlight .k,.highlight .kn,.highlight .kp,.highlight .kr,.highlight .kv{color:#aa759f}.highlight .kc{color:#d28445}.highlight .kt{color:#d28445}.highlight .kd{color:#d28445}.highlight .s,.highlight .sb,.highlight .sc,.highlight .sd,.highlight .s2,.highlight .sh,.highlight .sx,.highlight .s1{color:#90a959}.highlight .sr{color:#75b5aa}.highlight .si{color:#8f5536}.highlight .se{color:#8f5536}.highlight .nn{color:#f4bf75}.highlight .nc{color:#f4bf75}.highlight .no{color:#f4bf75}.highlight .na{color:#6a9fb5}.highlight .m,.highlight .mf,.highlight .mh,.highlight .mi,.highlight .il,.highlight .mo,.highlight .mb,.highlight .mx{color:#90a959}.highlight .ss{color:#90a959}body{padding:0px 0 20px 0px;margin:0px;font:14px/1.5 "OpenSansRegular", "Helvetica Neue", Helvetica, Arial, sans-serif;color:#f0e7d5;font-weight:normal;background:#252525;background-attachment:fixed !important;background:linear_gradient(#2a2a29, #1c1c1c)}h1,h2,h3,h4,h5,h6{color:#e8e8e8;margin:0 0 10px;font-family:'OpenSansRegular', "Helvetica Neue", Helvetica, Arial, sans-serif;font-weight:normal}p,ul,ol,table,pre,dl{margin:0 0 20px}h1,h2,h3{line-height:1.1}h1{font-size:28px}h2{font-size:24px}h4,h5,h6{color:#e8e8e8}h3{font-size:18px;line-height:24px;font-family:'OpenSansRegular', "Helvetica Neue", Helvetica, Arial, sans-serif !important;font-weight:normal;color:#b6b6b6}a{color:#ffcc00;font-weight:400;text-decoration:none}a:hover{color:#ffeb9b}a small{font-size:11px;color:#666;margin-top:-0.6em;display:block}ul{list-style-image:url("../images/bullet.png")}strong{font-family:'OpenSansBold', "Helvetica Neue", Helvetica, Arial, sans-serif !important;font-weight:normal}.wrapper{max-width:650px;margin:0 auto;position:relative;padding:0 20px}section img{max-width:100%}blockquote{border-left:3px solid #ffcc00;margin:0;padding:0 0 0 20px;font-style:italic}code{font-family:Monaco, Bitstream Vera Sans Mono, Lucida Console, Terminal, monospace;color:#efefef;font-size:13px;margin:0 4px;padding:4px 6px;border-radius:2px}pre{padding:8px 15px;background:#191919;border-radius:2px;border:1px solid #121212;box-shadow:inset 0 1px 3px rgba(0,0,0,0.3);overflow:auto;overflow-y:hidden}pre code{color:#efefef;text-shadow:0px 1px 0px #000;margin:0;padding:0}table{width:100%;border-collapse:collapse}th{text-align:left;padding:5px 10px;border-bottom:1px solid #434343;color:#b6b6b6;font-family:'OpenSansSemibold', "Helvetica Neue", Helvetica, Arial, sans-serif !important;font-weight:normal}td{text-align:left;padding:5px 10px;border-bottom:1px solid #434343}hr{border:0;outline:none;height:3px;background:transparent url("../images/hr.gif") center center repeat-x;margin:0 0 20px}dt{color:#F0E7D5;font-family:'OpenSansSemibold', "Helvetica Neue", Helvetica, Arial, sans-serif !important;font-weight:normal}#header{z-index:100;left:0;top:0px;height:60px;width:100%;position:fixed;background:url(../images/nav-bg.gif) #353535;border-bottom:4px solid #434343;box-shadow:0px 1px 3px rgba(0,0,0,0.25)}#header nav{max-width:650px;margin:0 auto;padding:0 10px;background:blue;margin:6px auto}#header nav li{font-family:'OpenSansLight', "Helvetica Neue", Helvetica, Arial, sans-serif;font-weight:normal;list-style:none;display:inline;color:white;line-height:50px;text-shadow:0px 1px 0px rgba(0,0,0,0.2);font-size:14px}#header nav li a{color:white;border:1px solid #5d910b;background:linear_gradient(#93bd20, #659e10);border-radius:2px;box-shadow:inset 0px 1px 0px rgba(255,255,255,0.3),0px 3px 7px rgba(0,0,0,0.7);background-color:#93bd20;padding:10px 12px;margin-top:6px;line-height:14px;font-size:14px;display:inline-block;text-align:center}#header nav li a:hover{background:linear_gradient(#749619, #527f0e);background-color:#659e10;border:1px solid #527f0e;box-shadow:inset 0px 1px 1px rgba(0,0,0,0.2),0px 1px 0px transparent}#header nav li.fork{float:left;margin-left:0px}#header nav li.downloads{float:right;margin-left:6px}#header nav li.title{float:right;margin-right:10px;font-size:11px}section{max-width:650px;padding:30px 0px 50px 0px;margin:20px 0;margin-top:70px}section #title{border:0;outline:none;margin:0 0 50px 0;padding:0 0 5px 0}section #title h1{font-family:'OpenSansLight', "Helvetica Neue", Helvetica, Arial, sans-serif;font-weight:normal;font-size:40px;text-align:center;line-height:36px}section #title p{color:#d7cfbe;font-family:'OpenSansLight', "Helvetica Neue", Helvetica, Arial, sans-serif;font-weight:normal;font-size:18px;text-align:center}section #title .credits{font-size:11px;font-family:'OpenSansRegular', "Helvetica Neue", Helvetica, Arial, sans-serif;font-weight:normal;color:#696969;margin-top:-10px}section #title .credits.left{float:left}section #title .credits.right{float:right}@media print, screen and (max-width: 720px){#title .credits{display:block;width:100%;line-height:30px;text-align:center}#title .credits .left{float:none;display:block}#title .credits .right{float:none;display:block}}@media print, screen and (max-width: 480px){#header{margin-top:-20px}section{margin-top:40px}nav{display:none}}
+  </style>
+  <meta charset="utf-8">
+  <meta content="IE=edge" http-equiv="X-UA-Compatible">
+  <!-- Begin Jekyll SEO tag v2.7.1 -->
+  <title>
+   &Scy;&rcy;&acy;&vcy;&ncy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&jcy; &acy;&ncy;&acy;&lcy;&icy;&zcy;.&Tcy;&Ocy;&Pcy; 10 CRM | [Name Redacted].github.io
+  </title>
+  <meta content="Jekyll v3.9.0" name="generator">
+  <meta content="&Scy;&rcy;&acy;&vcy;&ncy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&jcy; &acy;&ncy;&acy;&lcy;&icy;&zcy;.&Tcy;&Ocy;&Pcy; 10 CRM" property="og:title">
+  <meta content="en_US" property="og:locale">
+  <meta content="" property="og:url">
+  <meta content="[Name Redacted].github.io" property="og:site_name">
+  <meta content="summary" name="twitter:card">
+  <meta content="&Scy;&rcy;&acy;&vcy;&ncy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&jcy; &acy;&ncy;&acy;&lcy;&icy;&zcy;.&Tcy;&Ocy;&Pcy; 10 CRM" property="twitter:title">
+  <!-- End Jekyll SEO tag -->
+  <!--[if lt IE 9]>
+      
+    <![endif]-->
+  <!--[if lt IE 8]>
+    
+    <![endif]-->
+  <meta content="width=device-width, initial-scale=1, user-scalable=no" name="viewport">
+ </head>
+ <body>
+  <div id="header">
+   <nav>
+    <li class="fork">
+     <a>
+      View On GitHub
+     </a>
+    </li>
+   </nav>
+  </div>
+  <!-- end header -->
+  <div class="wrapper">
+   <section>
+    <div id="title">
+     <h1>
+      [Name Redacted].github.io
+     </h1>
+     <p>
+     </p>
+     <hr>
+     <span class="credits left">
+      Project maintained by
+      <a>
+       [Name Redacted]
+      </a>
+     </span>
+     <span class="credits right">
+      Hosted on GitHub Pages &mdash; Theme by
+      <a>
+       [Name Redacted]
+      </a>
+     </span>
+    </div>
+    <h2 id="&scy;&rcy;&acy;&vcy;&ncy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&jcy;-&acy;&ncy;&acy;&lcy;&icy;&zcy;&tcy;&ocy;&pcy;-10-crm">
+     &Scy;&rcy;&acy;&vcy;&ncy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&jcy; &acy;&ncy;&acy;&lcy;&icy;&zcy;.&Tcy;&Ocy;&Pcy; 10 CRM
+    </h2>
+    <p>
+     &Ocy;&scy;&ncy;&ocy;&vcy;&ncy;&ycy;&iecy; &kcy;&rcy;&icy;&tcy;&iecy;&rcy;&icy;&icy; &dcy;&lcy;&yacy; &scy;&rcy;&acy;&vcy;&ncy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ocy;&gcy;&ocy; &acy;&ncy;&acy;&lcy;&icy;&zcy;&acy;:
+    </p>
+    <p>
+     -&tscy;&iecy;&ncy;&acy;,
+    </p>
+    <p>
+     -&ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;,
+    </p>
+    <p>
+     -&fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;,
+    </p>
+    <p>
+     -&scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;,
+    </p>
+    <p>
+     -&ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;,
+    </p>
+    <p>
+     -&ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;.
+    </p>
+    <h3 id="crm_&bcy;&icy;&tcy;&icy;&rcy;&icy;&kcy;&scy;24">
+     CRM_&Bcy;&icy;&tcy;&icy;&rcy;&icy;&kcy;&scy;24
+    </h3>
+    <p>
+     <a>
+      <em>
+       CRM_&Bcy;&icy;&tcy;&icy;&rcy;&icy;&kcy;&scy;24
+      </em>
+     </a>
+    </p>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&mdash; &pcy;&rcy;&ocy;&bcy;&ncy;&acy;&yacy; -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; **&Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;: **&ndash;&pcy;&ocy;&mcy;&ocy;&gcy;&acy;&iecy;&tcy; &pcy;&rcy;&ocy;&dcy;&acy;&vcy;&acy;&tcy;&softcy; &bcy;&ocy;&lcy;&softcy;&shcy;&iecy;: &acy;&vcy;&tcy;&ocy;&mcy;&acy;&tcy;&icy;&zcy;&icy;&rcy;&ucy;&iecy;&tcy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;, &bcy;&iecy;&rcy;&iecy;&tcy; &pcy;&ocy;&dcy; &kcy;&ocy;&ncy;&tcy;&rcy;&ocy;&lcy;&softcy; &vcy;&scy;&iecy; &kcy;&acy;&ncy;&acy;&lcy;&ycy; &kcy;&ocy;&mcy;&mcy;&ucy;&ncy;&icy;&kcy;&acy;&tscy;&icy;&jcy; &scy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&acy;&mcy;&icy;, &ocy;&tcy;&pcy;&rcy;&acy;&vcy;&lcy;&yacy;&iecy;&tcy; &rcy;&acy;&scy;&scy;&ycy;&lcy;&kcy;&icy; &icy; &ucy;&scy;&icy;&lcy;&icy;&vcy;&acy;&iecy;&tcy; &pcy;&ocy;&vcy;&tcy;&ocy;&rcy;&ncy;&ycy;&iecy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;.
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;: &mdash;&scy;&icy;&scy;&tcy;&iecy;&mcy;&acy; &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &pcy;&rcy;&ocy;&iecy;&kcy;&tcy;&acy;&mcy;&icy;
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;: &mdash;&pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; **&Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: **&ndash;&Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;,&tcy;&iecy;&khcy;.&pcy;&ocy;&dcy;&dcy;&iecy;&rcy;&zhcy;&kcy;&acy;.
+&bull; &TScy;&iecy;&ncy;&acy;:&mdash; &pcy;&rcy;&ocy;&bcy;&ncy;&acy;&yacy; -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; **&Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;: **&ndash;&pcy;&ocy;&mcy;&ocy;&gcy;&acy;&iecy;&tcy; &pcy;&rcy;&ocy;&dcy;&acy;&vcy;&acy;&tcy;&softcy; &bcy;&ocy;&lcy;&softcy;&shcy;&iecy;: &acy;&vcy;&tcy;&ocy;&mcy;&acy;&tcy;&icy;&zcy;&icy;&rcy;&ucy;&iecy;&tcy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;, &bcy;&iecy;&rcy;&iecy;&tcy; &pcy;&ocy;&dcy; &kcy;&ocy;&ncy;&tcy;&rcy;&ocy;&lcy;&softcy; &vcy;&scy;&iecy; &kcy;&acy;&ncy;&acy;&lcy;&ycy; &kcy;&ocy;&mcy;&mcy;&ucy;&ncy;&icy;&kcy;&acy;&tscy;&icy;&jcy; &scy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&acy;&mcy;&icy;, &ocy;&tcy;&pcy;&rcy;&acy;&vcy;&lcy;&yacy;&iecy;&tcy; &rcy;&acy;&scy;&scy;&ycy;&lcy;&kcy;&icy; &icy; &ucy;&scy;&icy;&lcy;&icy;&vcy;&acy;&iecy;&tcy; &pcy;&ocy;&vcy;&tcy;&ocy;&rcy;&ncy;&ycy;&iecy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;.
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;: &mdash;&scy;&icy;&scy;&tcy;&iecy;&mcy;&acy; &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &pcy;&rcy;&ocy;&iecy;&kcy;&tcy;&acy;&mcy;&icy;
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;: &mdash;&pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; **&Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: **&ndash;&Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;,&tcy;&iecy;&khcy;.&pcy;&ocy;&dcy;&dcy;&iecy;&rcy;&zhcy;&kcy;&acy;.
+&bull; &TScy;&iecy;&ncy;&acy;:&mdash; &pcy;&rcy;&ocy;&bcy;&ncy;&acy;&yacy; -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; **&Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;: **&ndash;&pcy;&ocy;&mcy;&ocy;&gcy;&acy;&iecy;&tcy; &pcy;&rcy;&ocy;&dcy;&acy;&vcy;&acy;&tcy;&softcy; &bcy;&ocy;&lcy;&softcy;&shcy;&iecy;: &acy;&vcy;&tcy;&ocy;&mcy;&acy;&tcy;&icy;&zcy;&icy;&rcy;&ucy;&iecy;&tcy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;, &bcy;&iecy;&rcy;&iecy;&tcy; &pcy;&ocy;&dcy; &kcy;&ocy;&ncy;&tcy;&rcy;&ocy;&lcy;&softcy; &vcy;&scy;&iecy; &kcy;&acy;&ncy;&acy;&lcy;&ycy; &kcy;&ocy;&mcy;&mcy;&ucy;&ncy;&icy;&kcy;&acy;&tscy;&icy;&jcy; &scy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&acy;&mcy;&icy;, &ocy;&tcy;&pcy;&rcy;&acy;&vcy;&lcy;&yacy;&iecy;&tcy; &rcy;&acy;&scy;&scy;&ycy;&lcy;&kcy;&icy; &icy; &ucy;&scy;&icy;&lcy;&icy;&vcy;&acy;&iecy;&tcy; &pcy;&ocy;&vcy;&tcy;&ocy;&rcy;&ncy;&ycy;&iecy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;.
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;: &mdash;&scy;&icy;&scy;&tcy;&iecy;&mcy;&acy; &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &pcy;&rcy;&ocy;&iecy;&kcy;&tcy;&acy;&mcy;&icy;
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;: &mdash;&pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; **&Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: **&ndash;&Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;,&tcy;&iecy;&khcy;.&pcy;&ocy;&dcy;&dcy;&iecy;&rcy;&zhcy;&kcy;&acy;.
+    </p>
+    <h3 id="crm-&mcy;&iecy;&gcy;&acy;&pcy;&lcy;&acy;&ncy;">
+     CRM &Mcy;&iecy;&gcy;&acy;&pcy;&lcy;&acy;&ncy;
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 4$ -300$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;:&ndash; &IEcy;&dcy;&icy;&ncy;&acy;&yacy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&scy;&kcy;&acy;&yacy; &bcy;&acy;&zcy;&acy; &Scy;&pcy;&icy;&scy;&ocy;&kcy; &vcy;&scy;&iecy;&khcy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy; &kcy;&ocy;&mcy;&pcy;&acy;&ncy;&icy;&icy; &khcy;&rcy;&acy;&ncy;&icy;&tcy;&scy;&yacy; &vcy; &ocy;&dcy;&ncy;&ocy;&mcy; &mcy;&iecy;&scy;&tcy;&iecy;, &scy;&ocy; &vcy;&scy;&iecy;&mcy;&icy; &ncy;&iecy;&ocy;&bcy;&khcy;&ocy;&dcy;&icy;&mcy;&ycy;&mcy;&icy; &dcy;&acy;&ncy;&ncy;&ycy;&mcy;&icy; &icy; &gcy;&icy;&bcy;&kcy;&icy;&mcy;&icy; &ncy;&acy;&scy;&tcy;&rcy;&ocy;&jcy;&kcy;&acy;&mcy;&icy;
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&ndash; &pcy;&ocy;&mcy;&ocy;&gcy;&acy;&iecy;&tcy; &scy;&lcy;&iecy;&dcy;&icy;&tcy;&softcy; &zcy;&acy; &rcy;&acy;&bcy;&ocy;&tcy;&ocy;&jcy; &scy;&ocy;&tcy;&rcy;&ucy;&dcy;&ncy;&icy;&kcy;&ocy;&vcy;, &khcy;&rcy;&acy;&ncy;&icy;&tcy;&softcy; &icy;&scy;&tcy;&ocy;&rcy;&icy;&yucy; &bcy;&icy;&zcy;&ncy;&iecy;&scy;-&pcy;&rcy;&ocy;&tscy;&iecy;&scy;&scy;&ocy;&vcy;, &pcy;&rcy;&ocy;&vcy;&ocy;&dcy;&icy;&tcy;&softcy; &scy;&lcy;&ocy;&zhcy;&ncy;&ycy;&iecy; &scy;&dcy;&iecy;&lcy;&kcy;&icy; &icy; &pcy;&ocy;&dcy;&dcy;&iecy;&rcy;&zhcy;&icy;&vcy;&acy;&tcy;&softcy; &scy;&vcy;&yacy;&zcy;&softcy; &scy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&acy;&mcy;&icy;
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;:&ndash; &pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &Icy;&ncy;&tcy;&iecy;&gcy;&rcy;&acy;&tscy;&icy;&yacy; &scy; WhatsApp &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;
+    </p>
+    <h3 id="crm-&bcy;&icy;&zcy;&ncy;&iecy;&scy;&rcy;&ucy;-&kcy;&lcy;&acy;&scy;&scy;365">
+     CRM &Bcy;&icy;&zcy;&ncy;&iecy;&scy;.&Rcy;&ucy; (&Kcy;&lcy;&acy;&scy;&scy;365)
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 0$ -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;&ndash;: &pcy;&rcy;&ocy;&gcy;&rcy;&acy;&mcy;&mcy;&acy; &dcy;&lcy;&yacy; &ucy;&chcy;&iecy;&tcy;&acy; &vcy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy;&khcy;
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&ndash; &Icy;&ncy;&tcy;&iecy;&gcy;&rcy;&acy;&tscy;&icy;&yacy; &scy; &scy;&acy;&jcy;&tcy;&ocy;&mcy; &icy; &ocy;&bcy;&ocy;&rcy;&ucy;&dcy;&ocy;&vcy;&acy;&ncy;&icy;&iecy;&mcy;. &Ncy;&acy;&scy;&tcy;&rcy;&ocy;&jcy;&kcy;&acy; &kcy;&acy;&scy;&scy;.
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;:&ndash; &pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy; 5+
+    </p>
+    <p>
+     &bull; **&Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;, &ocy;&ncy;&lcy;&acy;&jcy;&ncy;-&kcy;&ocy;&ncy;&scy;&ucy;&lcy;&softcy;&tcy;&acy;&tscy;&icy;&yacy;
+    </p>
+    <h3 id="retailcrm">
+     RetailCRM
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 0$ -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;:&ndash; &rcy;&iecy;&shcy;&iecy;&ncy;&icy;&iecy; &dcy;&lcy;&yacy; eCommerce &icy; &rcy;&icy;&tcy;&iecy;&jcy;&lcy;&acy;. &ndash;&Pcy;&ocy;&mcy;&ocy;&gcy;&acy;&iecy;&tcy; &acy;&vcy;&tcy;&ocy;&mcy;&acy;&tcy;&icy;&zcy;&icy;&rcy;&ocy;&vcy;&acy;&tcy;&softcy; &ocy;&bcy;&rcy;&acy;&bcy;&ocy;&tcy;&kcy;&ucy; &zcy;&acy;&kcy;&acy;&zcy;&ocy;&vcy; &vcy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy;&khcy;.&mdash;&Ocy;&bcy;&hardcy;&iecy;&dcy;&icy;&ncy;&yacy;&iecy;&tcy; &ocy;&fcy;&lcy;&acy;&jcy;&ncy; &icy; &ocy;&ncy;&lcy;&acy;&jcy;&ncy; &pcy;&ocy;&kcy;&ucy;&pcy;&acy;&tcy;&iecy;&lcy;&iecy;&jcy; &vcy; &iecy;&dcy;&icy;&ncy;&ucy;&yucy; &ocy;&mcy;&ncy;&icy;&kcy;&acy;&ncy;&acy;&lcy;&softcy;&ncy;&ucy;&yucy; &bcy;&acy;&zcy;&ucy;.
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&mdash; &Pcy;&ocy;&zcy;&vcy;&ocy;&lcy;&yacy;&iecy;&tcy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy;&mcy; &pcy;&rcy;&ocy;&dcy;&acy;&vcy;&acy;&tcy;&softcy; &tcy;&ocy;&vcy;&acy;&rcy;&ycy; &vcy; &mcy;&iecy;&scy;&scy;&iecy;&ncy;&dcy;&zhcy;&iecy;&rcy;&acy;&khcy;. &ndash;&Ucy;&vcy;&iecy;&lcy;&icy;&chcy;&icy;&vcy;&acy;&iecy;&tcy; &pcy;&ocy;&vcy;&tcy;&ocy;&rcy;&ncy;&ycy;&iecy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy; &scy; &pcy;&ocy;&mcy;&ocy;&shchcy;&softcy;&yucy; CRM-&mcy;&acy;&rcy;&kcy;&iecy;&tcy;&icy;&ncy;&gcy;&acy;
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;:&ndash; &pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;, &acy;&ncy;&acy;&lcy;&icy;&tcy;&icy;&kcy;&acy;, &pcy;&rcy;&icy;&vcy;&yacy;&zcy;&kcy;&acy; &kcy; &mcy;&iecy;&scy;&scy;&iecy;&ncy;&dcy;&zhcy;&iecy;&rcy;&acy;&mcy;
+    </p>
+    <h3 id="crm-virtualpos">
+     CRM VirtualPOS
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 10$ -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; **&Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;: **&ndash;&ocy;&ncy;&lcy;&acy;&jcy;&ncy;-&scy;&icy;&scy;&tcy;&iecy;&mcy;&acy; &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &rcy;&ocy;&zcy;&ncy;&icy;&chcy;&ncy;&ycy;&mcy; &bcy;&icy;&zcy;&ncy;&iecy;&scy;&ocy;&mcy;
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&ndash; &Pcy;&rcy;&ocy;&gcy;&rcy;&acy;&mcy;&mcy;&acy; &dcy;&lcy;&yacy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy; &scy; &ucy;&chcy;&iocy;&tcy;&ncy;&ocy;&jcy; &scy;&icy;&scy;&tcy;&iecy;&mcy;&ocy;&jcy;, &mcy;&acy;&rcy;&kcy;&iecy;&tcy;&icy;&ncy;&gcy;&ocy;&mcy; &icy; &acy;&ncy;&acy;&lcy;&icy;&tcy;&icy;&kcy;&ocy;&jcy;.
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;:&ndash; &pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;, &mcy;&ocy;&zhcy;&ncy;&ocy; &scy;&dcy;&iecy;&lcy;&acy;&tcy;&softcy; &scy;&acy;&jcy;&tcy; &icy; &pcy;&rcy;&icy;&lcy;&ocy;&zhcy;&iecy;&ncy;&icy;&iecy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy;, &mcy;&ocy;&bcy;&icy;&lcy;&softcy;&ncy;&ocy;&iecy; &pcy;&rcy;&icy;&lcy;&ocy;&zhcy;&iecy;&ncy;&icy;&iecy;
+    </p>
+    <h3 id="crm-1&scy;&rcy;&ocy;&zcy;&ncy;&icy;&tscy;&acy;-8">
+     CRM 1&Scy;:&Rcy;&ocy;&zcy;&ncy;&icy;&tscy;&acy; 8
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 20$ -150$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;:&mdash; &acy;&vcy;&tcy;&ocy;&mcy;&acy;&tcy;&icy;&zcy;&acy;&tscy;&icy;&yacy; &rcy;&ocy;&zcy;&ncy;&icy;&chcy;&ncy;&ycy;&khcy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&ocy;&vcy; &icy; &scy;&iecy;&tcy;&iecy;&jcy;
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&ndash; &Pcy;&rcy;&ocy;&gcy;&rcy;&acy;&mcy;&mcy;&acy; &dcy;&lcy;&yacy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy; &scy; &ucy;&chcy;&iocy;&tcy;&ncy;&ocy;&jcy; &scy;&icy;&scy;&tcy;&iecy;&mcy;&ocy;&jcy;, &mcy;&acy;&rcy;&kcy;&iecy;&tcy;&icy;&ncy;&gcy;&ocy;&mcy; &icy; &acy;&ncy;&acy;&lcy;&icy;&tcy;&icy;&kcy;&ocy;&jcy;.
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;:&ndash; &pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&mdash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&ocy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;. &Ncy;&acy;&scy;&tcy;&rcy;&acy;&icy;&vcy;&acy;&iecy;&tcy;&scy;&yacy; &icy;&ncy;&dcy;&icy;&vcy;&icy;&dcy;&ucy;&acy;&lcy;&softcy;&ncy;&ocy; &pcy;&ocy;&dcy; &lcy;&yucy;&bcy;&ucy;&yucy; &scy;&fcy;&iecy;&rcy;&ucy; &tcy;&ocy;&rcy;&gcy;&ocy;&vcy;&lcy;&icy;.&mdash; &Vcy; &pcy;&rcy;&ocy;&gcy;&rcy;&acy;&mcy;&mcy;&iecy; 1&Scy;:&Rcy;&ocy;&zcy;&ncy;&icy;&tscy;&acy; 8 &rcy;&iecy;&acy;&lcy;&icy;&zcy;&ocy;&vcy;&acy;&ncy;&ycy; &ucy;&dcy;&ocy;&bcy;&ncy;&ycy;&iecy; &scy;&pcy;&rcy;&acy;&vcy;&ocy;&chcy;&ncy;&icy;&kcy;&icy; &dcy;&lcy;&yacy; &rcy;&acy;&bcy;&ocy;&tcy;&ycy; &scy; &ncy;&ocy;&mcy;&iecy;&ncy;&kcy;&lcy;&acy;&tcy;&ucy;&rcy;&ocy;&jcy; &icy; &tscy;&iecy;&ncy;&acy;&mcy;&icy;, &ocy;&fcy;&ocy;&rcy;&mcy;&lcy;&iecy;&ncy;&icy;&yacy; &khcy;&ocy;&zcy;&yacy;&jcy;&scy;&tcy;&vcy;&iecy;&ncy;&ncy;&ycy;&khcy; &ocy;&pcy;&iecy;&rcy;&acy;&tscy;&icy;&jcy;, &tscy;&iecy;&ncy;&tcy;&rcy;&acy;&lcy;&icy;&zcy;&ocy;&vcy;&acy;&ncy;&ncy;&ocy;&gcy;&ocy; &vcy;&vcy;&ocy;&dcy;&acy; &icy; &ocy;&bcy;&ncy;&ocy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &dcy;&acy;&ncy;&ncy;&ycy;&khcy;, &acy; &tcy;&acy;&kcy;&zhcy;&iecy; &dcy;&lcy;&yacy; &pcy;&ocy;&lcy;&ucy;&chcy;&iecy;&ncy;&icy;&yacy; &scy;&vcy;&iecy;&dcy;&iecy;&ncy;&icy;&jcy; &scy; &pcy;&ocy;&mcy;&ocy;&shchcy;&softcy;&yucy; &vcy;&scy;&tcy;&rcy;&ocy;&iecy;&ncy;&ncy;&ocy;&gcy;&ocy; &scy;&iecy;&rcy;&vcy;&icy;&scy;&acy; &icy;&zcy; &ocy;&bcy;&shchcy;&iecy;&rcy;&ocy;&scy;&scy;&icy;&jcy;&scy;&kcy;&icy;&khcy; &bcy;&acy;&zcy;&ocy;&vcy;&ycy;&khcy; &kcy;&lcy;&acy;&scy;&scy;&icy;&fcy;&icy;&kcy;&acy;&tcy;&ocy;&rcy;&ocy;&vcy;, &scy;&ocy;&dcy;&iecy;&rcy;&zhcy;&acy;&shchcy;&icy;&khcy; &icy;&ncy;&fcy;&ocy;&rcy;&mcy;&acy;&tscy;&icy;&yucy; &ocy; &pcy;&ocy;&chcy;&tcy;&ocy;&vcy;&ycy;&khcy; &acy;&dcy;&rcy;&iecy;&scy;&acy;&khcy;, &bcy;&acy;&ncy;&kcy;&acy;&khcy;, &scy;&tcy;&rcy;&acy;&ncy;&acy;&khcy; &icy; &pcy;&rcy;.
+    </p>
+    <h3 id="crm-rsscm">
+     CRM RS.SCM
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 10$ -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;:&ndash; &Lcy;&iecy;&gcy;&kcy;&ocy; &vcy;&ncy;&iecy;&dcy;&rcy;&yacy;&iecy;&mcy;&acy;&yacy; &icy; &bcy;&ycy;&scy;&tcy;&rcy;&acy;&yacy; &ncy;&acy; &scy;&tcy;&acy;&rcy;&tcy;&iecy; &scy;&icy;&scy;&tcy;&iecy;&mcy;&acy; &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &tscy;&iecy;&pcy;&ocy;&chcy;&kcy;&acy;&mcy;&icy; &pcy;&ocy;&scy;&tcy;&acy;&vcy;&ocy;&kcy; &scy;&ocy;&zcy;&dcy;&acy;&ncy;&acy; &dcy;&lcy;&yacy; &rcy;&ocy;&zcy;&ncy;&icy;&tscy;&ycy; &icy; &bcy;&ocy;&lcy;&softcy;&shcy;&ocy;&gcy;&ocy; &ocy;&bcy;&hardcy;&iecy;&mcy;&acy; &dcy;&acy;&ncy;&ncy;&ycy;&khcy;.&mdash; &Scy;&ocy;&vcy;&mcy;&iecy;&scy;&tcy;&icy;&mcy;&acy; &scy;&ocy; &vcy;&scy;&iecy;&mcy;&icy; &tcy;&ocy;&rcy;&gcy;&ocy;&vcy;&ycy;&mcy;&icy; ERP-&rcy;&iecy;&shcy;&iecy;&ncy;&icy;&yacy;&mcy;&icy;, &ncy;&iecy; &tcy;&rcy;&iecy;&bcy;&ucy;&iecy;&tcy; &icy;&zcy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy; &ucy;&chcy;&iecy;&tcy;&ncy;&ocy;&jcy;, &scy;&kcy;&lcy;&acy;&dcy;&scy;&kcy;&ocy;&jcy; &icy;&lcy;&icy; &icy;&ncy;&ycy;&khcy; &scy;&icy;&scy;&tcy;&iecy;&mcy;. &mdash;&Vcy;&ycy;&scy;&tcy;&rcy;&acy;&icy;&vcy;&acy;&iecy;&tcy; &pcy;&rcy;&ocy;&gcy;&ncy;&ocy;&zcy;, &icy;&scy;&khcy;&ocy;&dcy;&yacy; &icy;&zcy; &scy;&pcy;&rcy;&ocy;&scy;&acy;, &acy; &ncy;&iecy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;.
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&ndash; &Pcy;&rcy;&ocy;&gcy;&rcy;&acy;&mcy;&mcy;&acy; &dcy;&lcy;&yacy; &mcy;&acy;&gcy;&acy;&zcy;&icy;&ncy;&acy; &scy; &ucy;&chcy;&iocy;&tcy;&ncy;&ocy;&jcy; &scy;&icy;&scy;&tcy;&iecy;&mcy;&ocy;&jcy;, &mcy;&acy;&rcy;&kcy;&iecy;&tcy;&icy;&ncy;&gcy;&ocy;&mcy; &icy; &acy;&ncy;&acy;&lcy;&icy;&tcy;&icy;&kcy;&ocy;&jcy;.
+    </p>
+    <p>
+     &bull; **&Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;: **&mdash;&pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&ndash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;. &Pcy;&ocy;&scy;&tcy;&rcy;&ocy;&iecy;&ncy;&icy;&iecy; &kcy;&acy;&chcy;&iecy;&scy;&tcy;&vcy;&iecy;&ncy;&ncy;&ocy;&gcy;&ocy; &pcy;&rcy;&ocy;&gcy;&ncy;&ocy;&zcy;&acy; &pcy;&ocy;&tcy;&rcy;&iecy;&bcy;&icy;&tcy;&iecy;&lcy;&softcy;&scy;&kcy;&ocy;&gcy;&ocy; &scy;&pcy;&rcy;&ocy;&scy;&acy; &ncy;&acy; &bcy;&acy;&zcy;&iecy; &ocy;&chcy;&icy;&shchcy;&iecy;&ncy;&ncy;&ocy;&jcy; &scy;&tcy;&acy;&tcy;&icy;&scy;&tcy;&icy;&kcy;&icy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;, &mdash;&scy; &ucy;&chcy;&iecy;&tcy;&ocy;&mcy; &icy;&ncy;&fcy;&ocy;&rcy;&mcy;&acy;&tscy;&icy;&icy; &ocy;&bcy; &ocy;&tcy;&scy;&ucy;&tcy;&scy;&tcy;&vcy;&icy;&icy; &tcy;&ocy;&vcy;&acy;&rcy;&ocy;&vcy; &ncy;&acy; &pcy;&ocy;&lcy;&kcy;&iecy;, &mdash;&acy;&ncy;&ocy;&mcy;&acy;&lcy;&softcy;&ncy;&ycy;&khcy; &vcy;&scy;&pcy;&lcy;&iecy;&scy;&kcy;&ocy;&vcy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;, &pcy;&rcy;&ocy;&mcy;&ocy;-&acy;&kcy;&tscy;&icy;&jcy;, &scy;&iecy;&zcy;&ocy;&ncy;&ncy;&ocy;&scy;&tcy;&icy; &icy; &pcy;&rcy;&acy;&zcy;&dcy;&ncy;&icy;&kcy;&ocy;&vcy;
+    </p>
+    <h3 id="crm-salesplatform">
+     CRM SalesPlatform
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&mdash; 0$ -1000$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:- -&rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;:&ndash; &scy;&vcy;&ocy;&bcy;&ocy;&dcy;&ncy;&acy;&yacy; &icy; &scy;&tcy;&acy;&bcy;&icy;&lcy;&softcy;&ncy;&acy;&yacy; CRM &scy;&icy;&scy;&tcy;&iecy;&mcy;&acy;, &scy; &ocy;&tcy;&kcy;&rcy;&ycy;&tcy;&ycy;&mcy; &icy;&scy;&khcy;&ocy;&dcy;&ncy;&ycy;&mcy; &kcy;&ocy;&dcy;&ocy;&mcy; &icy; &bcy;&iecy;&zcy; &lcy;&icy;&tscy;&iecy;&ncy;&zcy;&icy;&rcy;&ocy;&vcy;&acy;&ncy;&ncy;&ycy;&khcy; &pcy;&lcy;&acy;&tcy;&iecy;&zhcy;&iecy;&jcy;, &kcy;&ocy;&tcy;&ocy;&rcy;&acy;&yacy; &pcy;&ocy;&zcy;&vcy;&ocy;&lcy;&icy;&tcy; &ucy;&vcy;&iecy;&lcy;&icy;&chcy;&icy;&tcy;&softcy; &vcy;&acy;&shcy;&icy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&icy;.
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:&mdash; &Dcy;&lcy;&yacy; &kcy;&acy;&zhcy;&dcy;&ocy;&jcy; &ocy;&rcy;&gcy;&acy;&ncy;&icy;&zcy;&acy;&tscy;&icy;&icy; &pcy;&ocy;&dcy;&dcy;&iecy;&rcy;&zhcy;&icy;&vcy;&acy;&iecy;&tcy;&scy;&yacy; &mcy;&ncy;&ocy;&zhcy;&iecy;&scy;&tcy;&vcy;&ocy; &kcy;&ocy;&ncy;&tcy;&acy;&kcy;&tcy;&ocy;&vcy;. &mdash;&Kcy;&acy;&zhcy;&dcy;&acy;&yacy; &kcy;&acy;&rcy;&tcy;&ocy;&chcy;&kcy;&acy; &vcy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&scy;&kcy;&ocy;&jcy; &bcy;&acy;&zcy;&iecy; &icy;&mcy;&iecy;&iecy;&tcy; &ocy;&tcy;&vcy;&iecy;&tcy;&scy;&tcy;&vcy;&iecy;&ncy;&ncy;&ocy;&gcy;&ocy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&tcy;&iecy;&lcy;&yacy;.
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;:&ndash; &pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; **&Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: **&ndash;&icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ucy;&yucy;&tcy;&scy;&yacy; &gcy;&icy;&bcy;&kcy;&icy;&iecy; &fcy;&icy;&lcy;&softcy;&tcy;&rcy;&ycy; &dcy;&lcy;&yacy; &vcy;&ycy;&bcy;&ocy;&rcy;&ocy;&kcy; &icy; &scy;&iecy;&gcy;&mcy;&iecy;&ncy;&tcy;&acy;&tscy;&icy;&icy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;, &pcy;&ocy;&icy;&scy;&kcy; &pcy;&ocy; &kcy;&ocy;&mcy;&bcy;&icy;&ncy;&acy;&tscy;&icy;&icy; &lcy;&yucy;&bcy;&ycy;&khcy; &pcy;&ocy;&lcy;&iecy;&jcy;. &mdash;&Vcy;&ocy;&zcy;&mcy;&ocy;&zhcy;&ncy;&acy; &ocy;&tcy;&pcy;&rcy;&acy;&vcy;&kcy;&acy; &scy;&ocy;&ocy;&bcy;&shchcy;&iecy;&ncy;&icy;&jcy; Email, &mdash;SMS &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&acy;&mcy;, &acy; &tcy;&acy;&kcy;&zhcy;&iecy; &ocy;&bcy;&shchcy;&iecy;&ncy;&icy;&iecy; &vcy; &scy;&ocy;&tscy;&icy;&acy;&lcy;&softcy;&ncy;&ycy;&khcy; &scy;&iecy;&tcy;&yacy;&khcy;.
+    </p>
+    <h3 id="crm-ekam">
+     CRM EKAM
+    </h3>
+    <p>
+     &bull; *&TScy;&iecy;&ncy;&acy;: **&ndash;10$ -100$
+    </p>
+    <p>
+     &bull; **&Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: **&mdash;&rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;:&ndash; &Ocy;&bcy;&lcy;&acy;&chcy;&ncy;&acy;&yacy; &scy;&icy;&scy;&tcy;&iecy;&mcy;&acy; &ucy;&chcy;&iecy;&tcy;&acy; &dcy;&lcy;&yacy; &rcy;&ocy;&zcy;&ncy;&icy;&chcy;&ncy;&ocy;&jcy; &tcy;&ocy;&rcy;&gcy;&ocy;&vcy;&lcy;&icy;
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;: &mdash;&pcy;&ocy;&mcy;&ocy;&gcy;&acy;&iecy;&tcy; &scy;&lcy;&iecy;&dcy;&icy;&tcy;&softcy; &zcy;&acy; &rcy;&acy;&bcy;&ocy;&tcy;&ocy;&jcy; &scy;&ocy;&tcy;&rcy;&ucy;&dcy;&ncy;&icy;&kcy;&ocy;&vcy;, &khcy;&rcy;&acy;&ncy;&icy;&tcy;&softcy; &icy;&scy;&tcy;&ocy;&rcy;&icy;&yucy; &bcy;&icy;&zcy;&ncy;&iecy;&scy;-&pcy;&rcy;&ocy;&tscy;&iecy;&scy;&scy;&ocy;&vcy;, &pcy;&rcy;&ocy;&vcy;&ocy;&dcy;&icy;&tcy;&softcy; &scy;&lcy;&ocy;&zhcy;&ncy;&ycy;&iecy; &scy;&dcy;&iecy;&lcy;&kcy;&icy; &icy; &pcy;&ocy;&dcy;&dcy;&iecy;&rcy;&zhcy;&icy;&vcy;&acy;&tcy;&softcy; &scy;&vcy;&yacy;&zcy;&softcy; &scy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&acy;&mcy;&icy;
+    </p>
+    <p>
+     &bull; **&Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;: **&mdash;&pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;:&mdash; &Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &pcy;&iecy;&chcy;&acy;&tcy;&acy;&tcy;&softcy; &tscy;&iecy;&ncy;&ncy;&icy;&kcy;&ocy;&vcy;, &acy;&ncy;&acy;&lcy;&icy;&tcy;&icy;&kcy;&acy; &pcy;&ocy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&acy;&mcy;, &vcy;&iecy;&dcy;&iecy;&ncy;&icy;&iecy; &scy;&kcy;&lcy;&acy;&dcy;&scy;&kcy;&ocy;&gcy;&ocy; &ucy;&chcy;&iecy;&tcy;&acy;. &mdash;&Mcy;&ocy;&zhcy;&ncy;&ocy; &pcy;&ocy;&dcy;&kcy;&lcy;&yucy;&chcy;&icy;&tcy;&softcy; &ocy;&ncy;&lcy;&acy;&jcy;&ncy;-&kcy;&acy;&scy;&scy;&ucy;, &scy;&kcy;&acy;&ncy;&iecy;&rcy; &shcy;&tcy;&rcy;&icy;&khcy;-&kcy;&ocy;&dcy;&ocy;&vcy;, &vcy;&iecy;&scy;&ycy;
+    </p>
+    <h3 id="crm-&mcy;&ocy;&jcy;&scy;&kcy;&lcy;&acy;&dcy;">
+     CRM &Mcy;&ocy;&jcy;&Scy;&kcy;&lcy;&acy;&dcy;
+    </h3>
+    <p>
+     &bull; &TScy;&iecy;&ncy;&acy;:&ndash; 0$ -100$
+    </p>
+    <p>
+     &bull; &Ucy;&scy;&lcy;&ocy;&vcy;&icy;&yacy; &pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: &mdash;&rcy;&iecy;&gcy;&icy;&scy;&tcy;&rcy;&acy;&tscy;&icy;&yacy; &icy; &pcy;&rcy;&icy;&ocy;&bcy;&rcy;&iecy;&tcy;&iecy;&ncy;&icy;&iecy; &pcy;&acy;&kcy;&iecy;&tcy;&acy;
+    </p>
+    <p>
+     &bull; &Fcy;&ucy;&ncy;&kcy;&tscy;&icy;&ocy;&ncy;&acy;&lcy;: &mdash;&Ocy;&bcy;&lcy;&acy;&chcy;&ncy;&ycy;&jcy; &scy;&iecy;&rcy;&vcy;&icy;&scy; &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&iecy;&ncy;&icy;&yacy; &tcy;&ocy;&rcy;&gcy;&ocy;&vcy;&lcy;&iecy;&jcy; &dcy;&lcy;&yacy; &mcy;&acy;&lcy;&ocy;&gcy;&ocy; &icy; &scy;&rcy;&iecy;&dcy;&ncy;&iecy;&gcy;&ocy; &bcy;&icy;&zcy;&ncy;&iecy;&scy;&acy;. &Pcy;&lcy;&acy;&tcy;&fcy;&ocy;&rcy;&mcy;&ycy;: &Vcy;&iecy;&bcy;-&pcy;&rcy;&icy;&lcy;&ocy;&zhcy;&iecy;&ncy;&icy;&iecy;, Windows, Mac, Linux, Android, iOS
+    </p>
+    <p>
+     &bull; &Scy;&fcy;&iecy;&rcy;&acy; &pcy;&rcy;&icy;&mcy;&iecy;&ncy;&iecy;&ncy;&icy;&yacy;:*&mdash;- &Scy; &iecy;&gcy;&ocy; &pcy;&ocy;&mcy;&ocy;&shchcy;&softcy;&yucy; &mcy;&ocy;&zhcy;&ncy;&ocy;: &ucy;&pcy;&rcy;&acy;&vcy;&lcy;&yacy;&tcy;&softcy; &pcy;&rcy;&ocy;&dcy;&acy;&zhcy;&acy;&mcy;&icy; &icy; &zcy;&acy;&kcy;&ucy;&pcy;&kcy;&acy;&mcy;&icy;, &vcy;&iecy;&scy;&tcy;&icy; &scy;&kcy;&lcy;&acy;&dcy;&scy;&kcy;&ocy;&jcy; &ucy;&chcy;&iecy;&tcy;, &mdash;&acy;&vcy;&tcy;&ocy;&mcy;&acy;&tcy;&icy;&zcy;&icy;&rcy;&ocy;&vcy;&acy;&tcy;&softcy; &rcy;&ocy;&zcy;&ncy;&icy;&tscy;&ucy;, &kcy;&ocy;&ncy;&tcy;&rcy;&ocy;&lcy;&icy;&rcy;&ocy;&vcy;&acy;&tcy;&softcy; &fcy;&icy;&ncy;&acy;&ncy;&scy;&ycy;, &rcy;&acy;&bcy;&ocy;&tcy;&acy;&tcy;&softcy; &scy; &bcy;&acy;&zcy;&ocy;&jcy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;.
+    </p>
+    <p>
+     &bull; &Ocy;&tcy;&zcy;&ycy;&vcy;&ycy; &kcy;&lcy;&icy;&iecy;&ncy;&tcy;&ocy;&vcy;: &mdash;&pcy;&ocy;&lcy;&ocy;&zhcy;&icy;&tcy;&iecy;&lcy;&softcy;&ncy;&ycy;&iecy;
+    </p>
+    <p>
+     &bull; &Ucy;&dcy;&ocy;&bcy;&scy;&tcy;&vcy;&acy; &icy;&scy;&pcy;&ocy;&lcy;&softcy;&zcy;&ocy;&vcy;&acy;&ncy;&icy;&yacy;: &mdash;&Bcy;&iecy;&zcy;&pcy;&acy;&scy;&ncy;&ocy;&scy;&tcy;&softcy;, &scy;&ocy;&kcy;&rcy;&acy;&shchcy;&iecy;&ncy;&icy;&iecy; &vcy;&rcy;&iecy;&mcy;&iecy;&ncy;&icy; &vcy; &rcy;&acy;&bcy;&ocy;&tcy;&iecy;.&Ucy;&dcy;&ocy;&bcy;&ncy;&ycy;&jcy; &icy;&ncy;&tcy;&iecy;&rcy;&fcy;&iecy;&jcy;c
+    </p>
+   </section>
+  </div>
+ </body>
+</html>

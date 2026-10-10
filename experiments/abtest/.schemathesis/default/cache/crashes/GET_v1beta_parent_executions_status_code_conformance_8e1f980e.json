@@ -1,0 +1,82 @@
+{
+  "operation": "GET /v1beta/{parent}/executions",
+  "method": "GET",
+  "path_template": "/v1beta/{parent}/executions",
+  "fingerprint": "8e1f980e",
+  "case_id": "4w6OyO",
+  "code_sample": "curl -X GET 'http://127.0.0.1:58434/v1beta/%EE%8A%8B%C2%BC%C2%AAzE%3A%F0%A0%AF%8AZ%F0%A0%99%B4C%F1%A7%AC%8Fm%0A%C3%B7f/executions?uploadType=%C2%96%F0%96%B7%86&access_token=%5BFiltered%5D'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:58434/v1beta/%EE%8A%8B%C2%BC%C2%AAzE%3A%F0%A0%AF%8AZ%F0%A0%99%B4C%F1%A7%AC%8Fm%0A%C3%B7f/executions?uploadType=%C2%96%F0%96%B7%86&access_token=%5BFiltered%5D",
+      "url_template": "http://127.0.0.1:58434/v1beta/{parent}/executions",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "4w6OyO"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sun, 11 Oct 2026 02:24:34 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.00578999996650964,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive",
+          "PATH": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/v1beta/{parent}/executions",
+      "path_parameters": {
+        "parent": "%EE%8A%8B%C2%BC%C2%AAzE%3A%F0%A0%AF%8AZ%F0%A0%99%B4C%F1%A7%AC%8Fm%0A%C3%B7f"
+      },
+      "query": {
+        "uploadType": "\u0096\ud81b\uddc6",
+        "access_token": "[Filtered]"
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <style>
+   :root {
+  --body-background-color: hsl(0, 0%, 100%);
+  --body-color: hsl(0, 0%, 25%);
+  --link-color: hsl(210, 90%, 50%);
+  --textarea-background-color: hsl(0, 0%, 95%);
+  --button-background-color: hsl(0, 0%, 92.5%);
+  --button-background-color-hover: hsl(0, 0%, 85%);
+  --button-background-color-active: hsl(0, 0%, 77.5%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --body-background-color: hsl(180, 5%, 15%);
+    --body-color: hsl(0, 0%, 80%);
+    --link-color: hsl(200, 50%, 60%);
+    --textarea-background-color: hsl(180, 5%, 22.5%);
+    --button-background-color: hsl(180, 5%, 27.5%);
+    --button-background-color-hover: hsl(180, 5%, 33%);
+    --button-background-color-active: hsl(180, 5%, 22.5%);
+  }
+}
+
+body {
+  background-color: var(--body-background-color);
+  color: var(--body-color);
+  /* Use a modern font stack inspired by Bootstrap 4. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+  line-height: 1.5;
+}
+
+h1 {
+  text-align: center;
+}
+
+a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+textarea {
+  color: var(--body-color);
+  background-color: var(--textarea-background-color);
+  font-size: 14px;
+  padding: 6px;
+}
+
+button {
+  background-color: var(--button-background-color);
+  color: var(--body-color);
+  border: none;
+  border-radius: 3px;
+  padding: 8px 14px;
+}
+
+button:hover {
+  background-color: var(--button-background-color-hover);
+}
+
+button:active {
+  background-color: var(--button-background-color-active);
+}
+
+@media (min-width: 800px) {
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-gap: 20px;
+  }
+
+  .preview {
+    position: fixed;
+    left: calc(50% + 20px);
+    width: calc(50% - 60px);
+    top: 1.6rem;
+  }
+}
+
+label {
+  /* Prevent selecting the text when double-clicking. */
+  user-select: none;
+}
+
+.option-label {
+  display: block;
+  margin-bottom: 10px;
+  padding: 5px 10px;
+  border-radius: 3px;
+  background-color: var(--button-background-color);
+}
+
+.option-label:hover {
+  background-color: var(--button-background-color-hover);
+}
+
+.option-label:active {
+  background-color: var(--button-background-color-active);
+}
+  </style>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <meta content="Hugo Locurcio" name="author">
+  <meta content="Generate SCons options to compile custom export templates with size optimizations." name="description">
+  <meta content="#3d8fcc" name="theme-color">
+  <title>
+   Godot build options generator
+  </title>
+ </head>
+ <body>
+  <main x-data="buildOptionsGenerator()">
+   <div class="grid">
+    <div class="options">
+     <h1>
+      Godot build options generator
+     </h1>
+     <em style="opacity: 0.7">
+      Last updated for
+      <strong>
+       Godot 4.2.x
+      </strong>
+      . This generator may
+            work with other Godot versions, but certain options may not have an
+            effect.
+     </em>
+     <p>
+      This tool generates SCons custom option files to build smaller
+            export templates. After downloading a
+      <code>
+       custom.py
+      </code>
+      file,
+            place it at the root of your Godot source repository and compile
+            export templates for the platforms you need. Once this is done,
+            you'll only have to specify the
+      <code>
+       platform=&lt;platform&gt; target=release
+      </code>
+      options on the
+            SCons command line. See
+      <a>
+       Optimizing a build for size
+      </a>
+      in the Godot documentation for more information.
+     </p>
+     <p>
+      <strong>
+       Note:
+      </strong>
+      Since this tool is dedicated to building
+            smaller export templates, it doesn't list modules that are only
+            compiled in editor builds.
+     </p>
+     <h2>
+      Select options and modules
+     </h2>
+     <template :key="option.id" x-for="(option, index) in options">
+      <label class="option-label">
+       <input type="checkbox" x-model="option.enabled">
+       <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       </span>
+       <!-- Visually align the description with the name. -->
+       <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       </span>
+       <input type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+      </label>
+     </template>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Extra suffix
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Changes the "custom_build" suffix. Useful for adding your "game_title" to a build.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Production
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Set defaults to build Godot for use in production.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Disable 3D
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Disable 3D nodes for a smaller binary.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Optimize for size
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Optimize the compiled binary for size instead of speed.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable double-precision floats
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Increase precision for large-scale worlds. This has a performance impact and requires GDExtensions specifically compiled for it (i.e.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Disable advanced GUI
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Disable advanced GUI nodes and behaviors such as Tree and GraphEdit.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable deprecated features
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Disabling deprecated features can make the binary slightly smaller.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable Minizip
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the ZIPReader and ZIPWriter classes. Also required to run projects that use data packed in a ZIP archive instead of a PCK.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable Brotli
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use Brotli (de)compression. Also required to use fonts in the WOFF2 format.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable Vulkan
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the Forward+ and Mobile rendering methods with Vulkan.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable OpenGL
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the Compatibility rendering method with OpenGL 3.3/OpenGL ES 3.0/WebGL 2.0.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Basis Universal
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load textures imported as Basis Universal.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: BMP
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load BMP images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Camera
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required for webcam support (unrelated to the Camera2D/Camera3D nodes).
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: CSG
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use Constructive Solid Geometry nodes.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: DDS
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load DirectDraw Surface images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: ENet
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use NetworkedMultiplayerENet and NetworkedMultiplayerPeer.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: FreeType
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to render DynamicFonts. Bitmap fonts can still be used without FreeType.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: GDScript
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to run scripts written in GDScript.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: GLTF
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load non-imported 3D scenes in the glTF format.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: GridMap
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use GridMap nodes.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: HDR
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load Radiance HDR images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: JPG
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load JPEG images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: JSON-RPC
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the JSONRPC class.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: KTX
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load Khronos KTX images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: mbedTLS
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to make secure requests with HTTPClient, HTTPRequest and WebSocket classes.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: meshoptimizer
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required for optimized SurfaceTool usage, including automatic LOD generation.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: minimp3
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to play back MP3 sounds in AudioStreamPlayer.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Mobile VR
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use VR on Android and iOS.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Mono
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to run scripts written in C#. (Godot uses .NET in 4.x, despite the option name mentioning Mono.)
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: MSDFGen
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use Multichannel Signed Distance Fields on fonts.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Multiplayer
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the multiplayer replication system (RPCs).
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Navigation
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use NavigationServer.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Noise
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use Noise, FastNoiseLite and NoiseTextures that rely on it.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: OGG
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required by `vorbis` for Ogg Vorbis audio playback. See also `stb_vorbis`.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: OpenXR
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use virtual reality and augmented reality with OpenXR.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Raycast
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use occlusion culling. (This option is disabled by default in web exports to reduce binary size.)
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: RegEx
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to parse regular expressions with the RegEx class.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Squish
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to decompress images compressed with Squish (including S3TC VRAM compression).
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: SVG
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load non-imported SVG images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Text Server Advanced
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use TextServerAdvanced, which is the default TextServer. Supports right-to-left typesetting and complex scripts.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Text Server Fallback
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use TextServerFallback. Does not support right-to-left typesetting or complex scripts.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: TGA
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to load TrueVision Targa images.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Theora
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to play back Ogg Theora videos in VideoStreamPlayer/VideoPlayer.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: UPnP
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the UPNP classes for network discovery and automatic port forwarding.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: V-HACD
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to create convex collision shapes in Mesh at runtime. (Not required if convex shapes were created on import.)
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: Vorbis
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to play back Ogg Vorbis sounds in AudioStreamPlayer. See also `ogg`.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: WebRTC
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use WebRTC connections.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: WebSocket
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use WebSocket connections.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: WebXR
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to run AR/VR on browsers.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 700" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Enable module: ZIP
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Required to use the ZIPReader and ZIPPacker classes (also requires Minizip to be enabled).
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+     <label class="option-label">
+      <input type="checkbox" x-model="option.enabled">
+      <span :style="`font-weight: ${option.enabled ? '700' : '400'}`" style="font-weight: 400" x-text="!option.notModule ? `Enable module: ${option.name}` : option.name">
+       Custom modules path
+      </span>
+      <!-- Visually align the description with the name. -->
+      <span style="display: block; margin-left: 30px; opacity: 0.65" x-text="option.description">
+       Specifies a path to a folder containing custom C++ modules to build. Useful for keeping custom modules separate from the Godot repository.
+      </span>
+      <input style="display: none;" type="text" x-model="option.value" x-show="option.text &amp; option.enabled">
+     </label>
+    </div>
+    <div class="preview">
+     <h2>
+      Resulting
+      <code>
+       custom.py
+      </code>
+     </h2>
+     <textarea @click="$refs.textarea.select()" readonly style="width: 100%; height: 500px" x-html="generatedOptions()" x-ref="textarea"># Generated using https://godot-build-options-generator.github.io
+
+</textarea>
+     <div style="margin-top: 10px">
+      <button @click="downloadOptions()" type="button">
+       Download
+      </button>
+      <button @click="copyOptionsToClipboard()" type="button">
+       Copy to clipboard
+      </button>
+     </div>
+    </div>
+   </div>
+   <footer style="margin: 2rem 0 4rem 0; opacity: 0.8; text-align: center">
+    &copy; 2020-present Hugo Locurcio and contributors
+    <br>
+    <a>
+     Contribute to this generator on GitHub!
+    </a>
+   </footer>
+  </main>
+ </body>
+</html>

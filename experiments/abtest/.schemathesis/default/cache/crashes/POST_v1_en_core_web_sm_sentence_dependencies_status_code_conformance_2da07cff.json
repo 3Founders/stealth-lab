@@ -1,0 +1,89 @@
+{
+  "operation": "POST /v1/en_core_web_sm/sentence-dependencies",
+  "method": "POST",
+  "path_template": "/v1/en_core_web_sm/sentence-dependencies",
+  "fingerprint": "2da07cff",
+  "case_id": "4oNiYS",
+  "code_sample": "curl -X POST -H 'Authorization: [Filtered]' -H 'Content-Type: application/json' -d '{\"text\": \"\"}' http://127.0.0.1:50285/v1/en_core_web_sm/sentence-dependencies",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:50285/v1/en_core_web_sm/sentence-dependencies",
+      "url_template": "http://127.0.0.1:50285/v1/en_core_web_sm/sentence-dependencies",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "4oNiYS",
+        "Content-Type": "application/json",
+        "Content-Length": "12"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:32:36 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200, 422"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.00014780001947656274,
+          "mode": "positive"
+        },
+        "components": {
+          "HEADER": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "Valid object",
+            "location": null,
+            "parameter": "application/json",
+            "parameter_location": "BODY",
+            "scenario": "valid_object"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "HEADER": {
+            "Authorization": "Bearer "
+          }
+        }
+      },
+      "path": "/v1/en_core_web_sm/sentence-dependencies",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "text": ""
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

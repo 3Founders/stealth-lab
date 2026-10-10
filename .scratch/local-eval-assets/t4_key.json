@@ -1,0 +1,386 @@
+{
+ "PyCQA__flake8-bugbear-287": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "dandi__dandi-cli-216": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "datosgobar__pydatajson-137": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-8166": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "corteva__rioxarray-14": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kinnala__scikit-fem-667": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "wkeeling__selenium-wire-509": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-2892": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "fronzbot__blinkpy-268": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "Textualize__textual-3360": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kytos__python-openflow-280": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyCQA__flake8-bugbear-316": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "PyCQA__flake8-1440": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "postlund__pyatv-978": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyCQA__isort-1717": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-3156": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-7687": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "spectacles-ci__spectacles-179": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pre-commit__pre-commit-hooks-575": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "marshmallow-code__apispec-361": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "pypa__auditwheel-287": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "duartegroup__autodE-242": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "snowflakedb__snowflake-connector-python-1856": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-4642": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "python-trio__trio-1129": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "aio-libs__aioftp-110": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "Krukov__cashews-29": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyThaiNLP__pythainlp-399": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "Axelrod-Python__Axelrod-653": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-9391": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "datalad__datalad-next-632": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "asottile__all-repos-138": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "MatterMiners__tardis-150": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "nipy__nipype-3248": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "dandi__dandi-cli-208": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "pynamodb__PynamoDB-864": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-5005": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "tomerfiliba__plumbum-366": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "Adyen__adyen-python-api-library-102": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "zulip__zulip-terminal-1463": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "dwavesystems__dwave-cloud-client-455": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "duartegroup__autodE-77": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "petrobras__ross-966": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-5906": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyCQA__isort-1432": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "serverless__serverless-2748": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "yannickcr__eslint-plugin-react-1527": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "vaskoz__dailycodingproblem-go-12": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "obsidian-tasks-group__obsidian-tasks-2486": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pion__turn-243": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "julialinearalgebra__genericlinearalgebra.jl-125": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "theacodes__nox-310": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "plexis-js__plexis-60": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "mgechev__revive-876": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "urlaubsverwaltung__urlaubsverwaltung-4789": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "doctrine__orm-11826": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kubernetes__kops-11816": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "ipython__traitlets-773": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "zulko__moviepy-1768": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "klothoplatform__klotho-354": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "google__go-safeweb-54": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "briannesbitt__carbon-2745": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "s-knibbs__dataclasses-jsonschema-82": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "argoproj-labs__applicationset-282": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "getmoto__moto-6049": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "ucfopen__canvasapi-467": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "bitshifter__glam-rs-187": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "goadesign__goa-2708": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "eslint__doctrine-182": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kubernetes-incubator__client-python-50": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "electron__electron-packager-1449": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "helidon-io__helidon-7988": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "agnostiqhq__covalent-1251": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "core-gatech-group__serpent-tools-34": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "import-js__eslint-plugin-import-2334": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "lunarphp__lunar-2124": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "gleam-lang__gleam-4354": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "laravel__framework-37487": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "geopandas__geopandas-3591": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "sasstools__sass-lint-893": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pajlads__dinkplugin-273": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "gleam-lang__gleam-3486": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "feature-engine__feature_engine-794": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "casey__just-2460": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kozea__weasyprint-2494": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "orchestr7__ktoml-304": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "alibaba__fescar-619": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "apigee__registry-1100": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "casey__just-1809": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kubernetes__kops-17270": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "ajalt__mordant-77": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "jenkinsci__prometheus-plugin-598": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "modin-project__modin-7395": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "urlaubsverwaltung__urlaubsverwaltung-4858": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "fika-lang__fika-37": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "godbus__dbus-297": {
+  "A": "kel",
+  "B": "alone"
+ }
+}

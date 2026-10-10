@@ -1,0 +1,85 @@
+{
+  "operation": "OPTIONS /events",
+  "method": "OPTIONS",
+  "path_template": "/events",
+  "fingerprint": "df585f01",
+  "case_id": "xfih2L",
+  "code_sample": "curl -X OPTIONS -H 'Authorization: [Filtered]' http://127.0.0.1:49227/events",
+  "sequence": [
+    {
+      "method": "OPTIONS",
+      "url": "http://127.0.0.1:49227/events",
+      "url_template": "http://127.0.0.1:49227/events",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "xfih2L",
+        "Content-Length": "0"
+      },
+      "response": {
+        "status_code": 405,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:25:29 GMT",
+          "server": "uvicorn",
+          "allow": "GET",
+          "content-length": "31",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Method Not Allowed\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 405\nDocumented: 200, 204, 401, 403"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 9.669997962191701e-05,
+          "mode": "positive"
+        },
+        "components": {
+          "HEADER": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "Default positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "scenario": "default_positive_test"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "HEADER": {
+            "Authorization": "Basic Og=="
+          }
+        }
+      },
+      "path": "/events",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

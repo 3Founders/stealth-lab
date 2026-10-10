@@ -1,0 +1,111 @@
+{
+  "operation": "GET /v1beta1/{name}",
+  "method": "GET",
+  "path_template": "/v1beta1/{name}",
+  "fingerprint": "8c2633e9",
+  "case_id": "eZm5iA",
+  "code_sample": "curl -X GET 'http://127.0.0.1:53897/v1beta1/0?%24.xgafv=1&access_token=%5BFiltered%5D&alt=json&callback=&fields=&key=%5BFiltered%5D&oauth_token=%5BFiltered%5D&prettyPrint=true&quotaUser=&uploadType='",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:53897/v1beta1/0?%24.xgafv=1&access_token=%5BFiltered%5D&alt=json&callback=&fields=&key=%5BFiltered%5D&oauth_token=%5BFiltered%5D&prettyPrint=true&quotaUser=&uploadType=",
+      "url_template": "http://127.0.0.1:53897/v1beta1/{name}",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "eZm5iA"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 11 Oct 2026 05:57:07 GMT",
+          "server": "uvicorn",
+          "content-length": "262",
+          "content-type": "application/json"
+        },
+        "body": "{\"deliveryErrors\":[],\"dkimSuccessRatio\":null,\"dmarcSuccessRatio\":null,\"domainReputation\":null,\"inboundEncryptionRatio\":null,\"ipReputations\":[],\"name\":\"0\",\"outboundEncryptionRatio\":null,\"spammyFeedbackLoops\":[],\"spfSuccessRatio\":null,\"userReportedSpamRatio\":null}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "response_schema_conformance",
+          "status": "failure",
+          "message": "Response violates schema\n\nnull is not of type \"number\"\n\nValidated against the response schema for status code 200.\n\nSchema at /components/schemas/TrafficStats/properties/userReportedSpamRatio:\n\n    {\n        \"type\": \"number\",\n        \"description\": \"The ratio of user-report spam vs. email that was sent to ...\n        \"format\": \"double\"\n    }\n\nValue:\n\n    null"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 2.9699993319809437e-05,
+          "mode": "positive"
+        },
+        "components": {
+          "PATH": "positive",
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "All required and 10 optional properties",
+            "location": null,
+            "parameter": null,
+            "parameter_location": "QUERY",
+            "scenario": "object_required_and_optional"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [
+          [
+            "path",
+            "name"
+          ]
+        ],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "PATH": {
+            "name": "0"
+          },
+          "QUERY": {
+            "$.xgafv": "1",
+            "access_token": "",
+            "alt": "json",
+            "callback": "",
+            "fields": "",
+            "key": "",
+            "oauth_token": "",
+            "prettyPrint": true,
+            "quotaUser": "",
+            "uploadType": ""
+          }
+        }
+      },
+      "path": "/v1beta1/{name}",
+      "path_parameters": {
+        "name": "0"
+      },
+      "query": {
+        "$.xgafv": "1",
+        "access_token": "[Filtered]",
+        "alt": "json",
+        "callback": "",
+        "fields": "",
+        "key": "[Filtered]",
+        "oauth_token": "[Filtered]",
+        "prettyPrint": "true",
+        "quotaUser": "",
+        "uploadType": ""
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

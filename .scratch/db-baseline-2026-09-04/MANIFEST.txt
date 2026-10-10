@@ -1,0 +1,26 @@
+STEALTHLAB PRE-INGESTION DATABASE BASELINE
+
+Date:
+2026-09-04
+
+Product commit:
+bd768e62a887b13a94fdd118693a5c671df1cf95
+
+Evaluation suite commit:
+f961c020ac3d5dbaad9b2df4337f83c8d3e2e1b2
+
+Product tag:
+v1-final-2026-09-04
+
+Database:
+Final-V1 acceptance Supabase project
+Project ref: wckeklqxmiglivfolujn
+
+Dump:
+stealthlab_v1_pre_ingestion.dump
+
+Purpose:
+Immutable pre-ingestion baseline for before/after empirical evaluation.
+
+IMPORTANT:
+No external-corpus ingestion is permitted against the baseline copy.

@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <style>
+   .clr-picker{display:none;flex-wrap:wrap;position:absolute;width:200px;z-index:1000;border-radius:10px;background-color:#fff;justify-content:flex-end;direction:ltr;box-shadow:0 0 5px rgba(0,0,0,.05),0 5px 20px rgba(0,0,0,.1);-moz-user-select:none;-webkit-user-select:none;user-select:none}.clr-picker.clr-open,.clr-picker[data-inline=true]{display:flex}.clr-picker[data-inline=true]{position:relative}.clr-gradient{position:relative;width:100%;height:100px;margin-bottom:15px;border-radius:3px 3px 0 0;background-image:linear-gradient(rgba(0,0,0,0),#000),linear-gradient(90deg,#fff,currentColor);cursor:pointer}.clr-marker{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border:1px solid #fff;border-radius:50%;background-color:currentColor;cursor:pointer}.clr-picker input[type=range]::-webkit-slider-runnable-track{width:100%;height:16px}.clr-picker input[type=range]::-webkit-slider-thumb{width:16px;height:16px;-webkit-appearance:none}.clr-picker input[type=range]::-moz-range-track{width:100%;height:16px;border:0}.clr-picker input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0}.clr-hue{background-image:linear-gradient(to right,red 0,#ff0 16.66%,#0f0 33.33%,#0ff 50%,#00f 66.66%,#f0f 83.33%,red 100%)}.clr-alpha,.clr-hue{position:relative;width:calc(100% - 40px);height:8px;margin:5px 20px;border-radius:4px}.clr-alpha span{display:block;height:100%;width:100%;border-radius:inherit;background-image:linear-gradient(90deg,rgba(0,0,0,0),currentColor)}.clr-alpha input[type=range],.clr-hue input[type=range]{position:absolute;width:calc(100% + 32px);height:16px;left:-16px;top:-4px;margin:0;background-color:transparent;opacity:0;cursor:pointer;appearance:none;-webkit-appearance:none}.clr-alpha div,.clr-hue div{position:absolute;width:16px;height:16px;left:0;top:50%;margin-left:-8px;transform:translateY(-50%);border:2px solid #fff;border-radius:50%;background-color:currentColor;box-shadow:0 0 1px #888;pointer-events:none}.clr-alpha div:before{content:'';position:absolute;height:100%;width:100%;left:0;top:0;border-radius:50%;background-color:currentColor}.clr-format{display:none;order:1;width:calc(100% - 40px);margin:0 20px 20px}.clr-segmented{display:flex;position:relative;width:100%;margin:0;padding:0;border:1px solid #ddd;border-radius:15px;box-sizing:border-box;color:#999;font-size:12px}.clr-segmented input,.clr-segmented legend{position:absolute;width:100%;height:100%;margin:0;padding:0;border:0;left:0;top:0;opacity:0;pointer-events:none}.clr-segmented label{flex-grow:1;margin:0;padding:4px 0;font-size:inherit;font-weight:400;line-height:initial;text-align:center;cursor:pointer}.clr-segmented label:first-of-type{border-radius:10px 0 0 10px}.clr-segmented label:last-of-type{border-radius:0 10px 10px 0}.clr-segmented input:checked+label{color:#fff;background-color:#666}.clr-swatches{order:2;width:calc(100% - 32px);margin:0 16px}.clr-swatches div{display:flex;flex-wrap:wrap;padding-bottom:12px;justify-content:center}.clr-swatches button{position:relative;width:20px;height:20px;margin:0 4px 6px 4px;padding:0;border:0;border-radius:50%;color:inherit;text-indent:-1000px;white-space:nowrap;overflow:hidden;cursor:pointer}.clr-swatches button:after{content:'';display:block;position:absolute;width:100%;height:100%;left:0;top:0;border-radius:inherit;background-color:currentColor;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}input.clr-color{order:1;width:calc(100% - 80px);height:32px;margin:15px 20px 20px auto;padding:0 10px;border:1px solid #ddd;border-radius:16px;color:#444;background-color:#fff;font-family:sans-serif;font-size:14px;text-align:center;box-shadow:none}input.clr-color:focus{outline:0;border:1px solid #1e90ff}.clr-clear,.clr-close{display:none;order:2;height:24px;margin:0 20px 20px;padding:0 20px;border:0;border-radius:12px;color:#fff;background-color:#666;font-family:inherit;font-size:12px;font-weight:400;cursor:pointer}.clr-close{display:block;margin:0 20px 20px auto}.clr-preview{position:relative;width:32px;height:32px;margin:15px 0 20px 20px;border-radius:50%;overflow:hidden}.clr-preview:after,.clr-preview:before{content:'';position:absolute;height:100%;width:100%;left:0;top:0;border:1px solid #fff;border-radius:50%}.clr-preview:after{border:0;background-color:currentColor;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}.clr-preview button{position:absolute;width:100%;height:100%;z-index:1;margin:0;padding:0;border:0;border-radius:50%;outline-offset:-2px;background-color:transparent;text-indent:-9999px;cursor:pointer;overflow:hidden}.clr-alpha div,.clr-color,.clr-hue div,.clr-marker{box-sizing:border-box}.clr-field{display:inline-block;position:relative;color:transparent}.clr-field input{margin:0;direction:ltr}.clr-field.clr-rtl input{text-align:right}.clr-field button{position:absolute;width:30px;height:100%;right:0;top:50%;transform:translateY(-50%);margin:0;padding:0;border:0;color:inherit;text-indent:-1000px;white-space:nowrap;overflow:hidden;pointer-events:none}.clr-field.clr-rtl button{right:auto;left:0}.clr-field button:after{content:'';display:block;position:absolute;width:100%;height:100%;left:0;top:0;border-radius:inherit;background-color:currentColor;box-shadow:inset 0 0 1px rgba(0,0,0,.5)}.clr-alpha,.clr-alpha div,.clr-field button,.clr-preview:before,.clr-swatches button{background-image:repeating-linear-gradient(45deg,#aaa 25%,transparent 25%,transparent 75%,#aaa 75%,#aaa),repeating-linear-gradient(45deg,#aaa 25%,#fff 25%,#fff 75%,#aaa 75%,#aaa);background-position:0 0,4px 4px;background-size:8px 8px}.clr-marker:focus{outline:0}.clr-keyboard-nav .clr-alpha input:focus+div,.clr-keyboard-nav .clr-hue input:focus+div,.clr-keyboard-nav .clr-marker:focus,.clr-keyboard-nav .clr-segmented input:focus+label{outline:0;box-shadow:0 0 0 2px #1e90ff,0 0 2px 2px #fff}.clr-picker[data-alpha=false] .clr-alpha{display:none}.clr-picker[data-minimal=true]{padding-top:16px}.clr-picker[data-minimal=true] .clr-alpha,.clr-picker[data-minimal=true] .clr-color,.clr-picker[data-minimal=true] .clr-gradient,.clr-picker[data-minimal=true] .clr-hue,.clr-picker[data-minimal=true] .clr-preview{display:none}.clr-dark{background-color:#444}.clr-dark .clr-segmented{border-color:#777}.clr-dark .clr-swatches button:after{box-shadow:inset 0 0 0 1px rgba(255,255,255,.3)}.clr-dark input.clr-color{color:#fff;border-color:#777;background-color:#555}.clr-dark input.clr-color:focus{border-color:#1e90ff}.clr-dark .clr-preview:after{box-shadow:inset 0 0 0 1px rgba(255,255,255,.5)}.clr-dark .clr-alpha,.clr-dark .clr-alpha div,.clr-dark .clr-preview:before,.clr-dark .clr-swatches button{background-image:repeating-linear-gradient(45deg,#666 25%,transparent 25%,transparent 75%,#888 75%,#888),repeating-linear-gradient(45deg,#888 25%,#444 25%,#444 75%,#888 75%,#888)}.clr-picker.clr-polaroid{border-radius:6px;box-shadow:0 0 5px rgba(0,0,0,.1),0 5px 30px rgba(0,0,0,.2)}.clr-picker.clr-polaroid:before{content:'';display:block;position:absolute;width:16px;height:10px;left:20px;top:-10px;border:solid transparent;border-width:0 8px 10px 8px;border-bottom-color:currentColor;box-sizing:border-box;color:#fff;filter:drop-shadow(0 -4px 3px rgba(0,0,0,.1));pointer-events:none}.clr-picker.clr-polaroid.clr-dark:before{color:#444}.clr-picker.clr-polaroid.clr-left:before{left:auto;right:20px}.clr-picker.clr-polaroid.clr-top:before{top:auto;bottom:-10px;transform:rotateZ(180deg)}.clr-polaroid .clr-gradient{width:calc(100% - 20px);height:120px;margin:10px;border-radius:3px}.clr-polaroid .clr-alpha,.clr-polaroid .clr-hue{width:calc(100% - 30px);height:10px;margin:6px 15px;border-radius:5px}.clr-polaroid .clr-alpha div,.clr-polaroid .clr-hue div{box-shadow:0 0 5px rgba(0,0,0,.2)}.clr-polaroid .clr-format{width:calc(100% - 20px);margin:0 10px 15px}.clr-polaroid .clr-swatches{width:calc(100% - 12px);margin:0 6px}.clr-polaroid .clr-swatches div{padding-bottom:10px}.clr-polaroid .clr-swatches button{width:22px;height:22px}.clr-polaroid input.clr-color{width:calc(100% - 60px);margin:10px 10px 15px auto}.clr-polaroid .clr-clear{margin:0 10px 15px 10px}.clr-polaroid .clr-close{margin:0 10px 15px auto}.clr-polaroid .clr-preview{margin:10px 0 15px 10px}.clr-picker.clr-large{width:275px}.clr-large .clr-gradient{height:150px}.clr-large .clr-swatches button{width:22px;height:22px}.clr-picker.clr-pill{width:380px;padding-left:180px;box-sizing:border-box}.clr-pill .clr-gradient{position:absolute;width:180px;height:100%;left:0;top:0;margin-bottom:0;border-radius:3px 0 0 3px}.clr-pill .clr-hue{margin-top:20px}
+
+
+/*************************************************************************************************/
+/* General                                                                                       */
+/*************************************************************************************************/
+
+#dispatcher {
+    width: 0;
+    height: 0;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+body.waiting,
+body.waiting * {
+    cursor: wait !important;
+}
+
+body,
+html {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: Roboto, sans-serif;
+    font-size: 12pt;
+}
+
+button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 12pt;
+    transition: color 0.3s ease;
+}
+
+button:hover {
+    color: #007bff;
+}
+
+
+
+
+/*************************************************************************************************/
+/* Layout                                                                                        */
+/*************************************************************************************************/
+
+.container {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.panel {
+    padding: 10px;
+    border: 1px solid #ccc;
+    overflow: hidden;
+}
+
+.left-panel {
+    display: block;
+    width: 250px;
+    flex-shrink: 0;
+}
+
+.middle-panel,
+.right-panel {
+    flex-grow: 1;
+    width: 50%;
+}
+
+.right-panel {
+    display: flex;
+    flex-direction: column;
+}
+
+.subpanel {
+    padding: 10px 0;
+    flex-grow: 1;
+}
+
+.right-panel .subpanel {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+
+/*************************************************************************************************/
+/* Hamburger menu                                                                                */
+/*************************************************************************************************/
+
+.hamburger-menu {
+    cursor: pointer;
+    padding: 10px;
+    background: white;
+}
+
+.bar {
+    width: 25px;
+    height: 3px;
+    background-color: #333;
+    margin: 5px 0;
+}
+
+/* Collapse left panel on mobile devices */
+@media (max-width: 768px) {
+    .left-panel {
+        display: none;
+    }
+}
+
+/* #new-item {
+    border: 0;
+} */
+
+
+/*************************************************************************************************/
+/* Selector                                                                                      */
+/*************************************************************************************************/
+
+.item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 30px;
+    border: 1px solid #aaa;
+    padding: 10px;
+    margin-bottom: 5px;
+    cursor: pointer;
+}
+
+.item span {
+    flex: 1;
+    /* Text takes as much space as possible */
+}
+
+.item:hover {
+    background-color: #eee;
+}
+
+.item button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    margin-left: auto;
+}
+
+.item.selected {
+    border-left: 5px solid black;
+    background-color: #f7f7f7;
+}
+
+.item:hover {
+    background-color: #eee;
+}
+
+.icon {
+    margin-right: 10px;
+}
+
+
+/*************************************************************************************************/
+/* Top buttons                                                                                   */
+/*************************************************************************************************/
+
+#buttons-bar {
+    position: relative;
+    margin-bottom: 10px;
+}
+
+#emoji-button {
+    text-decoration: none;
+    font-size: 14pt;
+}
+
+emoji-picker {
+    display: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 100;
+}
+
+emoji-picker.visible {
+    display: block;
+}
+
+#color-button {
+    width: 150px;
+}
+
+
+/*************************************************************************************************/
+/* Code editor                                                                                   */
+/*************************************************************************************************/
+
+#code-editor {
+    height: calc(100% - 30px);
+}
+
+
+/*************************************************************************************************/
+/* Terminal output                                                                               */
+/*************************************************************************************************/
+
+#terminal-output {
+    font-family: monospace;
+    resize: none;
+}
+
+#terminal-output.error {
+    background-color: #dc7373;
+}
+
+
+/*************************************************************************************************/
+/* Grid                                                                                          */
+/*************************************************************************************************/
+
+#grid {
+    width: 30vmin;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+}
+
+#grid-table {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+    height: 100%;
+}
+
+#grid #grid-table>div {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    border: 0.5px solid #ddd;
+    aspect-ratio: 1/1;
+    cursor: pointer;
+}
+
+#grid #grid-table>div>* {
+    margin: 10px;
+    text-overflow: ellipsis;
+    overflow: hidden;
+}
+
+
+/*************************************************************************************************/
+/* Control panel                                                                                 */
+/*************************************************************************************************/
+
+.control-panel {
+    height: 30px;
+    max-height: 30px;
+    overflow: hidden;
+}
+
+.control-panel {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.control-panel button#run-button {
+    font-size: 20pt;
+}
+
+
+/*************************************************************************************************/
+/* Confidentiality                                                                               */
+/*************************************************************************************************/
+
+#confidentiality {
+    font-size: 9pt;
+    color: #999;
+    padding: 0;
+    margin: 0;
+    display: block;
+    max-height: 45px;
+    overflow: hidden;
+}
+
+
+/*************************************************************************************************/
+/* Credits                                                                                       */
+/*************************************************************************************************/
+
+#credits,
+#credits * {
+    color: #999;
+    font-size: 9pt;
+    max-height: 30px;
+    padding: 0;
+    margin: 0;
+}
+
+#credits {
+    /* flex-direction: column; */
+}
+
+#credits p {
+    padding: 2px 0;
+}
+
+
+    .error_widget_wrapper {        background: inherit;        color: inherit;        border:none    }    .error_widget {        border-top: solid 2px;        border-bottom: solid 2px;        margin: 5px 0;        padding: 10px 40px;        white-space: pre-wrap;    }    .error_widget.ace_error, .error_widget_arrow.ace_error{        border-color: #ff5a5a    }    .error_widget.ace_warning, .error_widget_arrow.ace_warning{        border-color: #F1D817    }    .error_widget.ace_info, .error_widget_arrow.ace_info{        border-color: #5a5a5a    }    .error_widget.ace_ok, .error_widget_arrow.ace_ok{        border-color: #5aaa5a    }    .error_widget_arrow {        position: absolute;        border: solid 5px;        border-top-color: transparent!important;        border-right-color: transparent!important;        border-left-color: transparent!important;        top: -5px;    }
+  </style>
+  <style id="ace-tm">
+   .ace-tm .ace_gutter {background: #f0f0f0;color: #333;}.ace-tm .ace_print-margin {width: 1px;background: #e8e8e8;}.ace-tm .ace_fold {background-color: #6B72E6;}.ace-tm {background-color: #FFFFFF;color: black;}.ace-tm .ace_cursor {color: black;}.ace-tm .ace_invisible {color: rgb(191, 191, 191);}.ace-tm .ace_storage,.ace-tm .ace_keyword {color: blue;}.ace-tm .ace_constant {color: rgb(197, 6, 11);}.ace-tm .ace_constant.ace_buildin {color: rgb(88, 72, 246);}.ace-tm .ace_constant.ace_language {color: rgb(88, 92, 246);}.ace-tm .ace_constant.ace_library {color: rgb(6, 150, 14);}.ace-tm .ace_invalid {background-color: rgba(255, 0, 0, 0.1);color: red;}.ace-tm .ace_support.ace_function {color: rgb(60, 76, 114);}.ace-tm .ace_support.ace_constant {color: rgb(6, 150, 14);}.ace-tm .ace_support.ace_type,.ace-tm .ace_support.ace_class {color: rgb(109, 121, 222);}.ace-tm .ace_keyword.ace_operator {color: rgb(104, 118, 135);}.ace-tm .ace_string {color: rgb(3, 106, 7);}.ace-tm .ace_comment {color: rgb(76, 136, 107);}.ace-tm .ace_comment.ace_doc {color: rgb(0, 102, 255);}.ace-tm .ace_comment.ace_doc.ace_tag {color: rgb(128, 159, 191);}.ace-tm .ace_constant.ace_numeric {color: rgb(0, 0, 205);}.ace-tm .ace_variable {color: rgb(49, 132, 149);}.ace-tm .ace_xml-pe {color: rgb(104, 104, 91);}.ace-tm .ace_entity.ace_name.ace_function {color: #0000A2;}.ace-tm .ace_heading {color: rgb(12, 7, 255);}.ace-tm .ace_list {color:rgb(185, 6, 144);}.ace-tm .ace_meta.ace_tag {color:rgb(0, 22, 142);}.ace-tm .ace_string.ace_regex {color: rgb(255, 0, 0)}.ace-tm .ace_marker-layer .ace_selection {background: rgb(181, 213, 255);}.ace-tm.ace_multiselect .ace_selection.ace_start {box-shadow: 0 0 3px 0px white;}.ace-tm .ace_marker-layer .ace_step {background: rgb(252, 255, 0);}.ace-tm .ace_marker-layer .ace_stack {background: rgb(164, 229, 101);}.ace-tm .ace_marker-layer .ace_bracket {margin: -1px 0 0 -1px;border: 1px solid rgb(192, 192, 192);}.ace-tm .ace_marker-layer .ace_active-line {background: rgba(0, 0, 0, 0.07);}.ace-tm .ace_gutter-active-line {background-color : #dcdcdc;}.ace-tm .ace_marker-layer .ace_selected-word {background: rgb(250, 250, 255);border: 1px solid rgb(200, 200, 250);}.ace-tm .ace_indent-guide {background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAYAAACZgbYnAAAAE0lEQVQImWP4////f4bLly//BwAmVgd1/w11/gAAAABJRU5ErkJggg==") right repeat-y;}
+/*# sourceURL=ace/css/ace-tm */
+  </style>
+  <style id="ace_editor.css">
+   .ace_br1 {border-top-left-radius    : 3px;}.ace_br2 {border-top-right-radius   : 3px;}.ace_br3 {border-top-left-radius    : 3px; border-top-right-radius:    3px;}.ace_br4 {border-bottom-right-radius: 3px;}.ace_br5 {border-top-left-radius    : 3px; border-bottom-right-radius: 3px;}.ace_br6 {border-top-right-radius   : 3px; border-bottom-right-radius: 3px;}.ace_br7 {border-top-left-radius    : 3px; border-top-right-radius:    3px; border-bottom-right-radius: 3px;}.ace_br8 {border-bottom-left-radius : 3px;}.ace_br9 {border-top-left-radius    : 3px; border-bottom-left-radius:  3px;}.ace_br10{border-top-right-radius   : 3px; border-bottom-left-radius:  3px;}.ace_br11{border-top-left-radius    : 3px; border-top-right-radius:    3px; border-bottom-left-radius:  3px;}.ace_br12{border-bottom-right-radius: 3px; border-bottom-left-radius:  3px;}.ace_br13{border-top-left-radius    : 3px; border-bottom-right-radius: 3px; border-bottom-left-radius:  3px;}.ace_br14{border-top-right-radius   : 3px; border-bottom-right-radius: 3px; border-bottom-left-radius:  3px;}.ace_br15{border-top-left-radius    : 3px; border-top-right-radius:    3px; border-bottom-right-radius: 3px; border-bottom-left-radius: 3px;}.ace_editor {position: relative;overflow: hidden;padding: 0;font: 12px/normal 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;direction: ltr;text-align: left;-webkit-tap-highlight-color: rgba(0, 0, 0, 0);}.ace_scroller {position: absolute;overflow: hidden;top: 0;bottom: 0;background-color: inherit;-ms-user-select: none;-moz-user-select: none;-webkit-user-select: none;user-select: none;cursor: text;}.ace_content {position: absolute;box-sizing: border-box;min-width: 100%;contain: style size layout;font-variant-ligatures: no-common-ligatures;}.ace_dragging .ace_scroller:before{position: absolute;top: 0;left: 0;right: 0;bottom: 0;content: '';background: rgba(250, 250, 250, 0.01);z-index: 1000;}.ace_dragging.ace_dark .ace_scroller:before{background: rgba(0, 0, 0, 0.01);}.ace_selecting, .ace_selecting * {cursor: text !important;}.ace_gutter {position: absolute;overflow : hidden;width: auto;top: 0;bottom: 0;left: 0;cursor: default;z-index: 4;-ms-user-select: none;-moz-user-select: none;-webkit-user-select: none;user-select: none;contain: style size layout;}.ace_gutter-active-line {position: absolute;left: 0;right: 0;}.ace_scroller.ace_scroll-left {box-shadow: 17px 0 16px -16px rgba(0, 0, 0, 0.4) inset;}.ace_gutter-cell {position: absolute;top: 0;left: 0;right: 0;padding-left: 19px;padding-right: 6px;background-repeat: no-repeat;}.ace_gutter-cell.ace_error {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAABOFBMVEX/////////QRswFAb/Ui4wFAYwFAYwFAaWGAfDRymzOSH/PxswFAb/SiUwFAYwFAbUPRvjQiDllog5HhHdRybsTi3/Tyv9Tir+Syj/UC3////XurebMBIwFAb/RSHbPx/gUzfdwL3kzMivKBAwFAbbvbnhPx66NhowFAYwFAaZJg8wFAaxKBDZurf/RB6mMxb/SCMwFAYwFAbxQB3+RB4wFAb/Qhy4Oh+4QifbNRcwFAYwFAYwFAb/QRzdNhgwFAYwFAbav7v/Uy7oaE68MBK5LxLewr/r2NXewLswFAaxJw4wFAbkPRy2PyYwFAaxKhLm1tMwFAazPiQwFAaUGAb/QBrfOx3bvrv/VC/maE4wFAbRPBq6MRO8Qynew8Dp2tjfwb0wFAbx6eju5+by6uns4uH9/f36+vr/GkHjAAAAYnRSTlMAGt+64rnWu/bo8eAA4InH3+DwoN7j4eLi4xP99Nfg4+b+/u9B/eDs1MD1mO7+4PHg2MXa347g7vDizMLN4eG+Pv7i5evs/v79yu7S3/DV7/498Yv24eH+4ufQ3Ozu/v7+y13sRqwAAADLSURBVHjaZc/XDsFgGIBhtDrshlitmk2IrbHFqL2pvXf/+78DPokj7+Fz9qpU/9UXJIlhmPaTaQ6QPaz0mm+5gwkgovcV6GZzd5JtCQwgsxoHOvJO15kleRLAnMgHFIESUEPmawB9ngmelTtipwwfASilxOLyiV5UVUyVAfbG0cCPHig+GBkzAENHS0AstVF6bacZIOzgLmxsHbt2OecNgJC83JERmePUYq8ARGkJx6XtFsdddBQgZE2nPR6CICZhawjA4Fb/chv+399kfR+MMMDGOQAAAABJRU5ErkJggg==");background-repeat: no-repeat;background-position: 2px center;}.ace_gutter-cell.ace_warning {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAAmVBMVEX///8AAAD///8AAAAAAABPSzb/5sAAAAB/blH/73z/ulkAAAAAAAD85pkAAAAAAAACAgP/vGz/rkDerGbGrV7/pkQICAf////e0IsAAAD/oED/qTvhrnUAAAD/yHD/njcAAADuv2r/nz//oTj/p064oGf/zHAAAAA9Nir/tFIAAAD/tlTiuWf/tkIAAACynXEAAAAAAAAtIRW7zBpBAAAAM3RSTlMAABR1m7RXO8Ln31Z36zT+neXe5OzooRDfn+TZ4p3h2hTf4t3k3ucyrN1K5+Xaks52Sfs9CXgrAAAAjklEQVR42o3PbQ+CIBQFYEwboPhSYgoYunIqqLn6/z8uYdH8Vmdnu9vz4WwXgN/xTPRD2+sgOcZjsge/whXZgUaYYvT8QnuJaUrjrHUQreGczuEafQCO/SJTufTbroWsPgsllVhq3wJEk2jUSzX3CUEDJC84707djRc5MTAQxoLgupWRwW6UB5fS++NV8AbOZgnsC7BpEAAAAABJRU5ErkJggg==");background-position: 2px center;}.ace_gutter-cell.ace_info {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAAAAAA6mKC9AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAAJ0Uk5TAAB2k804AAAAPklEQVQY02NgIB68QuO3tiLznjAwpKTgNyDbMegwisCHZUETUZV0ZqOquBpXj2rtnpSJT1AEnnRmL2OgGgAAIKkRQap2htgAAAAASUVORK5CYII=");background-position: 2px center;}.ace_dark .ace_gutter-cell.ace_info {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQBAMAAADt3eJSAAAAJFBMVEUAAAChoaGAgIAqKiq+vr6tra1ZWVmUlJSbm5s8PDxubm56enrdgzg3AAAAAXRSTlMAQObYZgAAAClJREFUeNpjYMAPdsMYHegyJZFQBlsUlMFVCWUYKkAZMxZAGdxlDMQBAG+TBP4B6RyJAAAAAElFTkSuQmCC");}.ace_scrollbar {contain: strict;position: absolute;right: 0;bottom: 0;z-index: 6;}.ace_scrollbar-inner {position: absolute;cursor: text;left: 0;top: 0;}.ace_scrollbar-v{overflow-x: hidden;overflow-y: scroll;top: 0;}.ace_scrollbar-h {overflow-x: scroll;overflow-y: hidden;left: 0;}.ace_print-margin {position: absolute;height: 100%;}.ace_text-input {position: absolute;z-index: 0;width: 0.5em;height: 1em;opacity: 0;background: transparent;-moz-appearance: none;appearance: none;border: none;resize: none;outline: none;overflow: hidden;font: inherit;padding: 0 1px;margin: 0 -1px;contain: strict;-ms-user-select: text;-moz-user-select: text;-webkit-user-select: text;user-select: text;white-space: pre!important;}.ace_text-input.ace_composition {background: transparent;color: inherit;z-index: 1000;opacity: 1;}.ace_composition_placeholder { color: transparent }.ace_composition_marker { border-bottom: 1px solid;position: absolute;border-radius: 0;margin-top: 1px;}[ace_nocontext=true] {transform: none!important;filter: none!important;clip-path: none!important;mask : none!important;contain: none!important;perspective: none!important;mix-blend-mode: initial!important;z-index: auto;}.ace_layer {z-index: 1;position: absolute;overflow: hidden;word-wrap: normal;white-space: pre;height: 100%;width: 100%;box-sizing: border-box;pointer-events: none;}.ace_gutter-layer {position: relative;width: auto;text-align: right;pointer-events: auto;height: 1000000px;contain: style size layout;}.ace_text-layer {font: inherit !important;position: absolute;height: 1000000px;width: 1000000px;contain: style size layout;}.ace_text-layer > .ace_line, .ace_text-layer > .ace_line_group {contain: style size layout;position: absolute;top: 0;left: 0;right: 0;}.ace_hidpi .ace_text-layer,.ace_hidpi .ace_gutter-layer,.ace_hidpi .ace_content,.ace_hidpi .ace_gutter {contain: strict;will-change: transform;}.ace_hidpi .ace_text-layer > .ace_line, .ace_hidpi .ace_text-layer > .ace_line_group {contain: strict;}.ace_cjk {display: inline-block;text-align: center;}.ace_cursor-layer {z-index: 4;}.ace_cursor {z-index: 4;position: absolute;box-sizing: border-box;border-left: 2px solid;transform: translatez(0);}.ace_multiselect .ace_cursor {border-left-width: 1px;}.ace_slim-cursors .ace_cursor {border-left-width: 1px;}.ace_overwrite-cursors .ace_cursor {border-left-width: 0;border-bottom: 1px solid;}.ace_hidden-cursors .ace_cursor {opacity: 0.2;}.ace_hasPlaceholder .ace_hidden-cursors .ace_cursor {opacity: 0;}.ace_smooth-blinking .ace_cursor {transition: opacity 0.18s;}.ace_animate-blinking .ace_cursor {animation-duration: 1000ms;animation-timing-function: step-end;animation-name: blink-ace-animate;animation-iteration-count: infinite;}.ace_animate-blinking.ace_smooth-blinking .ace_cursor {animation-duration: 1000ms;animation-timing-function: ease-in-out;animation-name: blink-ace-animate-smooth;}@keyframes blink-ace-animate {from, to { opacity: 1; }60% { opacity: 0; }}@keyframes blink-ace-animate-smooth {from, to { opacity: 1; }45% { opacity: 1; }60% { opacity: 0; }85% { opacity: 0; }}.ace_marker-layer .ace_step, .ace_marker-layer .ace_stack {position: absolute;z-index: 3;}.ace_marker-layer .ace_selection {position: absolute;z-index: 5;}.ace_marker-layer .ace_bracket {position: absolute;z-index: 6;}.ace_marker-layer .ace_error_bracket {position: absolute;border-bottom: 1px solid #DE5555;border-radius: 0;}.ace_marker-layer .ace_active-line {position: absolute;z-index: 2;}.ace_marker-layer .ace_selected-word {position: absolute;z-index: 4;box-sizing: border-box;}.ace_line .ace_fold {box-sizing: border-box;display: inline-block;height: 11px;margin-top: -2px;vertical-align: middle;background-image:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAAJCAYAAADU6McMAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAJpJREFUeNpi/P//PwOlgAXGYGRklAVSokD8GmjwY1wasKljQpYACtpCFeADcHVQfQyMQAwzwAZI3wJKvCLkfKBaMSClBlR7BOQikCFGQEErIH0VqkabiGCAqwUadAzZJRxQr/0gwiXIal8zQQPnNVTgJ1TdawL0T5gBIP1MUJNhBv2HKoQHHjqNrA4WO4zY0glyNKLT2KIfIMAAQsdgGiXvgnYAAAAASUVORK5CYII="),url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAA3CAYAAADNNiA5AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAACJJREFUeNpi+P//fxgTAwPDBxDxD078RSX+YeEyDFMCIMAAI3INmXiwf2YAAAAASUVORK5CYII=");background-repeat: no-repeat, repeat-x;background-position: center center, top left;color: transparent;border: 1px solid black;border-radius: 2px;cursor: pointer;pointer-events: auto;}.ace_dark .ace_fold {}.ace_fold:hover{background-image:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAAJCAYAAADU6McMAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAJpJREFUeNpi/P//PwOlgAXGYGRklAVSokD8GmjwY1wasKljQpYACtpCFeADcHVQfQyMQAwzwAZI3wJKvCLkfKBaMSClBlR7BOQikCFGQEErIH0VqkabiGCAqwUadAzZJRxQr/0gwiXIal8zQQPnNVTgJ1TdawL0T5gBIP1MUJNhBv2HKoQHHjqNrA4WO4zY0glyNKLT2KIfIMAAQsdgGiXvgnYAAAAASUVORK5CYII="),url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAA3CAYAAADNNiA5AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAACBJREFUeNpi+P//fz4TAwPDZxDxD5X4i5fLMEwJgAADAEPVDbjNw87ZAAAAAElFTkSuQmCC");}.ace_tooltip {background-color: #FFF;background-image: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.1));border: 1px solid gray;border-radius: 1px;box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);color: black;max-width: 100%;padding: 3px 4px;position: fixed;z-index: 999999;box-sizing: border-box;cursor: default;white-space: pre;word-wrap: break-word;line-height: normal;font-style: normal;font-weight: normal;letter-spacing: normal;pointer-events: none;}.ace_folding-enabled > .ace_gutter-cell {padding-right: 13px;}.ace_fold-widget {box-sizing: border-box;margin: 0 -12px 0 1px;display: none;width: 11px;vertical-align: top;background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAANElEQVR42mWKsQ0AMAzC8ixLlrzQjzmBiEjp0A6WwBCSPgKAXoLkqSot7nN3yMwR7pZ32NzpKkVoDBUxKAAAAABJRU5ErkJggg==");background-repeat: no-repeat;background-position: center;border-radius: 3px;border: 1px solid transparent;cursor: pointer;}.ace_folding-enabled .ace_fold-widget {display: inline-block;   }.ace_fold-widget.ace_end {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAANElEQVR42m3HwQkAMAhD0YzsRchFKI7sAikeWkrxwScEB0nh5e7KTPWimZki4tYfVbX+MNl4pyZXejUO1QAAAABJRU5ErkJggg==");}.ace_fold-widget.ace_closed {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAAGCAYAAAAG5SQMAAAAOUlEQVR42jXKwQkAMAgDwKwqKD4EwQ26sSOkVWjgIIHAzPiCgaqiqnJHZnKICBERHN194O5b9vbLuAVRL+l0YWnZAAAAAElFTkSuQmCCXA==");}.ace_fold-widget:hover {border: 1px solid rgba(0, 0, 0, 0.3);background-color: rgba(255, 255, 255, 0.2);box-shadow: 0 1px 1px rgba(255, 255, 255, 0.7);}.ace_fold-widget:active {border: 1px solid rgba(0, 0, 0, 0.4);background-color: rgba(0, 0, 0, 0.05);box-shadow: 0 1px 1px rgba(255, 255, 255, 0.8);}.ace_dark .ace_fold-widget {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHklEQVQIW2P4//8/AzoGEQ7oGCaLLAhWiSwB146BAQCSTPYocqT0AAAAAElFTkSuQmCC");}.ace_dark .ace_fold-widget.ace_end {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAH0lEQVQIW2P4//8/AxQ7wNjIAjDMgC4AxjCVKBirIAAF0kz2rlhxpAAAAABJRU5ErkJggg==");}.ace_dark .ace_fold-widget.ace_closed {background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAACAcVaiAAAAHElEQVQIW2P4//+/AxAzgDADlOOAznHAKgPWAwARji8UIDTfQQAAAABJRU5ErkJggg==");}.ace_dark .ace_fold-widget:hover {box-shadow: 0 1px 1px rgba(255, 255, 255, 0.2);background-color: rgba(255, 255, 255, 0.1);}.ace_dark .ace_fold-widget:active {box-shadow: 0 1px 1px rgba(255, 255, 255, 0.2);}.ace_inline_button {border: 1px solid lightgray;display: inline-block;margin: -1px 8px;padding: 0 5px;pointer-events: auto;cursor: pointer;}.ace_inline_button:hover {border-color: gray;background: rgba(200,200,200,0.2);display: inline-block;pointer-events: auto;}.ace_fold-widget.ace_invalid {background-color: #FFB4B4;border-color: #DE5555;}.ace_fade-fold-widgets .ace_fold-widget {transition: opacity 0.4s ease 0.05s;opacity: 0;}.ace_fade-fold-widgets:hover .ace_fold-widget {transition: opacity 0.05s ease 0.05s;opacity:1;}.ace_underline {text-decoration: underline;}.ace_bold {font-weight: bold;}.ace_nobold .ace_bold {font-weight: normal;}.ace_italic {font-style: italic;}.ace_error-marker {background-color: rgba(255, 0, 0,0.2);position: absolute;z-index: 9;}.ace_highlight-marker {background-color: rgba(255, 255, 0,0.2);position: absolute;z-index: 8;}.ace_mobile-menu {position: absolute;line-height: 1.5;border-radius: 4px;-ms-user-select: none;-moz-user-select: none;-webkit-user-select: none;user-select: none;background: white;box-shadow: 1px 3px 2px grey;border: 1px solid #dcdcdc;color: black;}.ace_dark > .ace_mobile-menu {background: #333;color: #ccc;box-shadow: 1px 3px 2px grey;border: 1px solid #444;}.ace_mobile-button {padding: 2px;cursor: pointer;overflow: hidden;}.ace_mobile-button:hover {background-color: #eee;opacity:1;}.ace_mobile-button:active {background-color: #ddd;}.ace_placeholder {font-family: arial;transform: scale(0.9);transform-origin: left;white-space: pre;opacity: 0.7;margin: 0 10px;}
+/*# sourceURL=ace/css/ace_editor.css */
+  </style>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
+  <title>
+   PyKidos
+  </title>
+  <!-- ACE EDITOR -->
+  <!-- PYODIDE -->
+  <!-- PAKO -->
+  <!-- EMOJI PICKER -->
+  <!-- COLOR PICKER -->
+  <!-- CUSTOM STYLES -->
+  <!-- CUSTOM SCRIPT -->
+ </head>
+ <body class="">
+  <div id="dispatcher">
+  </div>
+  <div class="container">
+   <!-- HAMBURGER BUTTON -->
+   <div class="hamburger-menu" id="menu-toggle">
+    <div class="bar">
+    </div>
+    <div class="bar">
+    </div>
+    <div class="bar">
+    </div>
+   </div>
+   <!-- LEFT PANEL -->
+   <div class="panel left-panel">
+    <!-- NEW BUTTON -->
+    <div class="item" id="new-item">
+     New
+    </div>
+    <!-- SELECTOR -->
+    <div id="selector">
+     <div class="item selected">
+      <span>
+       0. 🐍 Tutorial
+      </span>
+      <button>
+       ✏️
+      </button>
+      <button>
+       🗑️
+      </button>
+     </div>
+     <div class="item">
+      <span>
+       1. 🔳 Chessboard
+      </span>
+      <button>
+       ✏️
+      </button>
+      <button>
+       🗑️
+      </button>
+     </div>
+     <div class="item">
+      <span>
+       2. 🔴 Disc
+      </span>
+      <button>
+       ✏️
+      </button>
+      <button>
+       🗑️
+      </button>
+     </div>
+     <div class="item">
+      <span>
+       3. ❌️ Tic-tac-toe
+      </span>
+      <button>
+       ✏️
+      </button>
+      <button>
+       🗑️
+      </button>
+     </div>
+     <div class="item">
+      <span>
+       4. 🧬 Game of Life
+      </span>
+      <button>
+       ✏️
+      </button>
+      <button>
+       🗑️
+      </button>
+     </div>
+     <div class="item">
+      <span>
+       5. 🐰 Bunny
+      </span>
+      <button>
+       ✏️
+      </button>
+      <button>
+       🗑️
+      </button>
+     </div>
+    </div>
+   </div>
+   <!-- MIDDLE PANEL -->
+   <div class="panel middle-panel">
+    <!-- BUTTONS BAR -->
+    <div id="buttons-bar">
+     <!-- EMOJI BUTTON -->
+     Emoji
+     <a id="emoji-button">
+      😀
+     </a>
+     &mdash;
+     <!-- COLOR PICKER BUTTON -->
+     Color
+     <div class="clr-field" style="color: rgb(0, 0, 0);">
+      <button aria-labelledby="clr-open-label" type="button">
+      </button>
+      <input data-coloris id="color-button" type="text" value="rgb(0,0,0)">
+     </div>
+     &mdash;
+     <button id="decrease-font-size-button" title="Decrease editor's font size">
+      🗛
+     </button>
+     <button id="increase-font-size-button" title="Increase editor's font size">
+      🗚
+     </button>
+     <!-- EMOJI PICKER POPUP -->
+     <emoji-picker class="light" id="emoji-picker">
+     </emoji-picker>
+    </div>
+    <!-- CODE EDITOR -->
+    <div class="ace_editor ace_hidpi ace-tm" id="code-editor">
+     <textarea autocapitalize="off" autocorrect="off" class="ace_text-input" spellcheck="false" style="opacity: 0; font-size: 1px; transform: translate(0px, 0px);" wrap="off"></textarea>
+     <div aria-hidden="true" class="ace_gutter" style="left: 0px; width: 48px;">
+      <div class="ace_layer ace_gutter-layer ace_folding-enabled" style="height: 1e+06px; transform: translate(0px, 0px); width: 48px;">
+       <div class="ace_gutter-cell" style="height: 14px; top: 0px;">
+        1
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 14px;">
+        2
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 28px;">
+        3
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 42px;">
+        4
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 56px;">
+        5
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 70px;">
+        6
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 84px;">
+        7
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 98px;">
+        8
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 112px;">
+        9
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 126px;">
+        10
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 140px;">
+        11
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 154px;">
+        12
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 168px;">
+        13
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 182px;">
+        14
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 196px;">
+        15
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 210px;">
+        16
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 224px;">
+        17
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 238px;">
+        18
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 252px;">
+        19
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 266px;">
+        20
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 280px;">
+        21
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 294px;">
+        22
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 308px;">
+        23
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 322px;">
+        24
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 336px;">
+        25
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 350px;">
+        26
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 364px;">
+        27
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 378px;">
+        28
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 392px;">
+        29
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 406px;">
+        30
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 420px;">
+        31
+        <span class="ace_fold-widget ace_start ace_open" style="display: inline-block; height: 14px;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 434px;">
+        32
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 448px;">
+        33
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 462px;">
+        34
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 476px;">
+        35
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 490px;">
+        36
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 504px;">
+        37
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 518px;">
+        38
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 532px;">
+        39
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 546px;">
+        40
+        <span class="ace_fold-widget ace_start ace_open" style="display: inline-block; height: 14px;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 560px;">
+        41
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 574px;">
+        42
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 588px;">
+        43
+        <span class="ace_fold-widget ace_start ace_open" style="display: inline-block; height: 14px;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 602px;">
+        44
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 616px;">
+        45
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 630px;">
+        46
+        <span class="ace_fold-widget ace_start ace_open" style="display: inline-block; height: 14px;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 644px;">
+        47
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 658px;">
+        48
+        <span style="display: none;">
+        </span>
+       </div>
+       <div class="ace_gutter-cell" style="height: 14px; top: 672px;">
+        49
+        <span class="ace_fold-widget ace_start ace_open" style="display: inline-block; height: 14px;">
+        </span>
+       </div>
+      </div>
+     </div>
+     <div class="ace_scroller" style="line-height: 14px; left: 47.4531px; right: 0px; bottom: 0px;">
+      <div class="ace_content" style="transform: translate(0px, 0px); width: 586px; height: 696px;">
+       <div class="ace_layer ace_print-margin-layer">
+        <div class="ace_print-margin" style="left: 582px; visibility: visible;">
+        </div>
+       </div>
+       <div class="ace_layer ace_marker-layer">
+       </div>
+       <div class="ace_layer ace_text-layer" style="height: 1e+06px; margin: 0px 4px; transform: translate(0px, 0px);">
+        <div class="ace_line" style="height: 14px; top: 0px;">
+         <span class="ace_string">
+          """
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 14px;">
+         <span class="ace_string">
+          Welcome to PyKidos! This is a small JavaScript application (still rough around
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 28px;">
+         <span class="ace_string">
+          the edges) that provides a Python playground running entirely in the browser,
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 42px;">
+         <span class="ace_string">
+          which is convenient for teaching purposes.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 56px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 70px;">
+         <span class="ace_string">
+          The grid cells (color and text) on the right can be manipulated from Python.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 84px;">
+         <span class="ace_string">
+          You can make simple grid animations and react to click and keyboard events.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 98px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 112px;">
+         <span class="ace_string">
+          Kids (and adults) can program toy games to learn basic Python coding skills.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 126px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 140px;">
+         <span class="ace_string">
+          You have a few examples on the left, and you can create your own scripts for
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 154px;">
+         <span class="ace_string">
+          your kids or for yourself!
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 168px;">
+         <span class="ace_string">
+          """
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 182px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 196px;">
+         <span class="ace_comment">
+          ################################################################################
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 210px;">
+         <span class="ace_comment">
+          # PRESS CONTROL + ENTER TO RUN THE SCRIPT
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 224px;">
+         <span class="ace_comment">
+          ################################################################################
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 238px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 252px;">
+         <span class="ace_comment">
+          # The standard output is displayed in the bottom right panel.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 266px;">
+         <span class="ace_keyword">
+          print
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_string">
+          "Hello world!"
+         </span>
+         <span class="ace_paren ace_rparen">
+          )
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 280px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 294px;">
+         <span class="ace_comment">
+          # Grid cells are 0-indexed. This is how you update a cell's color.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 308px;">
+         <span class="ace_comment">
+          # There are a few common colors predefined as global variables.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 322px;">
+         <span class="ace_identifier">
+          color
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_constant ace_numeric">
+          0
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_constant ace_numeric">
+          1
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_identifier">
+          red
+         </span>
+         <span class="ace_paren ace_rparen">
+          )
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 336px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 350px;">
+         <span class="ace_comment">
+          # You can resize the grid as follows (this will clear the grid first).
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 364px;">
+         <span class="ace_comment">
+          # size(12, 12)
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 378px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 392px;">
+         <span class="ace_comment">
+          # You can enter arbitrary colors as RGB triplets (numbers in 0-255). You can
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 406px;">
+         <span class="ace_comment">
+          # use the color picker at the top.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 420px;">
+         <span class="ace_keyword">
+          for
+         </span>
+         <span class="ace_identifier">
+          j
+         </span>
+         <span class="ace_keyword">
+          in
+         </span>
+         <span class="ace_support ace_function">
+          range
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_constant ace_numeric">
+          2
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_constant ace_numeric">
+          5
+         </span>
+         <span class="ace_paren ace_rparen">
+          )
+         </span>
+         <span class="ace_punctuation">
+          :
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 434px;">
+         <span class="ace_identifier">
+          color
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_constant ace_numeric">
+          0
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_identifier">
+          j
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_constant ace_numeric">
+          255
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_constant ace_numeric">
+          180
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_constant ace_numeric">
+          5
+         </span>
+         <span class="ace_paren ace_rparen">
+          ))
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 448px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 462px;">
+         <span class="ace_comment">
+          # You can also write one short strings in cells.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 476px;">
+         <span class="ace_identifier">
+          text
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_constant ace_numeric">
+          0
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_constant ace_numeric">
+          6
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_string">
+          "Hi!"
+         </span>
+         <span class="ace_paren ace_rparen">
+          )
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 490px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 504px;">
+         <span class="ace_comment">
+          # Use the emoji selector at the top to write Unicode emojis.
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 518px;">
+         <span class="ace_identifier">
+          text
+         </span>
+         <span class="ace_paren ace_lparen">
+          (
+         </span>
+         <span class="ace_constant ace_numeric">
+          0
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_constant ace_numeric">
+          8
+         </span>
+         <span class="ace_punctuation">
+          ,
+         </span>
+         <span class="ace_string">
+          "
+          <span class="ace_cjk" style="width: 14.4531px;">
+           🍎
+          </span>
+          "
+         </span>
+         <span class="ace_paren ace_rparen">
+          )
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 532px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 546px;">
+         <span class="ace_comment">
+          # You can change the default size as follows:
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 560px;">
+         <span class="ace_comment">
+          # font(12)
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 574px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 588px;">
+         <span class="ace_comment">
+          # This function clears the grid:
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 602px;">
+         <span class="ace_comment">
+          # clear()
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 616px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 630px;">
+         <span class="ace_comment">
+          # This one fills all cells with a given color:
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 644px;">
+         <span class="ace_comment">
+          # fill(black)
+         </span>
+        </div>
+        <div class="ace_line" style="height: 14px; top: 658px;">
+        </div>
+        <div class="ace_line" style="height: 14px; top: 672px;">
+         <span class="ace_comment">
+          # Some cell manipulation functions:
+         </span>
+        </div>
+       </div>
+       <div class="ace_layer ace_marker-layer">
+       </div>
+       <div class="ace_layer ace_cursor-layer ace_hidden-cursors">
+        <div class="ace_cursor" style="display: block; transform: translate(4px, 1106px); width: 7px; height: 14px;">
+        </div>
+       </div>
+      </div>
+     </div>
+     <div class="ace_scrollbar ace_scrollbar-v" style="width: 20px; bottom: 0px;">
+      <div class="ace_scrollbar-inner" style="width: 20px; height: 1120px;">
+       &nbsp;
+      </div>
+     </div>
+     <div class="ace_scrollbar ace_scrollbar-h" style="height: 20px; left: 47.4531px; right: 0px;">
+      <div class="ace_scrollbar-inner" style="height: 20px; width: 586px;">
+       &nbsp;
+      </div>
+     </div>
+     <div style="height: auto; width: auto; top: 0px; left: 0px; visibility: hidden; position: absolute; white-space: pre; font: inherit; overflow: hidden;">
+      <div style="height: auto; width: auto; top: 0px; left: 0px; visibility: hidden; position: absolute; white-space: pre; font: inherit; overflow: visible;">
+       הההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההההה
+      </div>
+      <div style="height: auto; width: auto; top: 0px; left: 0px; visibility: hidden; position: absolute; white-space: pre; font-style: inherit; font-variant: inherit; font-stretch: inherit; font-size: inherit; line-height: inherit; font-family: inherit; font-optical-sizing: inherit; font-kerning: inherit; font-feature-settings: inherit; font-variation-settings: inherit; overflow: visible;">
+       XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+      </div>
+     </div>
+    </div>
+   </div>
+   <!-- RIGHT PANEL -->
+   <div class="panel right-panel">
+    <!-- GRID VISUAL COMPONENT -->
+    <div class="subpanel">
+     <div id="grid" style="width: 60vmin;">
+      <div id="grid-table" style="font-size: 16pt; grid-template-columns: repeat(10, 1fr); grid-template-rows: repeat(10, 1fr);" tabindex="0">
+       <div style="background-color: rgb(240, 240, 240);" title="0, 0">
+       </div>
+       <div style="background-color: rgb(230, 90, 90);" title="0, 1">
+       </div>
+       <div style="background-color: rgb(255, 180, 5);" title="0, 2">
+       </div>
+       <div style="background-color: rgb(255, 180, 5);" title="0, 3">
+       </div>
+       <div style="background-color: rgb(255, 180, 5);" title="0, 4">
+       </div>
+       <div title="0, 5">
+       </div>
+       <div title="0, 6">
+        Hi!
+       </div>
+       <div title="0, 7">
+       </div>
+       <div title="0, 8">
+        🍎
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="0, 9">
+       </div>
+       <div title="1, 0">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="1, 1">
+       </div>
+       <div title="1, 2">
+       </div>
+       <div title="1, 3">
+       </div>
+       <div title="1, 4">
+       </div>
+       <div title="1, 5">
+       </div>
+       <div title="1, 6">
+       </div>
+       <div title="1, 7">
+       </div>
+       <div title="1, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="1, 9">
+       </div>
+       <div title="2, 0">
+       </div>
+       <div title="2, 1">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="2, 2">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="2, 3">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="2, 4">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="2, 5">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="2, 6">
+       </div>
+       <div title="2, 7">
+       </div>
+       <div title="2, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="2, 9">
+       </div>
+       <div title="3, 0">
+       </div>
+       <div title="3, 1">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="3, 2">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="3, 3">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="3, 4">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="3, 5">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="3, 6">
+       </div>
+       <div title="3, 7">
+       </div>
+       <div title="3, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="3, 9">
+       </div>
+       <div title="4, 0">
+       </div>
+       <div title="4, 1">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="4, 2">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="4, 3">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="4, 4">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="4, 5">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="4, 6">
+       </div>
+       <div title="4, 7">
+       </div>
+       <div title="4, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="4, 9">
+       </div>
+       <div title="5, 0">
+       </div>
+       <div title="5, 1">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="5, 2">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="5, 3">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="5, 4">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="5, 5">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="5, 6">
+       </div>
+       <div title="5, 7">
+       </div>
+       <div title="5, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="5, 9">
+       </div>
+       <div title="6, 0">
+       </div>
+       <div title="6, 1">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="6, 2">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="6, 3">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="6, 4">
+       </div>
+       <div style="background-color: rgb(200, 200, 200);" title="6, 5">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="6, 6">
+       </div>
+       <div title="6, 7">
+       </div>
+       <div title="6, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="6, 9">
+       </div>
+       <div title="7, 0">
+       </div>
+       <div title="7, 1">
+       </div>
+       <div title="7, 2">
+       </div>
+       <div title="7, 3">
+       </div>
+       <div title="7, 4">
+       </div>
+       <div title="7, 5">
+       </div>
+       <div title="7, 6">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="7, 7">
+       </div>
+       <div title="7, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="7, 9">
+       </div>
+       <div title="8, 0">
+       </div>
+       <div title="8, 1">
+       </div>
+       <div title="8, 2">
+       </div>
+       <div title="8, 3">
+       </div>
+       <div title="8, 4">
+       </div>
+       <div title="8, 5">
+       </div>
+       <div title="8, 6">
+       </div>
+       <div title="8, 7">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="8, 8">
+       </div>
+       <div style="background-color: rgb(80, 200, 120);" title="8, 9">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 0">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 1">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 2">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 3">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 4">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 5">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 6">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 7">
+       </div>
+       <div style="background-color: rgb(255, 230, 100);" title="9, 8">
+       </div>
+       <div style="background-color: rgb(240, 240, 240);" title="9, 9">
+       </div>
+      </div>
+     </div>
+    </div>
+    <!-- OUTPUT TERMINAL -->
+    <textarea class="subpanel" id="terminal-output" readonly></textarea>
+    <!-- CONTROL PANEL -->
+    <div class="subpanel control-panel">
+     <button id="run-button" title="Play/Stop (Control + Enter)">
+      ►
+     </button>
+     &nbsp;&mdash;&nbsp;
+     <button id="share-button" title="Copy the URL to the clipboard, with the code encoded in the URL">
+      Share
+     </button>
+     <button id="download-button" title="Download the Python script locally">
+      Download
+     </button>
+    </div>
+    <!-- CONFIDENTIALITY -->
+    <div class="subpanel" id="confidentiality">
+     Your code is stored locally in your browser's local storage. It is never sent to any server.
+    </div>
+    <!-- CREDITS -->
+    <div class="subpanel" id="credits">
+     <a>
+      PyKidos
+     </a>
+     &mdash;
+     <a>
+      Cyrille Rossant
+     </a>
+     &mdash;
+     <a>
+      GitHub repo
+     </a>
+     &mdash;
+                2024
+    </div>
+   </div>
+  </div>
+  <div class="clr-picker clr-default clr-light" data-alpha="false" id="clr-picker">
+   <input aria-label="Color value field" class="clr-color" id="clr-color-value" name="clr-color-value" spellcheck="false" type="text" value>
+   <div aria-label="Saturation and brightness selector. Use up, down, left and right arrow keys to select." class="clr-gradient" id="clr-color-area" role="application">
+    <div class="clr-marker" id="clr-color-marker" tabindex="0">
+    </div>
+   </div>
+   <div class="clr-hue">
+    <input aria-label="Hue slider" id="clr-hue-slider" max="360" min="0" name="clr-hue-slider" step="1" type="range">
+    <div id="clr-hue-marker">
+    </div>
+   </div>
+   <div class="clr-alpha">
+    <input aria-label="Opacity slider" id="clr-alpha-slider" max="100" min="0" name="clr-alpha-slider" step="1" type="range">
+    <div id="clr-alpha-marker">
+    </div>
+    <span>
+    </span>
+   </div>
+   <div class="clr-format" id="clr-format">
+    <fieldset class="clr-segmented">
+     <legend>
+      Color format
+     </legend>
+     <input id="clr-f1" name="clr-format" type="radio" value="hex">
+     <label for="clr-f1">
+      Hex
+     </label>
+     <input id="clr-f2" name="clr-format" type="radio" value="rgb">
+     <label for="clr-f2">
+      RGB
+     </label>
+     <input id="clr-f3" name="clr-format" type="radio" value="hsl">
+     <label for="clr-f3">
+      HSL
+     </label>
+     <span>
+     </span>
+    </fieldset>
+   </div>
+   <div class="clr-swatches" id="clr-swatches">
+   </div>
+   <button aria-label="Clear the selected color" class="clr-clear" id="clr-clear" type="button">
+    Clear
+   </button>
+   <button aria-label="Close color picker" class="clr-close" id="clr-close" type="button">
+    Insert
+   </button>
+   <div class="clr-preview" id="clr-color-preview">
+   </div>
+   <span hidden id="clr-open-label">
+    Open color picker
+   </span>
+   <span hidden id="clr-swatch-label">
+    Color swatch
+   </span>
+  </div>
+ </body>
+</html>

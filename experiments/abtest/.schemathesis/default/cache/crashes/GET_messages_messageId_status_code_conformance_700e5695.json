@@ -1,0 +1,112 @@
+{
+  "operation": "GET /messages/{messageId}",
+  "method": "GET",
+  "path_template": "/messages/{messageId}",
+  "fingerprint": "700e5695",
+  "case_id": "YMyHFI",
+  "code_sample": "curl -X GET -H 'X-Amz-Content-Sha256;' -H 'X-Amz-Date;' -H 'X-Amz-Algorithm;' -H 'X-Amz-Credential: [Filtered]' -H 'X-Amz-Security-Token: [Filtered]' -H 'X-Amz-Signature;' -H 'Authorization: [Filtered]' http://127.0.0.1:49590/messages/0",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:49590/messages/0",
+      "url_template": "http://127.0.0.1:49590/messages/{messageId}",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Amz-Content-Sha256": "",
+        "X-Amz-Date": "",
+        "X-Amz-Algorithm": "",
+        "X-Amz-Credential": "[Filtered]",
+        "X-Amz-Security-Token": "[Filtered]",
+        "X-Amz-Signature": "",
+        "Authorization": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "YMyHFI"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:28:08 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200, 480"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 7.840001489967108e-05,
+          "mode": "positive"
+        },
+        "components": {
+          "PATH": "positive",
+          "HEADER": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "All required and 6 optional properties",
+            "location": null,
+            "parameter": null,
+            "parameter_location": "HEADER",
+            "scenario": "object_required_and_optional"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [
+          [
+            "path",
+            "messageId"
+          ]
+        ],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "PATH": {
+            "messageId": "0"
+          },
+          "HEADER": {
+            "X-Amz-Content-Sha256": "",
+            "X-Amz-Date": "",
+            "X-Amz-Algorithm": "",
+            "X-Amz-Credential": "",
+            "X-Amz-Security-Token": "",
+            "X-Amz-Signature": "",
+            "Authorization": ""
+          }
+        }
+      },
+      "path": "/messages/{messageId}",
+      "path_parameters": {
+        "messageId": "0"
+      },
+      "query": {},
+      "case_headers": {
+        "X-Amz-Content-Sha256": "",
+        "X-Amz-Date": "",
+        "X-Amz-Algorithm": "",
+        "X-Amz-Credential": "[Filtered]",
+        "X-Amz-Security-Token": "[Filtered]",
+        "X-Amz-Signature": "",
+        "Authorization": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

@@ -1,0 +1,2165 @@
+<!DOCTYPE html>
+<html lang="en">
+ <head>
+  <style>
+   * { position: relative; margin: 0; padding: 0; box-sizing: border-box; }
+body { width: 75%; min-height: 100vh; margin: 0 auto; padding-bottom: 100px; color: #444; background-color:white;}
+:root { font-size: 16px; font-family: monospace; }
+
+header {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+#pagelink {
+    /* needed to make the $ the right color */
+    color: #805AC3;
+    font-size: 1.5em;
+    font-weight: bold;
+}
+
+h1, h2 {
+    color: black;
+}
+
+header nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+header nav a { margin-left: 20px; }
+
+#hero { 
+  display: flex; 
+  justify-content: space-between;
+  align-items: center;
+  max-width: 960px;
+  margin: 40px auto;
+}
+#hero h1 { font-size: 4rem; max-width: 640px; }
+
+#hero nav { 
+  display: flex; 
+  flex-direction: column;
+  width: 75%;
+  margin-left: 30px;
+}
+#hero nav h2 { font-size: 2rem; }
+
+section { max-width: 960px; margin: 0 auto; }
+
+#projects { display: flex; flex-wrap: wrap; padding-bottom: 25px; }
+#projects-list { display: flex; flex-wrap: wrap; padding-bottom: 25px; }
+#projects h2 { width: 100%;  color: #444;}
+.project { width: 25%; min-width: 200px; padding: 20px 10px; }
+.project img { display: inline-block; width: 1.5em; height: 1.5em; }
+.project h3 { display: inline-block; font-size: 1.5em; }
+.project a:hover { text-decoration: none; }
+.project > a > h3:hover { text-decoration: underline; }
+.repo-icons { float: right; }
+.repo-icons img:not(.nofilter) {
+  filter: invert(40%);
+}
+.author img { width: 1em; height: 1em; }
+
+.shell { text-transform: lowercase; font-family: monospace; }
+.prompt-sign:before { content: "$ "; }
+
+
+#tags { display: flex; flex-wrap: wrap;}
+.tag {
+  background-color: #ada3be;
+  margin: 5px 5px;
+  padding: 3px;
+  color: white;
+  cursor: pointer;
+}
+
+.tag-selected {
+  background-color: #805AC3;
+}
+
+.project-filtered {
+  /* border: 1px solid #805AC3; */
+  opacity: 0.5;
+}
+
+ul { margin: 20px; }
+#irc li { list-style-type: none; }
+.shell-list li:before { content: "$ "; font-family: monospace; }
+li { padding: 3px 0; }
+p { padding: 10px 0; }
+p, li { max-width: 75ch; font-family: sans-serif; }
+section > h2, section > h3 { padding-top: 15px; padding-bottom: 5px; }
+
+.button {
+  background-color: #805AC3;
+  margin: 10px 0;
+  padding: 10px;
+  background-position: calc(100% - 5px) center;
+  background-repeat: no-repeat;
+  background-size: 30px auto;
+  color: white;
+}
+
+.button.discord { background-image: url(/images/discord.svg); }
+.button.reddit  { 
+  background-image: url(/images/reddit.svg); 
+  background-size: auto 25px;
+}
+.button.irc { 
+  background-image: url(/images/irc.svg); 
+  background-size: 20px; 
+  background-position-x: calc(100% - 8px);
+}
+
+a { color: #805AC3; text-decoration: none; }
+a:hover { text-decoration: underline; }
+span.author, cite { display: block; font-style: italic; margin-bottom: 5px; }
+span.author:before { font-style: normal; content: "by "; }
+
+@media (max-width: 960px) {
+  header h1 { font-size: 1.25rem; }
+  #hero { flex-direction: column; }
+  #hero h1 { font-size: 3rem; text-align: center; margin-bottom: 30px; }
+  #hero h2 { text-align: center; }
+  #hero nav { margin-left: 0; }
+  #projects { justify-content: center; }
+  #projects h2 { text-align: center; }
+}
+
+@media (max-width: 720px) {
+  body { width: 90%; }
+  header { flex-direction: column; padding: 10px 0; }
+  header h1 { text-align: center; }
+  header nav { justify-content: center; margin-top: 10px; }
+  header nav a:first-child { margin: 0; }
+}
+
+@media (max-width: 360px) {
+  #hero h1 { font-size: 2rem; }
+}
+
+#pagelink::after {
+  content: "_";
+  animation: blinker 1.75s step-start infinite;
+}
+
+@keyframes blinker {
+  30% {
+    opacity: 0;
+  }
+}
+  </style>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>
+   Programming Language Design
+  </title>
+  <!-- Filter projects by tags -->
+ </head>
+ <body>
+  <header>
+   <span class="shell prompt-sign" id="pagelink">
+    <a>
+     [URL Redacted]
+    </a>
+   </span>
+   <nav>
+    <a>
+     Projects
+    </a>
+    <a>
+     Resources
+    </a>
+   </nav>
+  </header>
+  <section id="hero">
+   <h1>
+    Programming Language Design
+   </h1>
+   <nav>
+    <h2>
+     Join us!
+    </h2>
+    <a class="shell button prompt-sign reddit">
+     Subreddit
+    </a>
+    <a class="shell button prompt-sign irc">
+     IRC
+    </a>
+    <a class="shell button prompt-sign discord">
+     Discord
+    </a>
+   </nav>
+  </section>
+  <!-- Source of the many icons used here: https://github.com/simple-icons/simple-icons -->
+  <!-- Exceptions: The Libera, Reddit, IRC, and Discord icons. I don't know where those are from. -->
+  <section id="projects">
+   <h2>
+    Take a look at our projects
+   </h2>
+   <div data-all-tags="compiled,concurrent,first-class types,functional,imperative,interpreted,logic,multi-paradigm,non-programming language,object-oriented,parallel,pure,scripting,static types,strong types,systems" id="tags">
+    <div class="shell tag">
+     compiled
+    </div>
+    <div class="shell tag">
+     concurrent
+    </div>
+    <div class="shell tag">
+     first-class types
+    </div>
+    <div class="shell tag">
+     functional
+    </div>
+    <div class="shell tag">
+     imperative
+    </div>
+    <div class="shell tag">
+     interpreted
+    </div>
+    <div class="shell tag">
+     logic
+    </div>
+    <div class="shell tag">
+     multi-paradigm
+    </div>
+    <div class="shell tag">
+     non-programming language
+    </div>
+    <div class="shell tag">
+     object-oriented
+    </div>
+    <div class="shell tag">
+     parallel
+    </div>
+    <div class="shell tag">
+     pure
+    </div>
+    <div class="shell tag">
+     scripting
+    </div>
+    <div class="shell tag">
+     static types
+    </div>
+    <div class="shell tag">
+     strong types
+    </div>
+    <div class="shell tag">
+     systems
+    </div>
+   </div>
+   <!-- Liquid, the templating language, is incredibly underpowered. -->
+   <!-- What follows is very ugly code that is not possible to improve due to lack of features. -->
+   <div id="projects-list">
+    <div class="project" data-tags="compiled,first-class types,functional,static types,strong types" id="project-[Name Redacted]">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        [Name Redacted]
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      It is designed to be easy, yet powerful, compiling to LLVM and self-hosting. Our goal is for it to be faster than C and easier than Python.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-aec">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        AEC
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A low-level programming language with syntax inspired by BASIC and Ada. Right now, it can target x86 and WebAssembly.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-alox">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Alox
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      GPU-Accelerated, Distributed, Actor Model Language
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-amp">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Amp
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A minimalistic systems language for modern software
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-amun">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Amun
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A low-level programming language with a simple and productive design inspired by C/C++, Rust, Go, Jai.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-ante">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Ante
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A compiled systems language focusing on providing extensibility through the use of a compile-time API.
+     </p>
+    </div>
+    <div class="project" data-tags="interpreted,scripting,concurrent,parallel,multi-paradigm" id="project-argon">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Argon
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Argon is an interpreted multi-paradigm programming language. Its syntax is influenced by many modern languages and aims to be elegant, clean and simple to use.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-calypso">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Calypso
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Calypso is a mostly imperative language with some functional influences that is focused on flexibility and simplicity.
+     </p>
+    </div>
+    <div class="project" data-tags="compiled,pure,static types,strong types,imperative,multi-paradigm,systems" id="project-cella">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Cella
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A strongly-typed minimalistic systems programming language with semantic side-effects and minimal runtime overhead
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-c3">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        C3
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An evolution of C, adding modules, error handling and semantic macros.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-chaos">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Chaos
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Gitter" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="Libera.Chat" class="nofilter" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Strongly typed, dynamic yet compilable, test-oriented procedural programming language that achieves zero cyclomatic complexity.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-casc">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       CASC
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A JVM language focus on concise syntaxes and enhancing language features from Java.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-chika">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Chika
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      S-expression programming language, with VM targeting both PC and Arduino.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-closey">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Closey
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A functional language that aims to be as simple as possible but as efficient and user friendly as possible.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-cognate">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Cognate
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A highly readable quasi-concatenative dynamic language.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-cone">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Cone
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A fast, fit, friendly, and safe systems programming language to power the 3D web.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-core">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Core
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      a modern, minimal programming language
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-dyvil">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Dyvil
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A multi-paradigm, general purpose language for the JVM, with an extensible syntax.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-egel">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Egel
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An interpreter for eager untyped combinator rewriting implemented in C++.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-fennel">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Fennel
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Libera.Chat" class="nofilter" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A lisp which compiles to Lua with zero overhead, revived by technomancy.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-firefly">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Firefly
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Full-stack language with colorless async/await and object capabilities.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-forthscript">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       ForthScript
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Simple yet powerful concatenative stack-based scripting lang with code-as-data paradigm. Aims to run on bare metal like FORTH!
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-funcsug">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        FuncSug
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An alternative to event-driven programming that resolves the callback hell and the state management problem thanks to very structured concurrency and await-event instructions.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-futhark">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Futhark
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A high-performance parallel functional array language targeting GPUs.
+     </p>
+    </div>
+    <div class="project" data-tags="compiled,strong types,static types,object-oriented,imperative,multi-paradigm,interpreted" id="project-gera">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Gera
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A high-level, procedural, compiled and garbage collected programming language without type annotations.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-gwion">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Gwion
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A strongly-timed musical programming language
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-hascal">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Hascal
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Hascal is a general purpose and open source programming language designed to build optimal, maintainable, reliable and efficient software.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-h-hat">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        H-hat
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A quantum programming language aimed to build quantum algorithms through a higher abstraction layer.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-hook">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Hook
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An imperative, cross-platform, dynamically typed scripting language that utilizes a mutable value semantics approach.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-horse64">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Horse64
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Git" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Dynamically typed but orderly, reducing chaos in large projects. A grounded Python-alike.
+     </p>
+    </div>
+    <div class="project" data-tags="non-programming language" id="project-ilo token">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        ilo Token
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A rule-based dictionary-based Toki Pona to English translator that translates into multiple English outputs showing many possible grammatical and semantic interpretation of the text. No machine learning involved.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-imp">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Imp
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A statically typed and compiled scripting language with the goal of increasing programmer confidence.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-inko">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Inko
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitLab" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A gradually typed, interpreted, object-oriented language drawing inspiration from many others.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-insitux">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Insitux
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Extensible s-expression scripting language written in portable TypeScript.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-jank">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        jank
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A Clojure dialect hosted on LLVM with native C++ interop.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-jazz">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Jazz
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A systems programming language with a JIT and AOT compiler that uses GCCJIT as backend.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-jinx">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Jinx
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A clean, embeddable scripting language designed with an asynchronous and thread-safe execution model.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-kitten">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Kitten
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A statically typed concatenative language with effect types.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-peridot">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Peridot
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A fast functional language based on two level type theory
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-lesma">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Lesma
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A fast compiled, statically typed, pythonesque programming language.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-lobster">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Lobster
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Flow-senstitive type inference, specialization, compile-time reference counting, and Python-y syntax.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-manool">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        MANOOL
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Programming language that combines high abstraction power with great control over asymptotic complexity and performance of your programs
+     </p>
+    </div>
+    <div class="project" data-tags="compiled,logic,pure,static types,strong types" id="project-mercury">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Mercury
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A logic/functional programming language with advanced static analysis and error detection features.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-mlatu">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Mlatu
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Statically-typed, purely-functional, concatenative
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-monte">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Monte
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A dynamic programming language inspired by Python and E.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-mu">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Mu
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A purely statement-oriented language (like Basic) designed for teaching programming 1-on-1.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-mushroom">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Mushroom
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitLab" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An experimental functional programming language with an emphasis on type inference and aesthetic syntax.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-myrddin">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Myrddin
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A systems language aiming to fit in a similar niche to C, but with fewer bullets in your feet.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-never">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Never
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A simple syntactically-scoped, strongly-typed, call-by-value, functional language.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-ngs">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        NGS
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Next Generation Shell, an alternative to many scripting languages, with syntax for idempotent resource manipulation.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-nib">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Nib
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A semi-concatenative that extends array language features such as tacit programming and scalar extension.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-okta">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Okta
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Compiled, imperative and general-purpose programming language that aims to provide a simple platform to create efficient software.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-oopsilon">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Oopsilon
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Dynamic object language modelled after Smalltalk, with a gradual typing system affording expressiveness rivalling ML or Haskell.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-owen">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Owen
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A language close to C with modern touches.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-oxyl">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        oXyl
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitLab" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A functional language designed to work on parallel CPU and GPGPU using a functional paradigm and context system to contain side effects.
+     </p>
+    </div>
+    <div class="project" data-tags="compiled,concurrent,parallel,pure,static types,strong types" id="project-plasma">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Plasma
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A language that balances functional and imperative programming, and has state-of-the-art concurrency and parallelism features.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-pikelet">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Pikelet
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Gitter" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A friendly little systems language with first-class types and unboxed data.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-pisc">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        PISC
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An attempt to make concatenative programming less mind-bendy via locals, closures, and syntactic sugar.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-pointless">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Pointless
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A scripting language for learning and fun. Designed for teaching and exploring functional programming.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-popr">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Popr
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Concatenative programming for types as well as values, striving for purity, correctness, and efficient execution.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-psyche-c">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Psyche-c
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A compiler for incomplete C code.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-pyash">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Pyash
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitLab" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A language based on linguistic universals for totally taking over the world.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-rebuild">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Rebuild
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A project to experiment with and build the ultimate systems programming language.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-rhovas">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Rhovas
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An experimental programming language for API design.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-ricscript">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       RicScript
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A dynamically typed interpreted scripting language.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-riff">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Riff
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A dynamically typed programming language designed primarily for prototyping and command-line usage.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-ry">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Ry
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An open source programming language for web development with expressive type system similar to Rust.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-saltwater">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Saltwater
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A C compiler written in Rust.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-sixten">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Sixten
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A dependently typed language where all data is unboxed by default. Functional programming with fewer indirections!
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-snowball">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Snowball
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      🐱 Snowball is a low-weight, statically typed, object oriented programming language with garbage collector and module system.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-sophie">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Sophie
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Call-by-need statically-duck-typed pure-functional actor language named for French mathematician Sophie Germain.
+     </p>
+    </div>
+    <div class="project" data-tags="freestanding,memory,cross-architecture,object-oriented,bytecode-compiled,runtime" id="project-sphere">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Sphere
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Cross-architecture, freestanding and light-weight OOP Language made for OS and general software development with Direct Memory Manipulation
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-star">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Star
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An experimental programming language that's made to be powerful, productive, and predictable.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-swallow">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Swallow
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An easy to use systems programming language with python-like syntax
+     </p>
+    </div>
+    <div class="project" data-tags="compiled,functional,static types" id="project-theta">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Theta
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A statically typed, functional programming language that compiles to WebAssembly.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-topshell">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        TopShell
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Purely functional scripting language with structural types, type inference, reactive streams and visualization.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-truck">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Truck
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Truck is a dynamic programming language with a focus on simplicity.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-valkyrie">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Valkyrie
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Valkyrie is a multi-stage gradual typed language with first class continuation and effect system.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-vox">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Vox
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      Statically typed compiled language inspired by D. Both JIT and AOT compilation. Can be used for scripting in D programs.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-wlambda">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        WLambda
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An embeddable dynamic scripting language for Rust. Every value can be called and the syntax is a blend of Perl, Lua, JavaScript and LISP.
+     </p>
+    </div>
+    <div class="project" data-tags="" id="project-wu">
+     <span class="title">
+      <img alt="" src="rick.jpg"/>
+      <h3>
+       Wu
+      </h3>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="Discord" src="rick.jpg"/>
+      </a>
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      An expression oriented, gradually typed, sweet, and mission-critical programming language.
+     </p>
+    </div>
+    <div class="project" data-tags="compiled,static types,safe" id="project-ü">
+     <span class="title">
+      <a>
+       <img alt="" src="rick.jpg"/>
+       <h3>
+        Ü
+       </h3>
+      </a>
+     </span>
+     <span class="repo-icons">
+      <a>
+       <img alt="GitHub" src="rick.jpg"/>
+      </a>
+     </span>
+     <span class="author">
+      [Name Redacted]
+     </span>
+     <p>
+      A statically-typed C++/Rust-like compiled language. Main goals are safety and speed.
+     </p>
+    </div>
+   </div>
+  </section>
+  <section id="irc">
+   <h2>
+    #proglangdesign on irc.libera.chat
+   </h2>
+   <h3 id="join-irc">
+    Joining the IRC channel
+   </h3>
+   <p>
+    There are many ways to connect to IRC. You can:
+   </p>
+   <ul class="shell-list">
+    <li>
+     Install one of the
+      (
+     <a>
+      many!
+     </a>
+     )
+      available IRC clients.
+    </li>
+    <li>
+     Use
+     <a>
+      riot.im
+     </a>
+     (join #proglangdesign:libera.chat)
+    </li>
+    <li>
+     Join the
+     <a>
+      #proglangdesign channel
+     </a>
+     with a web-based client.
+    </li>
+   </ul>
+   <p>
+    You may also wish to peruse this
+    <a>
+     excerpt from a documentary on IRC.
+    </a>
+   </p>
+   <h3 id="irc-bots">
+    IRC Bots
+   </h3>
+   <p>
+    No channel is complete without a collection of noisy bots. They are also a good way to show off your programming language.
+   </p>
+   <ul>
+    <li>
+     <span class="shell">
+      <a>
+       egelbot
+      </a>
+      :
+     </span>
+     Speaks
+     <a>
+      Egel
+     </a>
+     .
+    </li>
+    <li>
+     <span class="shell">
+      <a>
+       popr
+      </a>
+      :
+     </span>
+     Speaks
+     <a>
+      Popr
+     </a>
+     .
+      Also supports interactive programs.
+    </li>
+    <li>
+     <span class="shell">
+      <a>
+       sturluson
+      </a>
+      :
+     </span>
+     Speaks
+     <a>
+      Futhark
+     </a>
+     .
+    </li>
+    <li>
+     <span class="shell">
+      <a>
+       gwionbot
+      </a>
+      :
+     </span>
+     Speaks
+     <a>
+      Gwion
+     </a>
+     .
+    </li>
+   </ul>
+   <p>
+    To try out a bot, simply say
+    `
+    <code>
+     botname: some &lt;lang&gt; code
+    </code>
+    `.
+   </p>
+  </section>
+  <section id="resources">
+   <h2>
+    Resources
+   </h2>
+   <h3 id="wiki">
+    PLD Wiki
+   </h3>
+   <p>
+    We have a
+    <a>
+     wiki
+    </a>
+    ! Only members of the GitHub organization can
+    <a>
+     edit the wiki
+    </a>
+    .
+   </p>
+   <h3 id="join-github">
+    Joining the GitHub organization
+   </h3>
+   <p>
+    If you are a regular on #proglangdesign, ask hackerfoo for an invitation
+    to the
+    <a>
+     GitHub organization
+    </a>
+    .
+    GitHub organization membership is necessary to edit the wiki, or
+    <a>
+     modify this website
+    </a>
+    without needing to make a pull request.
+   </p>
+   <h3 id="handy-links">
+    Handy Links
+   </h3>
+   <ul>
+    <li>
+     <a>
+      Practical Foundations for Programming Languages (PDF)
+     </a>
+     is a very comprehensive introduction to programming language theory.
+    </li>
+    <li>
+     <a>
+      Lambda the Ultimate
+     </a>
+     ,
+      probably the oldest programming languages weblog out there.
+    </li>
+    <li>
+     <a>
+      Crafting Interpreters
+     </a>
+     ,
+      an online, in progress book by Bob Nystrom explaining how to create interpreters and compilers from both Java and
+      C, from scratch.
+    </li>
+   </ul>
+  </section>
+ </body>
+</html>

@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="ko">
+ <head>
+  <style>
+
+body {
+    font-family: "Noto Sherif KR", sans-serif !important;
+    background: #ffffff;
+    background-color: #ffffff;
+	border-style: none;
+	margin: auto;
+	max-width: 750px;
+    word-break: keep-all;
+}
+
+.noti {
+    font-size: small;
+    color: black;
+    background-color: rgb(234, 234, 234);
+    padding: 15px;
+    margin-top: 15px;
+    line-height: 160%;
+}
+
+header {
+    margin-left: 3px;
+    margin-right: 3px;
+    margin-top: 5px;
+    margin-bottom: 15px;
+    padding: 15px;
+    color: #0042A1;
+}
+
+header a {
+    text-decoration: none;
+}
+
+header .title {
+    font-weight: bold;
+    font-size: x-large;
+    color: #0042A1;
+
+    /* border-left-width: 5px;
+    border-left-style: solid;
+    border-left-color: #0042A1;
+    padding-left: 10px; */
+}
+
+header img.logo {
+    margin-right: 1px;
+    width: 38px;
+    height: 38px;
+    vertical-align: middle;
+    transform: translate(0px, -3px);
+}
+
+header img.title {
+    margin-right: 1px;
+    width: 128px;
+    /* height: 28px; */
+    vertical-align: middle;
+    transform: translate(0px, -3px);
+    background-color: #193B82;
+    padding: 3px;
+    border-radius: 3px;
+}
+
+
+header .subtitle {
+    font-weight: bold;
+    font-size: medium;
+    color: rgb(99, 99, 99);
+}
+
+header .charnum {
+    font-weight: bolder;
+    font-size: x-large;
+    color: #F8D548;
+    -webkit-text-stroke: 1px black;
+}
+
+nav {
+    margin-top: 5px;
+    margin-bottom: 5px;
+    line-height: 180%;   
+}
+
+nav img {
+    width: 20px;
+    opacity: 0.75;
+}
+
+nav .sections {
+    margin-bottom: 10px;
+    text-align: center;
+    text-align: center;
+
+    width: 100%;
+    border-radius: 5px;
+
+    font-weight: bold;
+    font-size: large;
+}
+
+nav .sections div {
+
+    position: relative;
+    display: inline-block;
+
+    margin-left: 5px;
+    margin-right: 5px;
+    padding: 5px;
+    width: 40%;
+    text-align: center;
+
+    transition: 0.25s;
+}
+
+nav .section_selected {
+    color: white;
+    /* background-color: rgb(99, 99, 99); */
+    background-color: rgb(69, 69, 69);
+
+    box-shadow: 2px 2px 2px 2px lightgray;
+    border-radius: 10px;
+
+    /* transform: translate(0px, -2px); */
+}
+
+nav .section_selected:hover {
+    transform: translate(0px, -3px);
+}
+
+nav .section_normal {
+    color: rgb(68, 68, 68);
+    /* transform: translate(0px, 2px); */
+
+    border-color: #F3F3F4;
+    border-radius: 10px;
+    border-width: 1px;
+    border-style: solid;
+}
+
+
+nav .section_normal:hover {
+    color: black;
+    transform: translate(0px, -3px);
+
+    box-shadow: 2px 2px 2px 2px lightgray;
+    border-radius: 10px;
+}
+
+#tags {
+    clear: both;
+    /* margin-top: 25px; */
+    /* white-space: nowrap;
+    overflow: auto;  */
+    margin: 5px;
+}
+
+#tags button {
+    position: relative;
+    display: inline-block;
+    border: none;
+    padding: 8px 10px 8px 10px;
+    text-decoration: none;
+    font-size: medium;
+    transition: 0.25s;
+    margin: 4px 4px 4px 4px;
+
+    border-radius: 50vh;
+}
+
+.tag {
+    color: #3982C1;
+    background-color: #F2F9FE;
+}
+
+.tag:hover {
+    color: #2C679D;
+    background-color: #E3F1FD;
+    box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2);
+}
+
+.tag_special {
+    font-weight: bold;
+    color: rgb(255, 0, 242);
+    background-color: rgb(247, 247, 247);
+}
+
+.tag_special:hover {
+    color: black;
+    background-color: darkgray;
+    box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2);
+}
+
+.tag_selected {
+    background-color: #00A0E2;
+    color: white;
+    box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2);
+}
+
+#pledges_message {
+    text-align: center;
+    padding-top: 100px;
+    padding-bottom: 100px;
+    font-size: x-large;
+    font-weight: normal;
+    color: rgb(68, 68, 68);
+    line-height: 200%;
+}
+
+#pledges_message span {
+    color: #00A0E2;
+    font-weight: bolder;
+    font-size: xx-large;
+}
+
+.pledge {
+    margin: 15px;
+    background-color: white;
+    box-shadow: 0 5px 5px #F3F3F4;
+    border-radius: 15px;
+    border-color: #F3F3F4;
+    border-width: 1px;
+    border-style: solid;
+    transition: 0.25s;
+}
+
+.pledge:hover {
+    background-color: #E3F1FD;
+}
+
+.pledge_expandable {
+    padding: 5px;
+    margin: 5px;
+}
+ 
+.pledge_intro {
+    padding: 10px;
+    margin: 5px;
+}
+
+.pledge_poster {
+    float: inline-start;
+    width: 50px;
+}
+
+.pledge_poster img {
+    width: 50px;
+    height: 50px;
+    border-radius: 5px;
+}
+
+.pledge_text {
+    padding-left: 15px;
+    padding-right: 15px;
+    text-align: center;
+}
+
+.pledge_location {
+    color: #0B68B3;
+    font-size: x-large;
+    font-weight: bold;
+}
+
+.pledge_title {
+    margin-bottom: 5px;
+    color: black;
+    font-size: x-large;
+    font-weight: bold;
+}
+
+.pledge_description {
+    margin-top: 15px; 
+    font-size: large;
+    line-height: 150%;
+    color: rgb(112, 110, 110);   
+}
+
+.pledge_more {
+    text-align: center;
+}
+
+.pledge_more img {
+    width: 20px;
+    height: 20px;
+    opacity: 0.55;
+}
+
+.links {
+    display: none;
+    transition: 0.25s;
+}
+
+.link_website {
+    margin-top: 20px;
+    margin-bottom: 20px;
+    margin-left: 0px;
+    margin-right: 0px;
+    padding-top: 15px;
+    padding-bottom: 15px;
+}
+
+.link_website a {
+    text-decoration: none;
+    color: white;
+    background-color:#0B68B3;
+    padding: 15px;
+    margin: 20px;
+    border-radius: 10px;
+    line-height: 180%;
+}
+
+.link_website a img {
+    width: 15px;
+    margin-left: 10px;
+    margin-right: 5px;
+}
+
+.links div {
+    text-align: center;
+    margin-top: 15px;
+    margin-bottom: 15px;
+}
+
+.links img {
+    width: 100%;
+    max-width: 950px;
+}
+
+.links iframe {
+    width: 100%;
+    max-width: 950px;
+    height: 320px;
+}
+
+.pledge_fold {
+    text-align: center;
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+.pledge_fold img {
+    width: 15px;
+    opacity: 0.35;
+    margin-right: 5px;
+}
+
+#pledges_gotop {
+    text-align: center;
+    margin: 35px 15px 35px 15px ;
+    padding: 10px;
+    border-width: 1px;
+    border-style: dotted;
+    border-color: lightgray;
+    transition: 0.25s;
+    color: #00A0E2;
+}
+
+#pledges_gotop:hover {
+    background-color: #E3F1FD;
+}
+
+#pledges_gotop img {
+    width: 35px;
+    opacity: 0.45;
+}
+
+#pledges_gotop_tags {
+    margin-top: 30px;
+    color: rgb(112, 110, 110);
+    font-size: small;
+    line-height: 150%;
+}
+
+footer {
+    text-align: center;
+    margin-top: 15px;
+    margin-bottom: 15px;
+    padding-left: 20px;
+    padding-right: 15px;
+    font-size: small;
+    
+    color: rgb(112, 112, 112);
+}
+
+footer h4 {
+    margin-top: 15px;
+}
+
+footer a {
+    color: rgb(112, 112, 112);
+}
+
+footer a:hover {
+    font-weight: bold;
+}
+
+footer .sharing {
+    text-align: center;
+    margin: 5px;
+}
+
+footer .sharing img {
+    padding:15px;
+    width: 32px;
+}
+
+footer .credit img {
+    width: 90%;
+    max-width: 120px;
+    /* border-radius: 50%;    */
+    margin-top: 15px;
+}
+
+footer .creators {
+    width: 100%;
+
+}
+
+footer .creator {
+    vertical-align: top;
+    position: relative;
+    display: inline-block;
+    width: 40%;
+}
+
+footer .name {
+    font-weight: bold;
+    font-size: large;
+}
+
+footer .thanks {
+    clear: both;
+}
+
+
+footer .credit a {
+    text-decoration: none;
+}
+
+footer .credit {
+    margin-bottom: 25px;
+}
+  </style>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1.0, user-scalable=no" name="viewport">
+  <meta content="#FFFFFF" name="theme-color">
+  <meta content="이재명 후보의 공약을 관심주제에 맞추어 보여드립니다" name="description">
+  <meta content="공약한판정리" property="og:title">
+  <meta content="이재명 후보의 공약을 관심주제에 맞추어 보여드립니다" property="og:description">
+  <meta content="" property="og:image">
+  <title>
+   제20대 대통령선거 공약한판정리 기호1번 이재명
+  </title>
+  <!-- Global site tag (gtag.js) - Google Analytics -->
+ </head>
+ <body>
+  <header id="header" onclick="reloadPage();">
+   <div class="title">
+    <img alt="이재명" class="logo" src="rick.jpg">
+    <img alt="공약한판정리" class="title" src="rick.jpg">
+    <span class="subtitle">
+     제20대 대통령선거
+    </span>
+    <span class="subtitle">
+     기호
+     <span class="charnum">
+      1
+     </span>
+     번 이재명
+    </span>
+   </div>
+  </header>
+  <nav>
+   <div class="sections">
+    <div class="section_selected" id="section_0" onclick="selectSection(0);">
+     관심분야
+    </div>
+    <div class="section_normal" id="section_1" onclick="selectSection(1);">
+     우리지역
+    </div>
+   </div>
+   <div id="tags">
+    <button class="tag" onclick="selectTag('건강')">
+     건강
+    </button>
+    <button class="tag" onclick="selectTag('남성')">
+     남성
+    </button>
+    <button class="tag" onclick="selectTag('노후')">
+     노후
+    </button>
+    <button class="tag" onclick="selectTag('농수산')">
+     농수산
+    </button>
+    <button class="tag" onclick="selectTag('반려동물')">
+     반려동물
+    </button>
+    <button class="tag" onclick="selectTag('부동산')">
+     부동산
+    </button>
+    <button class="tag" onclick="selectTag('산업')">
+     산업
+    </button>
+    <button class="tag" onclick="selectTag('생활편의')">
+     생활편의
+    </button>
+    <button class="tag" onclick="selectTag('세금')">
+     세금
+    </button>
+    <button class="tag" onclick="selectTag('안전')">
+     안전
+    </button>
+    <button class="tag" onclick="selectTag('여성')">
+     여성
+    </button>
+    <button class="tag" onclick="selectTag('육아')">
+     육아
+    </button>
+    <button class="tag" onclick="selectTag('장애인')">
+     장애인
+    </button>
+    <button class="tag" onclick="selectTag('정의')">
+     정의
+    </button>
+    <button class="tag" onclick="selectTag('지역균형')">
+     지역균형
+    </button>
+    <button class="tag" onclick="selectTag('청년')">
+     청년
+    </button>
+    <button class="tag" onclick="selectTag('취업노동')">
+     취업노동
+    </button>
+    <button class="tag" onclick="selectTag('투자')">
+     투자
+    </button>
+    <button class="tag" onclick="selectTag('학업')">
+     학업
+    </button>
+    <button class="tag" onclick="selectTag('환경')">
+     환경
+    </button>
+    <button class="tag" onclick="selectTag('휴식')">
+     휴식
+    </button>
+   </div>
+  </nav>
+  <main>
+   <div id="pledges_message">
+    &ldquo;나의
+    <span>
+     [&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;]
+    </span>
+    를 위한 약속&rdquo;
+   </div>
+   <div id="pledges">
+   </div>
+   <div id="pledges_gotop" onclick="moveToTop();">
+    <div>
+     <img alt="위로 화살표" src="rick.jpg">
+    </div>
+    <div id="gotop_message">
+     관심분야를 선택하세요
+    </div>
+    <div id="pledges_gotop_tags">
+     <span>
+      #건강
+      <span>
+       #남성
+       <span>
+        #노후
+        <span>
+         #농수산
+         <span>
+          #반려동물
+          <span>
+           #부동산
+           <span>
+            #산업
+            <span>
+             #생활편의
+             <span>
+              #세금
+              <span>
+               #안전
+               <span>
+                #여성
+                <span>
+                 #육아
+                 <span>
+                  #장애인
+                  <span>
+                   #정의
+                   <span>
+                    #지역균형
+                    <span>
+                     #청년
+                     <span>
+                      #취업노동
+                      <span>
+                       #투자
+                       <span>
+                        #학업
+                        <span>
+                         #환경
+                         <span>
+                          #휴식
+                         </span>
+                        </span>
+                       </span>
+                      </span>
+                     </span>
+                    </span>
+                   </span>
+                  </span>
+                 </span>
+                </span>
+               </span>
+              </span>
+             </span>
+            </span>
+           </span>
+          </span>
+         </span>
+        </span>
+       </span>
+      </span>
+     </span>
+    </div>
+   </div>
+  </main>
+  <footer>
+   <div class="sharing">
+    <a onclick="shareFacebook()">
+     <img alt="페이스북으로 공유하기" src="rick.jpg">
+    </a>
+    <a onclick="shareKakaoTalk()">
+     <img alt="카카오톡으로 공유하기" src="rick.jpg">
+    </a>
+    <a onclick="shareTelegram()">
+     <img alt="텔레그램으로 공유하기" src="rick.jpg">
+    </a>
+    <a onclick="shareLink()">
+     <img alt="웹사이트 주소 공유하기" src="rick.jpg">
+    </a>
+   </div>
+   <div>
+    이 웹사이트는 공개된 정보를 사용합니다. 
+                오픈된 소스 확인 및 제안은
+    <a rel="noopener noreferrer" target="_blank">
+     GitHub 저장소
+    </a>
+    를 확인하세요.
+   </div>
+   <div class="credit">
+    <h4>
+     개인 프로젝트로 만든 웹사이트입니다.
+    </h4>
+    <div class="creators">
+     <div class="creator">
+      <a rel="noopener noreferrer" target="_blank">
+       <div>
+        <img alt="김윤이 사진" src="rick.jpg">
+       </div>
+       <div class="name">
+        김윤이
+       </div>
+       <div>
+        더불어민주당1호 국가인재영입
+       </div>
+       <div>
+        (주)뉴로어소시에이츠 CEO
+       </div>
+      </a>
+     </div>
+     <div class="creator">
+      <a rel="noopener noreferrer" target="_blank">
+       <div>
+        <img alt="박종욱 사진" src="rick.jpg">
+        <br>
+       </div>
+       <div class="name">
+        박종욱
+       </div>
+       <div>
+        클리앙 닉네임 얼음폭탄
+       </div>
+       <div>
+        (주)뉴로어소시에이츠 CTO
+       </div>
+      </a>
+     </div>
+    </div>
+   </div>
+   <div class="thanks">
+    <a>
+     나를위해이재명.com
+    </a>
+    주소를 연결해주신 
+                디씨인사이드 이재명 갤러리의 도메인 님께 감사드립니다.
+   </div>
+   <div>
+    <h4>
+     참고자료
+    </h4>
+    <div>
+     <a>
+      더불어민주당 이재명 후보 공약 목록(백업)
+     </a>
+     &middot;
+     <a>
+      재명이네 마을 공약센터(백업)
+     </a>
+     &middot;
+     <a>
+      이재명 후보 페이스북
+     </a>
+     &middot;
+     <a>
+      이재명 후보 블로그
+     </a>
+     &middot;
+     <a>
+      이재명 후보 유튜브
+     </a>
+     &middot;
+     <a>
+      재명이네 소극장 유튜브
+     </a>
+     &middot;
+     <a>
+      더불어민주당 유튜브
+     </a>
+     &middot;
+     <a>
+      정철 카피라이터 페이스북
+     </a>
+    </div>
+    <div>
+     <h4>
+      문의
+     </h4>
+     <a>
+      [Email Redacted]
+     </a>
+    </div>
+   </div>
+   <article class="noti">
+    2022년 3월 9일, 제20대 대통령선거가 치뤄졌습니다. 
+                이재명 후보의 공약들은 이곳에 기록으로 남겨둡니다. 
+                그동안 공약한판정리에 좋은 의견을 주신 분들과, 
+                여기 정보들을 통해 소중한 한 표를 결정하신 모든 분들께 감사드립니다.
+   </article>
+  </footer>
+ </body>
+</html>

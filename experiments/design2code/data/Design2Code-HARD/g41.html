@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <style>
+   table.docco{width:100%;table-layout:fixed}table.docco td.docs,table.docco th.docs{border:0}table.docco td.code,table.docco th.code{border:0;padding:14px 15px 16px 25px}.docco th.docs,.docco td.docs{width:26%;padding:10px 25px 1px 0px}.docco th.code,.docco td.code{width:74%}.pilwrap{position:relative}.pilcrow{position:absolute;top:3px;left:-20px;padding:1px 2px;opacity:0;-webkit-transition:opacity 0.2s linear;font:12px Arial;text-decoration:none}.docs:hover .pilcrow{opacity:1}.docs{padding-left:0}.code,.code code{background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px}.docs code{font-size:12px}
+
+
+
+body{margin:0;padding:0;font-size:100%;line-height:1}h1,h2,h3,h4,h5{margin-top:0}p{margin-top:0}table{border-collapse:collapse;border-spacing:0}th{font-weight:normal}figure,pre{margin:0}.header{background-color:#8A4182;width:100%;overflow:visible}.header .header-logo-wrapper{position:absolute;top:0;right:0;max-height:100%;overflow:hidden}.header .header-logo{width:500px;opacity:0.25}.header .header-title{margin-left:30px;position:absolute;top:50%;transform:translateY(-50%)}.header.small-header{position:sticky;top:0;height:80px}.header.small-header .header-title{height:95%}.header.small-header .header-title img{height:100%}.header.big-header{position:relative;height:300px}.header.big-header .header-logo{height:500px}.header.big-header .header-title-text{margin-top:-20px;margin-left:200px;color:white;font-size:30px}.search-wrapper{position:absolute;top:12px;right:30px}input[name=search]{font-size:1.2rem;border:0;width:250px;margin-left:1px;margin-right:1px;padding:2px 6px}.searchResults{position:absolute;z-index:100;background:white;font-size:1.2rem;box-sizing:border-box;width:100%;margin-top:0;border:1px solid #8A4182;line-height:1.3}.searchResults li a{display:block;padding:2px 4px;text-decoration:none}.searchResults li a:hover{text-decoration:none;background:#DDD}.menu{border-bottom:3px solid #8A4182;background:white;padding:0 30px;display:flex;flex-direction:row;align-items:center;height:3em}.menu a.menu-option{text-transform:uppercase;text-decoration:none;color:#8A4182;margin-left:10px;flex-grow:1;flex-shrink:0}.menu a.menu-option:hover{text-decoration:none;opacity:0.75}.menu .home{flex-grow:5}.menu .home img:hover{opacity:0.75}body{font-family:Helvetica, sans-serif;display:flex;flex-direction:column;align-items:stretch;color:#4d4d4d;background-color:#f5f5f5;min-height:100vh;min-width:650px}.main-content{margin:0;background-color:white;flex-grow:1;display:flex;flex-direction:row;align-items:flex-start;align-content:flex-start;justify-content:space-between;flex-wrap:wrap;padding:30px}.main-content a{color:#8A4182}.main-content a:visited{color:#8A4182}h1,h2,h3,h4,h5{font-weight:normal}h1{font-size:32px;width:100%;margin-bottom:20px}h2{font-size:24px;width:100%;margin-top:15px;margin-bottom:20px}h3,.api-docs-versions li{font-size:20px;width:100%;margin-top:10px;margin-bottom:10px}.api-docs-versions{margin-left:15px;padding-left:0;list-style:none}h4{font-size:18px;width:100%;margin-top:10px;margin-bottom:8px}h5{font-size:16px}.footer-wrapper{background-color:white;flex-shrink:0;padding:0 30px}.footer{display:flex;flex-direction:row;align-items:center;justify-content:space-between;padding:30px 0 15px}.footer a{color:#8A4182;text-decoration:none}.footer a:hover{opacity:0.75}a.button{display:inline-block;padding:10px 20px;text-transform:uppercase;text-decoration:none;background-color:#8A4182;color:white;white-space:nowrap}a.button:hover{text-decoration:none}a.button:visited{color:white}a.github{text-decoration:none;display:inline-block;vertical-align:bottom;float:right}@media (min-width: 1000px){body{align-items:center}.menu,.main-content,.footer-wrapper{width:950px;border-left:1px solid #8A4182;border-right:1px solid #8A4182}}.warning{box-sizing:border-box;width:100%;margin:0;padding:10px 30px;border:3px solid #d21515;background:#f3d3d3;line-height:1.4}.warning a{color:#8A4182}.anchorjs-link{color:#8A4182;text-decoration:none}@media (max-width: 768px){.anchorjs-link{display:none}}ul li{list-style-type:disc}table thead tr{background-color:#ddd}table td,table th{border:1px solid #ddd;margin:0;text-align:left;vertical-align:baseline;padding:4px 6px;display:table-cell;background-color:transparent}table td code,table th code{font-size:14px}table th{border-right:1px solid #aaa}table th:last-child{border-right-color:#ddd}.not-found{display:flex;flex-direction:column;align-content:center;align-items:center;justify-content:flex-start}.not-found h1{width:auto}.reasons{background-color:#f5f5f5;color:#4d4d4d;height:100px;flex-grow:0}.reasons .reason{width:25%;margin:0 20px;text-align:left}.reasons .reason h5{margin-bottom:10px;font-weight:bold}.example-code{background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px;width:55%;flex-grow:0;flex-shrink:0;padding:10px}.example-text{text-align:left;flex-grow:0;flex-shrink:0;width:35%;padding:10px}.example-text-links{margin-top:5em}.example-text-label{font-size:32px;margin-bottom:.5em;text-align:center}.option{width:100%;margin-bottom:30px}.option h2{font-size:1.1rem;margin-bottom:10px;color:#8A4182;text-transform:uppercase}.option p{margin-bottom:1rem}.option pre{background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px;padding:10px;margin-bottom:1rem}.support-channels{max-width:40%}.support-channels a{display:block;margin:15px 0}.twitter{width:400px}.api-docs a{color:#8A4182;text-decoration:none}.api-docs a:hover{text-decoration:underline}.api-docs h2{font-size:24px;font-weight:700;margin:0 0 10px 0}.api-docs h3{font-size:20px;font-weight:700;margin:0 0 10px 0}.api-docs h3.subsection-title{margin:2em 0.5em}.api-docs h4{font-size:18px;font-weight:700;margin:2em 0 0.5em}.api-docs h5{font-size:16px;font-weight:700;margin:0.5em 0}.api-docs em{font-style:italic}.api-docs ul,.api-docs ul li{margin:0;padding:0;list-style-type:none}.api-docs code,.api-docs tt,.api-docs kdb,.api-docs samp,.api-docs .name,.api-docs .signature{font-family:Consolas, Monaco, monospace}.api-docs .class-description{font-size:120%;line-height:1.3;margin:1em 0}.api-docs .description{margin:0.75em 0}.api-docs .type-signature{color:#aaa}.api-docs .signature-attributes{font-size:60%;color:#aaa;font-style:italic;font-weight:lighter;margin-left:4px}.api-docs .prettyprint{border:1px solid #aaa;overflow:auto}.api-docs .prettyprint code{line-height:1.1;padding:4px 12px;display:block}.api-docs dl{margin-bottom:40px}.api-docs dl:after{content:"";display:block;clear:both}.api-docs dt{width:120px;float:left}.api-docs dd{margin-left:40px}.api-docs .details{margin-top:14px;border-left:2px solid #ddd}.api-docs .details dt{padding-left:10px;padding-top:6px}.api-docs .details ul{margin:0}.api-docs .details ul{list-style-type:none}.api-docs .details li{margin-left:30px;padding-top:6px}.api-docs .details pre.prettyprint{margin:0}.api-docs .details .object-value{padding-top:0}.api-docs p{margin:10px 0}.api-docs nav{margin-right:2em;line-height:1.2}.api-docs nav h2{display:none}.api-docs nav ul{margin-bottom:10px}.api-docs nav ul a{font-family:Consolas, Monaco, monospace;font-size:14px;color:black}.api-docs .docs{flex:1;overflow-x:hidden}.api-docs .docs pre{margin:15px 0 15px;padding-left:15px}.api-docs .docs p tt,.api-docs .docs p code{background:#f8f8ff;border:1px solid #dedede;font-size:0.8em;padding:0 0.2em}.api-docs footer{width:100%;margin-top:50px;font-size:12px;font-style:italic}.article{font-family:"Open Sans","Helvetica Neue",Helvetica,Arial,sans-serif;line-height:1.2em}.article.main-content{display:block}.article p{width:100%;margin:1em 0}.article ol,.article ul{margin:10px 0}.article .highlighter-rouge{width:100%;overflow-x:auto;margin:15px 0;background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px}.article .highlighter-rouge .highlight{margin-left:6px;margin-right:6px;padding:8px}.article pre.highlight{background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px}.article code.highlighter-rouge{padding:1px 2px}.faq #toc li{margin-bottom:4px}.faq h2{margin-top:40px}.faq h3{font-size:18px;font-weight:bold}.faq h4{font-size:16px;font-weight:bold}.faq .highlighter-rouge .highlight{background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px}.faq code{background-color:#f0f0f0;font-family:Menlo, Courier, monospace;font-size:14px;padding:1px 2px}
+
+
+
+/*
+  Adapted from the highlight.js "Xcode" theme
+  <https://highlightjs.org/static/demo/#Xcode>
+  with minor color tweaks and class names changed to match our HTML
+ */
+
+.highlight .c { color: #408080; font-style: italic } /* Comment */
+.highlight .err { border: 1px solid #FF0000 } /* Error */
+.highlight .k { color: #aa0d91; } /* Keyword */
+.highlight .o { color: #666666 } /* Operator */
+.highlight .cm { color: #007400; font-style: italic } /* Comment.Multiline */
+.highlight .cp { color: #007400 } /* Comment.Preproc */
+.highlight .c1 { color: #007400; font-style: italic } /* Comment.Single */
+.highlight .cs { color: #007400; font-style: italic } /* Comment.Special */
+.highlight .gd { color: #A00000 } /* Generic.Deleted */
+.highlight .gi { color: #00A000 } /* Generic.Inserted */
+.highlight .kc { color: #aa0d91; } /* Keyword.Constant */
+.highlight .kd { color: #aa0d91; } /* Keyword.Declaration */
+.highlight .kn { color: #aa0d91; } /* Keyword.Namespace */
+.highlight .kp { color: #aa0d91 } /* Keyword.Pseudo */
+.highlight .kr { color: #aa0d91; } /* Keyword.Reserved */
+.highlight .kt { color: #5c2699 } /* Keyword.Type */
+.highlight .m { color: #1c00cf } /* Literal.Number */
+.highlight .s { color: #160effbd } /* Literal.String */
+.highlight .na { color: #836c28 } /* Name.Attribute */
+.highlight .nb { color: #5c2699 } /* Name.Builtin */
+.highlight .nc { color: #5c2699; } /* Name.Class */
+.highlight .no { color: #aa0d91 } /* Name.Constant */
+.highlight .nd { color: #aa0d91 } /* Name.Decorator */
+.highlight .ni { color: #aa0d91; } /* Name.Entity */
+.highlight .ne { color: #aa0d91; } /* Name.Exception */
+.highlight .nf { color: #aa0d91 } /* Name.Function */
+.highlight .nl { color: #aa0d91 } /* Name.Label */
+.highlight .nn { color: #aa0d91; } /* Name.Namespace */
+.highlight .nt { color: #aa0d91; } /* Name.Tag */
+.highlight .nv { color: #aa0d91 } /* Name.Variable */
+.highlight .mf { color: #1c00cf } /* Literal.Number.Float */
+.highlight .mh { color: #1c00cf } /* Literal.Number.Hex */
+.highlight .mi { color: #1c00cf } /* Literal.Number.Integer */
+.highlight .mo { color: #1c00cf } /* Literal.Number.Oct */
+.highlight .sb { color: #160effbd } /* Literal.String.Backtick */
+.highlight .sc { color: #160effbd } /* Literal.String.Char */
+.highlight .sd { color: #160effbd; font-style: italic } /* Literal.String.Doc */
+.highlight .s2 { color: #160effbd } /* Literal.String.Double */
+.highlight .se { color: #160effbd; font-weight: bold } /* Literal.String.Escape */
+.highlight .sh { color: #160effbd } /* Literal.String.Heredoc */
+.highlight .si { color: #160effbd; font-weight: bold } /* Literal.String.Interpol */
+.highlight .sx { color: #160effbd } /* Literal.String.Other */
+.highlight .sr { color: #160effbd } /* Literal.String.Regex */
+.highlight .s1 { color: #160effbd } /* Literal.String.Single */
+.highlight .ss { color: #1c00cf } /* Literal.String.Symbol */
+.highlight .bp { color: #5c2699 } /* Name.Builtin.Pseudo */
+.highlight .vc { color: #5c2699 } /* Name.Variable.Class */
+.highlight .vg { color: #aa0d91 } /* Name.Variable.Global */
+.highlight .vi { color: #aa0d91 } /* Name.Variable.Instance */
+.highlight .il { color: #1c00cf } /* Literal.Number.Integer.Long */
+  </style>
+  <title>
+   Jasmine Documentation
+  </title>
+ </head>
+ <body>
+  <div class="header big-header">
+   <div class="header-logo-wrapper">
+    <img alt class="header-logo" src="rick.jpg">
+   </div>
+   <div class="header-title">
+    <a class="home">
+     <img alt="Documentation Home" height="140" src="rick.jpg" width="600">
+    </a>
+    <div class="header-title-text">
+     Simple JavaScript testing
+    </div>
+   </div>
+   <div class="search-wrapper">
+    <input autocomplete="off" name="search" placeholder="search">
+    <ul class="searchResults">
+    </ul>
+   </div>
+  </div>
+  <div class="menu">
+   <a class="menu-option">
+    Get Started
+   </a>
+   <a class="menu-option">
+    Docs
+   </a>
+   <a class="menu-option">
+    Support
+   </a>
+   <a class="menu-option">
+    Releases
+   </a>
+   <a class="menu-option">
+    Github
+   </a>
+  </div>
+  <div class="main-content reasons">
+   <div class="reason">
+    <h5 class="reason-title">
+     FAST
+    </h5>
+    Low overhead, jasmine-core has no external dependencies.
+   </div>
+   <div class="reason">
+    <h5 class="reason-title">
+     NO MAGIC
+    </h5>
+    Jasmine specs are just JavaScript. Jasmine doesn't change the way your code
+    loads or runs.
+   </div>
+   <div class="reason">
+    <h5 class="reason-title">
+     NODE AND BROWSER
+    </h5>
+    Run your browser tests and Node.js tests with the same framework.
+   </div>
+  </div>
+  <div class="main-content">
+   <div class="example-code">
+    <figure class="highlight">
+     <pre><code class="language-javascript" data-lang="javascript"><span class="nx">describe</span><span class="p">(</span><span class="dl">"</span><span class="s2">A suite is just a function</span><span class="dl">"</span><span class="p">,</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+  <span class="kd">let</span> <span class="nx">a</span><span class="p">;</span>
+
+  <span class="nx">it</span><span class="p">(</span><span class="dl">"</span><span class="s2">and so is a spec</span><span class="dl">"</span><span class="p">,</span> <span class="kd">function</span><span class="p">()</span> <span class="p">{</span>
+    <span class="nx">a</span> <span class="o">=</span> <span class="kc">true</span><span class="p">;</span>
+
+    <span class="nx">expect</span><span class="p">(</span><span class="nx">a</span><span class="p">).</span><span class="nx">toBe</span><span class="p">(</span><span class="kc">true</span><span class="p">);</span>
+  <span class="p">});</span>
+<span class="p">});</span></code></pre>
+    </figure>
+   </div>
+   <div class="example-text">
+    Jasmine is a framework for testing JavaScript code.
+    It does not depend on any other JavaScript frameworks.
+    It runs in browsers and in Node.js.
+    And it has a clean, obvious syntax so that you can easily write tests.
+    <div class="example-text-links">
+     <a class="button">
+      Get Started
+     </a>
+    </div>
+   </div>
+  </div>
+  <div class="footer-wrapper">
+   <hr>
+   <div class="footer">
+    <span>
+     This documentation is open source.
+     <a>
+      Contributions are appreciated.
+     </a>
+    </span>
+    <img alt="Jasmine" class="footer-icon-jasmine" height="30" src="rick.jpg" width="127">
+   </div>
+  </div>
+ </body>
+</html>

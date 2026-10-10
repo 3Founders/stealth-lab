@@ -1,0 +1,82 @@
+{
+  "operation": "GET /v1/{name}",
+  "method": "GET",
+  "path_template": "/v1/{name}",
+  "fingerprint": "c0b001e4",
+  "case_id": "1RCPIe",
+  "code_sample": "curl -X GET 'http://127.0.0.1:52793/v1/a%0Ab%0Dc%C2%85d%0Be%0Cf%E2%80%A8g%E2%80%A9h%0D%0Ai?quotaUser=&uploadType=%F1%BF%A1%8AUFo'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:52793/v1/a%0Ab%0Dc%C2%85d%0Be%0Cf%E2%80%A8g%E2%80%A9h%0D%0Ai?quotaUser=&uploadType=%F1%BF%A1%8AUFo",
+      "url_template": "http://127.0.0.1:52793/v1/{name}",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "1RCPIe"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sun, 11 Oct 2026 03:30:23 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.006991300033405423,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive",
+          "PATH": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/v1/{name}",
+      "path_parameters": {
+        "name": "a%0Ab%0Dc%C2%85d%0Be%0Cf%E2%80%A8g%E2%80%A9h%0D%0Ai"
+      },
+      "query": {
+        "quotaUser": "",
+        "uploadType": "\ud9be\udc4aUFo"
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

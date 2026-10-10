@@ -1,0 +1,61 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\user\stealth-lab\backend\app\ingestion\admin.py", line 398, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\user\stealth-lab\backend\app\ingestion\admin.py", line 394, in main
+    sys.exit(asyncio.run(_amain(_parse(argv))))
+             ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\asyncio\runners.py", line 205, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Python314\Lib\asyncio\runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Python314\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\Users\user\stealth-lab\backend\app\ingestion\admin.py", line 195, in _amain
+    return await _routing_cli.run(pool, a)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\stealth-lab\backend\app\routing\admin_cli.py", line 82, in run
+    return await _run(pool, a)
+           ^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\stealth-lab\backend\app\routing\admin_cli.py", line 150, in _run
+    print(json.dumps(await import_public.run(pool, a.data_dir, sources=sources, apply=a.apply), default=str,
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\stealth-lab\backend\app\routing\import_public.py", line 113, in run
+    report["written_cards"] = await store.upsert_model_cards(pool, [c.to_row() for c in collected["cards"]])
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\stealth-lab\backend\app\routing\store.py", line 485, in upsert_model_cards
+    await pool.executemany(
+    ...<20 lines>...
+          r.get("price_in"), r.get("price_out"), list(r.get("aliases") or []), r.get("source") or "") for r in rows])
+  File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\asyncpg\pool.py", line 611, in executemany
+    return await con.executemany(command, args, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\asyncpg\connection.py", line 401, in executemany
+    return await self._executemany(command, args, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\asyncpg\connection.py", line 1997, in _executemany
+    result, _ = await self._do_execute(
+                ^^^^^^^^^^^^^^^^^^^^^^^
+        query, executor, timeout, record_class=record_class
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\asyncpg\connection.py", line 2021, in _do_execute
+    stmt = await self._get_statement(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+    )
+    ^
+  File "C:\Users\user\AppData\Roaming\Python\Python314\site-packages\asyncpg\connection.py", line 443, in _get_statement
+    statement = await self._protocol.prepare(
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+    )
+    ^
+  File "asyncpg/protocol/protocol.pyx", line 165, in prepare
+asyncpg.exceptions.ConnectionDoesNotExistError: connection was closed in the middle of operation

@@ -1,0 +1,92 @@
+{
+  "operation": "POST /v1/{name}:generateIdToken",
+  "method": "POST",
+  "path_template": "/v1/{name}:generateIdToken",
+  "fingerprint": "bf469c87",
+  "case_id": "V0YK7a",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{}' 'http://127.0.0.1:50632/v1/%F3%93%A0%A0%C3%B4%0A%F1%B2%92%99%C3%85%F1%A5%93%9D%F0%90%A0%80%C2%83%F0%AD%B0%84:generateIdToken?fields=%C2%B4%C3%B0%C3%9D%C2%BEC%C3%92&uploadType=%F3%8D%A0%8E%C2%A8%F0%BD%A2%9B%29%C3%ABAg%C2%9B&oauth_token=%5BFiltered%5D&callback=%C3%BD%C2%80%F3%B0%A0%B2%F3%84%8F%B4t+%C2%A5&upload_protocol=%C3%97%C2%9C%C3%94%F3%A1%98%B1G_%F2%84%B0%BC%F2%93%97%85%F1%B6%BA%8A%F2%80%9B%B7Y%C2%AD%C3%89fM3.H%C3%A5%1CG%F1%8B%BC%9E%C2%AD%F3%BD%BD%AC%F2%90%BF%A9&key=%5BFiltered%5D&%24.xgafv=2&quotaUser=%08%C3%97%C2%92t%F2%AD%88%81%3A%C3%B9O%F0%B5%B7%BB%F1%AA%B8%98c%C3%91%C2%86%C2%AC%F2%82%94%BF%C3%82U%C3%BE%C2%86'",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:50632/v1/%F3%93%A0%A0%C3%B4%0A%F1%B2%92%99%C3%85%F1%A5%93%9D%F0%90%A0%80%C2%83%F0%AD%B0%84:generateIdToken?fields=%C2%B4%C3%B0%C3%9D%C2%BEC%C3%92&uploadType=%F3%8D%A0%8E%C2%A8%F0%BD%A2%9B%29%C3%ABAg%C2%9B&oauth_token=%5BFiltered%5D&callback=%C3%BD%C2%80%F3%B0%A0%B2%F3%84%8F%B4t+%C2%A5&upload_protocol=%C3%97%C2%9C%C3%94%F3%A1%98%B1G_%F2%84%B0%BC%F2%93%97%85%F1%B6%BA%8A%F2%80%9B%B7Y%C2%AD%C3%89fM3.H%C3%A5%1CG%F1%8B%BC%9E%C2%AD%F3%BD%BD%AC%F2%90%BF%A9&key=%5BFiltered%5D&%24.xgafv=2&quotaUser=%08%C3%97%C2%92t%F2%AD%88%81%3A%C3%B9O%F0%B5%B7%BB%F1%AA%B8%98c%C3%91%C2%86%C2%AC%F2%82%94%BF%C3%82U%C3%BE%C2%86",
+      "url_template": "http://127.0.0.1:50632/v1/{name}:generateIdToken",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "V0YK7a",
+        "Content-Type": "application/json",
+        "Content-Length": "2"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sun, 11 Oct 2026 03:00:02 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.012948299990966916,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive",
+          "PATH": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/v1/{name}:generateIdToken",
+      "path_parameters": {
+        "name": "%F3%93%A0%A0%C3%B4%0A%F1%B2%92%99%C3%85%F1%A5%93%9D%F0%90%A0%80%C2%83%F0%AD%B0%84"
+      },
+      "query": {
+        "fields": "\u00b4\u00f0\u00dd\u00beC\u00d2",
+        "uploadType": "\udaf6\udc0e\u00a8\ud8b6\udc9b)\u00ebAg\u009b",
+        "oauth_token": "[Filtered]",
+        "callback": "\u00fd\u0080\udb82\udc32\udad0\udff4t \u00a5",
+        "upload_protocol": "\u00d7\u009c\u00d4\udb45\ude31G_\ud9d3\udc3c\uda0d\uddc5\ud99b\ude8a\ud9c1\udef7Y\u00ad\u00c9fM3.H\u00e5\u001cG\ud8ef\udf1e\u00ad\udbb7\udf6c\uda03\udfe9",
+        "key": "[Filtered]",
+        "$.xgafv": "2",
+        "quotaUser": "\b\u00d7\u0092t\uda74\ude01:\u00f9O\ud897\uddfb\ud96b\ude18c\u00d1\u0086\u00ac\ud9c9\udd3f\u00c2U\u00fe\u0086"
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {}
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

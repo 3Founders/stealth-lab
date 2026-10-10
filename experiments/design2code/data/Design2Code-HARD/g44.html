@@ -1,0 +1,2625 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <style>
+   *,
+*:before,
+*:after {
+    -webkit-box-sizing: border-box;
+    -moz-box-sizing: border-box;
+    box-sizing: border-box;
+}
+
+/* For RTL languages, English parts need to be LTR */
+.ltr{
+    direction: ltr;
+}
+
+body {
+    background-color: #D4D8DC;
+    font-family: "Helvetica Neue", "Helvetica", "Arial", sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+nav {
+    background-color: #db6ae6;
+    color: black;
+    direction: ltr;
+    font-weight: normal;
+    margin: 0 auto;
+    opacity: 0.9;
+    padding: 15px 0;
+    position: fixed;
+    text-align: center;
+    top: 0;
+    width: 100%;
+    z-index: 1;
+}
+
+.language-switch {
+    background-position: left center;
+    background-repeat: no-repeat;
+    cursor: pointer;
+    padding: 8px 10px 8px 29px;
+}
+
+.dropdown .cs-CZ a,    .cs-CZ a    { background-image: url(../icons/flags/cs-CZ16.png); }
+.dropdown .en-GB a,    .en-GB a    { background-image: url(../icons/flags/en-GB16.png); }
+.dropdown .gl-ES a,    .gl-ES a    { background-image: url(../icons/flags/gl-ES16.png); }
+.dropdown .es-ES a,    .es-ES a    { background-image: url(../icons/flags/es-ES16.png); }
+.dropdown .pt-BR a,    .pt-BR a    { background-image: url(../icons/flags/pt-BR16.png); }
+.dropdown .tr-TR a,    .tr-TR a    { background-image: url(../icons/flags/tr-TR16.png); }
+.dropdown .de-DE a,    .de-DE a    { background-image: url(../icons/flags/de-DE16.png); }
+.dropdown .fr-FR a,    .fr-FR a    { background-image: url(../icons/flags/fr-FR16.png); }
+.dropdown .ca-ES a,    .ca-ES a    { background-image: url(../icons/flags/ca-ES16.png); }
+.dropdown .nl-NL a,    .nl-NL a    { background-image: url(../icons/flags/nl-NL16.png); }
+.dropdown .it-IT a,    .it-IT a    { background-image: url(../icons/flags/it-IT16.png); }
+.dropdown .pl-PL a,    .pl-PL a    { background-image: url(../icons/flags/pl-PL16.png); }
+.dropdown .ja-JP a,    .pl-PL a    { background-image: url(../icons/flags/ja-JP16.png); }
+.dropdown .ru-RU a,    .pl-PL a    { background-image: url(../icons/flags/ru-RU16.png); }
+.dropdown .pt-PT a,    .pt-PT a    { background-image: url(../icons/flags/pt-PT16.png); }
+
+
+#cs-CZ    { background-image: url(../icons/flags/cs-CZ24.png); }
+#en-GB    { background-image: url(../icons/flags/en-GB24.png); }
+#es-ES    { background-image: url(../icons/flags/es-ES24.png); }
+#gl-ES    { background-image: url(../icons/flags/gl-ES24.png); }
+#pt-BR    { background-image: url(../icons/flags/pt-BR24.png); }
+#tr-TR    { background-image: url(../icons/flags/tr-TR24.png); }
+#de-DE    { background-image: url(../icons/flags/de-DE24.png); }
+#fr-FR    { background-image: url(../icons/flags/fr-FR24.png); }
+#ca-ES    { background-image: url(../icons/flags/ca-ES24.png); }
+#nl-NL    { background-image: url(../icons/flags/nl-NL24.png); }
+#it-IT    { background-image: url(../icons/flags/it-IT24.png); }
+#pl-PL    { background-image: url(../icons/flags/pl-PL24.png); }
+#ja-JP    { background-image: url(../icons/flags/ja-JP24.png); }
+#ru-RU    { background-image: url(../icons/flags/ru-RU24.png); }
+#pt-PT    { background-image: url(../icons/flags/pt-PT24.png); }
+
+nav a {
+    color: black;
+    font-weight: normal;
+    padding: 8px 10px;
+    text-decoration: none;
+}
+
+nav a:hover, .language-switch:hover, .current {
+    border-bottom: 1px solid black;
+}
+
+header {
+    background-color: #293840;
+    border-bottom: 5px solid #db6ae6;
+    color: #E8E8E8;
+    margin-top: 47px;
+    padding: 40px 0;
+    position: relative;
+    text-align: center;
+}
+
+.js-on header {
+    border: none;
+}
+
+header h1 {
+    font-size: 300%;
+    font-weight: lighter;
+    margin: 0;
+    padding-bottom: 10px;
+}
+
+header h1 span {
+    color: #db6ae6;
+}
+
+.tagline {
+    color: #9FB3BE;
+    font-size: 16px;
+    margin: 0;
+}
+
+.button {
+    background: #db6ae6;
+    border-radius: 5px;
+    color: white;
+    display: inline-block;
+    font-weight: lighter;
+    letter-spacing: 1px;
+    margin-top: 10px;
+    padding: 10px 20px;
+    text-decoration: none;
+    transition: all 0.3s ease 0s;
+}
+
+.button:hover {
+    background: #8a0963;
+    cursor: pointer;
+}
+
+.jdm.button:hover {
+    background: #004c99;
+}
+
+.search {
+    background-color: #db6ae6;
+    display: none;
+    padding: 10px 0;
+}
+
+.js-on .search {
+    display: block;
+}
+
+.search .search-container {
+    margin: 0 auto;
+    max-width: 500px;
+    padding: 0 30px 0 0;
+    position: relative;
+}
+
+.search .search-container input {
+    background-color: transparent;
+    border: 0 none;
+    border-bottom: 1px solid white;
+    color: white;
+    display: block;
+    font-size: 16px;
+    padding: 10px;
+    width: 100%;
+}
+
+.search .search-container input:focus {
+    outline: none;
+}
+
+#search{
+    direction: ltr;
+}
+
+.search .search-container label {
+    background: url('../img/spyglass.png');
+    background-size: 20px 20px;
+    cursor: pointer;
+    height: 20px;
+    position: absolute;
+    right: 0;
+    text-indent: -9999px;
+    top: 11px;
+    width: 20px;
+}
+
+.sort-container {
+    margin: 0 auto;
+    max-width: 500px;
+    padding: 10px 0;
+    position: relative;
+    text-align: center;
+}
+
+.sort-container a {
+    text-decoration: none;
+}
+
+button {
+    background-color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 70%;
+    font-weight: lighter;
+    padding: 10px 15px;
+    text-transform: uppercase;
+    transition: all 0.3s ease 0s;
+}
+
+button:hover {
+    background-color: #cce5fe;
+}
+
+.reset {
+    color: #db6ae6;
+}
+
+main {
+    border-bottom: 4px solid #db6ae6;
+}
+
+.sites {
+    display: grid;
+    grid-gap: 20px 14px;
+    grid-template-columns: repeat(4, 1fr);
+    margin: 0 auto;
+    max-width: 1000px;
+    min-height: 143px;
+    padding: 30px 0;
+}
+
+.sites a {
+    color: #db6ae6;
+    text-decoration: none;
+}
+
+.sites a:hover {
+    color: #283840;
+    text-decoration: underline;
+}
+
+.no-results {
+    display: none;
+    font-weight: bold;
+    grid-column: span 4;
+    text-align: center;
+}
+
+.site-block .site-header {
+    color: white;
+    direction: ltr;
+    display: block;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 1;
+    padding: 10px;
+}
+
+.site-block .site-header:hover {
+    color: white;
+    text-decoration: none;
+}
+
+.tooltip-content.toggled {
+    width: 500px;
+}
+
+.site-block.easy .site-header {
+    background-color: #7BAC7B;
+    border: 1px solid #5D895D;
+}
+.site-block.easy .site-header:hover {
+    background-color: #5D895D;
+}
+
+.site-block.medium .site-header {
+    background-color: #E8C674;
+    border: 1px solid #C5A65C;
+}
+.site-block.medium .site-header:hover {
+    background-color: #C5A65C;
+}
+
+.site-block.hard .site-header {
+    background-color: #D04343;
+    border: 1px solid #AC4949;
+}
+.site-block.hard .site-header:hover {
+    background-color: #AC4949;
+}
+
+.site-block.impossible .site-header {
+    background-color: #2B2B2B;
+    border: 1px solid black;
+}
+.site-block.impossible .site-header:hover {
+    background-color: black;
+}
+
+.site-block .site-difficulty {
+    background-color: #EAEBED;
+    border: 1px solid #BFC6CC;
+    border-top: 0;
+    color: #293840;
+    font-size: 12px;
+    font-weight: bold;
+    line-height: 0;
+    margin: 0;
+    padding: 15px 10px;
+    text-transform: uppercase;
+}
+
+.site-block .tooltip-content {
+    background-color: #EAEBED;
+    border: 1px solid #BFC6CC;
+    border-top: 0;
+    color: #293840;
+    display: none;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+    padding: 10px;
+}
+
+.site-block .tooltip-toggle {
+    background-color: #EAEBED;
+    border: 1px solid #BFC6CC;
+    border-top: 0;
+    color: #878787;
+    display: block;
+    font-size: 10px;
+    font-weight: bold;
+    line-height: 0;
+    margin: 0;
+    padding: 15px 10px;
+    text-transform: uppercase;
+}
+
+.site-block .tooltip-toggle.contains-info {
+    color: #293840;
+}
+
+.site-block.easy .tooltip-toggle.contains-info:hover       { color: #7BAC7B; }
+.site-block.medium .tooltip-toggle.contains-info:hover     { color: #E8C674; }
+.site-block.hard .tooltip-toggle.contains-info:hover       { color: #D04343; }
+.site-block.impossible .tooltip-toggle.contains-info:hover { color: #2B2B2B; }
+
+.hide-info {
+    display: none;
+}
+
+.toggled + .tooltip-toggle > .show-info {
+    display: none;
+}
+.toggled + .tooltip-toggle > .hide-info {
+    display: inline;
+}
+
+.info-container,
+.banner-content {
+    margin: 0 auto;
+    max-width: 1000px;
+    padding: 20px 0;
+}
+
+.info-container::after,
+.banner-content::after {
+    clear: both;
+    content: '';
+    display: block;
+}
+
+.info-block-half,
+.banner-block .banner-block-half {
+    float: left;
+    padding: 0 20px;
+    width: 50%;
+}
+
+.info-block {
+    background-color: #293840;
+    color: #9FB3BE;
+}
+
+.info-container a {
+    color: white;
+    text-decoration: none;
+}
+
+.info-container a:hover {
+    color: #db6ae6;
+}
+
+.info-container h2 {
+    color: white;
+    font-weight: 200;
+    margin: 0;
+    padding-bottom: 10px;
+}
+
+.info-container p {
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0 0 10px;
+}
+
+.info-container ul {
+    padding: 0;
+}
+
+.info-container li {
+    font-size: 14px;
+    margin: 5px 0;
+}
+
+.info-container .difficulty {
+    color: white;
+    display: inline-block;
+    font-weight: bold;
+    line-height: 1;
+    padding: 6px 12px;
+}
+
+.info-container .easy .difficulty {
+    background-color: #7BAC7B;
+    border: 1px solid #5D895D;
+}
+.info-container .medium .difficulty {
+    background-color: #E8C674;
+    border: 1px solid #C5A65C;
+}
+.info-container .hard .difficulty {
+    background-color: #D04343;
+    border: 1px solid #AC4949;
+}
+.info-container .impossible .difficulty {
+    background-color: #2B2B2B;
+    border: 1px solid black;
+}
+
+.banner-block {
+    background-color: #7BAC7B;
+    color: white;
+}
+
+.banner-block h2 {
+    font-weight: 200;
+}
+
+.banner-block p {
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0;
+    margin-bottom: 10px;
+}
+
+.banner-block a {
+    color: #2B2B2B;
+    font-weight: bold;
+    text-decoration: none;
+}
+
+.banner-block a:hover {
+    color: #db6ae6;
+}
+
+.banner-block ul {
+    padding: 0;
+}
+
+.banner-block li {
+    font-size: 14px;
+    list-style: none;
+    padding: 5px;
+}
+
+.banner-block li .dot-wrapper {
+    background-color: #EAEBED;
+    border: 1px solid #BFC6CC;
+    border-radius: 3px;
+    display: inline-block;
+    height: 20px;
+    padding: 4px 4px;
+    vertical-align: middle;
+    width: 20px;
+}
+.banner-block li .dot {
+    border-radius: 5px;
+    display: block;
+    height: 10px;
+    width: 10px;
+}
+.banner-block li .dot.easy {
+    background-color: #7BAC7B;
+    border: 1px solid #5D895D;
+}
+.banner-block li .dot.medium {
+    background-color: #E8C674;
+    border: 1px solid #C5A65C;
+}
+.banner-block li .dot.hard {
+    background-color: #D04343;
+    border: 1px solid #AC4949;
+}
+.banner-block li .dot.impossible {
+    background-color: #2B2B2B;
+    border: 1px solid black;
+}
+
+.banner-block .banner-block-extension {
+    background-image: url('../img/block.png');
+    background-position: center bottom;
+    background-repeat: no-repeat;
+    background-size: 100%;
+    height: 100px;
+    margin: 0 auto;
+    max-width: 540px;
+}
+
+footer {
+    border-top: 1px solid #9FB3BE;
+    color: #9FB3BE;
+    font-size: 12px;
+    margin-top: 30px;
+    padding: 10px 0 20px 0;
+    text-align: center;
+}
+
+.share-buttons {
+    float: right;
+}
+
+[dir="rtl"] .share-buttons {
+    float: left;
+}
+
+/* Media queries */
+@media only screen and (max-width: 1000px) {
+    .sites {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .no-results {
+        grid-column: span 3;
+    }
+}
+
+@media only screen and (max-width: 560px) {
+    header {
+        padding: 40px 20px;
+    }
+    .search {
+        padding: 10px 20px;
+    }
+    .sites {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .no-results {
+        grid-column: span 2;
+    }
+    .info-block-half,
+    .banner-block-half {
+        width: 100%;
+    }
+    .share-buttons {
+        float: none;
+        margin-top: 10px;
+    }
+}
+
+@media only screen and (max-width: 480px) {
+    .sites {
+        grid-template-columns: repeat(1, 1fr);
+    }
+    .no-results {
+        grid-column: auto;
+    }
+}
+
+
+
+.dropdown {
+	position: absolute;
+	z-index: 9999999;
+	display: none;
+}
+
+.dropdown .dropdown-menu,
+.dropdown .dropdown-panel {
+	min-width: 160px;
+	max-width: 360px;
+	list-style: none;
+	background: #D4D8DC;
+	border: solid 1px #DDD;
+	border: solid 1px rgba(0, 0, 0, .2);
+	/*border-radius: 6px;*/
+	box-shadow: 0 5px 10px rgba(0, 0, 0, .2);
+	overflow: visible;
+	padding: 4px 0;
+	margin: 0;
+}
+
+.dropdown .dropdown-panel {
+	padding: 10px;
+}
+
+.dropdown.dropdown-tip {
+	margin-top: 8px;
+}
+
+.dropdown.dropdown-tip:before {
+  position: absolute;
+  top: -6px;
+  left: 9px;
+  content: '';
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 7px solid #CCC;
+  border-bottom-color: rgba(0, 0, 0, 0.2);
+  display: inline-block;
+}
+
+.dropdown.dropdown-tip.dropdown-anchor-right:before {
+	left: auto;
+	right: 9px;
+}
+
+.dropdown.dropdown-tip:after {
+  position: absolute;
+  top: -5px;
+  left: 10px;
+  content: '';
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 6px solid #D4D8DC;
+  display: inline-block;
+}
+
+.dropdown.dropdown-tip.dropdown-anchor-right:after {
+	left: auto;
+	right: 10px;
+}
+
+
+.dropdown.dropdown-scroll .dropdown-menu,
+.dropdown.dropdown-scroll .dropdown-panel {
+	max-height: 358px;
+	overflow: auto;
+}
+
+.dropdown .dropdown-menu LI {
+	list-style: none;
+	padding: 0 0;
+	margin: 0;
+	line-height: 18px;
+}
+
+.dropdown .dropdown-menu LI > A,
+.dropdown .dropdown-menu LABEL {
+	display: block;
+	color: #555;
+	text-decoration: none;
+	line-height: 18px;
+	padding: 3px 15px;
+	white-space: nowrap;
+}
+
+.dropdown .dropdown-menu LI > A:hover,
+.dropdown .dropdown-menu LABEL:hover {
+	background-color: #798287;
+	color: #FFF;
+	cursor: pointer;
+}
+
+.dropdown .dropdown-menu .dropdown-divider {
+	font-size: 1px;
+	border-top: solid 1px #E5E5E5;
+	padding: 0;
+	margin: 5px 0;
+}
+
+/* Icon Examples - icons courtesy of http://p.yusukekamiyamane.com/ */
+.dropdown.has-icons LI > A {
+	padding-left: 30px;
+	background-position: 8px center;
+	background-repeat: no-repeat;
+}
+
+.dropdown .undo A { background-image: url(icons/arrow-curve-180-left.png); }
+.dropdown .redo A { background-image: url(icons/arrow-curve.png); }
+.dropdown .cut A { background-image: url(icons/scissors.png); }
+.dropdown .copy A { background-image: url(icons/document-copy.png); }
+.dropdown .paste A { background-image: url(icons/clipboard.png); }
+.dropdown .delete A { background-image: url(icons/cross-script.png); }
+  </style>
+  <title>
+   Just What's The Data - A directory of information for you to acknowledge the amount of data that web services gather from you.
+  </title>
+  <meta charset="utf-8">
+  <meta content="width=device-width,initial-scale=1" name="viewport">
+  <!-- Cloudflare Web Analytics -->
+  <!-- End Cloudflare Web Analytics -->
+ </head>
+ <body class="js-on" lang="en-GB" style>
+  <nav>
+   <!-- begin language switcher -->
+   <span class="language-switch" data-dropdown="#language-dropdown" id="en-GB">
+    English
+   </span>
+   <!-- end language switcher -->
+   <a class="info">
+    About
+   </a>
+  </nav>
+  <header>
+   <h1>
+    Just
+    <span>
+     Whats
+    </span>
+    The
+    <span>
+     Data
+    </span>
+   </h1>
+   <p class="tagline">
+    A directory of information for you to acknowledge the amount of data that web services gather from you.
+   </p>
+   <p>
+    <!--         <a  class="button banner">Google Chrome Extension</a> -->
+    <a class="button jdm">
+     Visit JustGetMyData
+    </a>
+    <a class="button">
+     Contribute on GitHub
+    </a>
+    <a class="button">
+     Translate on Crowdin
+    </a>
+    <a class="button">
+     Tweet JWTD
+    </a>
+   </p>
+  </header>
+  <div class="search">
+   <div class="search-container">
+    <input id="search" type="text">
+    <label for="search">
+     search
+    </label>
+   </div>
+   <div class="sort-container">
+    <button class="popular">
+     Popular
+    </button>
+    <button class="az-sort" data-dropdown="#alphabetical-dropdown">
+     A - Z
+    </button>
+    <button class="diff-sort" data-dropdown="#difficulty-dropdown">
+     Quantity
+    </button>
+    <button class="reset">
+     Reset
+    </button>
+   </div>
+  </div>
+  <main>
+   <section class="sites" id="sites">
+    <p class="no-results">
+     Can't find what you're looking for?
+     <a>
+      Help make JustWhatsTheData better
+     </a>
+     .
+    </p>
+    <section class="site-block easy">
+     <a class="site-header">
+      1688
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Adobe
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Alibaba
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Aliexpress
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium" data-popular>
+     <a class="site-header">
+      Amazon
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block hard" data-popular>
+     <a class="site-header">
+      Apple
+     </a>
+     <p class="site-difficulty">
+      Lots
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Badoo
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      BBVA
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Binance
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Board Game Geek
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Booking
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block hard">
+     <a class="site-header">
+      Coinbase
+     </a>
+     <p class="site-difficulty">
+      Lots
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Craigslist
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Precise location (using gps and/or bluetooth).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block hard">
+     <a class="site-header">
+      Discord
+     </a>
+     <p class="site-difficulty">
+      Lots
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      eBay
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block impossible" data-popular>
+     <a class="site-header">
+      Facebook
+     </a>
+     <p class="site-difficulty">
+      Ambiguous
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      GearBeast
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium" data-popular>
+     <a class="site-header">
+      GitHub
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      GOG
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+       <li>
+        Approximate location.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block hard" data-popular>
+     <a class="site-header">
+      Google
+     </a>
+     <p class="site-difficulty">
+      Lots
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Huawei
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block hard">
+     <a class="site-header">
+      ING
+     </a>
+     <p class="site-difficulty">
+      Lots
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block impossible">
+     <a class="site-header">
+      Instagram
+     </a>
+     <p class="site-difficulty">
+      Ambiguous
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Linkedin
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Mailfence
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Approximate location.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Microsoft
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      MSI
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Netflix
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Opera
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+       <li>
+        Cookies.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block impossible">
+     <a class="site-header">
+      PcComponentes
+     </a>
+     <p class="site-difficulty">
+      Ambiguous
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Cookies.
+       </li>
+       <li>
+        Uses Google Analytics.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Pinterest
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      PornHub
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Susceptive personal data (tax identification, DNI, nationality, employment situation...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy" data-popular>
+     <a class="site-header">
+      Reddit
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium" data-popular>
+     <a class="site-header">
+      Snapchat
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Spacehey
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Cookies.
+       </li>
+       <li>
+        Approximate location.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Spotify
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Steam
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+       <li>
+        Uses Google Analytics.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Telegram
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Chats and private messages content.
+       </li>
+       <li>
+        Contact book, calendar data ...
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Tiktok
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium" data-popular>
+     <a class="site-header">
+      Tinder
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Twitch
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium" data-popular>
+     <a class="site-header">
+      Twitter
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Universidad Complutense de Madrid
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Browsing data and use of their web/app (pages and links visited, games...).
+       </li>
+       <li>
+        Precise location (using gps and/or bluetooth).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium" data-popular>
+     <a class="site-header">
+      WhatsApp
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Cookies.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Wikimedia
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Web beacons, pixel tracking, browser fingerprinting and device fingerprinting.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Wikipedia
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Web beacons, pixel tracking, browser fingerprinting and device fingerprinting.
+       </li>
+       <li>
+        Web reference.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block hard">
+     <a class="site-header">
+      Yahoo!
+     </a>
+     <p class="site-difficulty">
+      Lots
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Address.
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block easy">
+     <a class="site-header">
+      Yoigo
+     </a>
+     <p class="site-difficulty">
+      Low
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Payment data.
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+    <section class="site-block medium">
+     <a class="site-header">
+      Zoom
+     </a>
+     <p class="site-difficulty">
+      Medium
+     </p>
+     <div class="tooltip-content">
+      <ul>
+       <li>
+        Basic personal data (name, birthdate, e-mail, tlf. number...).
+       </li>
+       <li>
+        Basic device info (IP address, browser, type of device...).
+       </li>
+       <li>
+        Content analysis (analise data used or sent in their web/app).
+       </li>
+       <li>
+        Precise location (using gps and/or bluetooth).
+       </li>
+      </ul>
+     </div>
+     <a class="tooltip-toggle contains-info">
+      <span class="show-info">
+       show info...
+      </span>
+      <span class="hide-info">
+       hide info...
+      </span>
+     </a>
+    </section>
+   </section>
+  </main>
+  <section class="info-block about" id="about">
+   <div class="info-container">
+    <div class="info-block-half">
+     <h2>
+      What is this?
+     </h2>
+     <p>
+      Many companies use
+      <a>
+       dark pattern
+      </a>
+      techniques to make you share more information that you really intended to. JustWhatsTheData makes it easy for the user to know the amount and type of information that web services collect when using them.
+     </p>
+     <p>
+      Got a site you think should be added?
+      <a>
+       Make a Pull Request on GitHub
+      </a>
+      .
+     </p>
+    </div>
+    <div class="info-block-half">
+     <h2>
+      Guide
+     </h2>
+     <p>
+      The links above are colour-coded to indicate the amount of data gathered by those companies. Note: We meassure de quantity of data by taking account of the number of types of data recovered not the actual data itself, also, the ambiguos (black) tag refers to those companies which policies pages are hard to read/understand, independently of the amount of data gathered:
+     </p>
+     <ul>
+      <li class="easy">
+       <span class="difficulty">
+        Low
+       </span>
+       - They collect little data
+      </li>
+      <li class="medium">
+       <span class="difficulty">
+        Medium
+       </span>
+       - They collect some data
+      </li>
+      <li class="hard">
+       <span class="difficulty">
+        Lots
+       </span>
+       - They collect a lot of data
+      </li>
+      <li class="impossible">
+       <span class="difficulty">
+        Ambiguous
+       </span>
+       - The privacy policy is ambiguous
+      </li>
+     </ul>
+    </div>
+   </div>
+  </section>
+  <!-- <div class="banner-block">
+    <div class="banner-content">
+        <div class="banner-block-half" id="extension">
+            <h2>Google Chrome Extension</h2>
+            <p> <a target='_blank' href='https://mikerogers.io'>Mike Rogers</a> </p>
+            <p></p>
+            <p> <a target='_blank' href='https://chrome.google.com/webstore/detail/justdeleteme/hfpofkfbabpbbmchmiekfnlcgaedbgcf'></a> .</p>
+        </div>
+        <div class="banner-block-half">
+            <h2>Extension Dot Guide</h2>
+            <ul>
+                <li><span class="dot-wrapper"><span class="dot easy"></span></span> - They collect little data</li>
+                <li><span class="dot-wrapper"><span class="dot medium"></span></span> -  They collect some data</li>
+                <li><span class="dot-wrapper"><span class="dot hard"></span></span> - They collect a lot of data</li>
+                <li><span class="dot-wrapper"><span class="dot impossible"></span></span> - The privacy policy is ambiguous</li>
+            </ul>
+        </div>
+    </div>
+    <div class="banner-block-extension"></div>
+</div> -->
+  <!-- Language dropdown -->
+  <div class="dropdown dropdown-tip has-icons" id="language-dropdown">
+   <ul class="dropdown-menu">
+    <li class="cs-CZ">
+     <a>
+      Czech
+     </a>
+    </li>
+    <li class="en-GB">
+     <a>
+      English
+     </a>
+    </li>
+    <li class="es-ES">
+     <a>
+      Espa&ntilde;ol
+     </a>
+    </li>
+    <li class="fr-FR">
+     <a>
+      French
+     </a>
+    </li>
+   </ul>
+  </div>
+  <!-- Alphabetical sorting -->
+  <div class="dropdown dropdown-tip" id="alphabetical-dropdown">
+   <ul class="dropdown-menu ltr">
+    <span class="alpha-sort">
+     <li>
+      <a href>
+       A
+      </a>
+     </li>
+     <li>
+      <a href>
+       B
+      </a>
+     </li>
+     <li>
+      <a href>
+       C
+      </a>
+     </li>
+     <li>
+      <a href>
+       D
+      </a>
+     </li>
+     <li>
+      <a href>
+       E
+      </a>
+     </li>
+     <li>
+      <a href>
+       F
+      </a>
+     </li>
+     <li>
+      <a href>
+       G
+      </a>
+     </li>
+     <li>
+      <a href>
+       H
+      </a>
+     </li>
+     <li>
+      <a href>
+       I
+      </a>
+     </li>
+     <li>
+      <a href>
+       J
+      </a>
+     </li>
+     <li>
+      <a href>
+       K
+      </a>
+     </li>
+     <li>
+      <a href>
+       L
+      </a>
+     </li>
+     <li>
+      <a href>
+       M
+      </a>
+     </li>
+     <li>
+      <a href>
+       N
+      </a>
+     </li>
+     <li>
+      <a href>
+       O
+      </a>
+     </li>
+     <li>
+      <a href>
+       P
+      </a>
+     </li>
+     <li>
+      <a href>
+       Q
+      </a>
+     </li>
+     <li>
+      <a href>
+       R
+      </a>
+     </li>
+     <li>
+      <a href>
+       S
+      </a>
+     </li>
+     <li>
+      <a href>
+       T
+      </a>
+     </li>
+     <li>
+      <a href>
+       U
+      </a>
+     </li>
+     <li>
+      <a href>
+       V
+      </a>
+     </li>
+     <li>
+      <a href>
+       W
+      </a>
+     </li>
+     <li>
+      <a href>
+       X
+      </a>
+     </li>
+     <li>
+      <a href>
+       Y
+      </a>
+     </li>
+     <li>
+      <a href>
+       Z
+      </a>
+     </li>
+    </span>
+   </ul>
+  </div>
+  <div class="dropdown dropdown-tip" id="difficulty-dropdown">
+   <ul class="dropdown-menu">
+    <span class="diff-sort">
+     <li>
+      <a>
+       Low
+      </a>
+     </li>
+     <li>
+      <a>
+       Medium
+      </a>
+     </li>
+     <li>
+      <a>
+       Lots
+      </a>
+     </li>
+     <li>
+      <a>
+       Ambiguous
+      </a>
+     </li>
+    </span>
+   </ul>
+  </div>
+  <section class="info-block">
+   <div class="info-container">
+    <footer>
+     Made by
+     <a>
+        [Name Redacted],
+     </a>
+     ,
+     <a>
+        [Name Redacted],
+     </a>
+     ,
+     <a>
+      [Name Redacted] Team,
+     </a>
+     ,
+     <a>
+        [Name Redacted] Team,
+     </a>
+     <a>
+        [Name Redacted] Team 
+                |
+     </a>
+     <a>
+      Contribute on GitHub
+     </a>
+     <br>
+     This work is licensed under a Creative Commons Attribution 4.0 International License.
+     <br>
+     <a rel="license">
+      <img alt="Licencia Creative Commons" src="rick.jpg" style="border-width:0" width="80%">
+     </a>
+    </footer>
+   </div>
+  </section>
+ </body>
+</html>

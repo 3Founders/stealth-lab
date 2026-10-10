@@ -1,0 +1,92 @@
+{
+  "operation": "PATCH /{groupUniqueId}",
+  "method": "PATCH",
+  "path_template": "/{groupUniqueId}",
+  "fingerprint": "019bcdac",
+  "case_id": "WPpHhs",
+  "code_sample": "curl -X PATCH 'http://127.0.0.1:49253/%C2%9F%C2%AE%F1%AA%8A%B7%C3%BA%05%C2%8AUZ%C2%AB%F3%A7%BA%B3?key=%5BFiltered%5D'",
+  "sequence": [
+    {
+      "method": "PATCH",
+      "url": "http://127.0.0.1:49253/%C2%9F%C2%AE%F1%AA%8A%B7%C3%BA%05%C2%8AUZ%C2%AB%F3%A7%BA%B3?key=%5BFiltered%5D",
+      "url_template": "http://127.0.0.1:49253/{groupUniqueId}",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "WPpHhs",
+        "Content-Length": "0"
+      },
+      "response": {
+        "status_code": 422,
+        "headers": {
+          "date": "Sun, 11 Oct 2026 02:43:20 GMT",
+          "server": "uvicorn",
+          "content-length": "82",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":[{\"type\":\"missing\",\"loc\":[\"body\"],\"msg\":\"Field required\",\"input\":null}]}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 422\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.008216799993533641,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive",
+          "PATH": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [
+          {
+            "location": "path",
+            "parameter_name": "groupUniqueId",
+            "resource_name": "GroupUnique",
+            "resource_field": "groupUniqueId",
+            "source_operation": "GET /{groupUniqueId}",
+            "source_status": 200
+          }
+        ],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/{groupUniqueId}",
+      "path_parameters": {
+        "groupUniqueId": "%C2%9F%C2%AE%F1%AA%8A%B7%C3%BA%05%C2%8AUZ%C2%AB%F3%A7%BA%B3"
+      },
+      "query": {
+        "key": "[Filtered]"
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

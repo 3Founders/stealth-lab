@@ -1,0 +1,114 @@
+{
+  "operation": "POST /v1/{name}:generateIdToken",
+  "method": "POST",
+  "path_template": "/v1/{name}:generateIdToken",
+  "fingerprint": "f4106f84",
+  "case_id": "2B2pM1",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{\"audience\": \"\", \"delegates\": [], \"includeEmail\": false}' 'http://127.0.0.1:53934/v1/0:generateIdToken?%24.xgafv=1&access_token=%5BFiltered%5D&alt=json&callback=&fields=&key=%5BFiltered%5D&oauth_token=%5BFiltered%5D&prettyPrint=true&quotaUser=&uploadType='",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:53934/v1/0:generateIdToken?%24.xgafv=1&access_token=%5BFiltered%5D&alt=json&callback=&fields=&key=%5BFiltered%5D&oauth_token=%5BFiltered%5D&prettyPrint=true&quotaUser=&uploadType=",
+      "url_template": "http://127.0.0.1:53934/v1/{name}:generateIdToken",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "2B2pM1",
+        "Content-Type": "application/json",
+        "Content-Length": "56"
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "date": "Sun, 11 Oct 2026 05:57:25 GMT",
+          "server": "uvicorn",
+          "content-length": "14",
+          "content-type": "application/json"
+        },
+        "body": "{\"token\":null}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "response_schema_conformance",
+          "status": "failure",
+          "message": "Response violates schema\n\nnull is not of type \"string\"\n\nValidated against the response schema for status code 200.\n\nSchema at /properties/token:\n\n    {\n        \"type\": \"string\",\n        \"description\": \"The OpenId Connect ID token.\"\n    }\n\nValue:\n\n    null"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 3.100000321865082e-05,
+          "mode": "positive"
+        },
+        "components": {
+          "PATH": "positive",
+          "QUERY": "positive",
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "All required and 10 optional properties",
+            "location": null,
+            "parameter": null,
+            "parameter_location": "QUERY",
+            "scenario": "object_required_and_optional"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "PATH": {
+            "name": "0"
+          },
+          "QUERY": {
+            "$.xgafv": "1",
+            "access_token": "",
+            "alt": "json",
+            "callback": "",
+            "fields": "",
+            "key": "",
+            "oauth_token": "",
+            "prettyPrint": true,
+            "quotaUser": "",
+            "uploadType": ""
+          }
+        }
+      },
+      "path": "/v1/{name}:generateIdToken",
+      "path_parameters": {
+        "name": "0"
+      },
+      "query": {
+        "$.xgafv": "1",
+        "access_token": "[Filtered]",
+        "alt": "json",
+        "callback": "",
+        "fields": "",
+        "key": "[Filtered]",
+        "oauth_token": "[Filtered]",
+        "prettyPrint": "true",
+        "quotaUser": "",
+        "uploadType": ""
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "audience": "",
+          "delegates": [],
+          "includeEmail": false
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

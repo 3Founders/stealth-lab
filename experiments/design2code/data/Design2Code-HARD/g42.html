@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html xml:lang="zh-CN" xmlns="">
+ <head>
+  <style>
+   body {
+  margin: 0px;
+  font-size: small;
+  background-color: WhiteSmoke;
+  color: Black;
+}
+#main {
+  float: left;
+  padding-bottom: 20px;
+  padding: 0px;
+  font: normal normal 100% 'Trebuchet MS', verdana, sans-serif;
+  word-wrap: break-word;
+  overflow: hidden;
+}
+
+#content-wrapper {
+  margin-top: 0px;
+  margin-right: 0px;
+  margin-bottom: 0;
+  margin-left: 5px;
+}
+
+h1 {
+  font-size: 300%;
+  font-weight: bold;
+  line-height: 120%;
+  text-align: center;
+}
+h4 {
+  font-size: 120%;
+  font-weight: bold;
+}
+
+.post-info {
+  text-align: left;
+  font-weight: normal;
+}
+.post-info .date-header {
+  font-size: 125%;
+  padding: 1px 50px 1px 20px;
+  color: Gray;
+}
+.post-info .tag {
+  font-size: 100%;
+  padding: 1px;
+  margin-left: 15px;
+}
+
+.post {
+  padding: 0px 20px 0px 20px;
+  margin-bottom: 20px;
+  line-height: 22px;
+}
+
+.post h2 {
+  font-size: 150%;
+  font-weight: bold;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 0px 0px 0px 22px;
+}
+.post h3 {
+  font-size: 120%;
+  font-weight: bold;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 0px 0px 0px 22px;
+}
+.post h4 {
+  font-size: 110%;
+  font-weight: bold;
+  margin-top: 5px;
+  margin-bottom: 5px;
+  padding: 0px 0px 0px 22px;
+}
+
+.post blockquote, .post q, .post pre, .post code {
+  background-color: #DDD;
+}
+.post blockquote {
+  margin: 1em 2em;
+  border: 0px none;
+}
+.post pre, .post code {
+  font-family: "DejaVu Sans Mono", Monaco, Menlo, Consolas, "Lucida Console", Courier, monospace;
+}
+.post pre {
+  overflow-x: auto;
+  padding: 0.5em 1em;
+  border: 0px none;
+}
+.post pre.shell {
+  background-color: Black;
+  color: LawnGreen;
+  border: 4px ridge Gray;
+  padding: 1em;
+  overflow-y: scroll;
+}
+
+.post a[target="_blank"] {
+  background: transparent url(../images/external_link.gif) no-repeat scroll right center;
+  padding-right: 13px;
+}
+
+a {
+  text-decoration: none;
+  color: #0066FF;
+}
+a:hover {
+  text-decoration: underline;
+  color: #88BBFF;
+}
+a img {
+  border: 0;
+}
+a:visited {
+  color: #800080;
+}
+
+#sidebar a {
+  color: #0066FF;
+}
+#sidebar a:visited {
+  color: #800080;
+}
+#sidebar a:hover {
+  color: #88BBFF;
+}
+
+#sidebar {
+  text-transform: none;
+  background-color: White;
+  color: Black;
+  padding-left: 20px;
+  width: 30%;
+  float: right;
+  font: normal normal 100% 'Trebuchet MS', verdana, sans-serif;
+  border-left: 2px dashed Black;
+  word-wrap: break-word;
+  overflow: hidden;
+}
+.sidebar h2 {
+  font-weight: bold;
+  font-size: 120%;
+  color: Black;
+}
+.sidebar h3 {
+  font-weight: bold;
+  font-size: 100%;
+  color: Black;
+}
+.sidebar .widget {
+  padding: 4px 8px 0px 0px;
+}
+
+/*--@ Source code syntax highlight @--*/
+.source pre { background: DarkSlateGray; }
+.source .hll { background-color: LightYellow; }
+.source .k { color: DodgerBlue; font-weight: bold; } /* Keyword */
+.source .kt { color: DodgerBlue; font-weight: bold; } /* Keyword.Type */
+.source .kn { color: DodgerBlue; font-weight: bold; } /* Keyword.Namespace */
+.source .kr { color: DodgerBlue; font-weight: bold; } /* Keyword.Reserved */
+.source .kc { color: DodgerBlue; font-weight: bold; } /* Keyword.Constant */
+.source .kd { color: DodgerBlue; font-weight: bold; } /* Keyword.Declaration */
+.source .kp { color: DodgerBlue; font-weight: bold; } /* Keyword.Pseudo */
+.source .n { color: White; } /* Name */
+.source .nb { color: SteelBlue; font-weight: bold; } /* Name.Builtin */
+.source .bp { color: SteelBlue; font-weight: bold; } /* Name.Builtin.Pseudo */
+.source .nn { color: GoldenRod; font-weight: bold } /* Name.Namespace */
+.source .nc { color: GoldenRod; font-weight: bold; } /* Name.Class */
+.source .nf { color: GoldenRod; font-weight: bold } /* Name.Function */
+.source .no { color: White; } /* Name.Constant */
+.source .nd { color: White; } /* Name.Decorator */
+.source .ne { color: White; } /* Name.Exception */
+.source .nv { color: White; } /* Name.Variable */
+.source .vc { color: White; } /* Name.Variable.Class */
+.source .vg { color: White; } /* Name.Variable.Global */
+.source .vi { color: White; } /* Name.Variable.Instance */
+.source .nl { color: White; } /* Name.Label */
+.source .nt { color: SteelBlue } /* Name.Tag */
+.source .ni { color: SteelBlue; } /* Name.Entity */
+.source .na { color: OliveDrab; } /* Name.Attribute */
+.source .py { color: White; } /* Name.Property */
+.source .nx { color: White; } /* Name.Other */
+.source .m { color: Orchid; } /* Literal.Number */
+.source .mb { color: Orchid; } /* Literal.Number.Bin */
+.source .mi { color: Orchid; } /* Literal.Number.Integer */
+.source .il { color: Orchid; } /* Literal.Number.Integer.Long */
+.source .mo { color: Orchid; } /* Literal.Number.Oct */
+.source .mh { color: Orchid; } /* Literal.Number.Hex */
+.source .mf { color: Orchid; } /* Literal.Number.Float */
+.source .s { color: Chocolate; } /* Literal.String */
+.source .sb { color: Chocolate; } /* Literal.String.Backtick */
+.source .sc { color: Chocolate; } /* Literal.String.Char */
+.source .sd { color: Chocolate; } /* Literal.String.Doc */
+.source .s2 { color: Chocolate; } /* Literal.String.Double */
+.source .se { color: Chocolate; } /* Literal.String.Escape */
+.source .sh { color: Chocolate; } /* Literal.String.Heredoc */
+.source .si { color: Chocolate; } /* Literal.String.Interpol */
+.source .sx { color: Chocolate; } /* Literal.String.Other */
+.source .sr { color: Chocolate; } /* Literal.String.Regex */
+.source .s1 { color: Chocolate; } /* Literal.String.Single */
+.source .ss { color: Chocolate; } /* Literal.String.Symbol */
+.source .o { color: Aqua; } /* Operator */
+.source .ow { color: Aqua; } /* Operator.Word */
+.source .p { color: White; } /* Punctuation */
+.source .c { color: LimeGreen; font-style: italic; } /* Comment */
+.source .ch { color: LimeGreen; font-style: italic; } /* Comment.Hashbang */
+.source .cm { color: LimeGreen; font-style: italic; } /* Comment.Multiline */
+.source .c1 { color: LimeGreen; font-style: italic; } /* Comment.Single */
+.source .cs { color: LimeGreen; font-style: italic; } /* Comment.Special */
+.source .cp { color: SteelBlue; font-weight: bold; font-style: italic; } /* Comment.Preproc */
+.source .cpf { color: LawnGreen; font-style: italic; } /* Comment.PreprocFile */
+.source .x { color: DarkGray; } /* Other */
+  </style>
+  <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+  <meta content="Python script by program.think@gmail.com" name="generator">
+  <meta content="program-think.blogspot.com" name="provider">
+  <title>
+   [Username Redacted]的博客
+  </title>
+ </head>
+ <body>
+  <div id="outer-wrapper">
+   <div id="content-wrapper">
+    <div id="main" style="width:67%;">
+     <h1>
+      <a title="跳转到俺的博客">
+       [Username Redacted]的博客
+      </a>
+     </h1>
+     <hr>
+     <div class="post">
+      <h2>
+       &starf;关于
+      </h2>
+      <br>
+      你看到的这个博客离线版本，制作于
+      <b style="font-size:125%;">
+       2021-04-13
+      </b>
+      <br>
+      （正常情况下，每次有新博文，这个离线版本都会在【一周内】更新；如果俺比较忙，更新会有滞后）
+      <br>
+      <br>
+      <h3>
+       ◇如何获取俺博客的【离线电子书】
+      </h3>
+      <br>
+      要想【自动】获取俺博客的离线版本，请使用 BT Sync（Resilio Sync）进行自动同步。如果你不熟悉这款软件，请看教程《
+      <a>
+       扫盲 BTSync（Resilio Sync）
+      </a>
+      》。
+      <b>
+       安装好 BT Sync 之后，添加如下&ldquo;同步密钥&rdquo;，即可自动同步。
+      </b>
+      <br>
+      <code style="font-size:125%;">
+       B7P64IMWOCXWEYOXIMBX6HN5MHEULFS4V
+      </code>
+      <br>
+      <br>
+      <h3>
+       ◇电子书格式说明
+      </h3>
+      <br>
+      <b>
+       HTML 格式
+      </b>
+      <br>
+      不管你用的是哪个操作系统，只要你装了浏览器，就可以直接浏览【HTML 格式】。
+      <br>
+      首先，确保你【已经完成】BT Sync 的同步（在界面上，该同步目录的图标变为绿色）。
+      <br>
+      浏览的时候，先进入 BT Sync 同步目录下的
+      <code>
+       blog
+      </code>
+      目录，再进入
+      <code>
+       html
+      </code>
+      目录，打开
+      <code>
+       index.html
+      </code>
+      就可以显示【离线浏览的首页】。
+      <br>
+      备注：
+      <br>
+      <code>
+       html
+      </code>
+      目录下所有网页的交叉链接，都已经转换为【相对路径】。因此，你可以把整个
+      <code>
+       html
+      </code>
+      目录复制到其它电脑；也可以用压缩软件打包，然后分享给其他人。
+      <br>
+      <br>
+      <b>
+       CHM 格式
+      </b>
+      <br>
+      &ldquo;CHM 格式&rdquo;需要你手动制作（别怕，俺提供了傻瓜化的【一键式生成】），具体步骤如下：
+      <br>
+      1. 首先，确保你已经完成 BT Sync 的同步（在界面上，该同步目录的图标变为绿色）。
+      <br>
+      2. 使用 Windows 系统的同学，进入如下目录：
+      <code>
+       blog\make\chm
+      </code>
+      并双击
+      <code>
+       make-chm.wsf
+      </code>
+      <br>
+      3. 使用 Linux 或 Mac OS 系统的同学，进入如下目录：
+      <code>
+       blog/make/chm
+      </code>
+      并运行 Python 脚本
+      <code>
+       make-chm.py
+      </code>
+      （该脚本同时兼容 Python2 和 Python3）
+      <br>
+      备注：
+      <br>
+      不使用 Windows 系统的同学，可以参考维基百科的&ldquo;
+      <a rel="nofollow" target="_blank">
+       这个页面
+      </a>
+      &rdquo;列出了【非 Windows】下的 CHM 阅读软件。
+      <br>
+      <br>
+      <b>
+       EPUB 格式
+      </b>
+      <br>
+      &ldquo;EPUB 格式&rdquo;需要你手动制作（别怕，俺提供了傻瓜化的【一键式生成】），具体步骤如下：
+      <br>
+      1. 首先，确保你已经完成 BT Sync 的同步（在界面上，该同步目录的图标变为绿色）。
+      <br>
+      2. 使用 Windows 系统的同学，进入如下目录：
+      <code>
+       blog\make\epub
+      </code>
+      并双击
+      <code>
+       make-epub.wsf
+      </code>
+      <br>
+      3. 使用 Linux 或 Mac OS 系统的同学，进入如下目录：
+      <code>
+       blog/make/epub
+      </code>
+      并运行 Python 脚本
+      <code>
+       make-epub.py
+      </code>
+      （该脚本同时兼容 Python2 和 Python3）
+      <br>
+      备注：
+      <br>
+      EPUB 的阅读软件很多，而且各个平台（Windows、Linux、Mac OS、Android、iOS）都有。维基百科的&ldquo;
+      <a rel="nofollow" target="_blank">
+       这个页面
+      </a>
+      &rdquo;列出了常用的 EPUB 阅读软件。
+      <br>
+      <br>
+      <h2>
+       &starf;最新博文
+      </h2>
+      <br>
+      （此处列出最近的【30篇】博文，更多博文请点击右侧栏的【分类标签】）
+      <br>
+      <br>
+      <h3>
+       <a>
+        近期安全动态和点评（2021年1季度）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-04-11
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：新疆棉花&mdash;&mdash;从&ldquo;人权争议&rdquo;到&ldquo;外交对抗&rdquo;（外媒报道30多篇）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-03-29
+       </span>
+       <a class="tag">
+        外交
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        计算机网络通讯的【系统性】扫盲&mdash;&mdash;从&ldquo;基本概念&rdquo;到&ldquo;OSI 模型&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-03-18
+       </span>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        IT.网络
+       </a>
+       <a class="tag">
+        IT.翻墙
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：3月3日，缅甸政变经历&ldquo;最血腥一天&rdquo;（外媒报道及现场照片，多图）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-03-05
+       </span>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        &ldquo;水门事件&rdquo;以及尼克松下台的经过
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-02-22
+       </span>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        政治.法制
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：内卷的天朝，各阶层的众生相（网文17篇）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-01-31
+       </span>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        教育
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        开博12周年庆，博文分类汇总
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-01-15
+       </span>
+       <a class="tag">
+        博客通告
+       </a>
+      </div>
+      <h3>
+       <a>
+        近期安全动态和点评（2020年4季度）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2021-01-09
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        分享各类电子书（科普、政治、IT、历史、等，180本）&mdash;&mdash;增加【科普】大类
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-12-22
+       </span>
+       <a class="tag">
+        书评/影评
+       </a>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        科普
+       </a>
+      </div>
+      <h3>
+       <a>
+        学习与人生&mdash;&mdash;700篇博文之感悟
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-12-04
+       </span>
+       <a class="tag">
+        学习方法
+       </a>
+       <a class="tag">
+        学会思考
+       </a>
+       <a class="tag">
+        心理学
+       </a>
+       <a class="tag">
+        教育
+       </a>
+       <a class="tag">
+        职场点滴
+       </a>
+      </div>
+      <h3>
+       <a>
+        博弈论入门教程&mdash;&mdash;从基本概念到具体案例
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-11-18
+       </span>
+       <a class="tag">
+        科普
+       </a>
+       <a class="tag">
+        经济
+       </a>
+      </div>
+      <h3>
+       <a>
+        2020年美国大选的选情分析
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-11-02
+       </span>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        美国政党简史（上）&mdash;&mdash;从&ldquo;邦联时期&rdquo;到&ldquo;南北战争前&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-10-22
+       </span>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        政治.法制
+       </a>
+      </div>
+      <h3>
+       <a>
+        近期安全动态和点评（2020年3季度）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-10-12
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        二十年目睹之怪现状&mdash;&mdash;中国学术界、科技界的&ldquo;奇葩排行榜&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-09-29
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.业界评论
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        政治.腐败
+       </a>
+       <a class="tag">
+        教育
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：半导体行业现状&mdash;&mdash;华为全面断供、中芯前景堪忧、弘芯轰然倒塌（网文14篇）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-09-15
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        外交
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        经济
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        如何用 Tor 访问对 Tor 不友好的网站&mdash;&mdash;扫盲&ldquo;三重代理&rdquo;及其它招数
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-08-31
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        IT.网络
+       </a>
+       <a class="tag">
+        IT.翻墙
+       </a>
+       <a class="tag">
+        IT.软件介绍
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：约瑟夫&middot;奈谈&ldquo;美国对华战略&rdquo;（中英文对照及俺的点评）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-08-24
+       </span>
+       <a class="tag">
+        外交
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：&ldquo;中美对抗&rdquo;进入【科技脱钩】阶段（网文7篇）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-08-11
+       </span>
+       <a class="tag">
+        外交
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        回顾六四系列[34]： 5月17日，&ldquo;戒严令&rdquo;出笼的经过
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-07-27
+       </span>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+      </div>
+      <h3>
+       <a>
+        近期安全动态和点评（2020年2季度）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-07-07
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：超级富豪王振华性侵9岁女童（大量网友评论，多图）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-06-26
+       </span>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        政治.法制
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        扫盲 Linux 逻辑卷管理（LVM）&mdash;&mdash;兼谈 RAID 以及&ldquo;磁盘加密工具的整合&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-06-16
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        IT.软件介绍
+       </a>
+      </div>
+      <h3>
+       <a>
+        如何理解&ldquo;英美法系&rdquo;（普通法系）&mdash;&mdash;从&ldquo;英国古代史&rdquo;聊到&ldquo;香港国安法&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-06-04
+       </span>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        政治.法制
+       </a>
+       <a class="tag">
+        经济
+       </a>
+      </div>
+      <h3>
+       <a>
+        每周转载：朝廷推香港版《国安法》，【一国一制】降临（外媒报道8篇）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-05-24
+       </span>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+       <a class="tag">
+        转载
+       </a>
+      </div>
+      <h3>
+       <a>
+        聊聊&ldquo;核战略的博弈模型&rdquo;与&ldquo;中美新冷战&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-05-13
+       </span>
+       <a class="tag">
+        军事
+       </a>
+       <a class="tag">
+        外交
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        &ldquo;政治体制&rdquo;与&ldquo;系统健壮性&rdquo;&mdash;&mdash;基于&ldquo;复杂性科学&rdquo;的思考
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-04-26
+       </span>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        政治.常识
+       </a>
+       <a class="tag">
+        经济
+       </a>
+      </div>
+      <h3>
+       <a>
+        近期安全动态和点评（2020年1季度）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-04-13
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+       <a class="tag">
+        时事评论
+       </a>
+      </div>
+      <h3>
+       <a>
+        在线查毒工具 VirusTotal 的 N 种玩法&mdash;&mdash;从&ldquo;误报/漏报&rdquo;聊到&ldquo;攻击者对它的利用&rdquo;
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-03-27
+       </span>
+       <a class="tag">
+        IT
+       </a>
+       <a class="tag">
+        IT.信息安全
+       </a>
+      </div>
+      <h3>
+       <a>
+        分享各类电子书（【英文版】专场，177本）
+       </a>
+      </h3>
+      <div class="post-info" style="margin-bottom:30px;">
+       <span class="date-header">
+        2020-03-17
+       </span>
+       <a class="tag">
+        书评/影评
+       </a>
+       <a class="tag">
+        军事
+       </a>
+       <a class="tag">
+        历史
+       </a>
+       <a class="tag">
+        政治
+       </a>
+       <a class="tag">
+        经济
+       </a>
+      </div>
+     </div>
+    </div>
+    <div id="sidebar-wrapper">
+     <div class="sidebar section" id="sidebar">
+      <div class="widget HTML" id="BlogAbout">
+       <div class="widget-content">
+        <img alt="[Username Redacted]的Logo" src="rick.jpg" title="[Username Redacted]的Logo">
+        <br>
+        <br>
+        <img height="16" src="rick.jpg" width="16">
+        <a target="_blank">
+         博客主站点 (BlogSpot)
+        </a>
+        <br>
+        <img height="16" src="rick.jpg" width="16">
+        <a target="_blank">
+         俺的邮箱 (Gmail)
+        </a>
+        <br>
+        <img height="16" src="rick.jpg" width="16">
+        <a target="_blank">
+         俺的收藏 (GitHub)
+        </a>
+        <br>
+        <img height="16" src="rick.jpg" width="16">
+        <a target="_blank">
+         俺的推特 (@programthink)
+        </a>
+        <br>
+       </div>
+      </div>
+      <div class="widget HTML" id="BlogFeed">
+       <h2 class="title">
+        订阅博客
+       </h2>
+       <div class="widget-content">
+        <a target="_blank" title="RSS 订阅">
+         <img alt="RSS 订阅" border="0" src="rick.jpg">
+        </a>
+        <a title="邮件订阅">
+         <img alt="邮件订阅" border="0" src="rick.jpg">
+        </a>
+        <br>
+       </div>
+      </div>
+      <div class="widget Text" id="BlogDesc">
+       <h2 class="title">
+        博客主要内容
+       </h2>
+       <div class="widget-content">
+        &starf;提升思维能力
+        <br>
+        &starf;普及政治常识
+        <br>
+        &starf;扫盲翻墙姿势
+        <br>
+        &starf;揭露党国嘴脸
+        <br>
+        &starf;网络安全教程
+        <br>
+        &starf;软件开发技术
+       </div>
+      </div>
+      <div class="widget Label" id="BlogTags">
+       <h2>
+        分类标签
+       </h2>
+       <div class="widget-content list-label-widget-content">
+        <ul>
+         <li>
+          <a class="tag">
+           IT
+          </a>
+          (207)
+         </li>
+         <li>
+          <a class="tag">
+           IT.Linux
+          </a>
+          (6)
+         </li>
+         <li>
+          <a class="tag">
+           IT.业界评论
+          </a>
+          (16)
+         </li>
+         <li>
+          <a class="tag">
+           IT.人工智能
+          </a>
+          (3)
+         </li>
+        </ul>
+       </div>
+      </div>
+      <div class="widget Label" id="BlogRecommend">
+       <div class="widget-content">
+        <h2>
+         推荐帖子（翻墙技术）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           如何翻墙（全方位入门扫盲）
+          </a>
+         </li>
+         <li>
+          <a>
+           常见翻墙问题答疑
+          </a>
+         </li>
+         <li>
+          <a>
+           获取翻墙软件方法大全
+          </a>
+         </li>
+         <li>
+          <a>
+           多台电脑如何共享翻墙通道
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（信息安全）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           计算机网络通讯的【系统性】扫盲&mdash;&mdash;从&ldquo;基本概念&rdquo;到&ldquo;OSI 模型&rdquo;
+          </a>
+         </li>
+         <li>
+          <a>
+           为啥朝廷总抓不到俺&mdash;&mdash;十年反党活动的安全经验汇总
+          </a>
+         </li>
+         <li>
+          <a>
+           &ldquo;对抗专制、捍卫自由&rdquo;的 N 种技术力量
+          </a>
+         </li>
+         <li>
+          <a>
+           如何防止黑客入侵（系列）
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（提升个人能力）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           学习与人生&mdash;&mdash;700篇博文之感悟
+          </a>
+         </li>
+         <li>
+          <a>
+           如何【系统性学习】&mdash;&mdash;从&ldquo;媒介形态&rdquo;聊到&ldquo;DIKW 模型&rdquo;
+          </a>
+         </li>
+         <li>
+          <a>
+           如何完善自己的知识结构
+          </a>
+         </li>
+         <li>
+          <a>
+           《如何阅读一本书》&mdash;&mdash;书评及内容纲要
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（洗脑与反洗脑）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           聊聊洗脑和脑残&mdash;&mdash;分析&ldquo;脑残的起源&rdquo;和&ldquo;脑残的觉醒&rdquo;
+          </a>
+         </li>
+         <li>
+          <a>
+           批判性思维扫盲&mdash;&mdash;学会区分&ldquo;事实&rdquo;与&ldquo;观点&rdquo;
+          </a>
+         </li>
+         <li>
+          <a>
+           扫盲逻辑谬误&mdash;&mdash;以五毛言论为反面教材
+          </a>
+         </li>
+         <li>
+          <a>
+           比&ldquo;欺骗&rdquo;更狡猾的洗脑&mdash;&mdash;基于【真实数据】进行忽悠
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（心理学）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           为什么独立思考这么难&mdash;&mdash;谈谈心理学的成因，并分享俺的经验
+          </a>
+         </li>
+         <li>
+          <a>
+           不要成为&ldquo;粉丝&rdquo;&mdash;&mdash;谈谈&ldquo;偶像崇拜&rdquo;的成因和危害
+          </a>
+         </li>
+         <li>
+          <a>
+           天朝民众的心理分析：圣君情结
+          </a>
+         </li>
+         <li>
+          <a>
+           天朝民众的心理分析：斯德哥尔摩综合症
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（政治）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           为什么马克思是错的&mdash;&mdash;全面批判马列主义的知名著作导读
+          </a>
+         </li>
+         <li>
+          <a>
+           &ldquo;政治体制&rdquo;与&ldquo;系统健壮性&rdquo;&mdash;&mdash;基于&ldquo;复杂性科学&rdquo;的思考
+          </a>
+         </li>
+         <li>
+          <a>
+           回顾&ldquo;六四&rdquo;（系列）
+          </a>
+         </li>
+         <li>
+          <a>
+           谈革命（系列）
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（历史）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           美苏冷战的缩影&mdash;&mdash;柏林墙简史
+          </a>
+         </li>
+         <li>
+          <a>
+           面对共产党&mdash;&mdash;民国人文大师的众生相
+          </a>
+         </li>
+         <li>
+          <a>
+           谈谈三年大饥荒（系列）
+          </a>
+         </li>
+         <li>
+          <a>
+           台湾民主运动与独立运动简史
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（编程技术）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           学习编程语言的3篇好文章
+          </a>
+         </li>
+         <li>
+          <a>
+           为什么俺推荐 Python（系列）
+          </a>
+         </li>
+         <li>
+          <a>
+           架构设计：生产者/消费者模式
+          </a>
+         </li>
+         <li>
+          <a>
+           架构设计：进程还是线程？
+          </a>
+         </li>
+        </ul>
+        <h2>
+         推荐帖子（职场与管理）
+        </h2>
+        <ul>
+         <li>
+          <a>
+           时间与人生&mdash;&mdash;跨入本世纪20年代的随想
+          </a>
+         </li>
+         <li>
+          <a>
+           德鲁克谈【自我管理】&mdash;&mdash;《哈佛商业评论》最受欢迎的文章
+          </a>
+         </li>
+         <li>
+          <a>
+           俺的招聘经验（系列）
+          </a>
+         </li>
+         <li>
+          <a>
+           招聘的误区
+          </a>
+         </li>
+        </ul>
+       </div>
+      </div>
+      <div class="widget HTML" id="BlogSearch">
+       <h2 class="title">
+        博客站内搜索 (需联网)
+       </h2>
+       <div class="widget-content">
+        <img alt="Google" border="0" src="rick.jpg">
+        <br>
+        <form action="" method="GET" target="_blank">
+         <input name="ie" type="hidden" value="UTF-8">
+         <input name="oe" type="hidden" value="UTF-8">
+         <input name="sitesearch" type="hidden" value="program-think.blogspot.com">
+         <input maxlength="128" name="q" size="32" type="text">
+         <input name="search" type="submit" value="Google">
+        </form>
+        <br>
+        <img alt="Bing" border="0" src="rick.jpg">
+        <br>
+        <form action="" method="GET" target="_blank">
+         <input name="q1" type="hidden" value="site:program-think.blogspot.com">
+         <input maxlength="128" name="q" size="32" type="text">
+         <input name="search" type="submit" value="Bing">
+        </form>
+       </div>
+      </div>
+      <div class="widget BlogArchive" id="BlogArchive">
+       <h2>
+        历史归档
+       </h2>
+       <div class="widget-content">
+        <ul>
+         <li>
+          <a>
+           2021
+          </a>
+          (8)
+         </li>
+         <li>
+          <a>
+           2020
+          </a>
+          (28)
+         </li>
+         <li>
+          <a>
+           2019
+          </a>
+          (39)
+         </li>
+         <li>
+          <a>
+           2018
+          </a>
+          (31)
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <!--sidebar-->
+    </div>
+    <!--sidebar-wrapper-->
+   </div>
+   <!-- end content-wrapper -->
+  </div>
+  <!-- end outer-wrapper -->
+ </body>
+</html>
