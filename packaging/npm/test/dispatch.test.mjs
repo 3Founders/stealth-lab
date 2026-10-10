@@ -39,11 +39,13 @@ function stubRuntime(repo, outcomes) {
   };
 }
 
-test("the dispatchable rungs: open-model rungs before the session's model or any Claude rung", () => {
+test("the dispatchable rungs: open-model rungs before the session's model; an in-session Claude rung is skipped", () => {
   const { env } = setup();
   assert.deepEqual(dispatchableRungs(PLAN, MINE, env).map((r) => r.unit), ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth"]);
-  assert.deepEqual(dispatchableRungs({ ladder: ["claude-sonnet-5-5|claude-code", "gemma-4-31b-it|stealth"] }, MINE, env), [],
-    "a Claude rung first: nothing to dispatch");
+  assert.deepEqual(dispatchableRungs({ ladder: ["claude-sonnet-5-5|claude-code", "gemma-4-31b-it|stealth"] }, MINE, env)
+    .map((r) => r.unit), ["gemma-4-31b-it|stealth"], "a Sonnet hand-over first: the cheap rungs still run");
+  assert.deepEqual(dispatchableRungs({ ladder: [MINE, "gemma-4-31b-it|stealth"] }, MINE, env), [],
+    "the session's own model first: nothing to dispatch");
   assert.deepEqual(dispatchableRungs(PLAN, MINE, setup(["gpt-oss-120b"]).env), [], "no local executor for the model");
 });
 

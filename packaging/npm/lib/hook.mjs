@@ -479,9 +479,17 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     } catch (err) {
       log(`stealthlab hook: dispatch skipped (${err.message})`);
     }
+    // Nothing was dispatched (no check, or no cheap model to run here): the session's own model does the task. Cheap
+    // models run only through dispatch -- never as hand-overs inside the session, whose reading, delegating and
+    // reporting cost more than the task -- so the plan is the session's own model and the session is not shown it.
+    let shown = reply;
+    if (mine && reply?.model_plan?.status === "ok") {
+      reply = { ...reply, model_plan: { ...reply.model_plan, ladder: [mine] } };
+      shown = { ...reply, model_plan: undefined };
+    }
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env, mine }); } catch { /* capture is best-effort */ }
-    const context = formatKnowledge(reply, policy.maxChars, { mode, root, mine });
+    const context = formatKnowledge(shown, policy.maxChars, { mode, root, mine });
     if (context) {
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }

@@ -137,7 +137,7 @@ export function dispatchableRungs(plan, mine, env = process.env, { claude = true
     const model = String(unit).split("|")[0];
     if (mine && model === String(mine).split("|")[0]) break;
     const local = executorFor(unit, env);
-    if (!local) break;
+    if (!local) continue;                    // e.g. Sonnet as an in-session subagent: not dispatched, skipped
     if (local.executor === "claude" && !claude) continue;
     if (!out.some((r) => r.unit === unit)) out.push({ unit, ...local });
   }
