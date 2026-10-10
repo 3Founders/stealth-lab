@@ -223,19 +223,26 @@ test("CLI: default install writes no exec entries; install --with-exec then unin
   assert.equal(fs.existsSync(agentsDir), false, "default install: no agent files");
   assert.equal(doc.hooks.UserPromptSubmit.length, 2, "default install still adds the knowledge hook");
 
+  // --with-exec: hooks only -- the prompt hook dispatches to the cheap models itself; no MCP server, agents or guard
   r = cli(["install", "--with-exec", ...url], { home, fakeBin });
   assert.equal(r.code, 0, r.err);
-  assert.match(r.err, /ok {4}Executor layer/);
+  assert.match(r.err, /ok {4}Claude Code {5}hooks only/);
   doc = readJson(settings);
-  assert.equal(doc.hooks.SubagentStart.length, 1);
-  assert.equal(doc.hooks.SubagentStop.length, 2);
-  assert.match(doc.hooks.SubagentStop[1].hooks[0].command, /stealthlab-mcp\.mjs"? hook subagent-stop$/);
-  for (const n of AGENT_NAMES) assert.ok(fs.existsSync(path.join(agentsDir, `${n}.md`)));
+  assert.equal(doc.hooks.UserPromptSubmit.length, 2, "the prompt hook (with the user's own)");
+  assert.match(doc.hooks.UserPromptSubmit[1].hooks[0].command, /hook-prompt$/);
+  assert.ok(JSON.stringify(doc.hooks).includes("capture-stop"), "the capture hooks");
+  assert.ok(!JSON.stringify(doc.hooks).includes("route-subagent"), "no model guard");
+  assert.equal(doc.hooks.SubagentStart, undefined, "no subagent hooks");
+  assert.equal(fs.existsSync(agentsDir), false, "no agent files");
+  assert.equal(readJson(path.join(home, ".stealthlab", "config.json")).dispatch, true);
+  const calls = fs.readFileSync(path.join(fakeBin, "claude.log"), "utf8").trim().split(/\r?\n/);
+  assert.match(calls[calls.length - 1], /mcp remove --scope user stealthlab/, "the MCP server is taken out, not re-added");
   const during = doc;
 
   r = cli(["uninstall", "--client", "claude-code"], { home, fakeBin });
   assert.equal(r.code, 0, r.err);
-  assert.match(r.err, /removed {2}Executor layer/);
+  assert.match(r.err, /removed {2}Dispatch/);
+  assert.equal(readJson(path.join(home, ".stealthlab", "config.json")).dispatch, undefined);
   const after = readJson(settings);
   assert.deepEqual(after, before, "pre-existing hooks intact, ours gone");
   for (const n of AGENT_NAMES) assert.equal(fs.existsSync(path.join(agentsDir, `${n}.md`)), false);
@@ -252,7 +259,7 @@ test("CLI: --with-exec --dry-run writes nothing; --with-exec without Claude Code
   const fakeBin = fakeClaudeDir();
   let r = cli(["install", "--with-exec", "--dry-run", "--url", "https://h.test/mcp", "--client", "claude-code"], { home, fakeBin });
   assert.equal(r.code, 0, r.err);
-  assert.match(r.err, /would write .*stealth-executor\.md/);
+  assert.match(r.err, /would configure Claude Code {5}hooks only/);
   assert.equal(fs.existsSync(path.join(home, ".claude")), false);
   r = cli(["install", "--with-exec", "--url", "https://h.test/mcp", "--client", "cursor"], { home, fakeBin });
   assert.equal(r.code, 0, r.err);

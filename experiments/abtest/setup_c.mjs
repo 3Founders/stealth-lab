@@ -16,8 +16,7 @@ if (!process.argv[2] || !fs.existsSync(ws)) {
   console.error("usage: node setup_c.mjs <existing workspace dir>");
   process.exit(2);
 }
-const { upsertClaudeHook } = await lib("clients.mjs");
-const { installExec } = await lib("claude_exec.mjs");
+const { installClaudeDispatch } = await lib("clients.mjs");
 
 const bin = path.join(NPM, "bin", "stealthlab-mcp.mjs");
 const launch = { command: process.execPath, args: [bin] };
@@ -26,8 +25,8 @@ fs.mkdirSync(claudeDir, { recursive: true });
 // the knowledge hook (UserPromptSubmit) + capture hooks + model guard, then the executor agents and their hooks
 // 90 s: the first lookup after the test server starts loads the prior and warms the judge; the runner also warms it
 // 1200 s: dispatch runs the plan's cheap rungs inside the prompt hook (lib/dispatch.mjs)
-upsertClaudeHook(path.join(claudeDir, "settings.json"), { command: launch.command, args: [...launch.args, "hook-prompt"] }, 1200);
-installExec({ env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir }, launch });
+// exactly what `stealthlab-mcp install --with-exec` does for Claude Code (hooks only), into this workspace
+installClaudeDispatch({ settingsFile: path.join(claudeDir, "settings.json"), launch,
+                       env: { ...process.env, CLAUDE_CONFIG_DIR: claudeDir } });
 for (const f of fs.readdirSync(claudeDir)) if (f.endsWith(".bak")) fs.rmSync(path.join(claudeDir, f));
-console.log(JSON.stringify({ workspace: ws, settings: path.join(claudeDir, "settings.json"),
-                             agents: fs.readdirSync(path.join(claudeDir, "agents")) }));
+console.log(JSON.stringify({ workspace: ws, settings: path.join(claudeDir, "settings.json") }));

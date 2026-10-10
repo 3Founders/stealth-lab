@@ -2,7 +2,8 @@
 // under the server name "stealthlab". JSON configs are edited in place: other servers
 // and keys are preserved, a .bak copy is written first, and a file that
 // doesn't parse is left untouched (we never clobber a config we can't read).
-import { shellJoin } from "./claude_exec.mjs";
+import { shellJoin, uninstallExec } from "./claude_exec.mjs";
+import { writeConfig } from "./config.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -156,7 +157,7 @@ function isOurs(group) {
 // same launcher with their own subcommand.
 // 900 s: Claude Code's kill timer for the prompt hook, a ceiling -- the lookup itself gives up after its own timeout,
 // but dispatch (lib/dispatch.mjs) runs the plan's cheap rungs to completion inside this hook.
-export function upsertClaudeHook(file, commandSpec, timeoutSec = 900) {
+export function upsertClaudeHook(file, commandSpec, timeoutSec = 900, { guard = true } = {}) {
   const doc = readJsonOrThrow(file);
   if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
   doc.hooks = doc.hooks || {};
@@ -166,7 +167,8 @@ export function upsertClaudeHook(file, commandSpec, timeoutSec = 900) {
   const args = commandSpec.args || [];
   const launch = { command: commandSpec.command, args: args[args.length - 1] === HOOK_MARK ? args.slice(0, -1) : args };
   addCaptureHooks(doc, launch);
-  addRouteHooks(doc, launch);                     // the model guard (lib/model_guard.mjs)
+  if (guard) addRouteHooks(doc, launch);          // the model guard (lib/model_guard.mjs)
+  else removeRouteHooks(doc);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
 }
@@ -188,6 +190,19 @@ export function removeClaudeHook(file) {
   if (doc.hooks && !Object.keys(doc.hooks).length) delete doc.hooks;
   fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
   return true;
+}
+
+// Claude Code with dispatch (`install --with-exec`): hooks only. The prompt hook looks the task up and runs the
+// cheap models itself (lib/dispatch.mjs); the capture hooks report outcomes and grow the library. Both call the
+// StealthLab server directly with the saved URL and token, so the session gets no MCP servers, no agents and no
+// model guard: nothing it would call, and nothing that adds to every turn's context. `dispatch: true` in the saved
+// config marks the local executor as installed (the models in exec.json become plan candidates).
+// settingsFile: Claude Code's settings.json (user level for an install, a project's .claude/ in the A/B test).
+export function installClaudeDispatch({ settingsFile, launch, env = process.env }) {
+  upsertClaudeHook(settingsFile, { command: launch.command, args: [...launch.args, "hook-prompt"] }, 1200, { guard: false });
+  uninstallExec({ env });                         // the delegation layer an older --with-exec install wrote
+  writeConfig({ dispatch: true }, env);
+  return { settings: settingsFile };
 }
 
 // --- CLI-registered clients -------------------------------------------------
@@ -225,8 +240,12 @@ export function clients({ env = process.env, platform = process.platform } = {})
       label: "Claude Code",
       detect: () => onPath("claude"),
       where: () => "claude mcp (user scope) + knowledge hook in " + claudeSettingsPath(env),
-      install: ({ url, token, hooks = true, hookCommand }) => {
+      install: ({ url, token, hooks = true, hookCommand, dispatch = false, launch }) => {
         run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]);
+        if (dispatch && hooks) {                  // hooks only: see installClaudeDispatch
+          installClaudeDispatch({ settingsFile: claudeSettingsPath(env), launch, env });
+          return "hooks only (prompt hook with dispatch + capture hooks) in " + claudeSettingsPath(env);
+        }
         const args = ["mcp", "add", "--scope", "user", "--transport", "http", SERVER_NAME, url];
         if (token) args.push("--header", `Authorization: Bearer ${token}`);
         const r = run("claude", args);

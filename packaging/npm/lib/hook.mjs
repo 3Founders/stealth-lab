@@ -27,6 +27,7 @@
 // gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { claudeDir } from "./claude_exec.mjs";
 import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
@@ -95,9 +96,18 @@ function parseCandidates(raw, env) {
 // With the local executor installed (`install --with-exec`: the stealth-delegator agent exists), every model
 // ~/.stealthlab/exec.json configures for an executor is a unit a plan may choose: "model|executor". The model guard
 // hands such a step to the delegator (lib/model_guard.mjs). A malformed exec.json adds nothing.
+function dispatchInstalled(env) {
+  try {
+    const p = path.join(env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab"), "config.json");
+    return JSON.parse(fs.readFileSync(p, "utf8"))?.dispatch === true;
+  } catch {
+    return false;
+  }
+}
+
 export function execCandidates(env = process.env) {
   try {
-    if (!fs.existsSync(path.join(claudeDir(env), "agents", "stealth-delegator.md"))) return [];
+    if (!fs.existsSync(path.join(claudeDir(env), "agents", "stealth-delegator.md")) && !dispatchInstalled(env)) return [];
     const cfg = JSON.parse(fs.readFileSync(execConfigPath(env), "utf8"));
     const out = [];
     for (const [id, spec] of Object.entries(cfg?.executors || {})) {

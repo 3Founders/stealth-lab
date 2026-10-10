@@ -130,7 +130,9 @@ def workspace(arm: str, name: str) -> Path:
     if arm == "C":
         (ws / ".stealth").mkdir(exist_ok=True)
         (ws / ".stealth" / ".keep").write_text("", encoding="utf-8")
-        subprocess.run(["node", str(HERE / "setup_c.mjs"), str(ws)], check=True, capture_output=True, text=True)
+        # STEALTHLAB_HOME: the install's saved config (dispatch: true) goes to arm C's home, never the person's own
+        subprocess.run(["node", str(HERE / "setup_c.mjs"), str(ws)], check=True, capture_output=True, text=True,
+                       env={**os.environ, "STEALTHLAB_HOME": str(c_home())})
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "-m", "workspace")
     return ws
@@ -304,7 +306,8 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     # project -- so the agent, dispatch and the test-first tests all run where the code would
     if getattr(mod, "PYTHON_DIR", None):
         env["PATH"] = str(mod.PYTHON_DIR) + os.pathsep + env.get("PATH", "")
-    extra = ["--mcp-config", str(mcp_config(secrets)), "--allowedTools", *C_TOOLS] if arm == "C" else []
+    # arm C is `install --with-exec` (setup_c.mjs): hooks only -- the session gets no MCP server, exactly as installed
+    extra = []
     logs = LOCAL / "logs" / run
     logs.mkdir(parents=True, exist_ok=True)
     started = now()

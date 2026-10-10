@@ -19,7 +19,7 @@ import { runStdioRelay } from "../lib/proxy.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
 import { freshToken, login as oauthLogin, logoutConfig } from "../lib/oauth.mjs";
 import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs";
-import { runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
+import { logHook, runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
 import { runCaptureHook, runCaptureWorker } from "../lib/capture_hook.mjs";
 import { applyInstructions } from "../lib/instructions.mjs";
 import { runCursorHook, runCursorLookupWorker } from "../lib/cursor_hooks.mjs";
@@ -87,9 +87,9 @@ Install options:
   --token <tok>   bearer token to send (optional; reads are anonymous)
   --dry-run       show what would change, change nothing
   --no-hooks      Claude Code / Cursor: register the MCP server only, without the hooks
-  --with-exec     Claude Code, opt-in: also install the local executor layer (agents
-                  stealth-executor + stealth-delegator in ~/.claude/agents, and the
-                  SubagentStart/SubagentStop hooks). Only your own local agents and logins.
+  --with-exec     Claude Code, opt-in: the prompt hook runs cheap models (~/.stealthlab/exec.json) before
+                  your session's model and applies a verified answer. Hooks only: no MCP server, agents or
+                  model guard in the session. With --no-hooks: the old executor agents instead.
 
 Config: ${configPath()}
 `;
@@ -120,7 +120,7 @@ async function cmdInstall(v) {
   const url = requireUrl(settings);
   const { chosen } = pickClients(v.client);
   const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] },
-                hooks: !v["no-hooks"], launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
+                hooks: !v["no-hooks"], dispatch: Boolean(v["with-exec"]), launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
 
   if (!v["dry-run"]) writeConfig({ url, ...(v.token ? { token: v.token } : {}) });
 
@@ -134,18 +134,21 @@ async function cmdInstall(v) {
   let failed = 0;
   for (const c of chosen) {
     if (v["dry-run"]) {
-      out(`  would configure ${c.label.padEnd(15)} ${c.where()}`);
+      out(`  would configure ${c.label.padEnd(15)} ${c.id === "claude-code" && v["with-exec"] && !v["no-hooks"]
+        ? "hooks only (prompt hook with dispatch + capture hooks; no MCP server, agents or model guard)" : c.where()}`);
       continue;
     }
     try {
-      c.install(ctx);
-      out(`  ok    ${c.label.padEnd(15)} ${c.where()}`);
+      const where = c.install(ctx);
+      out(`  ok    ${c.label.padEnd(15)} ${typeof where === "string" ? where : c.where()}`);
     } catch (err) {
       failed++;
       out(`  FAIL  ${c.label.padEnd(15)} ${err.message}`);
     }
   }
-  if (v["with-exec"]) {
+  if (v["with-exec"] && !v["no-hooks"] && chosen.some((c) => c.id === "claude-code")) {
+    // Claude Code took the hooks-only dispatch install (clients.mjs installClaudeDispatch): no agents to write
+  } else if (v["with-exec"]) {
     if (!chosen.some((c) => c.id === "claude-code")) {
       out("\n--with-exec: Claude Code not selected, so no agents or hooks were written.");
       out("  Other MCP clients can run the executor server as a stdio command: stealthlab-mcp exec");
@@ -178,6 +181,7 @@ async function cmdUninstall(v) {
   if (chosen.some((c) => c.id === "claude-code")) {
     try {
       if (uninstallExec().changed) out("  removed  Executor layer (agents + SubagentStart/SubagentStop hooks)");
+      if (readConfig().dispatch) { writeConfig({ dispatch: null }); out("  removed  Dispatch (hooks-only install)"); }
     } catch (err) {
       out(`  skip     Executor layer: ${err.message}`);
     }
@@ -345,7 +349,9 @@ async function main() {
       settings.token = await freshToken(settings);          // a signed-in token is renewed shortly before it expires
       return runPromptHook({
         stdinText: Buffer.concat(chunks).toString("utf8"), settings, userAgent: UA,
-        write: (s) => process.stdout.write(s + "\n"), log: out,
+        write: (s) => process.stdout.write(s + "\n"),
+        // also to ~/.stealthlab/hooks.log: Claude Code keeps no hook stderr, and dispatch's decisions need a record
+        log: (m) => { out(m); try { logHook(process.env, "prompt", m); } catch { /* best effort */ } },
       });
     }
     case "exec": {

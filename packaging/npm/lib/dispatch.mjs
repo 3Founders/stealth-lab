@@ -135,13 +135,26 @@ ${specContext(root)}
     return spawnSync(launch.cmd, [...launch.prefix, ...args], { encoding: "utf8", timeout: 180000, windowsHide: true,
       input, env: scrubEnv(env) });
   });
-  const r = run(["-p", "--model", model, "--system-prompt", SPEC_SYSTEM,
-    "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"], ask);
-  let j;
-  try { j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop()); } catch { log("test-first: no JSON reply"); return null; }
-  if (j.is_error || !j.result) { log(`test-first: ${String(j.result || "error").slice(0, 120)}`); return null; }
-  const code = rootRelative(codeBlock(j.result));
-  if (!/def test_/.test(code)) return null;
+  const args = ["-p", "--model", model, "--system-prompt", SPEC_SYSTEM,
+    "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
+  // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
+  let j = null;
+  let code = "";
+  for (let attempt = 1; attempt <= 2 && !code; attempt++) {
+    const r = run(args, ask);
+    try {
+      j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop());
+    } catch {
+      log(`test-first: no JSON reply (attempt ${attempt}, exit ${r.status ?? r.error?.code ?? "?"}: ` +
+          `${String(r.stderr || r.error?.message || "").trim().slice(-200)})`);
+      continue;
+    }
+    if (j.is_error || !j.result) { log(`test-first: ${String(j.result || "error").slice(0, 160)} (attempt ${attempt})`); continue; }
+    const c = rootRelative(codeBlock(j.result));
+    if (/def test_/.test(c)) code = c;
+    else log(`test-first: the reply has no test (attempt ${attempt})`);
+  }
+  if (!code) return null;
   const dir = path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
     "specs", `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
   fs.mkdirSync(dir, { recursive: true });
