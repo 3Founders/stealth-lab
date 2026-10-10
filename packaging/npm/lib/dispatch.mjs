@@ -15,7 +15,7 @@
 // the check of the library entry the lookup matched. No check, no dispatch. STEALTHLAB_DISPATCH=off turns it off.
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
 import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
@@ -42,6 +42,8 @@ export function dispatchPolicy(env = process.env) {
     // Claude models run by the claude executor (headless Claude Code): off by default -- on a small task their cost is
     // Claude Code's own overhead, about what the session model costs to do the task, so a failed try only adds cost
     claude: (env.STEALTHLAB_DISPATCH_CLAUDE || "off").toLowerCase() === "on",
+    // the time limit on all the cheap tries together, from their start: past it the session's model takes over
+    timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 150)),
   };
 }
 
@@ -127,37 +129,75 @@ export function pytestAvailable() {
   return pytestHere;
 }
 
+// Where test-first's files go: <STEALTHLAB_HOME>/specs/<id>/ -- test_spec.py when written, SKIP when none could be.
+export function specDir(env = process.env) {
+  const dir = path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
+    "specs", `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+// The check step that runs test-first's tests: waits for the tests (they are written while the cheap model works)
+// or for SKIP, then runs them with pytest from the worktree. No tests could be written: it passes, and dispatch
+// falls back on the cross-check for that answer.
+const RUN_SPEC = `import os, subprocess, sys, time
+d = os.path.dirname(os.path.abspath(__file__))
+f, skip = os.path.join(d, "test_spec.py"), os.path.join(d, "SKIP")
+end = time.time() + 300
+while not os.path.exists(f) and not os.path.exists(skip) and time.time() < end:
+    time.sleep(0.5)
+if not os.path.exists(f):
+    sys.exit(0)
+sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f]))
+`;
+
+export function writeSpecRunner(dir) {
+  const file = path.join(dir, "run_spec.py");
+  fs.writeFileSync(file, RUN_SPEC);
+  return file;
+}
+
+function runClaudeAsync(env, args, input, signal) {
+  return new Promise((resolve) => {
+    let launch;
+    try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
+    const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: scrubEnv(env) });
+    let stdout = "", stderr = "";
+    const timer = setTimeout(() => child.kill(), 180000);
+    const abort = () => child.kill();
+    signal?.addEventListener?.("abort", abort);
+    child.stdout.on("data", (d) => { stdout += d; });
+    child.stderr.on("data", (d) => { stderr += d; });
+    child.on("error", (err) => { stderr += err.message; });
+    child.on("close", (status) => { clearTimeout(timer); signal?.removeEventListener?.("abort", abort); resolve({ status, stdout, stderr }); });
+    child.stdin.end(input);
+  });
+}
+
 // -> {file, cost_usd} (a pytest file outside the repo, run from the worktree) or null. One lean, tool-less call to
-// the session's model: a short system prompt, no tools, no project settings -- ~$0.02 with Opus, measured.
-export function writeSpecTests({ prompt, root, mine, check = "", env = process.env, log = () => {}, runClaude }) {
+// a Claude model: a short system prompt, no tools, no project settings. Async: dispatch starts the cheap models at
+// the same time, and their check waits for the file (run_spec.py). `dir`: where to write (specDir() when omitted);
+// the file appears only once it is complete and parses, and SKIP appears instead when no tests could be written.
+export async function writeSpecTests({ prompt, root, mine, check = "", env = process.env, log = () => {}, runClaude,
+                                       dir = null, signal = null }) {
+  const out = dir || specDir(env);
+  const skip = () => { try { fs.writeFileSync(path.join(out, "SKIP"), ""); } catch { /* best effort */ } return null; };
   // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL (a cheaper Claude model, say)
   const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
-  if (!model.includes("claude")) return null;
-  const ask = `Task:
-${String(prompt || "").trim()}
-
-Project files:
-${specContext(root)}
-
-` +
-    (check ? `The project's own check command: ${check}
-
-` : "") +
+  if (!model.includes("claude")) return skip();
+  const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
+    (check ? `The project's own check command: ${check}\n\n` : "") +
     "Write the acceptance tests for this task. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
   // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
-  const run = runClaude || ((args, input) => {
-    const launch = launchOrThrow("claude", { env });
-    return spawnSync(launch.cmd, [...launch.prefix, ...args], { encoding: "utf8", timeout: 180000, windowsHide: true,
-      input, env: scrubEnv(env) });
-  });
+  const run = runClaude || ((args, input) => runClaudeAsync(env, args, input, signal));
   const args = ["-p", "--model", model, "--system-prompt", SPEC_SYSTEM,
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
   let j = null;
   let code = "";
-  for (let attempt = 1; attempt <= 2 && !code; attempt++) {
-    const r = run(args, ask);
+  for (let attempt = 1; attempt <= 2 && !code && !signal?.aborted; attempt++) {
+    const r = await run(args, ask);
     try {
       j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop());
     } catch {
@@ -170,21 +210,23 @@ ${specContext(root)}
     if (/def test_/.test(c)) code = c;
     else log(`test-first: the reply has no test (attempt ${attempt})`);
   }
-  if (!code) return null;
-  const dir = path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
-    "specs", `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, "test_spec.py");
+  if (!code) return skip();
+  const file = path.join(out, "test_spec.py");
+  const tmp = path.join(out, "test_spec.py.part");
   // run from the worktree: the project's modules import from the current directory
-  fs.writeFileSync(file, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + code + "\n");
+  fs.writeFileSync(tmp, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + code + "\n");
   const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
-  const bad = pythonSyntaxError(file);
-  if (bad) log(`test-first: the tests do not parse (${bad}); dispatch goes on without them`);
   try {
-    fs.appendFileSync(path.join(path.dirname(path.dirname(dir)), "dispatch_costs.jsonl"),
+    fs.appendFileSync(path.join(path.dirname(path.dirname(out)), "dispatch_costs.jsonl"),
       JSON.stringify({ at: new Date().toISOString(), what: "test-first", model, cost_usd: cost }) + "\n");
   } catch { /* the ledger is best-effort */ }
-  return bad ? null : { file, cost_usd: cost };   // the call is paid (ledger) either way
+  const bad = pythonSyntaxError(tmp);
+  if (bad) {
+    log(`test-first: the tests do not parse (${bad}); dispatch goes on without them`);
+    return skip();                                 // the call is paid (ledger) either way
+  }
+  fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
+  return { file, cost_usd: cost };
 }
 
 // The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count
@@ -252,15 +294,21 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   if (!rungs.length || !check) return null;
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
-  // test-first: the session model's tests join the project's check for every cheap rung
+  // test-first: tests from the task join the project's check for every cheap rung. They are written WHILE the cheap
+  // models work (a cheap model takes ~50 s to reach its first check, the tests ~20 s): the check's last step waits
+  // for them. Whatever the project's check is (pytest, vitest, a SQL or page check), the tests are a pytest file.
   let spec = null;
-  // whatever the project's check is (pytest, vitest, a SQL or page check), the tests are a pytest file run after it
+  let specDone = Promise.resolve(null);
+  let fullCheck = check;
+  const specAbort = new AbortController();
   if (policy.testFirst && (runClaude || pytestAvailable())) {
-    try { spec = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude }); } catch (err) {
-      log(`test-first: ${err.message}`);
-    }
+    const dir = specDir(env);
+    fullCheck = `${check} && python "${writeSpecRunner(dir)}"`;
+    specDone = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude, dir,
+                                signal: specAbort.signal })
+      .then((s) => { spec = s; return s; })
+      .catch((err) => { log(`test-first: ${err.message}`); try { fs.writeFileSync(path.join(dir, "SKIP"), ""); } catch { /* */ } return null; });
   }
-  const fullCheck = spec ? `${check} && python -m pytest -q -p no:cacheprovider "${spec.file}"` : check;
 
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
@@ -283,6 +331,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   };
   // a finished rung -> true when its answer is accepted
   const judge = async ({ rung, result, error }) => {
+    if (result?.state === "verified") await specDone;     // settled by then: the check waited for the tests
     if (error) {
       log(`dispatch ${rung.unit}: ${error.message}`);
       tried.push({ unit: rung.unit, state: "error", error: String(error.message).slice(0, 200) });
@@ -322,16 +371,38 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   const pending = new Map();               // unit -> promise of its finished run
   const width = policy.parallel ? rungs.length : 1;
   let winner = null;
+  // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
+  let timer;
+  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), policy.timeoutS * 1000); });
+  timer.unref?.();
+  let timedOut = false;
   while (!winner && (queue.length || pending.size)) {
     while (queue.length && pending.size < width) {
       const rung = queue.shift();
       pending.set(rung.unit, runRung(rung));
     }
-    const done = await Promise.race([...pending.values()]);
+    const done = await Promise.race([...pending.values(), deadline]);
+    if (done.timeout) { timedOut = true; break; }
     pending.delete(done.rung.unit);
     running.delete(done.rung.unit);
     if (await judge(done)) winner = done;
   }
+  clearTimeout(timer);
+  if (timedOut) {
+    // no pass in time: the runs still going are cancelled -- not counted against their models -- and the rest skipped
+    log(`dispatch: no cheap pass within ${policy.timeoutS} s; the session's model takes over`);
+    for (const unit of pending.keys()) {
+      const runId = running.get(unit);
+      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+    }
+    for (const p of pending.values()) {
+      const r = await p;
+      tried.push({ unit: r.rung.unit, state: "timed out", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    }
+    pending.clear();
+    for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (time limit)" });
+  }
+  specAbort.abort();                       // a test writer still going (no pass, or a time-out) is not needed now
   if (winner) {
     // the others still running: cancelled (not counted against their models), then awaited so their cost is known
     for (const unit of pending.keys()) {
