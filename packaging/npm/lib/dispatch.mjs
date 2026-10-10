@@ -86,20 +86,39 @@ export function rootRelative(code) {
   return out;
 }
 
+// The test writer's brief. One line: it is passed as an argument.
+export const SPEC_SYSTEM = [
+  "You write the acceptance tests that decide whether a cheaper model's change does a task correctly. Its change is",
+  "accepted only if your tests and the project's own check pass, so a weak test ships a bug and a wrong test throws",
+  "away a correct answer. Write 4-6 short, focused pytest tests, without comments or docstrings. (1) Test what the task is FOR, not only the example it",
+  "shows: an example's values often hide a wrong method, so cover the cases where a plausible but wrong",
+  "implementation would differ -- both sides of a sign, threshold, boundary or branch; empty, single and repeated",
+  "elements; odd and even sizes; inputs other than the one shown. (2) Where the task could be read two ways (a count",
+  "or a fraction, inclusive or exclusive, in place or a copy, which order), include an input on which the readings",
+  "give different answers and assert the one the task means. (3) Assert exact values where the task determines them.",
+  "Where the output depends on details the task leaves open (random draws under a seed, tie order, rounding),",
+  "compute the expected value in the test with a short reference implementation that takes the most direct reading",
+  "of the task and uses the names, imports and libraries the project files already give. (4) Do not test what the",
+  "task does not ask for: wording of messages, formatting, speed, internal structure, extra features. (5) Use the",
+  "project's interface exactly as its files show it (module names, function signatures, variables a snippet must",
+  "set). The test file is not inside the project: it runs with the project root as the current directory, so reach",
+  "project files through os.getcwd() or plain relative paths, never through __file__. Output only code.",
+].join(" ");
+
 // -> {file, cost_usd} (a pytest file outside the repo, run from the worktree) or null. One lean, tool-less call to
 // the session's model: a short system prompt, no tools, no project settings -- ~$0.02 with Opus, measured.
 export function writeSpecTests({ prompt, root, mine, env = process.env, log = () => {}, runClaude }) {
-  const model = String(mine || "").split("|")[0];
+  // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL (a cheaper Claude model, say)
+  const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
   if (!model.includes("claude")) return null;
-  const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
-    "Write 3-6 pytest tests that check the behaviour this task asks for, edge cases included (boundaries, empty or " +
-    "invalid input, exact outputs, errors it implies). Test only what the task states or clearly implies -- not your " +
-    "own guesses about unspecified details. Where the task could be misread (a count vs a fraction, inclusive vs " +
-    "exclusive bounds, in place vs a copy, the order of results), include an input on which the readings give " +
-    "different answers and assert the one the task means. Import from the project's modules as the files above " +
-    "show. The test " +
-    "file is NOT inside the project: it runs with the project root as the current directory, so reach project files " +
-    "through os.getcwd() or plain relative paths, never through __file__. Reply with only the Python test file.";
+  const ask = `Task:
+${String(prompt || "").trim()}
+
+Project files:
+${specContext(root)}
+
+` +
+    "Write the acceptance tests for this task. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
   // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
   const run = runClaude || ((args, input) => {
@@ -107,7 +126,7 @@ export function writeSpecTests({ prompt, root, mine, env = process.env, log = ()
     return spawnSync(launch.cmd, [...launch.prefix, ...args], { encoding: "utf8", timeout: 180000, windowsHide: true,
       input, env: scrubEnv(env) });
   });
-  const r = run(["-p", "--model", model, "--system-prompt", "You write precise pytest test files. Output only code.",
+  const r = run(["-p", "--model", model, "--system-prompt", SPEC_SYSTEM,
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"], ask);
   let j;
   try { j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop()); } catch { log("test-first: no JSON reply"); return null; }

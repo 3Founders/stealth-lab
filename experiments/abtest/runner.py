@@ -139,6 +139,8 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             "STEALTHLAB_HOOK_TIMEOUT_MS": "60000",
             # dispatch: the plan's cheap rungs run before the session's model, verified by the task's own check
             "STEALTHLAB_DISPATCH_CHECK": task_check,
+            **({"STEALTHLAB_DISPATCH_TESTFIRST_MODEL": os.environ["ABTEST_TESTFIRST_MODEL"]}
+               if os.environ.get("ABTEST_TESTFIRST_MODEL") else {}),
             "STEALTHLAB_EXEC_WORKTREE_ROOT": str(LOCAL / "worktrees"),
             "GENERAL_COMPUTE_API_KEY": secrets["gc"],
         })
@@ -333,6 +335,8 @@ def main() -> int:
     ap.add_argument("--tasks", required=True, help="e.g. ds1000:5")
     ap.add_argument("--seed", type=int, default=20261009)
     ap.add_argument("--arms", default="A,C")
+    ap.add_argument("--only", default="", help="comma-separated task ids: run just these from the sampled tasks")
+    ap.add_argument("--testfirst-model", default="", help="arm C: the model that writes the test-first tests")
     args = ap.parse_args()
 
     import local_identity
@@ -354,7 +358,12 @@ def main() -> int:
             if r.get("status") == "done":
                 done.add((r["task_id"], r["arm"]))
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
+    only = {t.strip() for t in args.only.split(",") if t.strip()}
+    if args.testfirst_model:
+        os.environ["ABTEST_TESTFIRST_MODEL"] = args.testfirst_model
     for task in load_tasks(args.tasks, args.seed):
+        if only and task["task_id"] not in only:
+            continue
         order = sorted(arms, key=lambda a: hashlib.sha256(f"{args.seed}|{task['task_id']}|{a}".encode()).hexdigest())
         for arm in order:
             if (task["task_id"], arm) in done:
