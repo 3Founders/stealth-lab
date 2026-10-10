@@ -158,6 +158,7 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             "STEALTHLAB_DISPATCH_CHECK": task_check,
             **({"STEALTHLAB_DISPATCH_TESTFIRST_MODEL": os.environ["ABTEST_TESTFIRST_MODEL"]}
                if os.environ.get("ABTEST_TESTFIRST_MODEL") else {}),
+            **({"STEALTHLAB_DISPATCH_PARALLEL": "on"} if os.environ.get("ABTEST_PARALLEL") else {}),
             "STEALTHLAB_EXEC_WORKTREE_ROOT": str(LOCAL / "worktrees"),
             "GENERAL_COMPUTE_API_KEY": secrets["gc"],
         })
@@ -355,6 +356,7 @@ def main() -> int:
     ap.add_argument("--arms", default="A,C")
     ap.add_argument("--exclude-runs", default="", help="comma-separated earlier runs whose tasks are skipped")
     ap.add_argument("--only", default="", help="comma-separated task ids: run just these from the sampled tasks")
+    ap.add_argument("--parallel", action="store_true", help="arm C: the cheap models run at once (first pass wins)")
     ap.add_argument("--testfirst-model", default="", help="arm C: the model that writes the test-first tests")
     args = ap.parse_args()
 
@@ -380,6 +382,8 @@ def main() -> int:
     only = {t.strip() for t in args.only.split(",") if t.strip()}
     if args.testfirst_model:
         os.environ["ABTEST_TESTFIRST_MODEL"] = args.testfirst_model
+    if args.parallel:
+        os.environ["ABTEST_PARALLEL"] = "on"
     seen = frozenset(json.loads(line)["task_id"] for r in args.exclude_runs.split(",") if r.strip()
                      for line in (LOCAL / "results" / f"{r.strip()}.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
     for task in load_tasks(args.tasks, args.seed, seen):
