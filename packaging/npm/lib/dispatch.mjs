@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
+import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 
@@ -29,8 +30,78 @@ export function dispatchPolicy(env = process.env) {
     check: (env.STEALTHLAB_DISPATCH_CHECK || "").trim() || null,
     maxRungs: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS || 3)),
     scope: String(env.STEALTHLAB_DISPATCH_SCOPE || "*,**/*").split(",").map((s) => s.trim()).filter(Boolean),
-    crosscheck: (env.STEALTHLAB_DISPATCH_CROSSCHECK || "on").toLowerCase() !== "off",
+    // "strict" (default): a cross-check that cannot decide counts as NOT verified -- the task goes up the ladder;
+    // "on": inconclusive is accepted as before; "off": no cross-check
+    crosscheck: (env.STEALTHLAB_DISPATCH_CROSSCHECK || "strict").toLowerCase(),
+    // test-first: the session's own model writes a few tests from the task before any cheap rung runs; every cheap
+    // answer must pass them too. "off" turns it off.
+    testFirst: (env.STEALTHLAB_DISPATCH_TESTFIRST || "on").toLowerCase() !== "off",
   };
+}
+
+// ---- test-first: the session model's own tests, from the task --------------------------------------------------
+
+const SPEC_FILES_MAX = 6000;     // bytes per file shown to the test writer
+const SPEC_FILES_N = 6;
+
+// The small top-level files that give the test writer the interface (the task file, the module to implement).
+function specContext(root) {
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(root).filter((f) => !f.startsWith(".") && !/^test_|_test\./.test(f)); } catch { return ""; }
+  for (const f of names.sort()) {
+    const p = path.join(root, f);
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile() || st.size > SPEC_FILES_MAX || !/\.(py|md|txt|toml|cfg|json)$/i.test(f)) continue;
+      out.push(`--- ${f} ---\n${fs.readFileSync(p, "utf8")}`);
+    } catch { /* unreadable: skip */ }
+    if (out.length >= SPEC_FILES_N) break;
+  }
+  return out.join("\n\n");
+}
+
+function codeBlock(text) {
+  const m = /```(?:python)?\s*\n([\s\S]*?)```/.exec(String(text || ""));
+  return (m ? m[1] : String(text || "")).trim();
+}
+
+// -> {file, cost_usd} (a pytest file outside the repo, run from the worktree) or null. One lean, tool-less call to
+// the session's model: a short system prompt, no tools, no project settings -- ~$0.02 with Opus, measured.
+export function writeSpecTests({ prompt, root, mine, env = process.env, log = () => {}, runClaude }) {
+  const model = String(mine || "").split("|")[0];
+  if (!model.includes("claude")) return null;
+  const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
+    "Write 3-6 pytest tests that check the behaviour this task asks for, edge cases included (boundaries, empty or " +
+    "invalid input, exact outputs, errors it implies). Test only what the task states or clearly implies -- not your " +
+    "own guesses about unspecified details. Import from the project's modules as the files above show. Reply with " +
+    "only the Python test file.";
+  // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
+  // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
+  const run = runClaude || ((args, input) => {
+    const launch = launchOrThrow("claude", { env });
+    return spawnSync(launch.cmd, [...launch.prefix, ...args], { encoding: "utf8", timeout: 180000, windowsHide: true,
+      input, env: scrubEnv(env) });
+  });
+  const r = run(["-p", "--model", model, "--system-prompt", "You write precise pytest test files. Output only code.",
+    "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"], ask);
+  let j;
+  try { j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop()); } catch { log("test-first: no JSON reply"); return null; }
+  if (j.is_error || !j.result) { log(`test-first: ${String(j.result || "error").slice(0, 120)}`); return null; }
+  const code = codeBlock(j.result);
+  if (!/def test_/.test(code)) return null;
+  const dir = path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
+    "specs", `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "test_spec.py");
+  // run from the worktree: the project's modules import from the current directory
+  fs.writeFileSync(file, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + code + "\n");
+  const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
+  try {
+    fs.appendFileSync(path.join(path.dirname(path.dirname(dir)), "dispatch_costs.jsonl"),
+      JSON.stringify({ at: new Date().toISOString(), what: "test-first", model, cost_usd: cost }) + "\n");
+  } catch { /* the ledger is best-effort */ }
+  return { file, cost_usd: cost };
 }
 
 // The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count
@@ -78,10 +149,18 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   if (!rungs.length || !check) return null;
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
+  // test-first: the session model's tests join the project's check for every cheap rung
+  let spec = null;
+  if (policy.testFirst && /pytest/.test(check)) {
+    try { spec = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, env, log }); } catch (err) {
+      log(`test-first: ${err.message}`);
+    }
+  }
+  const fullCheck = spec ? `${check} && python -m pytest -q -p no:cacheprovider "${spec.file}"` : check;
   for (const rung of rungs) {
     let result;
     try {
-      const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskText(payload.prompt), checks: [check],
+      const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskText(payload.prompt), checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
       do {
@@ -98,10 +177,16 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       continue;
     }
     let cross = null;
-    if (ok && policy.crosscheck) {
+    if (ok && policy.crosscheck !== "off") {
       cross = await crossCheck({ rt, rung, result, rungs: dispatchableRungs(plan, mine, env), env, payload, root, check,
                                  scope: policy.scope, log });
       if (cross.verdict === "disagree") ok = false;
+      if (cross.verdict === "inconclusive" && policy.crosscheck === "strict") {
+        // nothing could confirm the answer: not delivered, and not counted against the model either
+        tried.push({ unit: rung.unit, state: "unconfirmed", run_id: result.run_id, cost_usd: result.cost_usd, cross });
+        try { await rt.cancelRun(result.run_id); } catch { /* best effort */ }
+        continue;
+      }
     }
     try {
       if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), rung.model, rung.executor, ok);
@@ -135,13 +220,13 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
-    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried,
+    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried, spec,
       text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
         `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
-  return { handled: false, tried, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)) };
+  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)) };
 }
 
 // Cross-check (differential testing): a passing cheap answer is accepted only if a DIFFERENT model, solving the same

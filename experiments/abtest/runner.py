@@ -298,6 +298,12 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     if arm == "C":
         rec["hook_jobs_drained"] = wait_hook_jobs(LOCAL / "C_home")
         rec.update(open_model_runs(LOCAL / "C_home", started, now()))
+        # the session model's test-first calls (dispatch's ledger): part of C's cost
+        led = LOCAL / "C_home" / "dispatch_costs.jsonl"
+        extra = [json.loads(x) for x in led.read_text(encoding="utf-8").splitlines() if x.strip()] if led.exists() else []
+        rec["testfirst_cost_usd"] = round(sum(float(e.get("cost_usd") or 0) for e in extra
+                                              if started <= str(e.get("at", ""))[:19] + "+00:00" <= now()), 6)
+        rec["open_cost_usd"] = round(float(rec.get("open_cost_usd") or 0) + rec["testfirst_cost_usd"], 6)
         lib = ws / ".stealth" / "library.md"
         rec["library_entries"] = sum(1 for ln in lib.read_text(encoding="utf-8").splitlines()
                                      if ln.startswith("GOAL|")) if lib.exists() else 0

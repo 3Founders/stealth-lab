@@ -20,7 +20,9 @@ function setup(execModels = ["gemma-4-31b-it", "minimax-m2-7"]) {
   fs.mkdirSync(path.join(repo, ".stealth"));
   fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q" }, repo };
+  // these tests are about the dispatch loop: test-first and the cross-check have tests of their own below
+  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q",
+                  STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off" }, repo };
 }
 
 // A stand-in for ExecRuntime: each model's outcome is scripted; applying writes the "fixed" file.
@@ -137,4 +139,41 @@ test("cross-check: an answer that passes the other model's tests is accepted; no
   assert.equal((await crossCheck({ rt: ok.rt, rung: RUNGS[0], result: ok.result, rungs: [RUNGS[0]],
     env: { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nx-")) }, payload: { prompt: "x" }, root: ".",
     check: "python -m pytest -q" })).verdict, "inconclusive");
+});
+
+
+// --- test-first and the strict cross-check ---------------------------------------------------------------------
+
+import { writeSpecTests } from "../lib/dispatch.mjs";
+
+test("test-first: the session model's tests are saved outside the repo, sized, and the cost recorded", () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
+  let asked = null;
+  const runClaude = (args, input) => { asked = { args, input };
+    return { stdout: JSON.stringify({ result: "```python\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```",
+                                      total_cost_usd: 0.02 }) }; };
+  const spec = writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude });
+  assert.ok(spec.file.startsWith(env.STEALTHLAB_HOME) && !spec.file.startsWith(repo), "outside the repo");
+  assert.match(fs.readFileSync(spec.file, "utf8"), /sys\.path\.insert\(0, os\.getcwd\(\)\)[\s\S]*def test_neg/);
+  assert.equal(spec.cost_usd, 0.02);
+  assert.ok(asked.args.includes("--tools") && asked.args.includes("claude-opus-5-5"));
+  assert.match(asked.input, /double x[\s\S]*solution\.py/, "the prompt and the project's files go on stdin");
+  assert.match(fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8"), /"test-first"/);
+  assert.equal(writeSpecTests({ prompt: "x", root: repo, mine: "gpt-5|codex", env, runClaude }), null, "not a Claude session");
+  assert.equal(writeSpecTests({ prompt: "x", root: repo, mine: MINE, env,
+    runClaude: () => ({ stdout: JSON.stringify({ result: "no tests here" }) }) }), null);
+});
+
+test("strict cross-check: an answer nothing could confirm is not delivered and not counted against the model", async () => {
+  const { env, repo } = setup();
+  const rt = stubRuntime(repo, { "gemma-4-31b-it": "verified", "minimax-m2-7": "verified" });   // no worktrees: inconclusive
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo,
+    mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_CROSSCHECK: "strict" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.deepEqual(d.tried.map((t) => t.state), ["unconfirmed", "unconfirmed"]);
+  assert.equal(fs.existsSync(path.join(repo, ".stealth", "routing.md")), false, "no record either way");
+  const lenient = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo,
+    mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_CROSSCHECK: "on" }, runtime: stubRuntime(repo, { "gemma-4-31b-it": "verified" }) });
+  assert.equal(lenient.handled, true, "'on' accepts an inconclusive cross-check");
 });
