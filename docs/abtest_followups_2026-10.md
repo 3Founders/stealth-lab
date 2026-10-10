@@ -74,3 +74,27 @@ In order of value. Each needs the user's go-ahead before building.
 6. **Long-horizon, repo-level test of `.stealth`.** A series of tasks in one repo in real order, workspace and
    `.stealth` kept; arms A, C, and C with `.stealth` wiped each task. Spider 2.0-DBT locally first; SWE-rebench /
    SWE-EVO (verify) and ADE-bench on Modal with an API key (not the subscription login).
+
+## Product hardening (agreed 2026-10-11: BUILD it, not only test it) -- after fixes 1-3 merge
+
+A. Messy prompts and multi-turn sessions
+   1. Task brief: a cheap call turns the last few turns (hook payload transcript_path) + repo context into a short,
+      precise brief (resolves "that bug", fills details from earlier turns, splits multi-part requests); the cheap
+      models and the test writer get the brief, not the raw prompt.
+   2. Request type: code task / question / chat, plus clarity, size and checkability; only clear, checkable,
+      bounded tasks are dispatched; the rest go to the session's model with the knowledge block.
+   3. Unclear -> no dispatch (the session's model can ask the user).
+   4. Continuity: a short per-session log of what StealthLab did; follow-ups carry it (fix 3 is the first step).
+   5. Overrides: `!opus` skips StealthLab for one prompt, `!cheap` forces a try.
+B. Long, real repositories
+   1. Cheap models get the repo knowledge: the relevant .stealth facts, library matches, file hints.
+   2. Worktrees reuse the project's installed dependencies (node_modules, the virtualenv) so checks can run.
+   3. Faster checks: tests related to the changed files first, the full suite before accepting.
+   4. Time limit from the project's own test duration.
+   5. Size gating: big multi-file changes go to the session's model (or bounded steps of a plan).
+C. Real user flow
+   1. Safe apply: an undo point before applying, a short diff summary, `stealthlab-mcp undo`.
+   2. Don't overwrite files the user changed during the run: hand over instead.
+   3. A clear message for a cheaply-handled prompt: who, what changed, cost, how to undo.
+   4. Optional "ask before applying" mode.
+Build as cloud work in parts A, B, C, each with tests and a usage check after it.
