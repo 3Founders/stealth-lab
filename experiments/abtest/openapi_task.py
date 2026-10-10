@@ -92,6 +92,10 @@ def fuzz(app_dir: Path, spec: dict, n: int, seed: int, timeout_s: int = 600) -> 
         return r.returncode == 0, (r.stdout + r.stderr)[-2500:]
     finally:
         srv.kill()
+        try:
+            srv.wait(timeout=30)       # Windows keeps the app's folder open until the process is gone
+        except subprocess.TimeoutExpired:
+            pass
 
 
 @lru_cache(maxsize=1)
@@ -128,7 +132,7 @@ def files(task: dict, checker: Path) -> dict[str, str]:
           "\n\nThe check fuzzes the app with property-based requests generated from the contract (Schemathesis).\n")
     test = (f'import subprocess, sys\n\n\ndef test_check():\n'
             f'    r = subprocess.run([sys.executable, r"{checker}", "{task["spec"]}", "."],\n'
-            f'                       capture_output=True, text=True)\n'
+            f'                       capture_output=True, text=True, encoding="utf-8", errors="replace")\n'
             f'    print(r.stdout[-3000:])\n'
             f'    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-1000:]\n')
     return {"TASK.md": md, "openapi.json": json.dumps(spec, indent=2) + "\n", "app.py": STUB, "test_check.py": test}
@@ -147,8 +151,10 @@ def check(name: str, app_dir: Path, full: bool) -> tuple[bool, str]:
 
 
 def grade(task: dict, solution: str) -> dict:
-    with tempfile.TemporaryDirectory(prefix="oas_app_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="oas_app_", ignore_cleanup_errors=True) as tmp:
         Path(tmp, "app.py").write_text(solution, encoding="utf-8")
+        # the workspace's contract too: an app may load it at runtime, as it can in the workspace
+        Path(tmp, "openapi.json").write_text(json.dumps(spec_of(task["spec"]), indent=2) + "\n", encoding="utf-8")
         vis, _ = check(task["spec"], Path(tmp), full=False)
         ok, out = check(task["spec"], Path(tmp), full=True)
     return {"resolved": ok, "check_pass": vis, "error": None if ok else out[-300:]}
@@ -156,6 +162,7 @@ def grade(task: dict, solution: str) -> dict:
 
 if __name__ == "__main__":
     # the visible check: `python openapi_task.py <spec name> <app dir>` -> exit 0 when the visible operations conform
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")    # Schemathesis prints emoji; Windows' cp1252 can't
     ok, out = check(sys.argv[1], Path(sys.argv[2]).resolve(), full=False)
     print(out)
     print("CHECK PASS" if ok else "CHECK FAIL")
