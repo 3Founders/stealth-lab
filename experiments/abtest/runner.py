@@ -46,7 +46,7 @@ TOOLS = ["Read", "Edit", "Write", "Bash", "PowerShell", "Glob", "Grep", "Agent",
 # files a session must not open: the graders and the datasets (reference solutions). A transcript that touches one
 # is flagged `peeked` and excluded from the scored comparison.
 FORBIDDEN = ("ds1000_task.py", "evaluate.py", "test.jsonl", "experiments\\\\ds1000", "experiments/ds1000",
-             "runner.py", ".local\\\\results", ".local/results")
+             "runner.py", ".local\\\\results", ".local/results", "bcb_task.py", "bigcodebench", ".parquet")
 # one line: on Windows `claude` is a .cmd shim, and a newline in an argument cuts the command line there
 RULE = " Work only inside this directory: do not open, list or search files outside it."
 C_TOOLS = ["mcp__stealthlab", "mcp__stealthlab-exec"]
@@ -83,7 +83,10 @@ def load_tasks(spec: str, seed: int) -> list[dict]:
     if "ds1000" in suites:
         import ds1000_task
         tasks += [{**t, "module": "ds1000_task"} for t in ds1000_task.sample(suites["ds1000"], seed)]
-    unknown = set(suites) - {"ds1000"}
+    if "bcb" in suites:
+        import bcb_task
+        tasks += [{**t, "module": "bcb_task"} for t in bcb_task.sample(suites["bcb"], seed)]
+    unknown = set(suites) - {"ds1000", "bcb"}
     if unknown:
         raise SystemExit(f"unknown suites: {sorted(unknown)}")
     return tasks
