@@ -226,3 +226,13 @@ test("test-first: a reply with a missing fence is cleaned; a file that does not 
   assert.equal(writeSpecTests({ ...args, runClaude: runClaude("def test_a(:\n    pass") }), null);
   assert.ok(writeSpecTests({ ...args, runClaude: runClaude("def test_a():\n    pass") }).file);
 });
+
+test("a plan with only Sonnet before the session model still gets the cheap open models; one that starts with it does not", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "disp-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {
+    stealth: { models: ["gemma-4-31b-it", "minimax-m2-7"] }, claude: { models: ["claude-sonnet-5-5"] } } }));
+  const env = { STEALTHLAB_HOME: home };
+  assert.deepEqual(cheapCandidates({ ladder: ["claude-sonnet-5-5|claude", "claude-sonnet-5-5|claude", MINE] }, MINE, env)
+    .map((r) => r.model), ["gemma-4-31b-it", "minimax-m2-7"]);
+  assert.deepEqual(cheapCandidates({ ladder: [MINE] }, MINE, env), []);
+});

@@ -35,7 +35,13 @@ test("with the local executor installed, the models exec.json configures are can
   fs.writeFileSync(path.join(env.STEALTHLAB_TEST_HOME, ".claude", "agents", "stealth-delegator.md"), "x");
   assert.deepEqual(execCandidates(env), ["glm-5.3|stealth", "kimi-k2|stealth", "glm-5.3|opencode"]);
   const a = routingArgs(hookPolicy(env), "claude-sonnet-5-5");
-  assert.ok(a.candidates.includes("glm-5.3|stealth") && a.candidates.includes("claude-haiku-4-5|claude-code"));
+  assert.ok(a.candidates.includes("glm-5.3|stealth") && !a.candidates.includes("claude-haiku-4-5|claude-code"),
+    "with open models to dispatch to, the other Claude models are not candidates (dispatch does not run them)");
+  assert.ok(routingArgs(hookPolicy(env), "claude-sonnet-5-5").candidates.length === 3);
+  process.env.STEALTHLAB_DISPATCH_CLAUDE = "on";
+  try {
+    assert.ok(routingArgs(hookPolicy(env), "claude-sonnet-5-5").candidates.includes("claude-haiku-4-5|claude-code"));
+  } finally { delete process.env.STEALTHLAB_DISPATCH_CLAUDE; }
   assert.deepEqual(routingArgs(hookPolicy({ ...env, STEALTHLAB_HOOK_CANDIDATES: "x|y" }), "m1").candidates, ["x|y"]);
   fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), "{ not json");
   assert.deepEqual(execCandidates(env), []);

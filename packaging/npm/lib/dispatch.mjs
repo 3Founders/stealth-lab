@@ -177,8 +177,10 @@ export function dispatchableRungs(plan, mine, env = process.env, { claude = true
 // What dispatch tries: the plan's dispatchable rungs in its order, then the other open models this machine can run
 // (exec.json), up to `max`. Trying them all costs cents; one often solves what another gets wrong.
 export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude = false } = {}) {
+  // the plan puts the session's own model first: it expects the cheap models to fail here, so none is tried
+  const first = String((plan?.ladder || [])[0] || "").split("|")[0];
+  if (!first || (mine && first === String(mine).split("|")[0])) return [];
   const out = dispatchableRungs(plan, mine, env, { claude });
-  if (!out.length) return out;               // the plan puts no cheap rung first: nothing to add to
   try {
     const cfg = readExecConfig(env);
     for (const [executor, spec] of Object.entries(cfg.executors || {})) {

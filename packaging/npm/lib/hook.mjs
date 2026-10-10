@@ -116,7 +116,12 @@ export function execCandidates(env = process.env) {
 export function routingArgs(policy, model, scaffold = "claude-code") {
   if (!policy.routing || !model) return {};
   const mine = `${model}|${scaffold}`;
-  const others = policy.candidates.filter((c) => c !== mine);
+  // With open models to dispatch to, other Claude models are candidates only when dispatch runs them too
+  // (STEALTHLAB_DISPATCH_CLAUDE=on): the session never hands work over, so a plan that ranked Sonnet first would
+  // only stop the cheap models from being tried.
+  const open = policy.candidates.some((c) => !String(c).startsWith("claude-"));
+  const claudeToo = !open || (process.env.STEALTHLAB_DISPATCH_CLAUDE || "off").toLowerCase() === "on";
+  const others = policy.candidates.filter((c) => c !== mine && (claudeToo || !String(c).startsWith("claude-")));
   const constraints = {
     ...(policy.reliability !== null && policy.reliability !== undefined ? { reliability_target: policy.reliability } : {}),
     ...(policy.reliabilityMatch && (policy.reliability === null || policy.reliability === undefined)
