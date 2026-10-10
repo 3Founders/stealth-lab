@@ -68,7 +68,7 @@ def fuzz(app_dir: Path, spec: dict, n: int, seed: int, timeout_s: int = 600) -> 
     srv = subprocess.Popen([sys.executable, "-m", "uvicorn", "app:app", "--port", str(port), "--log-level", "warning"],
                            cwd=app_dir, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     try:
-        for _ in range(100):
+        for _ in range(600):           # up to 60 s for the app to listen
             if srv.poll() is not None:
                 return False, f"the app did not start: {(srv.stderr.read() or '')[-800:]}"
             try:
@@ -76,6 +76,8 @@ def fuzz(app_dir: Path, spec: dict, n: int, seed: int, timeout_s: int = 600) -> 
                 break
             except OSError:
                 time.sleep(0.1)
+        else:
+            return False, "the app did not listen within 60 s"
         with tempfile.TemporaryDirectory(prefix="oas_") as tmp:
             sp = Path(tmp, "spec.json")
             sp.write_text(json.dumps(spec), encoding="utf-8")
@@ -83,7 +85,8 @@ def fuzz(app_dir: Path, spec: dict, n: int, seed: int, timeout_s: int = 600) -> 
                 r = subprocess.run([sys.executable, "-m", "schemathesis.cli", "run", str(sp), "--url",
                                     f"http://127.0.0.1:{port}", "-c", CHECKS, "-m", "positive", "-n", str(n),
                                     "--seed", str(seed), "--phases", "examples,coverage,fuzzing", "--no-color"],
-                                   capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace")
+                                   capture_output=True, text=True, timeout=timeout_s, encoding="utf-8", errors="replace",
+                                   env={**env, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"})
             except subprocess.TimeoutExpired:
                 return False, "the check timed out"
         return r.returncode == 0, (r.stdout + r.stderr)[-2500:]

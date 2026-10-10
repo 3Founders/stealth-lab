@@ -28,21 +28,22 @@ from hypothesis_jsonschema import from_schema
 SPEC = json.loads(pathlib.Path(__file__).with_name("openapi.json").read_text(encoding="utf-8"))
 DROP = {"example", "examples", "xml", "discriminator", "readOnly", "writeOnly", "deprecated", "externalDocs"}
 
-def resolve(node, depth=0):
-    if depth > 12:
-        return {}
+def resolve(node, refs=0):
     if isinstance(node, dict):
         if "$ref" in node:
+            if refs >= 6:          # a recursive schema: any value at this depth
+                return {}
             target = SPEC
             for part in node["$ref"].lstrip("#/").split("/"):
                 target = target[part]
-            return resolve(target, depth + 1)
-        out = {k: resolve(v, depth + 1) for k, v in node.items() if k not in DROP}
+            return resolve(target, refs + 1)
+        out = {k: (resolve(v, refs) if k != "properties" else {p: resolve(x, refs) for p, x in v.items()})
+               for k, v in node.items() if k not in DROP or k == "properties"}
         if out.pop("nullable", False):
             out = {"anyOf": [out, {"type": "null"}]}
         return out
     if isinstance(node, list):
-        return [resolve(x, depth + 1) for x in node]
+        return [resolve(x, refs) for x in node]
     return node
 
 def one(schema):
