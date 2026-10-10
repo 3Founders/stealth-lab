@@ -49,7 +49,10 @@ FORBIDDEN = ("ds1000_task.py", "evaluate.py", "test.jsonl", "experiments\\\\ds10
              "runner.py", ".local\\\\results", ".local/results", "bcb_task.py", "bigcodebench", ".parquet",
              "mbpp_task.py", "mbppplus", "MbppPlus", "ifeval_task.py", "experiments\\\\ifeval", "experiments/ifeval",
              "bird_task.py", "experiments\\\\bird", "experiments/bird", "boolq_task.py", "experiments\\\\boolq",
-             "experiments/boolq", "openapi_task.py", "experiments\\\\openapi", "experiments/openapi")
+             "experiments/boolq", "openapi_task.py", "experiments\\\\openapi", "experiments/openapi",
+             "multiple_js_task.py", "experiments\\\\multiple", "experiments/multiple", "page_task.py", "html_grade.py",
+             "d2c_task.py", "websight_task.py", "experiments\\\\design2code", "experiments/design2code",
+             "experiments\\\\websight", "experiments/websight")
 # one line: on Windows `claude` is a .cmd shim, and a newline in an argument cuts the command line there
 RULE = " Work only inside this directory: do not open, list or search files outside it."
 C_TOOLS = ["mcp__stealthlab", "mcp__stealthlab-exec"]
@@ -78,7 +81,8 @@ def env_file(path: Path) -> dict[str, str]:
 # ---------------------------------------------------------------- tasks
 
 SUITES = {"ds1000": "ds1000_task", "bcb": "bcb_task", "mbpp": "mbpp_task", "ifeval": "ifeval_task",
-          "bird": "bird_task", "boolq": "boolq_task", "openapi": "openapi_task"}
+          "bird": "bird_task", "boolq": "boolq_task", "openapi": "openapi_task", "multiple_js": "multiple_js_task",
+          "d2c": "d2c_task", "websight": "websight_task"}
 
 
 def load_tasks(spec: str, seed: int, exclude: frozenset = frozenset()) -> list[dict]:
@@ -305,7 +309,10 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     mod = task_module(task)
     ws = workspace(arm, task["workspace"])
     for name, text in mod.files(task, HERE / f"{task['module']}.py").items():
-        (ws / name).write_text(text, encoding="utf-8")
+        if isinstance(text, bytes):          # e.g. a screenshot to recreate
+            (ws / name).write_bytes(text)
+        else:
+            (ws / name).write_text(text, encoding="utf-8")
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "--allow-empty", "-m", f"task {task['task_id']}")
     env = arm_env(arm, secrets, getattr(mod, "CHECK", ""))
