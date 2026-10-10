@@ -49,3 +49,28 @@ session's model does the task with a one-line note. Capture hooks report outcome
    Report results as "on checkable tasks, X% saved at Y% quality", never "saves X% on your work".
 7. **Latency** (p50/p95/p99 per arm) is measured from the full run on (runner `seconds`, wall time of the session
    including the hooks).
+
+## Queued product fixes (agreed 2026-10-11, not started)
+
+In order of value. Each needs the user's go-ahead before building.
+
+1. **Find the check automatically.** Today the A/B runner hands dispatch the check (STEALTHLAB_DISPATCH_CHECK); a
+   real user configures nothing, so dispatch mostly never fires. Detect it: pytest for Python, `npm test` from
+   package.json, `dbt test` for dbt projects, and so on; fall back to the matched library entry's check.
+2. **Hooks-only gaps** (the session no longer gets StealthLab's MCP instructions):
+   - a short StealthLab block in CLAUDE.md (as AGENTS.md already gets): record fixes in the library, attach to an
+     existing entry instead of duplicating, finish the survey worklist, look up sub-tasks;
+   - the agent uses the CLI through Bash for that (`stealthlab-mcp library ...`, `survey`, a `find` command) -- no MCP;
+   - run the survey automatically when the hook sees a repo without `.stealth`;
+   - tidy the library (merge duplicates) automatically now and then;
+   - upgrade note: `install --with-exec` removes the MCP registration; offer `--keep-mcp`.
+3. **Tell the session what a cheap model did.** A dispatched prompt is blocked, so the session never sees the change;
+   the next prompt's context should carry a short note ("minimax changed x.py to do Y").
+4. **Messy prompts.** Dispatch only when the request is clear enough (the triage judge rates it), and give the test
+   writer the conversation, not only the last prompt. Test with messy rewrites of the same tasks, a simulated user
+   who answers questions, non-task prompts mixed in, and real prompts from a pilot.
+5. **Cursor.** No dispatch today. Either a blocking `beforeSubmitPrompt` (if Cursor allows the wait) or one MCP tool
+   ("solve cheaply first") the Cursor rules tell the agent to call. Test with cursor-agent in the same A/C harness.
+6. **Long-horizon, repo-level test of `.stealth`.** A series of tasks in one repo in real order, workspace and
+   `.stealth` kept; arms A, C, and C with `.stealth` wiped each task. Spider 2.0-DBT locally first; SWE-rebench /
+   SWE-EVO (verify) and ADE-bench on Modal with an API key (not the subscription login).
