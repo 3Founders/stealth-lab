@@ -47,7 +47,9 @@ TOOLS = ["Read", "Edit", "Write", "Bash", "PowerShell", "Glob", "Grep", "Agent",
 # is flagged `peeked` and excluded from the scored comparison.
 FORBIDDEN = ("ds1000_task.py", "evaluate.py", "test.jsonl", "experiments\\\\ds1000", "experiments/ds1000",
              "runner.py", ".local\\\\results", ".local/results", "bcb_task.py", "bigcodebench", ".parquet",
-             "mbpp_task.py", "mbppplus", "MbppPlus")
+             "mbpp_task.py", "mbppplus", "MbppPlus", "ifeval_task.py", "experiments\\\\ifeval", "experiments/ifeval",
+             "bird_task.py", "experiments\\\\bird", "experiments/bird", "boolq_task.py", "experiments\\\\boolq",
+             "experiments/boolq", "openapi_task.py", "experiments\\\\openapi", "experiments/openapi")
 # one line: on Windows `claude` is a .cmd shim, and a newline in an argument cuts the command line there
 RULE = " Work only inside this directory: do not open, list or search files outside it."
 C_TOOLS = ["mcp__stealthlab", "mcp__stealthlab-exec"]
@@ -75,6 +77,10 @@ def env_file(path: Path) -> dict[str, str]:
 
 # ---------------------------------------------------------------- tasks
 
+SUITES = {"ds1000": "ds1000_task", "bcb": "bcb_task", "mbpp": "mbpp_task", "ifeval": "ifeval_task",
+          "bird": "bird_task", "boolq": "boolq_task", "openapi": "openapi_task"}
+
+
 def load_tasks(spec: str, seed: int, exclude: frozenset = frozenset()) -> list[dict]:
     suites = {}
     for part in spec.split(","):
@@ -89,20 +95,16 @@ def load_tasks(spec: str, seed: int, exclude: frozenset = frozenset()) -> list[d
                 out.append(t)
                 kept[t["suite"]] += 1
         return out
-    tasks = []
-    if "ds1000" in suites:
-        import ds1000_task
-        tasks += [{**t, "module": "ds1000_task"} for t in ds1000_task.sample(suites["ds1000"], seed)]
-    if "bcb" in suites:
-        import bcb_task
-        tasks += [{**t, "module": "bcb_task"} for t in bcb_task.sample(suites["bcb"], seed)]
-    if "mbpp" in suites:
-        import mbpp_task
-        tasks += [{**t, "module": "mbpp_task"} for t in mbpp_task.sample(suites["mbpp"], seed)]
-    unknown = set(suites) - {"ds1000", "bcb", "mbpp"}
+    unknown = set(suites) - set(SUITES)
     if unknown:
-        raise SystemExit(f"unknown suites: {sorted(unknown)}")
-    return tasks
+        raise SystemExit(f"unknown suites: {sorted(unknown)} (known: {sorted(SUITES)})")
+    per = []
+    for name, n in suites.items():
+        mod = __import__(SUITES[name])
+        per.append([{**t, "module": SUITES[name]} for t in mod.sample(n, seed)])
+    # interleaved in proportion to each suite's size: a run stopped early is still a balanced sample of every suite
+    order = sorted(((i + 0.5) / len(p), k, i) for k, p in enumerate(per) for i in range(len(p)))
+    return [per[k][i] for _, k, i in order]
 
 
 def task_module(task: dict):
@@ -313,7 +315,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     started = now()
     t0 = time.time()
     log_path = logs / f"{task['task_id']}.{arm}.jsonl"
-    out = run_claude(ws, mod.prompt(task) + RULE, env, extra, log_path)
+    out = run_claude(ws, mod.prompt(task) + getattr(mod, "RULE", RULE), env, extra, log_path)
     out["peeked"] = peeked(log_path)
     rec = {"run": run, "task_id": task["task_id"], "suite": task["suite"], "workspace": task["workspace"], "arm": arm,
            "model": MODEL, "started_at": started, "seconds": round(time.time() - t0, 1), **out}
@@ -330,7 +332,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
         rec["library_entries"] = sum(1 for ln in lib.read_text(encoding="utf-8").splitlines()
                                      if ln.startswith("GOAL|")) if lib.exists() else 0
     if out["status"] == "done":
-        solution = (ws / "solution.py").read_text(encoding="utf-8")
+        solution = (ws / getattr(mod, "solution_file", lambda t: "solution.py")(task)).read_text(encoding="utf-8")
         rec["grade"] = mod.grade(task, solution)
         rec["resolved"] = rec["grade"]["resolved"]
         rec["total_cost_usd"] = round(float(rec.get("claude_cost_usd") or 0) + float(rec.get("open_cost_usd") or 0), 6)
