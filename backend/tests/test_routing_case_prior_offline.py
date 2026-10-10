@@ -50,6 +50,7 @@ def no_database(monkeypatch):
     monkeypatch.setattr(store, "current_prices", empty_dict)
     monkeypatch.setattr(store, "model_updates", empty_dict)
     monkeypatch.setattr(store, "goal_token_stats", empty_dict)
+    monkeypatch.setattr(store, "goal_cost_stats", empty_dict)
     monkeypatch.setattr(store, "goal_rows", empty_dict)
     monkeypatch.setattr(store, "record_decision", record)
     return recorded

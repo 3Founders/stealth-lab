@@ -92,3 +92,49 @@ test("a Claude model run by the claude executor is a dispatched rung too; the se
   assert.deepEqual(dispatchableRungs(plan, MINE, { STEALTHLAB_HOME: home }).map((r) => [r.executor, r.model]),
     [["stealth", "gemma-4-31b-it"], ["claude", "claude-sonnet-5-5"]]);
 });
+
+// --- cross-check (differential testing), with real worktree folders and real pytest -----------------
+
+import { crossCheck, EXTRA_TESTS } from "../lib/dispatch.mjs";
+import { spawnSync } from "node:child_process";
+
+const hasPytest = spawnSync("python", ["-m", "pytest", "--version"], { encoding: "utf8" }).status === 0;
+
+function crossFixture(firstAnswer) {
+  const dirA = fs.mkdtempSync(path.join(os.tmpdir(), "xa-"));
+  const dirB = fs.mkdtempSync(path.join(os.tmpdir(), "xb-"));
+  fs.writeFileSync(path.join(dirA, "solution.py"), firstAnswer);
+  fs.writeFileSync(path.join(dirB, "solution.py"), "def f(x):\n    return x * 2\n");
+  fs.mkdirSync(path.join(dirB, "tests_extra"));
+  fs.writeFileSync(path.join(dirB, EXTRA_TESTS), "import sys, os\nsys.path.insert(0, os.getcwd())\nfrom solution import f\n\n" +
+    "def test_negative():\n    assert f(-3) == -6\n\ndef test_zero():\n    assert f(0) == 0\n\n" +
+    "def test_wrong_itself():\n    assert f(1) == 999\n");                      // the verifier's own bad test
+  const rt = {
+    async achieve() { return { run_id: "r-v" }; },
+    async runResult() { return { run_id: "r-v", state: "verified", cost_usd: 0.001, diff: { worktree: dirB } }; },
+    async cancelRun() { return {}; },
+  };
+  return { rt, result: { run_id: "r-a", state: "verified", diff: { worktree: dirA } } };
+}
+const RUNGS = [{ unit: "gemma-4-31b-it|stealth", executor: "stealth", model: "gemma-4-31b-it" },
+               { unit: "minimax-m2-7|stealth", executor: "stealth", model: "minimax-m2-7" }];
+
+test("cross-check: a second model's edge-case tests reject an answer that only the visible test liked", { skip: !hasPytest }, async () => {
+  const { rt, result } = crossFixture("def f(x):\n    return abs(x) * 2\n");   // right for x >= 0, wrong below
+  const c = await crossCheck({ rt, rung: RUNGS[0], result, rungs: RUNGS, env: {}, payload: { prompt: "double x" },
+    root: ".", check: "python -m pytest -q" });
+  assert.equal(c.verdict, "disagree");
+  assert.equal(c.verifier, "minimax-m2-7|stealth");
+  assert.equal(c.tests, 2, "the verifier's test that fails its own solution is dropped");
+});
+
+test("cross-check: an answer that passes the other model's tests is accepted; no pytest or no other model is inconclusive", { skip: !hasPytest }, async () => {
+  const ok = crossFixture("def f(x):\n    return x + x\n");
+  assert.equal((await crossCheck({ rt: ok.rt, rung: RUNGS[0], result: ok.result, rungs: RUNGS, env: {},
+    payload: { prompt: "double x" }, root: ".", check: "python -m pytest -q" })).verdict, "agree");
+  assert.equal((await crossCheck({ rt: ok.rt, rung: RUNGS[0], result: ok.result, rungs: RUNGS, env: {},
+    payload: { prompt: "x" }, root: ".", check: "npm test" })).verdict, "inconclusive");
+  assert.equal((await crossCheck({ rt: ok.rt, rung: RUNGS[0], result: ok.result, rungs: [RUNGS[0]],
+    env: { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nx-")) }, payload: { prompt: "x" }, root: ".",
+    check: "python -m pytest -q" })).verdict, "inconclusive");
+});

@@ -315,6 +315,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     # this, not from the public benchmark's task size -- otherwise a unit that ran once on small tasks looks far
     # cheaper than every untried one, which is then never tried (and never learned).
     pooled_tokens = _pool_unit_stats(goal_tokens)
+    goal_costs = await store.goal_cost_stats(pool, goal_id, steps=step_level)
     cost_ok, cost_fail = np.zeros(len(columns)), np.zeros(len(columns))
     for i, (u, _order) in enumerate(columns[:len(usable)]):          # earlier attempts' costs are sunk
         key = unit_id(*u)
@@ -322,6 +323,11 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
             target[i] = costs.dollars(prices[u[0]], *costs.expected_tokens(
                 outcome, token_meta.get("global", {}), _unit_tokens(token_meta, u[0], key, cards),
                 goal_tokens.get(key) or pooled_tokens, cfg))
+            # what this unit's attempts here REALLY cost, when reported: blended with the token estimate, which
+            # counts as COST_PRIOR_ATTEMPTS attempts (a few reports and the measured dollars decide)
+            seen = (goal_costs.get(key) or {}).get(outcome) or (goal_costs.get(key) or {}).get("1" if outcome == "0" else "0")
+            if seen and seen[0] > 0:
+                target[i] = (seen[0] * seen[1] + COST_PRIOR_ATTEMPTS * target[i]) / (seen[0] + COST_PRIOR_ATTEMPTS)
 
     # the caller's session pays to hand an attempt to a SUBAGENT of its own scaffold (another Claude Code model): it
     # reads, delegates and checks. A unit on another scaffold (an open model through the local executor) is
@@ -531,6 +537,9 @@ def local_obs_loglik(p: np.ndarray, eps_w: np.ndarray, alpha: np.ndarray, beta: 
         p_acc = np.clip(p_acc, 1e-12, 1 - 1e-12)
         ll += ok * np.log(p_acc) + (n - ok) * np.log1p(-p_acc)
     return ll
+
+
+COST_PRIOR_ATTEMPTS = 2.0
 
 
 def _explore_unit(usable: Sequence[Any], local_obs: Sequence[Mapping[str, Any]], baseline: Any,

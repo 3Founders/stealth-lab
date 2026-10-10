@@ -252,6 +252,22 @@ async def goal_token_stats(pool: Any, goal_id: str, *, steps: bool = False) -> d
     return out
 
 
+async def goal_cost_stats(pool: Any, goal_id: str, *, steps: bool = False) -> dict[str, dict[str, list[float]]]:
+    """{unit: {"1"|"0": [n, mean cost_usd]}}: what attempts on this Goal REALLY cost, as reported. Token counts miss
+    what some scaffolds pay (headless Claude Code's prompt-cache writes and reads dominate a small task), so the
+    reported dollars are the better measure wherever they exist."""
+    log = await _goal_log_pool(pool, goal_id)
+    kind = "step_order IS NOT NULL" if steps else "step_order IS NULL"
+    rows = await _log_call(log, "fetch",
+        "SELECT model_key || '|' || scaffold AS unit, accepted, count(*) AS n, avg(cost_usd) AS c "
+        f"FROM routing_observations WHERE goal_id = $1::uuid AND cost_usd IS NOT NULL AND {kind} GROUP BY 1, 2",
+        str(goal_id))
+    out: dict[str, dict[str, list[float]]] = {}
+    for r in rows:
+        out.setdefault(r["unit"], {})["1" if r["accepted"] else "0"] = [float(r["n"]), float(r["c"])]
+    return out
+
+
 def _jsonable(value: Any) -> Any:
     """A plain JSON value for a jsonb parameter. Every pool registers a jsonb codec that encodes (app/db/session.py),
     so passing json.dumps() text stored a JSON *string* inside jsonb -- invisible to SQL `->>` (it returns NULL), the

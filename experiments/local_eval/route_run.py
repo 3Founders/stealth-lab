@@ -119,7 +119,8 @@ def _no_database():
     saved = {}
     fakes = {"active_params": none, "load_posteriors": empty_dict, "model_registry": empty_dict,
              "model_cards": empty_list, "current_prices": empty_dict, "model_updates": empty_dict,
-             "goal_token_stats": empty_dict, "goal_rows": empty_dict, "record_decision": drop}
+             "goal_token_stats": empty_dict, "goal_cost_stats": empty_dict, "goal_rows": empty_dict,
+             "record_decision": drop}
     for name, fake in fakes.items():
         saved[name] = getattr(store, name)
         setattr(store, name, fake)

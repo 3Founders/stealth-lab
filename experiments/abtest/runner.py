@@ -269,9 +269,10 @@ def open_model_runs(home: Path, since: str, until: str) -> dict:
         if not (since <= (r.get("created_at") or "") <= until):
             continue
         runs += 1
+        role = "verifier" if "tests_extra/test_extra.py" in str((r.get("input") or {}).get("task") or "") else "attempt"
         for a in r.get("attempts") or []:
             attempts.append({"model": a.get("model"), "executor": a.get("executor"), "state": a.get("state"),
-                             "cost_usd": a.get("cost_usd"), "tokens": a.get("tokens")})
+                             "cost_usd": a.get("cost_usd"), "tokens": a.get("tokens"), "role": role})
             cost += float(a.get("cost_usd") or 0)
     return {"open_cost_usd": round(cost, 6), "exec_runs": runs, "attempts": attempts}
 
