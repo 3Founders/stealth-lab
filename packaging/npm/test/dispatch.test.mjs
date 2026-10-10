@@ -236,3 +236,17 @@ test("a plan with only Sonnet before the session model still gets the cheap open
     .map((r) => r.model), ["gemma-4-31b-it", "minimax-m2-7"]);
   assert.deepEqual(cheapCandidates({ ladder: [MINE] }, MINE, env), []);
 });
+
+test("test-first runs whatever the project's check is (a JS project here): the writer is told the check", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(repo, "sum.js"), "module.exports = (a, b) => a - b;\n");
+  const rt = stubRuntime(repo, { "gemma-4-31b-it": "verified", "minimax-m2-7": "verified" });
+  let asked = "";
+  const runClaude = (args, input) => { asked = input; return { stdout: JSON.stringify({ result: "def test_x():\n    assert True", total_cost_usd: 0.01 }) }; };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix sum.js" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_CHECK: "npx vitest run", STEALTHLAB_DISPATCH_TESTFIRST: "on" }, runtime: rt, runClaude });
+  assert.equal(d.handled, true);
+  assert.match(asked, /check command: npx vitest run/);
+  assert.match(asked, /--- sum\.js ---/, "the JS file is shown to the writer");
+  assert.match(rt.calls[0].checks[0], /^npx vitest run && python -m pytest .*test_spec\.py"$/);
+});

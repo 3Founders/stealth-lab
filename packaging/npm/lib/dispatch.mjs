@@ -59,7 +59,7 @@ function specContext(root) {
     const p = path.join(root, f);
     try {
       const st = fs.statSync(p);
-      if (!st.isFile() || st.size > SPEC_FILES_MAX || !/\.(py|md|txt|toml|cfg|json)$/i.test(f)) continue;
+      if (!st.isFile() || st.size > SPEC_FILES_MAX || !/\.(py|md|txt|toml|cfg|json|ya?ml|js|mjs|cjs|ts|tsx|jsx|sql|html|css)$/i.test(f)) continue;
       out.push(`--- ${f} ---\n${fs.readFileSync(p, "utf8")}`);
     } catch { /* unreadable: skip */ }
     if (out.length >= SPEC_FILES_N) break;
@@ -111,12 +111,25 @@ export const SPEC_SYSTEM = [
   "task does not ask for: wording of messages, formatting, speed, internal structure, extra features. (5) Use the",
   "project's interface exactly as its files show it (module names, function signatures, variables a snippet must",
   "set). The test file is not inside the project: it runs with the project root as the current directory, so reach",
-  "project files through os.getcwd() or plain relative paths, never through __file__. Output only code.",
+  "project files through os.getcwd() or plain relative paths, never through __file__. (6) The tests are pytest",
+  "files whatever the project's language: for a project that is not Python, drive it through its own runtime from",
+  "the test the way its check does (subprocess: node for JavaScript, the database for SQL, a headless browser for a",
+  "web page when the project uses one), and assert on what it outputs. Output only code.",
 ].join(" ");
+
+// test-first's tests are run with pytest, whatever the project's own check is: is it here?
+let pytestHere = null;
+export function pytestAvailable() {
+  if (pytestHere === null) {
+    const r = spawnSync("python", ["-m", "pytest", "--version"], { encoding: "utf8", timeout: 60000, windowsHide: true });
+    pytestHere = r.status === 0;
+  }
+  return pytestHere;
+}
 
 // -> {file, cost_usd} (a pytest file outside the repo, run from the worktree) or null. One lean, tool-less call to
 // the session's model: a short system prompt, no tools, no project settings -- ~$0.02 with Opus, measured.
-export function writeSpecTests({ prompt, root, mine, env = process.env, log = () => {}, runClaude }) {
+export function writeSpecTests({ prompt, root, mine, check = "", env = process.env, log = () => {}, runClaude }) {
   // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL (a cheaper Claude model, say)
   const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
   if (!model.includes("claude")) return null;
@@ -127,6 +140,9 @@ Project files:
 ${specContext(root)}
 
 ` +
+    (check ? `The project's own check command: ${check}
+
+` : "") +
     "Write the acceptance tests for this task. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
   // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
@@ -238,8 +254,9 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   const tried = [];
   // test-first: the session model's tests join the project's check for every cheap rung
   let spec = null;
-  if (policy.testFirst && /pytest/.test(check)) {
-    try { spec = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, env, log, runClaude }); } catch (err) {
+  // whatever the project's check is (pytest, vitest, a SQL or page check), the tests are a pytest file run after it
+  if (policy.testFirst && (runClaude || pytestAvailable())) {
+    try { spec = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude }); } catch (err) {
       log(`test-first: ${err.message}`);
     }
   }
