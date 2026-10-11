@@ -98,3 +98,18 @@ C. Real user flow
    3. A clear message for a cheaply-handled prompt: who, what changed, cost, how to undo.
    4. Optional "ask before applying" mode.
 Build as cloud work in parts A, B, C, each with tests and a usage check after it.
+
+## Routing rework (agreed 2026-10-11; build after the OpenAPI re-run)
+
+Why the router did not stop sending OpenAPI tasks to the cheap models (phase 1: 3 cheap passes in 20):
+1. Every benchmark task matched ONE Goal, so the router learned a blended pass rate (BoolQ ~100%, OpenAPI ~15%).
+2. Dispatch tries all configured cheap models (cheapCandidates fills them in), so the router only decides
+   "dispatch or not", never which models.
+3. Local learning is per workspace/repo; each OpenAPI task was a fresh workspace, so each re-explored all models.
+4. Time-limit cancellations are not counted (right for blame), so a third of the OpenAPI tries gave no signal.
+Plan:
+- Goals per kind of task (finer Goal matching), so different task types are learned apart.
+- The router chooses which cheap models to try and whether trying pays at all (expected saving vs the overhead:
+  test writing, tries, added latency); dispatch follows the plan instead of filling in every model.
+- Cut-off / provider failures recorded as "dispatch does not pay here" (not as the model's quality).
+- What is learned for a kind of task is shared across repos (a new repo starts from it, not from zero).
