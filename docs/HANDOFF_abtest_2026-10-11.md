@@ -183,6 +183,80 @@ Claude Code, `stealthlab-mcp install --with-exec`, without the global library.
 
 - **No dispatch** (queued). Cursor gets knowledge only, after its first tool call.
 
+### 3b. Every mechanism and service, in short
+
+**External services and models**
+
+| Service | What it is used for |
+|---|---|
+| **Claude Opus 5.5** (subscription, via Claude Code) | The session model; it does the task when nothing cheaper passes. Arm A uses only this. |
+| **Claude Sonnet 5.5** (`claude -p`, tool-less) | Writes the test-first acceptance tests (about $0.01-0.02 a task). No longer used as a dispatched coding model. |
+| **General Compute** (OpenAI-compatible API) | Hosts the 3 cheap coding models (gemma-4-31b-it, gpt-oss-120b, minimax-m2-7) and backs the server's find_ways LLM client (`general_compute_api_key`). Free tier: 10M tokens/day, 200k tokens/min per key. Keys: `GENERAL_COMPUTE_API_KEY`, `general_compute_api_key1`. |
+| **JEV** (`JEV_BASE_URL`, remote semantic judge) | The first judge in the semantic chain: find_ways triage (is this prompt a reusable task worth a lookup?), judging Goal candidates and library matches against the request and repo facts, and goal resolution. Falls back to OpenAI-compatible providers. |
+| **OpenRouter embeddings** (`EMBEDDING_PROVIDER_CHAIN=openrouter`, gemini-embedding-2) | Embeds queries and Ways for hybrid search, for semantic codes of Ways (`/routing/codes`), and now for each request's **kind of task** (routing key). Same vector space as the Vertex codebook. |
+| **Postgres** (local scratch DB `kel_abtest` for the test; Neon in production) | Goals, procedures, routing observations and decisions, cost and token stats, library ingestion. Row-level security scopes every read to the caller. |
+| **Bundled routing data** (`backend/app/routing/data/`) | `prior_bundle.*` is the fitted prior over models x tasks; `prior_cards.json` holds model prices; `codebook.npz` holds 24 x 8 task groups built from 20,731 Ways. |
+
+**Mechanisms, in the order they act**
+
+1. **Hooks-only install.** Three Claude Code hooks; no MCP server in the session (`installClaudeDispatch`).
+2. **Token refresh.** The hook renews a signed-in token shortly before it expires.
+3. **Triage** (JEV). One cheap classification decides whether to look the prompt up at all. It fails toward the
+   lookup.
+4. **find_ways.**
+   - Hybrid lexical + vector search for Goals, each candidate judged against the request and repo facts (JEV);
+     bounded hierarchy expansion; related examples; matches against the repo's own `library.md`.
+   - Knowledge is returned only when the request resolves; nothing is stored except the request's kind.
+5. **Repo facts.** `.stealth/claims.md` and the units' claim pages break ties between Goals and procedures.
+6. **Routing (model plan).** Per Goal, or per virtual key (library entry / repo+kind / kind / generic):
+   - the success model is a Bayesian prior: Thompson draws per request;
+   - the target is **matched to the session model's own reliability**, with a tolerance;
+   - the plan picks the cheapest feasible ladder, ending with the session model;
+   - local learning: this repo's `routing.md` counts plus the caller's server-side outcomes on the key, combined
+     Beta-binomial (prior strength 4);
+   - **costs learned** from reported dollars; untried units are sized optimistically;
+   - **exploration:** each cheap unit gets 3 tries per key;
+   - a **20% re-check** of kinds where Opus goes first.
+7. **Kind of task.** The request's codebook group keys routing when no Goal resolves. The full code sets the prior.
+8. **Dispatch.**
+   - **Check:** configured, or from a matched library entry.
+   - **Quota probe:** provider rate-limit headers; skip below 300k tokens.
+   - **Candidate selection:** plan rungs plus configured open models; Sonnet off by default.
+9. **Test-first.** Sonnet writes tests from the prompt and small project files under a general brief; they are
+   written at the same time as the cheap runs. `run_spec.py` waits for them. Code fences are cleaned; tests that
+   do not parse are dropped (SKIP).
+10. **Cross-check** (only when no test-first tests exist). A second cheap model writes extra tests; strict mode
+    rejects answers nothing could confirm.
+11. **Executor runtime** (`lib/exec/runtime.mjs`).
+    - Each run happens in an isolated git worktree based on the working tree.
+    - The check runs inside the worktree; hang and hard timeouts apply.
+    - Only verified work is applied.
+    - Every finished attempt is reported to the server (`report_result`, with tokens and cost). Cancelled and
+      provider-limited attempts are not reported.
+12. **Cheap agent** (`step_agent.mjs`). A tool loop over the provider's chat API:
+    - context compaction and no resent repeat reads;
+    - 429 back-off;
+    - tool-call error retries;
+    - a step limit.
+13. **Parallel tries and time limit.** Up to 2 runs at once, the first pass wins and the rest are cancelled. The
+    limit is 150 s plus a task-size allowance.
+14. **Apply and block.** The winning diff goes into the working copy; the prompt is blocked with a report.
+15. **Fallback note.** If nothing passed: one line, then Opus works as plain Claude Code.
+16. **Capture hooks.** Test verdicts from Bash/PowerShell; at Stop, a library entry and an outcome report through
+    the **outbox** (retries offline).
+17. **Library** (`.stealth/library.md`). Solved problems with their check and diff, grouped into reusable
+    Goals/Ways, plus semantic codes for Ways. Grows automatically from dispatch and capture.
+18. **Survey** (`stealthlab-mcp survey`). Scanner facts and a worklist for `.stealth`. **Manual today**; an
+    automatic survey is queued.
+19. **Logs and ledgers:** `hooks.log`, `dispatch_costs.jsonl`, per-run `runs/<id>/` (events, patch, stdout),
+    `provider_quota.json`.
+20. **Not active in hooks-only mode:** the model guard (blocked in-session edits for delegation), the delegator
+    agents, in-session hand-overs, plan-and-run, and the MCP tools (find_ways, report_result, discover_tools,
+    use_tool, call_model) as session tools. They remain for other clients and `--with-exec --no-hooks`.
+
+**Benchmark-only tools** (not product): Playwright + Chromium (page grading), Schemathesis + Hypothesis (OpenAPI
+grading), DS-1000's eval env, dbt-duckdb (planned), Node `--test` (MultiPL-E).
+
 ---
 
 ## 4. Code state
