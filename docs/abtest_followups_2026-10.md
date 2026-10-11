@@ -145,3 +145,20 @@ sometimes fails once with a duplicate edges constraint -- run it again on a fres
 `python experiments/abtest/run_backend.py` (port 8765); runner:
 `python experiments/abtest/runner.py --run phase1 --seed 20261010 --tasks ds1000:30,bird:50,ifeval:20,boolq:10,openapi:20 --arms C --parallel --testfirst-model claude-sonnet-5-5 --exclude-runs batch1,batch2,batch3,batch4,tf-sonnet,smoke-hooksonly,smoke-phase1`.
 Spawned "remote" agents ran LOCALLY on the subscription (not cloud credits): do not use them to save usage.
+
+## State on 2026-10-11 15:15 UTC (latest)
+
+- Phase 1 DONE on current main (routing per kind of task): `python experiments/abtest/report.py phase1` --
+  A 120/128 $15.38, C 114/128 $9.56 (-38%); per suite BIRD -50%, BoolQ -89%, DS-1000 -43%, IFEval -62%,
+  OpenAPI -1% (router skipped cheap models on 11/20). Latency p50/p95: A 33/92 s, C 56/286 s.
+  bird-1505 arm C still to redo (its row was removed: two runners overlapped for a minute; A also fails it):
+  same phase-1 command with `--only bird-1505`.
+- Phase 2: arm A DONE (75 tasks, 39 solved, $16.87; page tasks are hard under the fixed bar). Arm C PAUSED after 7
+  tasks: both General Compute keys (GENERAL_COMPUTE_API_KEY, general_compute_api_key1) are out of tokens for
+  2026-10-11; the daily limit appears to reset at 00:00 UTC. Resume with:
+  `python experiments/abtest/runner.py --run phase2 --seed 20261010 --tasks multiple_js:20,d2c:30,websight:25 --arms C --parallel --testfirst-model claude-sonnet-5-5 --gc-key-name general_compute_api_key1`
+  (it pauses itself, exit 4, below 100k General Compute tokens; exit 3 = Claude usage limit, rerun after reset).
+  Expect the page suites (d2c, websight) to cost about as much as A: the cheap models are text-only and cannot
+  see the screenshot; MultiPL-E JS is where C should save.
+- Claude weekly usage at 76% (Pro); the user's cap for this session is 80%, then handoff to Chaitanya.
+- The chain script used: experiments/abtest/.local/run_chain.sh (not committed; .local is ignored).
