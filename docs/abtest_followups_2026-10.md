@@ -113,3 +113,35 @@ Plan:
   test writing, tries, added latency); dispatch follows the plan instead of filling in every model.
 - Cut-off / provider failures recorded as "dispatch does not pay here" (not as the model's quality).
 - What is learned for a kind of task is shared across repos (a new repo starts from it, not from zero).
+
+## State on 2026-10-11 ~08:20 UTC (for whoever continues)
+
+Commits on main (local, NOT pushed since 75e502f): e3ee1ae, 0f94be5 (docs), b1efa59 (OpenAPI fixes: 429 back-off,
+2 parallel, 160k context, task-size time allowance, gpt-oss retry, test-writer brief), e63599f (cancelled and
+provider-limited attempts are not model failures; dispatch skips a provider with < 300k tokens left today),
+fd7d817 (routing per kind of task + 20% re-check of skipped kinds + report 'not dispatched' column).
+Package tests: 334+ pass. Backend routing offline tests pass; tests/test_mcp_minimal_surface_offline.py fails
+independently of these changes (it expects tools the progressive tool list hides).
+
+Phase 1 result (experiments/abtest/.local/results/phase1.jsonl; `python experiments/abtest/report.py phase1`):
+A 120/129 $15.50, C 111/129 $10.14 (-35%). NOT final: General Compute's daily 10M-token limit ran out during arm C
+(crossed 8M at 02:43 UTC, 10M at 03:17 UTC), so cheap success fell from 68% to 44% for the last ~40 tasks; also the
+router counted cancelled losers and rate-limited runs as failures (fixed in e63599f).
+
+Next steps, in order:
+1. After General Compute's daily reset (check `x-ratelimit-remaining-tokens-day` on any GC response): fresh test DB,
+   then re-run arm C on all 130 phase-1 tasks with the current main (keep phase1.jsonl's A rows; move the old C rows
+   to a backup file first), auto-resume loop as in the session (runner exit code 3 = Claude usage limit; wait, rerun).
+   Check after ~10 tasks: per-suite saving, solved, latency, 'not dispatched'.
+2. Phase 1b suites: feat/phase1b-suites (validation suite nearly done; reporting data/reference done; node and git
+   not started). Phase 2 suites (MultiPL-E JS, Design2Code, WebSight) are built and committed; run A and C.
+3. Queued product fixes and product hardening: see the sections above. Branches with partial work:
+   feat/product-fixes-1-3 (design notes only), feat/longhorizon-dbt (Spider2-DBT data notes),
+   feat/cursor-dispatch (LOCAL only: .claude/worktrees/agent-a6abcdfc7a4cc9b6b, WIP commit 7ba8273, untested).
+How to run (Windows, this machine): scratch Postgres on 127.0.0.1:55432 (pg_ctl -D C:\Users\user\pg-scratch\data
+start), DB kel_abtest reset with `DROP DATABASE ... WITH (FORCE)`, `CREATE DATABASE`, then
+`DATABASE_URL= python backend/scripts/migrate.py --dsn postgresql://kel_owner@127.0.0.1:55432/kel_abtest` (it
+sometimes fails once with a duplicate edges constraint -- run it again on a fresh DB); backend:
+`python experiments/abtest/run_backend.py` (port 8765); runner:
+`python experiments/abtest/runner.py --run phase1 --seed 20261010 --tasks ds1000:30,bird:50,ifeval:20,boolq:10,openapi:20 --arms C --parallel --testfirst-model claude-sonnet-5-5 --exclude-runs batch1,batch2,batch3,batch4,tf-sonnet,smoke-hooksonly,smoke-phase1`.
+Spawned "remote" agents ran LOCALLY on the subscription (not cloud credits): do not use them to save usage.
