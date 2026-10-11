@@ -34,7 +34,8 @@ const MAX_MATCHES = 60;
 const MAX_FILE_BYTES = 1_000_000;
 const SHELL_TIMEOUT_MS = 120_000;
 const SHELL_TAIL = 6000;
-const CONTEXT_CHAR_LIMIT = 400_000;
+// ~40k tokens: every step resends the whole history, so a big context multiplies tokens (and rate-limit hits)
+const CONTEXT_CHAR_LIMIT = 160_000;
 
 const SYSTEM = `You are a coding agent working inside one git repository (your current directory). Complete the task with the \
 smallest correct change.
@@ -224,8 +225,9 @@ const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
 async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
   const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   let lastErr;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     let res = null;
+    let waitMs = 1000 * 2 ** Math.min(attempt, 3);
     try {
       res = await fetchImpl(url, { method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${key}`, connection: "close" }, body: JSON.stringify(body) });
     } catch (err) {
@@ -233,19 +235,24 @@ async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
     }
     if (res) {
       const text = await res.text();
-      if (res.status === 429 || res.status >= 500) lastErr = new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 200)}`);
-      else if (res.status === 400 && /parse tool call|tool call.*pars|invalid tool call/i.test(text)) {
+      if (res.status === 429) {
+        // a tokens-per-minute limit frees up within the minute: wait what the provider asks (or 10-40 s), not 1-8 s
+        lastErr = new Error(`HTTP 429: ${redactKey(text, key).slice(0, 200)}`);
+        const after = Number(res.headers?.get?.("retry-after"));
+        waitMs = Number.isFinite(after) && after > 0 ? Math.min(60000, after * 1000) : Math.min(40000, 10000 * 2 ** Math.min(attempt, 2));
+      } else if (/did not complete|parse tool call|tool call.*pars|invalid tool call/i.test(text) && (res.status === 400 || res.status >= 500)) {
         // the PROVIDER could not parse the model's tool call (General Compute + gpt-oss, deep into a run): the model
         // sampled a malformed call, and at temperature 0 the same request returns the same one -- so ask again with
         // a little sampling variation instead of ending the run
         lastErr = new Error(`HTTP 400: ${redactKey(text, key).slice(0, 200)}`);
         body = { ...body, temperature: 0.4 + 0.2 * attempt };
-      } else if (res.status >= 300) throw new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 300)}`);   // 4xx: retrying will not help
+      } else if (res.status >= 500) lastErr = new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 200)}`);
+      else if (res.status >= 300) throw new Error(`HTTP ${res.status}: ${redactKey(text, key).slice(0, 300)}`);   // 4xx: retrying will not help
       else {
         try { return JSON.parse(text); } catch { throw new Error("the endpoint did not return JSON"); }
       }
     }
-    if (attempt < 3) { log(`retrying after ${lastErr.message}`); await sleep(1000 * 2 ** attempt); }
+    if (attempt < 5) { log(`retrying after ${lastErr.message}`); await sleep(waitMs); }
   }
   throw new Error(`the endpoint kept failing: ${lastErr.message}`);
 }
@@ -293,6 +300,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     : [{ role: "system", content: system }, { role: "user", content: cfg.task.trim() }];
   let tin = 0, tout = 0, step = 0, stop = "max_steps", finalMessage = "";
 
+  const seen = new Map();          // tool call signature -> its last output, for repeated reads
   while (step < maxSteps) {
     compact(messages);
     log(`step ${step + 1}: asking ${cfg.model_id}`);
@@ -330,7 +338,18 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
         result = `error: ${redactKey(err.message, key)}`;
       }
       log(`step ${step}: ${name}${args && args.path ? " " + args.path : ""}${/^error:/.test(String(result)) ? " (error)" : ""}`);
-      messages.push({ role: "tool", tool_call_id: call.id, content: redactKey(String(result), key) });
+      // the same read or search again, with the same output, while the first is still in context: say so instead of
+      // resending it (agents re-read a big spec file over and over; each copy rides along on every later step)
+      const sig = `${name}\u0000${JSON.stringify(args)}`;
+      const body = redactKey(String(result), key);
+      const prev = (name === "read_file" || name === "search" || name === "list_files") ? seen.get(sig) : null;
+      if (prev && prev.text === body && messages[prev.index]?.content === body) {
+        messages.push({ role: "tool", tool_call_id: call.id, content: `(unchanged: the same output as step ${prev.step}, still above)` });
+      } else {
+        messages.push({ role: "tool", tool_call_id: call.id, content: body });
+        if (name === "read_file" || name === "search" || name === "list_files") seen.set(sig, { text: body, index: messages.length - 1, step });
+        if (name === "edit_file" || name === "write_file") seen.clear();          // the files changed: earlier reads are stale
+      }
       if (finished || step >= maxSteps) break;
     }
     if (finished) { stop = "finished"; break; }

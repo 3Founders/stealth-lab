@@ -285,3 +285,15 @@ test("latency: no cheap pass within the time limit -- the runs are cancelled, no
   assert.deepEqual(d.tried.map((t) => t.state), ["timed out", "timed out"]);
   assert.equal(fs.existsSync(path.join(repo, ".stealth", "routing.md")), false, "no record against the models");
 });
+
+test("the cheap tries get more time for a task that comes with a big file (a 20 KB contract), ~none for a small one", async () => {
+  const { taskAllowanceS } = await import("../lib/dispatch.mjs");
+  const small = fs.mkdtempSync(path.join(os.tmpdir(), "allow-"));
+  fs.writeFileSync(path.join(small, "TASK.md"), "x".repeat(1024));
+  assert.equal(taskAllowanceS(small), 4);
+  const big = fs.mkdtempSync(path.join(os.tmpdir(), "allow-"));
+  fs.writeFileSync(path.join(big, "openapi.json"), "x".repeat(22 * 1024));
+  assert.equal(taskAllowanceS(big), 88);
+  fs.writeFileSync(path.join(big, "more.json"), "x".repeat(100 * 1024));
+  assert.equal(taskAllowanceS(big), 210, "capped");
+});

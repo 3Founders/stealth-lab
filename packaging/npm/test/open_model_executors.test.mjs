@@ -267,6 +267,60 @@ test("end to end: the adapter's command runs the real agent process and parseOut
   } finally { p.close(); }
 });
 
+test("a provider error mid tool call ('did not complete it') is retried with sampling variation, not fatal", async () => {
+  const repo = tmpRepo({ "a.txt": "x" });
+  let n = 0;
+  const p = await provider(() => {
+    n += 1;
+    if (n === 1) return { status: 500, body: { error: { message: "Model started a function call but did not complete it.", type: "provider_error" } } };
+    return reply({ role: "assistant", content: "done" });
+  });
+  try {
+    const out = await runAgent({ task: "t", base_url: p.url, model_id: "gpt-oss-120b" }, { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
+    assert.equal(out.stop, "answered");
+    assert.ok(p.seen[1].body.temperature > 0);
+  } finally { p.close(); }
+});
+
+test("a 429 waits as long as the provider asks (a tokens-per-minute limit), not a second or two", async () => {
+  const repo = tmpRepo({});
+  let n = 0;
+  const waits = [];
+  const server = http.createServer((req, res) => {
+    req.on("data", () => {}); req.on("end", () => {
+      n += 1;
+      if (n === 1) { res.writeHead(429, { "content-type": "application/json", "retry-after": "12" }); res.end("{}"); return; }
+      if (n === 2) { res.writeHead(429, { "content-type": "application/json" }); res.end("{}"); return; }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const out = await runAgent({ task: "t", base_url: `http://127.0.0.1:${server.address().port}/v1`, model_id: "m" },
+      { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: async (ms) => { waits.push(ms); } });
+    assert.equal(out.stop, "answered");
+    assert.deepEqual(waits, [12000, 20000], "retry-after first, then 10-40 s backoff");
+  } finally { server.close(); }
+});
+
+test("reading the same file again, unchanged, does not resend it; an edit makes the next read real again", async () => {
+  const repo = tmpRepo({ "spec.json": "{\"big\": true}\n" });
+  const p = await provider((n) => {
+    if (n <= 2) return reply({ role: "assistant", content: null, tool_calls: [toolCall(`c${n}`, "read_file", { path: "spec.json" })] });
+    if (n === 3) return reply({ role: "assistant", content: null, tool_calls: [toolCall("c3", "write_file", { path: "spec.json", content: "{}\n" })] });
+    if (n === 4) return reply({ role: "assistant", content: null, tool_calls: [toolCall("c4", "read_file", { path: "spec.json" })] });
+    return reply({ role: "assistant", content: "done" });
+  });
+  try {
+    await runAgent({ task: "t", base_url: p.url, model_id: "m" }, { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
+    const tools = p.seen[p.seen.length - 1].body.messages.filter((m) => m.role === "tool").map((m) => m.content);
+    assert.match(tools[0], /"big": true/);
+    assert.match(tools[1], /unchanged: the same output as step 1/);
+    assert.match(tools[3], /\{\}/, "after the write the file is read for real");
+  } finally { p.close(); }
+});
+
 test("a provider that cannot parse the model's tool call (HTTP 400) is asked again with sampling variation", async () => {
   const repo = tmpRepo({ "a.txt": "x" });
   let n = 0;

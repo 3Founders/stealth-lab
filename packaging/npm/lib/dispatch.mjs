@@ -44,6 +44,8 @@ export function dispatchPolicy(env = process.env) {
     claude: (env.STEALTHLAB_DISPATCH_CLAUDE || "off").toLowerCase() === "on",
     // the time limit on all the cheap tries together, from their start: past it the session's model takes over
     timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 150)),
+    // how many cheap runs at once: three agents on one provider can exceed its tokens-per-minute limit
+    maxParallel: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL || 2)),
   };
 }
 
@@ -116,7 +118,10 @@ export const SPEC_SYSTEM = [
   "project files through os.getcwd() or plain relative paths, never through __file__. (6) The tests are pytest",
   "files whatever the project's language: for a project that is not Python, drive it through its own runtime from",
   "the test the way its check does (subprocess: node for JavaScript, the database for SQL, a headless browser for a",
-  "web page when the project uses one), and assert on what it outputs. Output only code.",
+  "web page when the project uses one), and assert on what it outputs. (7) When the project's own check already",
+  "verifies a contract or schema exhaustively (property-based fuzzing, a schema validator, a type checker), do not",
+  "re-test what it covers: test only behaviour the task asks for beyond it, and never assume what the contract",
+  "leaves open (which route serves an ambiguous path, field values the schema allows freely). Output only code.",
 ].join(" ");
 
 // test-first's tests are run with pytest, whatever the project's own check is: is it here?
@@ -227,6 +232,20 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   }
   fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
   return { file, cost_usd: cost };
+}
+
+// Extra seconds for the cheap tries, from the size of the project's top-level text files (the task's own material:
+// a spec, a contract, a data sample): 4 s per KB, at most 210 s. A small task gets ~nothing; a 22 KB API contract
+// ~90 s more.
+export function taskAllowanceS(root) {
+  let bytes = 0;
+  try {
+    for (const f of fs.readdirSync(root)) {
+      if (f.startsWith(".") || !/\.(py|md|txt|json|ya?ml|js|mjs|ts|sql|html|css|csv|toml)$/i.test(f)) continue;
+      try { const st = fs.statSync(path.join(root, f)); if (st.isFile()) bytes += Math.min(st.size, 100_000); } catch { /* skip */ }
+    }
+  } catch { return 0; }
+  return Math.min(210, Math.round((bytes / 1024) * 4));
 }
 
 // The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count
@@ -369,11 +388,13 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
 
   const queue = [...rungs];
   const pending = new Map();               // unit -> promise of its finished run
-  const width = policy.parallel ? rungs.length : 1;
+  const width = policy.parallel ? Math.min(rungs.length, policy.maxParallel) : 1;
   let winner = null;
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
+  // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
+  const limitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
   let timer;
-  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), policy.timeoutS * 1000); });
+  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
   let timedOut = false;
   while (!winner && (queue.length || pending.size)) {
@@ -390,7 +411,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   clearTimeout(timer);
   if (timedOut) {
     // no pass in time: the runs still going are cancelled -- not counted against their models -- and the rest skipped
-    log(`dispatch: no cheap pass within ${policy.timeoutS} s; the session's model takes over`);
+    log(`dispatch: no cheap pass within ${limitS} s; the session's model takes over`);
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
       if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
