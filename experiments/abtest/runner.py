@@ -181,6 +181,10 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             **({"STEALTHLAB_DISPATCH_TESTFIRST_MODEL": os.environ["ABTEST_TESTFIRST_MODEL"]}
                if os.environ.get("ABTEST_TESTFIRST_MODEL") else {}),
             **({"STEALTHLAB_DISPATCH_PARALLEL": "on"} if os.environ.get("ABTEST_PARALLEL") else {}),
+            # dispatch's own skip-a-provider floor matches the runner's pause point, so no task between the two
+            # quietly goes to the session's model
+            **({"STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS": os.environ["ABTEST_GC_MIN_TOKENS"]}
+               if os.environ.get("ABTEST_GC_MIN_TOKENS") else {}),
             "STEALTHLAB_EXEC_WORKTREE_ROOT": str(LOCAL / "worktrees"),
             "GENERAL_COMPUTE_API_KEY": secrets["gc"],
         })
@@ -381,7 +385,7 @@ def main() -> int:
     ap.add_argument("--arms", default="A,C")
     ap.add_argument("--exclude-runs", default="", help="comma-separated earlier runs whose tasks are skipped")
     ap.add_argument("--only", default="", help="comma-separated task ids: run just these from the sampled tasks")
-    ap.add_argument("--gc-min-tokens", type=int, default=500000,
+    ap.add_argument("--gc-min-tokens", type=int, default=100000,
                     help="arm C: pause (exit 4) when the General Compute key has fewer tokens left today (0: off)")
     ap.add_argument("--gc-key-name", default="GENERAL_COMPUTE_API_KEY",
                     help="arm C: the backend/.env entry holding the General Compute key (e.g. a second key's daily quota)")
@@ -415,6 +419,7 @@ def main() -> int:
         os.environ["ABTEST_TESTFIRST_MODEL"] = args.testfirst_model
     if args.parallel:
         os.environ["ABTEST_PARALLEL"] = "on"
+    os.environ["ABTEST_GC_MIN_TOKENS"] = str(args.gc_min_tokens)
     seen = frozenset(json.loads(line)["task_id"] for r in args.exclude_runs.split(",") if r.strip()
                      for line in (LOCAL / "results" / f"{r.strip()}.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
     for task in load_tasks(args.tasks, args.seed, seen):
