@@ -43,7 +43,7 @@ def summarise(rows: dict) -> str:
     groups["ALL"] = tasks
     out = []
     head = (f"{'suite':8} {'n':>4} | {'A solved':>8} {'A $':>7} | {'C solved':>8} {'C $':>7} {'saving':>7} | "
-            f"{'A p50/p95/p99 s':>17} | {'C p50/p95/p99 s':>17} | cheap delivered")
+            f"{'A p50/p95/p99 s':>17} | {'C p50/p95/p99 s':>17} | cheap delivered | not dispatched")
     out.append(head)
     out.append("-" * len(head))
     for suite in sorted(groups, key=lambda s: (s == "ALL", s)):
@@ -57,10 +57,11 @@ def summarise(rows: dict) -> str:
         cheap = sum(1 for r in c if any(x.get("state") == "verified" and x.get("role", "attempt") == "attempt"
                                         and "claude" not in x.get("model", "") for x in r.get("attempts") or [])
                     and r.get("turns", 0) == 0)
+        skipped = sum(1 for r in c if not (r.get("attempts") or []))       # routing sent it straight to the session model
         lat = lambda xs: f"{pct(xs, 50):5.0f}/{pct(xs, 95):5.0f}/{pct(xs, 99):5.0f}"  # noqa: E731
         out.append(f"{suite:8} {len(ts):>4} | {solved(a):>8} {ca:>7.2f} | {solved(c):>8} {cc:>7.2f} "
                    f"{(cc - ca) / ca * 100 if ca else 0:>6.0f}% | {lat(secs(a)):>17} | {lat(secs(c)):>17} | "
-                   f"{cheap}/{len(ts)}")
+                   f"{cheap:>7}/{len(ts):<7} | {skipped}/{len(ts)}")
     wrong = [(t, rows[(t, "C")].get("suite")) for t in tasks if not rows[(t, "C")].get("resolved")]
     both = [t for t, _ in wrong if not rows[(t, "A")].get("resolved")]
     out.append(f"\nC unsolved: {len(wrong)} (of which A also unsolved: {len(both)}): {[t for t, _ in wrong]}")

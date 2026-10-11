@@ -323,3 +323,14 @@ test("quota: a provider with almost no tokens left today is not tried; a healthy
   assert.equal(calls, 2, "cached: no new probes within 5 minutes");
   assert.equal((await withQuota(rungs, env, { min: 0, fetchImpl })).length, 2, "min 0 turns it off");
 });
+
+test("a plan that puts the session's model first still tries the cheap models now and then (a skipped kind can recover)", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "disp-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7"] } } }));
+  const env = { STEALTHLAB_HOME: home };
+  const plan = { ladder: [MINE, "gemma-4-31b-it|stealth"] };
+  assert.deepEqual(cheapCandidates(plan, MINE, env, { explore: 0 }), []);
+  assert.deepEqual(cheapCandidates(plan, MINE, env, { explore: 0.2, rand: () => 0.5 }), [], "most of the time: skipped");
+  assert.deepEqual(cheapCandidates(plan, MINE, env, { explore: 0.2, rand: () => 0.1 }).map((r) => r.model),
+    ["gemma-4-31b-it", "minimax-m2-7"], "now and then: tried");
+});

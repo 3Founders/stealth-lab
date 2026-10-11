@@ -1842,7 +1842,7 @@ async def find_ways(
         candidates = [*(candidates or []), own]
     with _stages.stage("model_plan"):
         final = await _attach_model_plan(_mark_untrusted(shape(reply)), ctx, candidates=candidates,
-                                         check_kind=check_kind, constraints=model_constraints, **local)
+                                         check_kind=check_kind, constraints=model_constraints, query=query, **local)
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it
     await _record_find_ways(ctx, query, final, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return final
@@ -1891,7 +1891,41 @@ def _mark_untrusted(reply: str) -> str:
     return json.dumps(body, default=str)
 
 
-def _plan_case(body: dict[str, Any], library: Any, task_features: Any) -> tuple[Optional[dict[str, Any]],
+_TASK_CODE_CACHE: dict[str, Optional[str]] = {}
+
+
+async def _task_code(query: str) -> Optional[str]:
+    """The codebook code of a request (app/routing/semantic_codes.py: the same 24 x 8 groups the Ways are coded with),
+    or None (no codebook, a different embedding model, an error, or STEALTH_ROUTING_TASK_CODES=off). One embedding
+    call per distinct request text; cached for the process."""
+    import hashlib as _hl
+    import os as _os
+
+    if (_os.environ.get("STEALTH_ROUTING_TASK_CODES") or "on").lower() == "off" or not (query or "").strip():
+        return None
+    key = _hl.sha256(query.strip()[:4000].encode("utf-8")).hexdigest()
+    if key in _TASK_CODE_CACHE:
+        return _TASK_CODE_CACHE[key]
+    code = None
+    try:
+        from app.routing import semantic_codes as _sc
+        from app.services.embeddings import Embedder
+
+        cb = _sc.load()
+        embedder = Embedder()
+        if cb is not None and embedder.embedding_model_id() == cb.embedding_model_id:
+            vec = (await embedder.embed([query.strip()[:4000]], input_type="document"))[0]
+            code = cb.assign(vec)
+    except Exception:  # noqa: BLE001 -- no code only means the coarser key, as before
+        code = None
+    if len(_TASK_CODE_CACHE) > 5000:
+        _TASK_CODE_CACHE.clear()
+    _TASK_CODE_CACHE[key] = code
+    return code
+
+
+def _plan_case(body: dict[str, Any], library: Any, task_features: Any, code: Optional[str] = None
+               ) -> tuple[Optional[dict[str, Any]],
                                                                                Optional[dict[str, Any]]]:
     """(root, virtual) for the model plan. `root` is a resolved global Goal (with its Procedure); otherwise the
     task is planned on a virtual key, in this order:
@@ -1924,16 +1958,33 @@ def _plan_case(body: dict[str, Any], library: Any, task_features: Any) -> tuple[
         return None, {"id": _rs.virtual_goal_id("library", f"{repo_id}:{ref}"), "kind": "library", "ref": ref,
                       "features": way_info or entry or repo_stats, "parents": parents,
                       **({"code": code} if isinstance(code, str) else {})}
+    # With the request's kind (its codebook group), a repository's -- or, without one, everyone's -- record is
+    # kept per KIND of task: a contract-implementation task and a yes/no question no longer share one record (they
+    # did, and the router learned their average). The group is coarse (24 groups) so each record fills quickly;
+    # the full code still sets the prior.
+    group = _sc_coarse(code)
     if repo_id:
-        return None, {"id": _rs.virtual_goal_id("repo", repo_id), "kind": "repo", "features": repo_stats,
-                      "parents": parents}
+        return None, {"id": _rs.virtual_goal_id("repo", f"{repo_id}:{group}" if group else repo_id), "kind": "repo",
+                      "features": repo_stats, "parents": parents, **({"code": code} if code else {})}
+    if group:
+        return None, {"id": _rs.virtual_goal_id("code", group), "kind": "code", "code": code, "parents": parents}
     return None, {"id": _rs.virtual_goal_id("generic"), "kind": "generic", "parents": parents}
+
+
+def _sc_coarse(code: Optional[str]) -> Optional[str]:
+    if not code:
+        return None
+    from app.routing import semantic_codes as _sc
+    try:
+        return _sc.coarse(code)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] | None,
                              check_kind: str | None, constraints: dict[str, Any] | None,
                              route_obs: str = "", library: Any = None, local_args: bool = False,
-                             task_features: Any = None) -> str:
+                             task_features: Any = None, query: str = "") -> str:
     """Add `model_plan` to a find_ways reply when the caller (or a registered provider) can supply
     candidates. The plan never changes the knowledge and never breaks the reply: any failure
     becomes a status inside the block.
@@ -1951,7 +2002,10 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
         return reply                                       # a REFUSED: ... text
     if not isinstance(body, dict):
         return reply
-    root, virtual = _plan_case(body, library, task_features)
+    resolved = body.get("outcome") == "resolved" and any(isinstance(p, dict) and p.get("goal_id")
+                                                         for p in body.get("procedures") or [])
+    code = None if resolved else await _task_code(query)
+    root, virtual = _plan_case(body, library, task_features, code)
     goal_id = str(root["goal_id"]) if root is not None else virtual["id"]
     try:
         pool = ctx.request_context.lifespan_context["pool"]

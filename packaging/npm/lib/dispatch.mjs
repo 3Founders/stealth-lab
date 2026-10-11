@@ -47,6 +47,8 @@ export function dispatchPolicy(env = process.env) {
     timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 150)),
     // how many cheap runs at once: three agents on one provider can exceed its tokens-per-minute limit
     maxParallel: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL || 2)),
+    // when the plan puts the session's model first, still try the cheap models this often (a skipped kind recovers)
+    explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
   };
@@ -331,10 +333,13 @@ export function dispatchableRungs(plan, mine, env = process.env, { claude = true
 
 // What dispatch tries: the plan's dispatchable rungs in its order, then the other open models this machine can run
 // (exec.json), up to `max`. Trying them all costs cents; one often solves what another gets wrong.
-export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude = false } = {}) {
-  // the plan puts the session's own model first: it expects the cheap models to fail here, so none is tried
+export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude = false, explore = 0, rand = Math.random } = {}) {
+  // the plan puts the session's own model first: it expects the cheap models to fail on this kind of task, so none is
+  // tried -- except, with probability `explore`, a check that they still do (models and providers change; a kind of
+  // task the router gave up on must be able to come back)
   const first = String((plan?.ladder || [])[0] || "").split("|")[0];
-  if (!first || (mine && first === String(mine).split("|")[0])) return [];
+  if (!first) return [];
+  if (mine && first === String(mine).split("|")[0] && !(explore > 0 && rand() < explore)) return [];
   const out = dispatchableRungs(plan, mine, env, { claude });
   try {
     const cfg = readExecConfig(env);
@@ -375,7 +380,8 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
   const check = dispatchCheck(policy, reply, root);
   if (!check) return null;
-  const rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude }), env,
+  const rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
+                                                                    explore: policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) return null;
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });

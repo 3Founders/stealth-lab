@@ -268,6 +268,19 @@ async def goal_cost_stats(pool: Any, goal_id: str, *, steps: bool = False) -> di
     return out
 
 
+async def goal_outcome_counts(pool: Any, goal_id: str, *, steps: bool = False) -> list[dict[str, Any]]:
+    """[{unit, n, ok}]: the whole-task attempts recorded on this Goal (or virtual key) that the caller may see -- under
+    the caller's scope, so the caller's own outcomes from every repository and machine. For a virtual key (a kind
+    of task) this is what a new repository starts from instead of nothing."""
+    log = await _goal_log_pool(pool, goal_id)
+    kind = "step_order IS NOT NULL" if steps else "step_order IS NULL"
+    rows = await _log_call(log, "fetch",
+        "SELECT model_key || '|' || scaffold AS unit, count(*) AS n, count(*) FILTER (WHERE accepted) AS ok "
+        f"FROM routing_observations WHERE goal_id = $1::uuid AND {kind} GROUP BY 1",
+        str(goal_id))
+    return [{"unit": r["unit"], "n": int(r["n"]), "ok": int(r["ok"])} for r in rows]
+
+
 def _jsonable(value: Any) -> Any:
     """A plain JSON value for a jsonb parameter. Every pool registers a jsonb codec that encodes (app/db/session.py),
     so passing json.dumps() text stored a JSON *string* inside jsonb -- invisible to SQL `->>` (it returns NULL), the

@@ -89,7 +89,7 @@ def fill_twin_prices(rows: list[dict]) -> list[dict]:
 # for that case (prior_draws_for_case). Its decisions and attempts are logged under that key like any Goal's, so
 # report_result, the repository's routing.md counts and later fits all work the same way.
 VIRTUAL_KEY = "_virtual"
-VIRTUAL_KINDS = ("library", "repo", "generic")
+VIRTUAL_KINDS = ("library", "repo", "generic", "code")
 
 
 def virtual_goal_id(kind: str, ref: str = "") -> str:
@@ -287,6 +287,20 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
         if (unit, order) not in columns:
             columns.append((unit, order))
         attempts_cols.append((a, columns.index((unit, order))))
+    if virtual is not None and not step_level:
+        # A virtual key (a kind of task, or this repo's kind of task) also counts the caller's outcomes recorded on the
+        # server -- from every repository and machine -- so a new repository does not start from zero. Per unit the
+        # larger record wins: the repo's own routing.md lines were reported to the server too, so adding would
+        # count them twice.
+        try:
+            server_obs = await store.goal_outcome_counts(pool, goal_id)
+        except Exception:  # noqa: BLE001 -- the server's log is an addition; the local record still stands
+            server_obs = []
+        merged = {str(o["unit"]): dict(o) for o in local_obs}
+        for o in server_obs:
+            if int(o["n"]) > int((merged.get(o["unit"]) or {}).get("n") or 0):
+                merged[o["unit"]] = o
+        local_obs = list(merged.values())
     local_cols: list[tuple[int, int, int]] = []        # (column, attempts, accepted) of the repo's own past instances
     for o in list(local_obs)[:cfg.max_candidates]:
         unit = _parse_units([o["unit"]])[0]
