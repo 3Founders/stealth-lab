@@ -12,7 +12,10 @@ import json
 import sys
 from pathlib import Path
 
-RESULTS = Path(__file__).resolve().parent / ".local" / "results"
+import os
+
+# ABTEST_RESULTS_DIR=experiments/abtest/results_2026-10-11 reads the committed snapshot instead of .local/results
+RESULTS = Path(os.environ.get("ABTEST_RESULTS_DIR") or Path(__file__).resolve().parent / ".local" / "results")
 
 
 def pct(xs: list[float], p: float) -> float:
