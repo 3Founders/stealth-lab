@@ -363,13 +363,17 @@ def main() -> int:
     ap.add_argument("--arms", default="A,C")
     ap.add_argument("--exclude-runs", default="", help="comma-separated earlier runs whose tasks are skipped")
     ap.add_argument("--only", default="", help="comma-separated task ids: run just these from the sampled tasks")
+    ap.add_argument("--gc-key-name", default="GENERAL_COMPUTE_API_KEY",
+                    help="arm C: the backend/.env entry holding the General Compute key (e.g. a second key's daily quota)")
     ap.add_argument("--parallel", action="store_true", help="arm C: the cheap models run at once (first pass wins)")
     ap.add_argument("--testfirst-model", default="", help="arm C: the model that writes the test-first tests")
     args = ap.parse_args()
 
     import local_identity
     secrets = {"token": local_identity.paths()["token"].read_text().strip(),
-               "gc": env_file(REPO / "backend" / ".env").get("GENERAL_COMPUTE_API_KEY", "")}
+               "gc": env_file(REPO / "backend" / ".env").get(args.gc_key_name, "")}
+    if not secrets["gc"]:
+        raise SystemExit(f"backend/.env has no {args.gc_key_name}")
     if "C" in args.arms:
         try:
             urllib.request.urlopen(f"{SERVER}/healthz", timeout=10)
