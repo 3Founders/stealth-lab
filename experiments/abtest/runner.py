@@ -68,6 +68,24 @@ def git(ws: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(ws), *args], capture_output=True, text=True, check=True).stdout
 
 
+def gc_tokens_left(key: str) -> int | None:
+    """General Compute's remaining tokens for today on this key (one tiny request), or None when it cannot be read."""
+    req = urllib.request.Request("https://api.generalcompute.com/v1/chat/completions", method="POST",
+        data=json.dumps({"model": "gpt-oss-120b", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}).encode(),
+        headers={"content-type": "application/json", "authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            v = r.headers.get("x-ratelimit-remaining-tokens-day")
+    except urllib.error.HTTPError as e:
+        v = e.headers.get("x-ratelimit-remaining-tokens-day")
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def env_file(path: Path) -> dict[str, str]:
     out = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -363,6 +381,8 @@ def main() -> int:
     ap.add_argument("--arms", default="A,C")
     ap.add_argument("--exclude-runs", default="", help="comma-separated earlier runs whose tasks are skipped")
     ap.add_argument("--only", default="", help="comma-separated task ids: run just these from the sampled tasks")
+    ap.add_argument("--gc-min-tokens", type=int, default=500000,
+                    help="arm C: pause (exit 4) when the General Compute key has fewer tokens left today (0: off)")
     ap.add_argument("--gc-key-name", default="GENERAL_COMPUTE_API_KEY",
                     help="arm C: the backend/.env entry holding the General Compute key (e.g. a second key's daily quota)")
     ap.add_argument("--parallel", action="store_true", help="arm C: the cheap models run at once (first pass wins)")
@@ -404,6 +424,13 @@ def main() -> int:
         for arm in order:
             if (task["task_id"], arm) in done:
                 continue
+            if arm == "C" and args.gc_min_tokens > 0:
+                left = gc_tokens_left(secrets["gc"])
+                if left is not None and left < args.gc_min_tokens:
+                    # the cheap models' provider is nearly out for today: a run now would only measure that
+                    print(f"General Compute has {left} tokens left today (< {args.gc_min_tokens}): pausing. "
+                          "Rerun the same command after its daily reset (or with another key) to continue.", flush=True)
+                    return 4
             print(f"[{now()}] {task['task_id']} arm {arm} ...", flush=True)
             rec = run_one(task, arm, args.run, secrets)
             with results.open("a", encoding="utf-8") as fh:
