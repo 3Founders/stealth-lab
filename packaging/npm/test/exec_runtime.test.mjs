@@ -213,7 +213,7 @@ test("adapter refusal at runtime (spec 8.10): missing VERIFIED_WITH or a major m
   assert.deepEqual(listed.map((x) => [x.id, x.verified_flags, x.runnable]), [["unverified", false, false], ["newer", true, false]]);
 });
 
-test("race (spec 8.7): the faster verified attempt wins, the other is cancelled, both reported via the outbox", async () => {
+test("race (spec 8.7): the faster verified attempt wins, the other is cancelled -- and only the winner is reported", async () => {
   const repo = makeRepo();
   const hosted = await mockHosted((name) => {
     if (name === "recommend_models") {
@@ -236,7 +236,10 @@ test("race (spec 8.7): the faster verified attempt wins, the other is cancelled,
     assert.equal(res.attempt, 2, "the recommender ranked slow first; the verified one wins");
     assert.deepEqual(res.race.map((r) => [r.executor, r.state]), [["slow", "cancelled"], ["fast", "verified"]]);
     const queued = outboxFiles(env).map((e) => e.args);
-    assert.deepEqual(queued.map((a) => [a.scaffold, a.accepted]).sort(), [["fast", true], ["slow", false]]);
+    // the cancelled loser never finished: reporting it as a failure would teach the router a model failed that
+    // was only stopped (with parallel tries, two false failures for every cheap win)
+    assert.deepEqual(queued.map((a) => [a.scaffold, a.accepted]).sort(), [["fast", true]]);
+    assert.equal(res.race[0].evidence?.skipped ?? "cancelled: not a model outcome", "cancelled: not a model outcome");
     for (const a of queued) {
       assert.equal(a.instance_key, "ik-7");
       assert.equal(a.recommendation_id, "rec-7");

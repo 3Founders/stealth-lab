@@ -20,6 +20,7 @@ import { readExecConfig } from "./exec/store.mjs";
 import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
+import { profileKey } from "./executors/profile.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -46,6 +47,8 @@ export function dispatchPolicy(env = process.env) {
     timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 150)),
     // how many cheap runs at once: three agents on one provider can exceed its tokens-per-minute limit
     maxParallel: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL || 2)),
+    // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
+    minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
   };
 }
 
@@ -234,6 +237,68 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   return { file, cost_usd: cost };
 }
 
+// ---- provider quota: do not send work to a provider that has (almost) nothing left today -------------------------
+// A provider out of daily tokens answers every request with 429: the cheap tries then burn the whole time limit and
+// the session's model does the task anyway, later and at a higher total cost. One tiny request (a few tokens) reads
+// the provider's rate-limit headers; the answer is cached for 5 minutes per provider. Unknown -> assume it is fine.
+const QUOTA_TTL_MS = 5 * 60 * 1000;
+
+function quotaCachePath(env) {
+  return path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
+    "provider_quota.json");
+}
+
+function headerNum(h, names) {
+  for (const n of names) {
+    const v = Number(h.get ? h.get(n) : h[n]);
+    if (Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+// -> {day, minute} remaining tokens (null where the provider does not say), or null when it could not be read.
+export async function providerQuota(profile, env = process.env, fetchImpl = globalThis.fetch, now = Date.now()) {
+  const base = profile?.openai_base_url;
+  if (!base) return null;
+  let cache = {};
+  try { cache = JSON.parse(fs.readFileSync(quotaCachePath(env), "utf8")) || {}; } catch { /* none yet */ }
+  const hit = cache[base];
+  if (hit && now - hit.at < QUOTA_TTL_MS) return hit.quota;
+  let quota = null;
+  try {
+    const res = await fetchImpl(`${base.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST", redirect: "error",
+      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
+      body: JSON.stringify({ model: profile.model_id || profile.name, messages: [{ role: "user", content: "hi" }], max_tokens: 1 }),
+    });
+    await res.text().catch(() => "");
+    const day = headerNum(res.headers, ["x-ratelimit-remaining-tokens-day"]);
+    const minute = headerNum(res.headers, ["x-ratelimit-remaining-tokens-minute", "x-ratelimit-remaining-tokens"]);
+    quota = day === null && minute === null ? null : { day, minute };
+  } catch { return null; }
+  cache[base] = { at: now, quota };
+  try { fs.mkdirSync(path.dirname(quotaCachePath(env)), { recursive: true }); fs.writeFileSync(quotaCachePath(env), JSON.stringify(cache)); } catch { /* best effort */ }
+  return quota;
+}
+
+// The rungs whose provider has enough left today; the others are dropped with a log line.
+export async function withQuota(rungs, env, { min, fetchImpl, log = () => {} } = {}) {
+  if (!min) return rungs;
+  let profiles = {};
+  try { profiles = readExecConfig(env).profiles || {}; } catch { return rungs; }
+  const byBase = new Map();
+  const out = [];
+  for (const r of rungs) {
+    const prof = profiles[r.model];
+    if (!prof?.openai_base_url || r.executor === "claude") { out.push(r); continue; }
+    if (!byBase.has(prof.openai_base_url)) byBase.set(prof.openai_base_url, await providerQuota(prof, env, fetchImpl));
+    const q = byBase.get(prof.openai_base_url);
+    if (q && q.day !== null && q.day < min) { log(`dispatch: ${r.model} skipped -- its provider has ${q.day} tokens left today (< ${min})`); continue; }
+    out.push(r);
+  }
+  return out;
+}
+
 // Extra seconds for the cheap tries, from the size of the project's top-level text files (the task's own material:
 // a spec, a contract, a data sample): 4 s per KB, at most 210 s. A small task gets ~nothing; a 22 KB API contract
 // ~90 s more.
@@ -308,9 +373,11 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
-  const rungs = cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude });
   const check = dispatchCheck(policy, reply, root);
-  if (!rungs.length || !check) return null;
+  if (!check) return null;
+  const rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude }), env,
+    { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
+  if (!rungs.length) return null;
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
   // test-first: tests from the task join the project's check for every cheap rung. They are written WHILE the cheap
@@ -357,8 +424,12 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       return false;
     }
     let ok = result.state === "verified";
-    if (result.usage_limited) {            // the executor's account hit its limit: no verdict on the model
-      tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id });
+    if (result.usage_limited) {            // the executor's account or the provider hit a limit: no verdict on the model
+      tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id, cost_usd: result.cost_usd });
+      return false;
+    }
+    if (result.state === "cancelled") {    // stopped from outside: no verdict on the model either
+      tried.push({ unit: rung.unit, state: "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
       return false;
     }
     let cross = null;

@@ -33,6 +33,8 @@ import {
 export const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 // an executor run stopped by its own account's usage limit (not the model failing the task)
 export const USAGE_LIMIT = /hit your (session|usage|weekly) limit|usage_limit_reached|usage limit reached/i;
+// an open-model provider that kept refusing (rate limit or its daily token budget): the model never got to try
+export const PROVIDER_LIMIT = /kept failing: HTTP 429|Rate limit exceeded|Tokens per (minute|day) limit/i;
 const ORDER = { queued: 0, running: 1, verifying: 2 };
 const KEEP_MS = 7 * 24 * 3600 * 1000;
 const OUT_KEEP = 1024 * 1024;
@@ -390,7 +392,15 @@ export class ExecRuntime {
   }
 
   async finishAttempt(run, a) {
-    if (a.spawned && USAGE_LIMIT.test(a.summary || "")) {
+    if (a.spawned && a.state === "cancelled") {
+      // stopped by the caller (another model passed first, or the time limit): not a verdict on this model
+      a.evidence = { reported: false, queued: false, skipped: "cancelled: not a model outcome" };
+    } else if (a.spawned && a.state !== "verified" && PROVIDER_LIMIT.test(`${a.summary || ""}
+${a.error || ""}`)) {
+      // the provider refused (rate limit, out of tokens for the day): the model never got to try
+      a.usageLimited = true;
+      a.evidence = { reported: false, queued: false, skipped: "provider limit: not a model outcome" };
+    } else if (a.spawned && USAGE_LIMIT.test(a.summary || "")) {
       // the executor's own account hit a usage limit (headless Claude Code: "You've hit your session limit"): not a
       // verdict on the model -- nothing is reported, and the attempt is marked so callers do not count it either
       a.usageLimited = true;

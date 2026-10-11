@@ -297,3 +297,29 @@ test("the cheap tries get more time for a task that comes with a big file (a 20 
   fs.writeFileSync(path.join(big, "more.json"), "x".repeat(100 * 1024));
   assert.equal(taskAllowanceS(big), 210, "capped");
 });
+
+test("quota: a provider with almost no tokens left today is not tried; a healthy one is; the answer is cached", async () => {
+  const { withQuota } = await import("../lib/dispatch.mjs");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "quota-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["cheap-a", "cheap-b"] } },
+    profiles: {
+      "cheap-a": { key_env: "KEY_A", openai_base_url: "https://a.example/v1", model_id: "a" },
+      "cheap-b": { key_env: "KEY_B", openai_base_url: "https://b.example/v1", model_id: "b" },
+    } }));
+  const env = { STEALTHLAB_HOME: home, KEY_A: "ka", KEY_B: "kb" };
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls += 1;
+    const left = url.startsWith("https://a.") ? "10858" : "9000000";
+    return { text: async () => "{}", headers: new Map([["x-ratelimit-remaining-tokens-day", left]]) };
+  };
+  const rungs = [{ unit: "cheap-a|stealth", executor: "stealth", model: "cheap-a" }, { unit: "cheap-b|stealth", executor: "stealth", model: "cheap-b" }];
+  const logs = [];
+  const kept = await withQuota(rungs, env, { min: 300000, fetchImpl, log: (m) => logs.push(m) });
+  assert.deepEqual(kept.map((r) => r.model), ["cheap-b"]);
+  assert.match(logs.join("\n"), /cheap-a skipped -- its provider has 10858 tokens left today/);
+  await withQuota(rungs, env, { min: 300000, fetchImpl });
+  assert.equal(calls, 2, "cached: no new probes within 5 minutes");
+  assert.equal((await withQuota(rungs, env, { min: 0, fetchImpl })).length, 2, "min 0 turns it off");
+});
