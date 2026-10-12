@@ -541,3 +541,86 @@ Tests: 12 in `test/agreement.test.mjs`.
 8. L1: is `check_kind: "tests"` the right evidence kind for a stalled attempt? Is rule d (after the first edit) acceptable?
 9. L2: default multiplier 2 (the spec) or 3 (cuts 1% instead of 5% on the saved rows)?
 10. L3: on disagreement, hand to the session's model (built) or try a third cheap rung and take the majority?
+
+
+---
+
+# a16z speedrun "alpha" application and the deferral letter: state on 2026-10-12 (evening)
+
+Written after being told another session had submitted the application. I checked what a16z holds, using the session token from the code
+that arrived at 23b2712@iitb.ac.in (read-only: I only asked for the saved draft, I changed nothing and did not try to edit or resubmit).
+
+## What a16z holds for Chaitanya
+
+- Draft/application `daee78bf-92e6-4f11-9966-f07c4dc52fbe`, cohort `a-002`, email 23b2712@iitb.ac.in, **`submitted_application: true`**,
+  last updated 2026-10-12 12:43 UTC (18:13 IST).
+- Fields on file: full name, email, phone, date of birth (18 Dec 2005), location (Mumbai), US work authorization "No" and visa sponsorship
+  "Yes", intent "actively building", LinkedIn, GitHub, education (IIT Bombay, B.S., Center for Multidisciplinary Education, 2027; a16z added
+  `domain: iitb.ac.in`), one project (kel), capital raised "No", co-founder "applying too" with anujbhadbhade05@gmail.com, build stage
+  "prototype", timeline "already full-time", and the four essays.
+- **Not on file:** the SMS consent (you said yes; it was never sent, so a16z will not text you) and anything about the terms. `tos_accepted`
+  is a submit-time field I cannot read back.
+
+## Problem 1: the submitted essays are NOT the ones in `a16z_alpha_essays_chaitanya.md`
+
+That file is headed "Chaitanya's essays as they will be submitted" and "Not submitted", but the application on a16z's side carries the
+**original draft essays** (from `a16z_alpha_application_draft.md`), not the rewritten ones. Differences that matter:
+
+| Field | Submitted (live at a16z) | In the "as they will be submitted" file |
+|---|---|---|
+| `most_impressive_thing` | the 38% cost cut, 114 vs 120 solved, "six fewer ... slower; we report that", the seven-assistant installer, Groww grant, first lead | no numbers; adds the open-model gateway through four providers, governance (budgets, kill switch, audit), the pre-registered evaluation plan; the hardware chair moved here |
+| `started_building_software` | the chair project, then "about three years ago ... I started building software" | adds **Miti**, a Flutter + Firebase event app built after seeing Mood Indigo's crowd and event problems |
+| `anything_else` | includes "our 38% saving was measured on public problems, not yet on a customer's own work" | that sentence is dropped: "no revenue yet and not yet incorporated" only |
+| `building_now` | same in both | same |
+
+So either the other session submitted before swapping the essays in, or it submitted a stale payload. Whatever the cause, **the live application
+has the earlier text.** Whether a16z lets an applicant edit after submission I did not test. What to decide: is the submitted version
+acceptable (it is the more cautious one: it states the measured result and its limits), or should a16z be asked to replace it.
+Do not resubmit from two sessions at once: the application is one row per email, and the last writer wins.
+
+## Problem 2: things in the submitted text you should be able to stand behind
+
+- "a small grant from Groww": taken from you; no amount, date or confirmation was ever shown to me. If a16z asks for proof, it must exist.
+- "people we know in the industry put average spend near US$800 per developer per month": your relatives' figures, informal; not a survey.
+- "147 database migrations, 470+ test files, 1,100+ commits, installable for seven coding assistants": counted from the repo on 12 Oct.
+- "kel ... cut cost 38% on 128 public problems (114 vs 120 solved)": phase 1 of the A-vs-C run, public benchmarks, **not** a customer's work. The
+  later phase 2 (web pages) is unfinished, so do not quote it.
+- "We both graduate next year and already have no classes, so we are effectively full-time": your statement; it is also the basis of the
+  "already full-time" timeline answer.
+- The company name **kel** is disclosed to a16z in the essays and the project field, although the deferral letter to the institute keeps the
+  company unnamed (stealth). That was your instruction for a16z; just be aware the two documents differ on purpose.
+
+## Problem 3: who accepted the terms
+
+a16z's rules say only the applicant may accept the terms of service (and the SMS consent); an agent may not do it for them. I cannot see how
+that step happened in the other session. Please confirm you personally read and accepted the terms there. If the other session accepted them
+without you, that should be corrected with a16z.
+
+## Anuj's application
+
+- It is a separate form (one person per application). I have no evidence it was submitted. His verification code goes to
+  anujbhadbhade05@gmail.com and only he can answer his date of birth, US work authorization, visa, LinkedIn, education and essays, and accept the
+  terms. He must be under 27 on the day he submits.
+- His half-filled sheet `a16z_alpha_application_anuj.md` is **committed on `origin/main`** (b612733, under your git identity). It holds both
+  emails and no personal answers, but it was meant to stay local. Decide whether to keep it there; removing it is a normal commit (history keeps it).
+- Your submission names him as "co-founder who is applying too", so a16z may look for his application.
+
+## The deferral letter (`deferral_request_letter.tex`) was edited after my last version
+
+I did not edit it again. Compared with what I left, the file now has:
+- the Groww line reading "We have been awarded a grant by Groww, A confirmation can be shared on request." (a stray comma and capital where the
+  placeholder was removed; it should be one sentence);
+- plan item 1 and the later item saying **"paid pilot"** and "convert pilot into a paid engagement", although you told me earlier "don't say
+  pilot planned, we just have a lead" (my version said "trial" and "turn the first trial into a paid engagement"). Please decide which wording you
+  want; the LatentView lead is correctly unnamed ("a company of about 2,000 people");
+- the PDF (compiled 12:35) is older than the `.tex` (12:37), so the PDF you would attach does not match the source. Recompile before sending.
+
+## Other loose ends from today (all still true)
+
+- Not committed and holding personal data: `a16z_alpha_application_draft.md`, `a16z_alpha_essays_chaitanya.md`, the letter files and
+  `deferral_request_letter.pdf`. Only Anuj's sheet reached main.
+- The a16z token I used is mine from the code you gave me; it expires in about 7 days from 12 Oct. It is stored only in this session's temp
+  folder, not in the repo.
+- The arm C resume problems listed at the top of this file were addressed by the handoff updates (3ec2f29, 8b1a95f): resume on the original
+  machine, which has since finished the MultiPL-E JS part; 50 page tasks were left.
+- The eleven feature branches of the build queue above are unmerged; `origin/main` is still at b612733.
