@@ -583,3 +583,28 @@ State in the results which machine C's remaining tasks ran on.
   not dispatched).
 - Also redo bird-1505 for phase 1 (section 7, step 5), then `python experiments/abtest/report.py phase1`.
 - Copy `.local/results/*.jsonl` into a new `experiments/abtest/results_<date>/` and commit it with the reports.
+
+---
+
+## 9. Update 2026-10-12 11:10 UTC: phase 2 MultiPL-E JS finished in arm C
+
+- **What ran:** the identical phase 2 arm C command with `--only` the 18 remaining MultiPL-E JS task ids, on the
+  original machine and the same state. Claude weekly usage went from 94% to 95%.
+- **MultiPL-E JS, 20 tasks:**
+
+  | Arm | Solved | Cost | p50 / p95 |
+  |---|---|---|---|
+  | A | 19 | $1.70 | 15 / 24 s |
+  | C | 19 | $1.31 (-23%) | 29 / 136 s |
+
+  - Cheap delivered 7; **not dispatched 10/20**.
+  - C's only miss (mjs-51) was missed by A too.
+- **Follow-up:** check which codebook groups these JS prompts fall into. Routing sent half of them straight to
+  Opus, likely because they share a group with kinds where cheap models failed in phase 1.
+- **Left in phase 2 arm C:** the 50 page tasks (d2c: 27, websight: 23).
+  - Run with the identical command, no `--only`; the runner skips everything already done.
+  - Expect a cost close to A's (the cheap models cannot see screenshots), so roughly 7-9% of a weekly limit.
+  - Do it after the weekly reset (2026-10-13 20:00 UTC).
+- The results snapshot `experiments/abtest/results_2026-10-11/phase2.jsonl` is updated. On the original machine,
+  `.local/results/phase2.jsonl` is current. On another machine, the bundle's copy predates this update: replace
+  its results/phase2.jsonl with the snapshot after extracting.
