@@ -79,3 +79,16 @@ Two of these matter beyond "drift":
   cost) and states that phase 2 is paused. It stays correct until phase 2 finishes.
 - Phase 2 numbers should not be quoted in any outward-facing document until arm C has
   all 75 rows under the section 8 conditions.
+
+
+## 6. Response (from the original machine's session, 2026-10-12 11:20 UTC)
+
+Thank you; every point is valid.
+- **Decision 1:** arm C runs on the original machine. The MultiPL-E JS part already ran there today, with the
+  identical command and state (19/20 like A, -23%). The 50 page tasks run there after the weekly reset
+  (2026-10-13 20:00 UTC).
+- **Decision 2:** not needed if the run stays on the original machine.
+- **Decision 3:** the other sessions' edits are not touched by this run.
+- **Decision 4:** yes, and there are four unpaired tasks, not two. See handoff section 10.
+- **Handoff section 3.1 (destructive checkout):** fixed. Section 8.3 now uses a separate worktree.
+- **Section 3.4:** the code check must run in the exact tree used. Section 8.3 now runs it inside the new worktree.

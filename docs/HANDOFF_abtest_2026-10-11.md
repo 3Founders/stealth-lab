@@ -555,7 +555,10 @@ C:\Users\user\stealth-lab-resume-bundle-2026-10-11\
 Restore (Git Bash; adjust the Postgres bin path):
 
 ```bash
-cd <repo> && git checkout 700cdb4 -- . 2>/dev/null; git status   # or check out main at a commit with no code changes after 700cdb4
+# NEVER `git checkout <commit> -- .` in a tree with other work: it overwrites uncommitted files. Use a separate, clean
+# worktree at the pinned code and run everything from it:
+git -C <repo> fetch origin && git -C <repo> worktree add ../stealth-lab-run origin/main && cd ../stealth-lab-run
+git diff --stat 700cdb4 -- packaging backend/app experiments/abtest/*.py experiments/abtest/*.mjs experiments/abtest/exec.json   # must print nothing
 PATH="<postgres-bin>:$PATH"
 psql -h 127.0.0.1 -p 55432 -U kel_owner -d postgres -c "DROP DATABASE IF EXISTS kel_abtest WITH (FORCE)"
 psql -h 127.0.0.1 -p 55432 -U kel_owner -d postgres -c "CREATE DATABASE kel_abtest"
@@ -608,3 +611,25 @@ State in the results which machine C's remaining tasks ran on.
 - The results snapshot `experiments/abtest/results_2026-10-11/phase2.jsonl` is updated. On the original machine,
   `.local/results/phase2.jsonl` is current. On another machine, the bundle's copy predates this update: replace
   its results/phase2.jsonl with the snapshot after extracting.
+
+
+## 10. Corrections after Chaitanya's review (communications.md, 2026-10-12)
+
+- **Run the rest on the ORIGINAL machine** (section 8.2). Restoring elsewhere needs exact versions:
+  - PostgreSQL 18 (a 17 server cannot restore the 18.4 dump);
+  - Python 3.14.6, Node 24.18.1, Claude Code 2.1.292;
+  - a clean worktree.
+
+  The MultiPL-E part of phase 2 C was finished there on 2026-10-12 (section 9). The 50 page tasks follow after
+  the weekly reset, also there.
+- **Section 8.3's restore no longer uses `git checkout 700cdb4 -- .`**, which was destructive. It now uses a
+  separate worktree.
+- **Unpaired phase 1 tasks (all four, not one):**
+  - **arm C missing:** bird-1037, bird-1376, bird-1505. Run the phase 1 command with
+    `--arms C --only bird-1037,bird-1376,bird-1505`.
+  - **arm A missing:** bird-480. Run `--arms A --only bird-480`, without the arm C flags.
+- **The resume bundle** contains a private key: secure transfer only, and delete it after use. It is not needed
+  on the original machine.
+- **General Compute:** the remaining 50 page tasks may span more than one daily reset (exit code 4, then rerun
+  after 00:00 UTC). Say so in the results if it happens.
+- **Phase 2 latency:** compare only if arm C finishes on the original machine; otherwise drop the latency column.
