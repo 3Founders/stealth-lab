@@ -71,3 +71,32 @@ test("dispatchCheck: configured wins, then the library entry, then detection; th
   assert.equal(dispatchPolicy({}).detect, true);
   assert.equal(dispatchPolicy({ STEALTHLAB_DISPATCH_DETECT: "off" }).detect, false);
 });
+
+// ---- python or python3 ---------------------------------------------------------------------------------------------------
+
+import { pythonBin } from "../lib/detect_check.mjs";
+
+test("pythonBin: python3 only where python is not on PATH but python3 is, and never on Windows", () => {
+  const bin = (...names) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), "bin-")); for (const n of names) fs.writeFileSync(path.join(d, n), ""); return d; };
+  const env = (...dirs) => ({ PATH: dirs.join(path.delimiter) });
+  assert.equal(pythonBin({ platform: "linux", env: env(bin("python3")) }), "python3");
+  assert.equal(pythonBin({ platform: "linux", env: env(bin("python3"), bin("python")) }), "python", "both: python");
+  assert.equal(pythonBin({ platform: "linux", env: env(bin("python")) }), "python");
+  assert.equal(pythonBin({ platform: "linux", env: env(bin("ls")) }), "python", "neither: the default, python");
+  assert.equal(pythonBin({ platform: "linux", env: {} }), "python");
+  assert.equal(pythonBin({ platform: "darwin", env: env(bin("python3")) }), "python3");
+  assert.equal(pythonBin({ platform: "win32", env: env(bin("python3")) }), "python", "Windows: always python");
+  assert.equal(pythonBin({ platform: "linux", env: env(bin("python3")), exists: () => { throw new Error("unreadable"); } }), "python");
+});
+
+test("detectCheck uses python3 for the pytest check where python is missing; other checks are unchanged", () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "detect-"));
+  fs.writeFileSync(path.join(repo, "pytest.ini"), "[pytest]\n");
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "bin-"));
+  fs.writeFileSync(path.join(d, "python3"), "");
+  assert.equal(detectCheck(repo, { platform: "linux", env: { PATH: d } }), "python3 -m pytest -q");
+  assert.equal(detectCheck(repo, { platform: "win32", env: { PATH: d } }), "python -m pytest -q");
+  const go = fs.mkdtempSync(path.join(os.tmpdir(), "detect-"));
+  fs.writeFileSync(path.join(go, "go.mod"), "module x\n");
+  assert.equal(detectCheck(go, { platform: "linux", env: { PATH: d } }), "go test ./...");
+});

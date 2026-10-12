@@ -22,7 +22,7 @@ import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
-import { detectCheck } from "./detect_check.mjs";
+import { detectCheck, pythonBin } from "./detect_check.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -402,7 +402,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   const specAbort = new AbortController();
   if (policy.testFirst && (runClaude || pytestAvailable())) {
     const dir = specDir(env);
-    fullCheck = `${check} && python "${writeSpecRunner(dir)}"`;
+    fullCheck = `${check} && ${pythonBin({ env })} "${writeSpecRunner(dir)}"`;
     specDone = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude, dir,
                                 signal: specAbort.signal })
       .then((s) => { spec = s; return s; })

@@ -6,11 +6,22 @@
 //
 //   detectCheck(root) -> "<test command>" | null     (null = no check found: no dispatch, as before)
 //
+// The Python command: `python`, or `python3` where `python` is not on PATH but `python3` is (many Linux and macOS machines;
+// Windows always `python`). Decided here, once, so the detected check and dispatch's own `python` steps agree.
+//
 // Deliberately conservative: only the project ROOT is looked at (a monorepo's sub-package tests are not guessed), and a
 // signal that is weak (a loose test_*.py with no pytest config and no tests dir) does not count. A wrong check would let
 // wrong answers in, which is worse than no dispatch. STEALTHLAB_DISPATCH_DETECT=off turns detection off.
 import fs from "node:fs";
 import path from "node:path";
+
+// -> "python" | "python3"; `platform`, `env` and `exists` are injectable for tests
+export function pythonBin({ platform = process.platform, env = process.env, exists = fs.existsSync } = {}) {
+  if (platform === "win32") return "python";
+  const dirs = String(env.PATH || "").split(path.delimiter).filter(Boolean);
+  const has = (name) => dirs.some((d) => { try { return exists(path.join(d, name)); } catch { return false; } });
+  return has("python") || !has("python3") ? "python" : "python3";
+}
 
 const exists = (root, ...p) => { try { return fs.existsSync(path.join(root, ...p)); } catch { return false; } };
 const read = (root, f) => { try { return fs.readFileSync(path.join(root, f), "utf8"); } catch { return ""; } };
@@ -56,7 +67,7 @@ function hasPythonTests(root) {
   return false;
 }
 
-export function detectCheck(root) {
+export function detectCheck(root, opts = {}) {
   if (!root) return null;
   if (exists(root, "dbt_project.yml")) return "dbt build";
   if (exists(root, "go.mod")) return "go test ./...";
@@ -66,6 +77,6 @@ export function detectCheck(root) {
     if (c) return c;
   }
   // python last: a config file or a tests directory with real test files, not one stray file
-  if (hasPytestConfig(root) || hasPythonTests(root)) return "python -m pytest -q";
+  if (hasPytestConfig(root) || hasPythonTests(root)) return `${pythonBin(opts)} -m pytest -q`;
   return null;
 }
