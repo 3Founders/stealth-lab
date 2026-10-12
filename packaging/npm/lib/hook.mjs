@@ -321,7 +321,7 @@ function solution(vs, n) {
 // This repo's own solved problems (find_ways' library_matches), read from the local library: the entry's steps
 // and the diff that solved it. First in the block -- the evidence says they are what helps most (plan §0).
 // mode "lean": only entries the judge called a match.
-function libraryParts(reply, root, mode, budget) {
+export function libraryParts(reply, root, mode, budget) {
   const out = [];
   if (!root) return out;
   const matches = (reply.library_matches || []).filter((m) => (mode === "lean" ? m.relation === "matches" : true));

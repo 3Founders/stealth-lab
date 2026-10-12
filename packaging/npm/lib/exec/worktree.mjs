@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { childEnv } from "./proc.mjs";
+import { linkProjectDeps, unlinkProjectDeps } from "./deps.mjs";
 
 export function git(args, { cwd, input, env = process.env, maxBuffer = 64 * 1024 * 1024, timeoutMs = 120000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -85,6 +86,7 @@ export async function createWorktree({ repo, commit, dir, patch, env }) {
   if (patch && patch.length) {
     await git(["-C", dir, "apply", "--binary", "--whitespace=nowarn", "-"], { env, input: patch });
   }
+  linkProjectDeps({ repo, dir, env });             // node_modules / venv of the project, linked (lib/exec/deps.mjs)
   return { dir, baseTree: await snapshotTree(dir, env) };
 }
 
@@ -115,6 +117,9 @@ export async function collectDiff({ dir, baseTree, env }) {
 }
 
 export async function removeWorktree({ repo, dir, env }) {
+  // FIRST the dependency links, with the call that removes only the link: git worktree remove --force follows a Windows
+  // junction and empties the project's real node_modules (lib/exec/deps.mjs)
+  unlinkProjectDeps(dir);
   try { await git(["-C", repo, "worktree", "remove", "--force", "--", dir], { env }); } catch { /* fall through */ }
   try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* best effort */ }
   try { await git(["-C", repo, "worktree", "prune"], { env }); } catch { /* best effort */ }
