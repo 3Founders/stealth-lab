@@ -18,7 +18,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
 import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
-import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
+import { addEntry, diffFromGit, ensureRoute, learnedLimitS, readEntry, recordObs, routeWins } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
 
@@ -51,6 +51,10 @@ export function dispatchPolicy(env = process.env) {
     explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
+    // a time limit per kind of task, learned from this repo's own cheap wins (lib/library.mjs routeWins): 2 x their p90, between 60 s
+    // and the limit above; with fewer than 5 wins on the route the limit above stands. "off": always the limit above
+    learnedTimeout: (env.STEALTHLAB_DISPATCH_LEARNED_TIMEOUT || "on").toLowerCase() !== "off",
+    learnedMult: Math.max(1, Number(env.STEALTHLAB_DISPATCH_LEARNED_MULT) || 2),          // the limit is this many times the wins' p90
   };
 }
 
@@ -402,6 +406,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       .catch((err) => { log(`test-first: ${err.message}`); try { fs.writeFileSync(path.join(dir, "SKIP"), ""); } catch { /* */ } return null; });
   }
 
+  let triesStart = Date.now();             // reset right before the time limit starts; a win's duration is measured from it
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
   const runRung = async (rung) => {
@@ -453,7 +458,10 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       }
     }
     try {
-      if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), rung.model, rung.executor, ok);
+      if (plan.goal_id) {
+        recordObs(root, ensureRoute(root, plan.goal_id), rung.model, rung.executor, ok,
+          ok ? { winSeconds: (Date.now() - triesStart) / 1000 } : {});       // how long the cheap tries took to this pass
+      }
     } catch { /* the record is best-effort */ }
     tried.push({ unit: rung.unit, state: cross?.verdict === "disagree" ? "rejected by cross-check" : result.state,
                  run_id: result.run_id, cost_usd: result.cost_usd, ...(cross ? { cross } : {}),
@@ -469,7 +477,15 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   let winner = null;
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
-  const limitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
+  const baseLimitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
+  let limitS = baseLimitS;
+  if (policy.learnedTimeout && plan.goal_id) {
+    try {
+      const learned = learnedLimitS(routeWins(root, plan.goal_id), { baseS: baseLimitS, mult: policy.learnedMult });
+      if (learned !== null) { limitS = learned; log(`dispatch: time limit ${learned} s, learned from this route's cheap wins (the default is ${baseLimitS} s)`); }
+    } catch { /* no routing.md: the default limit */ }
+  }
+  triesStart = Date.now();
   let timer;
   const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
@@ -533,13 +549,13 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
-    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried, spec,
+    return { handled: true, run_id: result.run_id, unit: rung.unit, limit_s: limitS, library_entry: entry, tried, spec,
       text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
         `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
-  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)) };
+  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), limit_s: limitS };
 }
 
 // Cross-check (differential testing): a passing cheap answer is accepted only if a DIFFERENT model, solving the same

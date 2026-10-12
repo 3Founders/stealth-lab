@@ -83,7 +83,9 @@ export const ROUTING_HEADER =
   "# ROUTE|<R-id>|goal=<L-id or ->|g=<global goal id>|fit=<fit id or ->|basis=<prior|posterior|->|" +
   "as_of=<date>|step=<*|order>|ladder=<model>::<scaffold>:p=<mean>[<q05>,<q95>]:$<cost> > ...|" +
   "whole=p=<mean>[<q05>,<q95>]:$<cost>\n" +
-  "# OBS|<R-id>|<model>|<scaffold>|n=<attempts>|ok=<accepted>|last=<date>\n";
+  "# OBS|<R-id>|<model>|<scaffold>|n=<attempts>|ok=<accepted>|last=<date>[|p90s=<s>|wins=<s,s,...>]\n" +
+  "# p90s / wins: how long (seconds, from the cheap tries' start) this route's verified cheap answers took, the last 20 and\n" +
+  "# their 90th percentile -- the same on every OBS line of the route; dispatch's time limit is derived from it.\n";
 export const IDX_HEADER =
   "# library.idx -- GENERATED from library.md (rebuilt whenever source_sha differs). Do not hand-edit.\n" +
   "# id|status|outcome|unit|g|verified_at|start|end|block_sha|title\n";
@@ -583,11 +585,13 @@ export function parseRouting(text) {
       const key = `${f[1]}\u0000${model}\u0000${scaffold}`;
       const last = dash(k.last);
       const prev = obs.get(key);
-      if (!prev) obs.set(key, { last, model, n, ok, route: f[1], scaffold });
+      const wins = parseWins(k.wins);
+      if (!prev) obs.set(key, { last, model, n, ok, route: f[1], scaffold, ...(wins.length ? { wins } : {}) });
       else {
         prev.n += n;
         prev.ok += ok;
         prev.last = [prev.last, last].filter(Boolean).sort().pop() ?? null;
+        if (wins.length > (prev.wins || []).length) prev.wins = wins;     // the same list on every line of a route: keep the longest
       }
     }
   }
@@ -595,7 +599,33 @@ export function parseRouting(text) {
 }
 
 export function renderObsLine(o) {
-  return ["OBS", o.route, esc(o.model), esc(o.scaffold), `n=${o.n}`, `ok=${o.ok}`, kv("last", o.last)].join(SEP);
+  const wins = (o.wins || []).slice(-WINS_MAX);
+  return ["OBS", o.route, esc(o.model), esc(o.scaffold), `n=${o.n}`, `ok=${o.ok}`, kv("last", o.last),
+    ...(wins.length ? [kv("p90s", p90(wins)), kv("wins", wins.join(","))] : [])].join(SEP);
+}
+
+// ---- how long a route's verified cheap answers take (OBS wins=, p90s=): dispatch's time limit is derived from it
+export const WINS_MAX = 20;
+const round1 = (x) => Math.round(Number(x) * 10) / 10;
+function parseWins(text) {
+  return String(text ?? "").split(",").filter((x) => x.trim() !== "" && x.trim() !== "-").map((x) => Number(x)).filter((x) => Number.isFinite(x) && x >= 0).slice(-WINS_MAX);
+}
+// nearest-rank 90th percentile, one decimal
+export function p90(xs) {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return round1(s[Math.max(0, Math.ceil(0.9 * s.length) - 1)]);
+}
+// The seconds a route's cheap wins took, newest last (at most 20), or [] (no route for this Goal, no wins yet).
+export function routeWins(root, goalId) {
+  const { routes, obs } = parseRouting(read(P(root, "routing.md")) || "");
+  const ids = new Set(routes.filter((r) => r.g === goalId).map((r) => r.id));
+  return obs.filter((o) => ids.has(o.route)).reduce((best, o) => ((o.wins || []).length > best.length ? o.wins : best), []);
+}
+// clamp(mult x p90, floor, base): the learned limit for cheap tries (mult 2 by default), or null (keep `baseS`) with fewer than `minWins` wins
+export function learnedLimitS(wins, { baseS, floorS = 60, minWins = 5, mult = 2 }) {
+  if (!Array.isArray(wins) || wins.length < minWins) return null;
+  return Math.min(baseS, Math.max(floorS, mult * p90(wins)));
 }
 
 export function localObsForGoal(routes, obs, goalId) {
@@ -1030,7 +1060,9 @@ export function ensureRoute(root, goalId, { now = new Date() } = {}) {
 }
 
 // One attempt's outcome on a route: the OBS line for (route, model, scaffold) is incremented in place.
-export function recordObs(root, routeId, model, scaffold, accepted, { now = new Date() } = {}) {
+// winSeconds: for an accepted attempt, how long the cheap tries took to produce it; it joins the route's wins (last 20) and p90s
+// is recomputed on every OBS line of the route.
+export function recordObs(root, routeId, model, scaffold, accepted, { now = new Date(), winSeconds = null } = {}) {
   if (!ROUTE_ID.test(routeId)) throw new Error(`not a route id: ${routeId}`);
   const file = P(root, "routing.md");
   const lines = (read(file) || ROUTING_HEADER).split("\n");
@@ -1041,11 +1073,26 @@ export function recordObs(root, routeId, model, scaffold, accepted, { now = new 
     const k = splitKv(f.slice(4));
     if (!COUNT.test(k.n ?? "") || !COUNT.test(k.ok ?? "")) return line;
     hit = true;
-    return renderObsLine({ route: routeId, model, scaffold, n: Number(k.n) + 1, ok: Number(k.ok) + (accepted ? 1 : 0), last: today(now) });
+    return renderObsLine({ route: routeId, model, scaffold, n: Number(k.n) + 1, ok: Number(k.ok) + (accepted ? 1 : 0), last: today(now),
+                           wins: parseWins(k.wins) });
   });
   if (!hit) {
     while (out.length && out[out.length - 1] === "") out.pop();
     out.push(renderObsLine({ route: routeId, model, scaffold, n: 1, ok: accepted ? 1 : 0, last: today(now) }));
+  }
+  if (accepted && Number.isFinite(winSeconds) && winSeconds >= 0) {
+    // the route's wins are one list, kept identical on every OBS line of the route
+    const mine = (line) => { const f = line.split(SEP); return f[0] === "OBS" && f[1] === routeId; };
+    let list = [];
+    for (const line of out) if (mine(line)) { const w = parseWins(splitKv(line.split(SEP).slice(4)).wins); if (w.length > list.length) list = w; }
+    list = [...list, round1(winSeconds)].slice(-WINS_MAX);
+    for (let i = 0; i < out.length; i++) {
+      if (!mine(out[i])) continue;
+      const f = out[i].split(SEP);
+      const k = splitKv(f.slice(4));
+      out[i] = renderObsLine({ route: routeId, model: unesc(f[2] || ""), scaffold: unesc(f[3] || ""), n: Number(k.n), ok: Number(k.ok),
+                               last: dash(k.last), wins: list });
+    }
   }
   writeIfChanged(file, out.join("\n").replace(/\n*$/, "\n"));
 }
