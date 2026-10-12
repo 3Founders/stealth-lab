@@ -26,7 +26,7 @@ what the product does now, what is queued, and verbatim steps to resume. Older c
   - messy and multi-turn prompts are not handled;
   - `.stealth` knowledge is not exercised on long series of tasks in one repo.
 
-  See section 6.
+  See section 6; **the build queue for Chaitanya's Claude is section 6.6.**
 
 ---
 
@@ -395,6 +395,112 @@ Each item needs the owner's go-ahead.
 - When you stop a run, make sure its `python runner.py` process is gone too. Stopping the parent shell left one
   alive once, and two runners overlapped.
 - General Compute's free keys have 10M tokens/day each. A full phase 1 arm C uses about 10M.
+
+### 6.6 BUILD QUEUE for Chaitanya's Claude (agreed 2026-10-12): build, push branches, the owner reviews
+
+The owner wants these BUILT now, by Chaitanya's Claude, and pushed for review. Work through them in the order
+below. Each item has: where, exactly what, what NOT to do, and how to prove it.
+
+**Rules for every item (non-negotiable):**
+- One branch per item, from `origin/main`: `feat/q-<id>-<short-name>` (e.g. `feat/q-L1-early-stop`). Push the
+  branch; never push to `main`, never force-push, never merge. The owner pulls and reviews.
+- **Nothing may make earlier results worse.** Every item must show, offline where possible, that solved count and
+  cost on the existing results do not get worse (section 2 numbers; results in
+  `experiments/abtest/results_2026-10-11/`). If an item can only be judged live, say so in the commit message and
+  stop; do not run live benchmarks (they need the owner's Claude usage and General Compute quota).
+- Existing tests stay green and are never weakened: `cd packaging/npm && npm test`; in `backend`:
+  `python -m pytest tests/test_routing*.py tests/test_*plan*.py tests/test_find_ways*.py -q` (slow, ~18 min).
+  Add tests for every behaviour you add, in the style of the neighbouring tests.
+- Every new behaviour gets an env switch to turn it off, named `STEALTHLAB_*` (client) or `STEALTH_*` (server),
+  documented in the code where it is read.
+- Write code like the surrounding code (comment density, naming). No secrets in code, logs or commits; never read
+  or print `backend/.env` values; stage files by name (never `git add -A`).
+- Commit message: what changed, why (with the measured numbers that motivated it), how it was checked.
+
+**Q0. Router check calibration -- ALREADY BUILT, review only.** Branch `feat/routing-check-calibration` (6bdd530).
+- Why: the router assumed a 'tests' check lets ~19% of wrong answers through, so it expected 13-30% of accepted
+  cheap answers to be wrong and sent 9 of 20 MultiPL-E JS tasks straight to Opus. Measured: 6 wrong accepted of
+  ~79 wrong cheap attempts (~0.08). Giving JS its own routing group changed nothing -- the coarse grouping was NOT
+  the cause.
+- What it does: `tests_false_accept` = 0.08 on the bundled prior (`STEALTH_ROUTING_TESTS_FALSE_ACCEPT`, 0 = old
+  behaviour); per-kind learning from audits (`report_audit` MCP tool; dispatch reviews 10% of delivered cheap
+  answers in a detached process, `lib/audit.mjs`, `STEALTHLAB_DISPATCH_AUDIT`).
+- Offline evidence: replay of all 228 saved routing decisions, cheap-first 179 -> 213; projected phase 1 + JS
+  C cost $11.87 -> ~$10.50 (saving -34% -> ~-42%), ~0.7 fewer solved; balance tests unchanged.
+- Your job: review only. The live check (arm C on the 20 JS + 20 OpenAPI tasks after the weekly reset) is the
+  owner's.
+
+**6.1 fixes 1-6 and 6.2 hardening A/B/C (above): build them.** Order: 6.1 #1, #2, #3, then 6.2 A (A1-A5), C
+(C1-C4), B (B1-B5), then 6.1 #4 (= 6.2 A), #5 Cursor, #6 long-horizon test harness (build the harness only; do
+not run it). What "done" means for each:
+- 6.1 #1 check detection: a pure function `detectCheck(root) -> command | null` in `packaging/npm/lib/`, used by
+  `dispatchCheck` when no `STEALTHLAB_DISPATCH_CHECK` is set. Fixture repos in tests for: pytest (pyproject/ini/
+  tests dir), `npm test` with a real script (NOT npm's default "no test specified" placeholder), vitest, jest,
+  `dbt build`, `go test ./...`, `cargo test`, and a repo with none (-> null = no dispatch, as today).
+- 6.1 #2 hooks-only gaps: start from `feat/product-fixes-1-3` (rebase it). CLAUDE.md block is idempotent (re-install
+  does not duplicate it; uninstall removes it). First survey runs once per repo in the background and never blocks
+  a prompt. Tidy removes exact duplicates only. `--keep-mcp` keeps the MCP servers alongside the hooks.
+- 6.1 #3 continuity: after a dispatched (blocked) prompt, the NEXT prompt's hook context carries one line per
+  earlier dispatch in this session: "Earlier in this session, <model> changed <files> to <one-line task>
+  (StealthLab, check passed)". Kept in a per-session file under the StealthLab home; at most the last 5 lines.
+- 6.2 A1 task brief: a cheap model (gpt-oss-120b via the existing stealth executor's provider, NOT a Claude model)
+  turns the last <=6 turns of `transcript_path` plus the prompt into a brief: {task, files_hinted, acceptance,
+  parts[], clarity: clear|unclear, kind: code|question|chat, size: small|medium|large}. Budget: <=3 s typical,
+  hard timeout 8 s; on timeout or error, fall back to today's behaviour (raw prompt). The brief, not the raw
+  prompt, goes to the cheap models and to the test writer.
+- 6.2 A2/A3: dispatch only if kind=code AND clarity=clear AND size!=large AND a check exists; otherwise no
+  dispatch (the session model handles it, as in arm A). Never ask the user anything from the hook.
+- 6.2 A5 overrides: a prompt starting with `!opus` skips StealthLab entirely (the prefix is stripped from what the
+  session sees); `!cheap` forces a dispatch attempt even if routing would skip.
+- 6.2 C1-C4: before applying a cheap answer, record an undo point (a git stash-like ref, NOT a commit on the user's
+  branch); `stealthlab-mcp undo` restores it. If any file the answer touches changed in the user's tree during the
+  run, do not apply: report "not applied, you edited <file>". The block message states model, files, cost, and
+  the undo command. `STEALTHLAB_DISPATCH_ASK=on` stops before applying and shows the diff summary instead.
+- 6.2 B1: the cheap models' task text gets the relevant `.stealth` facts and the judged library matches (the same
+  ones find_ways returned), capped at 4 KB. B2: worktrees symlink/junction `node_modules` and reuse the project's
+  venv instead of reinstalling. B3: run tests related to changed files first (fail fast), full check before
+  accepting. B4 = L2 below. B5: size gating comes from A1's `size`.
+- How to test A without live runs: a fixed set of >=30 prompts (messy rewrites of existing benchmark tasks, plus
+  questions and chit-chat), committed as a fixture with the expected kind/clarity; the brief classifier must get
+  >=90% kind right and must never mark a question or chat as a code task.
+
+**Latency: only these three are worth building.** (The research reports also suggested starting Opus in parallel
+as a backup, a trained failure-prediction model, a separate upfront classifier, out-of-order speculation and
+neural answer scorers. Do NOT build those: a parallel Opus pays for Opus on tasks the cheap models win, against
+the product's rule that cheap models do the task; we already have an upfront router; the rest need training data
+we do not have or bring little for this design.) The data that decides it: of the 28 tasks where the cheap tries
+failed and Opus took over, **20 waited out the full time limit (median +164 s vs arm A)**; the 8 that failed
+earlier still added a median 99 s. Cheap wins add a median 22 s.
+
+- **L1. Stop stuck cheap runs early** (biggest win). Where: `packaging/npm/lib/agent/step_agent.mjs` (the cheap
+  agent loop) and `lib/exec/runtime.mjs`. Stop a run and report it as `failed` (state `stalled`, counted against
+  the model -- it did fail) when ANY of: (a) the check failed twice with the same failing test names/first error
+  line and the edits in between changed nothing those tests touch; (b) the same file content hash recurs (an edit
+  undone and redone); (c) 3 consecutive tool calls errored; (d) 6 steps with no change to the worktree diff.
+  Deterministic rules only -- no model. Switch: `STEALTHLAB_EARLY_STOP` (default on). Proof, offline: replay the
+  run logs of the phase 1/2 arm C runs (in the resume bundle, `C_home/runs`; ask the owner for the bundle if you
+  do not have it): count (i) failing runs the rules would have stopped and how many seconds earlier, and (ii)
+  runs that eventually PASSED that the rules would have stopped. (ii) must be 0 or the rule is too eager. Report
+  both numbers in the commit message.
+- **L2. A time limit per kind of task**, learned from this repo's own cheap wins. Record each verified cheap
+  run's duration in `.stealth/routing.md` OBS lines (add `p90s=<seconds>`, the 90th percentile of that route's
+  winning runs, last 20). Limit = clamp(2 x p90s, 60 s, today's limit (150 s + allowance)); with fewer than 5 wins
+  on the route, keep today's limit. Proof, offline: from results, how many cheap wins would have been cut (must
+  be 0 by construction on the data used) and the seconds saved on failures.
+- **L3. Agreement check** (accuracy, small latency cost; = 6.3 "Agreement check"). When a second cheap answer
+  passes while the first is still being judged, or within 10 s of the first pass, run both against the
+  test-first file plus `hypothesis`-generated inputs for the functions the tests call (pytest projects only),
+  and accept only if they agree; on disagreement, go up the ladder. Do not wait for a second model if none is
+  running. Switch: `STEALTHLAB_DISPATCH_AGREE` (default on). Proof: the 6 cheap answers that passed their checks
+  but failed the hidden tests (4 BIRD, 2 DS-1000: arm C rows with a verified cheap attempt, `turns` 0 and
+  `resolved` false) -- report how many it would have caught, where a second passing answer existed.
+- Later, only if the owner asks: a one-shot fast lane (one plain model call writes the change, check it, then
+  the agent loop if it fails). Do not build it in this round.
+
+**GLM.** Not on General Compute. When the owner gives a provider and key name (z.ai or OpenRouter), add a profile
+(see `packaging/npm/lib/executors/profile.mjs`; `key_env` is the NAME of the variable, never the key) for glm-5
+(code) and glm-4.6v (pages), and add them to the stealth executor's models. The router already has GLM priors.
+No code change otherwise; do not run it.
 
 ---
 
