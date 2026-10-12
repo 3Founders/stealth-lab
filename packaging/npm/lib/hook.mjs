@@ -26,6 +26,7 @@
 // 2026-09-28 (docs/findings.md): full is the only mode shown to help (open models, +8.5); on DS-1000 Sonnet
 // gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
+import { maybeStartSurvey } from "./auto_survey.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -440,6 +441,8 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
   } catch {
     return;
   }
+  // the first prompt in a repo starts its survey, detached (lib/auto_survey.mjs): never waits, never fails the hook
+  try { maybeStartSurvey({ cwd: payload.cwd || process.cwd(), env }); } catch { /* best effort */ }
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
   const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
   const mode = deliveryMode(policy, policy.strongMode ? model : null);

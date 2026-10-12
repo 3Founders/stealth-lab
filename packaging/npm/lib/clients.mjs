@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { addCaptureHooks, removeCaptureHooks } from "./capture_hook.mjs";
 import { addRouteHooks, removeRouteHooks } from "./model_guard.mjs";
 import { uninstallCursorHooks, upsertCursorHooks } from "./cursor_hooks.mjs";
+import { installClaudeMd, uninstallClaudeMd } from "./claude_md.mjs";
 
 export const SERVER_NAME = "stealthlab";
 
@@ -224,10 +225,13 @@ export function removeClaudeHook(file) {
 // model guard: nothing it would call, and nothing that adds to every turn's context. `dispatch: true` in the saved
 // config marks the local executor as installed (the models in exec.json become plan candidates).
 // settingsFile: Claude Code's settings.json (user level for an install, a project's .claude/ in the A/B test).
+// A CLAUDE.md block (lib/claude_md.mjs) tells the session what only it can do (record fixes, finish the survey worklist);
+// STEALTHLAB_CLAUDE_MD=off skips it. A second install replaces the block, never repeats it.
 export function installClaudeDispatch({ settingsFile, launch, env = process.env }) {
   upsertClaudeHook(settingsFile, { command: launch.command, args: [...launch.args, "hook-prompt"] }, 1200, { guard: false });
   uninstallExec({ env });                         // the delegation layer an older --with-exec install wrote
   writeConfig({ dispatch: true }, env);
+  installClaudeMd(settingsFile, env);
   return { settings: settingsFile };
 }
 
@@ -267,11 +271,18 @@ export function clients({ env = process.env, platform = process.platform } = {})
       label: "Claude Code",
       detect: () => onPath("claude"),
       where: () => "claude mcp (user scope) + knowledge hook in " + claudeSettingsPath(env),
-      install: ({ url, token, hooks = true, hookCommand, dispatch = false, launch }) => {
+      // keepMcp (`install --with-exec --keep-mcp`): the hooks-only install AND the MCP server, so the session can also call
+      // StealthLab's tools (find_ways, call_model ...) itself. Without it the MCP registration is removed, as before.
+      install: ({ url, token, hooks = true, hookCommand, dispatch = false, launch, keepMcp = false }) => {
         run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]);
         if (dispatch && hooks) {                  // hooks only: see installClaudeDispatch
           installClaudeDispatch({ settingsFile: claudeSettingsPath(env), launch, env });
-          return "hooks only (prompt hook with dispatch + capture hooks) in " + claudeSettingsPath(env);
+          if (!keepMcp) return "hooks only (prompt hook with dispatch + capture hooks) in " + claudeSettingsPath(env);
+          const kept = ["mcp", "add", "--scope", "user", "--transport", "http", SERVER_NAME, url];
+          if (token) kept.push("--header", `Authorization: Bearer ${token}`);
+          const r = run("claude", kept);
+          if (!r.ok) throw new Error(`claude mcp add failed: ${r.out}`);
+          return "hooks (prompt hook with dispatch + capture hooks) AND the MCP server, in " + claudeSettingsPath(env);
         }
         const args = ["mcp", "add", "--scope", "user", "--transport", "http", SERVER_NAME, url];
         if (token) args.push("--header", `Authorization: Bearer ${token}`);
@@ -282,7 +293,8 @@ export function clients({ env = process.env, platform = process.platform } = {})
       },
       uninstall: () => {
         const hook = removeClaudeHook(claudeSettingsPath(env));
-        return run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]).ok || hook;
+        const md = uninstallClaudeMd(claudeSettingsPath(env)) !== "absent";
+        return run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]).ok || hook || md;
       },
     },
     {

@@ -90,6 +90,8 @@ Install options:
   --with-exec     Claude Code, opt-in: the prompt hook runs cheap models (~/.stealthlab/exec.json) before
                   your session's model and applies a verified answer. Hooks only: no MCP server, agents or
                   model guard in the session. With --no-hooks: the old executor agents instead.
+  --keep-mcp      with --with-exec: keep the StealthLab MCP server registered as well, so the session can call
+                  StealthLab's tools too. Hooks-only is the default.
 
 Config: ${configPath()}
 `;
@@ -120,7 +122,7 @@ async function cmdInstall(v) {
   const url = requireUrl(settings);
   const { chosen } = pickClients(v.client);
   const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] },
-                hooks: !v["no-hooks"], dispatch: Boolean(v["with-exec"]), launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
+                hooks: !v["no-hooks"], dispatch: Boolean(v["with-exec"]), keepMcp: Boolean(v["keep-mcp"]), launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
 
   if (!v["dry-run"]) writeConfig({ url, ...(v.token ? { token: v.token } : {}) });
 
@@ -135,7 +137,8 @@ async function cmdInstall(v) {
   for (const c of chosen) {
     if (v["dry-run"]) {
       out(`  would configure ${c.label.padEnd(15)} ${c.id === "claude-code" && v["with-exec"] && !v["no-hooks"]
-        ? "hooks only (prompt hook with dispatch + capture hooks; no MCP server, agents or model guard)" : c.where()}`);
+        ? (v["keep-mcp"] ? "hooks (prompt hook with dispatch + capture hooks) and the MCP server; no agents or model guard"
+                         : "hooks only (prompt hook with dispatch + capture hooks; no MCP server, agents or model guard)") : c.where()}`);
       continue;
     }
     try {
@@ -297,6 +300,7 @@ async function main() {
         remove: { type: "boolean" },
         "no-hooks": { type: "boolean" },
         "with-exec": { type: "boolean" },
+        "keep-mcp": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },

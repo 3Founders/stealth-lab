@@ -167,6 +167,48 @@ export function duplicateEntries(lib) {
   return out.sort((x, y) => y.title_similarity - x.title_similarity || (x.keep < y.keep ? -1 : 1));
 }
 
+// ---------------------------------------------------------------- exact duplicates, dropped by themselves
+//
+// Judging near-duplicates stays the agent's job (above). An EXACT duplicate needs no judgement: the same title, unit,
+// outcome, checks and the same diff, recorded twice (two sessions fixing the same thing, a retried capture). The
+// newer-verified one stays, the other is dropped with `superseded_by` pointing at it (so it lands in the archive, not
+// nowhere). Called after a library entry is added; STEALTHLAB_LIBRARY_AUTOTIDY=off turns it off. Nothing similar-but-
+// different is ever dropped.
+export const autoTidyEnabled = (env = process.env) => (env.STEALTHLAB_LIBRARY_AUTOTIDY || "on").toLowerCase() !== "off";
+
+function exactKey(root, e) {
+  const p = (e.procs || [])[0];
+  let diff = "";
+  if (p?.solution) { try { diff = fs.readFileSync(path.join(L.stealthDir(root), "library", p.solution), "utf8"); } catch { diff = ""; } }
+  if (!diff.trim()) return null;                       // no diff to compare: never "exact"
+  const checks = (e.procs || []).flatMap((x) => (x.steps || []).map((s) => s.check)).filter(Boolean).join("\n");
+  return JSON.stringify([String(e.title || "").trim().toLowerCase().replace(/\s+/g, " "), e.unit || ".", e.outcome, checks, diff]);
+}
+
+export function dropExactDuplicates(root, { lib = L.loadLibrary(root) } = {}) {
+  const groups = new Map();
+  for (const e of lib.entries) {
+    const k = exactKey(root, e);
+    if (k) groups.set(k, [...(groups.get(k) || []), e]);
+  }
+  const dropped = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const keep = group.reduce((a, b) => ((b.verified_at || "") > (a.verified_at || "") ? b : a));
+    for (const e of group) {
+      if (e === keep) continue;
+      L.dropEntry(root, e.id, { supersededBy: keep.id });
+      dropped.push({ dropped: e.id, kept: keep.id });
+    }
+  }
+  return dropped;
+}
+
+// Never throws: housekeeping must not fail the hook that called it.
+export function autoTidy(root, env = process.env) {
+  try { return autoTidyEnabled(env) && root ? dropExactDuplicates(root) : []; } catch { return []; }
+}
+
 // Two knowledge Goals that are the same problem under different titles, and Goals where one is plainly a narrower
 // version of another (every word of the narrower title appears in the broader one's -- the longer title is the more
 // specific problem, so the shorter is its parent).

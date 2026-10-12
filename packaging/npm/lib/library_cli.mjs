@@ -32,7 +32,7 @@ export const LIBRARY_HELP = `stealthlab-mcp library <command> [--root <repo>]   
                                 repo_identity) -- to see exactly what leaves this machine
   lint                          dangling goal/way/parent links, parent cycles, missing diffs, size vs the 64 KB cap;
                                 exit 1 on an error (read-only)
-  tidy [--write]                what to clean: duplicate entries and goals, stale entries, goals that look narrower
+  tidy [--write | --exact]      (--exact: drop exact duplicates only, by themselves) what to clean: duplicate entries and goals, stale entries, goals that look narrower
                                 than another, what to archive first -- each with the command to run (read-only);
                                 --write also saves the worklist to .stealth/library/TIDY.md for the agent
   drop <L-id> [--superseded-by <L-id>]
@@ -74,7 +74,7 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
       "from-reply": { type: "string" }, line: { type: "string", multiple: true },
       model: { type: "string" }, scaffold: { type: "string" }, ok: { type: "boolean" }, fail: { type: "boolean" },
       parent: { type: "string" }, goal: { type: "string" }, way: { type: "string" },
-      "superseded-by": { type: "string" }, write: { type: "boolean" },
+      "superseded-by": { type: "string" }, write: { type: "boolean" }, exact: { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -142,6 +142,7 @@ export async function runLibraryCli(argv, { cwd = process.cwd(), print = (o) => 
       return;
     }
     case "tidy": {
+      if (v.exact) return print({ dropped: T.dropExactDuplicates(root) });   // exact duplicates only, no judgement
       const report = T.tidyReport(root);
       if (v.write) {
         const file = path.join(L.stealthDir(root), "library", "TIDY.md");
