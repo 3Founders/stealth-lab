@@ -3,6 +3,8 @@
   A  plain Claude Code on MODEL. Its workspace has no .claude/ and no .stealth/.
   C  the same Claude Code on MODEL, with StealthLab installed in the workspace (setup_c.mjs: knowledge hook, capture
      hooks, model guard, executor agents), the local test server (run_backend.py) and the open models in exec.json.
+  C0 (long-horizon series only) exactly C, but its .stealth/ is wiped before EVERY task: what C gains from a library
+     and survey that persist across tasks of one repo, C0 does not. C minus C0 is the value of .stealth.
 
 Both run `claude -p --setting-sources project` with the same prompt, tools and permission mode, from the same
 commit of a workspace that persists across tasks of the same group (so C's .stealth/ library can grow; A has none).
@@ -15,6 +17,17 @@ the reset and it continues with what is not done. A session silent for HANG_S is
 (infrastructure, not scored, retried on the next run). There is no other time limit.
 
     python experiments/abtest/runner.py --run smoke1 --tasks ds1000:5
+
+Long-horizon series (a SERIES of tasks in one repo, in real order; the workspace and, for C, its .stealth/ persist):
+
+    python experiments/abtest/runner.py --run toy1 --series series_toy_task --arms A,C,C0 --dry-run     # the plan, nothing runs
+    python experiments/abtest/runner.py --run toy1 --series series_toy_task:toy --arms A,C,C0
+
+A series module (see series_toy_task.py for a working template) provides, besides the usual prompt/files/grade:
+  series(name) -> the ordered task dicts ({task_id, suite, workspace, ...}); tasks of one series share a workspace.
+  setup_project(task, ws)   optional: build the shared project once per workspace and arm (before the first task).
+  grade_workspace(task, ws) optional: grade from the whole workspace (a dbt project) instead of one solution file.
+Results carry `series` and `position`; `report.py <run> --curve` prints the learning curve per arm.
 """
 from __future__ import annotations
 
@@ -98,6 +111,42 @@ def env_file(path: Path) -> dict[str, str]:
 
 # ---------------------------------------------------------------- tasks
 
+ARMS = ("A", "C", "C0")
+
+
+def is_c(arm: str) -> bool:
+    """C and C0 are the same install; C0 only differs in that .stealth/ is wiped before each task."""
+    return arm in ("C", "C0")
+
+
+def wipe_stealth(ws: Path) -> None:
+    """C0: empty .stealth/ (library, survey facts, routing counts, indexes), keeping the directory and its .keep, so the
+    workspace still counts as a StealthLab repo but starts every task with nothing learned."""
+    d = ws / ".stealth"
+    if d.exists():
+        for child in d.iterdir():
+            if child.name == ".keep":
+                continue
+            shutil.rmtree(child) if child.is_dir() else child.unlink()
+    d.mkdir(parents=True, exist_ok=True)
+    (d / ".keep").write_text("", encoding="utf-8")
+
+
+def load_series(spec: str) -> list[dict]:
+    """`module` or `module:name` -> the module's ordered tasks, each marked with its series and 1-based position."""
+    module, _, name = spec.partition(":")
+    mod = __import__(module)
+    if not hasattr(mod, "series"):
+        raise SystemExit(f"{module} has no series(name) function (see series_toy_task.py)")
+    tasks = mod.series(name or None)
+    if not tasks:
+        raise SystemExit(f"{spec}: the series is empty")
+    ws = {t["workspace"] for t in tasks}
+    if len(ws) != 1:
+        raise SystemExit(f"{spec}: the tasks of one series share ONE workspace, got {sorted(ws)}")
+    return [{**t, "module": module, "series": name or module, "position": i + 1} for i, t in enumerate(tasks)]
+
+
 SUITES = {"ds1000": "ds1000_task", "bcb": "bcb_task", "mbpp": "mbpp_task", "ifeval": "ifeval_task",
           "bird": "bird_task", "boolq": "boolq_task", "openapi": "openapi_task", "multiple_js": "multiple_js_task",
           "d2c": "d2c_task", "websight": "websight_task"}
@@ -155,22 +204,26 @@ def workspace(arm: str, name: str) -> Path:
     git(ws, "config", "user.email", "abtest@stealthlab.invalid")
     git(ws, "config", "user.name", "abtest")
     (ws / "README.md").write_text(f"Workspace {name} for the A-vs-C test (arm {arm}).\n", encoding="utf-8")
-    if arm == "C":
+    if is_c(arm):
         (ws / ".stealth").mkdir(exist_ok=True)
         (ws / ".stealth" / ".keep").write_text("", encoding="utf-8")
-        # STEALTHLAB_HOME: the install's saved config (dispatch: true) goes to arm C's home, never the person's own
-        subprocess.run(["node", str(HERE / "setup_c.mjs"), str(ws)], check=True, capture_output=True, text=True,
-                       env={**os.environ, "STEALTHLAB_HOME": str(c_home())})
+        install_c(ws)
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "-m", "workspace")
     return ws
+
+
+def install_c(ws: Path) -> None:
+    # STEALTHLAB_HOME: the install's saved config (dispatch: true) goes to arm C's home, never the person's own
+    subprocess.run(["node", str(HERE / "setup_c.mjs"), str(ws)], check=True, capture_output=True, text=True,
+                   env={**os.environ, "STEALTHLAB_HOME": str(c_home())})
 
 
 def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("STEALTHLAB_") and k not in (
         "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR")}
     env["ANTHROPIC_MODEL"] = MODEL
-    if arm == "C":
+    if is_c(arm):
         home = c_home()
         env.update({
             "STEALTHLAB_HOME": str(home), "STEALTHLAB_MCP_URL": f"{SERVER}/mcp", "STEALTHLAB_TOKEN": secrets["token"],
@@ -330,6 +383,11 @@ def open_model_runs(home: Path, since: str, until: str) -> dict:
 def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     mod = task_module(task)
     ws = workspace(arm, task["workspace"])
+    if arm == "C0":
+        wipe_stealth(ws)                        # what C0 is: C with nothing carried over in .stealth/
+    if hasattr(mod, "setup_project") and not (ws / ".series_ready").exists():
+        mod.setup_project(task, ws)             # a series: the shared project, built once per workspace and arm
+        (ws / ".series_ready").write_text("", encoding="utf-8")
     for name, text in mod.files(task, HERE / f"{task['module']}.py").items():
         if isinstance(text, bytes):          # e.g. a screenshot to recreate
             (ws / name).write_bytes(text)
@@ -352,8 +410,9 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     out = run_claude(ws, mod.prompt(task) + getattr(mod, "RULE", RULE), env, extra, log_path)
     out["peeked"] = peeked(log_path)
     rec = {"run": run, "task_id": task["task_id"], "suite": task["suite"], "workspace": task["workspace"], "arm": arm,
-           "model": MODEL, "started_at": started, "seconds": round(time.time() - t0, 1), **out}
-    if arm == "C":
+           "model": MODEL, "started_at": started, "seconds": round(time.time() - t0, 1), **out,
+           **({"series": task["series"], "position": task["position"]} if "series" in task else {})}
+    if is_c(arm):
         rec["hook_jobs_drained"] = wait_hook_jobs(LOCAL / "C_home")
         rec.update(open_model_runs(LOCAL / "C_home", started, now()))
         # the session model's test-first calls (dispatch's ledger): part of C's cost
@@ -366,8 +425,11 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
         rec["library_entries"] = sum(1 for ln in lib.read_text(encoding="utf-8").splitlines()
                                      if ln.startswith("GOAL|")) if lib.exists() else 0
     if out["status"] == "done":
-        solution = (ws / getattr(mod, "solution_file", lambda t: "solution.py")(task)).read_text(encoding="utf-8")
-        rec["grade"] = mod.grade(task, solution)
+        if hasattr(mod, "grade_workspace"):
+            rec["grade"] = mod.grade_workspace(task, ws)
+        else:
+            solution = (ws / getattr(mod, "solution_file", lambda t: "solution.py")(task)).read_text(encoding="utf-8")
+            rec["grade"] = mod.grade(task, solution)
         rec["resolved"] = rec["grade"]["resolved"]
         rec["total_cost_usd"] = round(float(rec.get("claude_cost_usd") or 0) + float(rec.get("open_cost_usd") or 0), 6)
     git(ws, "add", "-A")
@@ -377,10 +439,27 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
 
 # ---------------------------------------------------------------- the run
 
+def dry_run(args, arms: list[str]) -> int:
+    """What a run would do, in order: no server, no keys, no model, nothing written outside the temp listing."""
+    tasks = load_series(args.series) if args.series else load_tasks(args.tasks, args.seed)
+    print(f"run {args.run}: {len(tasks)} task(s), arms {','.join(arms)}" + (f", series {args.series}" if args.series else ""))
+    start = {"A": "plain Claude Code; its workspace has no .claude/ and no .stealth/, and persists across the series",
+             "C": "StealthLab hooks-only install; its .stealth/ (library, facts, routing counts) PERSISTS across the series",
+             "C0": "the same install as C, but .stealth/ is wiped before every task (nothing carried over)"}
+    for a in arms:
+        print(f"  arm {a}: {start[a]}")
+    for t in tasks:
+        order = sorted(arms, key=lambda a: hashlib.sha256(f"{args.seed}|{t['task_id']}|{a}".encode()).hexdigest())
+        print(f"  {t.get('position', '-'):>3}  {t['task_id']:<28} workspace {t['workspace']:<18} arms in order {','.join(order)}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True)
-    ap.add_argument("--tasks", required=True, help="e.g. ds1000:5")
+    ap.add_argument("--tasks", default="", help="e.g. ds1000:5")
+    ap.add_argument("--series", default="", help="a long-horizon series: module[:name] (see series_toy_task.py); instead of --tasks")
+    ap.add_argument("--dry-run", action="store_true", help="print the plan (tasks, arms, what each arm starts with) and run nothing")
     ap.add_argument("--seed", type=int, default=20261009)
     ap.add_argument("--arms", default="A,C")
     ap.add_argument("--exclude-runs", default="", help="comma-separated earlier runs whose tasks are skipped")
@@ -392,18 +471,26 @@ def main() -> int:
     ap.add_argument("--parallel", action="store_true", help="arm C: the cheap models run at once (first pass wins)")
     ap.add_argument("--testfirst-model", default="", help="arm C: the model that writes the test-first tests")
     args = ap.parse_args()
+    if bool(args.tasks) == bool(args.series):
+        raise SystemExit("give exactly one of --tasks and --series")
+    arms = [a.strip() for a in args.arms.split(",") if a.strip()]
+    bad = [a for a in arms if a not in ARMS]
+    if bad or (("C0" in arms) and not args.series):
+        raise SystemExit(f"arms are {', '.join(ARMS)} (C0 only with --series); got {args.arms}")
+    if args.dry_run:
+        return dry_run(args, arms)
 
     import local_identity
     secrets = {"token": local_identity.paths()["token"].read_text().strip(),
                "gc": env_file(REPO / "backend" / ".env").get(args.gc_key_name, "")}
     if not secrets["gc"]:
         raise SystemExit(f"backend/.env has no {args.gc_key_name}")
-    if "C" in args.arms:
+    if any(is_c(a) for a in arms):
         try:
             urllib.request.urlopen(f"{SERVER}/healthz", timeout=10)
         except Exception as exc:  # noqa: BLE001
             raise SystemExit(f"the test server is not up at {SERVER} ({exc}); start experiments/abtest/run_backend.py")
-    if "C" in args.arms:
+    if any(is_c(a) for a in arms):
         print(f"warm-up lookups: {warm(secrets)} s", flush=True)
     results = LOCAL / "results" / f"{args.run}.jsonl"
     results.parent.mkdir(parents=True, exist_ok=True)
@@ -413,7 +500,6 @@ def main() -> int:
             r = json.loads(line)
             if r.get("status") == "done":
                 done.add((r["task_id"], r["arm"]))
-    arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     only = {t.strip() for t in args.only.split(",") if t.strip()}
     if args.testfirst_model:
         os.environ["ABTEST_TESTFIRST_MODEL"] = args.testfirst_model
@@ -422,14 +508,15 @@ def main() -> int:
     os.environ["ABTEST_GC_MIN_TOKENS"] = str(args.gc_min_tokens)
     seen = frozenset(json.loads(line)["task_id"] for r in args.exclude_runs.split(",") if r.strip()
                      for line in (LOCAL / "results" / f"{r.strip()}.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
-    for task in load_tasks(args.tasks, args.seed, seen):
+    tasks = load_series(args.series) if args.series else load_tasks(args.tasks, args.seed, seen)
+    for task in tasks:
         if only and task["task_id"] not in only:
             continue
         order = sorted(arms, key=lambda a: hashlib.sha256(f"{args.seed}|{task['task_id']}|{a}".encode()).hexdigest())
         for arm in order:
             if (task["task_id"], arm) in done:
                 continue
-            if arm == "C" and args.gc_min_tokens > 0:
+            if is_c(arm) and args.gc_min_tokens > 0:
                 left = gc_tokens_left(secrets["gc"])
                 if left is not None and left < args.gc_min_tokens:
                     # the cheap models' provider is nearly out for today: a run now would only measure that

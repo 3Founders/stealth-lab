@@ -1,6 +1,7 @@
 """Summarise A-vs-C runs: per suite and overall -- solved, cost, saving, latency percentiles, who delivered.
 
     python experiments/abtest/report.py phase1 [more runs...]       # tasks finished in BOTH arms only
+    python experiments/abtest/report.py toy1 --curve                # a long-horizon series: the learning curve per arm
 
 Latency is each session's wall time (the runner's `seconds`): for C it includes the hooks -- the lookup, the
 test-first call, the cheap tries and, when they fail, the session's own model.
@@ -13,6 +14,8 @@ import sys
 from pathlib import Path
 
 import os
+
+NL = chr(10)
 
 # ABTEST_RESULTS_DIR=experiments/abtest/results_2026-10-11 reads the committed snapshot instead of .local/results
 RESULTS = Path(os.environ.get("ABTEST_RESULTS_DIR") or Path(__file__).resolve().parent / ".local" / "results")
@@ -71,5 +74,37 @@ def summarise(rows: dict) -> str:
     return "\n".join(out)
 
 
+def curve(rows: dict) -> str:
+    """The learning curve of a long-horizon series (runner.py --series): per arm (A, C, and C0 = C with .stealth wiped each
+    task) and per position in the series, solved and cost. What C has over C0 is what a persistent .stealth is worth; the
+    late positions are where it should show. Only tasks done in every arm present are counted, so the arms compare."""
+    arms = sorted({a for _, a in rows})
+    by = {(r["position"], a): r for (_, a), r in rows.items() if "position" in r}
+    positions = sorted({p for p, _ in by})
+    full = [p for p in positions if all((p, a) in by for a in arms)]
+    if not full:
+        return "no position is finished in every arm yet"
+    cost = lambda r: float(r.get("total_cost_usd") or 0)  # noqa: E731
+    head = f"{'position':>8} {'task':<26}" + "".join(f" | {a + ' solved':>9} {a + ' $':>7}" for a in arms)
+    out = [head, "-" * len(head)]
+    for p in full:
+        task = by[(p, arms[0])]["task_id"]
+        out.append(f"{p:>8} {task:<26}" + "".join(f" | {'yes' if by[(p, a)].get('resolved') else 'no':>9} {cost(by[(p, a)]):>7.3f}" for a in arms))
+    tot = {a: (sum(bool(by[(p, a)].get("resolved")) for p in full), sum(cost(by[(p, a)]) for p in full)) for a in arms}
+    out.append("-" * len(head))
+    out.append(f"{'all':>8} {'':<26}" + "".join(f" | {tot[a][0]:>3}/{len(full):<5} {tot[a][1]:>7.3f}" for a in arms))
+    later = [p for p in full if p > full[0]]
+    if later and "A" in arms:
+        base = sum(cost(by[(p, "A")]) for p in later)
+        for a in arms:
+            if a != "A" and base:
+                out.append(f"positions after the first, {a} vs A: {(sum(cost(by[(p, a)]) for p in later) - base) / base * 100:+.0f}% cost, "
+                           f"{sum(bool(by[(p, a)].get('resolved')) for p in later)}/{len(later)} solved "
+                           f"(A {sum(bool(by[(p, 'A')].get('resolved')) for p in later)}/{len(later)})")
+    return NL.join(out)
+
+
 if __name__ == "__main__":
-    print(summarise(load(sys.argv[1:] or ["phase1"])))
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    rows = load(args or ["phase1"])
+    print(curve(rows) if "--curve" in sys.argv else summarise(rows))
