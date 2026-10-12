@@ -401,6 +401,19 @@ Each item needs the owner's go-ahead.
 The owner wants these BUILT now, by Chaitanya's Claude, and pushed for review. Work through them in the order
 below. Each item has: where, exactly what, what NOT to do, and how to prove it.
 
+**How the owner wants things built (read before designing anything):**
+- The product's rule: **cheap models do the task**; Opus is the fallback, never a parallel backup.
+- **Simple over clever.** The owner pushes back on over-engineering: prefer a deterministic rule to a trained
+  model, a small change to a new subsystem. If a spec here seems to need something big, stop and ask.
+- **Real product path only:** everything runs through the hooks-only Claude Code install (`install --with-exec`),
+  the same way a user gets it -- no benchmark-only shortcuts in product code.
+- Explanations to the owner in plain, short language.
+- `feat/cursor-dispatch` is WIP and untested (7ba8273); `feat/product-fixes-1-3` is a design start, not finished.
+- L1's offline proof needs the arm C run logs, which exist only in the resume bundle on the owner's PC
+  (`C:\Users\user\stealth-lab-resume-bundle-2026-10-11\abtest_local_state.tar`, `C_home/runs`; it also holds a
+  private key -- ask the owner to send only `C_home/runs`). Without them, build L1 with unit tests and write
+  "proof pending: run logs" in the commit.
+
 **Rules for every item (non-negotiable):**
 - One branch per item, from `origin/main`: `feat/q-<id>-<short-name>` (e.g. `feat/q-L1-early-stop`). Push the
   branch; never push to `main`, never force-push, never merge. The owner pulls and reviews.
