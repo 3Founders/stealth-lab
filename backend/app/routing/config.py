@@ -89,6 +89,14 @@ class RoutingDefaults:
     value_multiplier: float = field(default_factory=lambda: _f("STEALTH_ROUTING_VALUE_MULTIPLIER", 5.0))
     wrong_penalty_ratio: float = field(default_factory=lambda: _f("STEALTH_ROUTING_WRONG_PENALTY_RATIO", 1.0))  # L / V
     default_check_kind: str = field(default_factory=lambda: os.environ.get("STEALTH_ROUTING_CHECK_KIND", "tests"))
+    # How often a 'tests' check lets a WRONG answer through, while routing runs on the bundled public prior (version
+    # 0; a database fit learns it from gold labels). The prior has ~0.19, which made the router expect 13-30% of the
+    # cheap answers it accepts to be wrong and skip them; measured on the A-vs-C runs (2026-10-11/12, tests written by
+    # the session model before the cheap models ran): 6 wrong accepted of ~79 wrong attempts. 0 = the prior's own rate.
+    tests_false_accept: float = field(default_factory=lambda: _f("STEALTH_ROUTING_TESTS_FALSE_ACCEPT", 0.08))
+    # How many wrong attempts that rate is worth against a kind's own audits (report_result's gold_correct: was an
+    # accepted answer really right) -- after ~this many, the kind's own record decides (calibrated_check_rates).
+    audit_prior_strength: float = field(default_factory=lambda: _f("STEALTH_ROUTING_AUDIT_PRIOR_STRENGTH", 10.0))
     # --- token prior (used until data exists; pooled away by data, plan §4)
     prior_tokens_in: float = field(default_factory=lambda: _f("STEALTH_ROUTING_PRIOR_TOKENS_IN", 60000.0))
     prior_tokens_out: float = field(default_factory=lambda: _f("STEALTH_ROUTING_PRIOR_TOKENS_OUT", 6000.0))

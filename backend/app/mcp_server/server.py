@@ -1577,6 +1577,31 @@ async def report_result(ctx: Context, instance_key: str, accepted: bool, model: 
 
 
 @server.tool()
+async def report_audit(ctx: Context, instance_key: str, correct: bool) -> str:
+    """
+    After an answer that your check ACCEPTED was checked again some other way (a review of the diff, the user's
+    verdict, a later test run): report whether it was really right. The plan's instance_key from find_ways.
+    This is how the router learns how often this kind of task's checks let a wrong answer through -- set too high,
+    it skips the cheap models for nothing; too low, it trusts them where it should not.
+
+    Example: report_audit(instance_key="<goal>.9f2c…", correct=true) -> {"updated": 1}
+    """
+    pool = ctx.request_context.lifespan_context["pool"]
+    from app.routing import plan as _plan
+    from app.routing.store import record_audit, routing_scope
+
+    scope = _caller_access_scope()
+    try:
+        instance = await _plan.load_instance(pool, scope, instance_key)
+    except _plan.RoutingError as exc:
+        return f"REFUSED: {exc}"
+    goal_id = _plan.goal_of_instance(instance_key)
+    with routing_scope(scope):
+        updated = await record_audit(pool, goal_id, instance_key, correct)
+    return json.dumps({"updated": updated})
+
+
+@server.tool()
 async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: str | None = None,
                      instance_key: str | None = None, system: str | None = None, max_tokens: int = 1024,
                      temperature: float | None = None, data_class: str = "USER_PRIVATE",
