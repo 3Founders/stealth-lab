@@ -472,3 +472,114 @@ rm -rf experiments/abtest/.local/ws/C experiments/abtest/.local/C_home experimen
 - stop at 80% of the Claude weekly limit (Pro);
 - check usage before big runs;
 - spawned cloud/remote agents run on the subscription, not on credits.
+
+---
+
+## 8. Resuming phase 2 arm C IDENTICALLY (no drift from how it was run)
+
+Phase 2 arm A (all 75 tasks) and arm C's first 7 tasks ran on the original machine under exactly the conditions
+below. To keep the remaining 68 arm C tasks comparable, every item here must match. If any cannot, write down
+which in the results.
+
+### 8.1 What must NOT change
+
+- **Code:** run from commit `700cdb4` (or any later commit that only touches `docs/`). Check with:
+  `git diff --stat 700cdb4 -- packaging backend/app experiments/abtest/*.py experiments/abtest/*.mjs experiments/abtest/exec.json`.
+  It must print nothing. No product or harness edits before the run ends.
+- **The exact runner command** (same flags, same seed, same task spec):
+  ```
+  python -u experiments/abtest/runner.py --run phase2 --seed 20261010 --tasks multiple_js:20,d2c:30,websight:25 --arms C --parallel --testfirst-model claude-sonnet-5-5 --gc-key-name general_compute_api_key1
+  ```
+  - `--gc-min-tokens` stays at its default, 100000. The runner then also sets dispatch's provider floor to 100000.
+  - Do **not** add `--exclude-runs`, `--only`, or `--arms A`.
+- **State** (where arm C left off):
+  - **the `kel_abtest` database:** arm C's routing memory from phase 1 and the first 7 phase 2 tasks;
+  - **the `.local/ws/C/{multiple-js,d2c,websight}` workspaces:** their `.stealth` libraries and routing.md;
+  - **`.local/C_home`:** exec.json copy, config `dispatch: true`, quota cache, specs, run logs;
+  - **`.local/results/phase2.jsonl`:** A's 75 rows and C's first 7. The runner skips them.
+
+  **Never reset the database or delete these for this resume.**
+- **Models and settings** (all from committed code and config):
+  - session model `claude-opus-5-5` (runner `MODEL`);
+  - test writer `claude-sonnet-5-5`;
+  - cheap models gemma-4-31b-it, gpt-oss-120b, minimax-m2-7 on General Compute (`experiments/abtest/exec.json`);
+  - dispatch defaults: parallel 2; time limit 150 s plus 4 s/KB up to +210 s; re-check 0.2; test-first on;
+    strict cross-check;
+  - backend: `experiments/abtest/run_backend.py` with backend/.env (JEV judge,
+    `EMBEDDING_PROVIDER_CHAIN=openrouter` with gemini-embedding-2, General Compute for the find_ways LLM client).
+- **Tool versions used for everything so far:**
+
+  | Tool | Version |
+  |---|---|
+  | Claude Code | 2.1.292 |
+  | Node | v24.18.1 |
+  | Python | 3.14.6 (DS-1000 eval env 3.11.9) |
+  | PostgreSQL | 18.4 |
+  | pytest | 9.1.1 |
+  | fastapi | 0.141.1 |
+  | uvicorn | 0.52.1 |
+  | schemathesis | 4.30.1 |
+  | hypothesis | 6.168.5 |
+  | hypothesis-jsonschema | 0.23.1 |
+  | playwright | 1.63.0 (Chromium installed via `python -m playwright install chromium`) |
+  | pyarrow | 25.0.1 |
+  | numpy | 2.5.1 |
+  | asyncpg | 0.31.0 |
+  | nltk | 3.10.3 (+ punkt_tab) |
+  | langdetect | 1.0.9 |
+  | immutabledict | 4.3.1 |
+  | absl-py | 2.5.1 |
+
+  OS: Windows 10, with Git Bash for the shell commands.
+- **General Compute:** the same key, `general_compute_api_key1` in backend/.env, on the same free tier
+  (10M tokens/day). Start only when it reports at least about 5M tokens left today (section 7, step 2), so the
+  run does not pause mid-way.
+- **One run at a time:** nothing else may use the machine heavily during the run (it affects latency). Never two
+  runners at once. Check with: `wmic process where "name='python.exe'" get ProcessId,CommandLine | grep runner.py`.
+
+### 8.2 Best option: resume on the ORIGINAL machine
+
+The state is already there. Follow section 7, steps 1-4, and do NOT reset the database.
+
+### 8.3 On another machine: restore the exact state first
+
+A bundle was made on the original machine at the moment of handoff. It is not in git; copy it securely, because
+it contains the local test identity's private key:
+
+```
+C:\Users\user\stealth-lab-resume-bundle-2026-10-11\
+  kel_abtest.dump            pg_dump -Fc of the test database (653 KB)
+  abtest_local_state.tar     experiments/abtest/.local/{results, ws/C, C_home, jwks.json, signing_key.pem, token.txt} (27 MB)
+```
+
+Restore (Git Bash; adjust the Postgres bin path):
+
+```bash
+cd <repo> && git checkout 700cdb4 -- . 2>/dev/null; git status   # or check out main at a commit with no code changes after 700cdb4
+PATH="<postgres-bin>:$PATH"
+psql -h 127.0.0.1 -p 55432 -U kel_owner -d postgres -c "DROP DATABASE IF EXISTS kel_abtest WITH (FORCE)"
+psql -h 127.0.0.1 -p 55432 -U kel_owner -d postgres -c "CREATE DATABASE kel_abtest"
+pg_restore -h 127.0.0.1 -p 55432 -U kel_owner -d kel_abtest --no-owner <bundle>/kel_abtest.dump
+mkdir -p experiments/abtest/.local && tar -xf <bundle>/abtest_local_state.tar -C experiments/abtest/.local
+# the workspaces' hook commands hold ABSOLUTE paths of the original machine: re-install them with the product's own
+# hooks-only installer, which is exactly what the runner did when it created each workspace
+for ws in experiments/abtest/.local/ws/C/*/; do STEALTHLAB_HOME="$(pwd)/experiments/abtest/.local/C_home" node experiments/abtest/setup_c.mjs "$ws"; done
+```
+
+Then follow section 7, steps 2-4.
+
+Also needed on the new machine:
+- the scratch Postgres on 127.0.0.1:55432 with role `kel_owner` (trust auth);
+- the phase 2 datasets under `experiments/multiple/data`, `experiments/design2code/data` and
+  `experiments/websight/data` (sources in `multiple_js_task.py` and `page_task.py`);
+- Claude Code logged in with access to Opus 5.5 and Sonnet 5.5.
+
+**Not comparable across machines:** latency (A ran on the original machine). Cost and solved stay comparable.
+State in the results which machine C's remaining tasks ran on.
+
+### 8.4 When it finishes
+
+- `python experiments/abtest/report.py phase2` gives the final table (A vs C per suite, saving, latency,
+  not dispatched).
+- Also redo bird-1505 for phase 1 (section 7, step 5), then `python experiments/abtest/report.py phase1`.
+- Copy `.local/results/*.jsonl` into a new `experiments/abtest/results_<date>/` and commit it with the reports.
