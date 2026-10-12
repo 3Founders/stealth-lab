@@ -21,6 +21,8 @@ import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { repoTopLevel } from "./exec/worktree.mjs";
+import { createUndoPoint, discardUndoPoint, finishUndoPoint, undoEnabled } from "./undo.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -51,6 +53,9 @@ export function dispatchPolicy(env = process.env) {
     explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
+    // "on": a verified cheap answer is NOT applied: the prompt is stopped with a summary of the change and the command that
+    // applies it (`stealthlab-mcp exec apply <run>`). Default off: it is applied, with an undo point (lib/undo.mjs)
+    ask: (env.STEALTHLAB_DISPATCH_ASK || "off").toLowerCase() === "on",
   };
 }
 
@@ -367,6 +372,8 @@ export function dispatchCheck(policy, reply, root) {
   }
 }
 
+const firstLine = (text) => String(text || "").split("\n").map((l) => l.trim()).find(Boolean)?.slice(0, 200) || "";
+
 function taskText(prompt) {
   const t = String(prompt || "").trim();
   return t.length <= TASK_MAX ? t : `${t.slice(0, TASK_MAX - 40)}\n[...prompt truncated for the executor]`;
@@ -512,7 +519,45 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       tried.push({ unit: r.rung.unit, state: "cancelled", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
     }
     const { rung, result } = winner;
-    const applied = await rt.applyRun(result.run_id);
+    const runId = winner.run_id || result.run_id;
+    const files = result.diff?.files || [];
+    const costNote = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
+    if (policy.ask) {
+      // ask mode: show what would change and stop; nothing is written to the user's checkout
+      const stat = result.diff?.stat ? `\n${result.diff.stat}\n` : " ";
+      return { handled: true, ask: true, run_id: runId, unit: rung.unit, model: rung.model, files, library_entry: null, tried, spec,
+        text: `Ready, NOT applied: ${rung.model} solved this and the check \`${check}\` passed in an isolated worktree${costNote}. ` +
+          `It would change: ${files.join(", ") || "no files"}.${stat}Apply it with: stealthlab-mcp exec apply ${runId}  ` +
+          "(dispatch asks first because STEALTHLAB_DISPATCH_ASK=on)." };
+    }
+    // the way back first: an undo point for the files the answer will touch (lib/undo.mjs), then the apply, which itself
+    // refuses when one of those files was edited in the checkout since the run started
+    let repoDir = null;
+    let undoPoint = null;
+    let undoNote = "";
+    if (undoEnabled(env) && files.length) {
+      try {
+        repoDir = await repoTopLevel(payload.cwd || root, env);
+        undoPoint = createUndoPoint({ repo: repoDir, files, model: rung.model, task: firstLine(payload.prompt), env });
+      } catch (err) {
+        log(`dispatch: no undo point (${err.message})`);
+        undoNote = ` (no undo point could be made: ${String(err.message).split("\n")[0].slice(0, 120)})`;
+      }
+    }
+    let applied;
+    try {
+      applied = await rt.applyRun(runId);
+    } catch (err) {
+      if (undoPoint) discardUndoPoint(undoPoint, { repo: repoDir, env });
+      if (Array.isArray(err.changed) && err.changed.length) {
+        log(`dispatch: not applied, ${err.changed.join(", ")} changed during the run`);
+        tried.push({ unit: rung.unit, state: `verified, not applied (you edited ${err.changed.join(", ")})`, run_id: runId });
+        return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !tried.some((t) => t.unit === u)),
+                 notApplied: { files: err.changed, model: rung.model, run_id: runId } };
+      }
+      throw err;
+    }
+    if (undoPoint) finishUndoPoint(undoPoint, { repo: repoDir, env });
     let entry = null;
     try {
       const { promptTitle } = await import("./capture_hook.mjs");
@@ -533,10 +578,11 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
-    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried, spec,
+    return { handled: true, run_id: runId, unit: rung.unit, library_entry: entry, tried, spec,
       text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
         `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
-        `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") };
+        `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
+        (undoPoint ? " To put it back as it was: stealthlab-mcp undo." : undoNote) };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
   return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)) };
@@ -604,6 +650,10 @@ export async function crossCheck({ rt, rung, result, rungs, env, payload, root, 
 
 // The note the session gets when dispatch ran but nothing passed.
 export function triedNote(d) {
+  if (d?.notApplied) {
+    return `StealthLab: ${d.notApplied.model} solved this and its check passed, but the change was NOT applied: you edited ` +
+      `${d.notApplied.files.join(", ")} while it ran. Do the task yourself, starting from your current files; there is nothing to report.`;
+  }
   if (!d || d.handled || !d.tried?.length) return "";
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report.";

@@ -34,6 +34,9 @@ Usage:
   npx -y stealthlab-mcp install [options]    register StealthLab with your agents
   stealthlab-mcp uninstall [--client <id>]   remove it again
   stealthlab-mcp doctor                      check the hosted server is reachable
+  stealthlab-mcp undo [<id>] [--list] [--force]
+                                             put back what a dispatched cheap answer changed in this repository
+                                             (the latest, or <id>); refuses if you edited those files since, unless --force
   stealthlab-mcp instructions [--dir <repo>] [--client cursor] [--remove] [--dry-run]
                                              tell the agents in a repo when to use StealthLab: a marked block in
                                              AGENTS.md (Cursor, Codex, opencode read it) and, for Cursor,
@@ -266,6 +269,12 @@ async function main() {
   if (cmd === "plan") {
     const { runPlanCli } = await import("../lib/plan_check.mjs");
     process.exitCode = runPlanCli(argv);
+    return;
+  }
+  if (cmd === "undo") {
+    // put back what a dispatched answer changed (lib/undo.mjs); its own flags and one optional id
+    const { runUndoCli } = await import("../lib/undo.mjs");
+    process.exitCode = runUndoCli(argv);
     return;
   }
   if (cmd === "exec" && argv[0] === "apply") {
