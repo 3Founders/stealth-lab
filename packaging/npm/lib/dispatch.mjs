@@ -21,6 +21,7 @@ import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { agreeCheck, agreeEnabled, agreeWaitS, definesFunctions } from "./agree.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -51,6 +52,10 @@ export function dispatchPolicy(env = process.env) {
     explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
+    // the agreement check (lib/agree.mjs): when a second cheap answer passes too, within agreeWaitS of the first, the two are compared
+    // on the test-first file's functions plus generated inputs; only agreeing answers are applied. "off": the first pass wins at once
+    agree: agreeEnabled(env),
+    agreeWaitS: agreeWaitS(env),
   };
 }
 
@@ -474,6 +479,21 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
   let timedOut = false;
+  let agreement = null;                    // the agreement check's verdict, when two cheap answers passed
+  let disagreed = null;                    // the two answers that passed but differ: neither is applied
+  // A second cheap answer that passes within agreeWaitS of the first (or already has). Not waited for when none is running.
+  const secondPass = async (first) => {
+    if (!pending.size) return null;
+    let sleeper;
+    const wait = new Promise((resolve) => { sleeper = setTimeout(() => resolve({ timeout: true }), policy.agreeWaitS * 1000); });
+    sleeper.unref?.();
+    const next = await Promise.race([...pending.values(), wait, deadline]);
+    clearTimeout(sleeper);
+    if (next.timeout) return null;
+    pending.delete(next.rung.unit);
+    running.delete(next.rung.unit);
+    return (await judge(next)) ? next : null;
+  };
   while (!winner && (queue.length || pending.size)) {
     while (queue.length && pending.size < width) {
       const rung = queue.shift();
@@ -483,7 +503,35 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     if (done.timeout) { timedOut = true; break; }
     pending.delete(done.rung.unit);
     running.delete(done.rung.unit);
-    if (await judge(done)) winner = done;
+    if (await judge(done)) {
+      winner = done;
+      await specDone;
+      const view = (x) => ({ worktree: x.result?.diff?.worktree, files: x.result?.diff?.files || [] });
+      if (policy.agree && spec?.file && /pytest/.test(check) && definesFunctions(view(done))) {
+        const second = await secondPass(done);
+        if (second) {
+          agreement = agreeCheck({ a: view(done), b: view(second), specFile: spec.file, env });
+          log(`dispatch: ${done.rung.model} and ${second.rung.model} both passed: ${agreement.verdict}${agreement.reason ? ` (${agreement.reason})` : ""}`);
+          if (agreement.verdict === "disagree") {
+            // at least one of them is wrong where the tests do not look: neither is applied, and nothing cheaper is tried
+            disagreed = [done, second];
+            winner = null;
+            for (const x of disagreed) {
+              const t = tried.find((e) => e.run_id === x.run_id && e.unit === x.rung.unit);       // judge() already listed it as passed
+              const state = `passed, but disagrees with ${(x === done ? second : done).rung.model}`;
+              if (t) t.state = state; else tried.push({ unit: x.rung.unit, state, run_id: x.run_id, cost_usd: x.result?.cost_usd ?? null });
+              try { await rt.cancelRun(x.run_id); } catch { /* best effort */ }
+            }
+            queue.length = 0;
+          } else {
+            const t = tried.find((e) => e.run_id === second.run_id && e.unit === second.rung.unit);
+            if (t) t.state = `passed too (${agreement.verdict})`;
+            try { await rt.cancelRun(second.run_id); } catch { /* best effort */ }        // it was not the one applied
+          }
+        }
+      }
+    }
+    if (disagreed) break;
   }
   clearTimeout(timer);
   if (timedOut) {
@@ -501,6 +549,18 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (time limit)" });
   }
   specAbort.abort();                       // a test writer still going (no pass, or a time-out) is not needed now
+  if (disagreed) {
+    // the runs still going are cancelled and awaited so their cost is known; the session's model takes over
+    for (const unit of pending.keys()) {
+      const runId = running.get(unit);
+      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+    }
+    for (const p of pending.values()) {
+      const r = await p;
+      tried.push({ unit: r.rung.unit, state: "cancelled", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    }
+    return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !tried.some((t) => t.unit === u)), agreement };
+  }
   if (winner) {
     // the others still running: cancelled (not counted against their models), then awaited so their cost is known
     for (const unit of pending.keys()) {
@@ -533,7 +593,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
-    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried, spec,
+    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried, spec, ...(agreement ? { agreement } : {}),
       text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
         `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") };
@@ -604,6 +664,12 @@ export async function crossCheck({ rt, rung, result, rungs, env, payload, root, 
 
 // The note the session gets when dispatch ran but nothing passed.
 export function triedNote(d) {
+  if (d?.agreement?.verdict === "disagree") {
+    const x = d.agreement.difference;
+    return "StealthLab: two cheap models both passed the check but disagreed" +
+      (x ? ` (${x.function}(${String(x.input).replace(/^\[|\]$/g, "")}): ${x.a?.[1] ?? x.a?.[0]} vs ${x.b?.[1] ?? x.b?.[0]})` : "") +
+      ", so neither change was applied. Do the task yourself; there is nothing to report.";
+  }
   if (!d || d.handled || !d.tried?.length) return "";
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report.";
