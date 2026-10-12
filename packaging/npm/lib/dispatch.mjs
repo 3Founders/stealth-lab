@@ -533,7 +533,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
-    return { handled: true, run_id: result.run_id, unit: rung.unit, library_entry: entry, tried, spec,
+    return { handled: true, run_id: result.run_id, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec,
       text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
         `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") };
