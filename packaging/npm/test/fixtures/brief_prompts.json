@@ -1,0 +1,43 @@
+{
+  "_note": "Prompts for the task brief (lib/brief.mjs): what a real user types, not a clean task. kind = what the brief should say; clarity = whether a coding assistant could start without asking; size where it matters. Code prompts are messy rewrites of the benchmark task types (SQL, data science, scripting, API, tests); the rest are questions and chit-chat. Used offline by test/brief.test.mjs and live by scripts/score_brief.mjs.",
+  "prompts": [
+    { "prompt": "ok so the sql in report.sql is double counting orders when a customer has two addresses, can u fix that so each order counts once", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "in utils.py the parse_date thing chokes on 2026-1-5, make it accept single digit months and days", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "the pandas bit in clean.py errors, drop rows where price is NaN BEFORE the groupby", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "add a --verbose flag to cli.py that prints each file it touches", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "vowel counter is wrong for uppercase letters. fix it", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "write a regex for ipv4 addresses, put it in validators.py, and a few tests", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "make tests/test_cart.py cover the empty cart case too", "kind": "code", "clarity": "clear", "size": "small" },
+    { "prompt": "implement the DELETE /pets/{id} endpoint, same style as the other ones in petstore.yaml", "kind": "code", "clarity": "clear", "size": "medium" },
+    { "prompt": "fix that bug", "kind": "code", "clarity": "unclear", "size": "small" },
+    { "prompt": "now do the same for the other one", "kind": "code", "clarity": "unclear", "size": "small" },
+    { "prompt": "rewrite the whole billing module to be async and migrate every caller, update the docs and tests too", "kind": "code", "clarity": "clear", "size": "large" },
+    { "prompt": "move the project from flask to fastapi: all routes, the tests and the deployment scripts", "kind": "code", "clarity": "clear", "size": "large" },
+
+    { "prompt": "what does the retry decorator in net.py actually do?", "kind": "question" },
+    { "prompt": "why is the build failing on windows only", "kind": "question" },
+    { "prompt": "how do I run just one test file with pytest", "kind": "question" },
+    { "prompt": "explain the difference between map and flatMap here", "kind": "question" },
+    { "prompt": "where is the config loaded?", "kind": "question" },
+    { "prompt": "is there a reason we use two caches?", "kind": "question" },
+    { "prompt": "tell me what db_utils.py exports", "kind": "question" },
+    { "prompt": "what's the best way to structure the migrations folder", "kind": "question" },
+    { "prompt": "which is faster here, a dict lookup or scanning the list?", "kind": "question" },
+    { "prompt": "does this project support python 3.8?", "kind": "question" },
+    { "prompt": "so is the cache per process or shared across workers", "kind": "question" },
+    { "prompt": "do you think we should split this file up at some point", "kind": "question" },
+
+    { "prompt": "thanks!", "kind": "chat" },
+    { "prompt": "ok", "kind": "chat" },
+    { "prompt": "perfect, looks good", "kind": "chat" },
+    { "prompt": "hello", "kind": "chat" },
+    { "prompt": "great work", "kind": "chat" },
+    { "prompt": "yes", "kind": "chat" },
+    { "prompt": "lgtm", "kind": "chat" },
+    { "prompt": "sounds good", "kind": "chat" },
+    { "prompt": "got it, thank you", "kind": "chat" },
+    { "prompt": "hmm interesting", "kind": "chat" },
+    { "prompt": "going to lunch, back in 20", "kind": "chat" },
+    { "prompt": "that was a lot faster than i expected honestly", "kind": "chat" }
+  ]
+}

@@ -26,6 +26,7 @@
 // 2026-09-28 (docs/findings.md): full is the only mode shown to help (open models, +8.5); on DS-1000 Sonnet
 // gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
+import { parseOverride } from "./brief.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -432,7 +433,8 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
   return cut(head + parts.join("\n\n"), maxChars);
 }
 
-export async function runPromptHook({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log }) {
+// dispatchImpl: for tests, a stand-in for lib/dispatch.mjs dispatch()
+export async function runPromptHook({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl }) {
   const policy = hookPolicy(env);
   let payload;
   try {
@@ -440,6 +442,17 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
   } catch {
     return;
   }
+  // overrides (lib/brief.mjs): `!opus` skips StealthLab for this prompt; `!cheap` forces a dispatch attempt. A hook cannot
+  // rewrite the prompt, so the session still sees the prefix: for `!opus` it is told to ignore it (a `!cheap` prompt is
+  // stopped by dispatch when it works, and otherwise the session sees the prefix as plain text).
+  const override = parseOverride(payload.prompt, env);
+  if (override.kind === "opus") {
+    try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
+    write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit",
+      additionalContext: 'StealthLab is skipped for this prompt: the leading "!opus" is an override for it, not part of the task.' } }));
+    return;
+  }
+  if (override.kind === "cheap") payload.prompt = override.prompt;
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
   const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
   const mode = deliveryMode(policy, policy.strongMode ? model : null);
@@ -474,7 +487,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
     const mine = model ? `${model}|claude-code` : null;
     try {
       const { dispatch, triedNote } = await import("./dispatch.mjs");
-      const d = await dispatch({ payload, reply, root, mine, env, fetchImpl, log });
+      const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap" });
       if (d?.handled) {
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
         write(JSON.stringify({ decision: "block", reason: d.text }));

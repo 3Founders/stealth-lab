@@ -51,6 +51,9 @@ export function dispatchPolicy(env = process.env) {
     explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
+    // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
+    // medium code task is dispatched; the cheap models and the test writer get the brief. "off": the raw prompt, as before
+    brief: (env.STEALTHLAB_BRIEF || "on").toLowerCase() !== "off",
   };
 }
 
@@ -374,16 +377,28 @@ function taskText(prompt) {
 
 // -> {handled: true, text} when a cheap rung's verified change was applied; else {handled: false, tried, remaining}
 //    (remaining: the plan's ladder after the rungs tried here), or null when dispatch does not apply.
-export async function dispatch({ payload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude }) {
+// force: the prompt began with `!cheap` -- try the cheap models even where routing would skip, and skip the brief's gate
+// briefImpl: for tests, a stand-in for brief.mjs makeBrief()
+export async function dispatch({ payload: rawPayload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude,
+                                 force = false, briefImpl }) {
+  let payload = rawPayload;
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
   const check = dispatchCheck(policy, reply, root);
   if (!check) return null;
   const rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
-                                                                    explore: policy.explore }), env,
+                                                                    explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) return null;
+  // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
+  if (policy.brief) {
+    const { briefGate, briefText, makeBrief } = await import("./brief.mjs");
+    const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path, env, fetchImpl, log });
+    const gate = briefGate(brief, payload.prompt);
+    if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
+    if (brief) payload = { ...payload, prompt: briefText(brief) };
+  }
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
   // test-first: tests from the task join the project's check for every cheap rung. They are written WHILE the cheap
@@ -517,7 +532,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     try {
       const { promptTitle } = await import("./capture_hook.mjs");
       const diff = diffFromGit(root);
-      if (diff.trim()) entry = addEntry(root, { title: promptTitle(payload.prompt), check, observed: true, diff }).id;
+      if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check, observed: true, diff }).id;
     } catch (err) {
       log(`dispatch: library entry not added (${err.message})`);
     }
