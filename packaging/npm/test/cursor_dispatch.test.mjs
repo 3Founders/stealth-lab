@@ -179,3 +179,27 @@ test("end to end with the real dispatch(): a stub executor's verified change is 
   assert.equal(calls[0].repo_path, ws);
   assert.deepEqual(calls[0].checks, ["python -m pytest -q"]);
 });
+
+// ---- the install, through the real CLI ---------------------------------------------------------------------------
+
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+
+test("install --client cursor --with-exec writes the prompt hook with minutes and turns dispatch on; without --with-exec it keeps the short limit; uninstall removes the hooks", () => {
+  const run = (args, env) => spawnSync(process.execPath, [BIN, ...args, "--url", "https://kel.example/mcp"], { encoding: "utf8", env: { ...process.env, ...env } });
+  const hooksOf = (home) => JSON.parse(fs.readFileSync(path.join(home, ".cursor", "hooks.json"), "utf8")).hooks;
+
+  const a = { STEALTHLAB_TEST_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cur-home-")), STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cur-sl-")) };
+  assert.equal(run(["install", "--client", "cursor", "--with-exec"], a).status, 0);
+  assert.equal(hooksOf(a.STEALTHLAB_TEST_HOME).beforeSubmitPrompt[0].timeout, CURSOR_DISPATCH_TIMEOUT_S);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(a.STEALTHLAB_HOME, "config.json"), "utf8")).dispatch, true);
+  assert.equal(run(["uninstall", "--client", "cursor"], a).status, 0);
+  assert.ok(!fs.existsSync(path.join(a.STEALTHLAB_TEST_HOME, ".cursor", "hooks.json")) || !hooksOf(a.STEALTHLAB_TEST_HOME).beforeSubmitPrompt?.length);
+
+  const b = { STEALTHLAB_TEST_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cur-home-")), STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cur-sl-")) };
+  assert.equal(run(["install", "--client", "cursor"], b).status, 0);
+  assert.equal(hooksOf(b.STEALTHLAB_TEST_HOME).beforeSubmitPrompt[0].timeout, CURSOR_HOOKS.beforeSubmitPrompt.timeout);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(b.STEALTHLAB_HOME, "config.json"), "utf8")).dispatch, undefined);
+});
