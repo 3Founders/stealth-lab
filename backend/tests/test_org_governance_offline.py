@@ -555,6 +555,66 @@ def test_the_export_needs_an_explicit_range_and_csv_carries_the_chain_result(api
     assert j.json()["chain_intact"] is True and j.json()["events"][0]["id"] == 5
 
 
+def test_audit_newest_first_passes_order_and_cursor_through(api, monkeypatch):
+    seen = {}
+
+    async def export(pool, **kw):
+        seen.update(kw)
+        return {"events": [{"id": 9}, {"id": 8}], "order": "desc", "next_before_id": 8, "chain_intact": True,
+                "first_broken_id": None}
+    monkeypatch.setattr(gov, "audit_export", export)
+    r = _req(api, "GET", f"/v1/orgs/{ORG}/audit?since=2026-10-01&until=2026-11-01&order=desc&limit=2&before_id=10")
+    assert r.status_code == 200 and r.headers["x-next-before-id"] == "8" and "x-next-after-id" not in r.headers
+    assert (seen["order"], seen["before_id"], seen["limit"]) == ("desc", 10, 2)
+    assert [e["id"] for e in r.json()["events"]] == [9, 8]
+    assert _req(api, "GET", f"/v1/orgs/{ORG}/audit?since=2026-10-01&until=2026-11-01&order=sideways").status_code == 422
+
+
+def test_audit_desc_query_reads_newest_first_with_a_before_cursor():
+    from datetime import datetime, timezone
+
+    from app.services import audit as audit_svc
+
+    class Conn:
+        def __init__(self):
+            self.sql = []
+
+        async def fetch(self, sql, *args):
+            self.sql.append((sql, args))
+            return [{"id": 7}]
+
+        async def fetchval(self, sql, *args):
+            return None
+
+    class _Acquire:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, *a):
+            return False
+
+    class Pool:
+        def __init__(self):
+            self.conn = Conn()
+
+        def acquire(self):
+            return _Acquire(self.conn)
+
+    pool = Pool()
+    now = datetime.now(timezone.utc)
+    out = run(audit_svc.export_tenant_events(pool, tenant_id=ORG, since=now, until=now, after_id=0, limit=1,
+                                             order="desc", before_id=0))
+    sql, args = pool.conn.sql[0]
+    assert "ORDER BY id DESC" in sql and "id < $2" in sql and args[1] == 0
+    assert out["next_before_id"] == 7 and "next_after_id" not in out and out["order"] == "desc"
+    run(audit_svc.export_tenant_events(pool, tenant_id=ORG, since=now, until=now, after_id=3, limit=5))
+    sql, args = pool.conn.sql[1]
+    assert "ORDER BY id LIMIT" in sql and "id > $2" in sql and args[1] == 3
+
+
 def test_a_broken_chain_is_visible_in_the_export(api, monkeypatch):
     async def export(pool, **kw):
         return {"events": [], "next_after_id": None, "chain_intact": False, "first_broken_id": 7}

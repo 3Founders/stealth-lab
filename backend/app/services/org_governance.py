@@ -450,15 +450,19 @@ async def performance_daily(pool: Any, *, actor_roles: Collection[str], org_id: 
 
 
 async def audit_export(pool: Any, *, actor_roles: Collection[str], org_id: str, since: datetime, until: datetime,
-                       after_id: int = 0, limit: int = 1000) -> dict[str, Any]:
-    """The organisation's own audit events, oldest first, a page at a time (`after_id` is the cursor), with the
-    result of verifying the hash chain (the query itself lives in services/audit.py)."""
+                       after_id: int = 0, limit: int = 1000, order: str = "asc", before_id: int = 0) -> dict[str, Any]:
+    """The organisation's own audit events a page at a time, with the result of verifying the hash chain (the query
+    itself lives in services/audit.py). order="asc": oldest first, cursor `after_id`; order="desc": newest first,
+    cursor `before_id` (for "latest changes" without walking every page)."""
     _require(actor_roles, ADMIN_ROLES, "exporting the audit log")
     if not 1 <= limit <= MAX_EXPORT_ROWS:
         raise Invalid(f"limit must be between 1 and {MAX_EXPORT_ROWS}")
+    if order not in ("asc", "desc"):
+        raise Invalid("order must be 'asc' or 'desc'")
     from app.services.audit import export_tenant_events
 
-    return await export_tenant_events(pool, tenant_id=org_id, since=since, until=until, after_id=after_id, limit=limit)
+    return await export_tenant_events(pool, tenant_id=org_id, since=since, until=until, after_id=after_id, limit=limit,
+                                      order=order, before_id=before_id)
 
 
 async def record_denial(pool: Any, *, org_id: str, actor_subject: str, tool: str, unit: str, provider: str, model: str,

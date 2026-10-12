@@ -54,8 +54,8 @@ def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
     assert s["prompts"] == ["plan_and_run", "survey_repo"]
     # The same two prompts as readable resources, for clients that don't surface MCP prompts, and the
     # .stealth library format (library.md / routing.md grammar and the commands that keep them).
-    assert s["static_resources"] == ["stealth://formats/library", "stealth://prompts/plan_and_run",
-                                     "stealth://prompts/survey_repo"]
+    assert s["static_resources"] == ["stealth://formats/library", "stealth://guides/find_ways",
+                                     "stealth://prompts/plan_and_run", "stealth://prompts/survey_repo"]
 
 
 def test_the_v2_tools_are_gone():

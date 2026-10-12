@@ -29,7 +29,33 @@ def _listed():
 
 def test_progressive_lists_only_the_core(monkeypatch):
     monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "progressive")
-    assert _listed() == ["discover_tools", "find_ways", "report_result", "use_tool"]
+    assert _listed() == ["discover_tools", "find_ways", "use_tool"]
+
+
+def test_listed_tools_stay_within_their_token_budget(monkeypatch):
+    """Every listed tool's name, description and schemas go into the agent's context on every turn. The budget is
+    ~4 characters per token; raise it only for a reason that is worth paying on every turn."""
+    import json
+    monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "progressive")
+    tools = run(srv.server.list_tools())
+    sizes = {t.name: len(json.dumps(t.model_dump(exclude_none=True))) // 4 for t in tools}
+    assert sizes["find_ways"] <= 900, sizes
+    assert sum(sizes.values()) <= 1500, sizes
+
+
+def test_find_ways_full_guide_is_one_call_away():
+    import json
+    from app.mcp_server.resources import FIND_WAYS_GUIDE
+    out = json.loads(run(srv.discover_tools(None, names=["find_ways"])))
+    assert out["guides"]["find_ways"] == FIND_WAYS_GUIDE and "unknown" not in out
+    for phrase in ("Triage", "repo_claims", "library_rows", "route_obs", "my_model", "detail"):
+        assert phrase in FIND_WAYS_GUIDE, phrase
+
+
+def test_report_result_is_found_and_run_through_discovery():
+    import json
+    out = json.loads(run(srv.discover_tools(None, need="report a model attempt")))
+    assert "report_result" in [t["name"] for t in out["tools"]]
 
 
 def test_all_lists_every_tool_without_the_discovery_pair(monkeypatch):
@@ -46,7 +72,8 @@ def test_hidden_tools_stay_registered_so_direct_callers_keep_working():
 def test_the_catalog_is_short_and_points_at_the_next_step():
     body = json.loads(run(srv.discover_tools(None)))
     names = {t["name"] for t in body["tools"]}
-    assert names == {"call_model", "recommend_models", "report_discovery", "report_model_run", "submit_way"}
+    assert names == {"call_model", "recommend_models", "report_discovery", "report_model_run", "report_result",
+                     "submit_way"}
     assert all("arguments" not in t for t in body["tools"])                 # names and summaries only
     assert "use_tool" in body["next"]
 

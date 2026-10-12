@@ -388,6 +388,96 @@ async def plan_and_run_prompt_resource() -> str:
     return plan_and_run("<your task>")
 
 
+# The long form of find_ways' description (server.py lists a short one: every listed word is paid on every turn).
+FIND_WAYS_GUIDE = (
+    '# find_ways: the full guide\n'
+    '\n'
+    'Find the known ways to do something. Returns KNOWLEDGE, not a plan: you\n'
+    '(the planner agent) compile the plan and write `.stealth/` yourself --\n'
+    'the `plan_and_run` prompt has the format.\n'
+    '\n'
+    'Call it ONCE, before writing code, for any task you would describe in a\n'
+    'sentence or more (a bug fix, a feature, a data transformation, a config\n'
+    "change). Don't call it for a one-line edit, a question about this repo's\n"
+    'own code, or the same request twice -- repeats are served from cache and\n'
+    'then refused.\n'
+    '\n'
+    'query: what you want done, in plain words ("add a DOCX export").\n'
+    "repo_claims: the text of this repo's `.stealth/claims.md`\n"
+    '  (`CLAIM|R-001|current|stack|repository|Node 20.11|source=.nvmrc:1#sha=9f2c|version=1`\n'
+    '  lines; up to 200 facts / 64 KB; write it with the `survey_repo` prompt).\n'
+    '  Used for this request only -- never stored or logged.\n'
+    '\n'
+    'What happens:\n'
+    '  0. Triage. One quick judgment decides whether this is a reusable task\n'
+    '     worth a lookup. A question about this repo, a trivial edit, a\n'
+    '     general question or conversation gets `outcome: "not_needed"` at\n'
+    '     once (with `next`); when unsure, the lookup runs.\n'
+    '  1. Goal search. Hybrid (lexical + vector) candidates, each judged by\n'
+    '     the JEV/NLI judge against your query AND your repo facts; accepted\n'
+    '     Goal-hierarchy neighbours of a match are judged the same way and\n'
+    '     listed under `goal_judgment.related_goals`. Three honest outcomes,\n'
+    '     never a guess: "resolved" (one Goal clearly best), "ambiguous" (2+\n'
+    '     too close to call, or only partial matches -- you pick, or\n'
+    '     rephrase), "no_match" (nothing known). If no judge answers, a\n'
+    '     lexical re-ranker is used instead and `goal_judgment.mode` says\n'
+    '     "lexical_fallback".\n'
+    '  2. Procedure choice (`resolve_goal`): feasible Procedures for the Goal,\n'
+    '     and recursively for its sub-Goals. With repo facts, the 5-20 most\n'
+    '     related facts per Procedure go to the NLI/JEV judge together with\n'
+    "     the Procedure's preconditions and its steps' runtime needs. A\n"
+    '     contradicted REQUIRED precondition drops the Procedure; a\n'
+    '     contradicted runtime need only moves it to the back.\n'
+    '  3. The result, per Goal: the chosen Procedure with every step in full\n'
+    '     (what to do, source locator, binding, needs, success check), the\n'
+    '     alternatives, and `repo_fit` (which of your fact ids supported or\n'
+    '     blocked it). Steps are `action` (has a script/tool), `subgoal`\n'
+    '     (see the entry with that goal_id), or `instruction` (do it from the\n'
+    '     text). No node ids, no order, no file writes, no execution -- those\n'
+    "     are the planner's job.\n"
+    '  4. On any outcome, `related_examples` (when enabled): verified solutions\n'
+    '     of SIMILAR past tasks -- worked examples, NOT verified to apply here:\n'
+    '     adapt them to your request, never copy them as-is. On "ambiguous",\n'
+    '     `suggested` names the one candidate to start from.\n'
+    '\n'
+    'Read-only; needs no token. Report what you learn with `report_discovery`.\n'
+    '\n'
+    'Optional model plan: pass `candidates` (the "model|scaffold" units you can run; a deployment\n'
+    'may also supply them server-side) and a `model_plan` block comes back with the cheapest\n'
+    'ladder likely to pass (try A; if its check fails, B). `check_kind` is how you will check\n'
+    "each attempt (tests by default); `model_constraints` is recommend_models' `constraints`.\n"
+    'Run the first model, check it, then call `report_result(instance_key, accepted)` -- its\n'
+    'reply names the next model. Without candidates the reply is unchanged.\n'
+    '\n'
+    "This repository's own knowledge (all optional; with none of them the reply is exactly as before):\n"
+    'repo_identity: {repo_id, public_name?, strength?} from `.stealth/meta.json` (repo_id is a hash;\n'
+    "  send public_name -- owner/name -- only if the user allows). A strong identity lets this repo's own\n"
+    '  global Goals be judged too; strength "weak" (or a p: id) is never used to match other repos.\n'
+    'library_rows: the text of `.stealth/index/library.idx` (up to 64 KB): problems already solved in\n'
+    '  THIS repo. Matching entries come back as `library_matches` (read them, and their diffs under\n'
+    '  `.stealth/library/solutions/`, before anything global); a Goal they name wins a tie.\n'
+    "route_obs: the ROUTE and OBS lines of `.stealth/routing.md` (up to 16 KB): this machine's attempt\n"
+    '  counts per model. With a model plan they condition it on what worked HERE, and `routing_rows`\n'
+    '  comes back: the ROUTE line(s) to write into routing.md.\n'
+    'Like repo_claims, these are used for this request only -- never stored or logged.\n'
+    '\n'
+    'my_model: the model YOU are (e.g. "claude-sonnet-4-5"). It is always a candidate (scaffold = your\n'
+    'MCP client), so the plan says whether to keep the task yourself or hand it to a cheaper / stronger\n'
+    'model. Each rung carries p_ok (mean and 90% interval) and expected cost; `basis` says whether that\n'
+    'rests on observed runs ("posterior") or on public benchmarks and model cards only ("prior").\n'
+    '\n'
+    'detail: "full" (default) returns every step in full. "summary" shortens step text, checks and\n'
+    'example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and\n'
+    'preconditions stay complete): much less to carry through a long session. Call again with the same\n'
+    'query and detail="full" for the whole thing; a hosted server answers that from cache.\n'
+)
+
+
+async def find_ways_guide_resource() -> str:
+    """stealth://guides/find_ways -- every find_ways argument, step and reply field."""
+    return FIND_WAYS_GUIDE
+
+
 async def library_format_resource() -> str:
     """stealth://formats/library -- the grammar of .stealth/library.md and routing.md and how to keep them."""
     from app.stealth.library import IDX_HEADER, LIBRARY_HEADER, ROUTING_HEADER
@@ -433,6 +523,9 @@ _V1_RESOURCES = [
     ("stealth://formats/library", "format-library", ".stealth library format",
      "The grammar of .stealth/library.md (this repo's solved problems), index/library.idx and routing.md, "
      "and the stealthlab-mcp library commands that keep them.", library_format_resource),
+    ("stealth://guides/find_ways", "guide-find-ways", "find_ways guide",
+     "Every find_ways argument, what each step does, and the reply fields (the listed description is short).",
+     find_ways_guide_resource),
 ]
 
 def register_resources(server) -> None:

@@ -215,10 +215,12 @@ It has:
   own. Plans/`recommend_models` mark rungs `unavailable` / `slow` / `not_served`. State is **per process**.
   Tests: `tests/test_provider_failover_offline.py` (34). Not yet run against a live provider.
 - **Progressive tool discovery** (`server.py`, `settings.mcp_tool_discovery`, env `MCP_TOOL_DISCOVERY`):
-  tools/list shows only `find_ways`, `report_result`, `discover_tools`, `use_tool`; the rest are found with
+  tools/list shows only `find_ways`, `discover_tools`, `use_tool` (~1,300 tokens per turn, from ~2,900; `find_ways`'
+  long description moved to `stealth://guides/find_ways`, and a test caps the listed size); the rest, `report_result`
+  included, are found with
   `discover_tools(need|names)` and run with `use_tool(name, arguments)` (same scope checks), and stay callable by name
   (hooks and the executor rely on that). `all` restores the full list. Tests:
-  `tests/test_mcp_progressive_discovery_offline.py` (14). The server has no session state, so it cannot send
+  `tests/test_mcp_progressive_discovery_offline.py` (17). The server has no session state, so it cannot send
   `tools/list_changed`; that is why discovery is a tool, not a changing list.
 - **Cursor hooks** (`packaging/npm/lib/cursor_hooks.mjs`, README section): sessionStart / beforeSubmitPrompt /
   postToolUse / stop. Cursor cannot add context at prompt time, so knowledge arrives at the first tool call.

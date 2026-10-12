@@ -242,17 +242,21 @@ _AUDIT_COLUMNS = ("id", "t_created", "actor_subject", "actor_user_id", "action",
 @router.get("/audit")
 async def audit(org_id: str, since: str = Query(...), until: str = Query(...), after_id: int = Query(0, ge=0),
                 limit: int = Query(1000, ge=1, le=gov.MAX_EXPORT_ROWS), format: str = Query("json", pattern="^(json|csv)$"),
+                order: str = Query("asc", pattern="^(asc|desc)$"), before_id: int = Query(0, ge=0),
                 pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> Response:
-    """The organisation's audit events, oldest first, paged by `after_id`. The reply says whether the hash chain
-    verified; the CSV form puts that, and the next cursor, in response headers."""
+    """The organisation's audit events. order=asc (default, the export): oldest first, paged by `after_id`.
+    order=desc (latest changes): newest first, paged by `before_id`. The reply says whether the hash chain verified;
+    the CSV form puts that, and the next cursor, in response headers."""
     caller, roles = _caller(ctx, org_id)
     try:
         page = await gov.audit_export(pool, actor_roles=roles, org_id=org_id, since=_when(since, "since"),
-                                      until=_when(until, "until"), after_id=after_id, limit=limit)
+                                      until=_when(until, "until"), after_id=after_id, limit=limit,
+                                      order=order, before_id=before_id)
     except gov.GovernanceError as exc:
         raise _http(exc) from exc
-    headers = {"X-Chain-Intact": str(page["chain_intact"]).lower(),
-               "X-Next-After-Id": "" if page["next_after_id"] is None else str(page["next_after_id"])}
+    cursor_name, cursor = (("X-Next-After-Id", page.get("next_after_id")) if order == "asc"
+                           else ("X-Next-Before-Id", page.get("next_before_id")))
+    headers = {"X-Chain-Intact": str(page["chain_intact"]).lower(), cursor_name: "" if cursor is None else str(cursor)}
     if format == "csv":
         buf = io.StringIO()
         writer = csv.writer(buf)

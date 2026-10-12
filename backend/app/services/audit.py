@@ -75,20 +75,31 @@ async def record_audit_event(
 
 
 async def export_tenant_events(pool: Any, *, tenant_id: str, since: Any, until: Any, after_id: int,
-                               limit: int) -> dict:
-    """One organisation's audit events, oldest first, a page at a time (`after_id` is the cursor), plus the result of
-    verifying that organisation's hash chain (db/136). Read-only. audit_events has no row-level security, so the tenant
-    predicate is explicit, and it lives here with the rest of the audit code."""
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, t_created, actor_subject, actor_user_id::text AS actor_user_id, action, object_type, "
+                               limit: int, order: str = "asc", before_id: int = 0) -> dict:
+    """One organisation's audit events a page at a time, plus the result of verifying that organisation's hash chain
+    (db/136). Read-only. audit_events has no row-level security, so the tenant predicate is explicit, and it lives here
+    with the rest of the audit code.
+
+    order="asc" (the export): oldest first, `after_id` is the cursor, the reply carries `next_after_id`.
+    order="desc" (a "latest changes" view): newest first, `before_id` is the cursor (0 = start from the newest), the
+    reply carries `next_before_id`. Both read the same rows; only the direction differs."""
+    if order not in ("asc", "desc"):
+        raise ValueError(f"order must be 'asc' or 'desc', not {order!r}")
+    cols = ("SELECT id, t_created, actor_subject, actor_user_id::text AS actor_user_id, action, object_type, "
             "object_id, tenant_id::text AS tenant_id, details, prev_hash, row_hash FROM audit_events "
-            "WHERE tenant_id = $1::uuid AND id > $2 AND t_created >= $3 AND t_created < $4 ORDER BY id LIMIT $5",
-            str(tenant_id), after_id, since, until, limit)
+            "WHERE tenant_id = $1::uuid AND t_created >= $3 AND t_created < $4 ")
+    async with pool.acquire() as conn:
+        if order == "asc":
+            rows = await conn.fetch(cols + "AND id > $2 ORDER BY id LIMIT $5",
+                                    str(tenant_id), after_id, since, until, limit)
+        else:
+            rows = await conn.fetch(cols + "AND ($2 = 0 OR id < $2) ORDER BY id DESC LIMIT $5",
+                                    str(tenant_id), before_id, since, until, limit)
         broken = await conn.fetchval("SELECT sl_audit_chain_check($1::uuid)", str(tenant_id))
     events = [dict(r) for r in rows]
-    return {"events": events, "next_after_id": events[-1]["id"] if len(events) == limit else None,
-            "chain_intact": broken is None, "first_broken_id": broken}
+    last = events[-1]["id"] if len(events) == limit else None
+    cursor = {"next_after_id": last} if order == "asc" else {"next_before_id": last}
+    return {"events": events, "order": order, **cursor, "chain_intact": broken is None, "first_broken_id": broken}
 
 
 async def record_security_event(

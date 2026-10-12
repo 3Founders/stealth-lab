@@ -49,6 +49,32 @@ function claudeDesktopConfig(env, platform) {
   return path.join(env.XDG_CONFIG_HOME || path.join(home(env), ".config"), "Claude", "claude_desktop_config.json");
 }
 
+// Cline is a VS Code extension, so its MCP config lives in VS Code's
+// globalStorage, not in a dotfile under $HOME. Cline reads it only while VS Code
+// is running, so `detect` below checks for the VS Code app data directory rather
+// than assuming the file exists -- a user can have Cline installed and never have
+// opened it, in which case globalStorage is not there yet and the directory (plus
+// the file) is created on install.
+export function clineSettingsPath(env = process.env, platform = process.platform) {
+  const base =
+    platform === "win32"
+      ? env.APPDATA || path.join(home(env), "AppData", "Roaming")
+      : platform === "darwin"
+        ? path.join(home(env), "Library", "Application Support")
+        : env.XDG_CONFIG_HOME || path.join(home(env), ".config");
+  return path.join(base, "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json");
+}
+
+function vscodeAppData(env = process.env, platform = process.platform) {
+  const base =
+    platform === "win32"
+      ? env.APPDATA || path.join(home(env), "AppData", "Roaming")
+      : platform === "darwin"
+        ? path.join(home(env), "Library", "Application Support")
+        : env.XDG_CONFIG_HOME || path.join(home(env), ".config");
+  return path.join(base, "Code");
+}
+
 // --- JSON configs (mcpServers map) -----------------------------------------
 
 export function upsertJsonServer(file, entry) {
@@ -232,6 +258,7 @@ export function clients({ env = process.env, platform = process.platform } = {})
   const cursorHooks = path.join(h, ".cursor", "hooks.json");
   const windsurf = path.join(h, ".codeium", "windsurf", "mcp_config.json");
   const codex = path.join(env.CODEX_HOME || path.join(h, ".codex"), "config.toml");
+  const cline = clineSettingsPath(env, platform);
   const desktop = claudeDesktopConfig(env, platform);
 
   return [
@@ -296,6 +323,20 @@ export function clients({ env = process.env, platform = process.platform } = {})
       where: () => windsurf,
       install: ({ url, token }) => upsertJsonServer(windsurf, withHeaders({ serverUrl: url }, token)),
       uninstall: () => removeJsonServer(windsurf),
+    },
+    {
+      id: "cline",
+      label: "Cline",
+      // Cline ships no CLI for MCP registration, and its config lives in VS Code
+      // globalStorage, so this is a plain JSON upsert like Cursor's. `detect`
+      // deliberately does NOT require the settings file to exist: a user can have
+      // Cline installed and never have opened it, so globalStorage is created on
+      // install (upsertJsonServer mkdirs). We also detect the Cline CLI, which
+      // lib/executors/cline.mjs drives as a delegated harness.
+      detect: () => fs.existsSync(vscodeAppData(env, platform)) || onPath("cline"),
+      where: () => cline,
+      install: ({ url, token }) => upsertJsonServer(cline, withHeaders({ url }, token)),
+      uninstall: () => removeJsonServer(cline),
     },
     {
       id: "codex",

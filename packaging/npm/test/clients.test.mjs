@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  launchSpec, removeCodexServer, removeJsonServer, upsertCodexServer, upsertJsonServer,
+  clients, clineSettingsPath, launchSpec, removeCodexServer, removeJsonServer, upsertCodexServer, upsertJsonServer,
 } from "../lib/clients.mjs";
 import { normalizeUrl, resolveSettings, writeConfig } from "../lib/config.mjs";
 
@@ -79,4 +79,56 @@ test("settings precedence: flag > env > saved config", () => {
   if (process.platform !== "win32") {
     assert.equal(fs.statSync(path.join(env.STEALTHLAB_HOME, "config.json")).mode & 0o777, 0o600);
   }
+});
+
+test("cline is a registered client, in the table and in the CLI's known ids", () => {
+  const ids = clients().map((c) => c.id);
+  assert.ok(ids.includes("cline"), `cline missing from the client table: ${ids.join(", ")}`);
+  const cline = clients().find((c) => c.id === "cline");
+  assert.equal(cline.label, "Cline");
+  assert.equal(typeof cline.install, "function");
+  assert.equal(typeof cline.uninstall, "function");
+});
+
+test("clineSettingsPath: VS Code globalStorage, not a $HOME dotfile", () => {
+  const env = { STEALTHLAB_TEST_HOME: tmp(), APPDATA: path.join(tmp(), "AppData", "Roaming") };
+  const p = clineSettingsPath(env, "win32");
+  assert.ok(p.endsWith(path.join("Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json")), p);
+  assert.ok(!p.includes(".cline"), `must not be a $HOME dotfile: ${p}`);
+  // darwin and linux differ only in the base dir; the tail is the same.
+  for (const platform of ["darwin", "linux"]) {
+    assert.ok(clineSettingsPath(env, platform).endsWith("cline_mcp_settings.json"));
+  }
+});
+
+test("cline: install writes the remote entry into globalStorage, uninstall removes only ours", () => {
+  const root = tmp();
+  const env = { STEALTHLAB_TEST_HOME: root, APPDATA: path.join(root, "AppData", "Roaming") };
+  const cline = clients({ env, platform: "win32" }).find((c) => c.id === "cline");
+  const file = cline.where();
+  assert.ok(file.startsWith(root), "must stay inside the sandboxed home");
+
+  cline.install({ url: "https://mcp.example.com/mcp", token: "tok" });
+  let doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(doc.mcpServers.stealthlab, {
+    url: "https://mcp.example.com/mcp",
+    headers: { Authorization: "Bearer tok" },
+  });
+
+  // a foreign server in the same file must survive our removal
+  doc.mcpServers.other = { url: "https://keep/mcp" };
+  fs.writeFileSync(file, JSON.stringify(doc));
+  assert.equal(cline.uninstall(), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, { other: { url: "https://keep/mcp" } });
+  assert.equal(cline.uninstall(), false, "second uninstall must be a no-op");
+});
+
+test("cline: no token means no headers block (v1 reads are anonymous)", () => {
+  const root = tmp();
+  const env = { STEALTHLAB_TEST_HOME: root, APPDATA: path.join(root, "AppData", "Roaming") };
+  const cline = clients({ env, platform: "win32" }).find((c) => c.id === "cline");
+  cline.install({ url: "https://mcp.example.com/mcp", token: "" });
+  const entry = JSON.parse(fs.readFileSync(cline.where(), "utf8")).mcpServers.stealthlab;
+  assert.deepEqual(entry, { url: "https://mcp.example.com/mcp" });
+  assert.equal("headers" in entry, false);
 });

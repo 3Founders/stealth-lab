@@ -221,7 +221,8 @@ def _compact(rec: Mapping[str, Any]) -> dict[str, Any]:
         "excluded": rec.get("excluded") or [],
         **({"local_evidence": rec["evidence"]["local"]} if (rec.get("evidence") or {}).get("local") else {}),
         "next": (f"Run {ladder[0]!r} on the task, check the result ({rec.get('check_kind')}), then call "
-                 "report_result(instance_key, accepted). If it failed the reply names the next model."
+                 "report_result(instance_key, accepted) (through use_tool when it is not listed). If it failed "
+                 "the reply names the next model."
                  if ladder else "No rung is recommended; use the model you would have used."),
     }
 

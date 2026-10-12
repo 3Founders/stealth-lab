@@ -41,6 +41,7 @@ shows what would change without changing anything.
 | Cursor | `~/.cursor/mcp.json` → `{ "url": … }` | no |
 | VS Code | `code --add-mcp {"type":"http","url":…}` | no |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` → `{ "serverUrl": … }` | no |
+| Cline | VS Code globalStorage `cline_mcp_settings.json` → `{ "url": …, "headers": {…} }` | no |
 | Codex CLI | `~/.codex/config.toml` → `[mcp_servers.stealthlab] url = …` | no |
 | Claude Desktop | `claude_desktop_config.json` → the stdio relay (see below) | a small Node relay while Desktop runs |
 

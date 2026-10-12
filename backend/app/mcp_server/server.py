@@ -483,7 +483,7 @@ _V1_INSTRUCTIONS = (
     "verified on submission). 5) Optional, to pick the cheapest model that "
     "will pass: pass candidates=[\"model|scaffold\", ...] to find_ways and a "
     "model_plan comes back with a ladder (try A; if its check fails, B). After "
-    "each model you run, call report_result(instance_key, accepted): it stops "
+    "each model you run, call report_result(instance_key, accepted) (through use_tool): it stops "
     "you on a pass and names the next model on a failure. call_model(prompt, "
     "model=\"auto\", instance_key) runs that next model for you on the models and "
     "agents this deployment has connected (call_model also runs any named model "
@@ -492,9 +492,10 @@ _V1_INSTRUCTIONS = (
     "On a local server reads need no "
     "token (a hosted one asks you to sign in); report_discovery, submit_way, "
     "report_model_run and report_result need a signed-in user or write token. "
-    "Tools: find_ways and report_result are listed; discover_tools(need) finds the "
-    "others (call_model, submit_way, report_discovery, recommend_models, "
-    "report_model_run) with their arguments, and use_tool(name, arguments) runs one."
+    "Tools: find_ways is listed; discover_tools(need) finds the others (report_result, "
+    "call_model, submit_way, report_discovery, recommend_models, report_model_run) with "
+    "their arguments, and use_tool(name, arguments) runs one. find_ways' full guide: "
+    "stealth://guides/find_ways or discover_tools(names=[\"find_ways\"])."
 )
 
 server = MCPServer(
@@ -1679,7 +1680,8 @@ async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: s
                   **({"latency_ms": usage["latency_ms"]} if usage["latency_ms"] is not None else {})}
         if model != "auto" or result.unit != unit:                 # not the plan's default rung: name what ran
             report["model"], report["scaffold"] = result.unit.split("|", 1)
-        body["next"] = {"check_then_call": "report_result", "with": report}
+        body["next"] = {"check_then_call": "report_result", "with": report,
+                        "how": "use_tool(name='report_result', arguments=<with>) when report_result is not listed"}
     return json.dumps(body, default=str)
 
 
@@ -1705,89 +1707,22 @@ async def find_ways(
     my_model: str | None = None, task_features: dict[str, Any] | None = None,
 ) -> str:
     """
-    Find the known ways to do something. Returns KNOWLEDGE, not a plan: you
-    (the planner agent) compile the plan and write `.stealth/` yourself --
-    the `plan_and_run` prompt has the format.
+    Find proven ways to do a coding task. Returns KNOWLEDGE -- the Goal, the chosen Procedure with its steps, the
+    alternatives, and which repo facts supported or blocked each -- not a plan: you plan, and write `.stealth/`.
 
-    Call it ONCE, before writing code, for any task you would describe in a
-    sentence or more (a bug fix, a feature, a data transformation, a config
-    change). Don't call it for a one-line edit, a question about this repo's
-    own code, or the same request twice -- repeats are served from cache and
-    then refused.
+    Call it ONCE, before writing code, for a task you would describe in a sentence or more. Not for a one-line
+    edit, a question about this repo's own code, or the same request twice (repeats are cached, then refused).
 
-    query: what you want done, in plain words ("add a DOCX export").
-    repo_claims: the text of this repo's `.stealth/claims.md`
-      (`CLAIM|R-001|current|stack|repository|Node 20.11|source=.nvmrc:1#sha=9f2c|version=1`
-      lines; up to 200 facts / 64 KB; write it with the `survey_repo` prompt).
-      Used for this request only -- never stored or logged.
+    query: the task in plain words ("add a DOCX export"). repo_claims: the text of `.stealth/claims.md`, if any.
+    detail: "full" (default) or "summary" (a line per step; ask again with "full" for the way you will follow).
+    outcome: "resolved", "ambiguous" (you pick, or rephrase), "no_match", or "not_needed" (not a reusable task).
+    Optional: candidates=["model|scaffold", ...] or my_model -> a `model_plan` (try A; if its check fails, B);
+    report each attempt with report_result (through use_tool when it is not listed). repo_identity,
+    library_rows, route_obs: this repo's `.stealth` library. repo_claims and the library arguments are used for
+    this request only, never stored.
 
-    What happens:
-      0. Triage. One quick judgment decides whether this is a reusable task
-         worth a lookup. A question about this repo, a trivial edit, a
-         general question or conversation gets `outcome: "not_needed"` at
-         once (with `next`); when unsure, the lookup runs.
-      1. Goal search. Hybrid (lexical + vector) candidates, each judged by
-         the JEV/NLI judge against your query AND your repo facts; accepted
-         Goal-hierarchy neighbours of a match are judged the same way and
-         listed under `goal_judgment.related_goals`. Three honest outcomes,
-         never a guess: "resolved" (one Goal clearly best), "ambiguous" (2+
-         too close to call, or only partial matches -- you pick, or
-         rephrase), "no_match" (nothing known). If no judge answers, a
-         lexical re-ranker is used instead and `goal_judgment.mode` says
-         "lexical_fallback".
-      2. Procedure choice (`resolve_goal`): feasible Procedures for the Goal,
-         and recursively for its sub-Goals. With repo facts, the 5-20 most
-         related facts per Procedure go to the NLI/JEV judge together with
-         the Procedure's preconditions and its steps' runtime needs. A
-         contradicted REQUIRED precondition drops the Procedure; a
-         contradicted runtime need only moves it to the back.
-      3. The result, per Goal: the chosen Procedure with every step in full
-         (what to do, source locator, binding, needs, success check), the
-         alternatives, and `repo_fit` (which of your fact ids supported or
-         blocked it). Steps are `action` (has a script/tool), `subgoal`
-         (see the entry with that goal_id), or `instruction` (do it from the
-         text). No node ids, no order, no file writes, no execution -- those
-         are the planner's job.
-      4. On any outcome, `related_examples` (when enabled): verified solutions
-         of SIMILAR past tasks -- worked examples, NOT verified to apply here:
-         adapt them to your request, never copy them as-is. On "ambiguous",
-         `suggested` names the one candidate to start from.
-
-    Read-only; needs no token. Report what you learn with `report_discovery`.
-
-    Optional model plan: pass `candidates` (the "model|scaffold" units you can run; a deployment
-    may also supply them server-side) and a `model_plan` block comes back with the cheapest
-    ladder likely to pass (try A; if its check fails, B). `check_kind` is how you will check
-    each attempt (tests by default); `model_constraints` is recommend_models' `constraints`.
-    Run the first model, check it, then call `report_result(instance_key, accepted)` -- its
-    reply names the next model. Without candidates the reply is unchanged.
-
-    This repository's own knowledge (all optional; with none of them the reply is exactly as before):
-    repo_identity: {repo_id, public_name?, strength?} from `.stealth/meta.json` (repo_id is a hash;
-      send public_name -- owner/name -- only if the user allows). A strong identity lets this repo's own
-      global Goals be judged too; strength "weak" (or a p: id) is never used to match other repos.
-    library_rows: the text of `.stealth/index/library.idx` (up to 64 KB): problems already solved in
-      THIS repo. Matching entries come back as `library_matches` (read them, and their diffs under
-      `.stealth/library/solutions/`, before anything global); a Goal they name wins a tie.
-    route_obs: the ROUTE and OBS lines of `.stealth/routing.md` (up to 16 KB): this machine's attempt
-      counts per model. With a model plan they condition it on what worked HERE, and `routing_rows`
-      comes back: the ROUTE line(s) to write into routing.md.
-    Like repo_claims, these are used for this request only -- never stored or logged.
-
-    my_model: the model YOU are (e.g. "claude-sonnet-4-5"). It is always a candidate (scaffold = your
-    MCP client), so the plan says whether to keep the task yourself or hand it to a cheaper / stronger
-    model. Each rung carries p_ok (mean and 90% interval) and expected cost; `basis` says whether that
-    rests on observed runs ("posterior") or on public benchmarks and model cards only ("prior").
-    A task with no global Goal is still planned, on a key of its own: the matched `.stealth` library entry,
-    else this repository, else the generic coding task (`model_plan.case` says which), each with its own prior.
-    task_features: {"entries": {"<L-id>": stats}, "repo": stats}, stats = {files, hunks, lines_added,
-      lines_removed, languages, tests?, packages} counted from the library's diffs (`stealthlab-mcp library
-      payload` sends them; numbers only, never the diff). They set the case's difficulty prior.
-
-    detail: "full" (default) returns every step in full. "summary" shortens step text, checks and
-    example bodies to a line each (the Goal, Procedure, why chosen, repo fit, alternatives and
-    preconditions stay complete): much less to carry through a long session. Call again with the same
-    query and detail="full" for the whole thing; a hosted server answers that from cache.
+    Every argument, step and reply field in detail: resource stealth://guides/find_ways, or
+    discover_tools(names=["find_ways"]). Read-only.
     """
     import time as _time
 
@@ -2030,15 +1965,15 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 # Progressive tool discovery (settings.mcp_tool_discovery = "progressive", the default).
 #
 # Why: every listed tool's name, description and argument schema goes into the agent's context on EVERY turn, and
-# most turns need only find_ways. So tools/list shows a small core -- find_ways, report_result and the two tools
-# below -- and the rest (call_model, recommend_models, report_model_run, submit_way, report_discovery) are found
+# most turns need only find_ways. So tools/list shows a small core -- find_ways and the two tools below -- and
+# the rest (report_result, call_model, recommend_models, report_model_run, submit_way, report_discovery) are found
 # when needed: discover_tools(need) returns the matching tools with their full arguments, and use_tool(name,
 # arguments) runs one. This works on every client, including ones that cannot refresh their tool list mid-session
 # (the transport is stateless, so the server cannot push tools/list_changed). Hidden tools stay callable by name,
 # so the hooks, the executor and older clients that call them directly keep working. "all" lists every tool.
 # ---------------------------------------------------------------------------
 
-CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "report_result", "discover_tools", "use_tool"})
+CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "discover_tools", "use_tool"})
 DISCOVERY_TOOLS: frozenset[str] = frozenset({"discover_tools", "use_tool"})
 
 
@@ -2081,8 +2016,11 @@ async def discover_tools(ctx: Context, need: str = "", names: list[str] | None =
     deferred = _deferred_tools()
     if names:
         wanted = [t for t in deferred if t.name in set(names)]
-        unknown = sorted(set(names) - {t.name for t in wanted})
+        from app.mcp_server.resources import FIND_WAYS_GUIDE
+        guides = {"find_ways": FIND_WAYS_GUIDE} if "find_ways" in names else {}
+        unknown = sorted(set(names) - {t.name for t in wanted} - set(guides))
         return json.dumps({"tools": [_tool_entry(t, True) for t in wanted],
+                           **({"guides": guides} if guides else {}),
                            **({"unknown": unknown} if unknown else {})}, default=str)
     if not need.strip():
         return json.dumps({"tools": [_tool_entry(t, False) for t in deferred],
@@ -2091,8 +2029,10 @@ async def discover_tools(ctx: Context, need: str = "", names: list[str] | None =
     words = {w for w in re.findall(r"[a-z0-9]+", need.lower()) if len(w) > 2}
     scored = []
     for t in deferred:
-        text = f"{t.name.replace('_', ' ')} {t.description or ''}".lower()
-        score = sum(1 for w in words if w in text) + (3 if any(w in t.name for w in words) else 0)
+        title = getattr(t, "title", None) or getattr(getattr(t, "annotations", None), "title", None) or ""
+        text = f"{t.name.replace('_', ' ')} {title} {t.description or ''}".lower()
+        score = (sum(1 for w in words if w in text) + (3 if any(w in t.name for w in words) else 0)
+                 + 2 * sum(1 for w in words if w in title.lower()))
         if score:
             scored.append((score, t))
     scored.sort(key=lambda st: (-st[0], st[1].name))

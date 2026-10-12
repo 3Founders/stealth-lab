@@ -20,11 +20,30 @@ code):
     than exposed as its own tool -- a legitimate consolidation, not a
     missing capability.
 
-This file pins that mapping in a real, automated, offline test (no
-DATABASE_URL needed -- pure tool-registration introspection via the
-real MCPServer.list_tools()), so a future accidental rename/removal of
-any of the 9 required operations (or their real equivalent) is caught
-immediately.
+This file pins that mapping, and pins the CURRENT surface, in a real,
+automated, offline test (no DATABASE_URL needed -- pure
+tool-registration introspection).
+
+**STATUS CHANGE -- this file's original assertion is obsolete.** The v2
+MCP tool surface was deliberately REMOVED (commit cb52606, "ship:
+remove the v2 MCP surface -- the server is the five v1 tools, two
+prompts and their resources"; see also the notice at the top of
+backend/README_MCP_SERVER.md). Seven of the nine B32 operations --
+find_best_way, continue_run, get_procedure, get_relevant_claims,
+verify_completion, report_execution, submit_procedure -- were on that
+removed surface and are NOT registered MCP tools today. They are not
+"missing"; they were removed by an explicit founder decision.
+
+The original assertion (`srv.server.list_tools()` must contain all 9)
+therefore cannot pass, and had been failing unnoticed. Note it was also
+reading the WRONG source: `server.list_tools` is monkeypatched to
+`_list_tools_progressively` (server.py), which returns only the
+progressive-discovery core, so it reported tools as absent that were
+still registered. This file now introspects the real registry,
+`server._tool_manager.list_tools()`, and asserts two things: the v1
+surface is exactly the 9 intended tools, and the 7 B32 v2 operations
+remain deliberately absent -- so re-adding any of them has to be a
+conscious edit here, not a silent regression.
 
 Deliberately NOT enforcing "hide backend graph mechanics" as a hard
 tool-count cap: B32's own text uses "SHOULD" for the minimal-surface
@@ -37,8 +56,6 @@ for the sake of a soft requirement. Documented here rather than
 silently ignored.
 """
 from __future__ import annotations
-
-import asyncio
 
 import app.mcp_server.server as srv
 
@@ -56,20 +73,65 @@ REQUIRED_OPERATIONS: dict[str, str] = {
 }
 
 
-def test_every_b32_required_operation_has_a_real_registered_tool():
-    async def _run():
-        tools = await srv.server.list_tools()
-        registered = {t.name for t in tools}
-        missing = [
-            (literal_name, real_name) for literal_name, real_name in REQUIRED_OPERATIONS.items()
-            if real_name not in registered
-        ]
-        assert not missing, (
-            f"B32 required operation(s) have no real registered tool: {missing} "
-            f"(registered tools: {sorted(registered)})"
-        )
+# The v1 MCP surface as it exists today, after cb52606 removed the v2 tools.
+# Introspect the REAL registry, not `server.list_tools`: the latter is
+# monkeypatched to `_list_tools_progressively`, which returns only the
+# progressive-discovery core (CORE_TOOLS) and would make every non-core tool
+# look unregistered.
+EXPECTED_V1_SURFACE: frozenset[str] = frozenset({
+    "find_ways", "submit_way", "report_discovery", "recommend_models",
+    "report_model_run", "report_result", "call_model", "discover_tools", "use_tool",
+})
 
-    asyncio.run(_run())
+# The B32 operations whose only implementation lived on the removed v2 surface.
+# They must stay absent unless a conscious decision re-adds them.
+REMOVED_V2_OPERATIONS: frozenset[str] = frozenset({
+    "find_best_way", "continue_run", "get_procedure", "get_relevant_claims",
+    "verify_completion", "report_execution", "submit_procedure",
+})
+
+
+def _registered_tools() -> set[str]:
+    return {t.name for t in srv.server._tool_manager.list_tools()}
+
+
+def test_b32_operations_on_the_removed_v2_surface_are_deliberately_absent():
+    """The 7 B32 operations carried by the deleted v2 surface must NOT be
+    registered. If one reappears, that is a surface change to review, not an
+    accident -- this test fails so the decision is made explicitly here."""
+    registered = _registered_tools()
+    resurrected = sorted(REMOVED_V2_OPERATIONS & registered)
+    assert not resurrected, (
+        f"B32 v2 operation(s) are registered again: {resurrected}. The v2 MCP "
+        f"surface was removed by decision (cb52606) -- if that is being "
+        f"reverted, update this test and backend/README_MCP_SERVER.md in the "
+        f"same change."
+    )
+
+
+def test_the_v1_surface_is_exactly_the_intended_nine_tools():
+    """Pins the live surface. `server.list_tools` is progressive and filtered,
+    so a client-visible listing cannot be used to assert the registry -- read
+    the registry directly."""
+    registered = _registered_tools()
+    assert registered == EXPECTED_V1_SURFACE, (
+        f"MCP surface drifted from the intended nine: "
+        f"unexpected={sorted(registered - EXPECTED_V1_SURFACE)} "
+        f"missing={sorted(EXPECTED_V1_SURFACE - registered)}"
+    )
+
+
+def test_progressive_listing_shows_only_the_core_and_keeps_the_rest_callable():
+    """The registry is the nine; what a client is LISTED is the smaller
+    progressive core, and every deferred tool stays reachable by name."""
+    import asyncio
+
+    listed = {t.name for t in asyncio.run(srv.server.list_tools())}
+    assert listed <= srv.CORE_TOOLS, (
+        f"tools/list must stay within CORE_TOOLS, got extra: {sorted(listed - srv.CORE_TOOLS)}"
+    )
+    # every v1 tool not listed is still registered (callable by name / use_tool)
+    assert EXPECTED_V1_SURFACE - listed <= _registered_tools()
 
 
 def test_b32_named_operations_that_differ_from_the_literal_name_are_explicitly_tracked():

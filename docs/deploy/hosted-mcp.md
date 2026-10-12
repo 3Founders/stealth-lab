@@ -57,7 +57,7 @@ one instance.
 | `OIDC_AUDIENCE` | `authenticated` | same |
 | `WEB_CONCURRENCY` | `1` (default) | Worker processes; see "Concurrency" |
 | `MIGRATE_DATABASE_URL` | the owner-role URL (optional) | Migrations run as it when set; needed once `DATABASE_URL` is the restricted `stealth_app` role, which cannot run DDL |
-| `MCP_TOOL_DISCOVERY` | `progressive` (default) or `all` | `progressive` lists only `find_ways`, `report_result`, `discover_tools` and `use_tool`; agents find the rest with `discover_tools` and run them with `use_tool` (hidden tools stay callable by name). `all` lists every tool |
+| `MCP_TOOL_DISCOVERY` | `progressive` (default) or `all` | `progressive` lists only `find_ways`, `discover_tools` and `use_tool` (about 1,300 tokens of definitions per turn, against about 5,800 for `all`); agents find the rest, `report_result` included, with `discover_tools` and run them with `use_tool` (hidden tools stay callable by name). `find_ways`' long description is the resource `stealth://guides/find_ways`. `all` lists every tool |
 | `DB_POOL_MAX_SIZE` | `20`-`40` behind a `-pooler` endpoint | Connections **per worker**. One `find_ways` uses several at once (search legs run concurrently), so the default of 10 starves at about ten simultaneous calls |
 | `JEV_BASE_URL` and/or `GEMINI_API_KEY` | judge provider | Contextual Goal and Procedure judgment. Without it, `find_ways` still answers, but with `goal_judgment.mode = "lexical_fallback"` |
 | `VOYAGE_API_KEY` (or `GEMINI_API_KEY`) | embeddings | vector leg of Goal and Procedure search |
