@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { jsonLines, plainResult, safeTaskArg, scrubEnv, tailText, num } from "./common.mjs";
 import { FOREIGN_CREDENTIAL_VARS, KEY_ENV_FOR_CHILD, profileKey } from "./profile.mjs";
+import { earlyStopEnabled } from "../agent/stall.mjs";
 
 export const STEP_AGENT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "agent", "step_agent.mjs");
 const AGENT_VERSION = "1.0.0";
@@ -35,7 +36,12 @@ const adapter = {
     const input = {
       task: safeTaskArg(task), base_url: profile.openai_base_url, model_id: profile.model_id,
       input_per_mtok: profile.input_per_mtok, output_per_mtok: profile.output_per_mtok,
-      request_extras: profile.request_extras, ...(profile.no_system_role ? { no_system_role: true } : {}), ...(limits || {}),
+      request_extras: profile.request_extras, ...(profile.no_system_role ? { no_system_role: true } : {}),
+      // stop a stuck run early (lib/agent/stall.mjs); the child's env carries no STEALTHLAB_ variable, so it travels here
+      early_stop: earlyStopEnabled(env),
+      ...(Number(env.STEALTHLAB_EARLY_STOP_STEPS) > 0 ? { early_stop_steps: Number(env.STEALTHLAB_EARLY_STOP_STEPS) } : {}),
+      ...(Number(env.STEALTHLAB_EARLY_STOP_ERRORS) > 0 ? { early_stop_errors: Number(env.STEALTHLAB_EARLY_STOP_ERRORS) } : {}),
+      ...(limits || {}),
     };
     void worktree; void timeoutS;
     return { cmd: process.execPath, args: [STEP_AGENT], env: childEnv, stdinText: JSON.stringify(input) };
@@ -51,6 +57,7 @@ const adapter = {
       learned: Array.isArray(f.learned) ? f.learned.filter((s) => typeof s === "string").slice(0, 5) : [],
       tokens: t ? { in: num(t.in), out: num(t.out) } : null,
       costUsd: num(f.costUsd),
+      ...(f.stalled && typeof f.stalled === "object" ? { stalled: { rule: String(f.stalled.rule || ""), why: String(f.stalled.why || "").slice(0, 300) } } : {}),
     };
   },
 

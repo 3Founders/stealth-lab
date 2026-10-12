@@ -16,13 +16,16 @@
 //  * No streaming, no parallel tool calls beyond running a returned batch in order, no image input.
 //
 // Input (stdin, JSON): { task, base_url, model_id, input_per_mtok?, output_per_mtok?, request_extras?, no_system_role?, max_steps?,
-//   max_cost_usd?, max_tokens?, hang_s? }. The provider key arrives in env OPEN_MODEL_API_KEY only.
+//   max_cost_usd?, max_tokens?, hang_s?, early_stop?, early_stop_steps?, early_stop_errors? }. The provider key arrives in env
+//   OPEN_MODEL_API_KEY only. early_stop (default true): a run that is going round in circles stops at once (lib/agent/stall.mjs).
 // Output (stdout): one progress line per step (so the runtime's hang detector sees life), then one final JSON line:
-//   {"type":"final","message","learned":[],"tokens":{"in","out"},"costUsd","steps","stop"}.
+//   {"type":"final","message","learned":[],"tokens":{"in","out"},"costUsd","steps","stop","stalled"?}.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { exec } from "node:child_process";
+import { exec, execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { StallDetector } from "./stall.mjs";
 
 export const KEY_ENV = "OPEN_MODEL_API_KEY";
 const PROTECTED = new Set(["model", "messages", "stream", "stream_options", "tools", "tool_choice", "functions",
@@ -283,7 +286,32 @@ function parseLearned(text) {
 
 // ---------------------------------------------------------------- the loop
 
-export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fetchImpl = globalThis.fetch, sleep = sleepReal, log = () => {} } = {}) {
+const sha = (buf) => crypto.createHash("sha1").update(buf).digest("hex");
+
+// A file's content hash, "absent" when it does not exist or cannot be read (the stall detector compares these).
+function fileHash(cwd, rel) {
+  try { return sha(fs.readFileSync(safePath(cwd, rel).abs)); } catch { return "absent"; }
+}
+
+// The worktree as a git sees it: the status, the diff against HEAD and the content of untracked files. null when this is
+// not a git worktree (the run then has no "no change for N steps" rule; the others still apply).
+export function worktreeFingerprint(cwd) {
+  try {
+    const git = (args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "buffer", maxBuffer: 32 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    const status = git(["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
+    const diff = git(["diff", "HEAD", "--no-ext-diff"]);
+    const h = crypto.createHash("sha1").update(status).update(diff);
+    for (const entry of status.toString("utf8").split("\0")) {
+      if (!entry.startsWith("?? ")) continue;
+      try { const f = path.join(cwd, entry.slice(3)); if (fs.statSync(f).size <= MAX_FILE_BYTES) h.update(entry).update(fs.readFileSync(f)); } catch { /* gone */ }
+    }
+    return h.digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fetchImpl = globalThis.fetch, sleep = sleepReal, log = () => {}, fingerprint = worktreeFingerprint } = {}) {
   const key = env[KEY_ENV];
   if (!key) throw new Error(`${KEY_ENV} is not set`);
   if (!cfg || typeof cfg.task !== "string" || !cfg.task.trim()) throw new Error("task is required");
@@ -299,6 +327,11 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     ? [{ role: "user", content: `${system}\n\n---\n\nTask:\n${cfg.task.trim()}` }]
     : [{ role: "system", content: system }, { role: "user", content: cfg.task.trim() }];
   let tin = 0, tout = 0, step = 0, stop = "max_steps", finalMessage = "";
+  // stop a stuck run early (lib/agent/stall.mjs); cfg.early_stop === false turns it off
+  const detector = cfg.early_stop === false ? null
+    : new StallDetector({ noChangeSteps: Number(cfg.early_stop_steps) || 6, errorRun: Number(cfg.early_stop_errors) || 3 });
+  detector?.start(fingerprint(cwd));
+  let stalled = null;
 
   const seen = new Map();          // tool call signature -> its last output, for repeated reads
   while (step < maxSteps) {
@@ -333,7 +366,10 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
       try {
         args = call.function && call.function.arguments ? JSON.parse(call.function.arguments) : {};
         if (name === "finish") { finalMessage = String(args.summary || "").trim(); finished = true; result = "done"; }
-        else result = await runTool(name, args, { cwd, env });
+        else {
+          if (detector && (name === "edit_file" || name === "write_file")) detector.seed(args.path, fileHash(cwd, args.path));
+          result = await runTool(name, args, { cwd, env });
+        }
       } catch (err) {
         result = `error: ${redactKey(err.message, key)}`;
       }
@@ -350,16 +386,24 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
         if (name === "read_file" || name === "search" || name === "list_files") seen.set(sig, { text: body, index: messages.length - 1, step });
         if (name === "edit_file" || name === "write_file") seen.clear();          // the files changed: earlier reads are stale
       }
+      if (detector && name !== "finish") {
+        const edit = (name === "edit_file" || name === "write_file") && !/^error:/.test(String(result));
+        stalled = detector.observe({ name, args, result: String(result), hash: edit ? fileHash(cwd, args.path) : null,
+                                     fingerprint: edit || name === "run_shell" ? fingerprint(cwd) : undefined });
+        if (stalled) { log(`stalled (rule ${stalled.rule}): ${stalled.why}`); break; }
+      }
       if (finished || step >= maxSteps) break;
     }
+    if (stalled) { stop = "stalled"; break; }
     if (finished) { stop = "finished"; break; }
     const spent = costOf(cfg, tin, tout);
     if (maxCost !== null && spent !== null && spent >= maxCost) { stop = "cost_cap"; break; }
   }
 
+  if (stalled) finalMessage = `stopped early (stalled, rule ${stalled.rule}): ${stalled.why}`;
   if (!finalMessage) finalMessage = stop === "max_steps" ? `stopped after ${maxSteps} tool calls without finishing` : stop === "cost_cap" ? "stopped: cost cap reached" : "";
   return { type: "final", message: finalMessage, learned: parseLearned(finalMessage), tokens: { in: tin, out: tout },
-           costUsd: costOf(cfg, tin, tout), steps: step, stop };
+           costUsd: costOf(cfg, tin, tout), steps: step, stop, ...(stalled ? { stalled } : {}) };
 }
 
 // ---------------------------------------------------------------- CLI
