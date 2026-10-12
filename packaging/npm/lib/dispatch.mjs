@@ -11,8 +11,9 @@
 // Every attempt is reported to the plan (report_result, by the runtime), counted in .stealth/routing.md with the
 // unit that ran it, and a pass becomes a library entry -- so the next plan learns from it.
 //
-// It needs a CHECK -- an unverified result never goes in: STEALTHLAB_DISPATCH_CHECK (the project's test command), or
-// the check of the library entry the lookup matched. No check, no dispatch. STEALTHLAB_DISPATCH=off turns it off.
+// It needs a CHECK -- an unverified result never goes in: STEALTHLAB_DISPATCH_CHECK (the project's test command), the
+// check of the library entry the lookup matched, or the test command the project itself defines (lib/detect_check.mjs).
+// No check, no dispatch. STEALTHLAB_DISPATCH=off turns it off.
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -21,6 +22,7 @@ import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { detectCheck } from "./detect_check.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -29,6 +31,9 @@ export function dispatchPolicy(env = process.env) {
   return {
     enabled: (env.STEALTHLAB_DISPATCH || "on").toLowerCase() !== "off",
     check: (env.STEALTHLAB_DISPATCH_CHECK || "").trim() || null,
+    // find the project's own test command (lib/detect_check.mjs) when none is configured and no library entry has one;
+    // "off" restores "no configured check, no dispatch"
+    detect: (env.STEALTHLAB_DISPATCH_DETECT || "on").toLowerCase() !== "off",
     maxRungs: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS || 3)),
     scope: String(env.STEALTHLAB_DISPATCH_SCOPE || "*,**/*").split(",").map((s) => s.trim()).filter(Boolean),
     // "strict" (default): a cross-check that cannot decide counts as NOT verified -- the task goes up the ladder;
@@ -353,18 +358,20 @@ export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude
   return out.slice(0, max);
 }
 
-// The check to verify a dispatched run with: the configured one, else the matched library entry's own check.
+// The check to verify a dispatched run with: the configured one, else the matched library entry's own check, else the
+// one the project itself defines (detectCheck).
 export function dispatchCheck(policy, reply, root) {
   if (policy.check) return policy.check;
   const match = (reply?.library_matches || []).find((m) => m?.relation === "matches" && m.id);
-  if (!match || !root) return null;
-  try {
-    const e = readEntry(root, match.id);
-    const steps = (e?.procs || []).flatMap((p) => p.steps || []);
-    return steps.map((s) => s.check).filter(Boolean).pop() || null;
-  } catch {
-    return null;
+  if (match && root) {
+    try {
+      const e = readEntry(root, match.id);
+      const steps = (e?.procs || []).flatMap((p) => p.steps || []);
+      const own = steps.map((s) => s.check).filter(Boolean).pop();
+      if (own) return own;
+    } catch { /* fall through to detection */ }
   }
+  return policy.detect && root ? detectCheck(root) : null;
 }
 
 function taskText(prompt) {
