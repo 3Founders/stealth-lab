@@ -472,7 +472,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const cap = policy.modelCap ? modelCapS(modelWins(root, rung.model, rung.executor)?.wins, { baseS: baseLimitS, mult: policy.capMult, floorS: policy.capFloorS }) : null;
       if (cap !== null) {
         capS = cap;
-        capTimer = setTimeout(() => { capped = true; log(`dispatch: ${rung.model} capped at ${cap} s`); rt.cancelRun(runId).catch(() => {}); }, cap * 1000);
+        capTimer = setTimeout(() => { capped = true; log(`dispatch: ${rung.model} capped at ${Math.round(cap * 10) / 10} s`); rt.cancelRun(runId).catch(() => {}); }, cap * 1000);
         capTimer.unref?.();
       }
       let result;
@@ -501,7 +501,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     if (result.state === "cancelled") {    // stopped from outside: no verdict on the model either
       // by its own model's cap (slower than its wins here usually are): not a failure of the model either
-      tried.push({ unit: rung.unit, state: capped ? `capped at ${capS} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
+      tried.push({ unit: rung.unit, state: capped ? `capped at ${Math.round(capS * 10) / 10} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
       return false;
     }
     let cross = null;
