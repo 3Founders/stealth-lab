@@ -620,15 +620,25 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     if (undoPoint) finishUndoPoint(undoPoint, { repo: repoDir, env });
     let entry = null;
+    let diff = "";
     try {
       const { promptTitle } = await import("./capture_hook.mjs");
-      const diff = diffFromGit(root);
+      diff = diffFromGit(root);
       if (diff.trim()) {
         entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check, observed: true, diff }).id;
         autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
       }
     } catch (err) {
       log(`dispatch: library entry not added (${err.message})`);
+    }
+    // a share of the delivered answers is reviewed afterwards, detached, so the router learns how often this kind's
+    // checks let a wrong answer through (lib/audit.mjs)
+    try {
+      const { startAudit } = await import("./audit.mjs");
+      startAudit({ instanceKey: plan.instance_key, prompt: rawPayload.prompt, diff, env, log,
+                   model: String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0] });
+    } catch (err) {
+      log(`dispatch: audit not started (${err.message})`);
     }
     if (entry) {
       // the new Way's semantic code (the capture Stop hook does this otherwise; a stopped prompt has no Stop)

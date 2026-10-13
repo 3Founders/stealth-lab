@@ -281,6 +281,31 @@ async def goal_outcome_counts(pool: Any, goal_id: str, *, steps: bool = False) -
     return [{"unit": r["unit"], "n": int(r["n"]), "ok": int(r["ok"])} for r in rows]
 
 
+async def goal_audit_counts(pool: Any, goal_id: str) -> dict[str, int]:
+    """Whole-task attempts on this Goal (or virtual key) under the caller's scope: accepted, rejected, and of the
+    accepted ones how many were audited (gold_correct reported) and found wrong -- what calibrated_check_rates needs."""
+    log = await _goal_log_pool(pool, goal_id)
+    row = await _log_call(log, "fetchrow",
+        "SELECT count(*) FILTER (WHERE accepted) AS accepted, count(*) FILTER (WHERE NOT accepted) AS rejected, "
+        "count(*) FILTER (WHERE accepted AND gold_correct IS NOT NULL) AS audited, "
+        "count(*) FILTER (WHERE accepted AND gold_correct = false) AS audited_wrong "
+        "FROM routing_observations WHERE goal_id = $1::uuid AND step_order IS NULL",
+        str(goal_id))
+    return {k: int((row or {}).get(k) or 0) for k in ("accepted", "rejected", "audited", "audited_wrong")}
+
+
+async def record_audit(pool: Any, goal_id: str, instance_key: str, correct: bool) -> int:
+    """Mark the latest ACCEPTED whole-task attempt of an instance as really right or wrong (gold_correct), under the
+    caller's scope -- a caller can only label its own rows. Returns how many rows changed (0 or 1)."""
+    log = await _goal_log_pool(pool, goal_id)
+    rows = await _log_call(log, "fetch",
+        "UPDATE routing_observations SET gold_correct = $3 WHERE id = (SELECT id FROM routing_observations "
+        "WHERE goal_id = $1::uuid AND instance_key = $2 AND accepted AND step_order IS NULL "
+        "ORDER BY occurred_at DESC LIMIT 1) RETURNING id",
+        str(goal_id), str(instance_key), bool(correct))
+    return len(rows)
+
+
 def _jsonable(value: Any) -> Any:
     """A plain JSON value for a jsonb parameter. Every pool registers a jsonb codec that encodes (app/db/session.py),
     so passing json.dumps() text stored a JSON *string* inside jsonb -- invisible to SQL `->>` (it returns NULL), the

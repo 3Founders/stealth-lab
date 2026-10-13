@@ -356,10 +356,14 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
                 cost_ok[i] += handoff
                 cost_fail[i] += handoff
 
-    alpha, beta = predict.check_rates(g, check_kind)
+    try:
+        audits = await store.goal_audit_counts(pool, goal_id) if not step_level else None
+    except Exception:  # noqa: BLE001 -- no audits only means the assumed rate
+        audits = None
+    alpha, beta = calibrated_check_rates(g, check_kind, cfg, audits)
     attempts = []
     for a, col in attempts_cols:
-        a_alpha, a_beta = predict.check_rates(g, a.get("check_kind") or check_kind)
+        a_alpha, a_beta = calibrated_check_rates(g, a.get("check_kind") or check_kind, cfg, audits)
         attempts.append(ladder.Attempt(col, bool(a.get("accepted")), a_alpha, a_beta))
     node_w, draw_w = ladder.belief(eps_w, p, attempts)
     local_evidence = None
@@ -495,6 +499,31 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
             "owner_id": store.routing_owner(goal["visibility"], goal["owner_id"], goal.get("tenant_id")),
             "step_order": current})
     return response
+
+
+def calibrated_check_rates(g: predict.Globals, check_kind: str, cfg: RoutingDefaults = DEFAULTS,
+                           audits: Optional[Mapping[str, int]] = None) -> tuple[np.ndarray, np.ndarray]:
+    """(alpha, beta) of a check kind, with the 'tests' false-accept rate alpha (a wrong answer passes) calibrated:
+    on the bundled prior, moved to `cfg.tests_false_accept` (what was measured, not the prior's ~0.19); then, when this
+    kind of task has audits (accepted answers later found right or wrong), to its own rate -- the audited share of
+    wrong among the accepted, extrapolated to all its accepted attempts, over those plus its rejected ones, with the
+    assumed rate counting as `cfg.audit_prior_strength` wrong attempts. The draws are scaled, so their spread stays."""
+    alpha, beta = predict.check_rates(g, check_kind)
+    if check_kind != "tests":
+        return alpha, beta
+    from app.routing import prior_bundle
+
+    base = float(alpha.mean())
+    target = base
+    if g.version == prior_bundle.BUNDLE_VERSION and cfg.tests_false_accept > 0:
+        target = cfg.tests_false_accept
+    if audits and audits.get("audited"):
+        wrong = audits.get("accepted", 0) * audits["audited_wrong"] / audits["audited"]
+        k = cfg.audit_prior_strength
+        target = (wrong + k * target) / (wrong + audits.get("rejected", 0) + k)
+    if base > 0 and abs(target - base) > 1e-9:
+        alpha = np.clip(alpha * (target / base), 1e-4, 0.95)
+    return alpha, beta
 
 
 def _code_parent(g: predict.Globals, code: Any) -> Optional[np.ndarray]:
