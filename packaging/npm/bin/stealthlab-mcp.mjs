@@ -34,6 +34,9 @@ Usage:
   npx -y stealthlab-mcp install [options]    register StealthLab with your agents
   stealthlab-mcp uninstall [--client <id>]   remove it again
   stealthlab-mcp doctor                      check the hosted server is reachable
+  stealthlab-mcp undo [<id>] [--list] [--force]
+                                             put back what a dispatched cheap answer changed in this repository
+                                             (the latest, or <id>); refuses if you edited those files since, unless --force
   stealthlab-mcp instructions [--dir <repo>] [--client cursor] [--remove] [--dry-run]
                                              tell the agents in a repo when to use StealthLab: a marked block in
                                              AGENTS.md (Cursor, Codex, opencode read it) and, for Cursor,
@@ -274,6 +277,12 @@ async function main() {
     process.exitCode = runPlanCli(argv);
     return;
   }
+  if (cmd === "undo") {
+    // put back what a dispatched answer changed (lib/undo.mjs); its own flags and one optional id
+    const { runUndoCli } = await import("../lib/undo.mjs");
+    process.exitCode = runUndoCli(argv);
+    return;
+  }
   if (cmd === "exec" && argv[0] === "apply") {
     // Apply a VERIFIED executor run to the checkout. The executor's MCP tools live only inside the delegator
     // subagent (which may not apply), so the main agent applies from the shell; same checks as apply_run.
@@ -281,7 +290,8 @@ async function main() {
     if (!runId) die("usage: stealthlab-mcp exec apply <run_id>", 2);
     const { ExecRuntime } = await import("../lib/exec/runtime.mjs");
     try {
-      return out(JSON.stringify(await new ExecRuntime({}).applyRun(runId)));
+      const { applyWithUndo } = await import("../lib/undo.mjs");
+      return out(JSON.stringify(await applyWithUndo(new ExecRuntime({}), runId)));
     } catch (err) {
       die(err.message, 1);
     }
