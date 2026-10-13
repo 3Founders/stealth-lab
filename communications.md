@@ -624,3 +624,93 @@ I did not edit it again. Compared with what I left, the file now has:
 - The arm C resume problems listed at the top of this file were addressed by the handoff updates (3ec2f29, 8b1a95f): resume on the original
   machine, which has since finished the MultiPL-E JS part; 50 page tasks were left.
 - The eleven feature branches of the build queue above are unmerged; `origin/main` is still at b612733.
+
+
+---
+
+# Owner review decisions, 2026-10-13: what changed
+
+Same rules as 6.6: branches pushed (normal pushes, nothing forced), never main, no benchmark runs, model calls stubbed. Five items built, one held.
+
+## At a glance
+
+| # | Decision | Branch (new commit) | New tests | Result |
+|---|---|---|---|---|
+| 1 | send the original prompt together with the brief | `feat/q-62-a-task-brief` (`e5ce9ee`) | 3 new, 3 assertions changed | done |
+| 2 | `exec apply` makes an undo point too | `feat/q-62-c-safe-apply` (`7eb49fe`) | 4 | done |
+| 3 | refuse package installs while dependency links are active | `feat/q-62-b-real-repos` (`bd2c776`) | 8 | done |
+| 4 | `python3` when `python` is not on PATH | `feat/q-61-1-detect-check` (`616d620`) | 2 | done |
+| 5 | per-MODEL cap and fastest-first (replaces L2) | **new** `feat/q-L4-model-cap` | 12 | done; replay needs the run records |
+| 6 | hold L3 | `feat/q-L3-agreement` | | unchanged, not touched |
+
+The full packaging suite ran on every branch. The same load-sensitive tests fail on this machine only when the whole suite runs together
+(dispatch latency, the Cursor first-tool-call wait, the grandchild-process test, a runtime gc test) and pass alone.
+
+## 1. The brief now travels with the original request (`feat/q-62-a-task-brief`)
+
+The cheap models and the test writer get the brief first, then `Original request:` and the user's own words. Within dispatch's 2000-character task
+limit the original is shortened first (with `...`, never below about 200 characters); the brief only gives way if it alone is too long. No brief still
+means the raw prompt alone with no label; the library title and `!cheap` stripping are unchanged. Answers open question 4b. (4a, `!opus` and the
+prefix a hook cannot strip, is still open.)
+
+## 2. `exec apply` makes an undo point (`feat/q-62-c-safe-apply`)
+
+`applyWithUndo()` in `lib/undo.mjs`: read the run's repo and files, make the undo point, then the runtime's apply (which still refuses when a touched
+file changed since the run started; the point is then discarded and nothing is written). The JSON gains `undo_point` and `undo_command`, or
+`undo_point: null` with `undo_note` (switch off, or a point could not be made). Tested against the real runtime and git and through the real CLI in a
+separate process. Answers open question 5b. 5a (fail closed when a point cannot be made) was not part of this decision: dispatch's own apply still
+fails open.
+
+## 3. Installs are refused while links are active (`feat/q-62-b-real-repos`)
+
+`lib/agent/installs.mjs`. If `node_modules`, `.venv` or `venv` in the agent's worktree is a link, an install command in `run_shell` is not run and the
+model gets an error saying why and what to do. Covered: npm / pnpm / yarn / bun `install`, `i`, `add`, `ci` (and a bare `yarn`), `pip` / `pip3` /
+`python -m pip` / `py -m pip` / `uv pip` `install`, plus `uv add`, `uv sync`, `poetry add|install`, `pipenv install` (my additions, same risk); also
+behind `sudo`, `env`, `VAR=x`, flags such as `npm --prefix web install`, and inside `&&` `;` `|` chains. `npm test`, `pip list`, `uv run`, an echo or a
+grep that merely mention the words are not installs. With no links nothing changes. Switch `STEALTHLAB_EXEC_BLOCK_INSTALLS=off`. It is a
+string rule on the command line: a command that installs indirectly (`bash install.sh`, `make deps`, `node -e "require('child_process')..."`) is NOT
+caught. Answers open question 6 for the common forms only; making the link read-only is still the stronger fix.
+
+## 4. python3 fallback (`feat/q-61-1-detect-check`)
+
+`pythonBin()`: `python3` on a non-Windows machine where `python` is not on PATH but `python3` is, else `python`. Used for the detected pytest check and for
+dispatch's test-first runner step, so detection and the step agree. Still `python` elsewhere in dispatch (`pytestAvailable`, the cross-check's pytest
+run). Answers open question 2.
+
+## 5. L4: a time cap per MODEL, fastest first (`feat/q-L4-model-cap`, from `origin/main`, does not contain L2)
+
+- **What it records:** each verified cheap answer's seconds, from the start of ITS OWN run, on a `WIN|model|scaffold|n=|last=|p90s=|wins=` line in
+  `.stealth/routing.md`, the last 20 per model. Local only: only ROUTE and OBS lines are sent to the server, its parser skips the new line type, and
+  `recordObs` / `upsertRoutes` keep it (tested).
+- **The cap:** `clamp(2 x p90, 60 s, today's limit)` per model; fewer than 5 wins for that model means today's limit. A capped run is cancelled and is
+  NOT a failure: no report to the server (the runtime reports nothing for a cancelled attempt), no OBS line, listed as `capped at N s`. The next rung
+  starts at once.
+- **The order:** rungs start fastest model first by median win time. A model with fewer than 5 wins is placed as the median of the known ones, so it
+  neither jumps the queue nor starves (my choice; the decision said "fastest-model-first by the same per-model data" and did not say what to do with
+  a model that has no data).
+- **Switches:** `STEALTHLAB_DISPATCH_MODEL_CAP=off`, `STEALTHLAB_DISPATCH_FASTEST_FIRST=off`, `STEALTHLAB_DISPATCH_CAP_MULT` (2),
+  `STEALTHLAB_DISPATCH_CAP_FLOOR_S` (60; added so the tests need not wait a minute).
+- **Replay:** `node scripts/replay_model_cap.mjs --runs <C_home/runs> [--mult 2] [--floor 60] [--base 150]`. It prints, per model, attempts, win median
+  and p90 and how many were still going at 100 s (the 20-of-27 minimax figure should reappear), then the cap's cost: wins it would cut, seconds given
+  back by failed or timed-out attempts that ran past their cap, and cancelled attempts that ran past it (cost only). Tested on synthetic records. The
+  run records are not on this machine, so I have NOT seen the real numbers; that is the proof pending, and until then whether a 2x p90 cap cuts too
+  many wins (L2's cut 5% at 2x on the suite-level proxy) is unknown for the per-model version. The multiplier is an env var.
+- L2 is superseded: `feat/q-L2-learned-timeout` is untouched and should not be merged.
+
+## 6. L3 held
+
+`feat/q-L3-agreement` was not changed.
+
+## Merge notes after these changes
+
+`git merge-tree` (writes nothing) shows these pairs conflict, textually in `lib/dispatch.mjs` (imports, the policy object, the return objects): L4 with
+#1 (detect), A (brief), C (undo), B (real repos), L1 and L3; and among the updated branches #1 x B, #1 x C, A x C, B x C. L4, L1 and L3 all edit the
+same part of `runRung` / `judge`; take both sides in each. Switches to turn off if you merge before the arm C resume finishes: the earlier list plus
+`STEALTHLAB_EXEC_BLOCK_INSTALLS=off` (no effect on tasks without links), `STEALTHLAB_DISPATCH_MODEL_CAP=off` and `STEALTHLAB_DISPATCH_FASTEST_FIRST=off`.
+
+## Open questions after this round
+
+1. A: is the context line enough for `!opus`? (a hook cannot rewrite the prompt)
+2. C: should dispatch's own apply fail closed when an undo point cannot be made?
+3. B: make the dependency link read-only, since the install refusal is a string rule and does not catch an indirect install?
+4. L4: the cap multiplier (2 by default) and the fastest-first handling of a model with no data, once the real run records have been replayed.
