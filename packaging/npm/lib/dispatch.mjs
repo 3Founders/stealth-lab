@@ -406,6 +406,7 @@ function taskText(prompt) {
 export async function dispatch({ payload: rawPayload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude,
                                  force = false, briefImpl }) {
   let payload = rawPayload;
+  const dispatchStart = Date.now();
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
@@ -652,11 +653,17 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
+    // what the user reads: a short explanation by a cheap model (lib/explain.mjs), never the session's model
+    const { explainChange } = await import("./explain.mjs");
+    const explanation = await explainChange({ request: rawPayload.prompt, diff, check, summary: result.summary, env, fetchImpl, log });
+    const secs = Math.round((Date.now() - dispatchStart) / 1000);
     return { handled: true, run_id: runId, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec,
-      text: `Done by ${rung.model} (StealthLab dispatched it before this session's model ran${cost}). ` +
+      explanation,
+      text: `Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost}). ` +
         `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
-        (undoPoint ? " To put it back as it was: stealthlab-mcp undo." : undoNote) };
+        (undoPoint ? " To put it back as it was: stealthlab-mcp undo." : undoNote) +
+        (explanation ? `\n\n${explanation}` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
   return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)) };
