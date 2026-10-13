@@ -16,13 +16,16 @@
 //  * No streaming, no parallel tool calls beyond running a returned batch in order, no image input.
 //
 // Input (stdin, JSON): { task, base_url, model_id, input_per_mtok?, output_per_mtok?, request_extras?, no_system_role?, max_steps?,
-//   max_cost_usd?, max_tokens?, hang_s? }. The provider key arrives in env OPEN_MODEL_API_KEY only.
+//   max_cost_usd?, max_tokens?, hang_s?, block_installs? }. The provider key arrives in env OPEN_MODEL_API_KEY only.
+//   block_installs (default true): while the worktree's node_modules / venv are links to the project's own, package installs in
+//   run_shell are refused (lib/agent/installs.mjs).
 // Output (stdout): one progress line per step (so the runtime's hang detector sees life), then one final JSON line:
 //   {"type":"final","message","learned":[],"tokens":{"in","out"},"costUsd","steps","stop"}.
 import fs from "node:fs";
 import path from "node:path";
 import { exec } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import { installRefusal } from "./installs.mjs";
 
 export const KEY_ENV = "OPEN_MODEL_API_KEY";
 const PROTECTED = new Set(["model", "messages", "stream", "stream_options", "tools", "tool_choice", "functions",
@@ -192,8 +195,11 @@ function shellEnv(env) {
   return out;
 }
 
-function toolRunShell(cwd, a, env) {
+function toolRunShell(cwd, a, env, blockInstalls = true) {
   if (typeof a.command !== "string" || !a.command.trim()) throw new Error("command is required");
+  // the worktree's node_modules / venv are links to the project's own (lib/exec/deps.mjs): an install would change the real ones
+  const refused = installRefusal(cwd, a.command, { enabled: blockInstalls });
+  if (refused) throw new Error(refused);
   return new Promise((resolve) => {
     exec(a.command, { cwd, env: shellEnv(env), timeout: SHELL_TIMEOUT_MS, windowsHide: true, maxBuffer: 4 << 20 }, (err, stdout, stderr) => {
       const text = `${stdout || ""}${stderr || ""}`;
@@ -204,14 +210,14 @@ function toolRunShell(cwd, a, env) {
   });
 }
 
-export async function runTool(name, args, { cwd, env }) {
+export async function runTool(name, args, { cwd, env, blockInstalls = true }) {
   switch (name) {
     case "read_file": return toolReadFile(cwd, args);
     case "list_files": return toolListFiles(cwd, args);
     case "search": return toolSearch(cwd, args);
     case "edit_file": return toolEditFile(cwd, args);
     case "write_file": return toolWriteFile(cwd, args);
-    case "run_shell": return toolRunShell(cwd, args, env);
+    case "run_shell": return toolRunShell(cwd, args, env, blockInstalls);
     default: throw new Error(`unknown tool ${name}`);
   }
 }
@@ -333,7 +339,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
       try {
         args = call.function && call.function.arguments ? JSON.parse(call.function.arguments) : {};
         if (name === "finish") { finalMessage = String(args.summary || "").trim(); finished = true; result = "done"; }
-        else result = await runTool(name, args, { cwd, env });
+        else result = await runTool(name, args, { cwd, env, blockInstalls: cfg.block_installs !== false });
       } catch (err) {
         result = `error: ${redactKey(err.message, key)}`;
       }
