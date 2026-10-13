@@ -21,6 +21,7 @@ import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { capFloorS, capMult, fastestFirstEnabled, modelCapEnabled, modelCapS, modelSpeeds, modelWins, orderFastestFirst, recordModelWin } from "./model_speed.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -51,6 +52,13 @@ export function dispatchPolicy(env = process.env) {
     explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
+    // per-MODEL timing learned from this repo's own cheap wins (lib/model_speed.mjs): a run is capped at 2 x its model's p90 win time (not
+    // below 60 s, not above the limit above; fewer than 5 wins: no cap), a capped run is cancelled and is not a failure; and the rungs start
+    // fastest model first. The two switches are independent.
+    modelCap: modelCapEnabled(env),
+    fastestFirst: fastestFirstEnabled(env),
+    capMult: capMult(env),
+    capFloorS: capFloorS(env),
   };
 }
 
@@ -380,10 +388,16 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
   const check = dispatchCheck(policy, reply, root);
   if (!check) return null;
-  const rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
+  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
                                                                     explore: policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) return null;
+  if (policy.fastestFirst) {
+    // the fast models get the parallel slots (lib/model_speed.mjs); a model without enough wins is placed as the median of the known ones
+    const ordered = orderFastestFirst(rungs, modelSpeeds(root));
+    if (ordered.some((r, i) => r !== rungs[i])) log(`dispatch: rungs fastest first: ${ordered.map((r) => r.model).join(", ")}`);
+    rungs = ordered;
+  }
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
   // test-first: tests from the task join the project's check for every cheap rung. They are written WHILE the cheap
@@ -402,27 +416,43 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       .catch((err) => { log(`test-first: ${err.message}`); try { fs.writeFileSync(path.join(dir, "SKIP"), ""); } catch { /* */ } return null; });
   }
 
+  // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
+  const baseLimitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
   const runRung = async (rung) => {
     let runId = null;
+    let startedAt = Date.now();
+    let capS = null;
+    let capped = false;
+    let capTimer = null;
     try {
       const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskText(payload.prompt), checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
       runId = started.run_id;
       running.set(rung.unit, runId);
+      startedAt = Date.now();
+      // this MODEL's own cap (from its wins in this repo): past it the run is cancelled, which is not a verdict on the model
+      const cap = policy.modelCap ? modelCapS(modelWins(root, rung.model, rung.executor)?.wins, { baseS: baseLimitS, mult: policy.capMult, floorS: policy.capFloorS }) : null;
+      if (cap !== null) {
+        capS = cap;
+        capTimer = setTimeout(() => { capped = true; log(`dispatch: ${rung.model} capped at ${cap} s`); rt.cancelRun(runId).catch(() => {}); }, cap * 1000);
+        capTimer.unref?.();
+      }
       let result;
       do {
         result = await rt.runResult(runId, 55);
       } while (!TERMINAL.has(result?.state));
-      return { rung, run_id: runId, result };
+      return { rung, run_id: runId, result, startedAt, capped, capS };
     } catch (err) {
-      return { rung, run_id: runId, error: err };
+      return { rung, run_id: runId, error: err, startedAt, capped, capS };
+    } finally {
+      clearTimeout(capTimer);
     }
   };
   // a finished rung -> true when its answer is accepted
-  const judge = async ({ rung, result, error }) => {
+  const judge = async ({ rung, result, error, startedAt, capped, capS }) => {
     if (result?.state === "verified") await specDone;     // settled by then: the check waited for the tests
     if (error) {
       log(`dispatch ${rung.unit}: ${error.message}`);
@@ -435,7 +465,8 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       return false;
     }
     if (result.state === "cancelled") {    // stopped from outside: no verdict on the model either
-      tried.push({ unit: rung.unit, state: "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
+      // by its own model's cap (slower than its wins here usually are): not a failure of the model either
+      tried.push({ unit: rung.unit, state: capped ? `capped at ${capS} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
       return false;
     }
     let cross = null;
@@ -455,6 +486,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     try {
       if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), rung.model, rung.executor, ok);
     } catch { /* the record is best-effort */ }
+    if (ok) recordModelWin(root, rung.model, rung.executor, (Date.now() - startedAt) / 1000);       // this model's own time to a pass
     tried.push({ unit: rung.unit, state: cross?.verdict === "disagree" ? "rejected by cross-check" : result.state,
                  run_id: result.run_id, cost_usd: result.cost_usd, ...(cross ? { cross } : {}),
                  tail: ok ? "" : (cross?.verdict === "disagree" ? cross.tail
@@ -469,7 +501,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
   let winner = null;
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
-  const limitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
+  const limitS = baseLimitS;
   let timer;
   const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
