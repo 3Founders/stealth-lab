@@ -528,7 +528,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       return { handled: true, ask: true, run_id: runId, unit: rung.unit, model: rung.model, files, library_entry: null, tried, spec,
         text: `Ready, NOT applied: ${rung.model} solved this and the check \`${check}\` passed in an isolated worktree${costNote}. ` +
           `It would change: ${files.join(", ") || "no files"}.${stat}Apply it with: stealthlab-mcp exec apply ${runId}  ` +
-          "(dispatch asks first because STEALTHLAB_DISPATCH_ASK=on)." };
+          "(dispatch asks first because STEALTHLAB_DISPATCH_ASK=on). That command makes an undo point first: stealthlab-mcp undo puts it back." };
     }
     // the way back first: an undo point for the files the answer will touch (lib/undo.mjs), then the apply, which itself
     // refuses when one of those files was edited in the checkout since the run started

@@ -135,6 +135,37 @@ export function undo({ repo, id = null, force = false, env = process.env }) {
   return { id: m.id, restored, removed };
 }
 
+// ---- apply a run by hand, with the same safety net ------------------------------------------------------------------------
+
+// `stealthlab-mcp exec apply <run_id>` (and ask mode, which stops before applying and tells the user to run it): the undo point first,
+// then the runtime's own apply, which still refuses when a touched file was edited since the run started. -> the apply result plus
+// { undo_point, undo_command } (undo_point null, with undo_note, when none could be made or the switch is off).
+export async function applyWithUndo(rt, runId, { env = process.env } = {}) {
+  const run = rt.load(runId);                                        // throws "unknown run" for a bad id, before anything is written
+  const result = await rt.runResult(runId, 0);
+  const files = result.diff?.files || [];
+  let point = null;
+  let note = null;
+  if (!undoEnabled(env)) note = "undo points are switched off (STEALTHLAB_DISPATCH_UNDO=off)";
+  else if (files.length) {
+    try {
+      const task = String(run.input?.task || "").split("\n").map((l) => l.trim()).find(Boolean) || "";
+      point = createUndoPoint({ repo: run.repo, files, model: result.model || null, task, env });
+    } catch (err) {
+      note = `no undo point could be made: ${String(err.message).split("\n")[0].slice(0, 120)}`;
+    }
+  }
+  let applied;
+  try {
+    applied = await rt.applyRun(runId);
+  } catch (err) {
+    if (point) discardUndoPoint(point, { repo: run.repo, env });
+    throw err;
+  }
+  if (point) finishUndoPoint(point, { repo: run.repo, env });
+  return { ...applied, undo_point: point ? point.id : null, ...(point ? { undo_command: "stealthlab-mcp undo" } : { undo_note: note }) };
+}
+
 // ---- the command ---------------------------------------------------------------------------------------------------------
 
 export function runUndoCli(argv, { cwd = process.cwd(), env = process.env, print = (s) => process.stdout.write(`${s}\n`) } = {}) {

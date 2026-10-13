@@ -182,3 +182,64 @@ test("dispatch: STEALTHLAB_DISPATCH_UNDO=off applies without a point, as before"
   assert.deepEqual(listUndoPoints({ repo: s.repo, env: s.env }), []);
   assert.equal(read(s.repo, "calc.py"), "x = 2\n");
 });
+
+// ---- exec apply (and ask mode's next step) makes an undo point too -----------------------------------------------------------------------
+
+import { applyWithUndo } from "../lib/undo.mjs";
+import { ExecRuntime } from "../lib/exec/runtime.mjs";
+import { git as gitIn, makeRepo, stubAdapter, testEnv } from "./fixtures/exec/helpers.mjs";
+
+async function verifiedRun(extraEnv = {}) {
+  const repo = makeRepo();
+  const env = testEnv({ extra: extraEnv });
+  const rt = new ExecRuntime({ env, adapters: { stub: stubAdapter({ scenario: { edits: [{ path: "calc.txt", content: "fixed\n" }], finalMessage: "fixed calc" } }) } });
+  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc so it says fixed", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1" });
+  assert.equal((await rt.runResult(run_id, 30)).state, "verified");
+  return { repo, env, rt, run_id };
+}
+
+test("exec apply: the run is applied with an undo point, and undo puts calc.txt back", async () => {
+  const { repo, env, rt, run_id } = await verifiedRun();
+  const before = { log: gitIn(repo, "log", "--oneline"), stash: gitIn(repo, "stash", "list") };
+  const r = await applyWithUndo(rt, run_id, { env });
+  assert.equal(r.applied, true);
+  assert.match(r.undo_point, /^u-\d{14}-[0-9a-f]{6}$/);
+  assert.equal(r.undo_command, "stealthlab-mcp undo");
+  assert.equal(read(repo, "calc.txt"), "fixed\n");
+  assert.deepEqual({ log: gitIn(repo, "log", "--oneline"), stash: gitIn(repo, "stash", "list") }, before, "nothing on the user's branch or stash");
+  const u = undo({ repo, env });
+  assert.deepEqual(u.restored, ["calc.txt"]);
+  assert.equal(read(repo, "calc.txt"), "broken\n");
+});
+
+test("exec apply: a file edited since the run started is not overwritten and leaves no undo point; an unknown run id writes nothing", async () => {
+  const { repo, env, rt, run_id } = await verifiedRun();
+  fs.writeFileSync(path.join(repo, "calc.txt"), "my own edit\n");                   // the user edits the same file during the run
+  await assert.rejects(applyWithUndo(rt, run_id, { env }), /changed since the run started/);
+  assert.equal(read(repo, "calc.txt"), "my own edit\n");
+  assert.deepEqual(listUndoPoints({ repo, env }), []);
+  await assert.rejects(applyWithUndo(rt, "r-20260101000000-abc123", { env }), /unknown run/);
+});
+
+test("exec apply: STEALTHLAB_DISPATCH_UNDO=off applies without a point and says why", async () => {
+  const { repo, env, rt, run_id } = await verifiedRun();
+  const r = await applyWithUndo(rt, run_id, { env: { ...env, STEALTHLAB_DISPATCH_UNDO: "off" } });
+  assert.equal(r.applied, true);
+  assert.equal(r.undo_point, null);
+  assert.match(r.undo_note, /switched off/);
+  assert.deepEqual(listUndoPoints({ repo, env }), []);
+});
+
+test("the real CLI: stealthlab-mcp exec apply <run> in another process prints the undo point, and stealthlab-mcp undo restores", async () => {
+  const { repo, env, run_id } = await verifiedRun();
+  const proc = spawnSync(process.execPath, [BIN, "exec", "apply", run_id], { cwd: repo, encoding: "utf8", env });
+  assert.equal(proc.status, 0, proc.stderr);
+  const printed = JSON.parse(proc.stderr.trim().split("\n").pop());
+  assert.equal(printed.applied, true);
+  assert.match(printed.undo_point, /^u-/);
+  assert.equal(read(repo, "calc.txt"), "fixed\n");
+  const back = spawnSync(process.execPath, [BIN, "undo"], { cwd: repo, encoding: "utf8", env });
+  assert.equal(back.status, 0, back.stdout + back.stderr);
+  assert.match(back.stdout, /undone .*restored calc\.txt/);
+  assert.equal(read(repo, "calc.txt"), "broken\n");
+}, { timeout: 120000 });

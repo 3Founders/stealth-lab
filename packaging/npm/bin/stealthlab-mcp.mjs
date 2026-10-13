@@ -284,7 +284,8 @@ async function main() {
     if (!runId) die("usage: stealthlab-mcp exec apply <run_id>", 2);
     const { ExecRuntime } = await import("../lib/exec/runtime.mjs");
     try {
-      return out(JSON.stringify(await new ExecRuntime({}).applyRun(runId)));
+      const { applyWithUndo } = await import("../lib/undo.mjs");
+      return out(JSON.stringify(await applyWithUndo(new ExecRuntime({}), runId)));
     } catch (err) {
       die(err.message, 1);
     }
