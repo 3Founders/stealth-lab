@@ -261,9 +261,15 @@ test("CLI: --with-exec --dry-run writes nothing; --with-exec without Claude Code
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /would configure Claude Code {5}hooks only/);
   assert.equal(fs.existsSync(path.join(home, ".claude")), false);
-  r = cli(["install", "--with-exec", "--url", "https://h.test/mcp", "--client", "cursor"], { home, fakeBin });
+  // a client that is neither Claude Code nor Cursor: nothing is written for --with-exec
+  r = cli(["install", "--with-exec", "--url", "https://h.test/mcp", "--client", "windsurf"], { home, fakeBin });
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, /Claude Code not selected/);
+  assert.equal(fs.existsSync(path.join(home, ".claude")), false);
+  // Cursor with --with-exec gets dispatch in its own prompt hook (docs/cursor_dispatch.md), still nothing under .claude
+  r = cli(["install", "--with-exec", "--url", "https://h.test/mcp", "--client", "cursor"], { home, fakeBin });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.err, /Cursor's prompt hook runs dispatch/);
   assert.equal(fs.existsSync(path.join(home, ".claude")), false);
 });
 

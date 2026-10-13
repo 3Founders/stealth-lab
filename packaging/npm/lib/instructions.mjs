@@ -64,7 +64,13 @@ export function removeBlock(file) {
   return "removed";
 }
 
-export function cursorRule(text = INSTRUCTIONS) {
+// Cursor only: with dispatch installed (`install --client cursor --with-exec`) the prompt hook may have a cheaper
+// model do a task before this agent runs (lib/cursor_dispatch.mjs). The agent never saw that prompt, so it is told
+// how to recognise such a change when the user refers to it.
+export const CURSOR_DISPATCH_NOTE = `- StealthLab may have a cheaper model do a task before you run: the user then sees "Done by <model> ..." and you never see that prompt. If the user refers to a change you did not make, look at \`git status\`/\`git diff\` and the newest entry in \`.stealth/\` before redoing it; the change already passed the project's check.
+`;
+
+export function cursorRule(text = INSTRUCTIONS + CURSOR_DISPATCH_NOTE) {
   return `---\ndescription: When and how to use the StealthLab MCP server\nalwaysApply: true\n---\n\n${BEGIN}\n${text.trimEnd()}\n${END}\n`;
 }
 
