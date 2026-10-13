@@ -52,7 +52,7 @@ export function dispatchPolicy(env = process.env) {
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
     // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
-    // medium code task is dispatched; the cheap models and the test writer get the brief. "off": the raw prompt, as before
+    // medium code task is dispatched; the cheap models and the test writer get the brief, then the user's original request. "off": the raw prompt, as before
     brief: (env.STEALTHLAB_BRIEF || "on").toLowerCase() !== "off",
   };
 }
@@ -393,11 +393,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (!rungs.length) return null;
   // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
   if (policy.brief) {
-    const { briefGate, briefText, makeBrief } = await import("./brief.mjs");
+    const { briefGate, briefedPrompt, makeBrief } = await import("./brief.mjs");
     const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path, env, fetchImpl, log });
     const gate = briefGate(brief, payload.prompt);
     if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
-    if (brief) payload = { ...payload, prompt: briefText(brief) };
+    // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there
+    if (brief) payload = { ...payload, prompt: briefedPrompt(brief, payload.prompt, TASK_MAX) };
   }
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];

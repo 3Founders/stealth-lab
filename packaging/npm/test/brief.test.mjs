@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { BRIEF_SYSTEM, briefGate, briefText, guardKind, makeBrief, parseBrief, parseOverride, recentTurns } from "../lib/brief.mjs";
+import { BRIEF_SYSTEM, briefGate, briefText, briefedPrompt, guardKind, makeBrief, parseBrief, parseOverride, recentTurns } from "../lib/brief.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
 
@@ -171,14 +171,14 @@ function stubRuntime(repo) {
 }
 const brief = (o) => async () => parseBrief(REPLY(o));
 
-test("dispatch: a clear code task runs, and the cheap model gets the BRIEF, not the raw prompt", async () => {
+test("dispatch: a clear code task runs, and the cheap model gets the BRIEF first, then the user's original request", async () => {
   const { env, repo } = setup();
   const rt = stubRuntime(repo);
   const d = await dispatch({ payload: { cwd: repo, prompt: "yes fix it" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
                              briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
   assert.equal(d.handled, true);
   assert.match(rt.calls[0].task, /^Fix calc\.py so x is 2 \(the bug discussed above\)/);
-  assert.doesNotMatch(rt.calls[0].task, /yes fix it/);
+  assert.match(rt.calls[0].task, /\n\nOriginal request:\nyes fix it$/);
   assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /yes fix it/, "the library title stays the user's own words");
 });
 
@@ -236,7 +236,7 @@ test("dispatch: !cheap tries the cheap models even when the plan puts the sessio
   assert.equal(d.handled, true);
 });
 
-test("test-first writer is told the brief too", async () => {
+test("test-first writer is told the brief and the original request too", async () => {
   const { env, repo } = setup({ STEALTHLAB_DISPATCH_TESTFIRST: "on" });
   const rt = stubRuntime(repo);
   const seen = [];
@@ -244,7 +244,7 @@ test("test-first writer is told the brief too", async () => {
                    runClaude: async (args, input) => { seen.push(String(input)); return { status: 0, stdout: "SKIP" }; },
                    briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
   assert.ok(seen.length, "the test writer ran");
-  assert.ok(seen.every((s) => s.includes("Fix calc.py so x is 2 (the bug discussed above)") && !s.includes("yes fix it")));
+  assert.ok(seen.every((s) => /Fix calc\.py so x is 2 \(the bug discussed above\)[\s\S]*\n\nOriginal request:\nyes fix it/.test(s)), "brief first, then the original");
 });
 
 // ---- overrides ---------------------------------------------------------------------------------------------------------
@@ -284,4 +284,42 @@ test("hook: !cheap forces the dispatch and gives it the prompt without the prefi
     dispatchImpl: async (a) => { seen.push({ prompt: a.payload.prompt, force: a.force }); return { handled: true, text: "Done by gemma", model: "gemma", files: [] }; } });
   assert.deepEqual(seen, [{ prompt: "fix the typo in the readme heading please", force: true }]);
   assert.equal(out[0].decision, "block");
+});
+
+// ---- the brief and the original request together ---------------------------------------------------------------------------------------
+
+test("briefedPrompt: the brief, then 'Original request:' and the user's words; within the limit the original is shortened first", () => {
+  const b = parseBrief(REPLY({}));
+  assert.equal(briefedPrompt(b, "fix it please"), `${briefText(b)}\n\nOriginal request:\nfix it please`);
+  assert.equal(briefedPrompt(b, "   "), briefText(b), "no original, no label");
+  const long = "x".repeat(5000);
+  const cut = briefedPrompt(b, long, 600);
+  assert.ok(cut.length <= 600, String(cut.length));
+  assert.ok(cut.startsWith(briefText(b)), "the brief is whole");
+  assert.match(cut, /\n\nOriginal request:\nx+\.\.\.$/);
+  const bigBrief = parseBrief(REPLY({ task: "t".repeat(900) }));
+  const squeezed = briefedPrompt(bigBrief, long, 700);
+  assert.ok(squeezed.length <= 700, String(squeezed.length));
+  assert.match(squeezed, /\n\nOriginal request:\nx{150,}\.\.\.$/, "a too-long brief gives way before the original drops below ~200 characters");
+});
+
+test("dispatch: a long original request still fits the task limit, brief whole, original cut with an ellipsis", async () => {
+  const { env, repo } = setup();
+  const rt = stubRuntime(repo);
+  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(120)}`;
+  await dispatch({ payload: { cwd: repo, prompt: raw }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
+                   briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
+  const task = rt.calls[0].task;
+  assert.ok(task.length <= 2000, String(task.length));
+  assert.match(task, /^Fix calc\.py so x is 2 \(the bug discussed above\)/);
+  assert.match(task, /\n\nOriginal request:\nyes fix it and also keep/);
+  assert.ok(task.endsWith("..."));
+  assert.doesNotMatch(task, /prompt truncated for the executor/);
+});
+
+test("dispatch: no brief still sends the raw prompt alone, with no label", async () => {
+  const { env, repo } = setup();
+  const rt = stubRuntime(repo);
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: async () => null });
+  assert.equal(rt.calls[0].task, "Fix calc.py so x is 2");
 });

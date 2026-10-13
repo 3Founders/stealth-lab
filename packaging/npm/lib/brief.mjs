@@ -1,4 +1,4 @@
-// The task brief: what the cheap models and the test writer are told instead of the raw prompt, and the rule that
+// The task brief: what the cheap models and the test writer are told FIRST (then the user's own words, see briefedPrompt), and the rule that
 // decides whether a prompt is dispatched at all.
 //
 // A real prompt is often not a clean task: "now do the same for the other one", "that bug again", a question, "thanks".
@@ -136,13 +136,28 @@ export function briefGate(brief, prompt) {
   return { ok: true, reason: "clear, small or medium code task" };
 }
 
-// What the cheap models and the test writer get. All of the brief, nothing but the brief.
+// The brief as text (briefedPrompt adds the original request after it).
 export function briefText(brief) {
   const lines = [brief.task];
   if (brief.parts.length > 1) lines.push("", "This is several things; do all of them:", ...brief.parts.map((p, i) => `${i + 1}. ${p}`));
   if (brief.files_hinted.length) lines.push("", `Files likely involved: ${brief.files_hinted.join(", ")}`);
   if (brief.acceptance) lines.push("", `Done when: ${brief.acceptance}`);
   return lines.join("\n");
+}
+
+// What the cheap models and the test writer are given: the brief FIRST, then the user's own words after "Original request:", so a
+// detail the brief dropped is still there. Within `max` characters (dispatch's task limit): the original request is shortened first (never
+// below 200 characters), the brief only if it alone is too long.
+export const ORIGINAL_LABEL = "\n\nOriginal request:\n";
+export function briefedPrompt(brief, raw, max = 2000) {
+  const head = briefText(brief);
+  const original = String(raw || "").trim();
+  if (!original) return head.slice(0, max);
+  const room = max - head.length - ORIGINAL_LABEL.length;
+  if (room >= original.length) return head + ORIGINAL_LABEL + original;
+  if (room >= 200) return head + ORIGINAL_LABEL + original.slice(0, room - 3) + "...";
+  const cut = Math.max(0, max - 200 - ORIGINAL_LABEL.length);
+  return head.slice(0, cut) + ORIGINAL_LABEL + original.slice(0, 197) + "...";
 }
 
 // ---- the call -----------------------------------------------------------------------------------------------------------
