@@ -455,7 +455,8 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     try {
       if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), rung.model, rung.executor, ok);
     } catch { /* the record is best-effort */ }
-    tried.push({ unit: rung.unit, state: cross?.verdict === "disagree" ? "rejected by cross-check" : result.state,
+    tried.push({ unit: rung.unit, state: cross?.verdict === "disagree" ? "rejected by cross-check"
+                   : result.stalled ? `failed, stalled (rule ${result.stalled.rule})` : result.state,
                  run_id: result.run_id, cost_usd: result.cost_usd, ...(cross ? { cross } : {}),
                  tail: ok ? "" : (cross?.verdict === "disagree" ? cross.tail
                    : String((result.checks || []).map((c) => c.tail || "").join("\n")).slice(-600)) });

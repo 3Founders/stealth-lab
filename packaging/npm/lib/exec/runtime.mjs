@@ -354,11 +354,13 @@ export class ExecRuntime {
       a.learned = (Array.isArray(parsed.learned) ? parsed.learned : []).slice(0, 5).map((s) => cut(this.red(String(s)), 240));
       if (parsed.tokens) a.tokens = { in: parsed.tokens.in ?? null, out: parsed.tokens.out ?? null };
       a.costUsd = parsed.costUsd ?? parsed.cost ?? null;
+      a.stalled = parsed.stalled || null;          // the agent stopped itself: it was going round in circles (lib/agent/stall.mjs)
 
       let terminal = null;
       if (a.cancelRequested || r.reason === "cancelled") terminal = "cancelled";
       else if (r.reason === "hang" || r.reason === "timeout") terminal = "timed_out";
       else if (r.reason === "spawn_error") { terminal = "failed"; a.error = this.red(`could not start executor: ${r.error}`); }
+      else if (a.stalled) { terminal = "failed"; a.error = this.red(`stalled (rule ${a.stalled.rule}): ${a.stalled.why}`); }   // failed, with no check run: it did fail
 
       if (terminal !== "cancelled") {
         const d = await collectDiff({ dir: a.worktree, baseTree: a.baseTree, env });
@@ -367,7 +369,7 @@ export class ExecRuntime {
         a.diff = { files: d.files, stat: d.stat, worktree: a.worktree, patch_path: patchPath };
         a.scopeViolations = scopeViolations(d.files, run.input.scope);
       }
-      if (terminal) return this.setState(run, a, terminal, { reason: r.reason });
+      if (terminal) return this.setState(run, a, terminal, { reason: r.reason, ...(a.stalled ? { stalled: a.stalled.rule } : {}) });
 
       this.setState(run, a, "verifying");
       a.checks = await runChecks({
@@ -408,14 +410,14 @@ ${a.error || ""}`)) {
     } else if (a.spawned && run.input.instance_key) {
       a.evidence = await reportPlanResult({
         instance_key: run.input.instance_key, accepted: a.state === "verified", model: a.model, scaffold: a.executor,
-        check_kind: a.checks.length ? "tests" : "self_report", latency_ms: a.finishedAt - a.startedAt,
+        check_kind: a.checks.length || a.stalled ? "tests" : "self_report", latency_ms: a.finishedAt - a.startedAt,
         tokens_in: a.tokens.in, tokens_out: a.tokens.out, cost_usd: a.costUsd,
       }, { env: this.env, fetchImpl: this.fetchImpl }).catch((err) => ({ reported: false, queued: false, error: this.red(err.message) }));
     } else if (a.spawned) {
       a.evidence = await reportModelRun({
         model: a.model, scaffold: a.executor, accepted: a.state === "verified", instance_key: run.instanceKey,
         goal_id: run.input.goal_id, procedure_id: run.input.procedure_id, step_order: run.input.step_order,
-        check_kind: a.checks.length ? "tests" : "self_report", latency_ms: a.finishedAt - a.startedAt,
+        check_kind: a.checks.length || a.stalled ? "tests" : "self_report", latency_ms: a.finishedAt - a.startedAt,
         tokens_in: a.tokens.in, tokens_out: a.tokens.out, cost_usd: a.costUsd,
         recommendation_id: run.selection?.recommendation?.recommendation_id, attempt_index: a.index,
       }, { env: this.env, fetchImpl: this.fetchImpl }).catch((err) => ({ reported: false, queued: false, error: this.red(err.message) }));
@@ -492,6 +494,7 @@ ${a.error || ""}`)) {
       evidence: { ...(a.evidence || { reported: false, queued: false }), instance_key: run.instanceKey || null },
       executor_exit: a.exitCode, ...(a.reason && a.reason !== "exit" ? { stop_reason: a.reason } : {}),
       ...(a.usageLimited ? { usage_limited: true } : {}),
+      ...(a.stalled ? { stalled: a.stalled } : {}),
       ...(a.error ? { error: a.error } : {}),
     };
   }
@@ -570,7 +573,7 @@ ${a.error || ""}`)) {
         spawned: !x.did_not_run, worktree: x.worktree, worktreeRemoved: x.worktree_removed, baseTree: x.base_tree, checks: x.checks || [],
         scopeViolations: x.scope_violations || [], diff: x.diff && x.diff.files ? { ...x.diff, worktree: x.worktree } : null,
         summary: x.summary, learned: x.learned || [], tokens: x.tokens || { in: null, out: null }, costUsd: x.cost_usd,
-        exitCode: x.executor_exit, reason: x.stop_reason || null,
+        exitCode: x.executor_exit, reason: x.stop_reason || null, stalled: x.stalled || null,
         error: TERMINAL.has(x.state) ? x.error : "the runtime exited before this attempt finished",
         evidence: x.evidence, startedAt: Date.parse(x.started_at) || null, finishedAt: Date.parse(x.finished_at) || null,
       })),
