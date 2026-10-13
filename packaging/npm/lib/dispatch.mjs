@@ -425,7 +425,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
   if (policy.brief) {
     const { briefGate, briefedPrompt, makeBrief } = await import("./brief.mjs");
-    const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path, env, fetchImpl, log });
+    const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
+                                                  cwd: payload.cwd || root, env, fetchImpl, log });
     const gate = briefGate(brief, payload.prompt);
     if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
     // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there

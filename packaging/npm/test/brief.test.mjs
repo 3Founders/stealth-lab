@@ -323,3 +323,14 @@ test("dispatch: no brief still sends the raw prompt alone, with no label", async
   await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: async () => null });
   assert.equal(rt.calls[0].task, "Fix calc.py so x is 2");
 });
+
+test("the brief sees the start of files the message names, only inside the project", async () => {
+  const { namedFiles } = await import("../lib/brief.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "named-"));
+  fs.writeFileSync(path.join(dir, "TASK.md"), "Full task: a valid file name has at most three digits.");
+  fs.writeFileSync(path.join(path.dirname(dir), "secret.txt"), "outside");
+  const got = namedFiles("A name is conside -- Implement it in solution.js (the task is in TASK.md). See ../secret.txt and `missing.md`.", dir);
+  assert.deepEqual(got.map((f) => f.name), ["TASK.md"]);
+  assert.match(got[0].text, /at most three digits/);
+  assert.deepEqual(namedFiles("fix TASK.md", null), []);
+});

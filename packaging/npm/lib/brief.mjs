@@ -42,8 +42,39 @@ export const BRIEF_SYSTEM = [
   "kind: 'code' only if the message asks for a change to code, files, queries or tests in this project; 'question' if it asks",
   "for an explanation or information; 'chat' for anything else (thanks, opinions, small talk).",
   "clarity: 'unclear' if an assistant could not start without asking the user something (no target, an ambiguous 'that',",
-  "no stated goal). size: small = one function, file or query; large = many files or an open-ended redesign.",
+  "no stated goal). A message that points to a file for the details ('the task is in TASK.md', 'see notes.txt') is clear",
+  "when that file exists: its start may be included after the message, and the assistant can read the rest.",
+  "size: small = one function, file or query; large = many files or an open-ended redesign.",
 ].join(" ");
+
+// ---- files the message names: "the task is in TASK.md" puts the details in the file, not the message ------------------
+
+const NAMED_FILE = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|rst|json|ya?ml|toml|ini|cfg|py|js|mjs|ts|tsx|jsx|sql|csv|html|css|go|rs|java|rb|sh))(?=$|[\s`'".,;:)!?])/g;
+const NAMED_MAX = 2;
+const NAMED_CHARS = 3000;
+
+// [{name, text}] for at most NAMED_MAX files the message names that exist inside `cwd` (never outside it), each cut to
+// NAMED_CHARS characters. Best-effort: nothing on any error.
+export function namedFiles(prompt, cwd) {
+  if (!cwd) return [];
+  const out = [];
+  const seen = new Set();
+  const root = path.resolve(cwd);
+  for (const m of String(prompt || "").matchAll(NAMED_FILE)) {
+    const name = m[1];
+    if (seen.has(name) || out.length >= NAMED_MAX) continue;
+    seen.add(name);
+    try {
+      const abs = path.resolve(root, name);
+      if (!abs.startsWith(root + path.sep)) continue;
+      if (!fs.statSync(abs).isFile()) continue;
+      const text = fs.readFileSync(abs, "utf-8").slice(0, NAMED_CHARS);
+      if (text.includes("\u0000")) continue;                  // binary
+      out.push({ name, text });
+    } catch { /* not there: skip */ }
+  }
+  return out;
+}
 
 // ---- the last turns of the session, from the transcript Claude Code points the hook at -------------------------------
 
@@ -170,7 +201,8 @@ function ledger(env, row) {
 }
 
 // -> brief | null. Never throws, never waits longer than the timeout.
-export async function makeBrief({ prompt, transcriptPath, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, readConfig = readExecConfig }) {
+export async function makeBrief({ prompt, transcriptPath, cwd = null, env = process.env, fetchImpl = globalThis.fetch, log = () => {},
+                                  readConfig = readExecConfig }) {
   try {
     if (!briefEnabled(env)) return null;
     const name = String(env.STEALTHLAB_BRIEF_MODEL || "gpt-oss-120b").trim();
@@ -179,7 +211,9 @@ export async function makeBrief({ prompt, transcriptPath, env = process.env, fet
     const turns = transcriptPath ? recentTurns(transcriptPath, { current: prompt }) : [];
     let history = turns.map((t) => `${t.role === "user" ? "Developer" : "Assistant"}: ${t.text}`).join("\n\n");
     if (history.length > CONTEXT_CHARS) history = history.slice(history.length - CONTEXT_CHARS);
-    const user = `${history ? `Earlier turns:\n${history}\n\n` : ""}Latest message:\n${String(prompt || "").trim()}`;
+    const files = namedFiles(prompt, cwd).map((f) => `--- ${f.name} (start) ---\n${f.text}`).join("\n\n");
+    const user = `${history ? `Earlier turns:\n${history}\n\n` : ""}Latest message:\n${String(prompt || "").trim()}` +
+      (files ? `\n\nFiles the message names:\n${files}` : "");
     const messages = profile.no_system_role
       ? [{ role: "user", content: `${BRIEF_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: BRIEF_SYSTEM }, { role: "user", content: user }];
