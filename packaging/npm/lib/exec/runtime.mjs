@@ -25,6 +25,8 @@ import {
 import { NO_CHANGE_RE, parseNodeLines } from "./task.mjs";
 import { localUnit } from "./store.mjs";
 import { runChecks, scopeViolations } from "./verify.mjs";
+import { depsEnv } from "./deps.mjs";
+import { relatedChecks } from "./related.mjs";
 import {
   applyToCheckout, assertNoMergeState, collectDiff, createWorktree, defaultWorktreeRoot, headCommit, removeWorktree,
   repoTopLevel, workingTreeDiff,
@@ -327,8 +329,9 @@ export class ExecRuntime {
       let stdout = "";
       let stderr = "";
       this.setState(run, a, "running");
+      const runEnv = depsEnv(a.worktree, env);          // the project's venv and node_modules/.bin lead PATH
       const h = spawnManaged({
-        cmd: spec.cmd, args: spec.args || [], cwd: a.worktree, env: childEnv(env, spec.env), stdinText: spec.stdinText,
+        cmd: spec.cmd, args: spec.args || [], cwd: a.worktree, env: childEnv(runEnv, spec.env), stdinText: spec.stdinText,
         hangS: run.input.hangS, timeoutS: run.input.timeoutS,
         onStdout: (d) => { stdout = (stdout + d).slice(-OUT_KEEP); outLog.write(d); },
         onStderr: (d) => { stderr = (stderr + d).slice(-OUT_KEEP); errLog.write(d); },
@@ -372,12 +375,22 @@ export class ExecRuntime {
       if (terminal) return this.setState(run, a, terminal, { reason: r.reason, ...(a.stalled ? { stalled: a.stalled.rule } : {}) });
 
       this.setState(run, a, "verifying");
-      a.checks = await runChecks({
-        cwd: a.worktree, checks: run.input.checks, timeoutS: run.input.checkTimeoutS, env, secrets: this.secrets,
+      const checkOpts = {
+        cwd: a.worktree, timeoutS: run.input.checkTimeoutS, env: runEnv, secrets: this.secrets,
         onEvent: (e) => this.event(run, { ...e, attempt: a.index + 1 }),
         onSpawn: (ch) => { a.checkHandle = ch; if (ch && a.cancelRequested) ch.kill("cancelled"); },
         shouldStop: () => a.cancelRequested,
-      });
+      };
+      // the tests related to what changed run first: a failure there ends the attempt at once; a pass changes nothing, the
+      // full check below always runs (lib/exec/related.mjs)
+      const quick = relatedChecks(run.input.checks, a.diff.files, a.worktree, env);
+      let quickFailed = false;
+      if (quick.length) {
+        this.event(run, { event: "related_checks", attempt: a.index + 1, files: quick.flatMap((q) => q.files).slice(0, 20) });
+        const q = await runChecks({ ...checkOpts, checks: quick.map((x) => x.cmd) });
+        if (q.some((c) => c.exit !== 0)) { a.checks = q; quickFailed = true; }
+      }
+      if (!quickFailed) a.checks = await runChecks({ ...checkOpts, checks: run.input.checks });
       if (a.cancelRequested) return this.setState(run, a, "cancelled");
       const allPass = a.checks.length === run.input.checks.length && a.checks.every((c) => c.exit === 0);
       const nonEmpty = a.diff.files.length > 0 || run.input.noChangeExpected;

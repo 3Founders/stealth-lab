@@ -23,6 +23,7 @@ import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./libr
 import { executorFor } from "./model_guard.mjs";
 import { profileKey } from "./executors/profile.mjs";
 import { detectCheck, pythonBin } from "./detect_check.mjs";
+import { repoContext } from "./task_context.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 const TASK_MAX = 2000;
@@ -409,12 +410,15 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
       .catch((err) => { log(`test-first: ${err.message}`); try { fs.writeFileSync(path.join(dir, "SKIP"), ""); } catch { /* */ } return null; });
   }
 
+  // the repo's own facts and the matched library entries, after the task (lib/task_context.mjs; STEALTHLAB_DISPATCH_CONTEXT=off)
+  const ctx = repoContext({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env });
+  const taskWithContext = ctx ? `${taskText(payload.prompt)}\n\n${ctx}` : taskText(payload.prompt);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
   const runRung = async (rung) => {
     let runId = null;
     try {
-      const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskText(payload.prompt), checks: [fullCheck],
+      const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskWithContext, checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
       runId = started.run_id;

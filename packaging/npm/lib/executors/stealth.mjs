@@ -41,6 +41,9 @@ const adapter = {
       early_stop: earlyStopEnabled(env),
       ...(Number(env.STEALTHLAB_EARLY_STOP_STEPS) > 0 ? { early_stop_steps: Number(env.STEALTHLAB_EARLY_STOP_STEPS) } : {}),
       ...(Number(env.STEALTHLAB_EARLY_STOP_ERRORS) > 0 ? { early_stop_errors: Number(env.STEALTHLAB_EARLY_STOP_ERRORS) } : {}),
+      // package installs are refused while dependency links are in the worktree (lib/agent/installs.mjs); the child's env carries
+      // no STEALTHLAB_ variable, so the switch travels here
+      ...((env.STEALTHLAB_EXEC_BLOCK_INSTALLS || "on").toLowerCase() === "off" ? { block_installs: false } : {}),
       ...(limits || {}),
     };
     void worktree; void timeoutS;
