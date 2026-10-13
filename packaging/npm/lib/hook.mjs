@@ -28,6 +28,7 @@
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
 import { parseOverride } from "./brief.mjs";
 import { markShown, pendingLines, recordDispatch } from "./continuity.mjs";
+import { maybeStartSurvey } from "./auto_survey.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -486,6 +487,8 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
     return;
   }
   if (override.kind === "cheap") payload.prompt = override.prompt;
+  // the first prompt in a repo starts its survey, detached (lib/auto_survey.mjs): never waits, never fails the hook
+  try { maybeStartSurvey({ cwd: payload.cwd || process.cwd(), env }); } catch { /* best effort */ }
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
   const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
   const mode = deliveryMode(policy, policy.strongMode ? model : null);

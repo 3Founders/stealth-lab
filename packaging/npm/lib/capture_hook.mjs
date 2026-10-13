@@ -39,6 +39,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./config.mjs";
 import { logHook } from "./subagent_hook.mjs";
+import { autoTidy } from "./library_tidy.mjs";
 import { addEntry, codeWays, diffFromGit, ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
@@ -302,6 +303,7 @@ export function recordLibraryEntry(s, { env = process.env, now = new Date(), git
   const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null },
                          { now, ...(gitImpl ? { gitImpl } : {}) });
   s.library_added = entry.id;
+  autoTidy(s.cwd, env);                              // an exact duplicate of an earlier entry is dropped, the newer one kept
   return entry.id;
 }
 

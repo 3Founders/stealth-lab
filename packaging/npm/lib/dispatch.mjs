@@ -21,6 +21,7 @@ import { readExecConfig } from "./exec/store.mjs";
 import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
+import { autoTidy } from "./library_tidy.mjs";
 import { profileKey } from "./executors/profile.mjs";
 import { capFloorS, capMult, fastestFirstEnabled, modelCapEnabled, modelCapS, modelSpeeds, modelWins, orderFastestFirst, recordModelWin } from "./model_speed.mjs";
 import { detectCheck, pythonBin } from "./detect_check.mjs";
@@ -622,7 +623,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     try {
       const { promptTitle } = await import("./capture_hook.mjs");
       const diff = diffFromGit(root);
-      if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check, observed: true, diff }).id;
+      if (diff.trim()) {
+        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check, observed: true, diff }).id;
+        autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
+      }
     } catch (err) {
       log(`dispatch: library entry not added (${err.message})`);
     }
