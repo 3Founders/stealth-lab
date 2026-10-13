@@ -70,6 +70,9 @@ export function dispatchPolicy(env = process.env) {
     fastestFirst: fastestFirstEnabled(env),
     capMult: capMult(env),
     capFloorS: capFloorS(env),
+    // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
+    // medium code task is dispatched; the cheap models and the test writer get the brief, then the user's original request. "off": the raw prompt, as before
+    brief: (env.STEALTHLAB_BRIEF || "on").toLowerCase() !== "off",
   };
 }
 
@@ -397,14 +400,18 @@ function taskText(prompt) {
 
 // -> {handled: true, text} when a cheap rung's verified change was applied; else {handled: false, tried, remaining}
 //    (remaining: the plan's ladder after the rungs tried here), or null when dispatch does not apply.
-export async function dispatch({ payload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude }) {
+// force: the prompt began with `!cheap` -- try the cheap models even where routing would skip, and skip the brief's gate
+// briefImpl: for tests, a stand-in for brief.mjs makeBrief()
+export async function dispatch({ payload: rawPayload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude,
+                                 force = false, briefImpl }) {
+  let payload = rawPayload;
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
   const check = dispatchCheck(policy, reply, root);
   if (!check) return null;
   let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
-                                                                    explore: policy.explore }), env,
+                                                                    explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) return null;
   if (policy.fastestFirst) {
@@ -412,6 +419,15 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     const ordered = orderFastestFirst(rungs, modelSpeeds(root));
     if (ordered.some((r, i) => r !== rungs[i])) log(`dispatch: rungs fastest first: ${ordered.map((r) => r.model).join(", ")}`);
     rungs = ordered;
+  }
+  // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
+  if (policy.brief) {
+    const { briefGate, briefedPrompt, makeBrief } = await import("./brief.mjs");
+    const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path, env, fetchImpl, log });
+    const gate = briefGate(brief, payload.prompt);
+    if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
+    // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there
+    if (brief) payload = { ...payload, prompt: briefedPrompt(brief, payload.prompt, TASK_MAX) };
   }
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
@@ -582,7 +598,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     if (undoEnabled(env) && files.length) {
       try {
         repoDir = await repoTopLevel(payload.cwd || root, env);
-        undoPoint = createUndoPoint({ repo: repoDir, files, model: rung.model, task: firstLine(payload.prompt), env });
+        undoPoint = createUndoPoint({ repo: repoDir, files, model: rung.model, task: firstLine(rawPayload.prompt), env });
       } catch (err) {
         log(`dispatch: no undo point (${err.message})`);
         undoNote = ` (no undo point could be made: ${String(err.message).split("\n")[0].slice(0, 120)})`;
@@ -606,7 +622,7 @@ export async function dispatch({ payload, reply, root, mine, env = process.env, 
     try {
       const { promptTitle } = await import("./capture_hook.mjs");
       const diff = diffFromGit(root);
-      if (diff.trim()) entry = addEntry(root, { title: promptTitle(payload.prompt), check, observed: true, diff }).id;
+      if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check, observed: true, diff }).id;
     } catch (err) {
       log(`dispatch: library entry not added (${err.message})`);
     }
