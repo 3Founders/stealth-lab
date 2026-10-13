@@ -27,13 +27,14 @@
 // gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
 import { parseOverride } from "./brief.mjs";
+import { markShown, pendingLines, recordDispatch } from "./continuity.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeDir } from "./claude_exec.mjs";
 import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
 import { execConfigPath } from "./exec/store.mjs";
-import { modelFromTranscript, rememberLookup } from "./capture_hook.mjs";
+import { modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
@@ -433,8 +434,40 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
   return cut(head + parts.join("\n\n"), maxChars);
 }
 
+// What a cheap model already did earlier in this session is added to this prompt's context (lib/continuity.mjs): into
+// whatever context the lookup produces, or on its own when the lookup adds none. A prompt that is itself blocked (a
+// dispatch) delivers nothing, so the lines wait for the next one.
+export async function runPromptHook(args) {
+  const { stdinText, env = process.env, write } = args;
+  let sessionId = null;
+  try { sessionId = JSON.parse(stdinText || "{}").session_id || null; } catch { /* the core ignores a bad payload too */ }
+  const lines = sessionId ? pendingLines(sessionId, { env }) : [];
+  if (!lines.length) return runPromptHookCore(args);
+  let delivered = false;
+  let blocked = false;
+  const note = lines.join("\n");
+  await runPromptHookCore({ ...args, write: (s) => {
+    try {
+      const o = JSON.parse(s);
+      if (o?.decision === "block") blocked = true;
+      const ctx = o?.hookSpecificOutput?.additionalContext;
+      if (typeof ctx === "string") {
+        o.hookSpecificOutput.additionalContext = `${note}\n\n${ctx}`;
+        delivered = true;
+        return write(JSON.stringify(o));
+      }
+    } catch { /* not JSON: pass it on as it is */ }
+    return write(s);
+  } });
+  if (!delivered && !blocked) {
+    write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: note } }));
+    delivered = true;
+  }
+  if (delivered) markShown(sessionId, { env });
+}
+
 // dispatchImpl: for tests, a stand-in for lib/dispatch.mjs dispatch()
-export async function runPromptHook({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl }) {
+async function runPromptHookCore({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl }) {
   const policy = hookPolicy(env);
   let payload;
   try {
@@ -490,6 +523,7 @@ export async function runPromptHook({ stdinText, settings, userAgent, env = proc
       const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap" });
       if (d?.handled) {
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
+        recordDispatch({ sessionId: payload.session_id, model: d.model, files: d.files, task: promptTitle(payload.prompt) }, { env });
         write(JSON.stringify({ decision: "block", reason: d.text }));
         return;
       }
