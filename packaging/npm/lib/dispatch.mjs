@@ -394,6 +394,16 @@ export function dispatchCheck(policy, reply, root) {
 
 const firstLine = (text) => String(text || "").split("\n").map((l) => l.trim()).find(Boolean)?.slice(0, 200) || "";
 
+// The executor takes at most TASK_MAX characters in all (lib/exec/runtime.mjs). The request comes first and is never cut
+// for the context; the repo context fills only what is left, and is dropped when less than CONTEXT_MIN would fit.
+const CONTEXT_MIN = 300;
+export function fitTask(task, ctx) {
+  if (!ctx) return task;
+  const room = TASK_MAX - task.length - 2;
+  if (room < CONTEXT_MIN) return task;
+  return `${task}\n\n${ctx.length <= room ? ctx : `${ctx.slice(0, room - 20)}\n[...context cut]`}`;
+}
+
 function taskText(prompt) {
   const t = String(prompt || "").trim();
   return t.length <= TASK_MAX ? t : `${t.slice(0, TASK_MAX - 40)}\n[...prompt truncated for the executor]`;
@@ -452,7 +462,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
 
   // the repo's own facts and the matched library entries, after the task (lib/task_context.mjs; STEALTHLAB_DISPATCH_CONTEXT=off)
   const ctx = repoContext({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env });
-  const taskWithContext = ctx ? `${taskText(payload.prompt)}\n\n${ctx}` : taskText(payload.prompt);
+  const taskWithContext = fitTask(taskText(payload.prompt), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
   const baseLimitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
