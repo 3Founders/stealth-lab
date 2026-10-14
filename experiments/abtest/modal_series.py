@@ -28,7 +28,7 @@ Choices, so a surprise has somewhere to start (plan section 4 says "one image pe
     dump of the test database to the Volume; a repeated command restores them and the runner skips what is done. Resuming
     arm C/C0 without that snapshot would restart their `.stealth/` from nothing and break the learning curve, so it is refused
     unless --allow-cold-resume.
-  * The Volume path is /vol/<run>/<repository>/ (results/, logs/, state.tgz, db.sql.gz, report.txt).
+  * The Volume path is /mnt/series/<run>/<repository>/ (results/, logs/, state.tgz, db.sql.gz, report.txt).
   * A, C and C0 of one repository share ONE test backend (as in a local run): what the server learned from C's outcomes is also
     visible to C0. Wiping .stealth/ does not wipe the server. Say so wherever C minus C0 is quoted.
 
@@ -71,7 +71,7 @@ ARMS = ("A", "C", "C0")
 AUTHS = ("subscription", "api")
 SERIES_MODULE = "swe_series_task"
 PYTHONS = ("3.9", "3.10", "3.11", "3.12")
-VOL = "/vol"                              # POSIX strings: they are paths inside the Linux container (Modal needs them absolute)
+VOL = "/mnt/series"                              # POSIX strings: they are paths inside the Linux container (Modal needs them absolute)
 APP_DIR = "/app"
 PG_BIN = "/usr/lib/postgresql/15/bin"
 PG_DATA = "/var/lib/postgresql/data"
@@ -137,7 +137,7 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
     lines.append(f"  {sessions} session(s) in all; {PLAN_ESTIMATE}")
     lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else API_SECRET)
                  + f"; volume {VOLUME_NAME}")
-    lines.append(f"  results: /vol/{spec.run_name()}/<repository>/ on the volume (results/, logs/, state.tgz, db.sql.gz, report.txt)")
+    lines.append(f"  results: /mnt/series/{spec.run_name()}/<repository>/ on the volume (results/, logs/, state.tgz, db.sql.gz, report.txt)")
     return "\n".join(lines)
 
 

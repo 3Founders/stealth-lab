@@ -56,7 +56,7 @@ def test_the_plan_says_what_runs_where_and_what_it_needs(fake_series):
     s = spec(max_issues=2)
     text = ms.plan_text(s, {"mini": ms.series_tasks(s, "mini")})
     assert "mini: 2 issue(s) -> 6 session(s)" in text and "6 session(s) in all" in text and "one after another" in text
-    assert f"{ms.KEYS_SECRET} + {ms.CLAUDE_SECRET}" in text and "/vol/long-mini-1t/<repository>/" in text
+    assert f"{ms.KEYS_SECRET} + {ms.CLAUDE_SECRET}" in text and "/mnt/series/long-mini-1t/<repository>/" in text
     api = ms.plan_text(spec(auth="api"), {"mini": ms.series_tasks(spec(), "mini")})
     assert "in parallel" in api and ms.API_SECRET in api and ms.CLAUDE_SECRET not in api
     assert len(ms.series_tasks(spec(), "mini")) == 4, "0 means every issue"
