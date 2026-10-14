@@ -14,7 +14,7 @@ and the Pythons the repositories need, and runs `runner.py` over the series task
     modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 1       # the dry run: 1 issue, 3 arms
     modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 8       # 8 issues x 3 arms = 24 sessions
 
-Auth (`--auth`): `subscription` (default) uses the owner's Claude Code login as a token (`claude setup-token`, Modal secret
+Auth (`--auth`; for `api` also set ABTEST_MODAL_AUTH=api when you run `modal run`): `subscription` (default) uses the owner's Claude Code login as a token (`claude setup-token`, Modal secret
 `claude-code-auth` holding CLAUDE_CODE_OAUTH_TOKEN): sessions count against the owner's 5-hour and weekly limits, so repositories
 and arms run ONE AT A TIME and a usage limit stops the run (resume by repeating the command). `api` uses an Anthropic API key
 (secret `anthropic-api` holding ANTHROPIC_API_KEY), billed per token; repositories run in parallel (arms still one after another
@@ -411,12 +411,13 @@ if modal is not None:
     volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
     _common = dict(image=build_image(), volumes={VOL: volume}, timeout=86400, cpu=4.0, memory=16384)
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)], **_common)
-    def run_subscription(spec: dict, repo: str) -> dict:
-        return container_main(spec, repo, commit=volume.commit)
+    # Modal resolves EVERY secret of EVERY function when the app starts, so only the secret of the chosen auth is attached: the
+    # default is the subscription; ABTEST_MODAL_AUTH=api (set when you run `modal run`) attaches the API-key secret instead
+    MODAL_AUTH = os.environ.get("ABTEST_MODAL_AUTH", "subscription")
+    _auth_secret = API_SECRET if MODAL_AUTH == "api" else CLAUDE_SECRET
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(API_SECRET)], **_common)
-    def run_api(spec: dict, repo: str) -> dict:
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    def run_unit(spec: dict, repo: str) -> dict:
         return container_main(spec, repo, commit=volume.commit)
 
     @app.local_entrypoint()
@@ -432,11 +433,13 @@ if modal is not None:
         print(plan_text(spec, tasks))
         if plan:
             return
-        fn = run_subscription if spec.auth == "subscription" else run_api
+        if spec.auth != MODAL_AUTH:
+            raise SystemExit(f"--auth {spec.auth} needs ABTEST_MODAL_AUTH={spec.auth} in the environment of this command "
+                             f"(it chooses which Modal secret the container gets); it is {MODAL_AUTH!r}")
         if spec.auth == "subscription":
-            results = [fn.remote(asdict(spec), r) for r in spec.repos]            # one at a time
+            results = [run_unit.remote(asdict(spec), r) for r in spec.repos]            # one at a time
         else:
-            results = list(fn.starmap([(asdict(spec), r) for r in spec.repos]))   # repositories in parallel
+            results = list(run_unit.starmap([(asdict(spec), r) for r in spec.repos]))   # repositories in parallel
         for r in results:
             print(json.dumps({k: v for k, v in r.items() if k != "report"}))
             print(r.get("report", ""))

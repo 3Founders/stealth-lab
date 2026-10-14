@@ -118,7 +118,8 @@ def test_what_never_reaches_the_image(path, expected):
 @pytest.mark.skipif(ms.modal is None, reason="modal is not installed")
 def test_the_image_and_the_app_are_built_without_touching_modal():
     assert isinstance(ms.build_image(), ms.modal.Image)
-    assert hasattr(ms.run_subscription, "remote") and hasattr(ms.run_api, "starmap"), "both functions are registered on the app"
+    assert hasattr(ms.run_unit, "remote") and hasattr(ms.run_unit, "starmap"), "the function is registered on the app"
+    assert ms.MODAL_AUTH == "subscription", "only the subscription's secret is attached unless ABTEST_MODAL_AUTH=api"
     assert ms.app.name == ms.APP_NAME
 
 
