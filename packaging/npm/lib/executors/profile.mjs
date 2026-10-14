@@ -82,6 +82,8 @@ export function normaliseProfile(name, raw) {
     dpa_signed: flag(name, "dpa_signed", raw.dpa_signed) ?? false, region,
     request_extras: Object.freeze(extras),
     no_system_role: flag(name, "no_system_role", raw.no_system_role) ?? false,
+    // the model reads images (a GLM-V, say): tasks built on a screenshot may go to it, and it gets the image
+    vision: flag(name, "vision", raw.vision) ?? false,
   });
 }
 

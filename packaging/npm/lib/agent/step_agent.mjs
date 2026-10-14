@@ -350,6 +350,23 @@ export function preloadNamedFiles(task, cwd) {
   return parts.length ? `\n\nThe files the task names, already read for you (read_file output, numbered lines):\n\n${parts.join("\n")}` : "";
 }
 
+// The images the task names that exist inside cwd (at most 2, 4 MB each), as OpenAI-style image_url parts.
+const IMAGE_NAMED = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(png|jpe?g|gif|webp))(?=$|[\s`'".,;:)!?])/gi;
+export function namedImageParts(task, cwd) {
+  const parts = [];
+  for (const m of String(task || "").matchAll(IMAGE_NAMED)) {
+    if (parts.length >= 2) break;
+    try {
+      const { abs } = safePath(cwd, m[1]);
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size > 4_000_000) continue;
+      const ext = m[2].toLowerCase() === "jpg" ? "jpeg" : m[2].toLowerCase();
+      parts.push({ type: "image_url", image_url: { url: `data:image/${ext};base64,${fs.readFileSync(abs).toString("base64")}` } });
+    } catch { /* missing or outside cwd */ }
+  }
+  return parts;
+}
+
 export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fetchImpl = globalThis.fetch, sleep = sleepReal, log = () => {}, fingerprint = worktreeFingerprint } = {}) {
   const key = env[KEY_ENV];
   if (!key) throw new Error(`${KEY_ENV} is not set`);
@@ -367,6 +384,14 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   const messages = cfg.no_system_role
     ? [{ role: "user", content: `${system}\n\n---\n\nTask:\n${taskText}` }]
     : [{ role: "system", content: system }, { role: "user", content: taskText }];
+  if (cfg.vision) {
+    // a model that can see gets the images the task names (screenshot.png) as image parts of its first turn
+    const parts = namedImageParts(cfg.task, cwd);
+    if (parts.length) {
+      const first = messages[messages.length - 1];
+      first.content = [{ type: "text", text: first.content }, ...parts];
+    }
+  }
   let tin = 0, tout = 0, step = 0, stop = "max_steps", finalMessage = "";
   // stop a stuck run early (lib/agent/stall.mjs); cfg.early_stop === false turns it off
   const detector = cfg.early_stop === false ? null

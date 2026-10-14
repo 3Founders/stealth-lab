@@ -431,10 +431,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (!root) { log("dispatch: not dispatched (no .stealth/ in this project)"); return null; }
   const check = dispatchCheck(policy, reply, root);
   if (!check) { log("dispatch: not dispatched (no check: no test command found or configured)"); return null; }
-  if (!policy.vision && !force) {
-    const images = namedImages(payload.prompt, payload.cwd || root);
-    if (images.length) { log(`dispatch: not dispatched (the task needs an image the cheap models cannot see: ${images.join(", ")})`); return null; }
-  }
+  // a task built on an image goes only to the cheap models that can see it (exec.json profile `vision: true`, e.g. a
+  // GLM-V); none, and it is not dispatched (STEALTHLAB_DISPATCH_VISION=on treats every cheap model as able to see)
+  const images = force ? [] : namedImages(payload.prompt, payload.cwd || root);
   let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
@@ -448,6 +447,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     const ordered = orderFastestFirst(rungs, modelSpeeds(root));
     if (ordered.some((r, i) => r !== rungs[i])) log(`dispatch: rungs fastest first: ${ordered.map((r) => r.model).join(", ")}`);
     rungs = ordered;
+  }
+  if (images.length && !policy.vision) {
+    const profiles = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
+    rungs = rungs.filter((r) => profiles[r.model]?.vision === true);
+    if (!rungs.length) {
+      log(`dispatch: not dispatched (the task needs an image no cheap model here can see: ${images.join(", ")})`);
+      return null;
+    }
   }
   // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
   if (policy.brief) {

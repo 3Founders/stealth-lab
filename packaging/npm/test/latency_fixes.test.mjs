@@ -87,3 +87,27 @@ test("the cheap agent starts with the files the task names already read", () => 
   assert.doesNotMatch(out, /check\.test\.js ---|x\.txt/);
   assert.equal(preloadNamedFiles("no files here", dir), "");
 });
+
+test("an image task goes only to the cheap models whose profile can see (vision: true)", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "glm-4.6v"] } },
+    profiles: { "glm-4.6v": { openai_base_url: "https://example.test/v1", key_env: "K", vision: true } } }));
+  fs.writeFileSync(path.join(repo, "screenshot.png"), "\x89PNG");
+  const plan = { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-4.6v|stealth"] };
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", ""], "glm-4.6v": ["verified", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Recreate the web page shown in screenshot.png as index.html" },
+    reply: { model_plan: plan }, root: repo, mine: MINE, env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" }, runtime: rt, log: (m) => logs.push(m) });
+  assert.ok(d?.handled, logs.join(" | "));
+  assert.deepEqual(rt.calls.map((c) => c.model), ["glm-4.6v"], logs.join(" | "));
+});
+
+test("a model that can see gets the named images as image parts", async () => {
+  const { namedImageParts } = await import("../lib/agent/step_agent.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "img-"));
+  fs.writeFileSync(path.join(dir, "screenshot.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const parts = namedImageParts("Recreate the page in screenshot.png; ignore missing.jpg", dir);
+  assert.equal(parts.length, 1);
+  assert.equal(parts[0].type, "image_url");
+  assert.match(parts[0].image_url.url, /^data:image\/png;base64,iVBORw==$/);
+});
