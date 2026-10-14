@@ -189,7 +189,6 @@ def build_image():
         .add_local_dir(REPO / "backend" / "app", f"{APP_DIR}/backend/app", ignore=ignored)
         .add_local_dir(REPO / "backend" / "db", f"{APP_DIR}/backend/db", ignore=ignored)
         .add_local_dir(REPO / "backend" / "scripts", f"{APP_DIR}/backend/scripts", ignore=ignored)
-        .add_local_dir(REPO / "backend" / "data", f"{APP_DIR}/backend/data", ignore=ignored)
         .add_local_dir(REPO / "packaging" / "npm", f"{APP_DIR}/packaging/npm", ignore=ignored)
         .add_local_dir(HERE, f"{APP_DIR}/experiments/abtest", ignore=ignored)
     )
