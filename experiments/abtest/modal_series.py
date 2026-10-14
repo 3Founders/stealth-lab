@@ -184,8 +184,7 @@ def build_image():
                       "uv python install " + " ".join(PYTHONS))
         .add_local_file(REPO / "backend" / "requirements.txt", "/tmp/backend-requirements.txt", copy=True)
         .run_commands("pip install -r /tmp/backend-requirements.txt", "pip install uvicorn pytest pyarrow pandas huggingface_hub")
-        .env({"PYTHONPATH": f"{APP_DIR}/experiments/abtest", "PYTHONUNBUFFERED": "1", "HF_HOME": f"{VOL}/cache/hf",
-              "UV_CACHE_DIR": f"{VOL}/cache/uv", "ABTEST_CONTAINER": "1"})
+        .env({"PYTHONPATH": f"{APP_DIR}/experiments/abtest", "PYTHONUNBUFFERED": "1", "ABTEST_CONTAINER": "1"})   # NOT the cache variables: see Container.__init__
         .add_local_dir(REPO / "backend" / "app", f"{APP_DIR}/backend/app", ignore=ignored)
         .add_local_dir(REPO / "backend" / "db", f"{APP_DIR}/backend/db", ignore=ignored)
         .add_local_dir(REPO / "backend" / "scripts", f"{APP_DIR}/backend/scripts", ignore=ignored)
@@ -229,7 +228,10 @@ class Container:
                  sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None):
         self.spec, self.repo, self.sh, self.commit, self.sleep = spec, repo, sh, commit, sleep
         self.vol, self.app = Path(vol), Path(app)
-        self.environ = auth_env(spec.auth, environ if environ is not None else dict(os.environ))
+        # the caches live on the Volume; their variables are set HERE, not in the image: a cache directory that exists in the image under
+        # the Volume's mount path makes Modal refuse the mount ("cannot mount volume on non-empty path")
+        self.environ = {**auth_env(spec.auth, environ if environ is not None else dict(os.environ)),
+                        "HF_HOME": str(self.vol / "cache" / "hf"), "UV_CACHE_DIR": str(self.vol / "cache" / "uv"), "UV_LINK_MODE": "copy"}
         self.ab = app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.out = vol / spec.run_name() / repo
