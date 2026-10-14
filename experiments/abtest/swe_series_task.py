@@ -82,7 +82,11 @@ def clone_url(repo: str) -> str:
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None, timeout: int | None = None,
         check: bool = True, input_bytes: bytes | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, env=env, timeout=timeout, check=check, input=input_bytes, capture_output=True)
+    r = subprocess.run(cmd, cwd=cwd, env=env, timeout=timeout, check=False, input=input_bytes, capture_output=True)
+    if check and r.returncode != 0:                 # say WHY (a bare CalledProcessError hides the command's own message)
+        tail = (r.stderr or b"").decode("utf-8", "replace")[-800:] or (r.stdout or b"").decode("utf-8", "replace")[-800:]
+        raise RuntimeError(f"`{' '.join(map(str, cmd))[:160]}` failed (exit {r.returncode}): {tail}")
+    return r
 
 
 def one_line(text: str) -> str:
