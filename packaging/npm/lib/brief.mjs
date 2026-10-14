@@ -15,6 +15,7 @@
 // off; STEALTHLAB_BRIEF_MODEL (default gpt-oss-120b) and STEALTHLAB_BRIEF_TIMEOUT_MS (default 8000) tune it.
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
@@ -44,6 +45,8 @@ export const BRIEF_SYSTEM = [
   "clarity: 'unclear' if an assistant could not start without asking the user something (no target, an ambiguous 'that',",
   "no stated goal). A message that points to a file for the details ('the task is in TASK.md', 'see notes.txt') is clear",
   "when that file exists: its start may be included after the message, and the assistant can read the rest.",
+  "The project's file names may follow too: a message naming a function or feature that plausibly lives in one of them",
+  "('add is broken, fix it' with a calc.py) is clear; put that file in files_hinted.",
   "size: small = one function, file or query; large = many files or an open-ended redesign.",
 ].join(" ");
 
@@ -74,6 +77,23 @@ export function namedFiles(prompt, cwd) {
     } catch { /* not there: skip */ }
   }
   return out;
+}
+
+// The project's tracked file names (git ls-files), at most PROJECT_FILES names and PROJECT_CHARS characters, or "".
+// "add is broken, fix it" is clear when the brief can see a calc.py; without the listing it cannot tell.
+const PROJECT_FILES = 120;
+const PROJECT_CHARS = 2000;
+export function projectFiles(cwd) {
+  if (!cwd) return "";
+  try {
+    const r = spawnSync("git", ["-C", cwd, "ls-files"], { encoding: "utf8", timeout: 3000, windowsHide: true });
+    if (r.status !== 0) return "";
+    const names = r.stdout.split(/\r?\n/).filter((n) => n && !n.startsWith(".stealth/")).slice(0, PROJECT_FILES);
+    const text = names.join("\n");
+    return text.length <= PROJECT_CHARS ? text : `${text.slice(0, PROJECT_CHARS).replace(/\n[^\n]*$/, "")}\n...`;
+  } catch {
+    return "";
+  }
 }
 
 // ---- the last turns of the session, from the transcript Claude Code points the hook at -------------------------------
@@ -214,8 +234,10 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
     let history = turns.map((t) => `${t.role === "user" ? "Developer" : "Assistant"}: ${t.text}`).join("\n\n");
     if (history.length > CONTEXT_CHARS) history = history.slice(history.length - CONTEXT_CHARS);
     const files = namedFiles(prompt, cwd).map((f) => `--- ${f.name} (start) ---\n${f.text}`).join("\n\n");
+    const listing = projectFiles(cwd);
     const user = `${history ? `Earlier turns:\n${history}\n\n` : ""}Latest message:\n${String(prompt || "").trim()}` +
-      (files ? `\n\nFiles the message names:\n${files}` : "");
+      (files ? `\n\nFiles the message names:\n${files}` : "") +
+      (listing ? `\n\nThe project's files (to tell where a named function or feature lives):\n${listing}` : "");
     const messages = profile.no_system_role
       ? [{ role: "user", content: `${BRIEF_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: BRIEF_SYSTEM }, { role: "user", content: user }];

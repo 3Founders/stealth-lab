@@ -493,6 +493,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
   const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
   const mode = deliveryMode(policy, policy.strongMode ? model : null);
   if (mode === "off") return;
+  let planOnly = false;                  // the triage said no knowledge is needed: the lookup is for dispatch's plan only
   if (policy.triage) {
     const verdict = await callTriage({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
@@ -502,11 +503,29 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
       // No lookup for this prompt. Clear the previous prompt's remembered Goal so the capture hooks
       // (lib/capture_hook.mjs) never report this prompt's outcome against it.
       try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
-      return;
+      // With dispatch installed a quick fix ("add is broken, fix it") still goes to find_ways -- for the model plan
+      // only: dispatch needs it, and the triage judges knowledge, not whether cheap models can do the task. Nothing
+      // the lookup returns reaches the session's context unless a dispatch happened.
+      if (!dispatchInstalled(env)) return;
+      planOnly = true;
     }
   }
   try {
-    const root = findStealthRoot(payload.cwd || process.cwd());   // null: no .stealth here, a plain lookup
+    let root = findStealthRoot(payload.cwd || process.cwd());     // null: no .stealth here, a plain lookup
+    if (!root && dispatchInstalled(env)) {
+      // a git repo StealthLab has not seen yet: dispatch needs .stealth/ (routing record, library), which the first survey
+      // would only create minutes later -- so the first prompt makes it, and the cheap models can help from this prompt on
+      try {
+        const { repoRoot } = await import("./auto_survey.mjs");
+        const top = repoRoot(payload.cwd || process.cwd());
+        if (top) {
+          fs.mkdirSync(path.join(top, ".stealth"), { recursive: true });
+          const keep = path.join(top, ".stealth", ".keep");
+          if (!fs.existsSync(keep)) fs.writeFileSync(keep, "");
+          root = top;
+        }
+      } catch { /* not a repo, or not writable: a plain lookup, as before */ }
+    }
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
     extra = { ...extra, ...routingArgs(policy, model) };
@@ -552,6 +571,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
       reply = { ...reply, model_plan: { ...reply.model_plan, ladder: [mine] } };
       shown = { ...reply, model_plan: undefined };
     }
+    if (planOnly) return;                 // looked up for the plan only: the session gets nothing it did not need
     // For the capture hooks (lib/capture_hook.mjs): which Goal/Procedure this prompt is about. Never fails the hook.
     try { rememberLookup(payload, reply, { env, mine }); } catch { /* capture is best-effort */ }
     const context = formatKnowledge(shown, policy.maxChars, { mode, root, mine });

@@ -1762,14 +1762,34 @@ async def find_ways(
     _stages.begin()                                   # per-stage timing for this request (utils/stage_timer.py)
     gov, caller = _governor(), _find_ways_caller(ctx)
     library = _library_context(repo_identity, library_rows)
+    async def _plan_for(knowledge: str) -> str:
+        """`knowledge` (a find_ways reply) with the caller's model plan attached."""
+        nonlocal candidates
+        # the library arguments only reach the plan when the caller sent them: without them, exactly as before
+        local = {} if library is None and not (route_obs or "").strip() else {
+            "route_obs": route_obs, "library": library, "local_args": True}
+        if task_features:
+            local["task_features"] = task_features
+        own = _routing_plan.caller_unit(my_model, (_find_ways_client(ctx) or {}).get("name"))
+        if own is not None:
+            candidates = [*(candidates or []), own]
+        with _stages.stage("model_plan"):
+            return await _attach_model_plan(knowledge, ctx, candidates=candidates, check_kind=check_kind,
+                                            constraints=model_constraints, query=query, **local)
+
     # the knowledge depends on the library arguments, so a cached reply may only be reused for the same ones
     cache_facts = repo_claims if library is None else f"{repo_claims}\x1e{library.fingerprint()}"
     with _stages.stage("governor"):
         decision = gov.check(caller, query, cache_facts) if gov is not None and caller is not None else None
     if decision is not None and decision.action != "run":
-        await _record_find_ways(ctx, query, decision.reply, {}, (_time.monotonic() - t0) * 1000,
+        cached = _mark_untrusted(shape(decision.reply))
+        if candidates or my_model:
+            # the cache holds the knowledge only (a plan is per call): a repeated request ("fix it pls" again) still
+            # needs its own model plan, or a dispatch client silently stops dispatching
+            cached = await _plan_for(cached)
+        await _record_find_ways(ctx, query, cached, {}, (_time.monotonic() - t0) * 1000,
                                 governor=decision.action)
-        return _mark_untrusted(shape(decision.reply))
+        return cached
     triaged = await _find_ways_triage(query)
     if triaged is not None and not triaged.needs_retrieval:
         from app.mcp_server.find_ways_triage import not_needed_reply
@@ -1777,6 +1797,11 @@ async def find_ways(
         reply = not_needed_reply(triaged)
         if decision is not None:
             gov.remember(caller, decision.key, reply)
+        if candidates or my_model:
+            # The caller asked for a model plan (a dispatch client: cheap models before its own). The triage judges
+            # whether KNOWLEDGE helps, not whether a cheap model can do the task, so "add is broken, fix it" still
+            # gets its plan -- with no knowledge attached.
+            reply = await _plan_for(reply)
         await _record_find_ways(ctx, query, reply, {}, (_time.monotonic() - t0) * 1000, governor="triage")
         return reply
     with track_shard_requests() as shard_stats:
@@ -1792,17 +1817,7 @@ async def find_ways(
         reply = with_triage(reply, triaged)
     if decision is not None:
         gov.remember(caller, decision.key, reply)        # the knowledge only: a plan is per call, never cached
-    # the library arguments only reach the plan when the caller sent them: without them, exactly as before
-    local = {} if library is None and not (route_obs or "").strip() else {
-        "route_obs": route_obs, "library": library, "local_args": True}
-    if task_features:
-        local["task_features"] = task_features
-    own = _routing_plan.caller_unit(my_model, (_find_ways_client(ctx) or {}).get("name"))
-    if own is not None:
-        candidates = [*(candidates or []), own]
-    with _stages.stage("model_plan"):
-        final = await _attach_model_plan(_mark_untrusted(shape(reply)), ctx, candidates=candidates,
-                                         check_kind=check_kind, constraints=model_constraints, query=query, **local)
+    final = await _plan_for(_mark_untrusted(shape(reply)))
     # recorded AFTER the plan so the request time includes it and `plan_ms` (the router's overhead) is stored with it
     await _record_find_ways(ctx, query, final, shard_stats.as_dict(), (_time.monotonic() - t0) * 1000)
     return final

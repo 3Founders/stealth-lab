@@ -426,9 +426,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const dispatchStart = Date.now();
   const policy = dispatchPolicy(env);
   const plan = reply?.model_plan;
-  if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
+  if (!policy.enabled) return null;
+  if (!plan || plan.status !== "ok") { log(`dispatch: not dispatched (no model plan${plan?.status ? `: ${plan.status}` : ""})`); return null; }
+  if (!root) { log("dispatch: not dispatched (no .stealth/ in this project)"); return null; }
   const check = dispatchCheck(policy, reply, root);
-  if (!check) return null;
+  if (!check) { log("dispatch: not dispatched (no check: no test command found or configured)"); return null; }
   if (!policy.vision && !force) {
     const images = namedImages(payload.prompt, payload.cwd || root);
     if (images.length) { log(`dispatch: not dispatched (the task needs an image the cheap models cannot see: ${images.join(", ")})`); return null; }
@@ -436,7 +438,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
-  if (!rungs.length) return null;
+  if (!rungs.length) {
+    log(`dispatch: not dispatched (${String(plan.ladder?.[0] || "").split("|")[0] === String(mine || "").split("|")[0]
+      ? "the plan puts the session's model first for this kind of task" : "no cheap model available (quota or exec.json)"})`);
+    return null;
+  }
   if (policy.fastestFirst) {
     // the fast models get the parallel slots (lib/model_speed.mjs); a model without enough wins is placed as the median of the known ones
     const ordered = orderFastestFirst(rungs, modelSpeeds(root));
