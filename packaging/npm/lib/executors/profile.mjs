@@ -84,6 +84,9 @@ export function normaliseProfile(name, raw) {
     no_system_role: flag(name, "no_system_role", raw.no_system_role) ?? false,
     // the model reads images (a GLM-V, say): tasks built on a screenshot may go to it, and it gets the image
     vision: flag(name, "vision", raw.vision) ?? false,
+    // the strongest cheap model (GLM-5.3-flash, say): it alone tries a task the brief calls large, starts in the first
+    // wave, and gets extra time (dispatch's STEALTHLAB_DISPATCH_STRONG_EXTRA_S)
+    strong: flag(name, "strong", raw.strong) ?? false,
   });
 }
 

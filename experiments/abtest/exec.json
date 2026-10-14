@@ -44,14 +44,21 @@
       "openai_base_url": "https://api.z.ai/api/paas/v4",
       "input_per_mtok": 0.15,
       "output_per_mtok": 0.5,
-      "vision": true
+      "vision": false,
+      "request_extras": {
+        "reasoning_effort": "high"
+      },
+      "strong": true
     },
     "glm-5.3": {
       "model_id": "glm-5.3",
       "key_env": "Z_AI_KEY",
       "openai_base_url": "https://api.z.ai/api/paas/v4",
       "input_per_mtok": 1.4,
-      "output_per_mtok": 4.4
+      "output_per_mtok": 4.4,
+      "request_extras": {
+        "reasoning_effort": "high"
+      }
     }
   },
   "max_concurrent_runs": 2

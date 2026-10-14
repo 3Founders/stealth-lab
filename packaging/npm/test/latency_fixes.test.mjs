@@ -73,7 +73,7 @@ test("a task built on an image in the project is not dispatched (text-only cheap
   assert.equal(await dispatch({ payload: { cwd: repo, prompt }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt }), null);
   assert.equal(rt.calls.length, 0);
   const d = await dispatch({ payload: { cwd: repo, prompt }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
-    env: { ...env, STEALTHLAB_DISPATCH_VISION: "on" }, runtime: rt });
+    env: { ...env, STEALTHLAB_DISPATCH_VISION: "on", STEALTHLAB_DISPATCH_VISUAL_CHECK: "off" }, runtime: rt });
   assert.equal(d.handled, true);
 });
 
@@ -97,7 +97,7 @@ test("an image task goes only to the cheap models whose profile can see (vision:
   const logs = [];
   const rt = stub(repo, { "gemma-4-31b-it": ["verified", ""], "glm-4.6v": ["verified", ""] });
   const d = await dispatch({ payload: { cwd: repo, prompt: "Recreate the web page shown in screenshot.png as index.html" },
-    reply: { model_plan: plan }, root: repo, mine: MINE, env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" }, runtime: rt, log: (m) => logs.push(m) });
+    reply: { model_plan: plan }, root: repo, mine: MINE, env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_VISUAL_CHECK: "off" }, runtime: rt, log: (m) => logs.push(m) });
   assert.ok(d?.handled, logs.join(" | "));
   assert.deepEqual(rt.calls.map((c) => c.model), ["glm-4.6v"], logs.join(" | "));
 });
@@ -131,4 +131,34 @@ test("a cancelled run that never answers does not hold back a finished answer", 
   assert.equal(d.unit, "gemma-4-31b-it|stealth");
   assert.ok(Date.now() - t0 < 20000, `delivered after ${Date.now() - t0} ms`);
   assert.ok(d.tried.some((t) => t.unit === "minimax-m2-7|stealth" && t.state === "cancelled"));
+});
+
+test("an image task finds the model that can see even when it is not among the first three candidates", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", vision: true } } }));
+  fs.writeFileSync(path.join(repo, "screenshot.png"), "\x89PNG");
+  const rt = stub(repo, { "glm-5.3-flash": ["verified", ""], "gemma-4-31b-it": ["verified", ""], "minimax-m2-7": ["verified", ""], "gpt-oss-120b": ["verified", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Recreate the web page shown in screenshot.png as index.html" }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_VISUAL_CHECK: "off" }, runtime: rt });
+  assert.equal(d?.handled, true);
+  assert.deepEqual(rt.calls.map((c) => c.model), ["glm-5.3-flash"]);
+});
+
+test("a large task goes only to the strong cheap model (profile strong: true), first in line; without one, to the session's model", async () => {
+  const { env, repo } = setup();
+  const exec = { executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true } } };
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify(exec));
+  const large = async () => ({ task: "build the whole API", files_hinted: [], acceptance: "", parts: [], clarity: "clear", kind: "code", size: "large" });
+  const rt = stub(repo, { "glm-5.3-flash": ["verified", ""], "gemma-4-31b-it": ["verified", ""] });
+  const e = { ...env, K: "k", STEALTHLAB_BRIEF: "on", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "implement every endpoint of the contract" }, reply: { model_plan: { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-5.3-flash|stealth"] } },
+    root: repo, mine: MINE, env: e, runtime: rt, briefImpl: large });
+  assert.equal(d?.handled, true);
+  assert.deepEqual(rt.calls.map((c) => c.model), ["glm-5.3-flash"]);
+  delete exec.profiles["glm-5.3-flash"].strong;
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify(exec));
+  assert.equal(await dispatch({ payload: { cwd: repo, prompt: "implement every endpoint of the contract" }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env: e, runtime: stub(repo, {}), briefImpl: large }), null);
 });

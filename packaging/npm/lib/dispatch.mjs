@@ -75,6 +75,10 @@ export function dispatchPolicy(env = process.env) {
     sharedFailStop: (env.STEALTHLAB_DISPATCH_SHARED_FAIL_STOP || "on").toLowerCase() !== "off",
     // the test writer flags a task that reads two ways: no cheap answer is delivered for it (STEALTHLAB_DISPATCH_AMBIGUITY=off)
     ambiguityStop: (env.STEALTHLAB_DISPATCH_AMBIGUITY || "on").toLowerCase() !== "off",
+    // an image task's passing page is compared with the screenshot by a model that can see (lib/visual_check.mjs)
+    visualCheck: (env.STEALTHLAB_DISPATCH_VISUAL_CHECK || "on").toLowerCase() !== "off",
+    // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them
+    strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 120)),
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -232,7 +236,7 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   // an open model with an exec.json profile (GLM, say: called directly on its OpenAI-compatible endpoint)
   const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
   const openProfile = model.includes("claude") ? null : openWriterProfile(env, model);
-  if (!model.includes("claude") && !openProfile && !runClaude) return skip();
+  if (!model.includes("claude") && !openProfile) return skip();
   const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
     (check ? `The project's own check command: ${check}\n\n` : "") +
     "Write the acceptance tests for this task. Reply with only the Python test file.";
@@ -306,7 +310,7 @@ async function runOpenWriter(profile, env, input, signal) {
       method: "POST", redirect: "error",
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000),
       headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
-      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 8000, temperature: 0, ...(profile.request_extras || {}) }),
+      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 12000, temperature: 0, ...(profile.request_extras || {}) }),
     });
     const text = await res.text();
     if (!res.ok) return { status: 1, stdout: "", stderr: `HTTP ${res.status}: ${text.slice(0, 200)}` };
@@ -503,7 +507,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // a task built on an image goes only to the cheap models that can see it (exec.json profile `vision: true`, e.g. a
   // GLM-V); none, and it is not dispatched (STEALTHLAB_DISPATCH_VISION=on treats every cheap model as able to see)
   const images = force ? [] : namedImages(payload.prompt, payload.cwd || root);
-  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
+  // an image task keeps every candidate until the ones that can see are picked (a max-3 cut first dropped GLM-V)
+  const seeOnly = images.length > 0 && !policy.vision;
+  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: seeOnly ? 16 : policy.maxRungs, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) {
@@ -517,9 +523,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (ordered.some((r, i) => r !== rungs[i])) log(`dispatch: rungs fastest first: ${ordered.map((r) => r.model).join(", ")}`);
     rungs = ordered;
   }
+  // the strongest cheap model starts in the first wave, not after the others time out
+  const strongSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set(Object.keys(ps).filter((k) => ps[k]?.strong)); } catch { return new Set(); } })();
+  rungs = [...rungs.filter((r) => strongSet.has(r.model)), ...rungs.filter((r) => !strongSet.has(r.model))];
   if (images.length && !policy.vision) {
     const profiles = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
-    rungs = rungs.filter((r) => profiles[r.model]?.vision === true);
+    rungs = rungs.filter((r) => profiles[r.model]?.vision === true).slice(0, policy.maxRungs);
     if (!rungs.length) {
       log(`dispatch: not dispatched (the task needs an image no cheap model here can see: ${images.join(", ")})`);
       return null;
@@ -531,7 +540,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
                                                   cwd: payload.cwd || root, env, fetchImpl, log });
     const gate = briefGate(brief, payload.prompt);
-    if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
+    // a large task: only the strong cheap model tries it (the small ones rarely manage); none -> the session's model
+    if (!gate.ok && !force && gate.reason === "size=large" && rungs.some((r) => strongSet.has(r.model))) {
+      rungs = rungs.filter((r) => strongSet.has(r.model));
+      log(`dispatch: a large task -- only ${rungs.map((r) => r.model).join(", ")} tries it`);
+    } else if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
     // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there
     if (brief) payload = { ...payload, prompt: briefedPrompt(brief, payload.prompt, TASK_MAX) };
   }
@@ -603,6 +616,18 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     let ok = result.state === "verified";
     // the test writer said the task can be read two ways with different results: a passing cheap answer may have taken
     // the other reading, which no test of ours can tell -- the session's model does the task (STEALTHLAB_DISPATCH_AMBIGUITY)
+    // a task built on a screenshot: the page must also LOOK like it (lib/visual_check.mjs); no verdict = not accepted
+    if (ok && images.length && policy.visualCheck) {
+      const { visualCheck } = await import("./visual_check.mjs");
+      const v = await visualCheck({ worktree: result.diff?.worktree, files: result.diff?.files || [], images,
+                                    repo: payload.cwd || root, env, fetchImpl, log, python: pythonBin({ env }) });
+      if (!v || !v.match) {
+        log(`dispatch ${rung.unit}: ${v ? `the page does not match the screenshot (${v.why})` : "no visual verdict"}`);
+        tried.push({ unit: rung.unit, state: v ? `passed the check, rejected by the visual check (${v.why})` : "passed the check, no visual verdict",
+                     run_id: result.run_id, cost_usd: result.cost_usd });
+        return false;
+      }
+    }
     if (ok && spec?.ambiguous && policy.ambiguityStop) {
       ambiguous = spec.ambiguous;
       tried.push({ unit: rung.unit, state: "passed, not delivered: the task can be read two ways", run_id: result.run_id,
@@ -651,7 +676,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let winner = null;
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
-  const limitS = baseLimitS;
+  // the strong model works more slowly (more context, more steps): its run gets extra time
+  const limitS = baseLimitS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
   let timer;
   const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
