@@ -5,7 +5,8 @@
       "models": [
         "gemma-4-31b-it",
         "gpt-oss-120b",
-        "minimax-m2-7"
+        "minimax-m2-7",
+        "glm-5.3-flash"
       ]
     },
     "claude": {
@@ -36,6 +37,21 @@
       "openai_base_url": "https://api.generalcompute.com/v1",
       "input_per_mtok": 0.037,
       "output_per_mtok": 0.17
+    },
+    "glm-5.3-flash": {
+      "model_id": "glm-5.3-flash",
+      "key_env": "Z_AI_KEY",
+      "openai_base_url": "https://api.z.ai/api/paas/v4",
+      "input_per_mtok": 0.15,
+      "output_per_mtok": 0.5,
+      "vision": true
+    },
+    "glm-5.3": {
+      "model_id": "glm-5.3",
+      "key_env": "Z_AI_KEY",
+      "openai_base_url": "https://api.z.ai/api/paas/v4",
+      "input_per_mtok": 1.4,
+      "output_per_mtok": 4.4
     }
   },
   "max_concurrent_runs": 2

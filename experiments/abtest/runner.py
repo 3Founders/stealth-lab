@@ -240,6 +240,8 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
                if os.environ.get("ABTEST_GC_MIN_TOKENS") else {}),
             "STEALTHLAB_EXEC_WORKTREE_ROOT": str(LOCAL / "worktrees"),
             "GENERAL_COMPUTE_API_KEY": secrets["gc"],
+            # z.ai (GLM) for the cheap rungs and an open-model test writer, when backend/.env has it
+            **({"Z_AI_KEY": secrets["zai"]} if secrets.get("zai") else {}),
         })
     return env
 
@@ -482,7 +484,8 @@ def main() -> int:
 
     import local_identity
     secrets = {"token": local_identity.paths()["token"].read_text().strip(),
-               "gc": env_file(REPO / "backend" / ".env").get(args.gc_key_name, "")}
+               "gc": env_file(REPO / "backend" / ".env").get(args.gc_key_name, ""),
+               "zai": env_file(REPO / "backend" / ".env").get("Z_AI_KEY", "")}
     if not secrets["gc"]:
         raise SystemExit(f"backend/.env has no {args.gc_key_name}")
     if any(is_c(a) for a in arms):

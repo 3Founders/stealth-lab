@@ -228,15 +228,18 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
                                        dir = null, signal = null }) {
   const out = dir || specDir(env);
   const skip = () => { try { fs.writeFileSync(path.join(out, "SKIP"), ""); } catch { /* best effort */ } return null; };
-  // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL (a cheaper Claude model, say)
+  // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL -- a Claude model (through Claude Code), or
+  // an open model with an exec.json profile (GLM, say: called directly on its OpenAI-compatible endpoint)
   const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
-  if (!model.includes("claude")) return skip();
+  const openProfile = model.includes("claude") ? null : openWriterProfile(env, model);
+  if (!model.includes("claude") && !openProfile && !runClaude) return skip();
   const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
     (check ? `The project's own check command: ${check}\n\n` : "") +
     "Write the acceptance tests for this task. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
   // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
-  const run = runClaude || ((args, input) => runClaudeAsync(env, args, input, signal));
+  const run = runClaude || (openProfile ? (_args, input) => runOpenWriter(openProfile, env, input, signal)
+    : (args, input) => runClaudeAsync(env, args, input, signal));
   const args = ["-p", "--model", model, "--system-prompt", SPEC_SYSTEM,
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
@@ -282,10 +285,46 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   return { file, cost_usd: cost, ...(amb ? { ambiguous: amb[1].trim().slice(0, 300) } : {}) };
 }
 
-// The test writer can run: a Claude model to write with, and Claude Code to run it.
+// An open model's exec.json profile with an OpenAI-compatible endpoint, or null.
+export function openWriterProfile(env, model) {
+  try {
+    const p = readExecConfig(env).profiles?.[model];
+    return p?.openai_base_url ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+// The test writer on an open model: one chat call, the same instructions and request; -> what runClaudeAsync returns
+// ({status, stdout: Claude Code's JSON line}), so the rest of writeSpecTests is the same for both.
+async function runOpenWriter(profile, env, input, signal) {
+  try {
+    const messages = profile.no_system_role
+      ? [{ role: "user", content: `${SPEC_SYSTEM}\n\n${input}` }]
+      : [{ role: "system", content: SPEC_SYSTEM }, { role: "user", content: input }];
+    const res = await fetch(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST", redirect: "error",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000),
+      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
+      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 8000, temperature: 0, ...(profile.request_extras || {}) }),
+    });
+    const text = await res.text();
+    if (!res.ok) return { status: 1, stdout: "", stderr: `HTTP ${res.status}: ${text.slice(0, 200)}` };
+    const body = JSON.parse(text);
+    const u = body?.usage || {};
+    const cost = (profile.input_per_mtok || profile.output_per_mtok)
+      ? ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 : null;
+    const result = body?.choices?.[0]?.message?.content || "";
+    return { status: 0, stdout: JSON.stringify({ result, total_cost_usd: cost, is_error: !result }) };
+  } catch (err) {
+    return { status: 1, stdout: "", stderr: err.message };
+  }
+}
+
+// The test writer can run: a Claude model and Claude Code to run it, or an open model with a profile.
 export function testWriterAvailable(env = process.env, mine = "") {
   const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
-  if (!model.includes("claude")) return false;
+  if (!model.includes("claude")) return Boolean(openWriterProfile(env, model));
   try { launchOrThrow("claude", { env }); return true; } catch { return false; }
 }
 
@@ -330,6 +369,9 @@ export async function providerQuota(profile, env = process.env, fetchImpl = glob
     const day = headerNum(res.headers, ["x-ratelimit-remaining-tokens-day"]);
     const minute = headerNum(res.headers, ["x-ratelimit-remaining-tokens-minute", "x-ratelimit-remaining-tokens"]);
     quota = day === null && minute === null ? null : { day, minute };
+    // a provider that just ANSWERED the probe is not out of tokens: "0 left" from a 200 is a header it does not keep
+    // (z.ai returned day/minute 0 on a successful call, 2026-10-14) -- unknown, which counts as fine
+    if (res.ok && quota && !quota.day && !quota.minute) quota = null;
   } catch { return null; }
   cache[base] = { at: now, quota };
   try { fs.mkdirSync(path.dirname(quotaCachePath(env)), { recursive: true }); fs.writeFileSync(quotaCachePath(env), JSON.stringify(cache)); } catch { /* best effort */ }
