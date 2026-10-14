@@ -221,7 +221,8 @@ def test_the_container_builds_with_the_default_string_paths(fake_series):
 
 def test_the_caches_are_on_the_volume_and_set_at_run_time_not_in_the_image(tmp_path, fake_series):
     c = container(tmp_path, max_issues=1)
-    assert c.environ["UV_CACHE_DIR"] == str(tmp_path / "vol" / "cache" / "uv") and c.environ["HF_HOME"] == str(tmp_path / "vol" / "cache" / "hf")
+    assert c.environ["HF_HOME"] == str(tmp_path / "vol" / "cache" / "hf")
+    assert "UV_CACHE_DIR" not in c.environ, "uv cannot use a Volume for its cache (Modal Volumes refuse its temp-file rename)"
 
 
 def test_the_runner_gets_the_auth_of_the_run_and_nothing_of_the_other(tmp_path, fake_series):

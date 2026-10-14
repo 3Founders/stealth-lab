@@ -230,10 +230,10 @@ class Container:
                  sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None):
         self.spec, self.repo, self.sh, self.commit, self.sleep = spec, repo, sh, commit, sleep
         self.vol, self.app = Path(vol), Path(app)
-        # the caches live on the Volume; their variables are set HERE, not in the image: a cache directory that exists in the image under
+        # the dataset cache lives on the Volume; its variable is set HERE, not in the image: a cache directory that exists in the image under
         # the Volume's mount path makes Modal refuse the mount ("cannot mount volume on non-empty path")
         self.environ = {**auth_env(spec.auth, environ if environ is not None else dict(os.environ)),
-                        "HF_HOME": str(self.vol / "cache" / "hf"), "UV_CACHE_DIR": str(self.vol / "cache" / "uv"), "UV_LINK_MODE": "copy"}
+                        "HF_HOME": str(self.vol / "cache" / "hf")}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.out = self.vol / spec.run_name() / repo
