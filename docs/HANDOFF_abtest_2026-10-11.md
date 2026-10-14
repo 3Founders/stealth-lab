@@ -802,3 +802,33 @@ pixel-strict).
 correctly and flash reads screenshots, but the free tier is too slow (glm-5.3 156 s per answer; page tasks hit NIM's
 5-minute 504). Live use needs a fast host (z.ai or OpenRouter). Estimated: GLM as the rung before Opus could take C
 from -40% to roughly -55..-65% (Opus is 76% of C's cost); unmeasured.
+
+---
+
+## 12. FINAL NUMBERS (2026-10-14): all 205 tasks, both arms, today's main
+
+Arm C = main as of `11b7e67` (phase 1 and 2 run as `final1014-p1/-p2`; the 17 tasks of the ambiguity-fix test -- the 7
+phase 1 misses plus 10 random controls -- use their `fix1014-p1` rows). Arm A = Opus alone (Oct 11 runs; bird-480 run
+Oct 14). Page suites graded by `html_grade2.py` (layout matching) for both arms; everything else by each benchmark's own
+hidden tests.
+
+| Suite | n | A solved | A cost | C solved | C cost | Saving | p50/p95/p99 A | p50/p95/p99 C |
+|---|---|---|---|---|---|---|---|---|
+| DS-1000 | 30 | 29 | $2.68 | 26 | $1.32 | -51% | 23/89/126 | 54/186/250 |
+| BIRD | 50 | 46 | $5.49 | 44 | $2.27 | -59% | 31/59/443 | 67/142/160 |
+| IFEval | 20 | 20 | $2.01 | 20 | $0.64 | -68% | 37/68/92 | 63/132/333 |
+| BoolQ | 10 | 10 | $0.77 | 10 | $0.11 | -86% | 21/35/35 | 43/69/69 |
+| OpenAPI | 20 | 16 | $4.56 | 18 | $3.93 | -14% | 64/118/170 | 80/309/339 |
+| MultiPL-E JS | 20 | 19 | $1.70 | 19 | $0.54 | -68% | 15/24/25 | 34/72/126 |
+| Design2Code | 30 | 17 | $10.73 | 19 | $10.44 | -3% | 54/273/341 | 54/239/281 |
+| WebSight | 25 | 18 | $4.44 | 20 | $4.87 | +10% | 41/59/69 | 49/57/63 |
+| **Code (150)** | 150 | **140** | **$17.20** | **137** | **$8.82** | **-49%** | 30/88/170 | 61/179/333 |
+| **All (205)** | 205 | **175** | **$32.37** | **176** | **$24.13** | **-25%** | 35/109/273 | 57/179/309 |
+
+- Page tasks go straight to Opus in C (image rule: no cheap model can see images yet), so C ~= A there; the page
+  differences are run-to-run variation.
+- The code gap (3) is DS-1000 (3) and BIRD (2) cheap answers that passed every check but were wrong, offset by OpenAPI
+  (+2). The ambiguity flag fixed 1 of the 7 phase 1 misses and wrongly flagged 1 of 9 controls; it is on, cheap, and
+  audited. Not counted in either arm: the server-side lookup (triage model, embeddings), a few % of C.
+- Results files (local): `.local/results/final1014-p1.jsonl`, `final1014-p2.jsonl`, `fix1014-p1.jsonl`,
+  `regrade_pages_phase2.jsonl`, `regrade_pages_final.jsonl`.
