@@ -99,6 +99,14 @@ def gc_tokens_left(key: str) -> int | None:
         return None
 
 
+def secret_value(name: str) -> str:
+    """A key by NAME: the environment first (Modal secrets, CI), else backend/.env when that file exists, else ''."""
+    if os.environ.get(name):
+        return os.environ[name]
+    path = REPO / "backend" / ".env"
+    return env_file(path).get(name, "") if path.exists() else ""
+
+
 def env_file(path: Path) -> dict[str, str]:
     out = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -220,8 +228,12 @@ def install_c(ws: Path) -> None:
 
 
 def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("STEALTHLAB_") and k not in (
-        "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR")}
+    # Claude Code authenticates as the person's own login (a subscription; CLAUDE_CODE_OAUTH_TOKEN passes through) -- or,
+    # with ABTEST_AUTH=api (modal_series.py --auth api), with ANTHROPIC_API_KEY, and then the subscription token is dropped
+    drop = {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR"}
+    if os.environ.get("ABTEST_AUTH") == "api":
+        drop = (drop - {"ANTHROPIC_API_KEY"}) | {"CLAUDE_CODE_OAUTH_TOKEN"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("STEALTHLAB_") and k not in drop}
     env["ANTHROPIC_MODEL"] = MODEL
     if is_c(arm):
         home = c_home()
@@ -484,10 +496,9 @@ def main() -> int:
 
     import local_identity
     secrets = {"token": local_identity.paths()["token"].read_text().strip(),
-               "gc": env_file(REPO / "backend" / ".env").get(args.gc_key_name, ""),
-               "zai": env_file(REPO / "backend" / ".env").get("Z_AI_KEY", "")}
+               "gc": secret_value(args.gc_key_name), "zai": secret_value("Z_AI_KEY")}
     if not secrets["gc"]:
-        raise SystemExit(f"backend/.env has no {args.gc_key_name}")
+        raise SystemExit(f"no {args.gc_key_name} in the environment or backend/.env")
     if any(is_c(a) for a in arms):
         try:
             urllib.request.urlopen(f"{SERVER}/healthz", timeout=10)

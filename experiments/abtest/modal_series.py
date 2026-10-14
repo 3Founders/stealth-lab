@@ -1,0 +1,506 @@
+"""modal_series: the long-horizon test (arms A, C, C0 over a real repository's issues, runner.py --series) on Modal.
+
+Why Modal: each repository needs Linux and its own Python (the SWE-rebench environments are 3.9), the StealthLab backend needs
+Postgres with pgvector, and a series is many long Claude Code sessions -- none of that belongs on a laptop. One container per
+repository holds everything: Postgres + the StealthLab test backend (run_backend.py, a local identity), Node + Claude Code, `uv`
+and the Pythons the repositories need, and runs `runner.py` over the series task by task. Results and logs go to a Modal Volume.
+
+    # once: the secrets (values from YOUR environment / backend/.env by NAME; nothing is printed, nothing goes on a command line)
+    $env:CLAUDE_CODE_OAUTH_TOKEN = "<from `claude setup-token`>"
+    python experiments/abtest/modal_series.py secrets --claude        # -> Modal secret "claude-code-auth"
+    python experiments/abtest/modal_series.py secrets --keys          # -> Modal secret "stealthlab-keys"
+
+    python experiments/abtest/modal_series.py plan --repos jsonargparse --max-issues 1     # what a run would do; no Modal call
+    modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 1       # the dry run: 1 issue, 3 arms
+    modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 8       # 8 issues x 3 arms = 24 sessions
+
+Auth (`--auth`): `subscription` (default) uses the owner's Claude Code login as a token (`claude setup-token`, Modal secret
+`claude-code-auth` holding CLAUDE_CODE_OAUTH_TOKEN): sessions count against the owner's 5-hour and weekly limits, so repositories
+and arms run ONE AT A TIME and a usage limit stops the run (resume by repeating the command). `api` uses an Anthropic API key
+(secret `anthropic-api` holding ANTHROPIC_API_KEY), billed per token; repositories run in parallel (arms still one after another
+inside a repository: they share its backend and each task's arms must see the same state).
+
+Choices, so a surprise has somewhere to start (plan section 4 says "one image per repo"):
+  * ONE image, not one per repository: Postgres/pgvector, Node, Claude Code, the backend's requirements, `uv` with Pythons
+    3.9-3.12. A repository's own state (bare clone, pinned dependencies, the dataset file) is built at run time into a Volume
+    cache, so a new repository costs minutes, not an image build.
+  * Resume: after EVERY task the container copies the run's results, logs, the arms' workspaces (with their .stealth/) and a
+    dump of the test database to the Volume; a repeated command restores them and the runner skips what is done. Resuming
+    arm C/C0 without that snapshot would restart their `.stealth/` from nothing and break the learning curve, so it is refused
+    unless --allow-cold-resume.
+  * The Volume path is /vol/<run>/<repository>/ (results/, logs/, state.tgz, db.sql.gz, report.txt).
+  * A, C and C0 of one repository share ONE test backend (as in a local run): what the server learned from C's outcomes is also
+    visible to C0. Wiping .stealth/ does not wipe the server. Say so wherever C minus C0 is quoted.
+
+Nothing here has run on Modal yet. The offline tests check the plan, the auth handling, what is (not) uploaded, the order of the
+container's commands and the snapshot/resume logic against stand-ins; the Postgres, backend and Claude Code commands inside the
+container are unverified until the dry run (1 issue per arm) has been done.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.request
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Callable
+
+try:                                  # the planning and the offline tests need no Modal
+    import modal
+except ImportError:                   # pragma: no cover
+    modal = None
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+
+APP_NAME = "stealthlab-series"
+VOLUME_NAME = "stealthlab-series"
+KEYS_SECRET = "stealthlab-keys"           # GENERAL_COMPUTE_API_KEY, Z_AI_KEY, the backend's judge/embedding keys
+CLAUDE_SECRET = "claude-code-auth"        # CLAUDE_CODE_OAUTH_TOKEN
+API_SECRET = "anthropic-api"              # ANTHROPIC_API_KEY
+KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
+             "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
+ARMS = ("A", "C", "C0")
+AUTHS = ("subscription", "api")
+SERIES_MODULE = "swe_series_task"
+PYTHONS = ("3.9", "3.10", "3.11", "3.12")
+VOL = "/vol"                              # POSIX strings: they are paths inside the Linux container (Modal needs them absolute)
+APP_DIR = "/app"
+PG_BIN = "/usr/lib/postgresql/15/bin"
+PG_DATA = "/var/lib/postgresql/data"
+PG_PORT = 55432
+DSN = f"postgresql://kel_owner@127.0.0.1:{PG_PORT}/kel_abtest"
+HEALTH = "http://127.0.0.1:8765/healthz"
+RC_RATE_LIMITED, RC_QUOTA = 3, 4          # runner.py's exit codes: a usage limit; the cheap models' daily quota
+PLAN_ESTIMATE = "plan's estimate: 24 sessions (1 repo x 8 issues x 3 arms) ~ $15-30 of Opus-equivalent; 90 sessions (3 x 10 x 3) ~ $50-150 on the API"
+
+
+# ---------------------------------------------------------------- the run, as data
+
+@dataclass
+class RunSpec:
+    repos: list[str]
+    arms: list[str] = field(default_factory=lambda: list(ARMS))
+    max_issues: int = 0                    # 0: every issue of the series
+    auth: str = "subscription"
+    turns: int = 1                         # 1: the task's own prompt; 2-4: vague opener + simulated user (multiturn.py)
+    run: str = ""
+    series_module: str = SERIES_MODULE
+    seed: int = 20261014
+    testfirst_model: str = "claude-sonnet-5-5"
+    gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
+    allow_cold_resume: bool = False
+
+    def run_name(self) -> str:
+        return self.run or f"long-{'-'.join(self.repos)}-{self.turns}t"
+
+
+def validate_spec(spec: RunSpec) -> list[str]:
+    problems = []
+    if not spec.repos:
+        problems.append("--repos is empty")
+    bad = [a for a in spec.arms if a not in ARMS]
+    if bad or not spec.arms:
+        problems.append(f"arms are {', '.join(ARMS)}; got {','.join(spec.arms) or 'none'}")
+    if spec.auth not in AUTHS:
+        problems.append(f"--auth is one of {', '.join(AUTHS)}; got {spec.auth!r}")
+    if spec.max_issues < 0:
+        problems.append("--max-issues cannot be negative")
+    if not 1 <= spec.turns <= 4:
+        problems.append("--turns is 1-4")
+    return problems
+
+
+def series_tasks(spec: RunSpec, repo: str) -> list[dict]:
+    """The series' tasks (swe_series_task.series(<repo>)), cut to --max-issues."""
+    tasks = importlib.import_module(spec.series_module).series(repo)
+    return tasks[: spec.max_issues] if spec.max_issues else tasks
+
+
+def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
+    sessions = sum(len(t) for t in tasks_by_repo.values()) * len(spec.arms)
+    lines = [f"run {spec.run_name()}: {len(spec.repos)} repo(s), arms {','.join(spec.arms)}, auth {spec.auth}, "
+             f"{spec.turns} user turn(s) per task",
+             "  repositories run " + ("one after another (a subscription has limits; no parallel sessions)" if spec.auth == "subscription"
+                                      else "in parallel (an API key is billed per token)") + "; arms run one after another inside a repository"]
+    for repo, tasks in tasks_by_repo.items():
+        lines.append(f"  {repo}: {len(tasks)} issue(s) -> {len(tasks) * len(spec.arms)} session(s) (x up to {spec.turns} turn(s)): "
+                     + ", ".join(t["task_id"] for t in tasks[:3]) + (" ..." if len(tasks) > 3 else ""))
+    lines.append(f"  {sessions} session(s) in all; {PLAN_ESTIMATE}")
+    lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else API_SECRET)
+                 + f"; volume {VOLUME_NAME}")
+    lines.append(f"  results: /vol/{spec.run_name()}/<repository>/ on the volume (results/, logs/, state.tgz, db.sql.gz, report.txt)")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- auth and what is uploaded
+
+def auth_env(mode: str, environ: dict[str, str]) -> dict[str, str]:
+    """The environment for the runner and Claude Code under `mode`. Raises SystemExit naming the missing variable (never a value)."""
+    env = dict(environ)
+    if mode == "subscription":
+        if not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            raise SystemExit(f"--auth subscription needs CLAUDE_CODE_OAUTH_TOKEN (Modal secret {CLAUDE_SECRET}; `claude setup-token`)")
+        env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    elif mode == "api":
+        if not env.get("ANTHROPIC_API_KEY"):
+            raise SystemExit(f"--auth api needs ANTHROPIC_API_KEY (Modal secret {API_SECRET})")
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    else:
+        raise SystemExit(f"--auth is one of {', '.join(AUTHS)}")
+    env["ABTEST_AUTH"] = mode
+    return env
+
+
+NEVER_UPLOAD_NAMES = {".git", ".local", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", ".env"}
+NEVER_UPLOAD_SUFFIXES = (".pem", ".key", ".mov", ".pyc", ".sqlite", ".db")
+
+
+def ignored(path: Path | str) -> bool:
+    """True for anything that must not reach the image: secrets (.env files, keys), the local identity and results (.local),
+    caches, other people's repositories."""
+    p = Path(path)
+    return (any(part in NEVER_UPLOAD_NAMES for part in p.parts) or p.name.startswith(".env") or p.name.endswith(".env")
+            or p.name.endswith(NEVER_UPLOAD_SUFFIXES))
+
+
+def build_image():
+    """The one image: pgvector Postgres 15, Python 3.12 (the backend), Node + Claude Code, uv with the repositories' Pythons, the
+    backend's requirements baked in; the repository's own code mounted last (so an edit does not rebuild the image)."""
+    return (
+        modal.Image.from_registry("pgvector/pgvector:pg15", add_python="3.12")
+        .apt_install("git", "curl", "ca-certificates", "gnupg", "xz-utils")
+        .run_commands("curl -fsSL https://deb.nodesource.com/setup_22.x | bash -", "apt-get install -y nodejs",
+                      "npm install -g @anthropic-ai/claude-code", "pip install uv",
+                      "uv python install " + " ".join(PYTHONS))
+        .add_local_file(REPO / "backend" / "requirements.txt", "/tmp/backend-requirements.txt", copy=True)
+        .run_commands("pip install -r /tmp/backend-requirements.txt", "pip install uvicorn pytest pyarrow pandas huggingface_hub")
+        .env({"PYTHONPATH": f"{APP_DIR}/experiments/abtest", "PYTHONUNBUFFERED": "1", "HF_HOME": f"{VOL}/cache/hf",
+              "UV_CACHE_DIR": f"{VOL}/cache/uv", "ABTEST_CONTAINER": "1"})
+        .add_local_dir(REPO / "backend" / "app", f"{APP_DIR}/backend/app", ignore=ignored)
+        .add_local_dir(REPO / "backend" / "db", f"{APP_DIR}/backend/db", ignore=ignored)
+        .add_local_dir(REPO / "backend" / "scripts", f"{APP_DIR}/backend/scripts", ignore=ignored)
+        .add_local_dir(REPO / "backend" / "data", f"{APP_DIR}/backend/data", ignore=ignored)
+        .add_local_dir(REPO / "packaging" / "npm", f"{APP_DIR}/packaging/npm", ignore=ignored)
+        .add_local_dir(HERE, f"{APP_DIR}/experiments/abtest", ignore=ignored)
+    )
+
+
+# ---------------------------------------------------------------- inside the container
+
+Shell = Callable[..., "subprocess.CompletedProcess"]
+
+
+def shell(argv: list[str] | str, *, env: dict | None = None, cwd: str | Path | None = None, timeout: int | None = None,
+          background: bool = False):
+    """Run a command (a list, or a string for bash -lc). background=True starts it and returns the Popen."""
+    cmd = ["bash", "-lc", argv] if isinstance(argv, str) else argv
+    if background:
+        return subprocess.Popen(cmd, env=env, cwd=cwd)
+    return subprocess.run(cmd, env=env, cwd=cwd, timeout=timeout, capture_output=True, text=True)
+
+
+def done_tasks(results: Path, arms: list[str]) -> set[str]:
+    """Task ids finished in EVERY arm (status done) in a results file."""
+    seen: dict[str, set[str]] = {}
+    if results.exists():
+        for line in results.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                if r.get("status") == "done":
+                    seen.setdefault(r["task_id"], set()).add(r["arm"])
+    return {t for t, a in seen.items() if set(arms) <= a}
+
+
+class Container:
+    """One repository's run, inside a container. Everything outside the filesystem goes through `sh`, so the order of commands
+    and the snapshot/resume logic are testable with a recorder; `vol` is the Volume's mount, `app` the code's."""
+
+    def __init__(self, spec: RunSpec, repo: str, *, sh: Shell = shell, vol: Path | str = VOL, app: Path | str = APP_DIR,
+                 environ: dict[str, str] | None = None, commit: Callable[[], None] = lambda: None,
+                 sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None):
+        self.spec, self.repo, self.sh, self.commit, self.sleep = spec, repo, sh, commit, sleep
+        self.vol, self.app = Path(vol), Path(app)
+        self.environ = auth_env(spec.auth, environ if environ is not None else dict(os.environ))
+        self.ab = app / "experiments" / "abtest"
+        self.local = self.ab / ".local"
+        self.out = vol / spec.run_name() / repo
+        self.health = health or self._healthy
+        self.log: list[str] = []
+
+    # -- state on the Volume
+    def snapshot(self) -> None:
+        """Results, logs, the arms' workspaces and C's home, openers and simulated-user replies, and a database dump -> the Volume."""
+        self.out.mkdir(parents=True, exist_ok=True)
+        run = self.spec.run_name()
+        for sub, src in (("results", self.local / "results"), ("logs", self.local / "logs" / run)):
+            if src.exists():
+                shutil.copytree(src, self.out / sub, dirs_exist_ok=True)
+        with tarfile.open(self.out / "state.tgz", "w:gz") as tf:
+            for name in ("ws", "C_home", "openers", "simuser"):
+                if (self.local / name).exists():
+                    tf.add(self.local / name, arcname=name)
+        dump = self.sh(f"{PG_BIN}/pg_dump -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest | gzip > {self.out / 'db.sql.gz'}")
+        self.log.append(f"snapshot (db dump rc={getattr(dump, 'returncode', '?')})")
+        self.commit()
+
+    def restore(self) -> str:
+        """Bring the Volume's snapshot back. Returns "fresh", "restored", or "cold" (results exist but no state: C/C0 cannot resume)."""
+        if not (self.out / "results").exists():
+            return "fresh"
+        shutil.copytree(self.out / "results", self.local / "results", dirs_exist_ok=True)
+        if (self.out / "logs").exists():
+            shutil.copytree(self.out / "logs", self.local / "logs" / self.spec.run_name(), dirs_exist_ok=True)
+        if not (self.out / "state.tgz").exists():
+            return "cold"
+        with tarfile.open(self.out / "state.tgz") as tf:
+            try:
+                tf.extractall(self.local, filter="data")
+            except TypeError:                                  # Python < 3.12
+                tf.extractall(self.local)
+        return "restored"
+
+    # -- services
+    def start_services(self) -> None:
+        pg = "su postgres -c"
+        steps = [
+            f"[ -f {PG_DATA}/PG_VERSION ] || {pg} \"{PG_BIN}/initdb -D {PG_DATA} --auth=trust -E UTF8\"",
+            f"{pg} \"{PG_BIN}/pg_ctl -D {PG_DATA} -o '-p {PG_PORT} -c listen_addresses=127.0.0.1' -l /tmp/pg.log -w start\"",
+            f"{pg} \"psql -p {PG_PORT} -h 127.0.0.1 -tc \\\"SELECT 1 FROM pg_roles WHERE rolname='kel_owner'\\\" | grep -q 1 || "
+            f"createuser -p {PG_PORT} -h 127.0.0.1 -s kel_owner\"",
+            f"{pg} \"psql -p {PG_PORT} -h 127.0.0.1 -tc \\\"SELECT 1 FROM pg_database WHERE datname='kel_abtest'\\\" | grep -q 1 || "
+            f"createdb -p {PG_PORT} -h 127.0.0.1 -O kel_owner kel_abtest\"",
+        ]
+        for s in steps:
+            self._must(self.sh(s), "postgres: " + s[:80])
+        self._must(self.sh([sys.executable, str(self.app / "backend" / "scripts" / "migrate.py"), "--dsn", DSN],
+                           cwd=self.app / "backend", env=self.environ), "migrate.py")
+        self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN},
+                               cwd=self.ab, background=True)
+        for _ in range(150):
+            if self.health():
+                return
+            self.sleep(2)
+        raise RuntimeError(f"the test backend did not come up at {HEALTH} in 300 s")
+
+    def restore_db(self) -> None:
+        dump = self.out / "db.sql.gz"
+        if dump.exists():
+            self.sh(f"gunzip -c {dump} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest")
+            self.log.append("database restored from the snapshot")
+
+    @staticmethod
+    def _healthy() -> bool:
+        try:
+            urllib.request.urlopen(HEALTH, timeout=5)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
+    def _must(proc, what: str) -> None:
+        rc = getattr(proc, "returncode", 0)
+        if rc not in (0, None):
+            raise RuntimeError(f"{what} failed (exit {rc}): {str(getattr(proc, 'stderr', ''))[-300:]}")
+
+    # -- the run
+    def runner_cmd(self, task_id: str) -> list[str]:
+        s = self.spec
+        return [sys.executable, str(self.ab / "runner.py"), "--run", s.run_name(), "--series", f"{s.series_module}:{self.repo}",
+                "--arms", ",".join(s.arms), "--only", task_id, "--seed", str(s.seed), "--parallel", "--testfirst-model", s.testfirst_model,
+                "--gc-key-name", s.gc_key_name] + (["--turns", str(s.turns)] if s.turns > 1 else [])
+
+    def run(self) -> dict:
+        s = self.spec
+        problems = validate_spec(s)
+        if problems:
+            raise SystemExit("; ".join(problems))
+        tasks = series_tasks(s, self.repo)
+        state = self.restore()
+        results = self.local / "results" / f"{s.run_name()}.jsonl"
+        done = done_tasks(results, s.arms)
+        if state == "cold" and done and any(a in ("C", "C0") for a in s.arms) and not s.allow_cold_resume:
+            return {"repo": self.repo, "status": "refused", "why": "results exist on the volume without the arms' workspaces and .stealth/: "
+                    "resuming C/C0 would break the learning curve. Rerun with --run <new name>, or --allow-cold-resume to accept that."}
+        pending = [t for t in tasks if t["task_id"] not in done]
+        summary = {"repo": self.repo, "run": s.run_name(), "issues": len(tasks), "already_done": len(tasks) - len(pending), "state": state,
+                   "ran": [], "status": "done"}
+        if not pending:
+            summary["report"] = self.report()
+            return summary
+        self.start_services()
+        if state == "restored":
+            self.restore_db()
+        self._must(self.sh([sys.executable, str(self.ab / f"{s.series_module}.py"), "fetch", self.repo], env=self.environ, cwd=self.ab),
+                   "fetching the series' data")
+        for t in pending:
+            proc = self.sh(self.runner_cmd(t["task_id"]), env=self.environ, cwd=self.ab)
+            rc = getattr(proc, "returncode", 0)
+            summary["ran"].append({"task": t["task_id"], "rc": rc})
+            self.snapshot()
+            if rc == RC_RATE_LIMITED:
+                summary.update(status="rate_limited", resume="repeat the same command after the usage limit resets")
+                break
+            if rc == RC_QUOTA:
+                summary.update(status="quota", resume="repeat the same command after the cheap models' daily quota resets (or --gc-key-name another key)")
+                break
+            if rc != 0:
+                summary.update(status="error", why=str(getattr(proc, "stderr", ""))[-300:])
+                break
+        summary["report"] = self.report()
+        return summary
+
+    def report(self) -> str:
+        """report.py's summary and learning curve for the run, saved next to the results."""
+        env = {**self.environ, "ABTEST_RESULTS_DIR": str(self.local / "results")}
+        parts = []
+        for extra in ([], ["--curve"]):
+            r = self.sh([sys.executable, str(self.ab / "report.py"), self.spec.run_name(), *extra], env=env, cwd=self.ab)
+            parts.append(str(getattr(r, "stdout", "") or ""))
+        text = "\n\n".join(parts)
+        self.out.mkdir(parents=True, exist_ok=True)
+        (self.out / "report.txt").write_text(text, encoding="utf-8")
+        self.commit()
+        return text
+
+
+def container_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda: None) -> dict:
+    return Container(RunSpec(**spec_dict), repo, commit=commit).run()
+
+
+# ---------------------------------------------------------------- the Modal app (defined only when modal is importable)
+
+if modal is not None:
+    app = modal.App(APP_NAME)
+    volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
+    _common = dict(image=build_image(), volumes={VOL: volume}, timeout=86400, cpu=4.0, memory=16384)
+
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)], **_common)
+    def run_subscription(spec: dict, repo: str) -> dict:
+        return container_main(spec, repo, commit=volume.commit)
+
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(API_SECRET)], **_common)
+    def run_api(spec: dict, repo: str) -> dict:
+        return container_main(spec, repo, commit=volume.commit)
+
+    @app.local_entrypoint()
+    def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
+             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False):
+        spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
+                       max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
+                       allow_cold_resume=allow_cold_resume)
+        problems = validate_spec(spec)
+        if problems:
+            raise SystemExit("; ".join(problems))
+        tasks = {r: series_tasks(spec, r) for r in spec.repos}
+        print(plan_text(spec, tasks))
+        if plan:
+            return
+        fn = run_subscription if spec.auth == "subscription" else run_api
+        if spec.auth == "subscription":
+            results = [fn.remote(asdict(spec), r) for r in spec.repos]            # one at a time
+        else:
+            results = list(fn.starmap([(asdict(spec), r) for r in spec.repos]))   # repositories in parallel
+        for r in results:
+            print(json.dumps({k: v for k, v in r.items() if k != "report"}))
+            print(r.get("report", ""))
+
+
+# ---------------------------------------------------------------- local helpers: plan, secrets
+
+def read_names(names: tuple[str, ...] | list[str], environ: dict[str, str] | None = None, env_file: Path | None = None) -> dict[str, str]:
+    """The named variables from the environment, else from backend/.env (read here, on the owner's machine). Values are returned,
+    never printed."""
+    environ = dict(os.environ) if environ is None else environ
+    out = {n: environ[n] for n in names if environ.get(n)}
+    path = env_file if env_file is not None else REPO / "backend" / ".env"
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition("=")
+            k = k.strip()
+            if k in names and k not in out and v.strip():
+                out[k] = v.strip().strip('"').strip("'")
+    return out
+
+
+def create_secret(name: str, values: dict[str, str]) -> None:
+    modal.Secret.objects.create(name, values, allow_existing=True)
+
+
+def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None, env_file: Path | None = None, out=print) -> int:
+    if modal is None:
+        out("modal is not installed (pip install modal; modal token new)")
+        return 2
+    environ = dict(os.environ) if environ is None else environ
+    made = False
+    if args.claude:
+        tok = environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        if not tok:
+            out("set CLAUDE_CODE_OAUTH_TOKEN in this shell first (the output of `claude setup-token`); it is read from the environment, never from an argument")
+            return 2
+        create_secret(CLAUDE_SECRET, {"CLAUDE_CODE_OAUTH_TOKEN": tok})
+        out(f"secret {CLAUDE_SECRET}: CLAUDE_CODE_OAUTH_TOKEN")
+        made = True
+    if args.api:
+        key = environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            out("set ANTHROPIC_API_KEY in this shell first")
+            return 2
+        create_secret(API_SECRET, {"ANTHROPIC_API_KEY": key})
+        out(f"secret {API_SECRET}: ANTHROPIC_API_KEY")
+        made = True
+    if args.keys:
+        vals = read_names(KEY_NAMES, environ, env_file)
+        if "GENERAL_COMPUTE_API_KEY" not in vals:
+            out("GENERAL_COMPUTE_API_KEY is in neither the environment nor backend/.env")
+            return 2
+        create_secret(KEYS_SECRET, vals)
+        out(f"secret {KEYS_SECRET}: " + ", ".join(sorted(vals)) + "  (names only)")
+        missing = [n for n in KEY_NAMES if n not in vals]
+        if missing:
+            out("  not found, so not set: " + ", ".join(missing))
+        made = True
+    if not made:
+        out("nothing to do: pass --claude, --api and/or --keys")
+        return 2
+    return 0
+
+
+def cli(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="the long-horizon test on Modal: plan, or create the secrets (run it with `modal run` otherwise)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("plan", help="print what a run would do; no Modal call")
+    p.add_argument("--repos", required=True)
+    p.add_argument("--arms", default="A,C,C0")
+    p.add_argument("--max-issues", type=int, default=0)
+    p.add_argument("--auth", default="subscription")
+    p.add_argument("--turns", type=int, default=1)
+    p.add_argument("--run", default="")
+    p.add_argument("--series-module", default=SERIES_MODULE)
+    s = sub.add_parser("secrets", help="create the Modal secrets from your environment / backend/.env by NAME (values are never printed)")
+    s.add_argument("--claude", action="store_true", help=f"{CLAUDE_SECRET} from $CLAUDE_CODE_OAUTH_TOKEN")
+    s.add_argument("--api", action="store_true", help=f"{API_SECRET} from $ANTHROPIC_API_KEY")
+    s.add_argument("--keys", action="store_true", help=f"{KEYS_SECRET} from the cheap-model and backend keys: " + ", ".join(KEY_NAMES))
+    args = ap.parse_args(argv)
+    if args.cmd == "secrets":
+        return secrets_cli(args)
+    spec = RunSpec(repos=[r.strip() for r in args.repos.split(",") if r.strip()], arms=[a.strip() for a in args.arms.split(",") if a.strip()],
+                   max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module)
+    problems = validate_spec(spec)
+    if problems:
+        print("; ".join(problems))
+        return 2
+    print(plan_text(spec, {r: series_tasks(spec, r) for r in spec.repos}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli())
