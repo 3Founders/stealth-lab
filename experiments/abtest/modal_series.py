@@ -297,8 +297,7 @@ class Container:
                 break
             self.sleep(2)
         tail = self.backend_log.read_text(encoding="utf-8", errors="replace")[-2500:] if self.backend_log.exists() else "(no output)"
-        raise RuntimeError(f"the test backend did not come up at {HEALTH}; its output ends:
-{tail}")
+        raise RuntimeError(f"the test backend did not come up at {HEALTH}; its output ends: {tail}")
 
     def restore_db(self) -> None:
         dump = self.out / "db.sql.gz"

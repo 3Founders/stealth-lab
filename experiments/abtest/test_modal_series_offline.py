@@ -288,8 +288,7 @@ def test_a_backend_that_dies_is_reported_with_the_end_of_its_output(tmp_path, fa
 
     def sh(argv, **kw):
         if kw.get("background"):
-            kw["log"].write_text("ModuleNotFoundError: No module named 'jwt'
-", encoding="utf-8")
+            kw["log"].write_text("ModuleNotFoundError: No module named 'jwt'"+chr(10), encoding="utf-8")
             return Dead()
         return inner(argv, **kw)
 
