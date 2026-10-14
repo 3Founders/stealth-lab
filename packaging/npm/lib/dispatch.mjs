@@ -601,11 +601,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     log(`dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
-      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+      if (runId) try { await settleWithin(rt.cancelRun(runId), SETTLE_MS); } catch { /* best effort */ }
     }
-    for (const p of pending.values()) {
-      const r = await p;
-      tried.push({ unit: r.rung.unit, state: "cancelled", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    for (const [unit, p] of pending) {
+      const r = await settleWithin(p, SETTLE_MS);         // a cancelled run stuck in a model call is not waited for
+      tried.push({ unit, state: "cancelled", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     pending.clear();
     for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (two answers failed the same advance tests)" });
@@ -616,11 +616,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     log(`dispatch: no cheap pass within ${limitS} s; the session's model takes over`);
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
-      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+      if (runId) try { await settleWithin(rt.cancelRun(runId), SETTLE_MS); } catch { /* best effort */ }
     }
-    for (const p of pending.values()) {
-      const r = await p;
-      tried.push({ unit: r.rung.unit, state: "timed out", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    for (const [unit, p] of pending) {
+      const r = await settleWithin(p, SETTLE_MS);         // a cancelled run stuck in a model call is not waited for
+      tried.push({ unit, state: "timed out", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     pending.clear();
     for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (time limit)" });
@@ -630,11 +630,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // the others still running: cancelled (not counted against their models), then awaited so their cost is known
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
-      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+      if (runId) try { await settleWithin(rt.cancelRun(runId), SETTLE_MS); } catch { /* best effort */ }
     }
-    for (const p of pending.values()) {
-      const r = await p;
-      tried.push({ unit: r.rung.unit, state: "cancelled", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    for (const [unit, p] of pending) {
+      const r = await settleWithin(p, SETTLE_MS);         // a cancelled run stuck in a model call is not waited for
+      tried.push({ unit, state: "cancelled", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     const { rung, result } = winner;
     const runId = winner.run_id || result.run_id;
@@ -737,6 +737,16 @@ export function namedImages(prompt, cwd) {
     const abs = path.resolve(root, name);
     try { return abs.startsWith(root + path.sep) && fs.statSync(abs).isFile(); } catch { return false; }
   });
+}
+
+// After a pass (or the time limit) the other runs are cancelled; their final cost is waited for at most SETTLE_MS --
+// a run stuck in a slow model call (up to 6 x 60 s of retries) once held a finished answer back for 5 minutes.
+const SETTLE_MS = 5000;
+function settleWithin(promise, ms) {
+  let timer;
+  return Promise.race([Promise.resolve(promise).catch(() => null),
+                       new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); timer.unref?.(); })])
+    .finally(() => clearTimeout(timer));
 }
 
 // The advance (test-first) tests a failed run failed, as one sorted, comma-separated string -- or null when the run did

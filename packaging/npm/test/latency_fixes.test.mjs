@@ -111,3 +111,24 @@ test("a model that can see gets the named images as image parts", async () => {
   assert.equal(parts[0].type, "image_url");
   assert.match(parts[0].image_url.url, /^data:image\/png;base64,iVBORw==$/);
 });
+
+test("a cancelled run that never answers does not hold back a finished answer", async () => {
+  const { env, repo } = setup();
+  const calls = [];
+  const rt = { calls,
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) {
+      const m = calls[Number(id.slice(2)) - 1].model;
+      if (m === "minimax-m2-7") return new Promise(() => {});                 // stuck in a model call, forever
+      return { run_id: id, state: "verified", cost_usd: 0.001, checks: [{ tail: "" }] };
+    },
+    async applyRun() { fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n"); return { files: ["calc.py"] }; },
+    async cancelRun() { return new Promise(() => {}); } };                     // cancelling hangs too
+  const t0 = Date.now();
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: { ...PLAN, ladder: ["minimax-m2-7|stealth", "gemma-4-31b-it|stealth"] } },
+    root: repo, mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_PARALLEL: "on", STEALTHLAB_DISPATCH_FASTEST_FIRST: "off" }, runtime: rt });
+  assert.equal(d.handled, true);
+  assert.equal(d.unit, "gemma-4-31b-it|stealth");
+  assert.ok(Date.now() - t0 < 20000, `delivered after ${Date.now() - t0} ms`);
+  assert.ok(d.tried.some((t) => t.unit === "minimax-m2-7|stealth" && t.state === "cancelled"));
+});
