@@ -46,7 +46,7 @@
       "output_per_mtok": 0.5,
       "vision": false,
       "request_extras": {
-        "reasoning_effort": "high"
+        "reasoning_effort": "low"
       },
       "strong": true
     },
