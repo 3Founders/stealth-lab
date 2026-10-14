@@ -199,11 +199,12 @@ Shell = Callable[..., "subprocess.CompletedProcess"]
 
 
 def shell(argv: list[str] | str, *, env: dict | None = None, cwd: str | Path | None = None, timeout: int | None = None,
-          background: bool = False):
-    """Run a command (a list, or a string for bash -lc). background=True starts it and returns the Popen."""
+          background: bool = False, log: Path | None = None):
+    """Run a command (a list, or a string for bash -lc). background=True starts it and returns the Popen (its output to `log`)."""
     cmd = ["bash", "-lc", argv] if isinstance(argv, str) else argv
     if background:
-        return subprocess.Popen(cmd, env=env, cwd=cwd)
+        out = open(log, "w", encoding="utf-8") if log else None
+        return subprocess.Popen(cmd, env=env, cwd=cwd, stdout=out, stderr=subprocess.STDOUT if out else None)
     return subprocess.run(cmd, env=env, cwd=cwd, timeout=timeout, capture_output=True, text=True)
 
 
@@ -285,13 +286,19 @@ class Container:
             self._must(self.sh(s), "postgres: " + s[:80])
         self._must(self.sh([sys.executable, str(self.app / "backend" / "scripts" / "migrate.py"), "--dsn", DSN],
                            cwd=self.app / "backend", env=self.environ), "migrate.py")
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.backend_log = self.out / "backend.log"
         self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN},
-                               cwd=self.ab, background=True)
+                               cwd=self.ab, background=True, log=self.backend_log)
         for _ in range(150):
             if self.health():
                 return
+            if getattr(self.backend, "poll", lambda: None)() is not None:          # the process already ended: no point waiting
+                break
             self.sleep(2)
-        raise RuntimeError(f"the test backend did not come up at {HEALTH} in 300 s")
+        tail = self.backend_log.read_text(encoding="utf-8", errors="replace")[-2500:] if self.backend_log.exists() else "(no output)"
+        raise RuntimeError(f"the test backend did not come up at {HEALTH}; its output ends:
+{tail}")
 
     def restore_db(self) -> None:
         dump = self.out / "db.sql.gz"

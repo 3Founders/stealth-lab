@@ -136,7 +136,7 @@ class Recorder:
     def __init__(self, container_ref, rc_for=None):
         self.c, self.calls, self.rc_for, self.bad = container_ref, [], rc_for or {}, set()
 
-    def __call__(self, argv, *, env=None, cwd=None, timeout=None, background=False):
+    def __call__(self, argv, *, env=None, cwd=None, timeout=None, background=False, log=None):
         text = argv if isinstance(argv, str) else " ".join(map(str, argv))
         self.calls.append({"cmd": text, "env": env, "cwd": cwd, "background": background})
         if background:
@@ -274,6 +274,27 @@ def test_a_backend_that_never_comes_up_is_an_error_not_a_hang(tmp_path, fake_ser
     c = container(tmp_path, max_issues=1)
     c.health = lambda: False
     with pytest.raises(RuntimeError, match="did not come up"):
+        c.run()
+
+
+def test_a_backend_that_dies_is_reported_with_the_end_of_its_output(tmp_path, fake_series):
+    class Dead:
+        def poll(self):
+            return 1
+
+    c = container(tmp_path, max_issues=1)
+    c.health = lambda: False
+    inner = c.sh
+
+    def sh(argv, **kw):
+        if kw.get("background"):
+            kw["log"].write_text("ModuleNotFoundError: No module named 'jwt'
+", encoding="utf-8")
+            return Dead()
+        return inner(argv, **kw)
+
+    c.sh = sh
+    with pytest.raises(RuntimeError, match="No module named 'jwt'"):
         c.run()
 
 
