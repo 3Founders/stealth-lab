@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FAILURE_ACTION, FAILURE_WATCH, activeUsers, activeUsersByDay, adoptionRate, concentration, costPerRequest, failureByDay, failureRate, successRate, topShares, verdict, type ExecSignals } from "@/lib/exec";
+import { DEFAULT_THRESHOLDS, FAILURE_ACTION, FAILURE_WATCH, activeUsers, adoptionCohorts, describeSpendChange, spendChange, topMovers, weeklyActive, activeUsersByDay, adoptionRate, concentration, costPerRequest, failureByDay, failureRate, successRate, topShares, verdict, type ExecSignals } from "@/lib/exec";
 import { toMicros } from "@/lib/money";
 import { emptyTotals } from "@/lib/usage";
 import type { UserUsageRow } from "@/lib/org-api";
@@ -92,5 +92,99 @@ describe("topShares", () => {
   });
   it("is empty with no spend", () => {
     expect(topShares([grp("a", "0")], 3)).toEqual([]);
+  });
+});
+
+describe("verdict with thresholds", () => {
+  it("flags a nearly spent budget at the urgent level, and a used-up one at the warn level", () => {
+    expect(verdict(base({ budget: m("100"), monthToDate: m("91"), projected: m("95") })).reasons.some((r) => /nearly at the limit/.test(r.text))).toBe(true);
+    const w = verdict(base({ budget: m("100"), monthToDate: m("76"), projected: m("95") }));
+    expect(w.level).toBe("watch");
+    expect(w.reasons.some((r) => /already used/.test(r.text))).toBe(true);
+    expect(verdict(base({ budget: m("100"), monthToDate: m("40"), projected: m("90") })).level).toBe("good");
+  });
+  it("honours custom thresholds", () => {
+    const strict = { ...DEFAULT_THRESHOLDS, failureWatch: 0.01, failureAction: 0.02 };
+    expect(verdict(base({ failureRate: 0.03 }), strict).level).toBe("action");
+    expect(verdict(base({ failureRate: 0.03 })).level).toBe("good");
+    const loose = { ...DEFAULT_THRESHOLDS, failureWatch: 0.5, failureAction: 0.9 };
+    expect(verdict(base({ failureRate: 0.2 }), loose).level).toBe("good");
+  });
+});
+
+describe("spendChange (volume vs unit cost)", () => {
+  it("splits a change exactly: volume + unit cost = delta", () => {
+    const sc = spendChange(m("300"), 150, m("100"), 100);
+    expect(sc.computable).toBe(true);
+    expect(sc.delta).toBe(m("200"));
+    expect(sc.volume).toBe(m("50"));        // 50 more requests at last period's $1 each
+    expect(sc.unitCost).toBe(m("150"));     // each request now costs $2
+    expect(sc.volume + sc.unitCost).toBe(sc.delta);
+  });
+  it("stays exact when it doesn't divide evenly", () => {
+    const sc = spendChange(m("10.000001"), 7, m("3.333333"), 3);
+    expect(sc.volume + sc.unitCost).toBe(sc.delta);
+  });
+  it("handles a fall and cannot be computed without a previous period", () => {
+    const down = spendChange(m("50"), 50, m("100"), 100);
+    expect(down.volume).toBe(m("-50"));
+    expect(down.unitCost).toBe(0n);
+    expect(spendChange(m("10"), 5, 0n, 0).computable).toBe(false);
+  });
+});
+
+describe("topMovers", () => {
+  it("ranks groups by size of change, up or down, and omits unchanged ones", () => {
+    const cur = [grp("a", "100"), grp("b", "10"), grp("c", "50"), grp("same", "5")];
+    const prev = [grp("a", "60"), grp("b", "40"), grp("same", "5"), grp("gone", "20")];
+    const mv = topMovers(cur, prev, 10);
+    expect(mv.map((x) => x.key)).toEqual(["c", "a", "b", "gone"].sort((x, y) => Math.abs(Number((({ c: 50, a: 40, b: -30, gone: -20 } as Record<string, number>)[y])) ) - Math.abs(Number((({ c: 50, a: 40, b: -30, gone: -20 } as Record<string, number>)[x])))));
+    expect(mv.find((x) => x.key === "c")).toMatchObject({ delta: m("50"), pct: null }); // new: no baseline
+    expect(mv.find((x) => x.key === "a")?.pct).toBeCloseTo(66.66, 1);
+    expect(mv.find((x) => x.key === "same")).toBeUndefined();
+  });
+  it("limits to n", () => {
+    expect(topMovers([grp("a", "9"), grp("b", "8"), grp("c", "7")], [], 2).length).toBe(2);
+  });
+});
+
+describe("adoptionCohorts", () => {
+  const days = (n: number, u: string) => Array.from({ length: n }, (_, i) => urow(u, `2026-09-${String(i + 1).padStart(2, "0")}`));
+  it("places people by the share of days they were active, and counts the rest as inactive", () => {
+    const rows = [...days(20, "power"), ...days(8, "regular"), ...days(2, "light")]; // of 30 days
+    const c = adoptionCohorts(rows, 10, 30)!;
+    expect(c).toEqual({ power: 1, regular: 1, light: 1, active: 3, inactive: 7 });
+  });
+  it("is null when the period is too short or members are unknown", () => {
+    expect(adoptionCohorts(days(3, "a"), 5, 5)).toBeNull();
+    expect(adoptionCohorts(days(3, "a"), 0, 30)).toBeNull();
+  });
+  it("never reports negative inactive when more people were active than members", () => {
+    expect(adoptionCohorts([...days(15, "a"), ...days(15, "b")], 1, 30)!.inactive).toBe(0);
+  });
+});
+
+describe("weeklyActive", () => {
+  it("counts distinct people in the last 7 days and the 7 before", () => {
+    const rows = [urow("a", "2026-09-29"), urow("a", "2026-09-28"), urow("b", "2026-09-25"), urow("c", "2026-09-20"), urow("d", "2026-09-10")];
+    expect(weeklyActive(rows, "2026-10-01")).toEqual({ now: 2, before: 1 });
+  });
+});
+
+describe("describeSpendChange", () => {
+  const fmt = (x: bigint) => `$${Number(x) / 1e6}`;
+  it("names both causes with signs", () => {
+    expect(describeSpendChange(spendChange(m("300"), 150, m("100"), 100), fmt)).toBe("Spending rose by $200: +$50 from more requests and +$150 from each request costing more.");
+  });
+  it("reads correctly when the causes pull in opposite directions", () => {
+    // fewer requests (-$50) but each costs far more (+$110): net up $60
+    const sc = spendChange(m("110"), 50, m("50"), 100);
+    expect(sc.delta).toBe(m("60"));
+    expect(describeSpendChange(sc, fmt)).toBe("Spending rose by $60: −$25 from fewer requests and +$85 from each request costing more.");
+  });
+  it("handles a fall, no change, and no baseline", () => {
+    expect(describeSpendChange(spendChange(m("50"), 50, m("100"), 100), fmt)).toBe("Spending fell by $50: −$50 from fewer requests.");
+    expect(describeSpendChange(spendChange(m("100"), 100, m("100"), 100), fmt)).toBe("Spending is unchanged from the previous period.");
+    expect(describeSpendChange(spendChange(m("10"), 5, 0n, 0), fmt)).toMatch(/no earlier activity/);
   });
 });

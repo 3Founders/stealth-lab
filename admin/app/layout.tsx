@@ -4,6 +4,7 @@ import "@fontsource/barlow/400.css";
 import "@fontsource/barlow/500.css";
 import "./globals.css";
 import AdminHeader from "@/components/AdminHeader";
+import DemoBanner from "@/components/DemoBanner";
 import { OrgProvider } from "@/components/OrgContext";
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="frame"><i /><i /><i /><i /><i /></div>
         </div>
         <OrgProvider>
+          <DemoBanner />
           <AdminHeader />
           <main id="main">{children}</main>
         </OrgProvider>

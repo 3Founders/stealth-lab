@@ -95,7 +95,7 @@ export function ShareBars({ shares, label }: { shares: Share[]; label: string })
         <li key={s.key} style={{ display: "grid", gridTemplateColumns: "minmax(120px, 240px) 1fr auto", gap: 12, alignItems: "center" }}>
           <span style={{ overflowWrap: "anywhere" }}>{s.key}</span>
           <span aria-hidden="true" style={{ background: "var(--rule)", height: 14 }}><span style={{ display: "block", height: "100%", width: `${s.pct}%`, background: s.key === "Everything else" ? "var(--grey)" : "var(--cobalt)" }} /></span>
-          <span><b>{s.pct.toFixed(0)}%</b> <span className="dim">· {formatUsd(s.amount)}</span></span>
+          <span><b>{s.pct.toFixed(0)}%</b> <span className="dim">· {s.count !== undefined ? `${s.count} ${s.count === 1 ? "person" : "people"}` : formatUsd(s.amount)}</span></span>
         </li>
       ))}
     </ul>

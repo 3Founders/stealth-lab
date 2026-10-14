@@ -5,6 +5,8 @@ import OrgGate from "@/components/OrgGate";
 import { RangePicker, useRange } from "@/components/Range";
 import { BudgetBanner, CsvButton, Delta, Updated } from "@/components/Widgets";
 import { anomalousDays, budgetStatus } from "@/lib/alerts";
+import { DEFAULT_THRESHOLDS, type Thresholds } from "@/lib/exec";
+import { loadThresholds } from "@/lib/thresholds";
 import { formatUsd, percent, perMillionTokens, toMicros, type Micros } from "@/lib/money";
 import { getPolicy, getUsage, type ApiState, type Org, type OrgPolicy, type UsageRow } from "@/lib/org-api";
 import { isRange, previousRange } from "@/lib/range";
@@ -69,6 +71,8 @@ function UsagePanel({ org }: { org: Org }) {
   const [nonce, setNonce] = useState(0);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
   const valid = isRange(range);
+  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  useEffect(() => { setThresholds(loadThresholds(org.organization_id)); }, [org.organization_id]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -106,7 +110,7 @@ function UsagePanel({ org }: { org: Org }) {
   const month = useMemo(() => projectMonth(rows, new Date()), [rows]);
   const budget = policy.kind === "ok" ? toMicros(policy.data.monthly_budget_usd) : null;
   const perUserDaily = policy.kind === "ok" ? toMicros(policy.data.per_user_daily_budget_usd) : null;
-  const status = covers ? budgetStatus(month.monthToDate, month.projected, budget) : null;
+  const status = covers ? budgetStatus(month.monthToDate, month.projected, budget, thresholds.budgetWarnPct, thresholds.budgetUrgentPct) : null;
   const hasSplit = rows.some((r) => r.cost_input_usd !== undefined);
 
   // Cumulative month-to-date spend, one bar per day, against the monthly budget line: the burn-down.

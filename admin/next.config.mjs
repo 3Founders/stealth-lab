@@ -14,6 +14,8 @@ export const ADMIN_HEADERS = [
 
 export default {
   reactStrictMode: true,
+  // The sample-data dev server (npm run dev:demo) builds into its own folder so it can run beside the real one.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   async headers() {
     return [{ source: "/:path*", headers: ADMIN_HEADERS }];
   },

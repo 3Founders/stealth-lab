@@ -3,21 +3,23 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Hero } from "@/components/Admin";
 import { Bars, BudgetBar, ControlRow, Kpi, Section, ShareBars, StatusBanner } from "@/components/ExecWidgets";
+import ThresholdSettings from "@/components/ThresholdSettings";
 import OrgGate from "@/components/OrgGate";
 import { useOrg } from "@/components/OrgContext";
 import { RangePicker, useRange } from "@/components/Range";
 import { Delta, Updated } from "@/components/Widgets";
 import { anomalousDays } from "@/lib/alerts";
 import { reasonText } from "@/lib/denials";
-import { activeUsers, adoptionRate, costPerRequest, failureByDay, failureRate, successRate, topShares, verdict } from "@/lib/exec";
-import { formatUsd, toMicros } from "@/lib/money";
+import { COHORT_MIN_DAYS, COHORT_POWER_SHARE, COHORT_REGULAR_SHARE, DEFAULT_THRESHOLDS, activeUsers, activeUsersByDay, adoptionCohorts, adoptionRate, costPerRequest, describeSpendChange, failureByDay, failureRate, spendChange, successRate, topMovers, topShares, verdict, weeklyActive, type Thresholds } from "@/lib/exec";
+import { formatUsd, formatUsdRounded, toMicros } from "@/lib/money";
 import {
   getAuditRecent, getBudget, getDenials, getMembers, getPerformanceSummary, getPolicy, getUsage, getUsageByUser,
   type ApiState, type AuditRecent, type BudgetPosition, type Member, type Org, type OrgPolicy, type PerfSummaryRow, type UsageRow, type UserUsageRow,
 } from "@/lib/org-api";
 import { userBudgets } from "@/lib/people";
 import { fmtMs } from "@/lib/perf";
-import { isRange, previousRange } from "@/lib/range";
+import { isRange, lengthDays, previousRange } from "@/lib/range";
+import { loadThresholds } from "@/lib/thresholds";
 import { dayOf, groupBy, projectMonth, sumAll } from "@/lib/usage";
 
 /**
@@ -30,6 +32,7 @@ const usd = (m: bigint) => Number(m) / 1e6; // charts and change chips only; eve
 const pct1 = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
 const num = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
 const ok = <T,>(s: ApiState<T>) => (s.kind === "ok" ? s.data : null);
+const pctOf = (n: number, d: number) => (d > 0 ? (n / d) * 100 : 0);
 const AUDIT_DAYS = 14;
 
 /** Why a card is empty, in plain words. Never blank, never "0". */
@@ -60,6 +63,8 @@ function ExecutivePanel({ org }: { org: Org }) {
   const [members, setMembers] = useState<ApiState<{ members: Member[] }>>({ kind: "loading" });
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  useEffect(() => { setThresholds(loadThresholds(id)); }, [id]);
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
@@ -90,7 +95,9 @@ function ExecutivePanel({ org }: { org: Org }) {
   const total = useMemo(() => sumAll(rows), [rows]);
   const prevTotal = useMemo(() => (ok(prevUsage) ? sumAll(ok(prevUsage)!.rows) : null), [prevUsage]);
   const byDay = useMemo(() => groupBy(rows, dayOf).sort((a, b) => a.key.localeCompare(b.key)), [rows]);
-  const models = useMemo(() => topShares(groupBy(rows, (r) => `${r.provider} / ${r.model}`), 4), [rows]);
+  const modelGroups = useMemo(() => groupBy(rows, (r) => `${r.provider} / ${r.model}`), [rows]);
+  const prevModelGroups = useMemo(() => groupBy(ok(prevUsage)?.rows ?? [], (r) => `${r.provider} / ${r.model}`), [prevUsage]);
+  const models = useMemo(() => topShares(modelGroups, 4), [modelGroups]);
   const providers = useMemo(() => topShares(groupBy(rows, (r) => r.provider), 4), [rows]);
   const spikes = useMemo(() => anomalousDays(byDay.map((t) => ({ day: t.key, value: usd(t.total) }))), [byDay]);
 
@@ -99,6 +106,10 @@ function ExecutivePanel({ org }: { org: Org }) {
   const active = activeUsers(userRows); // a count only: this page never says who
   const prevActive = ok(prevUsers) ? activeUsers(ok(prevUsers)!.rows) : null;
   const adoption = adoptionRate(active, memberCount);
+  const periodDays = isRange(range) ? lengthDays(range) : 0;
+  const cohorts = useMemo(() => adoptionCohorts(userRows, memberCount, periodDays), [userRows, memberCount, periodDays]);
+  // North Star (interim): people active in the latest week against the week before, from both periods' rows.
+  const weekly = useMemo(() => weeklyActive([...userRows, ...(ok(prevUsers)?.rows ?? [])], range.until), [userRows, prevUsers, range.until]);
 
   const perfNow = ok(perf)?.rows[0] ?? null;
   const perfPrev = ok(prevPerf)?.rows[0] ?? null;
@@ -125,12 +136,19 @@ function ExecutivePanel({ org }: { org: Org }) {
     calls: total.calls, killSwitch: pol?.kill_switch ?? b?.kill_switch ?? null, noPolicy, budget: monthlyBudget, monthToDate, projected,
     failureRate: fail, unpricedCalls: total.upperBoundCalls, spikeDays: spikes.size, usersAtCap: atCap,
     auditIntact: tail ? tail.chain_intact : null,
-  }) : null;
+  }, thresholds) : null;
 
   const refusals = [...(ok(denials)?.counts_by_reason ?? [])].sort((x, y) => y.count - x.count);
   const refused = refusals.reduce((s, c) => s + c.count, 0);
-  const perCall = costPerRequest(total.total, total.calls);
-  const prevPerCall = prevTotal ? costPerRequest(prevTotal.total, prevTotal.calls) : null;
+  // Cost is recorded for completed requests only, so the unit cost divides by completed requests, not attempts.
+  const completed = total.calls - total.failed;
+  const prevCompleted = prevTotal ? prevTotal.calls - prevTotal.failed : 0;
+  const perCall = costPerRequest(total.total, completed);
+  const prevPerCall = prevTotal ? costPerRequest(prevTotal.total, prevCompleted) : null;
+  const change = prevTotal ? spendChange(total.total, completed, prevTotal.total, prevCompleted) : null;
+  const movers = useMemo(() => topMovers([...modelGroups.values()], [...prevModelGroups.values()], 3), [modelGroups, prevModelGroups]);
+  const perPerson = active > 0 ? completed / active : null;
+  const prevPerPerson = prevActive != null && prevActive > 0 ? prevCompleted / prevActive : null;
   const recent = tail ? (tail.newestFirst ? tail.events : [...tail.events].reverse()).slice(0, 5) : [];
   const killOn = pol?.kill_switch ?? b?.kill_switch;
 
@@ -156,21 +174,52 @@ function ExecutivePanel({ org }: { org: Org }) {
       <StatusBanner verdict={v} scope={`${org.name} · ${range.since} → ${range.until}`} />
 
       <div className="stats">
-        <Kpi label="AI spend" value={usage.kind === "loading" ? "…" : formatUsd(total.total)}
+        <Kpi label="AI spend" value={usage.kind === "loading" ? "…" : formatUsdRounded(total.total)}
           change={prevTotal && <Delta cur={usd(total.total)} prev={usd(prevTotal.total)} />}
-          caption={monthlyBudget != null && monthlyBudget > 0n ? `Month to date ${formatUsd(monthToDate)} of ${formatUsd(monthlyBudget)} · on pace for ${formatUsd(projected)}` : noPolicy ? "No policy set" : "No monthly budget set"} />
+          caption={monthlyBudget != null && monthlyBudget > 0n ? `Month to date ${formatUsdRounded(monthToDate)} of ${formatUsdRounded(monthlyBudget)} · on pace for ${formatUsdRounded(projected)}` : noPolicy ? "No policy set" : "No monthly budget set"} />
         <Kpi label="People using it" value={users.kind === "ok" ? active : why(users)}
           change={prevActive != null && <Delta cur={active} prev={prevActive} upIsBad={false} />}
           caption={adoption != null ? `${(adoption * 100).toFixed(0)}% of ${memberCount} members` : members.kind === "ok" ? "No member count" : undefined} />
         <Kpi label="Requests" value={total.calls.toLocaleString()}
           change={prevTotal && <Delta cur={total.calls} prev={prevTotal.calls} upIsBad={false} />}
           caption={fail == null ? "None in this period" : `${pct1(successRate(total.calls, total.failed))} completed`} />
-        <Kpi label="Average cost per request" value={perCall == null ? "—" : formatUsd(perCall)}
-          change={perCall != null && prevPerCall != null && <Delta cur={usd(perCall)} prev={usd(prevPerCall)} />} caption="Spend ÷ requests" />
+        <Kpi label="Cost per completed request" value={perCall == null ? "—" : formatUsdRounded(perCall)}
+          change={perCall != null && prevPerCall != null && <Delta cur={usd(perCall)} prev={usd(prevPerCall)} />} caption="Spend ÷ requests that completed. Not the cost per successful task: that needs verified results." />
         <Kpi label="Typical wait (95th pct.)" value={perf.kind === "ok" ? fmtMs(perfNow?.provider_p95_ms) : why(perf)}
           change={num(perfNow?.provider_p95_ms) != null && num(perfPrev?.provider_p95_ms) != null && <Delta cur={num(perfNow!.provider_p95_ms)!} prev={num(perfPrev!.provider_p95_ms)!} />}
           caption={perfNow ? `Half of requests finish within ${fmtMs(perfNow.provider_p50_ms)}` : "19 in 20 requests are faster than this"} />
       </div>
+
+      <Section title="North Star" lead="The one number that says whether this is becoming part of how people work. Everything below explains it or feeds it.">
+        <div className="stats">
+          <Kpi label="People active in the last 7 days" value={users.kind === "ok" ? weekly.now : why(users)}
+            change={users.kind === "ok" && weekly.before > 0 && <Delta cur={weekly.now} prev={weekly.before} upIsBad={false} label="vs the 7 days before" />}
+            caption={memberCount > 0 && users.kind === "ok" ? `${Math.round((weekly.now / memberCount) * 100)}% of ${memberCount} members. Interim measure: it becomes verified successful tasks per week once those results are recorded.` : "Interim measure: it becomes verified successful tasks per week once those results are recorded."} />
+        </div>
+        <h3 className="small dim" style={{ fontWeight: 400, margin: "8px 0 0" }}>How the numbers fit together</h3>
+        <ul aria-label="Metric tree" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
+          <li><b>Spend</b> {formatUsdRounded(total.total)} = <b>completed requests</b> {completed.toLocaleString()} × <b>cost per completed request</b> {perCall == null ? "—" : formatUsdRounded(perCall)}</li>
+          <li><b>Completed requests</b> {completed.toLocaleString()} = <b>people active</b> {users.kind === "ok" ? active : why(users)} × <b>requests per person</b> {perPerson == null ? "—" : perPerson.toFixed(1)}
+            {perPerson != null && prevPerPerson != null && <> <Delta cur={perPerson} prev={prevPerPerson} upIsBad={false} /></>}</li>
+          <li><b>Cost per completed request</b> moves with <b>which models are used</b> and <b>how much is served from cache</b> (see the model breakdown and the performance page).</li>
+        </ul>
+      </Section>
+
+      <Section title="What changed" lead="Why spend moved against the previous period of the same length.">
+        {!change || !prevTotal ? <p className="small dim">The previous period isn’t available, so there is nothing to compare with.</p> : (
+          <>
+            <p><b>{describeSpendChange(change, formatUsdRounded)}</b></p>
+            {change.computable && <p className="small dim">“More requests” is what the earlier cost per request would have cost at this period’s volume; “each request costing more” is the rest, which includes any move to dearer or cheaper models.</p>}
+            {movers.length > 0 && (
+              <ul aria-label="Biggest changes by model" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+                {movers.map((mv) => (
+                  <li key={mv.key} className="small"><b>{mv.key}</b>: {mv.delta > 0n ? "up" : "down"} {formatUsdRounded(mv.delta < 0n ? -mv.delta : mv.delta)}{mv.pct == null ? " (new this period)" : ` (${mv.pct > 0 ? "+" : ""}${mv.pct.toFixed(0)}%)`}</li>
+                ))}
+              </ul>
+            )}
+          </>
+        )}
+      </Section>
 
       <Section title="Spending" lead="What is being spent, how it is trending, and where it goes.">
         {monthlyBudget != null ? (
@@ -192,6 +241,18 @@ function ExecutivePanel({ org }: { org: Org }) {
         {users.kind !== "ok" ? <p className="small dim">Adoption data: {why(users)}.</p> : (
           <p className="small"><b>{active}</b> of {memberCount || "an unknown number of"} members made at least one request in this period{adoption != null ? ` (${(adoption * 100).toFixed(0)}%)` : ""}.</p>
         )}
+        {cohorts ? (
+          <div>
+            <h3 className="small dim" style={{ fontWeight: 400, marginBottom: 8 }}>How often people use it (share of days active in this period)</h3>
+            <ShareBars label="Adoption depth" shares={[
+              { key: `Most days (${Math.round(COHORT_POWER_SHARE * 100)}% of days or more)`, amount: 0n, pct: pctOf(cohorts.power, memberCount), count: cohorts.power },
+              { key: `Regularly (${Math.round(COHORT_REGULAR_SHARE * 100)}% to ${Math.round(COHORT_POWER_SHARE * 100)}%)`, amount: 0n, pct: pctOf(cohorts.regular, memberCount), count: cohorts.regular },
+              { key: `Occasionally (under ${Math.round(COHORT_REGULAR_SHARE * 100)}%)`, amount: 0n, pct: pctOf(cohorts.light, memberCount), count: cohorts.light },
+              { key: "Not at all", amount: 0n, pct: pctOf(cohorts.inactive, memberCount), count: cohorts.inactive },
+            ]} />
+          </div>
+        ) : <p className="small dim">{periodDays < COHORT_MIN_DAYS ? `Choose a period of at least ${COHORT_MIN_DAYS} days to see how often people use it.` : "Adoption depth needs the member count."}</p>}
+        <Bars ariaLabel="People active per day" points={activeUsersByDay(userRows).map((p) => ({ label: p.day, value: p.value }))} format={(x) => `${x} ${x === 1 ? "person" : "people"}`} />
         <Bars ariaLabel="Requests per day" points={byDay.map((t) => ({ label: t.key, value: t.calls }))} format={(x) => `${x.toLocaleString()} requests`} />
       </Section>
 
@@ -250,10 +311,12 @@ function ExecutivePanel({ org }: { org: Org }) {
         </div>
       </Section>
 
+      <ThresholdSettings orgId={id} value={thresholds} onChange={setThresholds} />
+
       <p className="small dim" style={{ gridColumn: "1 / span 12", maxWidth: "60em" }}>
         Figures cover model calls made through keळ only, in UTC days; change is measured against the equal-length period just before. Spend is summed exactly from the ledger,
         and a request whose cost couldn&rsquo;t be determined is counted at its worst case, never zero. This page reports the organisation as a whole and never names individuals.
-        Status thresholds are defaults: a failure rate of 5% or more is a watch item and 15% or more needs action; budget alerts start at 75% and 90%.
+        Status thresholds start from defaults (failures: watch at 5%, action at 15%; budget: warn at 75%, urgent at 90%) and can be changed for this browser below.
         More is <Link href="/coming" style={{ textDecoration: "underline" }}>on the way</Link>.
       </p>
     </>

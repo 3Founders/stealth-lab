@@ -37,6 +37,18 @@ export function formatUsd(micros: Micros, opts: { cents?: boolean } = {}): strin
   return `${neg ? "-" : ""}$${whole}.${frac}`;
 }
 
+/**
+ * Dollars for an executive: whole dollars from $100 up, cents from $1, and the precise form below that so a small
+ * component never rounds to "$0". Display only; every sum underneath stays in exact micro-dollars.
+ */
+export function formatUsdRounded(micros: Micros): string {
+  const abs = micros < 0n ? -micros : micros;
+  if (abs < 100_000_000n) return formatUsd(micros);
+  const neg = micros < 0n;
+  const whole = ((abs + 500_000n) / 1_000_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${neg ? "-" : ""}$${whole}`;
+}
+
 /** Share of `part` in `whole` as a percentage with one decimal; null when there is no whole to share. */
 export function percent(part: Micros, whole: Micros): number | null {
   if (whole <= 0n) return null;

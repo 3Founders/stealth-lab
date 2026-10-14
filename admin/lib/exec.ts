@@ -11,6 +11,10 @@ import { dayOf, type Totals } from "@/lib/usage";
 export const FAILURE_WATCH = 0.05;
 export const FAILURE_ACTION = 0.15;
 
+/** What counts as worth flagging. Defaults here; an organisation's admin can change them for their own view (lib/thresholds.ts). */
+export interface Thresholds { failureWatch: number; failureAction: number; budgetWarnPct: number; budgetUrgentPct: number }
+export const DEFAULT_THRESHOLDS: Thresholds = { failureWatch: FAILURE_WATCH, failureAction: FAILURE_ACTION, budgetWarnPct: 75, budgetUrgentPct: 90 };
+
 export type Level = "good" | "watch" | "action" | "quiet";
 export interface Reason { level: "watch" | "action"; text: string }
 export interface Verdict { level: Level; headline: string; reasons: Reason[] }
@@ -34,7 +38,7 @@ export interface ExecSignals {
 const HEADLINES: Record<Level, string> = { good: "On track", watch: "Needs attention", action: "Action needed", quiet: "No activity yet" };
 
 /** Overall status in one line, plus every reason behind it. The worst reason sets the level. */
-export function verdict(s: ExecSignals): Verdict {
+export function verdict(s: ExecSignals, t: Thresholds = DEFAULT_THRESHOLDS): Verdict {
   const reasons: Reason[] = [];
   const add = (level: Reason["level"], text: string) => reasons.push({ level, text });
 
@@ -43,10 +47,15 @@ export function verdict(s: ExecSignals): Verdict {
   if (s.budget != null) {
     if (s.budget <= 0n ? s.monthToDate > 0n : s.monthToDate >= s.budget) add("action", "Spending has reached the monthly budget.");
     else if (s.budget > 0n && s.projected > s.budget) add("watch", "At the current pace, spending will pass the monthly budget before month end.");
+    else if (s.budget > 0n) {
+      const used = Number((s.monthToDate * 1000n) / s.budget) / 10;
+      if (used >= t.budgetUrgentPct) add("watch", `${used.toFixed(0)}% of the monthly budget is used: nearly at the limit.`);
+      else if (used >= t.budgetWarnPct) add("watch", `${used.toFixed(0)}% of the monthly budget is already used.`);
+    }
   }
   if (s.failureRate != null) {
-    if (s.failureRate >= FAILURE_ACTION) add("action", `${(s.failureRate * 100).toFixed(1)}% of requests are failing (action threshold ${FAILURE_ACTION * 100}%).`);
-    else if (s.failureRate >= FAILURE_WATCH) add("watch", `${(s.failureRate * 100).toFixed(1)}% of requests are failing (watch threshold ${FAILURE_WATCH * 100}%).`);
+    if (s.failureRate >= t.failureAction) add("action", `${(s.failureRate * 100).toFixed(1)}% of requests are failing (action threshold ${+(t.failureAction * 100).toFixed(1)}%).`);
+    else if (s.failureRate >= t.failureWatch) add("watch", `${(s.failureRate * 100).toFixed(1)}% of requests are failing (watch threshold ${+(t.failureWatch * 100).toFixed(1)}%).`);
   }
   if (s.noPolicy) add("watch", "No usage policy is set, so nothing is currently allowed.");
   if (s.spikeDays > 0) add("watch", `Spending was unusually high on ${s.spikeDays} day${s.spikeDays === 1 ? "" : "s"}.`);
@@ -90,7 +99,7 @@ export function failureByDay(days: Totals[]): { day: string; value: number }[] {
   return days.filter((t) => t.calls > 0).map((t) => ({ day: t.key, value: t.failed / t.calls })).sort((a, b) => a.day.localeCompare(b.day));
 }
 
-export interface Share { key: string; amount: Micros; pct: number }
+export interface Share { key: string; amount: Micros; pct: number; /** A head-count, shown instead of dollars (adoption depth). */ count?: number }
 
 /** Top `n` groups by spend with the remainder rolled into one "Everything else" row. Percentages sum to 100. */
 export function topShares(groups: Totals[], n: number): Share[] {
@@ -105,5 +114,100 @@ export function topShares(groups: Totals[], n: number): Share[] {
 
 /** The single biggest source of spend, for a one-line "most of it goes to X" caption. */
 export const concentration = (shares: Share[]): Share | null => shares.find((s) => s.key !== "Everything else") ?? null;
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Why did spend change?  Spend = completed requests x cost per completed request, so a change splits exactly into
+// "more or fewer requests" (volume) and "each request costing more or less" (unit cost, which also absorbs any shift
+// between cheaper and dearer models). Integer arithmetic: volume + unitCost always equals delta, to the micro-dollar.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export interface SpendChange { delta: Micros; volume: Micros; unitCost: Micros; computable: boolean }
+
+export function spendChange(curSpend: Micros, curRequests: number, prevSpend: Micros, prevRequests: number): SpendChange {
+  const delta = curSpend - prevSpend;
+  if (prevRequests <= 0) return { delta, volume: ZERO, unitCost: ZERO, computable: false }; // nothing to compare against
+  const volume = ((BigInt(Math.round(curRequests)) - BigInt(Math.round(prevRequests))) * prevSpend) / BigInt(Math.round(prevRequests));
+  return { delta, volume, unitCost: delta - volume, computable: true };
+}
+
+/** One sentence saying how much spend moved and why, with signed parts so a partly offset change reads correctly. */
+export function describeSpendChange(sc: SpendChange, fmt: (m: Micros) => string): string {
+  const abs = (x: Micros) => (x < ZERO ? -x : x);
+  if (sc.delta === ZERO && sc.volume === ZERO) return "Spending is unchanged from the previous period.";
+  const dir = sc.delta > ZERO ? "rose" : sc.delta < ZERO ? "fell" : "stayed level";
+  if (!sc.computable) return `Spending ${dir} by ${fmt(abs(sc.delta))}; there was no earlier activity to compare it with.`;
+  const signed = (x: Micros) => `${x < ZERO ? "−" : "+"}${fmt(abs(x))}`;
+  const parts: string[] = [];
+  if (sc.volume !== ZERO) parts.push(`${signed(sc.volume)} from ${sc.volume > ZERO ? "more" : "fewer"} requests`);
+  if (sc.unitCost !== ZERO) parts.push(`${signed(sc.unitCost)} from each request costing ${sc.unitCost > ZERO ? "more" : "less"}`);
+  return `Spending ${dir} by ${fmt(abs(sc.delta))}: ${parts.join(" and ")}.`;
+}
+
+export interface Mover { key: string; cur: Micros; prev: Micros; delta: Micros; pct: number | null }
+
+/** The groups whose spend moved most (up or down) between two periods. Groups that did not change are left out. */
+export function topMovers(cur: Totals[], prev: Totals[], n: number): Mover[] {
+  const c = new Map(cur.map((t) => [t.key, t.total]));
+  const p = new Map(prev.map((t) => [t.key, t.total]));
+  const keys = new Set([...c.keys(), ...p.keys()]);
+  const out: Mover[] = [];
+  for (const key of keys) {
+    const a = c.get(key) ?? ZERO, b = p.get(key) ?? ZERO, delta = a - b;
+    if (delta === ZERO) continue;
+    out.push({ key, cur: a, prev: b, delta, pct: b > ZERO ? Number((delta * 10_000n) / b) / 100 : null });
+  }
+  const abs = (x: Micros) => (x < ZERO ? -x : x);
+  return out.sort((x, y) => (abs(y.delta) > abs(x.delta) ? 1 : abs(y.delta) < abs(x.delta) ? -1 : x.key.localeCompare(y.key))).slice(0, n);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Adoption depth: not just "who used it" but how often. Counts only, never names. A person is placed by the share of
+// the period's days on which they made at least one request.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export const COHORT_POWER_SHARE = 0.5;
+export const COHORT_REGULAR_SHARE = 0.2;
+export const COHORT_MIN_DAYS = 7;
+
+export interface Cohorts { power: number; regular: number; light: number; inactive: number; active: number }
+
+/** Null when the period is too short to say how often anyone uses it, or when the member count is unknown. */
+export function adoptionCohorts(rows: UserUsageRow[], memberCount: number, periodDays: number): Cohorts | null {
+  if (periodDays < COHORT_MIN_DAYS || memberCount <= 0) return null;
+  const days = new Map<string, Set<string>>();
+  for (const r of rows) {
+    if ((Number(r.calls) || 0) <= 0) continue;
+    (days.get(r.actor_subject) ?? days.set(r.actor_subject, new Set()).get(r.actor_subject)!).add(String(r.day).slice(0, 10));
+  }
+  let power = 0, regular = 0, light = 0;
+  for (const set of days.values()) {
+    const share = set.size / periodDays;
+    if (share >= COHORT_POWER_SHARE) power++;
+    else if (share >= COHORT_REGULAR_SHARE) regular++;
+    else light++;
+  }
+  const active = days.size;
+  return { power, regular, light, active, inactive: Math.max(0, memberCount - active) };
+}
+
+/**
+ * Distinct people who made a request in the last 7 days before `until` (exclusive), and in the 7 days before that.
+ * The interim North Star: it leads revenue and spend, and becomes "verified successful tasks per week" once verified
+ * outcomes exist in the backend.
+ */
+export function weeklyActive(rows: UserUsageRow[], until: string): { now: number; before: number } {
+  const end = Date.parse(until);
+  const inWindow = (day: string, from: number, to: number) => { const t = Date.parse(day); return t >= from && t < to; };
+  const wk = 7 * 864e5;
+  const a = new Set<string>(), b = new Set<string>();
+  for (const r of rows) {
+    if ((Number(r.calls) || 0) <= 0) continue;
+    const day = String(r.day).slice(0, 10);
+    if (inWindow(day, end - wk, end)) a.add(r.actor_subject);
+    else if (inWindow(day, end - 2 * wk, end - wk)) b.add(r.actor_subject);
+  }
+  return { now: a.size, before: b.size };
+}
 
 export { dayOf };

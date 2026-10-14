@@ -1,3 +1,4 @@
+import { DEMO_WRITE_REFUSAL, demoEnabled, demoResponse } from "@/lib/demo";
 import { getAccessToken } from "@/lib/session";
 
 export const API_URL = (process.env.NEXT_PUBLIC_KEL_API_URL || "").replace(/\/$/, "");
@@ -21,6 +22,7 @@ async function _errorDetail(res: Response): Promise<unknown> {
 
 /** GET a keळ backend `/v1` route. Never fabricates: failures surface as an explicit state. */
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<ApiState<T>> {
+  if (demoEnabled()) return demoResponse(path) as ApiState<T>; // development-only sample data; see lib/demo.ts
   if (!API_URL) return { kind: "unconfigured" };
   try {
     const token = await getAccessToken();
@@ -52,6 +54,7 @@ async function apiWrite<T>(
   extraHeaders: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<ApiState<T>> {
+  if (demoEnabled()) return { kind: "error", message: DEMO_WRITE_REFUSAL, status: 403 };
   if (!API_URL) return { kind: "unconfigured" };
   const token = await getAccessToken();
   if (!token) return { kind: "unauthenticated" };
