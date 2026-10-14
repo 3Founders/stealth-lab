@@ -164,7 +164,7 @@ function ExecutivePanel({ org }: { org: Org }) {
 
   return (
     <>
-      <div className="no-print"><RangePicker range={range} setRange={setRange} idPrefix="exec" /></div>
+      <div className="no-print" style={{ gridColumn: "1 / span 12" }}><RangePicker range={range} setRange={setRange} idPrefix="exec" /></div>
       <div style={{ gridColumn: "1 / span 12", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <Updated at={loadedAt} onRefresh={refresh} busy={usage.kind === "loading"} />
         <button type="button" className="btn-line no-print" onClick={() => window.print()}>Print / save as PDF</button>

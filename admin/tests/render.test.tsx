@@ -126,3 +126,28 @@ describe("other pages (sample data)", () => {
     expect(crashes()).toEqual([]);
   });
 });
+
+describe("layout: the date-range controls sit on one horizontal row", () => {
+  // A picker placed in a single 1-of-12 grid column is squeezed into a narrow vertical stack. Whatever element holds the
+  // picker directly under the page's 12-column grid must therefore span all 12 columns.
+  const pages: [string, () => Promise<{ default: React.ComponentType }>, RegExp][] = [
+    ["Executive", () => import("@/app/page"), /Return on investment/],
+    ["Usage", () => import("@/app/usage/page"), /By day/],
+    ["Performance", () => import("@/app/performance/page"), /Whole range, merged/],
+    ["People", () => import("@/app/people/page"), /Members/],
+    ["Calls", () => import("@/app/calls/page"), /Metadata only/],
+    ["Denials", () => import("@/app/denials/page"), /By reason|No refusals/],
+    ["Audit", () => import("@/app/audit/page"), /Hash chain/],
+  ];
+  for (const [name, load, ready] of pages) {
+    it(`${name}: the picker's row spans all 12 grid columns`, async () => {
+      await show(load, ready);
+      const presets = host!.querySelector('nav[aria-label="Range presets"]');
+      expect(presets, "range picker is present").not.toBeNull();
+      let el: HTMLElement | null = presets as HTMLElement;
+      while (el && !(el.parentElement?.classList.contains("frame") && el.parentElement.classList.contains("grid"))) el = el.parentElement;
+      expect(el, "picker is inside the page grid").not.toBeNull();
+      expect(el!.style.gridColumn).toMatch(/span 12|\/ -1/);
+    });
+  }
+});
