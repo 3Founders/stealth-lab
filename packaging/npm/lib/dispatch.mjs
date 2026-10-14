@@ -73,6 +73,8 @@ export function dispatchPolicy(env = process.env) {
     capFloorS: capFloorS(env),
     // two cheap answers that fail the same advance tests end the cheap tries at once (STEALTHLAB_DISPATCH_SHARED_FAIL_STOP=off)
     sharedFailStop: (env.STEALTHLAB_DISPATCH_SHARED_FAIL_STOP || "on").toLowerCase() !== "off",
+    // the test writer flags a task that reads two ways: no cheap answer is delivered for it (STEALTHLAB_DISPATCH_AMBIGUITY=off)
+    ambiguityStop: (env.STEALTHLAB_DISPATCH_AMBIGUITY || "on").toLowerCase() !== "off",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -155,7 +157,11 @@ export const SPEC_SYSTEM = [
   "web page when the project uses one), and assert on what it outputs. (7) When the project's own check already",
   "verifies a contract or schema exhaustively (property-based fuzzing, a schema validator, a type checker), do not",
   "re-test what it covers: test only behaviour the task asks for beyond it, and never assume what the contract",
-  "leaves open (which route serves an ambiguous path, field values the schema allows freely). Output only code.",
+  "leaves open (which route serves an ambiguous path, field values the schema allows freely). (8) If the task, read",
+  "with its files, can reasonably be read two ways that give DIFFERENT correct results, and nothing in the task or the",
+  "files settles which, make the first line of the file `# AMBIGUOUS: <the two readings, one short sentence>` and still",
+  "write the tests for the likelier reading. Do not flag details the tests can leave open, or readings only a careless",
+  "reader would take; most tasks are not ambiguous. Output only code.",
 ].join(" ");
 
 // test-first's tests are run with pytest, whatever the project's own check is: is it here?
@@ -272,7 +278,8 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     return skip();                                 // the call is paid (ledger) either way
   }
   fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
-  return { file, cost_usd: cost };
+  const amb = /^#\s*AMBIGUOUS:\s*(.+)$/m.exec(code);
+  return { file, cost_usd: cost, ...(amb ? { ambiguous: amb[1].trim().slice(0, 300) } : {}) };
 }
 
 // The test writer can run: a Claude model to write with, and Claude Code to run it.
@@ -552,6 +559,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       return false;
     }
     let ok = result.state === "verified";
+    // the test writer said the task can be read two ways with different results: a passing cheap answer may have taken
+    // the other reading, which no test of ours can tell -- the session's model does the task (STEALTHLAB_DISPATCH_AMBIGUITY)
+    if (ok && spec?.ambiguous && policy.ambiguityStop) {
+      ambiguous = spec.ambiguous;
+      tried.push({ unit: rung.unit, state: "passed, not delivered: the task can be read two ways", run_id: result.run_id,
+                   cost_usd: result.cost_usd });
+      return false;
+    }
     if (result.usage_limited) {            // the executor's account or the provider hit a limit: no verdict on the model
       tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id, cost_usd: result.cost_usd });
       return false;
@@ -601,16 +616,21 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let timedOut = false;
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
   let sharedFail = null;
+  let ambiguous = null;                    // the test writer's note that the task reads two ways (stops the cheap tries)
+  const ambiguityKnown = specDone.then((s) => (s?.ambiguous && policy.ambiguityStop ? { ambiguityFlag: s.ambiguous } : new Promise(() => {})));
   while (!winner && (queue.length || pending.size)) {
     while (queue.length && pending.size < width) {
       const rung = queue.shift();
       pending.set(rung.unit, runRung(rung));
     }
-    const done = await Promise.race([...pending.values(), deadline]);
+    // the test writer's ambiguity flag (~20 s in) ends the cheap tries at once, not when the first one finishes
+    const done = await Promise.race([...pending.values(), deadline, ambiguityKnown]);
+    if (done.ambiguityFlag) { ambiguous = done.ambiguityFlag; break; }
     if (done.timeout) { timedOut = true; break; }
     pending.delete(done.rung.unit);
     running.delete(done.rung.unit);
     if (await judge(done)) { winner = done; break; }
+    if (ambiguous) break;
     // two models failing the SAME advance tests: the test is as likely wrong as both answers, and a third model rarely
     // rescues it (2 of 116 tasks in the A-vs-C runs) -- the session's model takes over now instead of at the time limit
     const fails = specFailures(done.result);
@@ -618,8 +638,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (fails) seenFails.push(fails);
   }
   clearTimeout(timer);
-  if (sharedFail) {
-    log(`dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
+  if (sharedFail || ambiguous) {
+    log(ambiguous ? `dispatch: the task reads two ways (${ambiguous}); the session's model takes over`
+      : `dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
       if (runId) try { await settleWithin(rt.cancelRun(runId), SETTLE_MS); } catch { /* best effort */ }
@@ -629,7 +650,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       tried.push({ unit, state: "cancelled", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     pending.clear();
-    for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (two answers failed the same advance tests)" });
+    for (const rung of queue) tried.push({ unit: rung.unit, state: ambiguous ? "skipped (the task reads two ways)"
+                                                                   : "skipped (two answers failed the same advance tests)" });
     queue.length = 0;
   }
   if (timedOut) {
@@ -745,7 +767,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         (explanation ? `\n\n${explanation}` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
-  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}) };
+  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
 }
 
 // The image files the request names that exist in the project ("recreate the page in screenshot.png"). The cheap models
@@ -849,6 +871,7 @@ export function triedNote(d) {
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
     (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +
-                    "themselves be wrong, so judge the task from its own words." : "");
+                    "themselves be wrong, so judge the task from its own words." : "") +
+    (d.ambiguous ? ` The task may be read two ways (${d.ambiguous}); settle which one is meant before answering.` : "");
 }
 
