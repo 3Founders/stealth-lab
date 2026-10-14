@@ -78,7 +78,7 @@ export function dispatchPolicy(env = process.env) {
     // an image task's passing page is compared with the screenshot by a model that can see (lib/visual_check.mjs)
     visualCheck: (env.STEALTHLAB_DISPATCH_VISUAL_CHECK || "on").toLowerCase() !== "off",
     // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them
-    strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 120)),
+    strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 240)),
     strongFirst: (env.STEALTHLAB_DISPATCH_STRONG_FIRST || "off").toLowerCase() === "on",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",

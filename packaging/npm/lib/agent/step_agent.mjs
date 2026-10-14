@@ -237,7 +237,7 @@ function redactKey(text, key) { return key ? String(text).split(key).join("[reda
 const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
 // one model call that never answers (seen with minimax on General Compute: no reply for the whole time limit) is cut
 // here and retried like a transport error, instead of holding the run until dispatch's limit
-const CALL_TIMEOUT_MS = Math.max(5000, Number(process.env.STEALTHLAB_AGENT_CALL_TIMEOUT_S || 60) * 1000);
+const CALL_TIMEOUT_MS = Math.max(5000, Number(process.env.STEALTHLAB_AGENT_CALL_TIMEOUT_S || 120) * 1000);
 
 async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
   const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -407,7 +407,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     try {
       reply = await chat({
         baseUrl: cfg.base_url, key, fetchImpl, sleep, log,
-        body: { ...extras, model: cfg.model_id, messages, tools: TOOLS, tool_choice: "auto", temperature: 0, max_tokens: Number(cfg.max_tokens) || 4096 },
+        body: { ...extras, model: cfg.model_id, messages, tools: TOOLS, tool_choice: "auto", temperature: 0, max_tokens: Number(cfg.max_tokens) || 16000 },
       });
     } catch (err) {
       // a provider error mid-run: the tokens already spent are real cost, so they leave with the error
