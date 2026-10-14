@@ -275,7 +275,7 @@ class Container:
         pg = "su postgres -c"
         steps = [
             f"[ -f {PG_DATA}/PG_VERSION ] || {pg} \"{PG_BIN}/initdb -D {PG_DATA} --auth=trust -E UTF8\"",
-            f"{pg} \"{PG_BIN}/pg_ctl -D {PG_DATA} -o '-p {PG_PORT} -c listen_addresses=127.0.0.1' -l /tmp/pg.log -w start\"",
+            f"{pg} \"{PG_BIN}/pg_ctl -D {PG_DATA} -o '-p {PG_PORT} -c listen_addresses=127.0.0.1' -l /var/lib/postgresql/pg.log -w start\"",
             f"{pg} \"psql -p {PG_PORT} -h 127.0.0.1 -tc \\\"SELECT 1 FROM pg_roles WHERE rolname='kel_owner'\\\" | grep -q 1 || "
             f"createuser -p {PG_PORT} -h 127.0.0.1 -s kel_owner\"",
             f"{pg} \"psql -p {PG_PORT} -h 127.0.0.1 -tc \\\"SELECT 1 FROM pg_database WHERE datname='kel_abtest'\\\" | grep -q 1 || "
