@@ -28,6 +28,12 @@ A series module (see series_toy_task.py for a working template) provides, beside
   setup_project(task, ws)   optional: build the shared project once per workspace and arm (before the first task).
   grade_workspace(task, ws) optional: grade from the whole workspace (a dbt project) instead of one solution file.
 Results carry `series` and `position`; `report.py <run> --curve` prints the learning curve per arm.
+
+Messy, multi-turn input (any task source): `--turns N` (2-4) replaces the task's own prompt by a vague opener and continues
+the same session with a simulated user (multiturn.py); the result then carries `turn_log` (one record per turn), `opener`,
+`user_turns`, `questions_asked`, `ended_by`, and the cost and time are summed over the turns:
+
+    python experiments/abtest/runner.py --run toy2 --series series_toy_task:toy --arms A,C,C0 --turns 3 --dry-run
 """
 from __future__ import annotations
 
@@ -273,7 +279,10 @@ LIMIT_WORDS = ("usage limit", "limit reached", "rate limit", "weekly limit", "5-
                "session limit", "usage_limit_reached", "hit your")
 
 
-def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log_path: Path) -> dict:
+def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log_path: Path,
+               resume: str | None = None) -> dict:
+    """One `claude -p` turn. `resume` continues that session (multi-turn tasks, multiturn.py); the result carries the
+    session's id and the full reply text (`final` is its first 400 characters)."""
     exe = shutil.which("claude") or "claude"
     # --strict-mcp-config: only the MCP servers this run passes (none for A, the test server for C) -- the person's own
     # user-level MCP servers never load in either arm
@@ -281,7 +290,7 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
         raise ValueError("the prompt must be one line (Windows .cmd shims cut arguments at a newline)")
     cmd = [exe, "-p", prompt, "--model", MODEL, "--setting-sources", "project", "--strict-mcp-config",
            "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--allowedTools", *TOOLS,
-           *extra]
+           *(["--resume", resume] if resume else []), *extra]
     proc = subprocess.Popen(cmd, cwd=ws, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     lines: "queue.Queue[str | None]" = queue.Queue()
@@ -317,7 +326,7 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
     return {"status": "done", "is_error": bool(result.get("is_error")), "claude_cost_usd": result.get("total_cost_usd"),
             "turns": result.get("num_turns"), "duration_ms": result.get("duration_ms"),
             "models": sorted((result.get("modelUsage") or {}).keys()), "model_usage": result.get("modelUsage"),
-            "final": text[:400]}
+            "final": text[:400], "text": text[:6000], "session_id": result.get("session_id")}
 
 
 def peeked(log_path: Path) -> list[str]:
@@ -382,7 +391,54 @@ def open_model_runs(home: Path, since: str, until: str) -> dict:
     return {"open_cost_usd": round(cost, 6), "exec_runs": runs, "attempts": attempts}
 
 
-def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
+def testfirst_cost(home: Path, since: str, until: str) -> float:
+    """The session model's test-first calls in a time window (dispatch's ledger, dispatch_costs.jsonl)."""
+    led = home / "dispatch_costs.jsonl"
+    rows = [json.loads(x) for x in led.read_text(encoding="utf-8").splitlines() if x.strip()] if led.exists() else []
+    return round(sum(float(e.get("cost_usd") or 0) for e in rows if since <= str(e.get("at", ""))[:19] + "+00:00" <= until), 6)
+
+
+def sim_llm(secrets: dict[str, str]):
+    """The model behind the opener and the simulated user (multiturn.py): glm-5.3-flash on z.ai, key by name Z_AI_KEY."""
+    import multiturn
+    return multiturn.zai_llm(secrets["zai"])
+
+
+def run_conversation(task: dict, arm: str, mod, ws: Path, env: dict[str, str], extra: list[str], log_path: Path, rule: str,
+                     secrets: dict[str, str], turns: int) -> dict:
+    """The task as a conversation (multiturn.py): a vague opener, a simulated user, `--resume` turns. The same opener for
+    every arm (cached per task); the simulated user's replies cached per (task, arm, turn). Each turn is recorded in
+    `turn_log`: time, cost, whether a cheap model did it and the message the user was shown, and what it changed."""
+    import multiturn
+    issue = (mod.issue_text(task) if hasattr(mod, "issue_text") else mod.prompt(task))
+    paths = [log_path]
+    snap = {"before": multiturn.tree_snapshot(ws)}
+
+    def run_turn(prompt: str, resume: str | None, n: int) -> dict:
+        path = log_path if n == 1 else log_path.with_name(f"{log_path.stem}.t{n}.jsonl")
+        if path not in paths:
+            paths.append(path)
+        return run_claude(ws, prompt, env, extra, path, resume=resume)
+
+    def observe(n: int, since: str, until: str, out: dict) -> dict:
+        after = multiturn.tree_snapshot(ws)
+        info = {"diff": multiturn.tree_diff(ws, snap["before"], after)}
+        snap["before"] = after
+        if is_c(arm):
+            runs = open_model_runs(LOCAL / "C_home", since, until)
+            shown = multiturn.shown_message(paths[n - 1]) if n - 1 < len(paths) else None
+            m = multiturn.DONE_BY.search(shown or "")
+            info.update({"open_cost_usd": round(runs["open_cost_usd"] + testfirst_cost(LOCAL / "C_home", since, until), 6),
+                         "exec_runs": runs["exec_runs"], "shown": shown, "dispatched": bool(shown),
+                         "dispatched_model": m.group(1) if m else None})
+        return info
+
+    return multiturn.run_session(task_id=task["task_id"], arm=arm, issue=issue, rule=rule, max_turns=turns, llm=sim_llm(secrets),
+                                 openers_dir=LOCAL / "openers", simuser_dir=LOCAL / "simuser", run_turn=run_turn, observe=observe)
+
+
+def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int = 1) -> dict:
+    """One task in one arm. turns > 1: a conversation of up to that many user turns (multiturn.py) instead of one prompt."""
     mod = task_module(task)
     ws = workspace(arm, task["workspace"])
     if arm == "C0":
@@ -409,8 +465,16 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
     started = now()
     t0 = time.time()
     log_path = logs / f"{task['task_id']}.{arm}.jsonl"
-    out = run_claude(ws, mod.prompt(task) + getattr(mod, "RULE", RULE), env, extra, log_path)
-    out["peeked"] = peeked(log_path)
+    rule = getattr(mod, "RULE", RULE)
+    if turns > 1:
+        out = run_conversation(task, arm, mod, ws, env, extra, log_path, rule, secrets, turns)
+        turn_logs = [log_path, *sorted(logs.glob(f"{task['task_id']}.{arm}.t*.jsonl"))]   # not C0's: its names start "C0."
+        out["peeked"] = sorted({h for p in turn_logs for h in peeked(p)})
+    else:
+        out = run_claude(ws, mod.prompt(task) + rule, env, extra, log_path)
+        out.pop("text", None)                    # the full reply and session id are only kept for conversations
+        out.pop("session_id", None)
+        out["peeked"] = peeked(log_path)
     rec = {"run": run, "task_id": task["task_id"], "suite": task["suite"], "workspace": task["workspace"], "arm": arm,
            "model": MODEL, "started_at": started, "seconds": round(time.time() - t0, 1), **out,
            **({"series": task["series"], "position": task["position"]} if "series" in task else {})}
@@ -418,10 +482,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str]) -> dict:
         rec["hook_jobs_drained"] = wait_hook_jobs(LOCAL / "C_home")
         rec.update(open_model_runs(LOCAL / "C_home", started, now()))
         # the session model's test-first calls (dispatch's ledger): part of C's cost
-        led = LOCAL / "C_home" / "dispatch_costs.jsonl"
-        extra = [json.loads(x) for x in led.read_text(encoding="utf-8").splitlines() if x.strip()] if led.exists() else []
-        rec["testfirst_cost_usd"] = round(sum(float(e.get("cost_usd") or 0) for e in extra
-                                              if started <= str(e.get("at", ""))[:19] + "+00:00" <= now()), 6)
+        rec["testfirst_cost_usd"] = testfirst_cost(LOCAL / "C_home", started, now())
         rec["open_cost_usd"] = round(float(rec.get("open_cost_usd") or 0) + rec["testfirst_cost_usd"], 6)
         lib = ws / ".stealth" / "library.md"
         rec["library_entries"] = sum(1 for ln in lib.read_text(encoding="utf-8").splitlines()
@@ -445,6 +506,9 @@ def dry_run(args, arms: list[str]) -> int:
     """What a run would do, in order: no server, no keys, no model, nothing written outside the temp listing."""
     tasks = load_series(args.series) if args.series else load_tasks(args.tasks, args.seed)
     print(f"run {args.run}: {len(tasks)} task(s), arms {','.join(arms)}" + (f", series {args.series}" if args.series else ""))
+    if args.turns > 1:
+        print(f"  conversations: up to {args.turns} user turns per task -- a vague opener (the same for every arm, cached), then a "
+              "simulated user answers questions or says thanks; turns are `claude --resume`")
     start = {"A": "plain Claude Code; its workspace has no .claude/ and no .stealth/, and persists across the series",
              "C": "StealthLab hooks-only install; its .stealth/ (library, facts, routing counts) PERSISTS across the series",
              "C0": "the same install as C, but .stealth/ is wiped before every task (nothing carried over)"}
@@ -472,7 +536,12 @@ def main() -> int:
                     help="arm C: the backend/.env entry holding the General Compute key (e.g. a second key's daily quota)")
     ap.add_argument("--parallel", action="store_true", help="arm C: the cheap models run at once (first pass wins)")
     ap.add_argument("--testfirst-model", default="", help="arm C: the model that writes the test-first tests")
+    ap.add_argument("--turns", type=int, default=1,
+                    help="user turns per task (opener included, 1-4): 1 sends the task's own prompt; 2+ sends a vague opener "
+                         "and a simulated user continues with `claude --resume` (multiturn.py; needs Z_AI_KEY in backend/.env)")
     args = ap.parse_args()
+    if not 1 <= args.turns <= 4:
+        raise SystemExit(f"--turns is 1-4 (user turns per task, the opener included); got {args.turns}")
     if bool(args.tasks) == bool(args.series):
         raise SystemExit("give exactly one of --tasks and --series")
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
@@ -488,6 +557,8 @@ def main() -> int:
                "zai": env_file(REPO / "backend" / ".env").get("Z_AI_KEY", "")}
     if not secrets["gc"]:
         raise SystemExit(f"backend/.env has no {args.gc_key_name}")
+    if args.turns > 1 and not secrets["zai"]:
+        raise SystemExit("--turns needs Z_AI_KEY in backend/.env (glm-5.3-flash writes the opener and plays the user)")
     if any(is_c(a) for a in arms):
         try:
             urllib.request.urlopen(f"{SERVER}/healthz", timeout=10)
@@ -527,7 +598,7 @@ def main() -> int:
                           "Rerun the same command after its daily reset (or with another key) to continue.", flush=True)
                     return 4
             print(f"[{now()}] {task['task_id']} arm {arm} ...", flush=True)
-            rec = run_one(task, arm, args.run, secrets)
+            rec = run_one(task, arm, args.run, secrets, args.turns)
             with results.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec) + "\n")
             print(f"    {rec['status']} resolved={rec.get('resolved')} cost={rec.get('total_cost_usd')} "
