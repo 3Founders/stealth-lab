@@ -114,15 +114,20 @@ test("not applicable (no executor, no .stealth, auto model, short prompt): null,
   assert.equal(await run(b.env, payload(b.ws, { prompt: "fix it" })), null);
 });
 
-test("triage saying the prompt is not a task: continue, no dispatch", async () => {
+test("triage saying no knowledge is needed: dispatch still decides (a quick fix is a task), nothing reaches the context", async () => {
+  // Changed 2026-10-14 with the Claude Code hook: the knowledge triage judges retrieval, not whether the cheap models
+  // can do the task ("add is broken, fix it" got "not needed" and was never dispatched). Whether a prompt is a task at
+  // all is dispatch's brief gate; here it says no (null), so the prompt goes on with no context added.
   const { env, ws } = setup({ extra: { STEALTHLAB_HOOK_TRIAGE: "on" } });
   const fetchImpl = async (url, init) => {
     if (String(url).endsWith("/triage")) return { ok: true, status: 200, text: async () => JSON.stringify({ needs_retrieval: false }) };
     return fakeServer(REPLY)(url, init);
   };
+  let asked = 0;
   const out = await onBeforeSubmitPromptDispatch(payload(ws), { env, settings: SETTINGS, fetchImpl,
-    dispatchImpl: async () => { throw new Error("must not run"); } });
+    dispatchImpl: async () => { asked++; return null; } });
   assert.deepEqual(out, { continue: true });
+  assert.equal(asked, 1, "dispatch is consulted");
 });
 
 test("an error anywhere fails open: the prompt goes on", async () => {

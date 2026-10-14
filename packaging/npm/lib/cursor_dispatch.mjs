@@ -19,8 +19,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { configDir } from "./config.mjs";
-import { callFindWays, callTriage, execCandidates, formatKnowledge, hookPolicy, readClaims, routingArgs,
+import { callFindWays, callTriage, ensureDispatchRoot, execCandidates, formatKnowledge, hookPolicy, readClaims, routingArgs,
   shouldLookUp } from "./hook.mjs";
+import { parseOverride } from "./brief.mjs";
 import { rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, requestPayload, upsertRoutes } from "./library.mjs";
 import { logHook } from "./subagent_hook.mjs";
@@ -64,20 +65,28 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   const model = cursorPlanModel(payload, env);
   if (!model) return null;
   const workspace = workspaceOf(payload);
-  const root = workspace ? findStealthRoot(workspace) : null;
-  if (!root) return null;                       // dispatch needs .stealth/ (routing, library); the plain hook instead
-  const prompt = String(payload.prompt).trim();
+  // dispatch needs .stealth/ (routing, library): a git repo seen for the first time gets it now (as in Claude Code)
+  const root = workspace ? (findStealthRoot(workspace) || await ensureDispatchRoot(workspace)) : null;
+  if (!root) return null;                       // not a git repo: the plain hook instead
+  // overrides (lib/brief.mjs): `!opus` leaves this prompt to Cursor's own model; `!cheap` forces a dispatch attempt.
+  // Cursor cannot rewrite the prompt, so its model still sees the prefix.
+  const override = parseOverride(String(payload.prompt), env);
+  if (override.kind === "opus") return null;
+  const prompt = String(override.kind === "cheap" ? override.prompt : payload.prompt).trim();
   const ids = { session_id: payload.conversation_id, prompt_id: payload.generation_id || null, cwd: workspace };
   const generation = payload.generation_id || null;
   // the plain hook's state for this conversation: a new prompt never inherits the last one's knowledge
   writeState(env, payload.conversation_id, { generation_id: generation, status: "empty", at: now, waited: true });
 
+  let planOnly = false;
   if (policy.triage) {
     const verdict = await callTriage({ url: settings.url, token: settings.token, userAgent, query: prompt,
       timeoutMs: policy.triageTimeoutMs, fetchImpl });
     if (verdict && verdict.needs_retrieval === false) {
+      // no knowledge needed -- but a quick fix may still be a task for the cheap models: the lookup goes on, for the
+      // model plan only, and nothing it returns reaches Cursor's context unless a dispatch happened (as in Claude Code)
       try { rememberLookup(ids, null, { env }); } catch { /* capture is best-effort */ }
-      return { continue: true };
+      planOnly = true;
     }
   }
   let extra = {};
@@ -93,12 +102,14 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   const mine = `${model}|cursor`;
   const run = dispatchImpl || (await import("./dispatch.mjs")).dispatch;
   const { triedNote } = await import("./dispatch.mjs");
-  const d = await run({ payload: { prompt, cwd: workspace }, reply, root, mine, env, fetchImpl, log });
+  const d = await run({ payload: { prompt, cwd: workspace, ...(payload.transcript_path ? { transcript_path: payload.transcript_path } : {}) },
+    reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap" });
   if (d?.handled) {
     try { rememberLookup(ids, null, { env }); } catch { /* capture is best-effort */ }
     log(`dispatch: handled by ${d.unit}`);
     return { continue: false, user_message: d.text };
   }
+  if (planOnly && !d) return { continue: true };   // looked up for the plan only, and nothing was tried
   // Not handled: Cursor's own model does the task. As in Claude Code, the plan it is shown is itself only (no
   // hand-overs inside the session), and what Kel knows arrives at the agent's first tool call (postToolUse).
   let shown = reply;

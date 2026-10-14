@@ -168,6 +168,23 @@ export function deliveryMode(policy, model) {
   return policy.mode;
 }
 
+// A git repo StealthLab has not seen yet: dispatch needs .stealth/ (routing record, library), which the first survey
+// would only create minutes later -- so the first prompt makes it, and the cheap models can help from that prompt on.
+// -> the repo's root, or null (not a git repo, or not writable). Used by the Claude Code and Cursor prompt hooks.
+export async function ensureDispatchRoot(cwd) {
+  try {
+    const { repoRoot } = await import("./auto_survey.mjs");
+    const top = repoRoot(cwd);
+    if (!top) return null;
+    fs.mkdirSync(path.join(top, ".stealth"), { recursive: true });
+    const keep = path.join(top, ".stealth", ".keep");
+    if (!fs.existsSync(keep)) fs.writeFileSync(keep, "");
+    return top;
+  } catch {
+    return null;
+  }
+}
+
 export function shouldLookUp(prompt, policy) {
   const text = String(prompt || "").trim();
   if (!policy.enabled || !text || text.startsWith("/")) return false;
@@ -512,20 +529,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
   }
   try {
     let root = findStealthRoot(payload.cwd || process.cwd());     // null: no .stealth here, a plain lookup
-    if (!root && dispatchInstalled(env)) {
-      // a git repo StealthLab has not seen yet: dispatch needs .stealth/ (routing record, library), which the first survey
-      // would only create minutes later -- so the first prompt makes it, and the cheap models can help from this prompt on
-      try {
-        const { repoRoot } = await import("./auto_survey.mjs");
-        const top = repoRoot(payload.cwd || process.cwd());
-        if (top) {
-          fs.mkdirSync(path.join(top, ".stealth"), { recursive: true });
-          const keep = path.join(top, ".stealth", ".keep");
-          if (!fs.existsSync(keep)) fs.writeFileSync(keep, "");
-          root = top;
-        }
-      } catch { /* not a repo, or not writable: a plain lookup, as before */ }
-    }
+    if (!root && dispatchInstalled(env)) root = await ensureDispatchRoot(payload.cwd || process.cwd());
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
     extra = { ...extra, ...routingArgs(policy, model) };
