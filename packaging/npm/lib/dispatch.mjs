@@ -267,6 +267,7 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
 // the session's model does the task anyway, later and at a higher total cost. One tiny request (a few tokens) reads
 // the provider's rate-limit headers; the answer is cached for 5 minutes per provider. Unknown -> assume it is fine.
 const QUOTA_TTL_MS = 5 * 60 * 1000;
+const QUOTA_PROBE_MS = 5000;
 
 function quotaCachePath(env) {
   return path.join(env.STEALTHLAB_HOME || path.join(process.env.USERPROFILE || process.env.HOME || ".", ".stealthlab"),
@@ -291,8 +292,10 @@ export async function providerQuota(profile, env = process.env, fetchImpl = glob
   if (hit && now - hit.at < QUOTA_TTL_MS) return hit.quota;
   let quota = null;
   try {
+    // 5 s at most: a provider slow to answer this probe held a prompt 5-7 minutes (live check, 2026-10-14); no answer =
+    // unknown, which is treated as fine
     const res = await fetchImpl(`${base.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error",
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(QUOTA_PROBE_MS),
       headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
       body: JSON.stringify({ model: profile.model_id || profile.name, messages: [{ role: "user", content: "hi" }], max_tokens: 1 }),
     });
