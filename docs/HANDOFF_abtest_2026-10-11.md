@@ -4,6 +4,9 @@ For Chaitanya (or anyone resuming). Everything needed to continue from this exac
 what the product does now, what is queued, and verbatim steps to resume. Older context:
 `docs/abtest_followups_2026-10.md` (running notes, same facts in more detail).
 
+> **Latest state (2026-10-14): read section 11 first.** The 6.6 build queue was built, merged to main and
+> live-checked; sections 2-10 describe the state before that.
+
 ---
 
 ## 1. TL;DR
@@ -752,3 +755,50 @@ State in the results which machine C's remaining tasks ran on.
 - **General Compute:** the remaining 50 page tasks may span more than one daily reset (exit code 4, then rerun
   after 00:00 UTC). Say so in the results if it happens.
 - **Phase 2 latency:** compare only if arm C finishes on the original machine; otherwise drop the latency column.
+
+
+---
+
+## 11. State on 2026-10-14: build queue merged to main, live-checked
+
+**Main = `ee9adcf`** (fast-forward of `integration/2026-10-14`): the router calibration, every 6.6 branch (#1-#3, A, B,
+C, #5 Cursor, #6 harness, L1, L4 at cap x3; L2 dropped, L3 held), plus fixes found by live and real-flow testing.
+
+**Results**
+| | Solved | Cost | vs A |
+|---|---|---|---|
+| All 153 paired tasks, A | 140 | $18.05 | -- |
+| C before this round | 134 | $11.87 | -34% |
+| C now (56 re-run on the new system, 97 earlier rows) | 137 | $10.77 | -40% |
+| Live check, 56 hard tasks (all JS, all OpenAPI, every earlier Opus fallback): A / old C / new C | 49 / 47 / 50 | $8.06 / $7.86 / $6.75 | -- / -2% / -16% |
+| MultiPL-E JS on today's main (run `verify1014f-p2`) | 19/20 (= A) | $0.67 | -61% |
+
+Latency: C median 42-55 s vs A 15-37 s; the tail came from three stall bugs, all fixed (the last fix, cancelled runs
+held a finished answer for minutes, is unit-tested but not re-measured live). Results: `experiments/abtest/.local/
+results/verify1014e-p1.jsonl`, `verify1014e-p2.jsonl`, `verify1014f-p2.jsonl` (local only, like the other results).
+
+**New in the product since section 6**
+- explanation of a cheap model's change, by a cheap model (gpt-oss), shown in the hook's message: no Opus cost
+  (`STEALTHLAB_EXPLAIN`)
+- latency: files the task names read up front (`STEALTHLAB_AGENT_PRELOAD`), stop when two answers fail the same advance
+  test (`STEALTHLAB_DISPATCH_SHARED_FAIL_STOP`), explanation in parallel, 5 s quota probe timeout, 60 s per model call
+  (`STEALTHLAB_AGENT_CALL_TIMEOUT_S`), cancelled runs waited for 5 s at most
+- image tasks go only to profiles with `vision: true` (none configured: Opus does them)
+- real user flow: a new git repo dispatches from its first prompt (creates `.stealth/`); a short request the knowledge
+  triage calls "not needed" still gets a model plan (hook + find_ways); a repeated request gets a plan from the cache
+  path too; the brief sees the project's file names and files the prompt names; dispatch logs why it did not run
+- the brief parser accepts chat/question replies with an empty task (score_brief: 36/36, was 32/36)
+- edits on CRLF files; the task text fits the executor's 2000 characters
+
+**Checked by a scripted real session** (fresh repo, no check configured): "add is broken, fix it pls" -> gpt-oss fixed
+it (41 s, $0.0001, with an explanation); "now also make it reject strings" -> resolved "it", fixed (52 s); `undo`
+restored the last change and kept the user's own file; "thanks" not dispatched; continuity shown once.
+
+**Not tested yet:** a real Node repo (node_modules links, related tests, `npm test` detection); Cursor in a real
+Cursor; the long-horizon harness; the 97 tasks not re-run on the new system; page tasks (5 paired; the grader is
+pixel-strict).
+
+**GLM:** NVIDIA NIM hosts `z-ai/glm-5.3` and `glm-5.3-flash` (key `NVIDIA_API_KEY` in backend/.env). Both answer
+correctly and flash reads screenshots, but the free tier is too slow (glm-5.3 156 s per answer; page tasks hit NIM's
+5-minute 504). Live use needs a fast host (z.ai or OpenRouter). Estimated: GLM as the rung before Opus could take C
+from -40% to roughly -55..-65% (Opus is 76% of C's cost); unmeasured.
