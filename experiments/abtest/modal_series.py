@@ -416,13 +416,34 @@ if modal is not None:
 
 # ---------------------------------------------------------------- local helpers: plan, secrets
 
+def default_env_files(repo: Path = REPO) -> list[Path]:
+    """The backend/.env files that exist: this checkout's, and the MAIN checkout's when this is a git worktree (a worktree does
+    not have the untracked, git-ignored .env; it stays in the checkout it was made in)."""
+    files = [repo / "backend" / ".env"]
+    try:
+        common = subprocess.run(["git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=20).stdout.strip()
+        if common:
+            files.append(Path(common).parent / "backend" / ".env")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    seen, out = set(), []
+    for f in files:
+        key = str(f.resolve()) if f.exists() else str(f)
+        if key not in seen:
+            seen.add(key)
+            out.append(f)
+    return out
+
+
 def read_names(names: tuple[str, ...] | list[str], environ: dict[str, str] | None = None, env_file: Path | None = None) -> dict[str, str]:
-    """The named variables from the environment, else from backend/.env (read here, on the owner's machine). Values are returned,
-    never printed."""
+    """The named variables from the environment, else from backend/.env (env_file, or every file default_env_files() finds; read here,
+    on the owner's machine). Values are returned, never printed."""
     environ = dict(os.environ) if environ is None else environ
     out = {n: environ[n] for n in names if environ.get(n)}
-    path = env_file if env_file is not None else REPO / "backend" / ".env"
-    if path.exists():
+    for path in ([env_file] if env_file is not None else default_env_files()):
+        if not path.exists():
+            continue
         for line in path.read_text(encoding="utf-8").splitlines():
             k, _, v = line.partition("=")
             k = k.strip()
@@ -458,9 +479,13 @@ def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None,
         out(f"secret {API_SECRET}: ANTHROPIC_API_KEY")
         made = True
     if args.keys:
+        env_file = env_file or (Path(args.env_file) if getattr(args, "env_file", None) else None)
         vals = read_names(KEY_NAMES, environ, env_file)
         if "GENERAL_COMPUTE_API_KEY" not in vals:
-            out("GENERAL_COMPUTE_API_KEY is in neither the environment nor backend/.env")
+            looked = [env_file] if env_file is not None else default_env_files()
+            out("GENERAL_COMPUTE_API_KEY is in neither the environment nor these files: "
+                + "; ".join(f"{f} ({'found' if f.exists() else 'does not exist'})" for f in looked)
+                + " | point at the right one with --env-file <path to backend/.env> (a git worktree does not have the main checkout's .env)")
             return 2
         create_secret(KEYS_SECRET, vals)
         out(f"secret {KEYS_SECRET}: " + ", ".join(sorted(vals)) + "  (names only)")
@@ -489,6 +514,7 @@ def cli(argv: list[str] | None = None) -> int:
     s.add_argument("--claude", action="store_true", help=f"{CLAUDE_SECRET} from $CLAUDE_CODE_OAUTH_TOKEN")
     s.add_argument("--api", action="store_true", help=f"{API_SECRET} from $ANTHROPIC_API_KEY")
     s.add_argument("--keys", action="store_true", help=f"{KEYS_SECRET} from the cheap-model and backend keys: " + ", ".join(KEY_NAMES))
+    s.add_argument("--env-file", default="", help="the backend/.env to read the keys from (default: this checkout's, then the main checkout's)")
     args = ap.parse_args(argv)
     if args.cmd == "secrets":
         return secrets_cli(args)

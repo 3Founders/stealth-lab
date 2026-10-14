@@ -308,3 +308,31 @@ def test_the_plan_command_prints_and_calls_nothing(fake_series, capsys, monkeypa
     out = capsys.readouterr().out
     assert "mini: 2 issue(s) -> 6 session(s)" in out and "in parallel" in out
     assert ms.cli(["plan", "--repos", "mini", "--series-module", "fake_series", "--arms", "A,Z"]) == 2
+
+
+def test_a_git_worktree_finds_the_main_checkouts_env_file(tmp_path):
+    import subprocess
+    main = tmp_path / "StealthLab"
+    (main / "backend").mkdir(parents=True)
+    subprocess.run(["git", "-C", str(main), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(main), "-c", "user.email=t@t.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    (main / "backend" / ".env").write_text("GENERAL_COMPUTE_API_KEY=gc-from-main"+chr(10), encoding="utf-8")
+    wt = tmp_path / "ct4"
+    subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", str(wt), "-b", "wt"], check=True)
+    assert not (wt / "backend" / ".env").exists(), "the ignored .env is not in a worktree"
+    files = ms.default_env_files(wt)
+    assert (main / "backend" / ".env").resolve() in [f.resolve() for f in files if f.exists()]
+    old = ms.default_env_files
+    try:
+        ms.default_env_files = lambda repo=wt: old(wt)
+        assert ms.read_names(("GENERAL_COMPUTE_API_KEY",), {})["GENERAL_COMPUTE_API_KEY"] == "gc-from-main"
+    finally:
+        ms.default_env_files = old
+
+
+@pytest.mark.skipif(ms.modal is None, reason="modal is not installed")
+def test_a_missing_key_names_the_files_that_were_looked_at(tmp_path):
+    said = []
+    ns = argparse.Namespace(claude=False, api=False, keys=True, env_file=str(tmp_path / "nope.env"))
+    assert ms.secrets_cli(ns, environ={}, out=said.append) == 2
+    assert "nope.env (does not exist)" in said[0] and "--env-file" in said[0] and "worktree" in said[0]
