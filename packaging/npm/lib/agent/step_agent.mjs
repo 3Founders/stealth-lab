@@ -172,6 +172,11 @@ function toolEditFile(cwd, a) {
   refuseGit(rel);
   if (typeof a.old_text !== "string" || typeof a.new_text !== "string" || !a.old_text) throw new Error("old_text and new_text are required");
   const text = fs.readFileSync(abs, "utf8");
+  // a Windows (CRLF) file: the model copies lines with "\n", so match and write in the file's own line endings
+  if (text.includes("\r\n") && !text.includes(a.old_text) && a.old_text.includes("\n")) {
+    const crlf = (s) => s.replace(/\r?\n/g, "\r\n");
+    a = { ...a, old_text: crlf(a.old_text), new_text: crlf(a.new_text) };
+  }
   const count = text.split(a.old_text).length - 1;
   if (count === 0) throw new Error(`old_text not found in ${rel}; read the file again and copy the text exactly`);
   if (count > 1) throw new Error(`old_text matches ${count} places in ${rel}; include more surrounding lines so it matches once`);
@@ -230,6 +235,9 @@ export async function runTool(name, args, { cwd, env, blockInstalls = true }) {
 function redactKey(text, key) { return key ? String(text).split(key).join("[redacted]") : String(text); }
 
 const sleepReal = (ms) => new Promise((r) => setTimeout(r, ms));
+// one model call that never answers (seen with minimax on General Compute: no reply for the whole time limit) is cut
+// here and retried like a transport error, instead of holding the run until dispatch's limit
+const CALL_TIMEOUT_MS = Math.max(5000, Number(process.env.STEALTHLAB_AGENT_CALL_TIMEOUT_S || 60) * 1000);
 
 async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
   const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -238,12 +246,18 @@ async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
     let res = null;
     let waitMs = 1000 * 2 ** Math.min(attempt, 3);
     try {
-      res = await fetchImpl(url, { method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${key}`, connection: "close" }, body: JSON.stringify(body) });
+      res = await fetchImpl(url, { method: "POST", redirect: "error", signal: AbortSignal.timeout(CALL_TIMEOUT_MS), headers: { "content-type": "application/json", authorization: `Bearer ${key}`, connection: "close" }, body: JSON.stringify(body) });
     } catch (err) {
-      lastErr = new Error(`request failed (${err && err.name})`);          // transport error: worth another try
+      lastErr = new Error(`request failed (${err && err.name === "TimeoutError" ? "no reply in time" : err && err.name})`); // worth another try
+    }
+    let text = "";
+    if (res) {
+      try { text = await res.text(); } catch (err) {     // the body can time out too
+        lastErr = new Error(`request failed (${err && err.name === "TimeoutError" ? "no reply in time" : err && err.name})`);
+        res = null;
+      }
     }
     if (res) {
-      const text = await res.text();
       if (res.status === 429) {
         // a tokens-per-minute limit frees up within the minute: wait what the provider asks (or 10-40 s), not 1-8 s
         lastErr = new Error(`HTTP 429: ${redactKey(text, key).slice(0, 200)}`);

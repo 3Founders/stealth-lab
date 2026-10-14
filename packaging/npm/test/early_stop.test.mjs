@@ -288,3 +288,11 @@ test("replay over a runs directory: failing attempts stopped and seconds saved, 
     { runs: 3, passed: 1, failed: 2, stoppedFailed: 1, stoppedPassed: 0 });
   assert.equal(r.secondsSaved, 40, "100 s x (1 - 3/5)");
 });
+
+test("edit_file on a Windows (CRLF) file: a multi-line old_text copied with \n still matches, and the file keeps CRLF", async () => {
+  const { runTool } = await import("../lib/agent/step_agent.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "crlf-"));
+  fs.writeFileSync(path.join(dir, "a.js"), "function f() {\r\n  return 1;\r\n}\r\n");
+  assert.equal(await runTool("edit_file", { path: "a.js", old_text: "function f() {\n  return 1;", new_text: "function f() {\n  return 2;" }, { cwd: dir, env: {} }), "edited a.js");
+  assert.equal(fs.readFileSync(path.join(dir, "a.js"), "utf8"), "function f() {\r\n  return 2;\r\n}\r\n");
+});
