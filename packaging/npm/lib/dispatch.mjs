@@ -71,6 +71,10 @@ export function dispatchPolicy(env = process.env) {
     fastestFirst: fastestFirstEnabled(env),
     capMult: capMult(env),
     capFloorS: capFloorS(env),
+    // two cheap answers that fail the same advance tests end the cheap tries at once (STEALTHLAB_DISPATCH_SHARED_FAIL_STOP=off)
+    sharedFailStop: (env.STEALTHLAB_DISPATCH_SHARED_FAIL_STOP || "on").toLowerCase() !== "off",
+    // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
+    vision: (env.STEALTHLAB_DISPATCH_VISION || "off").toLowerCase() === "on",
     // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
     // medium code task is dispatched; the cheap models and the test writer get the brief, then the user's original request. "off": the raw prompt, as before
     brief: (env.STEALTHLAB_BRIEF || "on").toLowerCase() !== "off",
@@ -425,6 +429,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (!policy.enabled || !plan || plan.status !== "ok" || !root) return null;
   const check = dispatchCheck(policy, reply, root);
   if (!check) return null;
+  if (!policy.vision && !force) {
+    const images = namedImages(payload.prompt, payload.cwd || root);
+    if (images.length) { log(`dispatch: not dispatched (the task needs an image the cheap models cannot see: ${images.join(", ")})`); return null; }
+  }
   let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: policy.maxRungs, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
@@ -557,6 +565,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
   let timedOut = false;
+  const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
+  let sharedFail = null;
   while (!winner && (queue.length || pending.size)) {
     while (queue.length && pending.size < width) {
       const rung = queue.shift();
@@ -566,9 +576,28 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (done.timeout) { timedOut = true; break; }
     pending.delete(done.rung.unit);
     running.delete(done.rung.unit);
-    if (await judge(done)) winner = done;
+    if (await judge(done)) { winner = done; break; }
+    // two models failing the SAME advance tests: the test is as likely wrong as both answers, and a third model rarely
+    // rescues it (2 of 116 tasks in the A-vs-C runs) -- the session's model takes over now instead of at the time limit
+    const fails = specFailures(done.result);
+    if (fails && policy.sharedFailStop && seenFails.includes(fails)) { sharedFail = fails; break; }
+    if (fails) seenFails.push(fails);
   }
   clearTimeout(timer);
+  if (sharedFail) {
+    log(`dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
+    for (const unit of pending.keys()) {
+      const runId = running.get(unit);
+      if (runId) try { await rt.cancelRun(runId); } catch { /* best effort */ }
+    }
+    for (const p of pending.values()) {
+      const r = await p;
+      tried.push({ unit: r.rung.unit, state: "cancelled", run_id: r.run_id, cost_usd: r.result?.cost_usd ?? null });
+    }
+    pending.clear();
+    for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (two answers failed the same advance tests)" });
+    queue.length = 0;
+  }
   if (timedOut) {
     // no pass in time: the runs still going are cancelled -- not counted against their models -- and the rest skipped
     log(`dispatch: no cheap pass within ${limitS} s; the session's model takes over`);
@@ -646,6 +675,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     } catch (err) {
       log(`dispatch: library entry not added (${err.message})`);
     }
+    // the explanation the user reads (lib/explain.mjs) is written WHILE the library bookkeeping below runs, not after it
+    const { explainChange } = await import("./explain.mjs");
+    const explaining = explainChange({ request: rawPayload.prompt, diff, check, summary: result.summary, env, fetchImpl, log });
     // a share of the delivered answers is reviewed afterwards, detached, so the router learns how often this kind's
     // checks let a wrong answer through (lib/audit.mjs)
     try {
@@ -667,9 +699,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       }
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
-    // what the user reads: a short explanation by a cheap model (lib/explain.mjs), never the session's model
-    const { explainChange } = await import("./explain.mjs");
-    const explanation = await explainChange({ request: rawPayload.prompt, diff, check, summary: result.summary, env, fetchImpl, log });
+    // what the user reads: a short explanation by a cheap model (started above), never the session's model
+    const explanation = await explaining;
     const secs = Math.round((Date.now() - dispatchStart) / 1000);
     return { handled: true, run_id: runId, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec,
       explanation,
@@ -680,7 +711,28 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         (explanation ? `\n\n${explanation}` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
-  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)) };
+  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}) };
+}
+
+// The image files the request names that exist in the project ("recreate the page in screenshot.png"). The cheap models
+// read text only, so such a task is not dispatched -- unless STEALTHLAB_DISPATCH_VISION=on says one of them can see.
+const IMAGE_FILE = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(?:png|jpe?g|gif|webp|bmp))(?=$|[\s`'".,;:)!?])/gi;
+export function namedImages(prompt, cwd) {
+  if (!cwd) return [];
+  const root = path.resolve(cwd);
+  return [...String(prompt || "").matchAll(IMAGE_FILE)].map((m) => m[1]).filter((name) => {
+    const abs = path.resolve(root, name);
+    try { return abs.startsWith(root + path.sep) && fs.statSync(abs).isFile(); } catch { return false; }
+  });
+}
+
+// The advance (test-first) tests a failed run failed, as one sorted, comma-separated string -- or null when the run did
+// not fail on them (it failed the project's own check, stalled, or errored).
+export function specFailures(result) {
+  if (!result || result.state !== "failed") return null;
+  const text = (result.checks || []).map((c) => c.tail || "").join("\n");
+  const names = [...text.matchAll(/FAILED [^\s]*test_spec\.py::(\w+)/g)].map((m) => m[1]);
+  return names.length ? [...new Set(names)].sort().join(",") : null;
 }
 
 // Cross-check (differential testing): a passing cheap answer is accepted only if a DIFFERENT model, solving the same
@@ -751,6 +803,8 @@ export function triedNote(d) {
   }
   if (!d || d.handled || !d.tried?.length) return "";
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
-    "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report.";
+    "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
+    (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +
+                    "themselves be wrong, so judge the task from its own words." : "");
 }
 

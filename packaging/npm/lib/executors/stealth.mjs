@@ -44,6 +44,8 @@ const adapter = {
       // package installs are refused while dependency links are in the worktree (lib/agent/installs.mjs); the child's env carries
       // no STEALTHLAB_ variable, so the switch travels here
       ...((env.STEALTHLAB_EXEC_BLOCK_INSTALLS || "on").toLowerCase() === "off" ? { block_installs: false } : {}),
+      // the files the task names are read into the first turn (lib/agent/step_agent.mjs); STEALTHLAB_AGENT_PRELOAD=off turns it off
+      ...((env.STEALTHLAB_AGENT_PRELOAD || "on").toLowerCase() === "off" ? { preload: false } : {}),
       ...(limits || {}),
     };
     void worktree; void timeoutS;

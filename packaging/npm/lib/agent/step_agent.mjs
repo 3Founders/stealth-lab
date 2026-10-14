@@ -331,6 +331,25 @@ export function worktreeFingerprint(cwd) {
   }
 }
 
+// Files the task names (up to PRELOAD_FILES, inside cwd, text only), as read_file would show them -> the text appended to
+// the task, or "". Never throws: a file that is missing, outside cwd or not text is simply left out.
+const PRELOAD_FILES = 3;
+const NAMED = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|json|ya?ml|toml|py|js|mjs|cjs|ts|tsx|jsx|sql|csv|html|css|go|rs|java|rb|sh))(?=$|[\s`'".,;:)!?])/g;
+export function preloadNamedFiles(task, cwd) {
+  const parts = [];
+  const seen = new Set();
+  for (const m of String(task || "").matchAll(NAMED)) {
+    const name = m[1];
+    if (seen.has(name) || parts.length >= PRELOAD_FILES) continue;
+    seen.add(name);
+    try {
+      const text = toolReadFile(cwd, { path: name });
+      if (!text.includes("\u0000")) parts.push(`--- ${name} ---\n${text}`);
+    } catch { /* not there, outside cwd, or not a file */ }
+  }
+  return parts.length ? `\n\nThe files the task names, already read for you (read_file output, numbered lines):\n\n${parts.join("\n")}` : "";
+}
+
 export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fetchImpl = globalThis.fetch, sleep = sleepReal, log = () => {}, fingerprint = worktreeFingerprint } = {}) {
   const key = env[KEY_ENV];
   if (!key) throw new Error(`${KEY_ENV} is not set`);
@@ -343,9 +362,11 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   const system = SYSTEM.replace("{max_steps}", String(maxSteps));
   // Some endpoints reject a system turn (General Compute's Gemma 4 answers 400 "invalid base64 image data",
   // checked 2026-10-09); for them the instructions open the first user turn instead.
+  // the files the task names are read up front: a model otherwise spends its first 2-3 steps listing and reading them
+  const taskText = cfg.task.trim() + (cfg.preload === false ? "" : preloadNamedFiles(cfg.task, cwd));
   const messages = cfg.no_system_role
-    ? [{ role: "user", content: `${system}\n\n---\n\nTask:\n${cfg.task.trim()}` }]
-    : [{ role: "system", content: system }, { role: "user", content: cfg.task.trim() }];
+    ? [{ role: "user", content: `${system}\n\n---\n\nTask:\n${taskText}` }]
+    : [{ role: "system", content: system }, { role: "user", content: taskText }];
   let tin = 0, tout = 0, step = 0, stop = "max_steps", finalMessage = "";
   // stop a stuck run early (lib/agent/stall.mjs); cfg.early_stop === false turns it off
   const detector = cfg.early_stop === false ? null
