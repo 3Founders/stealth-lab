@@ -263,3 +263,37 @@ own `brief.mjs recentTurns`.
 5. C0 in its own container (isolated server state) or sharing the backend with C (item 4)?
 6. Rotate the OAuth token after the runs (it was pasted into the chat).
 7. Item 6 (pages as tiles) was not started.
+
+
+---
+
+# Combined test build, update (later on 2026-10-14): integration branch and the first Modal dry run
+
+**`feat/ct-integration`** (head `01efb2d`) = `origin/main` + `feat/ct-1..5`. One textual conflict (`runner.py`, the `--turns` key check next to the
+"environment or backend/.env" wording), resolved. `swe_series_task.SERIES` now holds two 10-issue windows (jsonargparse, 2024-05..09;
+sqlglot, 2024-09-04..11). The container runs the gold check before any session (up to twice as many issues as the run needs; a refused
+one is replaced by the next; `gold_check.json` records what was dropped and why). All six offline test files together: 121 passed
+before the last additions; `test_modal_series_offline.py` now 44 passed, `test_swe_series_offline.py` 16.
+
+**The Modal dry run (the plan's "1 issue per arm") ran end to end** on `jsonargparse`, `--max-issues 1`, subscription auth: Postgres,
+migrations, the test backend, the dataset fetch, the gold check, `runner.py` for the three arms, the snapshot to the Volume, the report.
+- Gold check: 2 issues checked, `omni-us__jsonargparse-502` usable; `-508` dropped (4 PASS_TO_PASS tests fail in this environment even
+  with the real fix: `TestPydantic::test_pydantic_types[...]`, probably a pydantic version difference from the pinned requirements).
+- Result on ONE issue (no conclusion can be drawn from n=1): all three arms solved it. Cost A $0.195, C $0.236 (+21%), C0 $0.283. Wall
+  time A 49 s, C 197 s. Cheap models delivered 0 of 1 (C paid the test-first and hook overhead and then Opus did the task).
+- Not exercised: `--turns` (multi-turn) on Modal, the resume path against a real Volume, `--auth api`, more than one issue.
+
+**What the dry run found (all fixed on `feat/ct-integration`, each with a test):** Modal resolves every secret of every function at start
+(now only the chosen auth's secret is attached; `--auth api` needs `ABTEST_MODAL_AUTH=api` in the shell of `modal run`); `backend/data` is
+untracked local data (no longer uploaded); a cache directory baked into the image under the Volume's mount path made Modal refuse the
+mount (the Volume is now at `/mnt/series`, not `/vol`, and `HF_HOME` is set at run time); `REPO = HERE.parents[1]` fails because Modal
+places the file at `/root/modal_series.py`; `Container` used the default string paths; the Postgres log could not be created in `/tmp`;
+the backend needs a `STEALTHLAB_MCP_TOKEN` (now generated per container); uv's cache cannot live on a Volume ("Operation not permitted");
+the container now keeps the backend's output and shows its end when it does not come up, and `swe_series_task.run` says why a command
+failed. Corrections to earlier text: the module docstring and my first notes said `/vol`; the commit message of one fix says 42 tests
+passed, the count was 40.
+
+**Next, needs the owner's go-ahead (it spends the subscription's limits and Modal credits):**
+`modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 8` from a checkout of `feat/ct-integration`
+(PowerShell: `$env:PYTHONPATH="experiments\abtest"` first), 8 issues x 3 arms = 24 sessions, sequential. It may stop on a usage limit;
+repeating the same command resumes from the Volume.
