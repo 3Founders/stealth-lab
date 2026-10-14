@@ -199,6 +199,15 @@ def test_a_fresh_run_starts_the_services_in_order_then_runs_the_runner_task_by_t
     assert len(c.commits) >= 3, "the volume is committed after every task and the report"
 
 
+def test_the_backend_gets_a_fresh_mcp_token_the_runner_does_not(tmp_path, fake_series):
+    c = container(tmp_path, max_issues=1)
+    c.run()
+    backend = next(x for x in c.rec.calls if "run_backend.py" in x["cmd"])
+    assert len(backend["env"]["STEALTHLAB_MCP_TOKEN"]) >= 32 and backend["env"]["ABTEST_DATABASE_URL"].startswith("postgresql://kel_owner@127.0.0.1")
+    runner_env = next(x["env"] for x in c.rec.calls if "runner.py" in x["cmd"])
+    assert "STEALTHLAB_MCP_TOKEN" not in runner_env
+
+
 def test_a_single_turn_run_does_not_pass_turns(tmp_path, fake_series):
     c = container(tmp_path, max_issues=1)
     c.run()

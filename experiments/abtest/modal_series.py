@@ -42,6 +42,7 @@ import argparse
 import importlib
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -288,7 +289,9 @@ class Container:
                            cwd=self.app / "backend", env=self.environ), "migrate.py")
         self.out.mkdir(parents=True, exist_ok=True)
         self.backend_log = self.out / "backend.log"
-        self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN},
+        self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN,
+                                                                           # the server refuses to start without a static MCP token (locally it is in backend/.env)
+                                                                           "STEALTHLAB_MCP_TOKEN": secrets.token_urlsafe(32)},
                                cwd=self.ab, background=True, log=self.backend_log)
         for _ in range(150):
             if self.health():
