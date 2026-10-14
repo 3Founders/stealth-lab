@@ -73,6 +73,8 @@ export function dispatchPolicy(env = process.env) {
     capFloorS: capFloorS(env),
     // two cheap answers that fail the same advance tests end the cheap tries at once (STEALTHLAB_DISPATCH_SHARED_FAIL_STOP=off)
     sharedFailStop: (env.STEALTHLAB_DISPATCH_SHARED_FAIL_STOP || "on").toLowerCase() !== "off",
+    // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
+    specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
     vision: (env.STEALTHLAB_DISPATCH_VISION || "off").toLowerCase() === "on",
     // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
@@ -188,9 +190,10 @@ if not os.path.exists(f):
 sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f]))
 `;
 
-export function writeSpecRunner(dir) {
+// strict: the tests written for the task are the ONLY check (the project has no test command), so no tests = fail
+export function writeSpecRunner(dir, { strict = false } = {}) {
   const file = path.join(dir, "run_spec.py");
-  fs.writeFileSync(file, RUN_SPEC);
+  fs.writeFileSync(file, strict ? RUN_SPEC.replace("if not os.path.exists(f):\n    sys.exit(0)", "if not os.path.exists(f):\n    sys.exit(1)") : RUN_SPEC);
   return file;
 }
 
@@ -244,8 +247,14 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     }
     if (j.is_error || !j.result) { log(`test-first: ${String(j.result || "error").slice(0, 160)} (attempt ${attempt})`); continue; }
     const c = rootRelative(codeBlock(j.result));
-    if (/def test_/.test(c)) code = c;
-    else log(`test-first: the reply has no test (attempt ${attempt})`);
+    if (!/def test_/.test(c)) { log(`test-first: the reply has no test (attempt ${attempt})`); continue; }
+    // a reply that does not parse gets the second attempt too: when these tests are the only check, no tests = no win
+    const probe = path.join(out, "test_spec.py.probe");
+    fs.writeFileSync(probe, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + c + "\n");
+    const bad = pythonSyntaxError(probe);
+    try { fs.unlinkSync(probe); } catch { /* */ }
+    if (bad && attempt < 2) { log(`test-first: the tests do not parse (${bad}); asking again`); continue; }
+    code = c;
   }
   if (!code) return skip();
   const file = path.join(out, "test_spec.py");
@@ -264,6 +273,13 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   }
   fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
   return { file, cost_usd: cost };
+}
+
+// The test writer can run: a Claude model to write with, and Claude Code to run it.
+export function testWriterAvailable(env = process.env, mine = "") {
+  const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
+  if (!model.includes("claude")) return false;
+  try { launchOrThrow("claude", { env }); return true; } catch { return false; }
 }
 
 // ---- provider quota: do not send work to a provider that has (almost) nothing left today -------------------------
@@ -430,7 +446,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (!plan || plan.status !== "ok") { log(`dispatch: not dispatched (no model plan${plan?.status ? `: ${plan.status}` : ""})`); return null; }
   if (!root) { log("dispatch: not dispatched (no .stealth/ in this project)"); return null; }
   const check = dispatchCheck(policy, reply, root);
-  if (!check) { log("dispatch: not dispatched (no check: no test command found or configured)"); return null; }
+  // no test command in the project: the tests written for this task (test-first) can be the whole check -- a weaker one,
+  // so it needs the test writer, and an answer is accepted only if those tests exist and pass (STEALTHLAB_DISPATCH_SPEC_ONLY)
+  const specOnly = !check && policy.specOnly && policy.testFirst && (runClaude || (pytestAvailable() && testWriterAvailable(env, mine)));
+  if (!check && !specOnly) { log("dispatch: not dispatched (no check: no test command found or configured)"); return null; }
+  const checkLabel = specOnly ? "the tests written for this task (the project has no test command)" : `\`${check}\``;
   // a task built on an image goes only to the cheap models that can see it (exec.json profile `vision: true`, e.g. a
   // GLM-V); none, and it is not dispatched (STEALTHLAB_DISPATCH_VISION=on treats every cheap model as able to see)
   const images = force ? [] : namedImages(payload.prompt, payload.cwd || root);
@@ -477,7 +497,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const specAbort = new AbortController();
   if (policy.testFirst && (runClaude || pytestAvailable())) {
     const dir = specDir(env);
-    fullCheck = `${check} && ${pythonBin({ env })} "${writeSpecRunner(dir)}"`;
+    fullCheck = specOnly ? `${pythonBin({ env })} "${writeSpecRunner(dir, { strict: true })}"`
+      : `${check} && ${pythonBin({ env })} "${writeSpecRunner(dir)}"`;
     specDone = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude, dir,
                                 signal: specAbort.signal })
       .then((s) => { spec = s; return s; })
@@ -644,7 +665,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // ask mode: show what would change and stop; nothing is written to the user's checkout
       const stat = result.diff?.stat ? `\n${result.diff.stat}\n` : " ";
       return { handled: true, ask: true, run_id: runId, unit: rung.unit, model: rung.model, files, library_entry: null, tried, spec,
-        text: `Ready, NOT applied: ${rung.model} solved this and the check \`${check}\` passed in an isolated worktree${costNote}. ` +
+        text: `Ready, NOT applied: ${rung.model} solved this and ${checkLabel} passed in an isolated worktree${costNote}. ` +
           `It would change: ${files.join(", ") || "no files"}.${stat}Apply it with: stealthlab-mcp exec apply ${runId}  ` +
           "(dispatch asks first because STEALTHLAB_DISPATCH_ASK=on). That command makes an undo point first: stealthlab-mcp undo puts it back." };
     }
@@ -682,7 +703,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const { promptTitle } = await import("./capture_hook.mjs");
       diff = diffFromGit(root);
       if (diff.trim()) {
-        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check, observed: true, diff }).id;
+        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff }).id;
         autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
       }
     } catch (err) {
@@ -690,7 +711,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     // the explanation the user reads (lib/explain.mjs) is written WHILE the library bookkeeping below runs, not after it
     const { explainChange } = await import("./explain.mjs");
-    const explaining = explainChange({ request: rawPayload.prompt, diff, check, summary: result.summary, env, fetchImpl, log });
+    const explaining = explainChange({ request: rawPayload.prompt, diff, check: check || "tests written for this task", summary: result.summary, env, fetchImpl, log });
     // a share of the delivered answers is reviewed afterwards, detached, so the router learns how often this kind's
     // checks let a wrong answer through (lib/audit.mjs)
     try {
@@ -718,7 +739,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     return { handled: true, run_id: runId, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec,
       explanation,
       text: `Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost}). ` +
-        `The check \`${check}\` passed in an isolated worktree and the change is applied: ` +
+        `It passed ${checkLabel} in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
         (undoPoint ? " To put it back as it was: stealthlab-mcp undo." : undoNote) +
         (explanation ? `\n\n${explanation}` : "") };
