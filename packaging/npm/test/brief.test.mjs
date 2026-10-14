@@ -334,3 +334,10 @@ test("the brief sees the start of files the message names, only inside the proje
   assert.match(got[0].text, /at most three digits/);
   assert.deepEqual(namedFiles("fix TASK.md", null), []);
 });
+
+test("a chat or question brief with no task is still a brief (and is gated out); a code brief needs a task", () => {
+  const chat = parseBrief('{"task":"","files_hinted":[],"acceptance":"","parts":[],"clarity":"clear","kind":"chat","size":"small"}');
+  assert.equal(chat.kind, "chat");
+  assert.equal(briefGate(chat, "hmm interesting").ok, false);
+  assert.equal(parseBrief('{"task":"","files_hinted":[],"acceptance":"","parts":[],"clarity":"clear","kind":"code","size":"small"}'), null);
+});

@@ -151,7 +151,9 @@ export function parseBrief(text) {
   try { o = JSON.parse(m[0]); } catch { return null; }
   if (!o || typeof o !== "object") return null;
   const task = String(o.task || "").trim();
-  if (!task || !KINDS.includes(o.kind) || !SIZES.includes(o.size) || !CLARITIES.includes(o.clarity)) return null;
+  // a question or chat has no task to restate ("hmm interesting" -> task ""): only a code brief needs one
+  if (!KINDS.includes(o.kind) || !SIZES.includes(o.size) || !CLARITIES.includes(o.clarity)) return null;
+  if (!task && o.kind === "code") return null;
   return { task, files_hinted: asList(o.files_hinted, 8), acceptance: String(o.acceptance || "").trim(),
            parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size };
 }
