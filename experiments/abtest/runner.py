@@ -27,6 +27,9 @@ A series module (see series_toy_task.py for a working template) provides, beside
   series(name) -> the ordered task dicts ({task_id, suite, workspace, ...}); tasks of one series share a workspace.
   setup_project(task, ws)   optional: build the shared project once per workspace and arm (before the first task).
   grade_workspace(task, ws) optional: grade from the whole workspace (a dbt project) instead of one solution file.
+  prepare_task(task, ws)    optional: before EVERY task, put the workspace's files where this task starts (a real repository at
+                            the issue's base commit: swe_series_task.py); .git, .stealth/ and .claude/ stay.
+  python_dir(task, ws)      optional: the directory whose `python` the agent, dispatch and the tests use (a per-arm venv).
 Results carry `series` and `position`; `report.py <run> --curve` prints the learning curve per arm.
 
 Messy, multi-turn input (any task source): `--turns N` (2-4) replaces the task's own prompt by a vague opener and continues
@@ -71,7 +74,7 @@ FORBIDDEN = ("ds1000_task.py", "evaluate.py", "test.jsonl", "experiments\\\\ds10
              "experiments/boolq", "openapi_task.py", "experiments\\\\openapi", "experiments/openapi",
              "multiple_js_task.py", "experiments\\\\multiple", "experiments/multiple", "page_task.py", "html_grade.py",
              "d2c_task.py", "websight_task.py", "experiments\\\\design2code", "experiments/design2code",
-             "experiments\\\\websight", "experiments/websight")
+             "experiments\\\\websight", "experiments/websight", "swe_series_task.py", ".local/swe", ".local\\\\swe")
 # one line: on Windows `claude` is a .cmd shim, and a newline in an argument cuts the command line there
 RULE = " Work only inside this directory: do not open, list or search files outside it."
 C_TOOLS = ["mcp__stealthlab", "mcp__stealthlab-exec"]
@@ -446,6 +449,8 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
     if hasattr(mod, "setup_project") and not (ws / ".series_ready").exists():
         mod.setup_project(task, ws)             # a series: the shared project, built once per workspace and arm
         (ws / ".series_ready").write_text("", encoding="utf-8")
+    if hasattr(mod, "prepare_task"):
+        mod.prepare_task(task, ws)              # a series on a real repository: the files go to THIS task's base commit
     for name, text in mod.files(task, HERE / f"{task['module']}.py").items():
         if isinstance(text, bytes):          # e.g. a screenshot to recreate
             (ws / name).write_bytes(text)
@@ -456,8 +461,9 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
     env = arm_env(arm, secrets, getattr(mod, "CHECK", ""))
     # the project's own Python (both arms): `python` in the workspace has the libraries the task uses, as in a real
     # project -- so the agent, dispatch and the test-first tests all run where the code would
-    if getattr(mod, "PYTHON_DIR", None):
-        env["PATH"] = str(mod.PYTHON_DIR) + os.pathsep + env.get("PATH", "")
+    python_dir = mod.python_dir(task, ws) if hasattr(mod, "python_dir") else getattr(mod, "PYTHON_DIR", None)
+    if python_dir:
+        env["PATH"] = str(python_dir) + os.pathsep + env.get("PATH", "")
     # arm C is `install --with-exec` (setup_c.mjs): hooks only -- the session gets no MCP server, exactly as installed
     extra = []
     logs = LOCAL / "logs" / run
