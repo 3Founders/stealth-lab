@@ -28,10 +28,9 @@ Selection criteria (`python swe_series_task.py candidates` prints what passes th
      environment, its FAIL_TO_PASS tests fail at the base commit and pass with the gold patch, and its PASS_TO_PASS tests pass
      with it. Issues that fail the gold check are listed under SKIPPED with the reason, not silently dropped.
 
-STATUS: SERIES is EMPTY on purpose. Choosing the repositories and issues needs the gold check (criterion 5), which needs Linux
-and the dataset's Python (3.9): it is the first thing the Modal app (modal_series.py) does, not something to do on a Windows
-laptop. `candidates` already lists what passes criteria 1-4 (it only reads the dataset); copy the chosen ids into SERIES,
-run `fetch` and `validate` there, and move the refused ones to SKIPPED with the reason.
+STATUS: SERIES holds the windows `candidates --ids` found (jsonargparse, sqlglot); they have passed criteria 1-4 only. The gold check
+(criterion 5) needs Linux and the dataset's Python (3.9), so it is the first thing the Modal app (modal_series.py) does for the
+issues it is about to run (the unusable ones are dropped from that run and reported); it has not been run anywhere yet.
 
 The module contract (runner.py reads exactly this): series, sample, setup_project, prepare_task, python_dir, files, prompt,
 issue_text, grade_workspace, CHECK.
@@ -63,7 +62,17 @@ WORKSPACE_PREFIX = "swe-"
 PROMPT_CHARS = 3000               # the single-prompt form of an issue (a Windows .cmd shim cuts long command lines)
 
 # name -> the chosen series. "issues" are SWE-rebench instance ids in creation order (filled in by `validate`, see SKIPPED).
-SERIES: dict[str, dict] = {}
+SERIES: dict[str, dict] = {
+    # the tightest windows of 10 consecutive issues among pure-pytest repositories with ONE Python version (`candidates --ids`,
+    # 2026-10-14); the gold check (validate, run first by modal_series.py) decides which of them are usable
+    "jsonargparse": {"repo": "omni-us/jsonargparse", "python": "3.9", "issues": [
+        "omni-us__jsonargparse-502", "omni-us__jsonargparse-508", "omni-us__jsonargparse-518", "omni-us__jsonargparse-527",
+        "omni-us__jsonargparse-531", "omni-us__jsonargparse-559", "omni-us__jsonargparse-560", "omni-us__jsonargparse-562",
+        "omni-us__jsonargparse-564", "omni-us__jsonargparse-576"]},
+    "sqlglot": {"repo": "tobymao/sqlglot", "python": "3.9", "issues": [
+        "tobymao__sqlglot-4051", "tobymao__sqlglot-4067", "tobymao__sqlglot-4079", "tobymao__sqlglot-4087", "tobymao__sqlglot-4093",
+        "tobymao__sqlglot-4096", "tobymao__sqlglot-4104", "tobymao__sqlglot-4106", "tobymao__sqlglot-4109", "tobymao__sqlglot-4110"]},
+}
 SKIPPED: dict[str, dict[str, str]] = {}      # series -> {instance id: why the gold check refused it}
 
 

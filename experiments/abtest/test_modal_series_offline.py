@@ -133,7 +133,7 @@ class Recorder:
     """Stand-in for the shell: records every command, plays the runner (writes result rows) and pg_dump (writes the dump)."""
 
     def __init__(self, container_ref, rc_for=None):
-        self.c, self.calls, self.rc_for = container_ref, [], rc_for or {}
+        self.c, self.calls, self.rc_for, self.bad = container_ref, [], rc_for or {}, set()
 
     def __call__(self, argv, *, env=None, cwd=None, timeout=None, background=False):
         text = argv if isinstance(argv, str) else " ".join(map(str, argv))
@@ -154,6 +154,14 @@ class Recorder:
             (c.local / "logs" / c.spec.run_name()).mkdir(parents=True, exist_ok=True)
             (c.local / "logs" / c.spec.run_name() / f"{task}.A.jsonl").write_text("{}", encoding="utf-8")
             return Proc(rc, err="usage limit" if rc else "")
+        if "swe_series_task.py validate" in text.replace("\\", "/") or (isinstance(argv, list) and "validate" in argv):
+            ids = argv[argv.index("validate") + 2:]
+            rows = [{"instance_id": i, "usable": i not in self.bad, "gold_resolves": i not in self.bad,
+                     "gold": {"error": "the gold patch does not apply"} if i in self.bad else {}} for i in ids]
+            vp = c.local / "swe" / f"validate_{c.repo}.json"
+            vp.parent.mkdir(parents=True, exist_ok=True)
+            vp.write_text(json.dumps(rows), encoding="utf-8")
+            return Proc(0)
         if "pg_dump" in text:
             (c.out / "db.sql.gz").write_bytes(b"dump")
         if "report.py" in text:
@@ -336,3 +344,41 @@ def test_a_missing_key_names_the_files_that_were_looked_at(tmp_path):
     ns = argparse.Namespace(claude=False, api=False, keys=True, env_file=str(tmp_path / "nope.env"))
     assert ms.secrets_cli(ns, environ={}, out=said.append) == 2
     assert "nope.env (does not exist)" in said[0] and "--env-file" in said[0] and "worktree" in said[0]
+
+
+@pytest.fixture()
+def swe_stub(monkeypatch):
+    """A stand-in for the real series module under its real name, so the container treats the series as a SWE one."""
+    mod = types.ModuleType("swe_series_task")
+    mod.series = lambda name=None: [{"task_id": f"x__{name}-{i}", "suite": "swe", "workspace": f"swe-{name}"} for i in range(1, 7)]
+    monkeypatch.setitem(sys.modules, "swe_series_task", mod)
+    return mod
+
+
+def test_the_gold_check_runs_before_any_session_and_a_refused_issue_is_replaced_by_the_next(tmp_path, swe_stub):
+    c = container(tmp_path, max_issues=2, series_module="swe_series_task")
+    c.rec.bad = {"x__mini-1"}
+    out = c.run()
+    cmds = [x["cmd"] for x in c.rec.calls]
+    assert next(i for i, t in enumerate(cmds) if "validate" in t) < next(i for i, t in enumerate(cmds) if "runner.py" in t)
+    checked = [x for x in c.rec.calls if "validate" in x["cmd"]][0]["cmd"].split("validate mini ")[1].split()
+    assert checked == ["x__mini-1", "x__mini-2", "x__mini-3", "x__mini-4"], "up to twice as many as the run needs"
+    assert [r["task"] for r in out["ran"]] == ["x__mini-2", "x__mini-3"], "the refused first issue is replaced by the next"
+    assert out["gold_check"]["usable"] == ["x__mini-2", "x__mini-3"] and "does not apply" in out["gold_check"]["dropped"]["x__mini-1"]
+    assert json.loads((c.out / "gold_check.json").read_text(encoding="utf-8"))["checked"] == 4
+
+
+def test_no_usable_issue_is_an_error_before_any_session(tmp_path, swe_stub):
+    c = container(tmp_path, max_issues=1, series_module="swe_series_task")
+    c.rec.bad = {f"x__mini-{i}" for i in range(1, 7)}
+    out = c.run()
+    assert out["status"] == "error" and "gold check" in out["why"] and not any("runner.py" in x["cmd"] for x in c.rec.calls)
+
+
+def test_the_gold_check_can_be_skipped_and_is_only_for_the_swe_series(tmp_path, swe_stub, fake_series):
+    off = container(tmp_path, max_issues=1, series_module="swe_series_task", validate=False)
+    off.run()
+    assert not any("validate" in x["cmd"] for x in off.rec.calls)
+    toy = container(tmp_path / "toy", max_issues=1)                 # fake_series: not the SWE module
+    toy.run()
+    assert not any("validate" in x["cmd"] for x in toy.rec.calls)

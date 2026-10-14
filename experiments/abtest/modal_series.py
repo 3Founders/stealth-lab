@@ -97,6 +97,7 @@ class RunSpec:
     testfirst_model: str = "claude-sonnet-5-5"
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     allow_cold_resume: bool = False
+    validate: bool = True                  # the gold check on the issues about to run (swe_series_task only); False skips it
 
     def run_name(self) -> str:
         return self.run or f"long-{'-'.join(self.repos)}-{self.turns}t"
@@ -341,6 +342,13 @@ class Container:
             self.restore_db()
         self._must(self.sh([sys.executable, str(self.ab / f"{s.series_module}.py"), "fetch", self.repo], env=self.environ, cwd=self.ab),
                    "fetching the series' data")
+        if s.validate and s.series_module == SERIES_MODULE:
+            full = importlib.import_module(s.series_module).series(self.repo)          # not cut: a refused issue is replaced by the next
+            pending, summary["gold_check"] = self.gold_check([t for t in full if t["task_id"] not in done])
+            if not pending:
+                summary.update(status="error", why="no issue passed the gold check (see gold_check)")
+                summary["report"] = self.report()
+                return summary
         for t in pending:
             proc = self.sh(self.runner_cmd(t["task_id"]), env=self.environ, cwd=self.ab)
             rc = getattr(proc, "returncode", 0)
@@ -357,6 +365,27 @@ class Container:
                 break
         summary["report"] = self.report()
         return summary
+
+    def gold_check(self, pending: list[dict]) -> tuple[list[dict], dict]:
+        """The gold-patch check (swe_series_task.py validate) on the next issues: in THIS environment the hidden tests fail at the base
+        commit and pass with the real fix. Checks up to twice as many issues as the run needs (a refused one is replaced by the next),
+        keeps the first usable ones in order, and returns them with a record of what was checked and why any was dropped."""
+        need = self.spec.max_issues or len(pending)
+        pool = pending[: need * 2] if self.spec.max_issues else pending
+        proc = self.sh([sys.executable, str(self.ab / f"{SERIES_MODULE}.py"), "validate", self.repo, *[t["task_id"] for t in pool]],
+                       env=self.environ, cwd=self.ab)
+        self._must(proc, "the gold check")
+        path = self.local / "swe" / f"validate_{self.repo}.json"
+        rows = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        verdict = {r["instance_id"]: r for r in rows}
+        usable = [t for t in pool if verdict.get(t["task_id"], {}).get("usable")][:need]
+        dropped = {t["task_id"]: str((verdict.get(t["task_id"], {}).get("gold") or {}).get("error")
+                                     or ("the base commit already passes its FAIL_TO_PASS tests" if verdict.get(t["task_id"], {}).get("gold_resolves")
+                                         else "not checked")) for t in pool if t not in usable}
+        record = {"checked": len(pool), "usable": [t["task_id"] for t in usable], "dropped": dropped}
+        (self.out).mkdir(parents=True, exist_ok=True)
+        (self.out / "gold_check.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
+        return usable, record
 
     def report(self) -> str:
         """report.py's summary and learning curve for the run, saved next to the results."""

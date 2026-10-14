@@ -304,3 +304,18 @@ def test_candidates_cli_prints_the_window_ids_on_request(capsys, monkeypatch):
     assert swe.main(["candidates", "--ids"]) == 0
     assert '["a__b-1", "a__b-2"]' in capsys.readouterr().out
     assert swe.main([]) == 2 and "candidates [--ids]" in capsys.readouterr().out
+
+
+def test_the_shipped_series_are_ten_ordered_issues_of_one_repository_each(monkeypatch):
+    import importlib
+    real = importlib.reload(swe)
+    try:
+        assert set(real.SERIES) >= {"jsonargparse", "sqlglot"}
+        for name, spec in real.SERIES.items():
+            ids = spec["issues"]
+            assert len(ids) == 10 and len(set(ids)) == 10 and spec["python"] == "3.9"
+            assert all(i.startswith(spec["repo"].replace("/", "__") + "-") for i in ids), name
+            tasks = real.series(name)
+            assert [t["task_id"] for t in tasks] == ids and {t["workspace"] for t in tasks} == {f"swe-{name}"}
+    finally:
+        importlib.reload(swe)
