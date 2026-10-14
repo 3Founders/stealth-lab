@@ -293,3 +293,14 @@ def test_a_dry_run_lists_the_real_series_and_peeking_at_the_hidden_tests_is_flag
         assert runner.peeked(log), tool_input
     log.write_text(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "input": {"command": "pytest"}}]}}) + "\n", encoding="utf-8")
     assert runner.peeked(log) == []
+
+
+def test_candidates_cli_prints_the_window_ids_on_request(capsys, monkeypatch):
+    c = {"repo": "a/b", "python": "3.9", "n_with_py": 12, "span_days": 7, "first": "2024-01-01", "last": "2024-01-08", "p2p_median": 5,
+         "license": "MIT License", "ids": ["a__b-1", "a__b-2"]}
+    monkeypatch.setattr(swe, "candidates", lambda *a, **k: [c])
+    assert swe.main(["candidates"]) == 0
+    assert "a/b" in capsys.readouterr().out
+    assert swe.main(["candidates", "--ids"]) == 0
+    assert '["a__b-1", "a__b-2"]' in capsys.readouterr().out
+    assert swe.main([]) == 2 and "candidates [--ids]" in capsys.readouterr().out

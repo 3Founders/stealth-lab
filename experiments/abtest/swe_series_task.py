@@ -436,6 +436,8 @@ def main(argv: list[str]) -> int:
         for c in candidates():
             print(f"{c['repo']:<40} py {c['python']:<5} n={c['n_with_py']:<4} window {c['first']}..{c['last']} ({c['span_days']} d) "
                   f"p2p~{c['p2p_median']:<4} {c['license'][:22]}")
+            if "--ids" in argv:                   # the window's instance ids, in order: what goes into SERIES[...]["issues"]
+                print("    " + json.dumps(c["ids"]))
         return 0
     if cmd == "fetch" and len(argv) == 2:
         print(fetch(argv[1]))
@@ -446,7 +448,7 @@ def main(argv: list[str]) -> int:
         out.write_text(json.dumps(res, indent=1), encoding="utf-8")
         print(f"{sum(r['usable'] for r in res)}/{len(res)} usable; details: {out}")
         return 0
-    print("usage: swe_series_task.py candidates | fetch <series> | validate <series> [instance ids]")
+    print("usage: swe_series_task.py candidates [--ids] | fetch <series> | validate <series> [instance ids]")
     return 2
 
 
