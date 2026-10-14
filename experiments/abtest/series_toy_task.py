@@ -131,3 +131,9 @@ def grade_workspace(task: dict, ws: Path) -> dict:
         return {"resolved": False, "check_pass": False, "error": (r.stderr or r.stdout)[-300:]}
     problems = json.loads(r.stdout.strip().splitlines()[-1])
     return {"resolved": not problems, "check_pass": not problems, "error": "; ".join(problems)[:300] or None}
+
+
+def issue_text(task: dict) -> str:
+    """The task as an issue (multiturn.py rewrites it as a vague opener): what is wanted, without the repo's conventions
+    (NOTES.md holds those -- a task that never looks there is what the hidden grade catches)."""
+    return f"Feature request: textutils.py needs {_TASKS[task['index']]['ask']}."
