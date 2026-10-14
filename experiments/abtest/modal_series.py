@@ -58,7 +58,7 @@ except ImportError:                   # pragma: no cover
     modal = None
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+REPO = HERE.parents[1] if len(HERE.parents) > 1 else HERE      # inside the container Modal puts this file at /root/modal_series.py
 
 APP_NAME = "stealthlab-series"
 VOLUME_NAME = "stealthlab-series"
