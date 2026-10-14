@@ -79,6 +79,7 @@ export function dispatchPolicy(env = process.env) {
     visualCheck: (env.STEALTHLAB_DISPATCH_VISUAL_CHECK || "on").toLowerCase() !== "off",
     // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them
     strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 120)),
+    strongFirst: (env.STEALTHLAB_DISPATCH_STRONG_FIRST || "off").toLowerCase() === "on",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -509,7 +510,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const images = force ? [] : namedImages(payload.prompt, payload.cwd || root);
   // an image task keeps every candidate until the ones that can see are picked (a max-3 cut first dropped GLM-V)
   const seeOnly = images.length > 0 && !policy.vision;
-  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: seeOnly ? 16 : policy.maxRungs, claude: policy.claude,
+  const strongSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set(Object.keys(ps).filter((k) => ps[k]?.strong)); } catch { return new Set(); } })();
+  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: seeOnly ? 16 : policy.maxRungs + strongSet.size, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) {
@@ -523,9 +525,16 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (ordered.some((r, i) => r !== rungs[i])) log(`dispatch: rungs fastest first: ${ordered.map((r) => r.model).join(", ")}`);
     rungs = ordered;
   }
-  // the strongest cheap model starts in the first wave, not after the others time out
-  const strongSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set(Object.keys(ps).filter((k) => ps[k]?.strong)); } catch { return new Set(); } })();
-  rungs = [...rungs.filter((r) => strongSet.has(r.model)), ...rungs.filter((r) => !strongSet.has(r.model))];
+  // the strong cheap model (profile strong: true) is never cut by the max-rungs limit. By default it is the LAST cheap
+  // try: the small models keep their slots and their cheap wins, and the strong one starts when one of them is done
+  // without a pass (first, it took the slot a faster small model used to win in: 17 -> 15 cheap wins on 20 tasks).
+  // STEALTHLAB_DISPATCH_STRONG_FIRST=on starts it in the first wave instead.
+  {
+    // an image task is cut to max-rungs only after the models that can see are picked (below)
+    const weak = rungs.filter((r) => !strongSet.has(r.model)).slice(0, seeOnly ? 16 : policy.maxRungs);
+    const strong = rungs.filter((r) => strongSet.has(r.model));
+    rungs = policy.strongFirst ? [...strong, ...weak] : [...weak, ...strong];
+  }
   if (images.length && !policy.vision) {
     const profiles = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
     rungs = rungs.filter((r) => profiles[r.model]?.vision === true).slice(0, policy.maxRungs);
