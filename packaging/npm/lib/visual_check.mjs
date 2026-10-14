@@ -122,8 +122,9 @@ export async function compareImages(target, page, { env = process.env, fetchImpl
 export async function compareImagesClaude(target, page, model, { env = process.env, log = () => {}, run } = {}) {
   const prompt = `${VISUAL_PROMPT}\n\nImage 1 (the target): ${target}\nImage 2 (the recreation): ${page}\n` +
     "Read both image files, then reply with the one line.";
-  const args = ["-p", "--model", model, "--allowedTools", "Read", "--setting-sources", "user", "--strict-mcp-config",
-    "--output-format", "json"];
+  // a short system prompt and only the Read tool: Claude Code's own system prompt made a judgement cost ~$0.07
+  const args = ["-p", "--model", model, "--system-prompt", "You compare two images of a web page and reply with one verdict line.",
+    "--tools", "Read", "--allowedTools", "Read", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   const exec = run || ((a, input) => new Promise((resolve) => {
     let launch;
     try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
