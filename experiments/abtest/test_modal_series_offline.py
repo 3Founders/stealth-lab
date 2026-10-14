@@ -205,6 +205,11 @@ def test_a_single_turn_run_does_not_pass_turns(tmp_path, fake_series):
     assert "--turns" not in next(x["cmd"] for x in c.rec.calls if "runner.py" in x["cmd"])
 
 
+def test_the_container_builds_with_the_default_string_paths(fake_series):
+    c = ms.Container(spec(), "mini", sh=lambda *a, **k: None, environ=ENV_SUB)
+    assert c.ab == Path("/app/experiments/abtest") and c.out == Path("/mnt/series/long-mini-1t/mini")
+
+
 def test_the_caches_are_on_the_volume_and_set_at_run_time_not_in_the_image(tmp_path, fake_series):
     c = container(tmp_path, max_issues=1)
     assert c.environ["UV_CACHE_DIR"] == str(tmp_path / "vol" / "cache" / "uv") and c.environ["HF_HOME"] == str(tmp_path / "vol" / "cache" / "hf")

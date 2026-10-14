@@ -232,9 +232,9 @@ class Container:
         # the Volume's mount path makes Modal refuse the mount ("cannot mount volume on non-empty path")
         self.environ = {**auth_env(spec.auth, environ if environ is not None else dict(os.environ)),
                         "HF_HOME": str(self.vol / "cache" / "hf"), "UV_CACHE_DIR": str(self.vol / "cache" / "uv"), "UV_LINK_MODE": "copy"}
-        self.ab = app / "experiments" / "abtest"
+        self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
-        self.out = vol / spec.run_name() / repo
+        self.out = self.vol / spec.run_name() / repo
         self.health = health or self._healthy
         self.log: list[str] = []
 
