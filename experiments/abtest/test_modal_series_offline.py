@@ -616,3 +616,20 @@ def test_a_later_run_with_other_arms_joins_the_earlier_arms_results_in_the_repor
         (e / "long-mini-1t.jsonl").write_text(json.dumps({"task_id": "t0", "arm": arm, "status": "done"}) + chr(10), encoding="utf-8")
     out = later.finish()
     assert out["arms"] == ["A", "C", "C0"] and out["rows"] == 3 and out["arms_without_results"] == []
+
+
+@pytest.mark.skipif(ms.modal is None, reason="modal is not installed")
+def test_create_secret_replaces_an_existing_secret_instead_of_keeping_the_old_values(monkeypatch):
+    calls = []
+
+    class FakeObjects:
+        def delete(self, name, allow_missing=False, **kw):
+            calls.append(("delete", name, allow_missing))
+
+        def create(self, name, values, **kw):
+            assert "allow_existing" not in kw, "allow_existing=True keeps the old values: the update would be lost"
+            calls.append(("create", name, dict(values)))
+
+    monkeypatch.setattr(ms.modal.Secret, "objects", FakeObjects())
+    ms.create_secret("stealthlab-keys", {"Z_AI_KEY": "new"})
+    assert calls == [("delete", "stealthlab-keys", True), ("create", "stealthlab-keys", {"Z_AI_KEY": "new"})]

@@ -613,7 +613,10 @@ def read_names(names: tuple[str, ...] | list[str], environ: dict[str, str] | Non
 
 
 def create_secret(name: str, values: dict[str, str]) -> None:
-    modal.Secret.objects.create(name, values, allow_existing=True)
+    """Create the secret, REPLACING one of the same name. (Modal's allow_existing=True keeps the OLD values and does nothing, so an
+    updated key or token silently never arrived: the Z_AI_KEY, the backend keys and the rotated Claude token all stayed old.)"""
+    modal.Secret.objects.delete(name, allow_missing=True)
+    modal.Secret.objects.create(name, values)
 
 
 def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None, env_file: Path | None = None, out=print) -> int:
