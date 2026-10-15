@@ -324,3 +324,24 @@ test("test-first hedged: a slow open writer gets the fallback beside it after th
   assert.ok(fast?.file);
   assert.deepEqual(asked, ["glm-5.3"], "done within the hedge time: only the open writer is asked");
 });
+
+test("cheap models at once: the limit is per provider, so a model on another provider does not take a slot", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://zai.example.test/v1", key_env: "K", strong: true, first: true } } }));
+  const started = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = [];
+  const rt = { calls,
+    async achieve(input) { calls.push(input); started.push(input.model); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) { await gate; return { run_id: id, state: "failed", cost_usd: 0.001, checks: [{ tail: "x" }] }; },
+    async applyRun() { return { files: [] }; }, async cancelRun() {} };
+  const p = dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_FASTEST_FIRST: "off", STEALTHLAB_DISPATCH_PARALLEL: "on",
+           STEALTHLAB_DISPATCH_MODEL_CAP: "off", STEALTHLAB_DISPATCH_TIMEOUT_S: "10" }, runtime: rt });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.deepEqual([...started].sort(), ["gemma-4-31b-it", "glm-5.3-flash", "minimax-m2-7"], "two on the shared provider plus flash on its own");
+  release();
+  await p;
+});

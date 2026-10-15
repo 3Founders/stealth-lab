@@ -312,3 +312,18 @@ test("rule d: reading new parts of the code after a first edit is not a stall; r
   for (let i = 0; i < 6; i++) r.observe({ name: "read_file", args: { path: "a.py" }, result: "x" });   // the first read is new
   assert.equal(r.observe({ name: "read_file", args: { path: "a.py" }, result: "x" })?.rule, "d", "the same read over and over: stuck");
 });
+
+test("rule d: testing an edit with new commands or new results is not a stall; the same command and result again is", () => {
+  const d = new StallDetector({ noChangeSteps: 6 });
+  d.start("fp0");
+  d.observe({ name: "edit_file", args: { path: "a.py" }, result: "ok", hash: "h1", fingerprint: "fp1" });
+  for (let i = 0; i < 8; i++) {
+    assert.equal(d.observe({ name: "run_shell", args: { command: `python -c "probe ${i}"` }, result: `[exit 1]\nout ${i}`, fingerprint: "fp1" }), null);
+  }
+  const s = new StallDetector({ noChangeSteps: 6 });
+  s.start("fp0");
+  s.observe({ name: "edit_file", args: { path: "a.py" }, result: "ok", hash: "h1", fingerprint: "fp1" });
+  let r = null;
+  for (let i = 0; i < 7 && !r; i++) r = s.observe({ name: "run_shell", args: { command: "pytest -q" }, result: "[exit 1]\n1 failed", fingerprint: "fp1" });
+  assert.equal(r?.rule, "d", "the same command, the same result, over and over");
+});

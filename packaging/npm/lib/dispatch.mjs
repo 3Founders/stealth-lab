@@ -987,6 +987,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const queue = [...rungs];
   const pending = new Map();               // unit -> promise of its finished run
   const width = policy.parallel ? Math.min(rungs.length, policy.maxParallel) : 1;
+  const profilesNow = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
+  // a rung's provider: its profile's endpoint host, else its executor
+  const providerOf = (r) => { try { return new URL(profilesNow[r.model]?.openai_base_url).host; } catch { return r.executor || "?"; } };
   let winner = null;
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
@@ -1015,9 +1018,18 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let ambiguous = null;                    // the test writer's note that the task reads two ways (stops the cheap tries)
   const ambiguityKnown = specDone.then((s) => (s?.ambiguous && policy.ambiguityStop ? { ambiguityFlag: s.ambiguous } : new Promise(() => {})));
   while (!winner && (queue.length || pending.size)) {
-    while (queue.length && pending.size < width) {
-      const rung = queue.shift();
-      pending.set(rung.unit, runRung(rung));
+    // the limit is per provider: it is there because 3 agents on one provider exceed its tokens-per-minute; a model on
+    // another provider (glm-5.3-flash on z.ai) does not take a General Compute slot (Modal, sqlglot-4051: minimax got
+    // the last 2 of 10 minutes because flash held one of the two slots)
+    for (let i = 0; i < queue.length;) {
+      const p = providerOf(queue[i]);
+      // a strong model meant to go last (no first: true) still waits until the small ones have all started
+      const holdLast = strongSet.has(queue[i].model) && !policy.strongFirst && !strongFirstSet.has(queue[i].model)
+        && queue.some((r) => !strongSet.has(r.model));
+      if (!holdLast && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < width) {
+        const rung = queue.splice(i, 1)[0];
+        pending.set(rung.unit, runRung(rung));
+      } else i++;
     }
     // the test writer's ambiguity flag (~20 s in) ends the cheap tries at once, not when the first one finishes
     const done = await Promise.race([...pending.values(), deadline, ambiguityKnown]);
