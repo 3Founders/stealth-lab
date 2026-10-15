@@ -20,7 +20,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
-import { locate, renderForWriter, renderWhere } from "./locate.mjs";
+import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
 import { runDag } from "./dag_run.mjs";
@@ -765,7 +765,16 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the brief's search terms join the request's own words: a plain-language issue ("double pipe ... ms sql server")
   // names nothing the code spells, and the brief has seen the file names (tsql.py, ||)
   const searchTerms = (briefed?.brief?.search_terms || []).map((t) => `\`${String(t).replace(/`/g, "")}\``).join(" ");
-  const loc = locate({ prompt: `${rawPayload.prompt || ""}\n${payload.prompt || ""}\n${searchTerms}`, root: payload.cwd || root, env });
+  const locPrompt = `${rawPayload.prompt || ""}\n${payload.prompt || ""}\n${searchTerms}`;
+  const searched = locate({ prompt: locPrompt, root: payload.cwd || root, env });
+  // a cheap model narrows the search to the files and functions the fix is in (lib/locate_model.mjs); the test file is
+  // the search's for the first file picked
+  let loc = searched;
+  if (locateEnabled(env)) {
+    const { narrowLocation } = await import("./locate_model.mjs");
+    loc = await narrowLocation({ prompt: rawPayload.prompt || payload.prompt, root: payload.cwd || root, loc: searched, env, fetchImpl, log });
+    if (loc !== searched && loc.files[0]) loc = { ...loc, testFile: testFileFor(payload.cwd || root, loc.files[0]) || searched.testFile };
+  }
   const where = renderWhere(loc);
   if (loc.spots.length) log(`dispatch: located ${loc.spots.map((s) => `${s.file}:${s.start}-${s.end}`).join(", ")}${loc.testFile ? ` (tests: ${loc.testFile})` : ""}`);
   if (where && briefed) {
