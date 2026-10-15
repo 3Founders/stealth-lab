@@ -95,7 +95,7 @@ class RunSpec:
     run: str = ""
     series_module: str = SERIES_MODULE
     seed: int = 20261014
-    testfirst_model: str = "claude-sonnet-5-5"
+    testfirst_model: str = "glm-5.3"            # the test writer; a slow or failed open writer falls back to Sonnet (dispatch)
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     allow_cold_resume: bool = False
     validate: bool = True                  # the gold check on the issues about to run (swe_series_task only); False skips it
@@ -553,10 +553,11 @@ if modal is not None:
 
     @app.local_entrypoint()
     def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
-             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False):
+             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
+             testfirst_model: str = "glm-5.3"):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
-                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms)
+                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))

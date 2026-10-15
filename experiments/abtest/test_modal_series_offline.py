@@ -191,7 +191,7 @@ def test_a_fresh_run_starts_the_services_in_order_then_runs_the_runner_task_by_t
     runs = [x for x in c.rec.calls if "runner.py" in x["cmd"]]
     assert [r["cmd"].split("--only ")[1].split()[0] for r in runs] == ["x__mini-1", "x__mini-2"], "max_issues cuts the series"
     first = runs[0]["cmd"]
-    for part in ("--run long-mini-3t", "--series fake_series:mini", "--arms A,C,C0", "--parallel", "--testfirst-model claude-sonnet-5-5",
+    for part in ("--run long-mini-3t", "--series fake_series:mini", "--arms A,C,C0", "--parallel", "--testfirst-model glm-5.3",
                  "--turns 3", "--gc-key-name GENERAL_COMPUTE_API_KEY"):
         assert part in first, part
     assert out["status"] == "done" and out["ran"] == [{"task": "x__mini-1", "rc": 0}, {"task": "x__mini-2", "rc": 0}] and out["report"] == "summary\n\ncurve"
