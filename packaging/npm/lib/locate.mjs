@@ -25,6 +25,8 @@ const STOP = new Set(("the and for with from this that into when then than what 
   "result results argument arguments option options parser config").split(" "));
 const TEST_PATH = /(^|\/)(tests?|testing|[\w.-]*_tests?)(\/)|(^|\/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$/i;
 const SKIP_PATH = /(^|\/)(docs?|examples?|vendor|node_modules|dist|build)\/|\.(md|rst|txt|lock|json|ya?ml|toml|cfg|ini|csv)$|(^|\/)(CHANGELOG|CHANGES|HISTORY|README)/i;
+const SOURCE_EXT = /\.(py|pyx|pyi|m?[jt]sx?|cjs|go|rs|java|kt|kts|scala|rb|php|cs|c|cc|cpp|cxx|h|hpp|swift|m|mm|lua|r|jl|ex|exs|erl|clj|dart|sql|vue|svelte)$/i;
+export const isSource = (f) => SOURCE_EXT.test(f) && !TEST_PATH.test(f) && !SKIP_PATH.test(f);
 const DEF_LINE = /^\s*(?:async\s+def|def|class|function|export\s+(?:async\s+)?function|export\s+class|func|fn|pub\s+fn)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 const MAX_TERMS = 20;
 const MAX_FILES_PER_TERM = 40;          // a term in more files than this is too common to say where the task is
@@ -223,7 +225,9 @@ export function locate({ prompt, root, env = process.env, maxFiles = 3 } = {}) {
     }
     for (const [f, w] of libraryFiles(root, terms)) if (!isTest(f) && fs.existsSync(path.join(root, f))) bump(f, 2 * w);
     for (const [f, w] of claimFiles(root, terms)) if (!isTest(f) && !SKIP_PATH.test(f) && fs.existsSync(path.join(root, f))) bump(f, 0.5 * Math.min(2, w));
-    const ranked = [...score.entries()].sort((a, b) => b[1] - a[1]);
+    // only source code can be "the place": config files, images, shell/cmd scripts and the like were picked on 5 of 47
+    // real issues (.flake8, .pylintrc, icon.svg, *.cmd -- pipeline survey, 2026-10-16)
+    const ranked = [...score.entries()].filter(([f]) => isSource(f)).sort((a, b) => b[1] - a[1]);
     if (!ranked.length) return { ...empty, terms: terms.map((t) => t.term) };
     const top = ranked[0][1];
     const files = ranked.filter(([, s]) => s >= top * 0.34).slice(0, maxFiles).map(([f]) => f);
