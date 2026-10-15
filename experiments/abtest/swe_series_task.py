@@ -272,9 +272,26 @@ def setup_project(task: dict, ws: Path) -> None:
     TOOLCHAIN.install(py, clean_requirements(first_record(task)["requirements"]) + ["pytest"])
 
 
+def record_history(r: dict, ws: Path) -> None:
+    """The project's own commits up to this issue's base commit become part of the workspace's history -- a merge that
+    keeps the workspace's files (`-s ours`) -- as in a developer's clone, so the survey can mine past fixes into the
+    library. Only the base commit and its ancestors are fetched: nothing after it (the fix) can be seen.
+    ABTEST_SERIES_HISTORY=off: no history, as before."""
+    if os.environ.get("ABTEST_SERIES_HISTORY", "on").lower() == "off":
+        return
+    sha = r["base_commit"]
+    d = ensure_commit(r["repo"], sha)
+    ref = f"refs/abtest/{sha}"
+    run(["git", f"--git-dir={d}", "update-ref", ref, sha])
+    run(["git", "-C", str(ws), "fetch", "-q", "--no-tags", str(d), f"{ref}:{ref}"])
+    run(["git", "-C", str(ws), "merge", "-q", "-s", "ours", "--allow-unrelated-histories", "--no-edit",
+         "-m", f"upstream history up to {sha[:10]}", ref])
+
+
 def prepare_task(task: dict, ws: Path) -> None:
     """Before every task: the workspace's files become this issue's base commit; the project is installed editable."""
     r = rec(task)
+    record_history(r, ws)                    # first, while the workspace is clean (the last task was committed)
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp) / "base"
         export_tree(r["repo"], r["base_commit"], base)
