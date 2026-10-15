@@ -328,3 +328,12 @@ test("no similar fix, but the request asks for two things: one part each, locate
   assert.match(fs.readFileSync(path.join(repo, "pkg", "parser.py"), "utf8"), /SLICE/);
   assert.match(fs.readFileSync(path.join(repo, ".stealth", "run.md"), "utf8"), /# plan: the request's own parts/);
 });
+
+test("Claude Code's own messages in the prompt stream are not tasks: no lookup, no dispatch, no library title", async () => {
+  const { shouldLookUp, isHarnessMessage } = await import("../lib/hook.mjs");
+  const policy = { enabled: true, minWords: 3 };
+  assert.equal(isHarnessMessage("<task-notification>\n<task-id>b1</task-id> completed</task-notification>"), true);
+  assert.equal(shouldLookUp("<task-notification><task-id>b1</task-id><status>completed</status> the tests passed</task-notification>", policy), false);
+  assert.equal(shouldLookUp("  <system-reminder>note</system-reminder> fix the parser please", policy), false);
+  assert.equal(shouldLookUp("fix the <task-notification> handling in the parser", policy), true, "a real prompt that mentions the tag");
+});
