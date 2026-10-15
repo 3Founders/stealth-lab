@@ -176,7 +176,8 @@ export const SPEC_SYSTEM = [
   "of the task and uses the names, imports and libraries the project files already give. (4) Do not test what the",
   "task does not ask for: wording of messages, formatting, speed, internal structure, extra features. (5) Use the",
   "project's interface exactly as its files show it (module names, function signatures, variables a snippet must",
-  "set). The test file is not inside the project: it runs with the project root as the current directory, so reach",
+  "set); test the behaviour through what exists now -- import only names the files shown define or the task itself names,",
+  "never a helper you expect the fix to add. The test file is not inside the project: it runs with the project root as the current directory, so reach",
   "project files through os.getcwd() or plain relative paths, never through __file__. (6) The tests are pytest",
   "files whatever the project's language: for a project that is not Python, drive it through its own runtime from",
   "the test the way its check does (subprocess: node for JavaScript, the database for SQL, a headless browser for a",
@@ -345,13 +346,26 @@ export function runAsync(cmd, args, { cwd, timeoutMs = 120000, signal = null } =
 }
 
 // tests for the task, run on the code as it is now (cwd: the project) -> pytest's exit code (0: all pass) or null
+// the test file as run: the project root first on the import path -- placed after any `from __future__` imports, which
+// Python requires first in a file (above them it broke 2 of 30 writers' tests: pipeline survey, 2026-10-16)
+export function withHeader(code) {
+  const lines = String(code).split(/\r?\n/);
+  let last = -1;
+  for (let i = 0; i < lines.length; i++) if (/^from __future__ import /.test(lines[i])) last = i;
+  const head = "import os, sys\nsys.path.insert(0, os.getcwd())";
+  if (last < 0) return `${head}\n\n${code}\n`;
+  return `${lines.slice(0, last + 1).join("\n")}\n${head}\n${lines.slice(last + 1).join("\n")}\n`;
+}
+
 // run inside the project, as the check does (RUN_INSIDE): a uniquely named copy in its test folder, removed after
+// -> {code, out} or null
 async function runPytestAsync(python, code, dir, cwd, signal) {
   const testDir = ["tests", "test", "testing"].map((t) => path.join(cwd, t)).find((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }) || cwd;
   const f = path.join(testDir, `test_zz_stealthlab_baseline_${process.pid}_${Date.now() % 100000}.py`);
   try { fs.writeFileSync(f, code); } catch { return null; }
   try {
-    return await runAsync(python, ["-m", "pytest", "-q", "-p", "no:cacheprovider", f], { cwd, timeoutMs: 120000, signal });
+    const r = await runShellCapture(`"${python}" -m pytest -q -p no:cacheprovider "${f}"`, { cwd, timeoutMs: 120000, signal });
+    return r.code === null ? null : r;
   } finally {
     try { fs.unlinkSync(f); } catch { /* */ }
   }
@@ -457,14 +471,24 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     if (!/def test_/.test(c)) { log(`test-first: the reply has no test (attempt ${attempt})`); continue; }
     // a reply that does not parse gets the second attempt too: when these tests are the only check, no tests = no win
     const probe = path.join(out, "test_spec.py.probe");
-    fs.writeFileSync(probe, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + c + "\n");
+    fs.writeFileSync(probe, withHeader(c));
     const bad = pythonSyntaxError(probe);
     try { fs.unlinkSync(probe); } catch { /* */ }
     if (bad && attempt < 2) { log(`test-first: the tests do not parse (${bad}); asking again`); continue; }
     // tests that all pass on the code as it is now do not test the change: every answer, even a wrong one, would pass
     // them. Asked again with that said; still so on the second attempt -> no tests (the session's model does the task)
     if (baseline && !bad) {
-      const base = await runPytestAsync(python, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + c + "\n", out, root, signal);
+      const run = await runPytestAsync(python, withHeader(c), out, root, signal);
+      const base = run?.code ?? null;
+      // a real failure is pytest's exit 1 with tests run; a crash at collection or setup (2-5: an import of a name that
+      // does not exist, a plugin error) is not "failing on the current code" -- such tests reject every answer
+      if (base !== null && base !== 0 && (base !== 1 || /errors? during collection|^ERROR /m.test(run.out))) {
+        log(`test-first: the tests do not run on the unchanged code (pytest exit ${base}, attempt ${attempt})${attempt < 2 ? "; asking again" : "; dropped"}`);
+        ask += "\n\nYour previous tests could not even run on the current code (an error before any test ran):\n" +
+          String(run.out || "").split(/\r?\n/).filter((l) => /Error|error|ERROR/.test(l)).slice(-6).join("\n").slice(0, 800) +
+          "\nWrite tests that import only names that exist now (or that the task itself names) and fail by assertion.";
+        continue;
+      }
       if (base === 0) {
         log(`test-first: the tests all pass on the unchanged code (attempt ${attempt})${attempt < 2 ? "; asking again" : "; dropped"}`);
         ask += "\n\nYour previous tests ALL PASS on the code as it is now, so they do not check the change this task asks " +
@@ -478,7 +502,7 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   const file = path.join(out, "test_spec.py");
   const tmp = path.join(out, "test_spec.py.part");
   // run from the worktree: the project's modules import from the current directory
-  fs.writeFileSync(tmp, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + code + "\n");
+  fs.writeFileSync(tmp, withHeader(code));
   const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
   try {
     fs.appendFileSync(path.join(path.dirname(path.dirname(out)), "dispatch_costs.jsonl"),
