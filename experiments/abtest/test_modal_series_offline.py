@@ -444,7 +444,7 @@ def test_a_split_plan_says_so_and_sequential_arms_says_the_old_thing(fake_series
     old = ms.plan_text(spec(max_issues=2, split_arms=False), tasks)
     assert "one after another inside a repository" in old and "<arm>" not in old
     one = ms.plan_text(spec(max_issues=2, arms=["A"]), tasks)
-    assert "one after another inside a repository" in one, "a single arm has nothing to split"
+    assert "one container per arm" in one, "even one arm gets its own directory, so a later run can add the other arms to the same run"
 
 
 def test_arm_specs_are_one_arm_each_with_the_same_gold_checked_issues():
@@ -494,8 +494,8 @@ def test_a_split_run_with_an_api_key_starts_every_repositorys_arms_together():
 def test_without_splitting_one_container_does_everything_as_before():
     out, calls = orch(ms.RunSpec(repos=["a", "b"], split_arms=False))
     assert calls == [("one", "a"), ("one", "b")] and [o["repo"] for o in out] == ["a", "b"]
-    _, calls = orch(ms.RunSpec(repos=["a"], arms=["C"]))
-    assert calls == [("one", "a")], "one arm: nothing to split"
+    _, calls = orch(ms.RunSpec(repos=["a"], arms=["A"]))
+    assert calls == [("prepare", "a"), ("run_arms", [("A", "a")]), ("finish", "a")], "one arm is still a unit: its results can be joined by later arms"
     _, calls = orch(ms.RunSpec(repos=["a", "b"], split_arms=False, auth="api"))
     assert calls == [("run_arms", [("-", "a"), ("-", "b")])]
 
@@ -559,7 +559,7 @@ def test_finish_merges_every_arms_results_and_reports_over_all_of_them(tmp_path,
         (d / "long-mini-1t.jsonl").write_text("".join(json.dumps({"task_id": f"t{i}", "arm": arm, "status": "done"}) + chr(10) for i in range(n)), encoding="utf-8")
     out = c.finish()
     merged = (c.run_dir / "results" / "long-mini-1t.jsonl").read_text(encoding="utf-8").splitlines()
-    assert len(merged) == 4 and out["rows"] == 4 and out["arms_without_results"] == ["C0"]
+    assert len(merged) == 4 and out["rows"] == 4 and out["arms_without_results"] == ["C0"] and out["arms"] == ["A", "C"]
     reports = [x for x in c.rec.calls if "report.py" in x["cmd"]]
     assert len(reports) == 2 and "--curve" in reports[1]["cmd"] and all("long-mini-1t" in x["cmd"] for x in reports)
     assert all(x["env"]["ABTEST_RESULTS_DIR"] == str(c.run_dir / "results") for x in reports)
@@ -602,3 +602,17 @@ def test_arm_a_alone_needs_no_test_server_token_but_c_and_c0_do(tmp_path, monkey
             runner.read_token(arms)
     (tmp_path / "token.txt").write_text("tok" + chr(10), encoding="utf-8")
     assert runner.read_token(["C"]) == "tok" and runner.read_token(["A"]) == "tok"
+
+
+def test_a_later_run_with_other_arms_joins_the_earlier_arms_results_in_the_report(tmp_path, fake_series):
+    first = container(tmp_path, arms=["A"])
+    d = first.run_dir / "A" / "results"
+    d.mkdir(parents=True)
+    (d / "long-mini-1t.jsonl").write_text(json.dumps({"task_id": "t0", "arm": "A", "status": "done"}) + chr(10), encoding="utf-8")
+    later = container(tmp_path, arms=["C", "C0"])                  # same run name, same volume: only C and C0 were asked for
+    for arm in ("C", "C0"):
+        e = later.run_dir / arm / "results"
+        e.mkdir(parents=True)
+        (e / "long-mini-1t.jsonl").write_text(json.dumps({"task_id": "t0", "arm": arm, "status": "done"}) + chr(10), encoding="utf-8")
+    out = later.finish()
+    assert out["arms"] == ["A", "C", "C0"] and out["rows"] == 3 and out["arms_without_results"] == []

@@ -138,7 +138,7 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
              "  repositories run " + ("one after another (a subscription has limits)" if spec.auth == "subscription"
                                       else "in parallel (an API key is billed per token)") + "; "
              + ("the arms run at the same time, one container per arm (each with its own backend: C and C0 do not share server state), "
-                "after ONE gold check of the series" if spec.split_arms and len(spec.arms) > 1
+                "after ONE gold check of the series" if spec.split_arms
                 else "the arms run one after another inside a repository")]
     for repo, tasks in tasks_by_repo.items():
         lines.append(f"  {repo}: {len(tasks)} issue(s) -> {len(tasks) * len(spec.arms)} session(s) (x up to {spec.turns} turn(s)): "
@@ -147,7 +147,7 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
     lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else API_SECRET)
                  + f"; volume {VOLUME_NAME}")
     lines.append(f"  results: /mnt/series/{spec.run_name()}/<repository>/ on the volume (gold_check.json, report.txt"
-                 + (", and per arm <arm>/results, <arm>/logs, <arm>/state.tgz, <arm>/db.sql.gz)" if spec.split_arms and len(spec.arms) > 1
+                 + (", and per arm <arm>/results, <arm>/logs, <arm>/state.tgz, <arm>/db.sql.gz)" if spec.split_arms
                     else ", results/, logs/, state.tgz, db.sql.gz)"))
     return "\n".join(lines)
 
@@ -452,12 +452,13 @@ class Container:
         s = self.spec
         merged_dir = self.run_dir / "results"
         merged_dir.mkdir(parents=True, exist_ok=True)
-        lines, missing = [], []
-        for arm in s.arms:
+        lines, missing, merged_arms = [], [], []
+        for arm in ARMS:                                  # every arm that has results under this run, whatever this command asked for
             f = self.run_dir / arm / "results" / f"{s.run_name()}.jsonl"
             if f.exists():
                 lines += [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
-            else:
+                merged_arms.append(arm)
+            elif arm in s.arms:
                 missing.append(arm)
         merged = merged_dir / f"{s.run_name()}.jsonl"
         merged.write_text("".join(ln + chr(10) for ln in lines), encoding="utf-8")
@@ -469,7 +470,7 @@ class Container:
         text = "".join(p + chr(10) + chr(10) for p in parts).rstrip()
         (self.run_dir / "report.txt").write_text(text, encoding="utf-8")
         self.commit()
-        return {"repo": self.repo, "run": s.run_name(), "rows": len(lines), "arms_without_results": missing, "report": text}
+        return {"repo": self.repo, "run": s.run_name(), "rows": len(lines), "arms": merged_arms, "arms_without_results": missing, "report": text}
 
     def report(self) -> str:
         """report.py's summary and learning curve for the run, saved next to the results."""
@@ -505,11 +506,11 @@ def arm_specs(spec: RunSpec, task_ids: list[str]) -> list[RunSpec]:
 
 def orchestrate(spec: RunSpec, *, prepare: Callable[[dict, str], dict], run_arms: Callable[[list[tuple[dict, str]]], list[dict]],
                 finish: Callable[[dict, str], dict], run_one_container: Callable[[dict, str], dict]) -> list[dict]:
-    """The whole run from the local side. Not split (one arm, or split_arms False): one container per repository does everything.
+    """The whole run from the local side. Not split (split_arms False): one container per repository does everything.
     Split: for each repository ONE gold check (prepare), then one container per arm at the same time (run_arms), then one merge and
     report (finish). With a subscription the repositories go one after another; with an API key the arm containers of ALL
     repositories start together."""
-    if not spec.split_arms or len(spec.arms) < 2:
+    if not spec.split_arms:
         d = asdict(spec)
         return [run_one_container(d, r) for r in spec.repos] if spec.auth == "subscription" else run_arms([(d, r) for r in spec.repos])
     prepared = {r: prepare(asdict(spec), r) for r in spec.repos}
