@@ -946,6 +946,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     try {
       dagRes = await runDag({ rt, root, payload, rawPayload, reply, loc, where, rungs, strongSet, policy, interCheck, fullCheck,
         specDone, env, log, instanceKey: plan.instance_key, runShell: (cmd, o) => runShellCapture(cmd, { ...o, signal: specAbort.signal }),
+        // each part's outcome counts for its model on this task's route, as a whole-task try does (routing.md OBS)
+        obs: (model, executor, ok) => { try { if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), model, executor, ok); } catch { /* best effort */ } },
+        goalId: plan.goal_id || null,
         undo: { enabled: undoEnabled(env) && !policy.ask,
                 create: (o) => createUndoPoint({ ...o, env }), finish: (p, o) => finishUndoPoint(p, { ...o, env }), discard: (p, o) => discardUndoPoint(p, { ...o, env }) } });
     } catch (err) {

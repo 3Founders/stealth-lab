@@ -292,3 +292,13 @@ test("dag continue refuses to go on while the session's part does not pass", asy
   assert.match(out.lines[0], /Your part \(N-1\) does not pass the check yet: nothing else was run/);
   assert.equal(rt.calls.length, 0);
 });
+
+test("each part's outcome counts for its model on the task's route (routing.md OBS), as a whole-task try does", async () => {
+  const { repo, p1, p2 } = sliceRepo();
+  const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+                             env: env(fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"))), runtime: rt });
+  assert.equal(d.handled, true);
+  const routing = fs.readFileSync(path.join(repo, ".stealth", "routing.md"), "utf8");
+  assert.match(routing, /^OBS\|R-[0-9a-f]+\|gemma-4-31b-it\|stealth\|n=2\|ok=2\|/m, routing);
+});

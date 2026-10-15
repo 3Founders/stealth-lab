@@ -143,6 +143,17 @@ async function runNode({ rt, repo, task, check, scope, rungs, extraPatches, limi
   return { winner, tried };
 }
 
+// a part's tries into the route's counts: a pass is a win, a failed answer a loss; a cancelled or timed-out run is
+// neither (it says nothing about the model), as for a whole-task try
+export function countTries(tried, obs) {
+  for (const t of tried) {
+    const [model, executor] = String(t.unit || "").split("|");
+    if (!model) continue;
+    if (t.state === "verified") obs(model, executor || "stealth", true);
+    else if (t.state === "failed") obs(model, executor || "stealth", false);
+  }
+}
+
 // the full check on base + every accepted part, in a fresh worktree -> {ok, tail}
 async function finalCheck({ repo, patches, check, env, runShell }) {
   const dir = path.join(os.tmpdir(), `stealth-final-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`);
@@ -174,7 +185,7 @@ async function applyParts({ repo, patches, task, models, env, undo }) {
 // -> the dispatch result ({handled: true, ...} or {handled: false, partial, ...}) or null (no plan: the caller goes on)
 export async function runDag(ctx) {
   const { rt, root, payload, rawPayload, reply, loc, where, rungs, strongSet, policy, interCheck, fullCheck, specDone, env, log,
-          runShell, undo, instanceKey } = ctx;
+          runShell, undo, instanceKey, obs = () => {}, goalId = null } = ctx;
   if (!dagEnabled(env)) return null;
   const plan = planFromLibrary({ root, reply, loc });
   if (!plan || plan.dag.nodes.length < 2) return null;
@@ -199,6 +210,7 @@ export async function runDag(ctx) {
     const r = await runNode({ rt, repo, task, check: interCheck, scope: policy.scope, rungs: m.rungs, extraPatches: patchesBefore(n),
                               limitS: policy.timeoutS, width: policy.maxParallel, instanceKey, log });
     tried.push(...r.tried.map((t) => ({ ...t, node: n.id })));
+    countTries(r.tried, obs);
     for (const f of n.step.at) recordArea(root, f, !!r.winner);
     if (r.winner) { accepted.set(n.id, r.winner); n.who = r.winner.model; }
     return r.winner;
@@ -241,7 +253,7 @@ export async function runDag(ctx) {
   const status = (n) => (accepted.has(n.id) ? "done" : waiting.has(n.id) ? "waiting" : "ready");
   // the cheap parts after yours: saved so `stealthlab-mcp dag continue` can do them once your part is in
   const resumable = waiting.size > 0 && saveDagState(root, {
-    task: rawPayload.prompt, entry: plan.entry.id, slots: plan.slots, where, interCheck, fullCheck, instanceKey,
+    task: rawPayload.prompt, entry: plan.entry.id, slots: plan.slots, where, interCheck, fullCheck, instanceKey, goalId,
     policy: { timeoutS: policy.timeoutS, maxParallel: policy.maxParallel, scope: policy.scope },
     rungs: rungs.map((r) => ({ unit: r.unit, model: r.model, executor: r.executor })),
     nodes: nodes.map((n) => ({ id: n.id, deps: n.deps, step: n.step, who: n.who || "session", status: status(n), rungUnits: n.rungUnits || null })),
@@ -298,6 +310,10 @@ export async function continueDag({ root, env = process.env, rt, log = () => {},
       const r = await runNode({ rt, repo, task, check: st.interCheck, scope: st.policy.scope, rungs, extraPatches: [],
                                 limitS: st.policy.timeoutS, width: st.policy.maxParallel, instanceKey: st.instanceKey, log });
       for (const f of n.step.at) recordArea(root, f, !!r.winner);
+      if (st.goalId) {
+        const { ensureRoute, recordObs } = await import("./library.mjs");
+        countTries(r.tried, (m, ex, ok) => { try { recordObs(root, ensureRoute(root, st.goalId), m, ex, ok); } catch { /* best effort */ } });
+      }
       if (r.winner) {
         await applyParts({ repo, patches: [r.winner.patch], task: st.task, models: r.winner.model, env, undo });
         n.status = "done"; n.who = r.winner.model;
