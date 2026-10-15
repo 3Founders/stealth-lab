@@ -603,6 +603,11 @@ export function taskAllowanceS(root) {
 // The plan's rungs, in order, that a local executor can run, up to the session's own model. Claude models count
 // too when an executor runs them (headless Claude Code on Sonnet, say -- the `claude` executor): nothing cheaper
 // than the session's model ever runs inside the session.
+// an exec.json profile for this model (an open model), or null
+function openModelProfile(model, env) {
+  try { return readExecConfig(env).profiles?.[model] || null; } catch { return null; }
+}
+
 export function dispatchableRungs(plan, mine, env = process.env, { claude = true } = {}) {
   const out = [];
   for (const unit of plan?.ladder || []) {
@@ -610,7 +615,7 @@ export function dispatchableRungs(plan, mine, env = process.env, { claude = true
     if (mine && model === String(mine).split("|")[0]) break;
     const local = executorFor(unit, env);
     if (!local) continue;                    // e.g. Sonnet as an in-session subagent: not dispatched, skipped
-    if (local.executor === "claude" && !claude) continue;
+    if (local.executor === "claude" && !claude && !openModelProfile(model, env)) continue;
     if (!out.some((r) => r.unit === unit)) out.push({ unit, ...local });
   }
   return out;
@@ -629,8 +634,10 @@ export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude
   try {
     const cfg = readExecConfig(env);
     for (const [executor, spec] of Object.entries(cfg.executors || {})) {
-      if (executor === "claude") continue;
       for (const m of (spec?.models || []).map(String)) {
+        // Claude Code driving an OPEN model (an exec.json profile) is a cheap rung like any other; a Claude model
+        // run by it is not (its cost is about the session model's own)
+        if (executor === "claude" && !(cfg.profiles || {})[m]) continue;
         if (!out.some((r) => r.model === m)) out.push({ unit: `${m}|${executor}`, executor, model: m });
       }
     }
@@ -755,7 +762,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   // where in this repository the task is (lib/locate.mjs): the test writer gets that code, the cheap models a
   // path:start-end line their agent preloads, and the session's model the same pointer if the cheap tries fail
-  const loc = locate({ prompt: `${rawPayload.prompt || ""}\n${payload.prompt || ""}`, root: payload.cwd || root, env });
+  // the brief's search terms join the request's own words: a plain-language issue ("double pipe ... ms sql server")
+  // names nothing the code spells, and the brief has seen the file names (tsql.py, ||)
+  const searchTerms = (briefed?.brief?.search_terms || []).map((t) => `\`${String(t).replace(/`/g, "")}\``).join(" ");
+  const loc = locate({ prompt: `${rawPayload.prompt || ""}\n${payload.prompt || ""}\n${searchTerms}`, root: payload.cwd || root, env });
   const where = renderWhere(loc);
   if (loc.spots.length) log(`dispatch: located ${loc.spots.map((s) => `${s.file}:${s.start}-${s.end}`).join(", ")}${loc.testFile ? ` (tests: ${loc.testFile})` : ""}`);
   if (where && briefed) {

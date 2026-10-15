@@ -49,7 +49,17 @@ export function taskTerms(text) {
     const last = m[1].split(".").pop();
     if (last.length > 2 && !STOP.has(last.toLowerCase()) && !/^(py|js|ts|md|txt|com|org|io)$/i.test(last)) add(last, "ident");
   }
-  return [...out.entries()].slice(0, MAX_TERMS).map(([term, kind]) => ({ term, kind }));
+  // the other spellings code uses for a name the task writes in snake_case: `regexp_extract` is RegexpExtract (the class)
+  // and REGEXP_EXTRACT (the SQL name) in sqlglot -- searched as written, it matched nothing in the source and the
+  // "likely place" fell back to the files' first lines (Modal, sqlglot-4051)
+  const base = [...out.entries()].slice(0, MAX_TERMS);
+  const more = [];
+  for (const [term, kind] of base) {
+    if (kind !== "ident" || !/^[a-z0-9]+(_[a-z0-9]+)+$/.test(term)) continue;
+    const camel = term.split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+    for (const v of [camel, term.toUpperCase()]) if (!out.has(v)) { out.set(v, "ident"); more.push([v, "ident"]); }
+  }
+  return [...base, ...more.slice(0, 10)].map(([term, kind]) => ({ term, kind }));
 }
 
 function git(root, args, timeout = 15000) {
@@ -58,16 +68,28 @@ function git(root, args, timeout = 15000) {
 }
 
 // term -> Map(file -> [{line, def}])
+// paths never searched: docs, generated and vendored trees, the .stealth notes (a minified docs/search.js matched on
+// one multi-megabyte line overflowed the output and the whole lookup came back empty -- sqlglot, 2026-10-16)
+const GREP_EXCLUDES = [":(exclude).stealth", ":(exclude)docs", ":(exclude)doc", ":(exclude)node_modules", ":(exclude)vendor",
+  ":(exclude)dist", ":(exclude)build", ":(glob,exclude)**/*.min.js", ":(glob,exclude)**/*.map", ":(glob,exclude)**/*.html",
+  ":(glob,exclude)**/*.lock", ":(glob,exclude)**/package-lock.json"];
+
 function grepTerm(root, { term, kind }) {
-  const args = ["grep", "-n", "-I", "--no-color", "-F"];
+  // -o: only the matched text, never the whole line (a line can be megabytes); definitions are read from the file after
+  const args = ["grep", "-n", "-o", "-I", "--no-color", "-F"];
   if (kind === "message") args.push("-i");
-  const out = git(root, [...args, "-e", term, "--", "."]);
+  const out = git(root, [...args, "-e", term, "--", ".", ...GREP_EXCLUDES]);
   const hits = new Map();
+  const cache = new Map();
+  const lineOf = (file, n) => {
+    if (!cache.has(file)) cache.set(file, readLines(path.join(root, file)) || []);
+    return cache.get(file)[n - 1] || "";
+  };
   for (const l of out.split(/\r?\n/)) {
     const m = /^(.+?):(\d+):(.*)$/.exec(l);
     if (!m) continue;
     const file = m[1].replace(/\\/g, "/");
-    const def = kind === "ident" && DEF_LINE.exec(m[3])?.[1] === term;
+    const def = kind === "ident" && DEF_LINE.exec(lineOf(file, Number(m[2])).slice(0, 400))?.[1] === term;
     if (!hits.has(file)) hits.set(file, []);
     hits.get(file).push({ line: Number(m[2]), def });
   }
@@ -186,6 +208,18 @@ export function locate({ prompt, root, env = process.env, maxFiles = 3 } = {}) {
     for (const t of terms.filter((x) => x.kind === "path")) {
       const f = t.term.replace(/^\.\//, "");
       if (fs.existsSync(path.join(root, f))) bump(f, 3);
+    }
+    // a name that IS a source file's name points at that file ("tsql" -> sqlglot/dialects/tsql.py)
+    const stems = new Map();
+    for (const f of git(root, ["ls-files"]).split(/\r?\n/)) {
+      if (!f || isTest(f) || SKIP_PATH.test(f) || !/\.(py|m?[jt]sx?|go|rs|java|rb|kt|cs|php)$/.test(f)) continue;
+      const s = path.posix.basename(f).replace(/\.[^.]+$/, "").replace(/^_+/, "").toLowerCase();
+      if (!stems.has(s)) stems.set(s, []);
+      stems.get(s).push(f);
+    }
+    for (const t of terms.filter((x) => x.kind === "ident")) {
+      const fs_ = stems.get(t.term.toLowerCase());
+      if (fs_ && fs_.length <= 3) for (const f of fs_) bump(f, 3 / fs_.length);
     }
     for (const [f, w] of libraryFiles(root, terms)) if (!isTest(f) && fs.existsSync(path.join(root, f))) bump(f, 2 * w);
     for (const [f, w] of claimFiles(root, terms)) if (!isTest(f) && !SKIP_PATH.test(f) && fs.existsSync(path.join(root, f))) bump(f, 0.5 * Math.min(2, w));

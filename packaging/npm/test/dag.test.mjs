@@ -337,3 +337,10 @@ test("Claude Code's own messages in the prompt stream are not tasks: no lookup, 
   assert.equal(shouldLookUp("  <system-reminder>note</system-reminder> fix the parser please", policy), false);
   assert.equal(shouldLookUp("fix the <task-notification> handling in the parser", policy), true, "a real prompt that mentions the tag");
 });
+
+test("a past fix plans a task only when it changed the code the task is located in, whatever the lookup calls it", () => {
+  const { repo } = sliceRepo();
+  const reply = { library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation: "related" })) };
+  assert.equal(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/tsql.py", "pkg/other.py"] } }), null, "located elsewhere: the task goes whole");
+  assert.ok(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/parser.py"] } }), "located in a file the past fix changed");
+});
