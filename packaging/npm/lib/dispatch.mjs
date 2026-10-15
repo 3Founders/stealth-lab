@@ -91,6 +91,8 @@ export function dispatchPolicy(env = process.env) {
     regression: (env.STEALTHLAB_DISPATCH_REGRESSION || "on").toLowerCase() !== "off",
     // tests written for the task that all pass on the unchanged code do not test the change: asked again, then dropped
     specBaseline: (env.STEALTHLAB_DISPATCH_SPEC_BASELINE || "on").toLowerCase() !== "off",
+    // the project's pytest check: tests that already fail on the unchanged code do not fail an answer
+    baselineCheck: (env.STEALTHLAB_DISPATCH_BASELINE_CHECK || "on").toLowerCase() !== "off",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -235,6 +237,64 @@ if not os.path.exists(ok):
 t = open(ok, encoding="utf-8").read().strip()
 sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", t]))
 `;
+
+// The project's check, judged against the unchanged code: run it; on failure, wait for dispatch's run of it on the
+// unchanged code (BASE_FAILS: the tests that failed there; BASE_NONE: none failed, or that run said nothing usable)
+// and pass when every failing test also failed there. Anything else -- a new failure, an error before the tests ran
+// (exit 2+), no failing test names in the output -- keeps the check's own exit code.
+const RUN_BASELINE_CHECK = `import os, re, subprocess, sys, time
+d = os.path.dirname(os.path.abspath(__file__))
+cmd = open(os.path.join(d, "CHECK"), encoding="utf-8").read()
+p = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+sys.stdout.write(p.stdout[-20000:])
+if p.returncode != 1:
+    sys.exit(p.returncode)
+fails = set(re.findall(r"^(?:FAILED|ERROR) (\\S+)", p.stdout, re.M))
+bf, bn = os.path.join(d, "BASE_FAILS"), os.path.join(d, "BASE_NONE")
+end = time.time() + 300
+while not os.path.exists(bf) and not os.path.exists(bn) and time.time() < end:
+    time.sleep(0.5)
+spec, skip = os.path.join(d, "test_spec.py"), os.path.join(d, "SKIP")
+while not os.path.exists(spec) and not os.path.exists(skip) and time.time() < end:
+    time.sleep(0.5)
+if fails and os.path.exists(bf) and os.path.exists(spec):
+    base = set(open(bf, encoding="utf-8").read().split())
+    new = sorted(fails - base)
+    if not new:
+        print("[stealthlab] %d failing test(s), all failing on the unchanged code too: not caused by this change" % len(fails))
+        sys.exit(0)
+    print("[stealthlab] new failures: " + ", ".join(new[:10]))
+sys.exit(1)
+`;
+
+export function writeBaselineCheckRunner(dir, check) {
+  fs.writeFileSync(path.join(dir, "CHECK"), check);
+  const file = path.join(dir, "run_check.py");
+  fs.writeFileSync(file, RUN_BASELINE_CHECK);
+  return file;
+}
+
+// pytest's short summary -> the failing test ids ("FAILED tests/test_x.py::test_y - msg" -> tests/test_x.py::test_y)
+export function failingTests(out) {
+  return [...new Set([...String(out || "").matchAll(/^(?:FAILED|ERROR) (\S+)/gm)].map((m) => m[1]))];
+}
+
+// a shell command -> {code, out} (code null: could not start, timed out or aborted); never blocks the event loop
+export function runShellCapture(cmd, { cwd, timeoutMs = 300000, signal = null } = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try { child = spawn(cmd, { cwd, shell: true, windowsHide: true }); } catch { resolve({ code: null, out: "" }); return; }
+    let out = "", done = false;
+    const finish = (code) => { if (!done) { done = true; clearTimeout(timer); signal?.removeEventListener?.("abort", abort); resolve({ code, out }); } };
+    const abort = () => { try { child.kill(); } catch { /* */ } finish(null); };
+    const timer = setTimeout(abort, timeoutMs);
+    signal?.addEventListener?.("abort", abort);
+    child.stdout.on("data", (b) => { out = (out + b).slice(-200000); });
+    child.stderr.on("data", (b) => { out = (out + b).slice(-200000); });
+    child.on("error", () => finish(null));
+    child.on("close", (code) => finish(code));
+  });
+}
 
 export function writeRegressRunner(dir) {
   const file = path.join(dir, "run_regress.py");
@@ -681,17 +741,41 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // for them. Whatever the project's check is (pytest, vitest, a SQL or page check), the tests are a pytest file.
   let spec = null;
   let specDone = Promise.resolve(null);
-  let fullCheck = check;
   const specAbort = new AbortController();
+  // the project's pytest check judged against the unchanged code: tests that already fail there (an environment-bound
+  // test, a flaky one) do not fail an answer, only NEW failures do (STEALTHLAB_DISPATCH_BASELINE_CHECK). In the Modal
+  // containers 5 permission tests fail as root on any code, and they failed all 13 cheap answers of a real issue.
+  // Only with the tests written for the task (they check the change itself; the project's suite then guards what
+  // already worked), and never for a test the task names (a failing test for this very bug must still fail the answer).
+  const testFirstOn = policy.testFirst && (runClaude || pytestAvailable());
+  const workDir = testFirstOn || (check && policy.baselineCheck) ? specDir(env) : null;
+  let checkRun = check;
+  if (check && !specOnly && testFirstOn && policy.baselineCheck && /\bpytest\b/.test(check)) {
+    const bdir = workDir;
+    checkRun = `${pythonBin({ env })} "${writeBaselineCheckRunner(bdir, check)}"`;
+    const named = String(`${rawPayload.prompt || ""}\n${payload.prompt || ""}`);
+    runShellCapture(check, { cwd: payload.cwd || root, timeoutMs: 300000, signal: specAbort.signal }).then(({ code, out }) => {
+      const fails = (code === 1 ? failingTests(out) : []).filter((id) => {
+        const name = id.split("::").pop().replace(/\[.*$/, "");
+        return !named.includes(name) && !named.includes(id.split("::")[0]);
+      });
+      try {
+        if (fails.length) fs.writeFileSync(path.join(bdir, "BASE_FAILS"), fails.join("\n") + "\n");
+        else fs.writeFileSync(path.join(bdir, "BASE_NONE"), String(code ?? "none"));
+      } catch { /* */ }
+      if (fails.length) log(`dispatch: ${fails.length} test(s) already fail on the unchanged code: answers are judged on new failures only`);
+    });
+  }
+  let fullCheck = checkRun;
   let specDirPath = null;
   // the module's own tests, when they joined the check (for run.md and the note to the session's model)
   const regressIn = () => (specDirPath && fs.existsSync(path.join(specDirPath, "REGRESS_OK")) ? loc.testFile : null);
-  if (policy.testFirst && (runClaude || pytestAvailable())) {
-    const dir = specDir(env);
+  if (testFirstOn) {
+    const dir = workDir;
     specDirPath = dir;
     const py = pythonBin({ env });
     fullCheck = specOnly ? `${py} "${writeSpecRunner(dir, { strict: true })}"`
-      : `${check} && ${py} "${writeSpecRunner(dir)}"`;
+      : `${checkRun} && ${py} "${writeSpecRunner(dir)}"`;
     // the located module's existing tests: in the check when they pass on the unchanged code (run now, alongside)
     if (policy.regression && loc.testFile && /\.py$/.test(loc.testFile) && specOnly) {
       fullCheck += ` && ${py} "${writeRegressRunner(dir)}"`;
