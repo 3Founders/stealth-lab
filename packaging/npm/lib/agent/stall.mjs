@@ -124,6 +124,14 @@ export class StallDetector {
       fresh = !this.seenCalls.has(key);
       this.seenCalls.add(key);
     }
+    // a shell command whose result it has not seen before is new information too: after editing, agents run the tests
+    // and probes 5-6 times in a row while debugging, and rule d stopped every one of them mid-way (Modal, sqlglot-4051:
+    // 4 of 4 stalled runs). The same command with the same output again is the loop rule d is for.
+    if (name === "run_shell") {
+      const key = `run_shell|${String(args.command || "").trim()}|${String(result).slice(0, 4000)}`;
+      fresh = !this.seenCalls.has(key);
+      this.seenCalls.add(key);
+    }
     if (fingerprint !== undefined && fingerprint !== null) {
       if (fingerprint !== this.fp) { this.fp = fingerprint; this.started = true; this.still = 0; this.browse = 0; }
       else if (this.started) { if (fresh) this.browse++; else this.still++; }
