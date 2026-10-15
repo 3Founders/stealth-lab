@@ -264,7 +264,7 @@ test("latency: the tests are written while the cheap models run, and the check w
     env: { ...env, STEALTHLAB_DISPATCH_TESTFIRST: "on" }, runtime: rt, runClaude });
   assert.equal(d.handled, true);
   assert.ok(d.spec && fs.existsSync(d.spec.file), "the tests were written");
-  const runner = rt.calls[0].checks[0].match(/python "(.*run_spec\.py)"/)[1];
+  const runner = rt.calls[0].checks[0].match(/python "([^"]*run_spec\.py)"/)[1];
   const r = spawnSync("python", [runner], { cwd: repo, encoding: "utf8" });
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });

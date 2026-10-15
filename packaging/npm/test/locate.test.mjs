@@ -169,3 +169,33 @@ test("the regression check: runs the module's tests when they passed on the unch
   fs.writeFileSync(path.join(repo, "pkg", "_typehints.py"), "def adapt_typehints(val, typehint):\n    return None\n");
   assert.notEqual(spawnSync("python", [runner], { cwd: repo }).status, 0, "an answer that breaks them fails the check");
 });
+
+test("the project's check, judged against the unchanged code: old failures pass only with the task's own tests; new ones fail", async () => {
+  const { failingTests, writeBaselineCheckRunner } = await import("../lib/dispatch.mjs");
+  assert.deepEqual(failingTests("x\nFAILED tests/test_env.py::test_perm - Failed: DID NOT RAISE\nERROR tests/test_b.py::test_c\n1 failed"),
+    ["tests/test_env.py::test_perm", "tests/test_b.py::test_c"]);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "base-repo-"));
+  fs.mkdirSync(path.join(repo, "tests"));
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");
+  fs.writeFileSync(path.join(repo, "tests", "test_env.py"), "def test_perm():\n    assert False, 'fails as root'\n");
+  fs.writeFileSync(path.join(repo, "tests", "test_calc.py"), "import sys, os\nsys.path.insert(0, os.getcwd())\nimport calc\n\ndef test_x():\n    assert calc.x == 2\n");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "base-dir-"));
+  const runner = writeBaselineCheckRunner(dir, "python -m pytest -q -p no:cacheprovider tests");
+  fs.writeFileSync(path.join(dir, "BASE_FAILS"), "tests/test_env.py::test_perm\n");
+  const run = () => spawnSync("python", [runner], { cwd: repo, encoding: "utf8" });
+  fs.writeFileSync(path.join(dir, "SKIP"), "");
+  assert.equal(run().status, 1, "no tests written for the task: the old failure still fails the answer");
+  fs.unlinkSync(path.join(dir, "SKIP"));
+  fs.writeFileSync(path.join(dir, "test_spec.py"), "def test_ok():\n    assert True\n");
+  const ok = run();
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.match(ok.stdout, /all failing on the unchanged code too/);
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 3\n");
+  const bad = run();
+  assert.equal(bad.status, 1);
+  assert.match(bad.stdout, /new failures: tests\/test_calc\.py::test_x/);
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");
+  fs.unlinkSync(path.join(dir, "BASE_FAILS"));
+  fs.writeFileSync(path.join(dir, "BASE_NONE"), "0");
+  assert.equal(run().status, 1, "nothing failed on the unchanged code: any failure is the answer's");
+});
