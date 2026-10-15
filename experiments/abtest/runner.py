@@ -220,7 +220,14 @@ def task_module(task: dict):
 def c_home() -> Path:
     home = LOCAL / "C_home"
     home.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(HERE / "exec.json", home / "exec.json")
+    cfg = json.loads((HERE / "exec.json").read_text(encoding="utf-8"))
+    # ABTEST_CHEAP_AGENT=claude: the same open models, driven by Claude Code (through StealthLab's local bridge) instead
+    # of StealthLab's own minimal agent loop -- only WHO drives the models changes; models, profiles, checks, .stealth
+    # and dispatch stay as they are
+    if os.environ.get("ABTEST_CHEAP_AGENT", "stealth").lower() == "claude":
+        models = [m for spec in cfg.get("executors", {}).values() for m in (spec.get("models") or []) if m in cfg.get("profiles", {})]
+        cfg["executors"] = {"claude": {"models": list(dict.fromkeys(models))}}
+    (home / "exec.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return home
 
 
