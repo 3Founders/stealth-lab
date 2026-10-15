@@ -79,8 +79,11 @@ def zai_llm(key: str, *, profile: str = LLM_PROFILE, config: Path = HERE / "exec
             messages = [{"role": "user", "content": f"{system}\n\n{user}"}]
         else:
             messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        # the simulated user's own reasoning, not the product's: exec.json's profile may say "high" for the cheap rung,
+        # which would change the test inputs with the product config (and spend max_tokens on thinking)
         body = json.dumps({"model": spec["model_id"], "messages": messages, "temperature": 0, "max_tokens": max_tokens,
-                           **(spec.get("request_extras") or {})}).encode()
+                           **(spec.get("request_extras") or {}),
+                           "reasoning_effort": os.environ.get("ABTEST_SIM_REASONING", "low")}).encode()
         last = ""
         for attempt in range(retries):
             req = urllib.request.Request(url, data=body, method="POST", headers={
