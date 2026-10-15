@@ -296,7 +296,9 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   }
   fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
   const amb = /^#\s*AMBIGUOUS:\s*(.+)$/m.exec(code);
-  return { file, cost_usd: cost, ...(amb ? { ambiguous: amb[1].trim().slice(0, 300) } : {}) };
+  // "# AMBIGUOUS: none" (a writer that fills in the line anyway) is not a flag: it stopped the cheap tries on a clear task
+  const ambiguous = amb && !/^(none|no|n\/?a|not ambiguous|nothing)[\s.)]*$/i.test(amb[1].trim().replace(/^[(\[]/, "")) ? amb[1].trim().slice(0, 300) : null;
+  return { file, cost_usd: cost, ...(ambiguous ? { ambiguous } : {}) };
 }
 
 // An open model's exec.json profile with an OpenAI-compatible endpoint, or null.

@@ -246,3 +246,15 @@ test("test-first on an open model: a late or failed reply -> the fallback Claude
     runClaude: (args) => { asked.push(args[args.indexOf("--model") + 1]); return { status: 1, stdout: "" }; } }), null);
   assert.deepEqual(asked, ["glm-5.3", "glm-5.3"], "fallback off: the open model twice, as before");
 });
+
+test("test-first: '# AMBIGUOUS: none' is not an ambiguity flag; a real one is", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
+  const reply = (first) => () => ({ stdout: JSON.stringify({ result: "```python\n" + first + "\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```", total_cost_usd: 0.01 }) });
+  for (const line of ["# AMBIGUOUS: none", "# AMBIGUOUS: None.", "# AMBIGUOUS: (none)", "# AMBIGUOUS: N/A"]) {
+    const spec = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude: reply(line) });
+    assert.equal(spec.ambiguous, undefined, line);
+  }
+  const real = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude: reply("# AMBIGUOUS: double could mean x*2 or x+x as strings") });
+  assert.match(real.ambiguous, /x\*2 or x\+x/);
+});
