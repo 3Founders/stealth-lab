@@ -554,10 +554,10 @@ if modal is not None:
     @app.local_entrypoint()
     def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
              series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
-             testfirst_model: str = "glm-5.3"):
+             testfirst_model: str = "glm-5.3", gc_key_name: str = "GENERAL_COMPUTE_API_KEY"):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
-                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model)
+                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model, gc_key_name=gc_key_name)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))
