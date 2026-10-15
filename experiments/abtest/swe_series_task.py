@@ -277,8 +277,8 @@ def record_history(r: dict, ws: Path) -> None:
     keeps the workspace's files (`-s ours`) -- as in a developer's clone, so the survey can mine past fixes into the
     library. Only the base commit and its ancestors are fetched: nothing after it (the fix) can be seen.
     ABTEST_SERIES_HISTORY=off: no history, as before."""
-    if os.environ.get("ABTEST_SERIES_HISTORY", "on").lower() == "off":
-        return
+    if os.environ.get("ABTEST_SERIES_HISTORY", "on").lower() == "off" or not (ws / ".git").exists():
+        return                               # the gold check's plain directories have no history to carry
     sha = r["base_commit"]
     d = ensure_commit(r["repo"], sha)
     ref = f"refs/abtest/{sha}"
