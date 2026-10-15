@@ -99,6 +99,9 @@ class RunSpec:
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     allow_cold_resume: bool = False
     validate: bool = True                  # the gold check on the issues about to run (swe_series_task only); False skips it
+    split_arms: bool = True                # one container per arm, so A, C and C0 run at the same time; False: all arms in one container
+    task_ids: list[str] | None = None      # the issues to run, already gold-checked (prepare); None: this container picks them itself
+    unit_arm: str = ""                     # set for the one-arm container of a split run: its results live in <run>/<repository>/<arm>/
 
     def run_name(self) -> str:
         return self.run or f"long-{'-'.join(self.repos)}-{self.turns}t"
@@ -117,6 +120,8 @@ def validate_spec(spec: RunSpec) -> list[str]:
         problems.append("--max-issues cannot be negative")
     if not 1 <= spec.turns <= 4:
         problems.append("--turns is 1-4")
+    if spec.unit_arm and spec.arms != [spec.unit_arm]:
+        problems.append("a one-arm unit runs exactly its own arm")
     return problems
 
 
@@ -130,15 +135,20 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
     sessions = sum(len(t) for t in tasks_by_repo.values()) * len(spec.arms)
     lines = [f"run {spec.run_name()}: {len(spec.repos)} repo(s), arms {','.join(spec.arms)}, auth {spec.auth}, "
              f"{spec.turns} user turn(s) per task",
-             "  repositories run " + ("one after another (a subscription has limits; no parallel sessions)" if spec.auth == "subscription"
-                                      else "in parallel (an API key is billed per token)") + "; arms run one after another inside a repository"]
+             "  repositories run " + ("one after another (a subscription has limits)" if spec.auth == "subscription"
+                                      else "in parallel (an API key is billed per token)") + "; "
+             + ("the arms run at the same time, one container per arm (each with its own backend: C and C0 do not share server state), "
+                "after ONE gold check of the series" if spec.split_arms and len(spec.arms) > 1
+                else "the arms run one after another inside a repository")]
     for repo, tasks in tasks_by_repo.items():
         lines.append(f"  {repo}: {len(tasks)} issue(s) -> {len(tasks) * len(spec.arms)} session(s) (x up to {spec.turns} turn(s)): "
                      + ", ".join(t["task_id"] for t in tasks[:3]) + (" ..." if len(tasks) > 3 else ""))
     lines.append(f"  {sessions} session(s) in all; {PLAN_ESTIMATE}")
     lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else API_SECRET)
                  + f"; volume {VOLUME_NAME}")
-    lines.append(f"  results: /mnt/series/{spec.run_name()}/<repository>/ on the volume (results/, logs/, state.tgz, db.sql.gz, report.txt)")
+    lines.append(f"  results: /mnt/series/{spec.run_name()}/<repository>/ on the volume (gold_check.json, report.txt"
+                 + (", and per arm <arm>/results, <arm>/logs, <arm>/state.tgz, <arm>/db.sql.gz)" if spec.split_arms and len(spec.arms) > 1
+                    else ", results/, logs/, state.tgz, db.sql.gz)"))
     return "\n".join(lines)
 
 
@@ -236,7 +246,9 @@ class Container:
                         "HF_HOME": str(self.vol / "cache" / "hf")}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
-        self.out = self.vol / spec.run_name() / repo
+        self.run_dir = self.vol / spec.run_name() / repo                  # the repository's directory on the volume
+        self.out = self.run_dir / spec.unit_arm if spec.unit_arm else self.run_dir
+        self.uses_backend = any(a in ("C", "C0") for a in spec.arms)      # arm A is plain Claude Code: no server, no Postgres
         self.health = health or self._healthy
         self.log: list[str] = []
 
@@ -252,8 +264,9 @@ class Container:
             for name in ("ws", "C_home", "openers", "simuser"):
                 if (self.local / name).exists():
                     tf.add(self.local / name, arcname=name)
-        dump = self.sh(f"{PG_BIN}/pg_dump -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest | gzip > {self.out / 'db.sql.gz'}")
-        self.log.append(f"snapshot (db dump rc={getattr(dump, 'returncode', '?')})")
+        if self.uses_backend:
+            dump = self.sh(f"{PG_BIN}/pg_dump -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest | gzip > {self.out / 'db.sql.gz'}")
+            self.log.append(f"snapshot (db dump rc={getattr(dump, 'returncode', '?')})")
         self.commit()
 
     def restore(self) -> str:
@@ -304,7 +317,7 @@ class Container:
 
     def restore_db(self) -> None:
         dump = self.out / "db.sql.gz"
-        if dump.exists():
+        if self.uses_backend and dump.exists():
             self.sh(f"gunzip -c {dump} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest")
             self.log.append("database restored from the snapshot")
 
@@ -334,7 +347,11 @@ class Container:
         problems = validate_spec(s)
         if problems:
             raise SystemExit("; ".join(problems))
-        tasks = series_tasks(s, self.repo)
+        if s.task_ids is not None:                    # a split run: the issues were gold-checked once, before the arms started
+            full = importlib.import_module(s.series_module).series(self.repo)
+            tasks = [t for t in full if t["task_id"] in set(s.task_ids)]            # in series order
+        else:
+            tasks = series_tasks(s, self.repo)
         state = self.restore()
         results = self.local / "results" / f"{s.run_name()}.jsonl"
         done = done_tasks(results, s.arms)
@@ -345,14 +362,20 @@ class Container:
         summary = {"repo": self.repo, "run": s.run_name(), "issues": len(tasks), "already_done": len(tasks) - len(pending), "state": state,
                    "ran": [], "status": "done"}
         if not pending:
-            summary["report"] = self.report()
+            if not s.unit_arm:
+                summary["report"] = self.report()
             return summary
-        self.start_services()
-        if state == "restored":
-            self.restore_db()
+        shared = self.run_dir / "validate.json"
+        if s.task_ids is not None and shared.exists():      # a split run: the gold check ran in another container
+            (self.local / "swe").mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(shared, self.local / "swe" / f"validate_{self.repo}.json")
+        if self.uses_backend:
+            self.start_services()
+            if state == "restored":
+                self.restore_db()
         self._must(self.sh([sys.executable, str(self.ab / f"{s.series_module}.py"), "fetch", self.repo], env=self.environ, cwd=self.ab),
                    "fetching the series' data")
-        if s.validate and s.series_module == SERIES_MODULE:
+        if s.validate and s.series_module == SERIES_MODULE and s.task_ids is None:
             full = importlib.import_module(s.series_module).series(self.repo)          # not cut: a refused issue is replaced by the next
             pending, summary["gold_check"] = self.gold_check([t for t in full if t["task_id"] not in done])
             if not pending:
@@ -373,7 +396,8 @@ class Container:
             if rc != 0:
                 summary.update(status="error", why=str(getattr(proc, "stderr", ""))[-300:])
                 break
-        summary["report"] = self.report()
+        if not s.unit_arm:                              # a split run's report is made once, from every arm's results (finish)
+            summary["report"] = self.report()
         return summary
 
     def gold_check(self, pending: list[dict]) -> tuple[list[dict], dict]:
@@ -387,15 +411,65 @@ class Container:
         self._must(proc, "the gold check")
         path = self.local / "swe" / f"validate_{self.repo}.json"
         rows = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        if path.exists():                       # the arms' containers need it too: it holds the PASS_TO_PASS tests this environment breaks
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, self.run_dir / "validate.json")
         verdict = {r["instance_id"]: r for r in rows}
         usable = [t for t in pool if verdict.get(t["task_id"], {}).get("usable")][:need]
         dropped = {t["task_id"]: str((verdict.get(t["task_id"], {}).get("gold") or {}).get("error")
                                      or ("the base commit already passes its FAIL_TO_PASS tests" if verdict.get(t["task_id"], {}).get("gold_resolves")
                                          else "not checked")) for t in pool if t not in usable}
         record = {"checked": len(pool), "usable": [t["task_id"] for t in usable], "dropped": dropped}
-        (self.out).mkdir(parents=True, exist_ok=True)
-        (self.out / "gold_check.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        (self.run_dir / "gold_check.json").write_text(json.dumps(record, indent=1), encoding="utf-8")
         return usable, record
+
+    def prepare(self) -> dict:
+        """A split run's first step, in its own container and with no services: fetch the series' data and run the gold check ONCE, for
+        every arm. A repeated command reuses the recorded answer (the same issues, in the same order, so a resume matches)."""
+        s = self.spec
+        record_path = self.run_dir / "gold_check.json"
+        if record_path.exists():
+            rec = json.loads(record_path.read_text(encoding="utf-8"))
+            if rec.get("max_issues") == s.max_issues and rec.get("usable"):
+                return {"task_ids": rec["usable"], "gold_check": rec, "reused": True}
+        self._must(self.sh([sys.executable, str(self.ab / f"{s.series_module}.py"), "fetch", self.repo], env=self.environ, cwd=self.ab),
+                   "fetching the series' data")
+        tasks = importlib.import_module(s.series_module).series(self.repo)
+        if s.validate and s.series_module == SERIES_MODULE:
+            usable, record = self.gold_check(tasks)
+        else:
+            usable = tasks[: s.max_issues] if s.max_issues else tasks
+            record = {"checked": 0, "usable": [t["task_id"] for t in usable], "dropped": {}}
+        record["max_issues"] = s.max_issues
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(json.dumps(record, indent=1), encoding="utf-8")
+        self.commit()
+        return {"task_ids": record["usable"], "gold_check": record, "reused": False}
+
+    def finish(self) -> dict:
+        """A split run's last step: every arm's results in one file, then report.py's summary and learning curve over all of them."""
+        s = self.spec
+        merged_dir = self.run_dir / "results"
+        merged_dir.mkdir(parents=True, exist_ok=True)
+        lines, missing = [], []
+        for arm in s.arms:
+            f = self.run_dir / arm / "results" / f"{s.run_name()}.jsonl"
+            if f.exists():
+                lines += [ln for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+            else:
+                missing.append(arm)
+        merged = merged_dir / f"{s.run_name()}.jsonl"
+        merged.write_text("".join(ln + chr(10) for ln in lines), encoding="utf-8")
+        env = {**self.environ, "ABTEST_RESULTS_DIR": str(merged_dir)}
+        parts = []
+        for extra in ([], ["--curve"]):
+            r = self.sh([sys.executable, str(self.ab / "report.py"), s.run_name(), *extra], env=env, cwd=self.ab)
+            parts.append(str(getattr(r, "stdout", "") or ""))
+        text = "".join(p + chr(10) + chr(10) for p in parts).rstrip()
+        (self.run_dir / "report.txt").write_text(text, encoding="utf-8")
+        self.commit()
+        return {"repo": self.repo, "run": s.run_name(), "rows": len(lines), "arms_without_results": missing, "report": text}
 
     def report(self) -> str:
         """report.py's summary and learning curve for the run, saved next to the results."""
@@ -415,6 +489,43 @@ def container_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lamb
     return Container(RunSpec(**spec_dict), repo, commit=commit).run()
 
 
+def prepare_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda: None) -> dict:
+    return Container(RunSpec(**spec_dict), repo, commit=commit).prepare()
+
+
+def finish_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda: None, reload: Callable[[], None] = lambda: None) -> dict:
+    reload()                                           # see what the other containers committed to the volume
+    return Container(RunSpec(**spec_dict), repo, commit=commit).finish()
+
+
+def arm_specs(spec: RunSpec, task_ids: list[str]) -> list[RunSpec]:
+    """One spec per arm for a split run: the same issues, that arm only."""
+    return [RunSpec(**{**asdict(spec), "arms": [a], "unit_arm": a, "task_ids": list(task_ids)}) for a in spec.arms]
+
+
+def orchestrate(spec: RunSpec, *, prepare: Callable[[dict, str], dict], run_arms: Callable[[list[tuple[dict, str]]], list[dict]],
+                finish: Callable[[dict, str], dict], run_one_container: Callable[[dict, str], dict]) -> list[dict]:
+    """The whole run from the local side. Not split (one arm, or split_arms False): one container per repository does everything.
+    Split: for each repository ONE gold check (prepare), then one container per arm at the same time (run_arms), then one merge and
+    report (finish). With a subscription the repositories go one after another; with an API key the arm containers of ALL
+    repositories start together."""
+    if not spec.split_arms or len(spec.arms) < 2:
+        d = asdict(spec)
+        return [run_one_container(d, r) for r in spec.repos] if spec.auth == "subscription" else run_arms([(d, r) for r in spec.repos])
+    prepared = {r: prepare(asdict(spec), r) for r in spec.repos}
+    out = []
+    batches = [[r] for r in spec.repos] if spec.auth == "subscription" else [list(spec.repos)]
+    for batch in batches:
+        units = [(asdict(a), r) for r in batch for a in arm_specs(spec, prepared[r]["task_ids"])]
+        results = run_arms(units)
+        for r in batch:
+            fin = finish(asdict(spec), r)
+            fin["gold_check"] = prepared[r]["gold_check"]
+            fin["arms"] = [x for (d, rr), x in zip(units, results) if rr == r]
+            out.append(fin)
+    return out
+
+
 # ---------------------------------------------------------------- the Modal app (defined only when modal is importable)
 
 if modal is not None:
@@ -431,12 +542,20 @@ if modal is not None:
     def run_unit(spec: dict, repo: str) -> dict:
         return container_main(spec, repo, commit=volume.commit)
 
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    def prepare_unit(spec: dict, repo: str) -> dict:
+        return prepare_main(spec, repo, commit=volume.commit)
+
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    def finish_unit(spec: dict, repo: str) -> dict:
+        return finish_main(spec, repo, commit=volume.commit, reload=volume.reload)
+
     @app.local_entrypoint()
     def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
-             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False):
+             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
-                       allow_cold_resume=allow_cold_resume)
+                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))
@@ -447,10 +566,8 @@ if modal is not None:
         if spec.auth != MODAL_AUTH:
             raise SystemExit(f"--auth {spec.auth} needs ABTEST_MODAL_AUTH={spec.auth} in the environment of this command "
                              f"(it chooses which Modal secret the container gets); it is {MODAL_AUTH!r}")
-        if spec.auth == "subscription":
-            results = [run_unit.remote(asdict(spec), r) for r in spec.repos]            # one at a time
-        else:
-            results = list(run_unit.starmap([(asdict(spec), r) for r in spec.repos]))   # repositories in parallel
+        results = orchestrate(spec, prepare=lambda d, r: prepare_unit.remote(d, r), run_one_container=lambda d, r: run_unit.remote(d, r),
+                              run_arms=lambda units: list(run_unit.starmap(units)), finish=lambda d, r: finish_unit.remote(d, r))
         for r in results:
             print(json.dumps({k: v for k, v in r.items() if k != "report"}))
             print(r.get("report", ""))
@@ -552,6 +669,7 @@ def cli(argv: list[str] | None = None) -> int:
     p.add_argument("--turns", type=int, default=1)
     p.add_argument("--run", default="")
     p.add_argument("--series-module", default=SERIES_MODULE)
+    p.add_argument("--sequential-arms", action="store_true", help="all arms in one container, one after another (the slower layout)")
     s = sub.add_parser("secrets", help="create the Modal secrets from your environment / backend/.env by NAME (values are never printed)")
     s.add_argument("--claude", action="store_true", help=f"{CLAUDE_SECRET} from $CLAUDE_CODE_OAUTH_TOKEN")
     s.add_argument("--api", action="store_true", help=f"{API_SECRET} from $ANTHROPIC_API_KEY")
@@ -561,7 +679,8 @@ def cli(argv: list[str] | None = None) -> int:
     if args.cmd == "secrets":
         return secrets_cli(args)
     spec = RunSpec(repos=[r.strip() for r in args.repos.split(",") if r.strip()], arms=[a.strip() for a in args.arms.split(",") if a.strip()],
-                   max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module)
+                   max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module,
+                   split_arms=not args.sequential_arms)
     problems = validate_spec(spec)
     if problems:
         print("; ".join(problems))

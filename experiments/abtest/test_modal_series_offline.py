@@ -423,3 +423,171 @@ def test_the_gold_check_can_be_skipped_and_is_only_for_the_swe_series(tmp_path, 
     toy = container(tmp_path / "toy", max_issues=1)                 # fake_series: not the SWE module
     toy.run()
     assert not any("validate" in x["cmd"] for x in toy.rec.calls)
+
+
+# ---------------------------------------------------------------- split arms: one gold check, one container per arm, one merged report
+
+def unit(tmp_path, arm, ids, **kw):
+    """The one-arm container of a split run (what orchestrate hands to run_unit)."""
+    return container(tmp_path, arms=[arm], unit_arm=arm, task_ids=ids, **kw)
+
+
+def commands(c):
+    return [x["cmd"] for x in c.rec.calls]
+
+
+def test_a_split_plan_says_so_and_sequential_arms_says_the_old_thing(fake_series):
+    tasks = {"mini": ms.series_tasks(spec(max_issues=2), "mini")}
+    text = ms.plan_text(spec(max_issues=2), tasks)
+    assert "the arms run at the same time, one container per arm" in text and "ONE gold check" in text and "do not share server state" in text
+    assert "<arm>/results" in text
+    old = ms.plan_text(spec(max_issues=2, split_arms=False), tasks)
+    assert "one after another inside a repository" in old and "<arm>" not in old
+    one = ms.plan_text(spec(max_issues=2, arms=["A"]), tasks)
+    assert "one after another inside a repository" in one, "a single arm has nothing to split"
+
+
+def test_arm_specs_are_one_arm_each_with_the_same_gold_checked_issues():
+    specs = ms.arm_specs(spec(), ["a", "b"])
+    assert [s.arms for s in specs] == [["A"], ["C"], ["C0"]] and [s.unit_arm for s in specs] == ["A", "C", "C0"]
+    assert all(s.task_ids == ["a", "b"] for s in specs)
+    assert ms.validate_spec(specs[0]) == []
+    assert any("one-arm unit" in p for p in ms.validate_spec(spec(unit_arm="A")))
+
+
+def orch(spec_, **fns):
+    calls = []
+
+    def prepare(d, r):
+        calls.append(("prepare", r))
+        return {"task_ids": [f"x__{r}-1", f"x__{r}-2"], "gold_check": {"usable": 2}}
+
+    def run_arms(units):
+        calls.append(("run_arms", [(d["unit_arm"] or "-", r) for d, r in units]))
+        return [{"arm": d["unit_arm"], "status": "done"} for d, r in units]
+
+    def finish(d, r):
+        calls.append(("finish", r))
+        return {"repo": r, "report": "rep"}
+
+    def one(d, r):
+        calls.append(("one", r))
+        return {"repo": r, "status": "done"}
+
+    out = ms.orchestrate(spec_, prepare=prepare, run_arms=run_arms, finish=finish, run_one_container=one)
+    return out, calls
+
+
+def test_a_split_run_with_a_subscription_goes_repository_by_repository_with_the_arms_at_once():
+    out, calls = orch(ms.RunSpec(repos=["a", "b"]))
+    assert calls == [("prepare", "a"), ("prepare", "b"), ("run_arms", [("A", "a"), ("C", "a"), ("C0", "a")]), ("finish", "a"),
+                     ("run_arms", [("A", "b"), ("C", "b"), ("C0", "b")]), ("finish", "b")]
+    assert [o["repo"] for o in out] == ["a", "b"] and out[0]["gold_check"] == {"usable": 2} and [x["arm"] for x in out[0]["arms"]] == ["A", "C", "C0"]
+
+
+def test_a_split_run_with_an_api_key_starts_every_repositorys_arms_together():
+    _, calls = orch(ms.RunSpec(repos=["a", "b"], auth="api"))
+    assert calls[0:2] == [("prepare", "a"), ("prepare", "b")]
+    assert calls[2] == ("run_arms", [("A", "a"), ("C", "a"), ("C0", "a"), ("A", "b"), ("C", "b"), ("C0", "b")]) and calls[3:] == [("finish", "a"), ("finish", "b")]
+
+
+def test_without_splitting_one_container_does_everything_as_before():
+    out, calls = orch(ms.RunSpec(repos=["a", "b"], split_arms=False))
+    assert calls == [("one", "a"), ("one", "b")] and [o["repo"] for o in out] == ["a", "b"]
+    _, calls = orch(ms.RunSpec(repos=["a"], arms=["C"]))
+    assert calls == [("one", "a")], "one arm: nothing to split"
+    _, calls = orch(ms.RunSpec(repos=["a", "b"], split_arms=False, auth="api"))
+    assert calls == [("run_arms", [("-", "a"), ("-", "b")])]
+
+
+def test_arm_a_runs_without_postgres_or_a_backend_on_the_issues_it_is_given(tmp_path, fake_series):
+    c = unit(tmp_path, "A", ["x__mini-3", "x__mini-1"])
+    out = c.run()
+    cmds = commands(c)
+    assert not any(k in t for t in cmds for k in ("initdb", "pg_ctl", "createuser", "migrate.py", "run_backend.py", "pg_dump")), cmds
+    runs = [t for t in cmds if "runner.py" in t]
+    assert [r.split("--only ")[1].split()[0] for r in runs] == ["x__mini-1", "x__mini-3"], "the given issues, in series order"
+    assert all("--arms A " in r for r in runs) and all("--series fake_series:mini" in r for r in runs)
+    assert out["status"] == "done" and "report" not in out, "a split run's report is made once, by finish"
+    assert (c.out / "state.tgz").exists() and c.out == tmp_path / "vol" / "long-mini-1t" / "mini" / "A" and not (c.out / "db.sql.gz").exists()
+
+
+def test_arm_c_starts_its_own_backend_and_keeps_its_snapshot_in_its_own_directory(tmp_path, fake_series):
+    c = unit(tmp_path, "C", ["x__mini-1"])
+    c.run()
+    cmds = commands(c)
+    assert any("initdb" in t for t in cmds) and any("run_backend.py" in t for t in cmds) and any("pg_dump" in t for t in cmds)
+    assert (c.out / "db.sql.gz").exists() and c.out.name == "C"
+    assert all("--arms C " in t for t in cmds if "runner.py" in t)
+
+
+def test_a_unit_never_runs_the_gold_check_itself_even_for_the_swe_series(tmp_path, swe_stub):
+    c = unit(tmp_path, "A", ["x__mini-2"], series_module="swe_series_task")
+    c.run()
+    assert not any("validate" in t for t in commands(c))
+    assert [t.split("--only ")[1].split()[0] for t in commands(c) if "runner.py" in t] == ["x__mini-2"]
+
+
+def test_prepare_runs_the_gold_check_once_with_no_services_and_remembers_the_answer(tmp_path, swe_stub):
+    c = container(tmp_path, max_issues=2, series_module="swe_series_task")
+    c.rec.bad = {"x__mini-1"}
+    got = c.prepare()
+    cmds = commands(c)
+    assert got["task_ids"] == ["x__mini-2", "x__mini-3"] and got["reused"] is False
+    assert any("fetch mini" in t for t in cmds) and any("validate" in t for t in cmds)
+    assert not any(k in t for t in cmds for k in ("initdb", "run_backend.py", "runner.py")), "no Postgres, no backend, no session"
+    rec = json.loads((tmp_path / "vol" / "long-mini-1t" / "mini" / "gold_check.json").read_text(encoding="utf-8"))
+    assert rec["usable"] == ["x__mini-2", "x__mini-3"] and rec["max_issues"] == 2 and "x__mini-1" in rec["dropped"]
+    again = container(tmp_path, max_issues=2, series_module="swe_series_task")
+    got2 = again.prepare()
+    assert got2["task_ids"] == got["task_ids"] and got2["reused"] is True and commands(again) == [], "a repeated command reuses the answer"
+    more = container(tmp_path, max_issues=3, series_module="swe_series_task")
+    assert more.prepare()["reused"] is False, "a different --max-issues is a different question"
+
+
+def test_prepare_for_a_series_without_a_gold_check_just_takes_the_first_issues(tmp_path, fake_series):
+    c = container(tmp_path, max_issues=2)
+    got = c.prepare()
+    assert got["task_ids"] == ["x__mini-1", "x__mini-2"] and not any("validate" in t for t in commands(c))
+
+
+def test_finish_merges_every_arms_results_and_reports_over_all_of_them(tmp_path, fake_series):
+    c = container(tmp_path)
+    for arm, n in (("A", 2), ("C", 2)):                       # C0's container produced nothing
+        d = c.run_dir / arm / "results"
+        d.mkdir(parents=True)
+        (d / "long-mini-1t.jsonl").write_text("".join(json.dumps({"task_id": f"t{i}", "arm": arm, "status": "done"}) + chr(10) for i in range(n)), encoding="utf-8")
+    out = c.finish()
+    merged = (c.run_dir / "results" / "long-mini-1t.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(merged) == 4 and out["rows"] == 4 and out["arms_without_results"] == ["C0"]
+    reports = [x for x in c.rec.calls if "report.py" in x["cmd"]]
+    assert len(reports) == 2 and "--curve" in reports[1]["cmd"] and all("long-mini-1t" in x["cmd"] for x in reports)
+    assert all(x["env"]["ABTEST_RESULTS_DIR"] == str(c.run_dir / "results") for x in reports)
+    assert out["report"] == "summary" + chr(10) + chr(10) + "curve" and (c.run_dir / "report.txt").read_text(encoding="utf-8") == out["report"]
+    assert c.commits, "the volume is committed"
+
+
+def test_the_container_mains_for_prepare_and_finish_build_from_plain_dicts(tmp_path, fake_series, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(ms.Container, "prepare", lambda self: seen.update(prepare=self.repo) or {"task_ids": []})
+    monkeypatch.setattr(ms.Container, "finish", lambda self: seen.update(finish=self.repo) or {"report": ""})
+    monkeypatch.setattr(ms, "auth_env", lambda mode, environ: dict(environ))
+    d = {"repos": ["mini"], "series_module": "fake_series"}
+    ms.prepare_main(d, "mini")
+    reloaded = []
+    ms.finish_main(d, "mini", reload=lambda: reloaded.append(1))
+    assert seen == {"prepare": "mini", "finish": "mini"} and reloaded == [1], "finish reloads the volume to see the other containers' commits"
+
+
+def test_the_gold_checks_environment_findings_reach_the_arms_containers(tmp_path, swe_stub):
+    prep = container(tmp_path, max_issues=2, series_module="swe_series_task")
+    prep.prepare()
+    shared = tmp_path / "vol" / "long-mini-1t" / "mini" / "validate.json"
+    assert shared.exists(), "prepare keeps validate_<series>.json (the PASS_TO_PASS exclusions) on the volume"
+    expected = shared.read_text(encoding="utf-8")
+    arm = unit(tmp_path / "other", "A", ["x__mini-2"], series_module="swe_series_task")
+    arm.vol = tmp_path / "vol"                                   # the same volume, a different container (empty local disk)
+    arm.run_dir = arm.vol / "long-mini-1t" / "mini"
+    arm.out = arm.run_dir / "A"
+    arm.run()
+    assert (arm.local / "swe" / "validate_mini.json").read_text(encoding="utf-8") == expected
