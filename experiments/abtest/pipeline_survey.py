@@ -186,7 +186,11 @@ def stage2(iid: str, work: Path) -> dict:
     try:
         after, tail_a = run_spec(py, spec, root)
     finally:
-        subprocess.run(["git", "-C", str(root), "checkout", "-q", "--", "."], capture_output=True)
+        # undone exactly (new files too): stage 3's agents must not see any of the real fix
+        if not _apply(root, r["patch"], reverse=True):
+            subprocess.run(["git", "-C", str(root), "checkout", "-q", "--", "."], capture_output=True)
+            for f in re.findall(r"^diff --git a/\S+ b/(\S+)\nnew file mode", r["patch"], re.M):
+                (root / f).unlink(missing_ok=True)
     out.update({"fails_before": before != 0, "passes_with_fix": after == 0, "valid": before != 0 and after == 0,
                 "rejects_right_answer": after != 0, "tail_with_fix": tail_a[-400:] if after != 0 else ""})
     return out
@@ -246,3 +250,80 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
+
+
+# ---------------------------------------------------------------- stage 3: the cheap agent, judged by our gate and by the truth
+
+def _apply(root: Path, patch: str, reverse: bool = False) -> bool:
+    if not patch.strip():
+        return True
+    p = subprocess.run(["git", "-C", str(root), "apply", "--whitespace=nowarn", *(["-R"] if reverse else []), "-"],
+                       input=patch.encode(), capture_output=True)
+    return p.returncode == 0
+
+
+def hidden_pass(py: Path, root: Path, test_patch: str, f2p: list[str]) -> tuple[bool, str]:
+    """The real hidden tests (the merged PR's): its test patch applied, FAIL_TO_PASS must pass."""
+    import swe_series_task as S
+    if not _apply(root, test_patch):
+        return False, "test patch does not apply"
+    try:
+        code, out = S.TOOLCHAIN.pytest(py, ["-q", "-p", "no:cacheprovider", *f2p], root, 600)
+        return code == 0, out[-300:]
+    finally:
+        _apply(root, test_patch, reverse=True)
+
+
+def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth"), model: str = "glm-5.3-flash") -> dict:
+    import swe_series_task as S
+    base = stage2(iid, work)                      # environment, our tests (and their validity), the where line
+    if base.get("env_error") or base.get("error"):
+        return base
+    full = S.load_split()
+    full = full[full.instance_id == iid].iloc[0]
+    root, py = work / "repo", next((work / "venvs").glob(f"{iid}*/bin/python"), None) or next((work / "venvs").glob(f"{iid}*/Scripts/python.exe"))
+    spec = next(iter(sorted((work / "home" / "specs" / "s").glob("test_spec.py"))), None)
+    where = work / "home" / "specs" / "s" / "where.txt"
+    f2p = list(full["FAIL_TO_PASS"])
+    out = {**base, "agents": {}}
+    env = {**os.environ, "STEALTHLAB_HOME": str(work / "home"),
+           "PATH": f"{py.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+    for agent in agents:
+        p = subprocess.run(["node", str(HERE / "survey_agent.mjs"), str(root), str(work / "prompt.txt"), str(where), agent, model],
+                           capture_output=True, text=True, timeout=1500, env=env)
+        try:
+            a = json.loads(p.stdout)
+        except ValueError:
+            out["agents"][agent] = {"error": p.stderr[-300:]}
+            continue
+        res = {k: a.get(k) for k in ("state", "files", "secs", "cost_usd", "tokens", "error")}
+        patch = a.get("patch") or ""
+        if patch.strip() and _apply(root, patch):
+            try:
+                res["passes_our_tests"] = (run_spec(py, spec, root)[0] == 0) if spec else None
+                res["truly_solved"], res["hidden_tail"] = hidden_pass(py, root, str(full["test_patch"]), f2p)
+            finally:
+                _apply(root, patch, reverse=True)
+        else:
+            res.update({"passes_our_tests": False if spec else None, "truly_solved": False, "no_change": not patch.strip()})
+        out["agents"][agent] = res
+    return out
+
+
+def report3(rows: list[dict]) -> str:
+    ok = [r for r in rows if r.get("agents")]
+    lines = [f"{len(ok)} issues with a working environment", ""]
+    for agent in ("claude", "stealth"):
+        xs = [r["agents"][agent] for r in ok if agent in r["agents"] and "error" not in r["agents"][agent]]
+        if not xs:
+            continue
+        solved = [x for x in xs if x.get("truly_solved")]
+        gated = [x for x in xs if x.get("passes_our_tests")]
+        rejected_right = [x for x in solved if x.get("passes_our_tests") is False]
+        accepted_wrong = [x for x in gated if not x.get("truly_solved")]
+        secs = sorted(x.get("secs") or 0 for x in xs)
+        cost = sum(float(x.get("cost_usd") or 0) for x in xs)
+        lines += [f"agent {agent} (n={len(xs)}): truly solved {len(solved)} ({len(solved) / len(xs) * 100:.0f}%), passed our tests {len(gated)}, "
+                  f"right answers our tests REJECTED {len(rejected_right)}, wrong answers our tests ACCEPTED {len(accepted_wrong)}; "
+                  f"median {secs[len(secs) // 2]} s, cost ${cost:.2f} in all"]
+    return "\n".join(lines)

@@ -67,6 +67,35 @@ def stage2_batch(iids: list[str]) -> list[dict]:
     return out
 
 
+@app.function(image=build_image(), volumes={VOL: volume}, timeout=14400, cpu=2.0, memory=8192,
+              secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)])
+def stage3_batch(iids: list[str]) -> list[dict]:
+    """The cheap agent on each issue -- lean Claude Code and StealthLab's own loop, both on SURVEY_AGENT_MODEL -- judged by
+    our tests and by the real hidden tests."""
+    import shutil, tempfile
+    os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
+    os.environ["STEALTHLAB_NPM_DIR"] = f"{APP_DIR}/packaging/npm"
+    os.environ["STEALTHLAB_LOCATE_MODEL"] = os.environ.get("SURVEY_LOCATE_MODEL", "glm-5.3-flash")
+    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        os.environ["STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN"] = os.environ["CLAUDE_CODE_OAUTH_TOKEN"]
+    model = os.environ.get("SURVEY_AGENT_MODEL", "glm-5.3-flash")
+    cfg = json.loads(Path(f"{APP_DIR}/experiments/abtest/exec.json").read_text(encoding="utf-8"))
+    cfg["executors"] = {"stealth": {"models": [model]}, "claude": {"models": [model]}}
+    import pipeline_survey as P
+    out = []
+    for iid in iids:
+        work = Path(tempfile.mkdtemp())
+        (work / "home").mkdir()
+        (work / "home" / "exec.json").write_text(json.dumps(cfg), encoding="utf-8")
+        try:
+            out.append(P.stage3(iid, work, model=model))
+        except Exception as e:  # noqa: BLE001
+            out.append({"instance_id": iid, "error": f"{type(e).__name__}: {str(e)[:200]}"})
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    return out
+
+
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=1800)
 def select_ids(n: int, seed: int) -> list[str]:
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
@@ -89,10 +118,11 @@ def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", worker
     import pipeline_survey as P
     ids = select_ids.remote(n, seed)
     batches = [ids[i::workers] for i in range(workers)]
-    rows = [r for b in (stage1_batch if stage == 1 else stage2_batch).map(batches) for r in b]
+    fn = {1: stage1_batch, 2: stage2_batch, 3: stage3_batch}[stage]
+    rows = [r for b in fn.map(batches) for r in b]
     path = save.remote(run, stage, rows)
     local = HERE / ".local" / "survey"
     local.mkdir(parents=True, exist_ok=True)
     (local / f"{run}-stage{stage}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    print(P.report(rows) if stage == 1 else P.report2(rows))
+    print({1: P.report, 2: P.report2, 3: P.report3}[stage](rows))
     print(f"\nsaved: {path} (volume) and {local / f'{run}-stage{stage}.jsonl'}")

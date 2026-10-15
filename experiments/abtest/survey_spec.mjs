@@ -18,6 +18,9 @@ const loc = await narrowLocation({ prompt, root, loc: locate({ prompt, root, env
 fs.mkdirSync(outDir, { recursive: true });
 const spec = await writeSpecTests({ prompt, root, mine: "claude-opus-5-5|claude-code", env, dir: outDir, log: (m) => log.push(m),
                                     located: renderForWriter(loc, root), baseline: true, python });
+// the "likely place" line, for stage 3's agents (as dispatch would send it)
+const { renderWhere } = await import(pathToFileURL(path.join(npm, "lib", "locate.mjs")).href);
+fs.writeFileSync(path.join(outDir, "where.txt"), renderWhere(loc));
 const costs = (() => { try { return fs.readFileSync(path.join(path.dirname(path.dirname(outDir)), "dispatch_costs.jsonl"), "utf8"); } catch { return ""; } })();
 const model = (/"what":"test-first","model":"([^"]+)"/.exec(costs.split("\n").reverse().join("\n")) || [])[1] || null;
 process.stdout.write(JSON.stringify({ file: spec?.file || null, ambiguous: spec?.ambiguous || null, model, log, ms: Date.now() - t0 }));
