@@ -258,3 +258,21 @@ test("test-first: '# AMBIGUOUS: none' is not an ambiguity flag; a real one is", 
   const real = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude: reply("# AMBIGUOUS: double could mean x*2 or x+x as strings") });
   assert.match(real.ambiguous, /x\*2 or x\+x/);
 });
+
+test("the cheap model's task carries the likely place; an area where cheap models lost 3 times is not dispatched", async () => {
+  const { env, repo } = setup();
+  const { recordArea } = await import("../lib/areas.mjs");
+  const e = { ...env, STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_EXPLORE: "0" };
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", ""], "minimax-m2-7": ["verified", ""], "gpt-oss-120b": ["verified", ""] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: e, runtime: rt });
+  assert.match(rt.calls[0].task, /Likely place in this repository[^\n]*calc\.py:\d+-\d+/);
+  const fresh = setup().repo;                          // the first dispatch won in calc.py there: a win keeps an area open
+  for (let i = 0; i < 3; i++) recordArea(fresh, "calc.py", false);
+  const rt2 = stub(fresh, { "gemma-4-31b-it": ["verified", ""] });
+  assert.equal(await dispatch({ payload: { cwd: fresh, prompt: "Fix calc.py so x is 3" }, reply: { model_plan: PLAN }, root: fresh, mine: MINE, env: e, runtime: rt2 }), null);
+  assert.equal(rt2.calls.length, 0);
+  const rt3 = stub(fresh, { "gemma-4-31b-it": ["verified", ""], "minimax-m2-7": ["verified", ""], "gpt-oss-120b": ["verified", ""] });
+  const d = await dispatch({ payload: { cwd: fresh, prompt: "Fix calc.py so x is 3" }, reply: { model_plan: PLAN }, root: fresh, mine: MINE,
+    env: { ...e, STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt3 });
+  assert.equal(d.handled, true, "switch off: dispatched as before");
+});
