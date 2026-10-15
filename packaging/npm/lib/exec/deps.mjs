@@ -80,9 +80,15 @@ export function depsEnv(dir, env = process.env) {
   }
   const nb = path.join(dir, "node_modules", ".bin");
   if (fs.existsSync(nb)) add.push(nb);
-  if (!add.length) return env;
+  // a Python project in this worktree: its own code first on the import path -- the project is installed (editable)
+  // from the user's checkout, so a src/ layout imported THAT copy, and an answer's change in the worktree was not what
+  // its checks tested (pipeline survey, 2026-10-16: black, tox, streamlink, fromager are src/ layouts)
+  const py = ["pyproject.toml", "setup.py", "setup.cfg"].some((f) => fs.existsSync(path.join(dir, f)));
+  const pyPath = py ? [fs.existsSync(path.join(dir, "src")) ? path.join(dir, "src") : null, dir].filter(Boolean) : [];
+  if (!add.length && !pyPath.length) return env;
   const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const out = { ...env, [key]: [...add, env[key] || ""].filter(Boolean).join(path.delimiter) };
+  if (pyPath.length) out.PYTHONPATH = [...pyPath, env.PYTHONPATH || ""].filter(Boolean).join(path.delimiter);
   if (venv) {
     try { out.VIRTUAL_ENV = fs.realpathSync(venv); } catch { out.VIRTUAL_ENV = venv; }
   }
