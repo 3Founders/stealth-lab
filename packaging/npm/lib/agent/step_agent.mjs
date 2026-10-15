@@ -335,9 +335,20 @@ export function worktreeFingerprint(cwd) {
 // the task, or "". Never throws: a file that is missing, outside cwd or not text is simply left out.
 const PRELOAD_FILES = 3;
 const NAMED = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|json|ya?ml|toml|py|js|mjs|cjs|ts|tsx|jsx|sql|csv|html|css|go|rs|java|rb|sh))(?=$|[\s`'".,;:)!?])/g;
+// path:start-end in the task (StealthLab's "likely place" line, lib/locate.mjs): those lines, not the file's first 200
+const RANGED = /(?:^|[\s`'"(,])((?:[\w.-]+\/)*[\w.-]+\.(?:py|js|mjs|cjs|ts|tsx|jsx|go|rs|java|rb|sql|sh)):(\d+)-(\d+)(?=$|[\s`'".,;:)!?])/g;
 export function preloadNamedFiles(task, cwd) {
   const parts = [];
   const seen = new Set();
+  for (const m of String(task || "").matchAll(RANGED)) {
+    if (parts.length >= PRELOAD_FILES) break;
+    const [name, a, b] = [m[1], Number(m[2]), Number(m[3])];
+    seen.add(name);
+    try {
+      const text = toolReadFile(cwd, { path: name, start_line: a, num_lines: Math.max(1, b - a + 1) });
+      if (!text.includes("\u0000")) parts.push(`--- ${name} (lines ${a}-${b}) ---\n${text}`);
+    } catch { /* not there, outside cwd, or not a file */ }
+  }
   for (const m of String(task || "").matchAll(NAMED)) {
     const name = m[1];
     if (seen.has(name) || parts.length >= PRELOAD_FILES) continue;

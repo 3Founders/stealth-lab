@@ -200,7 +200,7 @@ test("B1 through dispatch: the executor's task is the prompt then the context; w
       async runResult() { return { state: "failed", cost_usd: 0.001, checks: [{ tail: "no" }] }; }, async cancelRun() { return {}; } };
     await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
       env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
-             STEALTHLAB_BRIEF: "off", ...(off ? { STEALTHLAB_DISPATCH_CONTEXT: "off" } : {}) }, runtime: rt });
+             STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...(off ? { STEALTHLAB_DISPATCH_CONTEXT: "off" } : {}) }, runtime: rt });
     assert.ok(seen[0].startsWith("Fix calc.py so x is 2"));
     if (off) assert.equal(seen[0], "Fix calc.py so x is 2");
     else assert.match(seen[0], /\n\nContext from this repository[\s\S]*calc\.py owns every constant/);

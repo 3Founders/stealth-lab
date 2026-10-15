@@ -19,6 +19,9 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
+import { locate, renderForWriter, renderWhere } from "./locate.mjs";
+import { readArea, recordArea } from "./areas.mjs";
+import { writeDispatchRun } from "./dispatch_run.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
@@ -80,6 +83,14 @@ export function dispatchPolicy(env = process.env) {
     // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them
     strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 240)),
     strongFirst: (env.STEALTHLAB_DISPATCH_STRONG_FIRST || "off").toLowerCase() === "on",
+    // a repo area (lib/areas.mjs) where the cheap models lost this many times and never won is not dispatched to
+    areaSkip: (env.STEALTHLAB_DISPATCH_AREA_SKIP || "on").toLowerCase() !== "off",
+    areaSkipAfter: Math.max(1, Number(env.STEALTHLAB_DISPATCH_AREA_SKIP_AFTER || 3)),
+    // the located module's existing test file joins the check when it passes on the unchanged code (a cheap answer
+    // must not break what already works there)
+    regression: (env.STEALTHLAB_DISPATCH_REGRESSION || "on").toLowerCase() !== "off",
+    // tests written for the task that all pass on the unchanged code do not test the change: asked again, then dropped
+    specBaseline: (env.STEALTHLAB_DISPATCH_SPEC_BASELINE || "on").toLowerCase() !== "off",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -166,7 +177,9 @@ export const SPEC_SYSTEM = [
   "with its files, can reasonably be read two ways that give DIFFERENT correct results, and nothing in the task or the",
   "files settles which, make the first line of the file `# AMBIGUOUS: <the two readings, one short sentence>` and still",
   "write the tests for the likelier reading. Do not flag details the tests can leave open, or readings only a careless",
-  "reader would take; most tasks are not ambiguous. Output only code.",
+  "reader would take; most tasks are not ambiguous. (9) The tests must fail on the code as it is now and pass once the",
+  "task is done: for a bug, reproduce it (the input from the report, the result it should give); import the code from",
+  "the module paths the files shown use. Output only code.",
 ].join(" ");
 
 // test-first's tests are run with pytest, whatever the project's own check is: is it here?
@@ -208,6 +221,53 @@ export function writeSpecRunner(dir, { strict = false } = {}) {
   return file;
 }
 
+// The located module's existing tests as part of the check (lib/locate.mjs testFile): waits for dispatch's run of them on
+// the unchanged code -- REGRESS_OK (they pass: the answer must keep them passing) or REGRESS_SKIP (they fail or could
+// not run there already: they say nothing about the answer) -- then runs them from the worktree.
+const RUN_REGRESS = `import os, subprocess, sys, time
+d = os.path.dirname(os.path.abspath(__file__))
+ok, skip = os.path.join(d, "REGRESS_OK"), os.path.join(d, "REGRESS_SKIP")
+end = time.time() + 300
+while not os.path.exists(ok) and not os.path.exists(skip) and time.time() < end:
+    time.sleep(0.5)
+if not os.path.exists(ok):
+    sys.exit(0)
+t = open(ok, encoding="utf-8").read().strip()
+sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", t]))
+`;
+
+export function writeRegressRunner(dir) {
+  const file = path.join(dir, "run_regress.py");
+  fs.writeFileSync(file, RUN_REGRESS);
+  return file;
+}
+
+// a command without a shell -> its exit code, or null (could not start, timed out, aborted); never blocks the event loop
+export function runAsync(cmd, args, { cwd, timeoutMs = 120000, signal = null } = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try { child = spawn(cmd, args, { cwd, windowsHide: true, stdio: "ignore" }); } catch { resolve(null); return; }
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); signal?.removeEventListener?.("abort", abort); resolve(v); } };
+    const abort = () => { try { child.kill(); } catch { /* */ } finish(null); };
+    const timer = setTimeout(abort, timeoutMs);
+    signal?.addEventListener?.("abort", abort);
+    child.on("error", () => finish(null));
+    child.on("close", (code) => finish(code));
+  });
+}
+
+// tests for the task, run on the code as it is now (cwd: the project) -> pytest's exit code (0: all pass) or null
+async function runPytestAsync(python, code, dir, cwd, signal) {
+  const f = path.join(dir, "test_spec_baseline.py");
+  try { fs.writeFileSync(f, code); } catch { return null; }
+  try {
+    return await runAsync(python, ["-m", "pytest", "-q", "-p", "no:cacheprovider", f], { cwd, timeoutMs: 120000, signal });
+  } finally {
+    try { fs.unlinkSync(f); } catch { /* */ }
+  }
+}
+
 function runClaudeAsync(env, args, input, signal) {
   return new Promise((resolve) => {
     let launch;
@@ -230,7 +290,7 @@ function runClaudeAsync(env, args, input, signal) {
 // the same time, and their check waits for the file (run_spec.py). `dir`: where to write (specDir() when omitted);
 // the file appears only once it is complete and parses, and SKIP appears instead when no tests could be written.
 export async function writeSpecTests({ prompt, root, mine, check = "", env = process.env, log = () => {}, runClaude,
-                                       dir = null, signal = null }) {
+                                       dir = null, signal = null, located = "", baseline = false, python = "python" }) {
   const out = dir || specDir(env);
   const skip = () => { try { fs.writeFileSync(path.join(out, "SKIP"), ""); } catch { /* best effort */ } return null; };
   // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL -- a Claude model (through Claude Code), or
@@ -238,7 +298,11 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_MODEL || "").trim() || String(mine || "").split("|")[0];
   const openProfile = model.includes("claude") ? null : openWriterProfile(env, model);
   if (!model.includes("claude") && !openProfile) return skip();
-  const ask = `Task:\n${String(prompt || "").trim()}\n\nProject files:\n${specContext(root)}\n\n` +
+  // located: the code where the task is (lib/locate.mjs) and the module's own tests; in a large repository the
+  // top-level files alone left the writer guessing the module paths and the interface
+  let ask = `Task:\n${String(prompt || "").trim()}\n\n` +
+    (located ? `Where the task is in this repository (found by searching it for the task's names; the code at those lines):\n${located}\n\n` : "") +
+    `Project files:\n${specContext(root)}\n\n` +
     (check ? `The project's own check command: ${check}\n\n` : "") +
     "Write the acceptance tests for this task. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
@@ -277,6 +341,17 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     const bad = pythonSyntaxError(probe);
     try { fs.unlinkSync(probe); } catch { /* */ }
     if (bad && attempt < 2) { log(`test-first: the tests do not parse (${bad}); asking again`); continue; }
+    // tests that all pass on the code as it is now do not test the change: every answer, even a wrong one, would pass
+    // them. Asked again with that said; still so on the second attempt -> no tests (the session's model does the task)
+    if (baseline && !bad) {
+      const base = await runPytestAsync(python, "import os, sys\nsys.path.insert(0, os.getcwd())\n\n" + c + "\n", out, root, signal);
+      if (base === 0) {
+        log(`test-first: the tests all pass on the unchanged code (attempt ${attempt})${attempt < 2 ? "; asking again" : "; dropped"}`);
+        ask += "\n\nYour previous tests ALL PASS on the code as it is now, so they do not check the change this task asks " +
+          "for. Write tests that fail on the current code and pass once the task is done.";
+        continue;
+      }
+    }
     code = c;
   }
   if (!code) return skip();
@@ -492,6 +567,13 @@ export function fitTask(task, ctx) {
   return `${task}\n\n${ctx.length <= room ? ctx : `${ctx.slice(0, room - 20)}\n[...context cut]`}`;
 }
 
+// the "likely place" line (lib/locate.mjs) after the request, inside TASK_MAX: the request is cut, never the line
+export function withWhere(task, where) {
+  if (!where) return task;
+  if (task.length + where.length + 2 <= TASK_MAX) return `${task}\n\n${where}`;
+  return `${task.slice(0, Math.max(0, TASK_MAX - where.length - 30))}\n[...cut]\n\n${where}`;
+}
+
 function taskText(prompt) {
   const t = String(prompt || "").trim();
   return t.length <= TASK_MAX ? t : `${t.slice(0, TASK_MAX - 40)}\n[...prompt truncated for the executor]`;
@@ -558,6 +640,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
   }
   // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
+  let briefed = null;
   if (policy.brief) {
     const { briefGate, briefedPrompt, makeBrief } = await import("./brief.mjs");
     const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
@@ -569,7 +652,27 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       log(`dispatch: a large task -- only ${rungs.map((r) => r.model).join(", ")} tries it`);
     } else if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
     // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there
-    if (brief) payload = { ...payload, prompt: briefedPrompt(brief, payload.prompt, TASK_MAX) };
+    if (brief) { payload = { ...payload, prompt: briefedPrompt(brief, payload.prompt, TASK_MAX) }; briefed = { brief, briefedPrompt }; }
+  }
+  // where in this repository the task is (lib/locate.mjs): the test writer gets that code, the cheap models a
+  // path:start-end line their agent preloads, and the session's model the same pointer if the cheap tries fail
+  const loc = locate({ prompt: `${rawPayload.prompt || ""}\n${payload.prompt || ""}`, root: payload.cwd || root, env });
+  const where = renderWhere(loc);
+  if (loc.spots.length) log(`dispatch: located ${loc.spots.map((s) => `${s.file}:${s.start}-${s.end}`).join(", ")}${loc.testFile ? ` (tests: ${loc.testFile})` : ""}`);
+  if (where && briefed) {
+    // the brief is cut to leave the line its room inside the executor's TASK_MAX
+    const { brief, briefedPrompt } = briefed;
+    payload = { ...payload, prompt: briefedPrompt(brief, rawPayload.prompt, TASK_MAX - where.length - 2) };
+  }
+  // a repo area where the cheap models keep losing (lib/areas.mjs): straight to the session's model, which saves the
+  // wait and the cheap models' spend there; now and then (explore) they still try, so an area can recover
+  const area = loc.files[0] || null;
+  if (area && policy.areaSkip && !force) {
+    const rec = readArea(root, area);
+    if (rec && rec.losses >= policy.areaSkipAfter && rec.wins === 0 && Math.random() >= policy.explore) {
+      log(`dispatch: not dispatched (cheap models lost ${rec.losses} of ${rec.losses} tries in ${area} here)`);
+      return null;
+    }
   }
   const rt = runtime || new (await import("./exec/runtime.mjs")).ExecRuntime({ env, fetchImpl });
   const tried = [];
@@ -580,19 +683,35 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let specDone = Promise.resolve(null);
   let fullCheck = check;
   const specAbort = new AbortController();
+  let specDirPath = null;
+  // the module's own tests, when they joined the check (for run.md and the note to the session's model)
+  const regressIn = () => (specDirPath && fs.existsSync(path.join(specDirPath, "REGRESS_OK")) ? loc.testFile : null);
   if (policy.testFirst && (runClaude || pytestAvailable())) {
     const dir = specDir(env);
-    fullCheck = specOnly ? `${pythonBin({ env })} "${writeSpecRunner(dir, { strict: true })}"`
-      : `${check} && ${pythonBin({ env })} "${writeSpecRunner(dir)}"`;
+    specDirPath = dir;
+    const py = pythonBin({ env });
+    fullCheck = specOnly ? `${py} "${writeSpecRunner(dir, { strict: true })}"`
+      : `${check} && ${py} "${writeSpecRunner(dir)}"`;
+    // the located module's existing tests: in the check when they pass on the unchanged code (run now, alongside)
+    if (policy.regression && loc.testFile && /\.py$/.test(loc.testFile) && specOnly) {
+      fullCheck += ` && ${py} "${writeRegressRunner(dir)}"`;
+      runAsync(py, ["-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", loc.testFile], { cwd: payload.cwd || root, timeoutMs: 180000, signal: specAbort.signal })
+        .then((code) => {
+          const ok = code === 0;
+          log(`dispatch: ${loc.testFile} ${ok ? "passes on the unchanged code: it joins the check" : "does not pass on the unchanged code: not in the check"}`);
+          try { fs.writeFileSync(path.join(dir, ok ? "REGRESS_OK" : "REGRESS_SKIP"), ok ? loc.testFile : ""); } catch { /* */ }
+        });
+    }
     specDone = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude, dir,
-                                signal: specAbort.signal })
+                                signal: specAbort.signal, located: renderForWriter(loc, payload.cwd || root),
+                                baseline: policy.specBaseline && !runClaude, python: py })
       .then((s) => { spec = s; return s; })
       .catch((err) => { log(`test-first: ${err.message}`); try { fs.writeFileSync(path.join(dir, "SKIP"), ""); } catch { /* */ } return null; });
   }
 
   // the repo's own facts and the matched library entries, after the task (lib/task_context.mjs; STEALTHLAB_DISPATCH_CONTEXT=off)
   const ctx = repoContext({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env });
-  const taskWithContext = fitTask(taskText(payload.prompt), ctx);
+  const taskWithContext = fitTask(withWhere(taskText(payload.prompt), where), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
   const baseLimitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
@@ -867,7 +986,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // what the user reads: a short explanation by a cheap model (started above), never the session's model
     const explanation = await explaining;
     const secs = Math.round((Date.now() - dispatchStart) / 1000);
-    return { handled: true, run_id: runId, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec,
+    recordArea(root, area, true);
+    writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), winner: rung.model, tried });
+    return { handled: true, run_id: runId, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec, loc,
       explanation,
       text: `Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost}). ` +
         `It passed ${checkLabel} in an isolated worktree and the change is applied: ` +
@@ -876,7 +997,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         (explanation ? `\n\n${explanation}` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
-  return { handled: false, tried, spec, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
+  // a loss for this area only when the models were really tried: not a task that reads two ways, not usage limits
+  if (!ambiguous && tried.some((t) => !/usage_limited|^skipped|^cancelled$/.test(String(t.state)))) recordArea(root, area, false);
+  const runMd = writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), tried });
+  return { handled: false, tried, spec, loc, runMd, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
 }
 
 // The image files the request names that exist in the project ("recreate the page in screenshot.png"). The cheap models
@@ -982,6 +1106,19 @@ export function triedNote(d) {
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
     (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +
                     "themselves be wrong, so judge the task from its own words." : "") +
-    (d.ambiguous ? ` The task may be read two ways (${d.ambiguous}); settle which one is meant before answering.` : "");
+    (d.ambiguous ? ` The task may be read two ways (${d.ambiguous}); settle which one is meant before answering.` : "") +
+    handoffNote(d);
+}
+
+// What the cheap tries found that saves the session's model its own search: where the task likely is, and tests written
+// for it that fail on the unchanged code (not when two answers failed them alike: then they may be wrong).
+function handoffNote(d) {
+  const spots = (d.loc?.spots || []).slice(0, 3).map((s) => `${s.file}:${s.start}-${s.end}${s.symbol ? ` (${s.symbol})` : ""}`);
+  const parts = [];
+  if (spots.length) parts.push(`Searching this repository for the task's names points at ${spots.join(", ")}; confirm it before relying on it.`);
+  if (d.spec?.file && !d.sharedFail && !d.ambiguous) parts.push(`Tests written for this task, which fail on the unchanged code, are at ${d.spec.file}: ` +
+    "read them and run them to check your change, but judge the task from its own words where they disagree.");
+  if (parts.length && d.runMd) parts.push("The plan is in .stealth/run.md (node N-3 is yours).");
+  return parts.length ? ` ${parts.join(" ")}` : "";
 }
 

@@ -160,7 +160,7 @@ function setup(extra = {}) {
   fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
-                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", ...extra }, repo };
+                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...extra }, repo };
 }
 function stubRuntime(repo) {
   const calls = [];

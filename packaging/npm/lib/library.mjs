@@ -646,7 +646,7 @@ function writeIfChanged(file, text) {
 // .stealth/.gitignore: the generated files, rebuilt from library.md / the server. library.md, library/solutions
 // and SUMMARY's sources stay committable -- whether .stealth/ is committed at all is the repo owner's choice.
 const GITATTRIBUTES = "library.md merge=union\n";
-const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json"];
+const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json", "areas.md"];
 
 export function ensureGitFiles(root) {
   const attr = P(root, ".gitattributes");
