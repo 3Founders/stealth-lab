@@ -432,9 +432,26 @@ def testfirst_cost(home: Path, since: str, until: str) -> float:
 
 
 def sim_llm(secrets: dict[str, str]):
-    """The model behind the opener and the simulated user (multiturn.py): glm-5.3-flash on z.ai, key by name Z_AI_KEY."""
+    """The model behind the opener and the simulated user (multiturn.py): glm-5.3-flash on z.ai, key by name Z_AI_KEY;
+    when z.ai fails (out of credit, down), gpt-oss-120b on General Compute, so a provider problem cannot stop the run.
+    Openers and replies are cached per task, so every arm still gets the same input whichever model wrote it."""
     import multiturn
-    return multiturn.zai_llm(secrets["zai"])
+    primary = multiturn.zai_llm(secrets["zai"]) if secrets.get("zai") else None
+    backup = multiturn.zai_llm(secrets["gc"], profile="gpt-oss-120b") if secrets.get("gc") else None
+
+    def call(system: str, user: str) -> str:
+        if primary:
+            try:
+                return primary(system, user)
+            except RuntimeError as e:
+                if not backup:
+                    raise
+                print(f"simulated user: {e}; using gpt-oss-120b", flush=True)
+        if not backup:
+            raise RuntimeError("no model for the simulated user (Z_AI_KEY and the General Compute key are both missing)")
+        return backup(system, user)
+
+    return call
 
 
 def run_conversation(task: dict, arm: str, mod, ws: Path, env: dict[str, str], extra: list[str], log_path: Path, rule: str,

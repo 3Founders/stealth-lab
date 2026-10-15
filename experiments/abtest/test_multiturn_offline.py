@@ -447,3 +447,21 @@ def test_every_task_gets_at_least_one_followup_by_default(tmp_path, monkeypatch)
     assert [c[0] for c in calls][1:] == ["it also breaks on empty input"], "the first follow-up, word for word from the script"
     assert [t["user_kind"] for t in out["turn_log"]] == ["opener", "followup"]
     assert out["user_turns"] == 2 and out["ended_by"] == "thanks"
+
+
+def test_the_simulated_user_falls_back_to_gpt_oss_when_z_ai_fails(monkeypatch):
+    made = []
+
+    def fake(key, profile=multiturn.LLM_PROFILE, **kw):
+        made.append(profile)
+        if profile == multiturn.LLM_PROFILE:
+            def bad(s, u):
+                raise RuntimeError("glm-5.3-flash call failed (HTTP 429)")
+            return bad
+        return lambda s, u: "from gpt-oss"
+
+    monkeypatch.setattr(multiturn, "zai_llm", fake)
+    llm = runner.sim_llm({"zai": "z", "gc": "k"})
+    assert llm("s", "u") == "from gpt-oss" and made == [multiturn.LLM_PROFILE, "gpt-oss-120b"]
+    with pytest.raises(RuntimeError):
+        runner.sim_llm({"zai": "z"})("s", "u")
