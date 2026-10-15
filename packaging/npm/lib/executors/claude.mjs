@@ -34,7 +34,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  VERIFIED_DATE, detectBin, healthOf, lastJsonObject, launchOrThrow, num, plainResult, safeTaskArg, scrubEnv, tailText, extractLearned,
+  VERIFIED_DATE, detectBin, healthOf, lastJsonObject, launchOrThrow, num, plainResult, safeTaskArg, scrubEnv, claudeChildEnv, tailText, extractLearned,
 } from "./common.mjs";
 import { FOREIGN_CREDENTIAL_VARS, profileKey } from "./profile.mjs";
 
@@ -114,7 +114,7 @@ const adapter = {
     void worktree; void timeoutS; // cwd = worktree is set by the runtime; no timeout flag
     // With a profile the overlay both adds the open-model variables and blanks (undefined) the user's own vendor
     // credentials; the runtime's childEnv applies an overlay entry of undefined as a delete.
-    return { cmd: launch.cmd, args, env: profile ? { ...scrubEnv(env), ...openModelEnv(profile, env, { configDir }) } : scrubEnv(env), stdinText: undefined };
+    return { cmd: launch.cmd, args, env: profile ? { ...scrubEnv(env), ...openModelEnv(profile, env, { configDir }) } : claudeChildEnv(env), stdinText: undefined };
   },
 
   parseOutput({ stdout = "", stderr = "" } = {}) {

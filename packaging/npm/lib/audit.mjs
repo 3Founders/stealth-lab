@@ -61,10 +61,10 @@ export async function runAudit(jobFile, { env = process.env, runClaude, report }
   const args = ["-p", "--model", job.model, "--system-prompt", AUDIT_SYSTEM,
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   const run = runClaude || (async (a, input) => {
-    const { launchOrThrow, scrubEnv } = await import("./executors/common.mjs");
+    const { launchOrThrow, claudeChildEnv } = await import("./executors/common.mjs");
     const launch = launchOrThrow("claude", { env });
     return await new Promise((resolve) => {
-      const c = spawn(launch.cmd, [...launch.prefix, ...a], { windowsHide: true, env: scrubEnv(env) });
+      const c = spawn(launch.cmd, [...launch.prefix, ...a], { windowsHide: true, env: claudeChildEnv(env) });
       let stdout = "";
       const timer = setTimeout(() => c.kill(), 120000);
       c.stdout.on("data", (d) => { stdout += d; });

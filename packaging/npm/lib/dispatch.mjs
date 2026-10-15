@@ -18,7 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
-import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
+import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
@@ -212,7 +212,7 @@ function runClaudeAsync(env, args, input, signal) {
   return new Promise((resolve) => {
     let launch;
     try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
-    const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: scrubEnv(env) });
+    const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: claudeChildEnv(env) });
     let stdout = "", stderr = "";
     const timer = setTimeout(() => child.kill(), 180000);
     const abort = () => child.kill();
