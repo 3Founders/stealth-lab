@@ -319,3 +319,18 @@ def test_the_shipped_series_are_ten_ordered_issues_of_one_repository_each(monkey
             assert [t["task_id"] for t in tasks] == ids and {t["workspace"] for t in tasks} == {f"swe-{name}"}
     finally:
         importlib.reload(swe)
+
+
+def test_an_issue_whose_project_cannot_be_installed_is_unusable_and_the_others_still_run(upstream, capsys):
+    tc = upstream["toolchain"]
+    real = tc.install_editable
+
+    def picky(self, py, project):
+        if (project / "mini.py").read_text(encoding="utf-8") == BUG:           # issue 1's base commit
+            raise RuntimeError("the editable install failed: error: Dependency `jsonnet @ https://x/zipball/master` has no archive extension")
+        return real(self, py, project)
+
+    tc.install_editable = picky
+    res = swe.validate("mini")
+    assert [r["usable"] for r in res] == [False, True]
+    assert "environment:" in res[0]["gold"]["error"] and "zipball/master" in res[0]["gold"]["error"] and res[0]["gold"]["infra"] is True

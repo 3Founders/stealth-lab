@@ -426,7 +426,13 @@ def validate(name: str, only: list[str] | None = None) -> list[dict]:
     for t in tasks:
         if only and t["instance_id"] not in only:
             continue
-        prepare_task(t, ws)
+        try:
+            prepare_task(t, ws)
+        except RuntimeError as exc:           # e.g. the project's metadata cannot be installed at this commit: this issue is unusable, not the run
+            results.append({"instance_id": t["instance_id"], "base_fails_f2p": False, "base": {}, "gold_resolves": False,
+                            "gold": {"error": f"environment: {exc}"[:400], "infra": True}, "usable": False})
+            print(f"{t['instance_id']:<44} environment: {str(exc)[:160]}", flush=True)
+            continue
         with tempfile.TemporaryDirectory() as tmp:
             plain = Path(tmp) / "plain"
             gold = Path(tmp) / "gold"
