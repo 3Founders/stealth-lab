@@ -297,3 +297,49 @@ passed, the count was 40.
 `modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 8` from a checkout of `feat/ct-integration`
 (PowerShell: `$env:PYTHONPATH="experiments\abtest"` first), 8 issues x 3 arms = 24 sessions, sequential. It may stop on a usage limit;
 repeating the same command resumes from the Volume.
+
+
+---
+
+# Combined test build, update 2 (2026-10-15): the 12-session result, why C cost more, the test-first login finding, a faster layout
+
+**First full run (`long-jsonargparse-1t`, 4 usable issues x 3 arms = 12 sessions, 9 issues gold-checked).** Every arm solved all four
+(502, 518, 531, 564). Cost: A $1.19, C $1.65 (+39%), C0 $1.33 (+12%); after the first position C is +43% and C0 +5% against A. Cheap
+models delivered 0 of 4 in C. C's median wall time was 250 s against A's 49 s. n = 3 positions after the first: no conclusion about C vs C0.
+
+**Why C cost more, from the stored logs and results.**
+- Both arms are the same Opus agent loop. The cost is cache reads across turns: 12-33 turns x 18-30k tokens of context each (e.g. 518 C:
+  976k cache-read tokens over 33 turns; A 591k over 26). Each session also pays ~13-24k cache-creation tokens for Claude Code's own system
+  prompt and tools. Output tokens are a few thousand. There is no hidden overhead of the cheap attempts: their cost is $0.0002-$0.025.
+- C's sessions took more turns than A's on 3 of 4 issues (14/33/12/19 vs 12/26/11/12); the transcripts show the same kinds of tool calls
+  (more greps and reads in C). With n = 4 and Opus run-to-run variance this is noise-level, not a measured overhead of the hooks.
+- Tokens can only fall by NOT running Opus, i.e. when a cheap model delivers. That never happened, and the reason is below.
+
+**Finding: test-first never ran in the container, so no cheap answer could pass.** `hooks.log` in every C task: `test-first: Not
+logged in - Please run /login (attempt 1/2)`, then `dispatch: no cheap pass within 168 s; the session's model takes over`. Probe on the
+same image: Claude Code REMOVES `CLAUDE_CODE_OAUTH_TOKEN` from the environment it gives hook processes (the hook saw other CLAUDE_CODE_*
+variables but `token-ABSENT`), so the headless `claude -p` the hook starts for the test-first writer has no login. On a developer's
+machine that child uses the interactive login stored in `~/.claude`, which is why the earlier local benchmark worked. Consequences in this
+run: (1) no test-first tests, so every cheap answer is unchecked and rejected; (2) each C task waited the full 168 s time limit before the
+session's model started. So this run measured "C without its verifier", not C. It must not be quoted as a result for C.
+Not fixed: the options are (a) give the container a real login for `~/.claude` (what a user has), (b) a small switch-guarded product change that
+passes a token to the hook's child under a name Claude Code does not strip, (c) set the project's own test command as the dispatch check
+(a different scenario, no test-first). I tried to probe (a) by writing a credentials file from the token and the auto-mode classifier
+blocked it; I did not work around that. Needs the owner's decision.
+
+**Pass-to-pass calibration (`0206ed2`).** 508, 527, 559, 560 were dropped only because four pydantic PASS_TO_PASS tests fail in this
+environment with and without the real fix. `validate` now records `p2p_exclude` per issue (failing at the base AND with the fix) and the
+grade ignores exactly those; PASS_TO_PASS tests that pass at the base are still enforced and FAIL_TO_PASS is never excluded. The change in
+the grading standard is recorded in `validate_<series>.json` and the grade (`p2p_excluded`). In the split dry run 508 is still dropped, now
+for a different reason: its FAIL_TO_PASS tests already pass at the base commit in this environment.
+
+**Faster layout (`3839827`, `7920a86`).** One gold check (its own container, no services), then one container per arm at the same time, then
+one merge and report. Arm A starts no Postgres or backend; C and C0 each get their own backend (C0 no longer shares server state with C,
+which removes the caveat in the item 4 notes). `--sequential-arms` keeps the old layout. Verified on Modal with `--max-issues 1 --run
+split-dry2`: three arm containers finished in parallel, the merged report came out (A $0.224, C $0.264, C0 $0.308 on issue 502; 6 minutes
+wall for the whole run including the gold check). Expected for 8 issues: about 40 minutes instead of about 85, since the arms no longer add up.
+Measurement is unchanged: same issues, same configuration, same grader. Wall-time comparisons are cleaner too (each arm in its own container).
+Offline tests: `test_modal_series_offline.py` 58 passed. Not changed: the 168 s cheap-model time limit, the product, the hooks.
+
+**Next (owner):** decide the test-first login option above; then start the fresh run under a new name, e.g.
+`modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 8 --run long-jsonargparse-v2`.
