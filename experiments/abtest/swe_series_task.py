@@ -305,9 +305,11 @@ def test_args(r: dict) -> list[str]:
     return parts
 
 
-def grade_copy(task: dict, tree: Path, *, gold: bool = False) -> dict:
+def grade_copy(task: dict, tree: Path, *, gold: bool = False, exclude: tuple[str, ...] | list[str] = ()) -> dict:
     """Grade the files in `tree` (a throwaway copy): test files back to the base versions, the PR's test patch applied, then
-    FAIL_TO_PASS must pass and PASS_TO_PASS must still pass. gold=True first applies the gold patch (the validation)."""
+    FAIL_TO_PASS must pass and PASS_TO_PASS must still pass. gold=True first applies the gold patch (the validation).
+    `exclude`: PASS_TO_PASS tests that fail in THIS environment with and without the real fix (see `validate`); they are not
+    held against anyone. The returned `_passed` (the set of tests that passed) is for `validate` and is not recorded."""
     r = rec(task)
     if gold:
         ok, err = apply_patch(tree, r["patch"])
@@ -340,12 +342,15 @@ def grade_copy(task: dict, tree: Path, *, gold: bool = False) -> dict:
     if code == 124:
         return {"resolved": False, "check_pass": False, "error": "the tests timed out"}
     passed = parse_passed(out)
-    miss_f, miss_p = [i for i in f2p if i not in passed], [i for i in p2p if i not in passed]
+    skip = set(exclude)
+    miss_f, miss_p = [i for i in f2p if i not in passed], [i for i in p2p if i not in passed and i not in skip]
     return {"resolved": not miss_f and not miss_p, "check_pass": not miss_f,
-            "f2p": f"{len(f2p) - len(miss_f)}/{len(f2p)}", "p2p": f"{len(p2p) - len(miss_p)}/{len(p2p)}",
+            "f2p": f"{len(f2p) - len(miss_f)}/{len(f2p)}", "p2p": f"{len(p2p) - len(skip & set(p2p)) - len(miss_p)}/{len(p2p) - len(skip & set(p2p))}",
+            **({"p2p_excluded": len(skip & set(p2p))} if skip & set(p2p) else {}),
             "error": None if not (miss_f or miss_p) else "; ".join(
                 ([f"{len(miss_f)} FAIL_TO_PASS still failing, e.g. {miss_f[0]}"] if miss_f else [])
-                + ([f"{len(miss_p)} PASS_TO_PASS broken, e.g. {miss_p[0]}"] if miss_p else []))[:300]}
+                + ([f"{len(miss_p)} PASS_TO_PASS broken, e.g. {miss_p[0]}"] if miss_p else []))[:300],
+            "_passed": passed}
 
 
 def grade_workspace(task: dict, ws: Path) -> dict:
@@ -353,7 +358,20 @@ def grade_workspace(task: dict, ws: Path) -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tree = Path(tmp) / "tree"
         shutil.copytree(ws, tree, ignore=lambda d, names: [n for n in names if n in SKIP_COPY or n.endswith(".egg-info")])
-        return grade_copy(task, tree)
+        g = grade_copy(task, tree, exclude=excluded_p2p(task))
+        g.pop("_passed", None)
+        return g
+
+
+def excluded_p2p(task: dict) -> list[str]:
+    """The PASS_TO_PASS tests `validate` found broken in this environment for this issue (validate_<series>.json), or []."""
+    path = LOCAL / f"validate_{task['series_name']}.json"
+    if not path.exists():
+        return []
+    for row in json.loads(path.read_text(encoding="utf-8")):
+        if row.get("instance_id") == task["instance_id"]:
+            return list(row.get("p2p_exclude") or [])
+    return []
 
 
 # ---------------------------------------------------------------- choosing and checking a series (CLI)
@@ -441,9 +459,21 @@ def validate(name: str, only: list[str] | None = None) -> list[dict]:
             shutil.copytree(ws, gold, ignore=ignore)
             before = grade_copy(t, plain)
             after = grade_copy(t, gold, gold=True)
+        # PASS_TO_PASS tests that fail at the base commit AND with the real fix are broken by this ENVIRONMENT (a dependency version
+        # unlike the dataset's own), not by anyone's change: they are excluded for this issue and said so (p2p_exclude), instead of
+        # making a correct fix look wrong. Anything else must still pass.
+        p2p = list(rec(t)["PASS_TO_PASS"])
+        broken = [i for i in p2p if i not in before.get("_passed", set()) and i not in after.get("_passed", set())] if "_passed" in after else []
+        if broken and "_passed" in after:
+            miss_f = [i for i in rec(t)["FAIL_TO_PASS"] if i not in after["_passed"]]
+            miss_p = [i for i in p2p if i not in after["_passed"] and i not in broken]
+            after = {**after, "resolved": not miss_f and not miss_p, "p2p_excluded": len(broken),
+                     "error": None if not (miss_f or miss_p) else after.get("error")}
+        before.pop("_passed", None)
+        after.pop("_passed", None)
         ok = (not before["check_pass"]) and after["resolved"]
         results.append({"instance_id": t["instance_id"], "base_fails_f2p": not before["check_pass"], "base": before,
-                        "gold_resolves": after["resolved"], "gold": after, "usable": ok})
+                        "gold_resolves": after["resolved"], "gold": after, "usable": ok, "p2p_exclude": broken})
         print(f"{t['instance_id']:<44} base F2P {'fails' if not before['check_pass'] else 'PASSES'}   gold "
               f"{'resolves' if after['resolved'] else 'FAILS: ' + str(after.get('error'))}", flush=True)
     return results

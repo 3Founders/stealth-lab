@@ -334,3 +334,23 @@ def test_an_issue_whose_project_cannot_be_installed_is_unusable_and_the_others_s
     res = swe.validate("mini")
     assert [r["usable"] for r in res] == [False, True]
     assert "environment:" in res[0]["gold"]["error"] and "zipball/master" in res[0]["gold"]["error"] and res[0]["gold"]["infra"] is True
+
+
+def test_a_pass_to_pass_test_broken_by_the_environment_is_excluded_for_that_issue_only(upstream, tmp_path):
+    broken = "tests/test_mini.py::test_never_passes"            # fails here with and without the real fix (a dependency version unlike the dataset's)
+    r1 = dict(upstream["recs"][0], PASS_TO_PASS=upstream["recs"][0]["PASS_TO_PASS"] + [broken])
+    (swe.DATA / "mini.json").write_text(json.dumps([r1, upstream["recs"][1]]), encoding="utf-8")
+    assert swe.main(["validate", "mini"]) == 0
+    rows = json.loads((swe.LOCAL / "validate_mini.json").read_text(encoding="utf-8"))
+    assert [r["usable"] for r in rows] == [True, True], "without the exclusion the first issue would be refused"
+    assert rows[0]["p2p_exclude"] == [broken] and rows[1]["p2p_exclude"] == [] and rows[0]["gold"]["p2p_excluded"] == 1
+    assert "_passed" not in rows[0]["base"] and "_passed" not in rows[0]["gold"]
+    task, ws = prepared(upstream, tmp_path)
+    assert swe.excluded_p2p(task) == [broken]
+    (ws / "mini.py").write_text(FIXED, encoding="utf-8")
+    g = swe.grade_workspace(task, ws)
+    assert g["resolved"] is True and g["p2p_excluded"] == 1 and g["p2p"] == "1/1" and "_passed" not in g
+    (ws / "mini.py").write_text(FIXED.replace("def sub(a, b):\n    return a - b", "def sub(a, b):\n    return a + b"), encoding="utf-8")
+    assert swe.grade_workspace(task, ws)["resolved"] is False, "a P2P test that passes at the base is still enforced"
+    t2, ws2 = prepared(upstream, tmp_path, i=1, arm="C")
+    assert swe.excluded_p2p(t2) == [], "the exclusion belongs to the issue it was found for"
