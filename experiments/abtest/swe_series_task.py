@@ -281,6 +281,11 @@ def record_history(r: dict, ws: Path) -> None:
         return                               # the gold check's plain directories have no history to carry
     sha = r["base_commit"]
     d = ensure_commit(r["repo"], sha)
+    # the harness's own commits (this merge, the runner's "task"/"after" commits) carry the base commit's date: dated
+    # today they made the history look two years old, and the survey's miner (two years before HEAD) found nothing
+    when = run(["git", f"--git-dir={d}", "show", "-s", "--format=%cI", sha]).stdout.decode().strip()
+    if when:
+        os.environ["GIT_AUTHOR_DATE"] = os.environ["GIT_COMMITTER_DATE"] = when
     ref = f"refs/abtest/{sha}"
     run(["git", f"--git-dir={d}", "update-ref", ref, sha])
     run(["git", "-C", str(ws), "fetch", "-q", "--no-tags", str(d), f"{ref}:{ref}"])
