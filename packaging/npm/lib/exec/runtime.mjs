@@ -107,11 +107,13 @@ export class ExecRuntime {
     await assertNoMergeState(repo, this.env);
     const commit = await headCommit(repo, this.env);
     const patch = base === "working-tree" ? await workingTreeDiff(repo, this.env) : null;
+    // the earlier nodes' accepted changes, applied after the base (a plan's later node starts from them)
+    const extraPatches = Array.isArray(input.extra_patches) ? input.extra_patches.map(String).filter((p) => p.trim()) : [];
 
     const id = newRunId();
     const stepOrder = input.step_order ?? (nodes.length === 1 ? nodes[0].step?.order ?? null : null);
     const run = {
-      id, repo, commit, base, patch, createdAt: Date.now(), finishedAt: null,
+      id, repo, commit, base, patch, extraPatches, createdAt: Date.now(), finishedAt: null,
       input: {
         task: input.task, checks, scope, goal_id: input.goal_id || null, procedure_id: input.procedure_id || null,
         step_order: stepOrder, executor: input.executor || null, model: input.model || null, timeoutS, hangS,
@@ -314,7 +316,7 @@ export class ExecRuntime {
         a.didNotRun = true;
         return this.setState(run, a, "failed", { error: a.error });
       }
-      const wt = await createWorktree({ repo: run.repo, commit: run.commit, dir: a.worktree, patch: run.patch, env });
+      const wt = await createWorktree({ repo: run.repo, commit: run.commit, dir: a.worktree, patch: run.patch, extraPatches: run.extraPatches || [], env });
       a.baseTree = wt.baseTree;
       this.event(run, { event: "worktree", attempt: a.index + 1, path: a.worktree });
       if (a.cancelRequested) return this.setState(run, a, "cancelled");
@@ -453,6 +455,7 @@ ${a.error || ""}`)) {
     run.finishedAt = Date.now();
     run.settled = true;
     run.patch = null;
+    run.extraPatches = null;
     this.event(run, { event: "done", state: this.stateOf(run) });
     this.persist(run);
     for (const w of [...run.waiters]) w();

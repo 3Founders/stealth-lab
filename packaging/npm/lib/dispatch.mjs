@@ -21,7 +21,9 @@ import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { locate, renderForWriter, renderWhere } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
-import { writeDispatchRun } from "./dispatch_run.mjs";
+import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
+import { runDag } from "./dag_run.mjs";
+import { wayStepsForEntry } from "./way_extract.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
@@ -93,6 +95,10 @@ export function dispatchPolicy(env = process.env) {
     specBaseline: (env.STEALTHLAB_DISPATCH_SPEC_BASELINE || "on").toLowerCase() !== "off",
     // the project's pytest check: tests that already fail on the unchanged code do not fail an answer
     baselineCheck: (env.STEALTHLAB_DISPATCH_BASELINE_CHECK || "on").toLowerCase() !== "off",
+    // a task in parts (lib/dag_run.mjs): planned from the closest fix already made here; the accepted parts of an
+    // unfinished plan are applied for the session's model to continue from (STEALTHLAB_DISPATCH_DAG_PARTIAL=off: none)
+    dag: (env.STEALTHLAB_DISPATCH_DAG || "on").toLowerCase() !== "off",
+    dagPartialApply: (env.STEALTHLAB_DISPATCH_DAG_PARTIAL || "on").toLowerCase() !== "off",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -379,12 +385,43 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   const args = argsFor(model);
   let usedModel = model;
+  // hedged: an open writer not done after STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S (30 s) gets the fallback writing beside
+  // it, and the first usable tests win -- instead of waiting out its whole timeout first. On real repository issues
+  // GLM-5.3 timed out on every turn (90 s each, Modal 2026-10-15) while its quick replies on small tasks are kept.
+  const hedgeS = Number(env.STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S ?? 30);
+  const ledger = path.join(path.dirname(path.dirname(out)), "dispatch_costs.jsonl");
+  const usable = (r) => {
+    try { const x = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); return !x.is_error && /def test_/.test(String(x.result || "")); } catch { return false; }
+  };
+  const bookLoser = (p) => p.then(({ r, m }) => {             // the slower call is paid too: on the ledger, as unused
+    try {
+      const x = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop());
+      fs.appendFileSync(ledger, JSON.stringify({ at: new Date().toISOString(), what: "test-first-unused", model: m, cost_usd: x.total_cost_usd ?? null }) + "\n");
+    } catch { /* no reply, nothing paid that we can see */ }
+  });
+  const hedged = async () => {
+    if (!fallback || !(hedgeS > 0)) return run(args, ask);
+    const p1 = Promise.resolve(run(args, ask)).then((r) => ({ r, m: model }));
+    let t;
+    const wait = new Promise((res) => { t = setTimeout(() => res(null), hedgeS * 1000); t.unref?.(); });
+    const early = await Promise.race([p1, wait]);
+    clearTimeout(t);
+    if (early) return early.r;
+    log(`test-first: ${model} not done in ${hedgeS} s; ${fallback} writes too, the first usable tests win`);
+    const p2 = Promise.resolve(claudeRun(argsFor(fallback), ask)).then((r) => ({ r, m: fallback }));
+    const first = await Promise.race([p1, p2]);
+    const other = first.m === model ? p2 : p1;
+    if (usable(first.r)) { usedModel = first.m; bookLoser(other); return first.r; }
+    const second = await other;
+    usedModel = second.m;
+    return second.r;
+  };
   // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
   let j = null;
   let code = "";
   for (let attempt = 1; attempt <= 2 && !code && !signal?.aborted; attempt++) {
     if (attempt === 2 && fallback) { usedModel = fallback; log(`test-first: ${model} gave no usable tests; ${fallback} writes them`); }
-    const r = attempt === 2 && fallback ? await claudeRun(argsFor(fallback), ask) : await run(args, ask);
+    const r = attempt === 2 && fallback ? await claudeRun(argsFor(fallback), ask) : await hedged();
     try {
       j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop());
     } catch {
@@ -897,6 +934,46 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     return ok;
   };
 
+  // a task in parts, planned from the closest fix already made here (lib/dag_run.mjs); no such fix -> whole, as before
+  if (policy.dag && !images.length) {
+    const py = pythonBin({ env });
+    // a part is checked by "no new failures": the project's check judged against the unchanged code, or with no check
+    // here, that the Python still compiles (the tests written for the whole task run on the parts together, at the end)
+    const interCheck = checkRun || `${py} -c "import compileall, sys; sys.exit(0 if compileall.compile_dir('.', quiet=1) else 1)"`;
+    let dagRes = null;
+    try {
+      dagRes = await runDag({ rt, root, payload, rawPayload, reply, loc, where, rungs, strongSet, policy, interCheck, fullCheck,
+        specDone, env, log, instanceKey: plan.instance_key, runShell: (cmd, o) => runShellCapture(cmd, { ...o, signal: specAbort.signal }),
+        undo: { enabled: undoEnabled(env) && !policy.ask,
+                create: (o) => createUndoPoint({ ...o, env }), finish: (p, o) => finishUndoPoint(p, { ...o, env }), discard: (p, o) => discardUndoPoint(p, { ...o, env }) } });
+    } catch (err) {
+      log(`dag: ${err.message}; the task goes whole`);
+    }
+    if (dagRes) {
+      specAbort.abort();
+      const runMd = writeDagRun(root, { task: rawPayload.prompt, nodes: dagRes.handled ? dagRes.dag.nodes : dagRes.partial.nodes,
+        entry: dagRes.handled ? dagRes.dag.entry : dagRes.partial.entry, interCheck, fullCheck });
+      if (!dagRes.handled) return { ...dagRes, spec, loc, runMd, remaining: plan.ladder || [] };
+      let entry = null, diff = "";
+      try {
+        const { promptTitle } = await import("./capture_hook.mjs");
+        diff = diffFromGit(root);
+        if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff,
+                                                  steps: wayStepsForEntry(diff) }).id;
+      } catch (err) { log(`dispatch: library entry not added (${err.message})`); }
+      const { explainChange } = await import("./explain.mjs");
+      const explanation = await explainChange({ request: rawPayload.prompt, diff, check: check || "tests written for this task", summary: "", env, fetchImpl, log });
+      const secs = Math.round((Date.now() - dispatchStart) / 1000);
+      const parts = dagRes.dag.nodes.length;
+      return { handled: true, dag: dagRes.dag, files: dagRes.files, tried: dagRes.tried, spec, loc, runMd, library_entry: entry, explanation,
+        model: dagRes.models, unit: `${dagRes.models}|dag`,
+        text: `Done in ${parts} parts by ${dagRes.models} in ${secs} s (StealthLab planned it from a similar fix made here and dispatched each part ` +
+          `before this session's model ran, $${(dagRes.cost_usd || 0).toFixed(4)}). All parts together passed ${checkLabel} in an isolated worktree ` +
+          `and the change is applied: ${dagRes.files.join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
+          (dagRes.undone ? " To put it back as it was: stealthlab-mcp undo." : "") + (explanation ? `\n\n${explanation}` : "") };
+    }
+  }
+
   const queue = [...rungs];
   const pending = new Map();               // unit -> promise of its finished run
   const width = policy.parallel ? Math.min(rungs.length, policy.maxParallel) : 1;
@@ -904,10 +981,23 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
   // the strong model works more slowly (more context, more steps): its run gets extra time
-  const limitS = baseLimitS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
+  let limitS = baseLimitS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
   let timer;
-  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
+  let fireDeadline;
+  const triesStart = Date.now();
+  const deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
+  // the extra time is the strong model's: once it has finished without a pass (failed, stalled, capped), the others get
+  // the plain limit again -- on a real issue they waited 240 s more after flash had already stopped (Modal, 2026-10-15)
+  const dropStrongExtra = () => {
+    if (limitS === baseLimitS) return;
+    const strongLeft = queue.some((r) => strongSet.has(r.model)) || rungs.some((r) => strongSet.has(r.model) && pending.has(r.unit));
+    if (strongLeft) return;
+    limitS = baseLimitS;
+    clearTimeout(timer);
+    timer = setTimeout(() => fireDeadline({ timeout: true }), Math.max(0, baseLimitS * 1000 - (Date.now() - triesStart)));
+    timer.unref?.();
+  };
   let timedOut = false;
   const extraRuns = new Set();             // cross-check runs: cancelled with the rest when the time is up
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
@@ -935,6 +1025,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     if (verdict) { winner = done; break; }
     if (ambiguous) break;
+    dropStrongExtra();
     // two models failing the SAME advance tests: the test is as likely wrong as both answers, and a third model rarely
     // rescues it (2 of 116 tasks in the A-vs-C runs) -- the session's model takes over now instead of at the time limit
     const fails = specFailures(done.result);
@@ -1037,7 +1128,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const { promptTitle } = await import("./capture_hook.mjs");
       diff = diffFromGit(root);
       if (diff.trim()) {
-        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff }).id;
+        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff, steps: wayStepsForEntry(diff) }).id;
         autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
       }
     } catch (err) {
@@ -1185,7 +1276,20 @@ export function triedNote(d) {
     return `StealthLab: ${d.notApplied.model} solved this and its check passed, but the change was NOT applied: you edited ` +
       `${d.notApplied.files.join(", ")} while it ran. Do the task yourself, starting from your current files; there is nothing to report.`;
   }
-  if (!d || d.handled || !d.tried?.length) return "";
+  if (!d || d.handled) return "";
+  if (d.partial) {
+    // the task was planned in parts from a similar fix made here; some were done by cheap models
+    const done = d.partial.nodes.filter((n) => n.status === "done");
+    const yours = d.partial.nodes.filter((n) => n.status !== "done");
+    const list = (ns) => ns.map((n) => `${n.id} (${n.at.join(", ")})`).join(", ");
+    return `StealthLab split this task into ${d.partial.nodes.length} parts, planned from a similar fix already made here (${d.partial.entry}). ` +
+      (done.length && d.partial.applied.length
+        ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; stealthlab-mcp undo removes them" : ""}. `
+        : "No part was applied. ") +
+      `Yours: ${list(yours)}. Finish the task from the code as it is now and check the whole of it` +
+      (d.runMd ? "; the plan is in .stealth/run.md." : ".") + handoffNote({ ...d, runMd: false });
+  }
+  if (!d.tried?.length) return "";
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
     (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +
