@@ -66,6 +66,8 @@ VOLUME_NAME = "stealthlab-series"
 KEYS_SECRET = "stealthlab-keys"           # GENERAL_COMPUTE_API_KEY, Z_AI_KEY, the backend's judge/embedding keys
 CLAUDE_SECRET = "claude-code-auth"        # CLAUDE_CODE_OAUTH_TOKEN
 API_SECRET = "anthropic-api"              # ANTHROPIC_API_KEY
+LOGIN_SECRET = "claude-login"             # CLAUDE_CREDENTIALS_JSON: the owner's ~/.claude/.credentials.json, for the processes the HOOKS start
+LOGIN_VAR = "CLAUDE_CREDENTIALS_JSON"
 KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
              "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
 ARMS = ("A", "C", "C0")
@@ -145,6 +147,8 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
                      + ", ".join(t["task_id"] for t in tasks[:3]) + (" ..." if len(tasks) > 3 else ""))
     lines.append(f"  {sessions} session(s) in all; {PLAN_ESTIMATE}")
     lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else API_SECRET)
+                 + (f" + {LOGIN_SECRET} (the hooks' login: test-first runs `claude -p` from a hook, which has no token)"
+                    if spec.auth == "subscription" and any(a in ("C", "C0") for a in spec.arms) else "")
                  + f"; volume {VOLUME_NAME}")
     lines.append(f"  results: /mnt/series/{spec.run_name()}/<repository>/ on the volume (gold_check.json, report.txt"
                  + (", and per arm <arm>/results, <arm>/logs, <arm>/state.tgz, <arm>/db.sql.gz)" if spec.split_arms
@@ -231,19 +235,40 @@ def done_tasks(results: Path, arms: list[str]) -> set[str]:
     return {t for t, a in seen.items() if set(arms) <= a}
 
 
+def install_login(blob: str, home: Path) -> str:
+    """Put the owner's Claude login where `claude` looks for it: <home>/.claude/.credentials.json, owner-only. Needed because Claude Code
+    removes CLAUDE_CODE_OAUTH_TOKEN from the environment of every hook it starts, so the headless `claude -p` that a hook starts (the
+    test-first writer) would be 'Not logged in'; on a developer's machine that process uses this very file. Returns "installed", "absent"
+    (no secret) or "invalid" (not JSON). The content is never returned, printed or logged."""
+    if not blob:
+        return "absent"
+    try:
+        json.loads(blob)
+    except json.JSONDecodeError:
+        return "invalid"
+    d = home / ".claude"
+    d.mkdir(parents=True, exist_ok=True)
+    fd = os.open(d / ".credentials.json", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(blob)
+    return "installed"
+
+
 class Container:
     """One repository's run, inside a container. Everything outside the filesystem goes through `sh`, so the order of commands
     and the snapshot/resume logic are testable with a recorder; `vol` is the Volume's mount, `app` the code's."""
 
     def __init__(self, spec: RunSpec, repo: str, *, sh: Shell = shell, vol: Path | str = VOL, app: Path | str = APP_DIR,
                  environ: dict[str, str] | None = None, commit: Callable[[], None] = lambda: None,
-                 sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None):
+                 sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None, home: Path | str | None = None):
         self.spec, self.repo, self.sh, self.commit, self.sleep = spec, repo, sh, commit, sleep
         self.vol, self.app = Path(vol), Path(app)
         # the dataset cache lives on the Volume; its variable is set HERE, not in the image: a cache directory that exists in the image under
         # the Volume's mount path makes Modal refuse the mount ("cannot mount volume on non-empty path")
         self.environ = {**auth_env(spec.auth, environ if environ is not None else dict(os.environ)),
                         "HF_HOME": str(self.vol / "cache" / "hf")}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+        self._login_blob = self.environ.pop(LOGIN_VAR, "")                 # never passed on to the runner or any session
+        self.home = Path(home if home is not None else os.environ.get("HOME") or "/root")
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.run_dir = self.vol / spec.run_name() / repo                  # the repository's directory on the volume
@@ -335,6 +360,25 @@ class Container:
         if rc not in (0, None):
             raise RuntimeError(f"{what} failed (exit {rc}): {str(getattr(proc, 'stderr', ''))[-300:]}")
 
+    def ensure_hook_login(self) -> None:
+        """Arms C and C0 only: install the owner's login for the hooks' own `claude` processes, then PROVE it works the way a hook's child
+        would use it (no token in the environment). A run without it would measure C with no test-first and no cheap answer could pass:
+        so it stops here, before any session is paid for."""
+        if os.environ.get("ABTEST_CONTAINER") != "1" and self.home.resolve() == Path.home().resolve():
+            raise SystemExit("refusing to write a Claude login into this machine's own home (only a container, or an explicit other home)")
+        state = install_login(self._login_blob, self.home)
+        if state != "installed":
+            raise SystemExit(f"arms C and C0 need the hooks' Claude login ({state}): create the Modal secret {LOGIN_SECRET} with "
+                             "`python experiments/abtest/modal_series.py secrets --login` (it reads your ~/.claude/.credentials.json)")
+        env = {k: v for k, v in self.environ.items() if k not in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+        proc = self.sh(["claude", "-p", "reply with the word ok", "--setting-sources", "user", "--tools", "", "--output-format", "json"],
+                       env=env, cwd=self.home)
+        said = str(getattr(proc, "stdout", "") or "") + str(getattr(proc, "stderr", "") or "")
+        if getattr(proc, "returncode", 0) not in (0, None) or "Not logged in" in said or "/login" in said:
+            raise RuntimeError("the installed Claude login does not work in the container for a process started WITHOUT the token (as a hook does): "
+                               + said[-300:] + " -- the file may have expired or been rotated; run `claude login` locally and recreate the secret")
+        self.log.append("hook login: installed and checked")
+
     # -- the run
     def runner_cmd(self, task_id: str) -> list[str]:
         s = self.spec
@@ -370,6 +414,8 @@ class Container:
             (self.local / "swe").mkdir(parents=True, exist_ok=True)
             shutil.copyfile(shared, self.local / "swe" / f"validate_{self.repo}.json")
         if self.uses_backend:
+            if s.auth == "subscription":              # with an API key the hooks may receive the key itself (not verified; no login file is required)
+                self.ensure_hook_login()
             self.start_services()
             if state == "restored":
                 self.restore_db()
@@ -538,16 +584,20 @@ if modal is not None:
     # default is the subscription; ABTEST_MODAL_AUTH=api (set when you run `modal run`) attaches the API-key secret instead
     MODAL_AUTH = os.environ.get("ABTEST_MODAL_AUTH", "subscription")
     _auth_secret = API_SECRET if MODAL_AUTH == "api" else CLAUDE_SECRET
+    # the hooks' login (arms C and C0): attached unless ABTEST_MODAL_LOGIN=off (an arm-A-only run needs no login)
+    MODAL_LOGIN = os.environ.get("ABTEST_MODAL_LOGIN", "on")
+    _secrets = [modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)] + (
+        [modal.Secret.from_name(LOGIN_SECRET)] if MODAL_LOGIN != "off" else [])
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    @app.function(secrets=_secrets, **_common)
     def run_unit(spec: dict, repo: str) -> dict:
         return container_main(spec, repo, commit=volume.commit)
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    @app.function(secrets=_secrets, **_common)
     def prepare_unit(spec: dict, repo: str) -> dict:
         return prepare_main(spec, repo, commit=volume.commit)
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    @app.function(secrets=_secrets, **_common)
     def finish_unit(spec: dict, repo: str) -> dict:
         return finish_main(spec, repo, commit=volume.commit, reload=volume.reload)
 
@@ -638,6 +688,21 @@ def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None,
         create_secret(API_SECRET, {"ANTHROPIC_API_KEY": key})
         out(f"secret {API_SECRET}: ANTHROPIC_API_KEY")
         made = True
+    if getattr(args, "login", False):
+        lf = Path(getattr(args, "login_file", "") or Path.home() / ".claude" / ".credentials.json")
+        if not lf.exists():
+            out(f"{lf} does not exist: log in with `claude login` on this machine first (or pass --login-file)")
+            return 2
+        blob = lf.read_text(encoding="utf-8")
+        try:
+            json.loads(blob)
+        except json.JSONDecodeError:
+            out(f"{lf} is not valid JSON")
+            return 2
+        create_secret(LOGIN_SECRET, {LOGIN_VAR: blob})
+        out(f"secret {LOGIN_SECRET}: {LOGIN_VAR} ({len(blob)} characters from {lf}; the content is not shown)")
+        out("  note: the container refreshes this login on its own; if that signs your local Claude Code out, run `claude login` again")
+        made = True
     if args.keys:
         env_file = env_file or (Path(args.env_file) if getattr(args, "env_file", None) else None)
         vals = read_names(KEY_NAMES, environ, env_file)
@@ -675,6 +740,8 @@ def cli(argv: list[str] | None = None) -> int:
     s.add_argument("--claude", action="store_true", help=f"{CLAUDE_SECRET} from $CLAUDE_CODE_OAUTH_TOKEN")
     s.add_argument("--api", action="store_true", help=f"{API_SECRET} from $ANTHROPIC_API_KEY")
     s.add_argument("--keys", action="store_true", help=f"{KEYS_SECRET} from the cheap-model and backend keys: " + ", ".join(KEY_NAMES))
+    s.add_argument("--login", action="store_true", help=f"{LOGIN_SECRET} from your Claude login file (~/.claude/.credentials.json): the hooks' own claude processes need it")
+    s.add_argument("--login-file", default="", help="another login file than ~/.claude/.credentials.json")
     s.add_argument("--env-file", default="", help="the backend/.env to read the keys from (default: this checkout's, then the main checkout's)")
     args = ap.parse_args(argv)
     if args.cmd == "secrets":

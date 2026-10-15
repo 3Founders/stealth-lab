@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tarfile
 import types
@@ -20,7 +21,8 @@ import modal_series as ms  # noqa: E402
 import runner  # noqa: E402
 
 TOKEN = "TOKEN-VALUE-THAT-MUST-NEVER-BE-PRINTED"
-ENV_SUB = {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "ANTHROPIC_API_KEY": "stale-key", "PATH": "p"}
+LOGIN_JSON = '{"claudeAiOauth": {"accessToken": "LOGIN-SECRET-VALUE"}}'
+ENV_SUB = {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "ANTHROPIC_API_KEY": "stale-key", "PATH": "p", "CLAUDE_CREDENTIALS_JSON": LOGIN_JSON}
 ENV_API = {"ANTHROPIC_API_KEY": "api-key-value", "CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "PATH": "p"}
 
 
@@ -138,6 +140,10 @@ class Recorder:
 
     def __call__(self, argv, *, env=None, cwd=None, timeout=None, background=False, log=None):
         text = argv if isinstance(argv, str) else " ".join(map(str, argv))
+        if isinstance(argv, list) and argv[:2] == ["claude", "-p"]:                     # the login probe
+            self.calls.append({"cmd": text, "env": env, "cwd": cwd, "background": background})
+            ok = getattr(self, "login_ok", True)
+            return Proc(0 if ok else 1, out='{"result":"ok"}' if ok else '{"result":"Not logged in - Please run /login"}')
         self.calls.append({"cmd": text, "env": env, "cwd": cwd, "background": background})
         if background:
             return object()
@@ -175,7 +181,7 @@ def container(tmp_path, rc_for=None, environ=None, **spec_kw):
     rec = Recorder(lambda: holder["c"], rc_for)
     commits = []
     c = ms.Container(spec(**spec_kw), "mini", sh=rec, vol=tmp_path / "vol", app=tmp_path / "app",
-                     environ=environ or ENV_SUB, commit=lambda: commits.append(1), sleep=lambda s: None, health=lambda: True)
+                     environ=environ or ENV_SUB, commit=lambda: commits.append(1), sleep=lambda s: None, health=lambda: True, home=tmp_path / "h")
     holder["c"] = c
     c.rec, c.commits = rec, commits
     return c
@@ -253,7 +259,7 @@ def test_resuming_restores_the_snapshot_and_skips_what_is_done(tmp_path, fake_se
     first.run()
     # a NEW container (empty local disk, same volume), the same command
     second = ms.Container(spec(max_issues=3), "mini", sh=Recorder(lambda: second, None), vol=tmp_path / "vol", app=tmp_path / "app2",
-                          environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True)
+                          environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True, home=tmp_path / "h")
     assert second.restore() == "restored"
     lib = second.local / "ws" / "C" / "swe-mini" / ".stealth" / "library.md"
     assert lib.read_text(encoding="utf-8") == "after x__mini-2", "C's .stealth/ came back from the volume, as the last task left it"
@@ -269,14 +275,14 @@ def test_resuming_c_without_its_state_is_refused_unless_allowed(tmp_path, fake_s
     c.run()
     (c.out / "state.tgz").unlink()
     again2 = ms.Container(spec(max_issues=3), "mini", sh=Recorder(lambda: again2, None), vol=tmp_path / "vol", app=tmp_path / "app3",
-                          environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True)
+                          environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True, home=tmp_path / "h")
     refused = again2.run()
     assert refused["status"] == "refused" and "learning curve" in refused["why"] and not any("runner.py" in x["cmd"] for x in again2.sh.calls)
     ok = ms.Container(spec(max_issues=3, allow_cold_resume=True), "mini", sh=Recorder(lambda: ok, None), vol=tmp_path / "vol",
-                      app=tmp_path / "app4", environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True)
+                      app=tmp_path / "app4", environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True, home=tmp_path / "h")
     assert ok.run()["status"] == "done" and any("runner.py" in x["cmd"] for x in ok.sh.calls)
     a_only = ms.Container(spec(arms=["A"], max_issues=3), "mini", sh=Recorder(lambda: a_only, None), vol=tmp_path / "vol",
-                          app=tmp_path / "app5", environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True)
+                          app=tmp_path / "app5", environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True, home=tmp_path / "h")
     assert a_only.run()["status"] == "done", "arm A has no .stealth/: a cold resume costs it nothing"
 
 
@@ -616,3 +622,92 @@ def test_a_later_run_with_other_arms_joins_the_earlier_arms_results_in_the_repor
         (e / "long-mini-1t.jsonl").write_text(json.dumps({"task_id": "t0", "arm": arm, "status": "done"}) + chr(10), encoding="utf-8")
     out = later.finish()
     assert out["arms"] == ["A", "C", "C0"] and out["rows"] == 3 and out["arms_without_results"] == []
+
+
+# ---------------------------------------------------------------- the hooks' login (arms C and C0)
+
+def test_install_login_writes_an_owner_only_file_and_never_returns_the_content(tmp_path):
+    assert ms.install_login(LOGIN_JSON, tmp_path) == "installed"
+    f = tmp_path / ".claude" / ".credentials.json"
+    assert f.read_text(encoding="utf-8") == LOGIN_JSON
+    if os.name != "nt":
+        assert oct(f.stat().st_mode & 0o777) == "0o600"
+    assert ms.install_login("", tmp_path / "x") == "absent" and ms.install_login("not json", tmp_path / "y") == "invalid"
+    assert not (tmp_path / "x").exists() and not (tmp_path / "y").exists(), "nothing is written for an absent or invalid login"
+
+
+def test_c_installs_the_login_proves_it_without_the_token_and_keeps_it_out_of_every_environment(tmp_path, fake_series):
+    c = container(tmp_path, arms=["C"], unit_arm="C", task_ids=["x__mini-1"])
+    out = c.run()
+    assert out["status"] == "done" and (tmp_path / "h" / ".claude" / ".credentials.json").read_text(encoding="utf-8") == LOGIN_JSON
+    probe = next(x for x in c.rec.calls if x["cmd"].startswith("claude -p"))
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in probe["env"] and "ANTHROPIC_API_KEY" not in probe["env"], "the probe runs as a hook's child does: no token"
+    assert "--setting-sources user" in probe["cmd"] and probe["cwd"] == tmp_path / "h"
+    order = [x["cmd"] for x in c.rec.calls]
+    assert next(i for i, t in enumerate(order) if t.startswith("claude -p")) < next(i for i, t in enumerate(order) if "initdb" in t), "proved before any service starts"
+    for call in c.rec.calls:                                         # the login never reaches a runner, a session or the backend
+        assert not call["env"] or "CLAUDE_CREDENTIALS_JSON" not in call["env"]
+        assert "LOGIN-SECRET-VALUE" not in call["cmd"]
+    assert "LOGIN-SECRET-VALUE" not in json.dumps(out) and "CLAUDE_CREDENTIALS_JSON" not in c.environ
+
+
+def test_c_without_the_login_stops_before_any_service_or_session(tmp_path, fake_series):
+    env = {k: v for k, v in ENV_SUB.items() if k != "CLAUDE_CREDENTIALS_JSON"}
+    c = container(tmp_path, environ=env, arms=["C", "C0"], unit_arm="", task_ids=None, max_issues=1)
+    with pytest.raises(SystemExit, match="claude-login") as e:
+        c.run()
+    assert "secrets --login" in str(e.value) and not c.rec.calls, "nothing was started, nothing was paid for"
+
+
+def test_a_login_that_does_not_work_without_the_token_stops_the_run(tmp_path, fake_series):
+    c = container(tmp_path, max_issues=1)
+    c.rec.login_ok = False
+    with pytest.raises(RuntimeError, match="does not work in the container") as e:
+        c.run()
+    assert "Not logged in" in str(e.value) and not any("runner.py" in x["cmd"] or "initdb" in x["cmd"] for x in c.rec.calls)
+
+
+def test_arm_a_needs_no_login(tmp_path, fake_series):
+    env = {k: v for k, v in ENV_SUB.items() if k != "CLAUDE_CREDENTIALS_JSON"}
+    c = container(tmp_path, environ=env, arms=["A"], unit_arm="A", task_ids=["x__mini-1"])
+    assert c.run()["status"] == "done" and not any(x["cmd"].startswith("claude -p") for x in c.rec.calls)
+
+
+def test_the_login_is_never_written_into_the_machines_own_home(tmp_path, fake_series, monkeypatch):
+    monkeypatch.delenv("ABTEST_CONTAINER", raising=False)
+    c = container(tmp_path, arms=["C"], unit_arm="C", task_ids=["x__mini-1"])
+    c.home = Path.home()
+    with pytest.raises(SystemExit, match="refusing to write a Claude login into this machine's own home"):
+        c.ensure_hook_login()
+    monkeypatch.setenv("ABTEST_CONTAINER", "1")
+    assert "own home" not in str(getattr(c, "log", ""))
+
+
+def test_with_an_api_key_no_login_file_is_required(tmp_path, fake_series):
+    env = {k: v for k, v in ENV_API.items()}
+    c = container(tmp_path, environ=env, auth="api", arms=["C"], unit_arm="C", task_ids=["x__mini-1"])
+    assert c.run()["status"] == "done" and not any(x["cmd"].startswith("claude -p") for x in c.rec.calls)
+
+
+@pytest.mark.skipif(ms.modal is None, reason="modal is not installed")
+def test_secrets_login_reads_the_owners_file_by_path_and_never_prints_it(monkeypatch, tmp_path):
+    made, said = {}, []
+    monkeypatch.setattr(ms, "create_secret", lambda name, values: made.update({name: values}))
+    f = tmp_path / "creds.json"
+    f.write_text(LOGIN_JSON, encoding="utf-8")
+    ns = argparse.Namespace(claude=False, api=False, keys=False, login=True, login_file=str(f))
+    assert ms.secrets_cli(ns, environ={}, out=said.append) == 0
+    assert made == {ms.LOGIN_SECRET: {ms.LOGIN_VAR: LOGIN_JSON}}
+    assert "LOGIN-SECRET-VALUE" not in "".join(said) and "not shown" in said[0] and "signs your local Claude Code out" in said[1]
+    said.clear()
+    assert ms.secrets_cli(argparse.Namespace(claude=False, api=False, keys=False, login=True, login_file=str(tmp_path / "none.json")),
+                          environ={}, out=said.append) == 2 and "claude login" in said[0]
+    f.write_text("not json", encoding="utf-8")
+    assert ms.secrets_cli(ns, environ={}, out=said.append) == 2
+
+
+def test_the_plan_names_the_login_secret_for_c_and_c0_only(fake_series):
+    tasks = {"mini": ms.series_tasks(spec(max_issues=1), "mini")}
+    assert ms.LOGIN_SECRET in ms.plan_text(spec(max_issues=1), tasks)
+    assert ms.LOGIN_SECRET not in ms.plan_text(spec(max_issues=1, arms=["A"]), tasks)
+    assert ms.LOGIN_SECRET not in ms.plan_text(spec(max_issues=1, auth="api"), tasks)
