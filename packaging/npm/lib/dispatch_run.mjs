@@ -33,7 +33,8 @@ export function renderDagRun({ task, nodes, entry, interCheck, fullCheck }) {
   return [
     RUN_HEAD,
     `# task: ${clean(task, 300)}`,
-    `# plan: from ${entry} (a similar fix already made here); parts with no deps between them can run in parallel`,
+    `# plan: ${entry === "request" ? "the request's own parts (no similar fix here yet)" : `from ${entry} (a similar fix already made here)`}; ` +
+      "parts with no deps between them can run in parallel",
     ...nodes.map((n, i) => `NODE|${n.id}|${n.status}|${clean(`The change in ${n.at.join(", ")}${n.gives?.length ? ` (past fix: ${n.gives.slice(0, 4).join(", ")})` : ""}`, 200)}` +
       `|step=-|claims=-|deps=${n.deps.length ? n.deps.join(",") : "-"}|model=${clean(n.who || "session", 60)}|check=${i === last - 1 && fullCheck ? fullCheck : interCheck || "-"}`),
     "",

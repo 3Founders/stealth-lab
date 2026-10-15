@@ -147,7 +147,8 @@ function stubRt(answers, outcomes) {
     async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
     async runResult(id) {
       const input = calls[Number(id.slice(2)) - 1];
-      const part = /the change in pkg\/expressions\.py/.test(input.task) ? "p1" : "p2";
+      const at = /This part:.*?(?:the change in |-- in |likely in )(pkg\/\w+\.py)/.exec(input.task)?.[1];
+      const part = at === "pkg/expressions.py" ? "p1" : "p2";
       if (outcomes[part] !== "verified") return { run_id: id, state: "failed", cost_usd: 0.001, checks: [{ tail: "no" }] };
       const f = path.join(dir, `${id}.patch`);
       fs.writeFileSync(f, answers[part]);
@@ -291,4 +292,48 @@ test("dag continue refuses to go on while the session's part does not pass", asy
   assert.equal(out.ok, false);
   assert.match(out.lines[0], /Your part \(N-1\) does not pass the check yet: nothing else was run/);
   assert.equal(rt.calls.length, 0);
+});
+
+test("each part's outcome counts for its model on the task's route (routing.md OBS), as a whole-task try does", async () => {
+  const { repo, p1, p2 } = sliceRepo();
+  const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+                             env: env(fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"))), runtime: rt });
+  assert.equal(d.handled, true);
+  const routing = fs.readFileSync(path.join(repo, ".stealth", "routing.md"), "utf8");
+  assert.match(routing, /^OBS\|R-[0-9a-f]+\|gemma-4-31b-it\|stealth\|n=2\|ok=2\|/m, routing);
+});
+
+// ------------------------------------------------------------------ the request's own parts (no similar fix yet)
+
+test("no similar fix, but the request asks for two things: one part each, located on its own, run on cheap models", async () => {
+  const repo = gitRepo({ "pkg/__init__.py": "", "pkg/expressions.py": "class Expression:\n    pass\n", "pkg/parser.py": "def parse(name):\n    return None\n" });
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" });
+  fs.writeFileSync(path.join(repo, "pkg", "expressions.py"), "class Expression:\n    pass\nclass ArraySlice(Expression):\n    pass\n");
+  const p1 = g("diff", "--", "pkg/expressions.py");
+  fs.writeFileSync(path.join(repo, "pkg", "parser.py"), "def parse(name):\n    from pkg.expressions import ArraySlice\n    return ArraySlice() if name == \"SLICE\" else None\n");
+  const p2 = g("diff", "--", "pkg/parser.py");
+  g("checkout", "--", "pkg");
+  const parts = ["Add an ArraySlice class in pkg/expressions.py", "Make parse in pkg/parser.py return ArraySlice() for SLICE"];
+  const brief = async () => ({ task: "ArraySlice", files_hinted: [], acceptance: "", parts, clarity: "clear", kind: "code", size: "medium" });
+  const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
+  const d = await dispatch({ payload: { cwd: repo, prompt: "add ArraySlice and parse SLICE into it" }, reply: { model_plan: PLAN }, root: repo,
+    mine: "claude-opus-5-5|claude-code", env: { ...env(home), STEALTHLAB_BRIEF: "on" }, runtime: rt, briefImpl: brief });
+  assert.equal(d.handled, true, JSON.stringify(d.tried || d));
+  assert.equal(d.dag.entry, "request");
+  assert.match(rt.calls[0].task, /This part: Add an ArraySlice class in pkg\/expressions\.py \(likely in pkg\/expressions\.py\)/);
+  assert.doesNotMatch(rt.calls[0].task, /Worked example/, "no past fix: no example");
+  assert.match(d.text, /split the request into the things it asks for/);
+  assert.match(fs.readFileSync(path.join(repo, "pkg", "parser.py"), "utf8"), /SLICE/);
+  assert.match(fs.readFileSync(path.join(repo, ".stealth", "run.md"), "utf8"), /# plan: the request's own parts/);
+});
+
+test("Claude Code's own messages in the prompt stream are not tasks: no lookup, no dispatch, no library title", async () => {
+  const { shouldLookUp, isHarnessMessage } = await import("../lib/hook.mjs");
+  const policy = { enabled: true, minWords: 3 };
+  assert.equal(isHarnessMessage("<task-notification>\n<task-id>b1</task-id> completed</task-notification>"), true);
+  assert.equal(shouldLookUp("<task-notification><task-id>b1</task-id><status>completed</status> the tests passed</task-notification>", policy), false);
+  assert.equal(shouldLookUp("  <system-reminder>note</system-reminder> fix the parser please", policy), false);
+  assert.equal(shouldLookUp("fix the <task-notification> handling in the parser", policy), true, "a real prompt that mentions the tag");
 });

@@ -185,9 +185,15 @@ export async function ensureDispatchRoot(cwd) {
   }
 }
 
+// Messages Claude Code itself puts in the prompt stream are not the person asking for anything: a background task's
+// notification arrived as a "prompt" after a task was done, was dispatched as a new task (5 parts planned from the fix
+// just made) and became a library title (Modal, sqlglot-4051, 2026-10-15).
+const HARNESS_MESSAGE = /^<(task-notification|system-reminder|command-name|command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook)\b/i;
+export const isHarnessMessage = (prompt) => HARNESS_MESSAGE.test(String(prompt || "").trim());
+
 export function shouldLookUp(prompt, policy) {
   const text = String(prompt || "").trim();
-  if (!policy.enabled || !text || text.startsWith("/")) return false;
+  if (!policy.enabled || !text || text.startsWith("/") || isHarnessMessage(text)) return false;
   return (text.match(/\w+/g) || []).length >= policy.minWords;
 }
 
