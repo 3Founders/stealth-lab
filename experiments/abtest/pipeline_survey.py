@@ -136,8 +136,16 @@ def environment(r: dict, root: Path, venvs: Path) -> Path:
 
 
 def run_spec(py: Path, spec: Path, cwd: Path) -> tuple[int, str]:
+    """As the product runs them (lib/dispatch.mjs RUN_INSIDE): copied into the project's test folder, run, removed."""
+    import shutil
     import swe_series_task as S
-    return S.TOOLCHAIN.pytest(py, ["-q", "-x", "-p", "no:cacheprovider", str(spec)], cwd, 300)
+    d = next((cwd / t for t in ("tests", "test", "testing") if (cwd / t).is_dir()), cwd)
+    dest = d / "test_zz_stealthlab_spec.py"
+    shutil.copyfile(spec, dest)
+    try:
+        return S.TOOLCHAIN.pytest(py, ["-q", "-x", "-p", "no:cacheprovider", str(dest)], cwd, 300)
+    finally:
+        dest.unlink(missing_ok=True)
 
 
 def stage2(iid: str, work: Path) -> dict:
@@ -171,12 +179,14 @@ def stage2(iid: str, work: Path) -> dict:
         return out
     spec = Path(w["file"])
     before, tail_b = run_spec(py, spec, root)
-    gold_tree = work / "gold"
-    subprocess.run(["git", "-C", str(root), "worktree", "add", "-q", "--detach", str(gold_tree), "HEAD"], check=True, capture_output=True)
-    ok, err = S.apply_patch(gold_tree, r["patch"])
+    # the real fix applied IN PLACE (the project is installed editable from root: a src/ layout imports root's code), then undone
+    ok, err = S.apply_patch(root, r["patch"])
     if not ok:
         return {**out, "error": f"gold patch: {err[:200]}"}
-    after, tail_a = run_spec(py, spec, gold_tree)
+    try:
+        after, tail_a = run_spec(py, spec, root)
+    finally:
+        subprocess.run(["git", "-C", str(root), "checkout", "-q", "--", "."], capture_output=True)
     out.update({"fails_before": before != 0, "passes_with_fix": after == 0, "valid": before != 0 and after == 0,
                 "rejects_right_answer": after != 0, "tail_with_fix": tail_a[-400:] if after != 0 else ""})
     return out
