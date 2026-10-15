@@ -20,6 +20,7 @@ import path from "node:path";
 import { buildDag } from "./dag.mjs";
 import { diffPiece, readStepExtras, splitDiff, stepsFromDiff } from "./way_extract.mjs";
 import { loadLibrary } from "./library.mjs";
+import { locate } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { createWorktree, git, headCommit, removeWorktree, repoTopLevel, workingTreeDiff } from "./exec/worktree.mjs";
 
@@ -68,21 +69,35 @@ export function planFromLibrary({ root, reply, loc }) {
   return { entry: best.entry, diff: best.diff, steps: best.steps, slots, way: p.name, dag: buildDag(best.steps) };
 }
 
+// No similar fix here, but the request asks for several things (the brief's parts, lib/brief.mjs): one node per part,
+// each located on its own (its likely file); parts in different files are independent, the rest in order (lib/dag.mjs).
+// There is no worked example: the part's own words and the located code. -> plan | null
+export function planFromParts({ parts = [], root, env = process.env }) {
+  const ps = (parts || []).map((p) => String(p || "").trim()).filter(Boolean).slice(0, 6);
+  if (ps.length < 2) return null;
+  const steps = ps.map((p, i) => {
+    const l = locate({ prompt: p, root, env });
+    return { order: i + 1, kind: "action", at: l.files.slice(0, 1), gives: [], needs: [], added: 0, desc: p };
+  });
+  return { entry: { id: "request", title: "the request's own parts" }, diff: "", steps, slots: [], way: null, dag: buildDag(steps) };
+}
+
 // the node's task: this part of the task, with the past fix's piece for the same file as the worked example
 export function nodeTask({ task, node, total, entry, diff, where = "", done = [], slots = [] }) {
   const s = node.step;
   const head = `Part ${node.id.slice(2)} of ${total} of this task (the other parts are done separately; change only what this part needs):\n`;
   const ask = String(task || "").trim();
-  const said = s.desc ? `${s.desc} -- in ${s.at.join(", ")}` : `the change in ${s.at.join(", ")}`;
+  const where_ = s.at.length ? ` -- in ${s.at.join(", ")}` : "";
+  const said = s.desc ? `${s.desc}${diff ? where_ : s.at.length ? ` (likely in ${s.at.join(", ")})` : ""}` : `the change in ${s.at.join(", ")}`;
   const part = `\nThis part: ${said}${s.gives.length ? ` (in the past fix: ${s.gives.slice(0, 5).join(", ")})` : ""}.` +
     (slots.length ? ` In that fix ${slots.map(([k, v]) => `{${k}} was ${v}`).join(", ")}; find their values for this task.` : "") +
     (done.length ? ` Already done and in the code: ${done.join("; ")}.` : "");
   const tail = where ? `\n\n${where}` : "";
-  const exHead = `\nWorked example -- this part in a similar fix already made in this repository ("${String(entry.title).slice(0, 120)}"); adapt it, do not copy it:\n`;
+  const exHead = diff ? `\nWorked example -- this part in a similar fix already made in this repository ("${String(entry?.title || "").slice(0, 120)}"); adapt it, do not copy it:\n` : "";
   const room = TASK_MAX - head.length - part.length - tail.length - exHead.length - 40;
   const askCut = ask.length <= Math.max(300, Math.floor(room / 2)) ? ask : `${ask.slice(0, Math.max(300, Math.floor(room / 2)) - 10)} [...]`;
   const exRoom = TASK_MAX - head.length - askCut.length - part.length - tail.length - exHead.length - 10;
-  const example = exRoom > 200 ? exHead + diffPiece(diff, s.at, exRoom) : "";
+  const example = diff && exRoom > 200 ? exHead + diffPiece(diff, s.at, exRoom) : "";
   return `${head}${askCut}${part}${example}${tail}`.slice(0, TASK_MAX);
 }
 
@@ -187,7 +202,7 @@ export async function runDag(ctx) {
   const { rt, root, payload, rawPayload, reply, loc, where, rungs, strongSet, policy, interCheck, fullCheck, specDone, env, log,
           runShell, undo, instanceKey, obs = () => {}, goalId = null } = ctx;
   if (!dagEnabled(env)) return null;
-  const plan = planFromLibrary({ root, reply, loc });
+  const plan = planFromLibrary({ root, reply, loc }) || planFromParts({ parts: ctx.parts, root, env });
   if (!plan || plan.dag.nodes.length < 2) return null;
   const repo = await repoTopLevel(payload.cwd || root, env);
   const nodes = plan.dag.nodes;
@@ -234,7 +249,12 @@ export async function runDag(ctx) {
         width: policy.maxParallel, instanceKey, log,
         task: `${String(rawPayload.prompt).slice(0, 1200)}\n\nEvery part of this task is already in the code, but the check fails:\n${fin.tail.slice(-600)}\nFix what makes it fail.` });
       tried.push(...repair.tried.map((t) => ({ ...t, node: "repair" })));
-      if (repair.winner) { patches.push(repair.winner.patch); fin = { ok: true }; }
+      // the repair passed the full check in its own worktree; the parts plus it are checked together once more
+      if (repair.winner) {
+        const withRepair = [...patches, repair.winner.patch];
+        fin = await finalCheck({ repo, patches: withRepair, check: fullCheck, env, runShell });
+        if (fin.ok) patches.push(repair.winner.patch);
+      }
     }
     if (fin.ok) {
       const applied = await applyParts({ repo, patches, task: rawPayload.prompt, models, env, undo });

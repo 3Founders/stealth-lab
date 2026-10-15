@@ -949,6 +949,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         // each part's outcome counts for its model on this task's route, as a whole-task try does (routing.md OBS)
         obs: (model, executor, ok) => { try { if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), model, executor, ok); } catch { /* best effort */ } },
         goalId: plan.goal_id || null,
+        // no similar fix here: the request's own parts, when the brief found several (lib/brief.mjs)
+        parts: briefed?.brief?.parts || [],
         undo: { enabled: undoEnabled(env) && !policy.ask,
                 create: (o) => createUndoPoint({ ...o, env }), finish: (p, o) => finishUndoPoint(p, { ...o, env }), discard: (p, o) => discardUndoPoint(p, { ...o, env }) } });
     } catch (err) {
@@ -974,7 +976,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const parts = dagRes.dag.nodes.length;
       return { handled: true, dag: dagRes.dag, files: dagRes.files, tried: dagRes.tried, spec, loc, runMd, library_entry: entry, explanation,
         model: dagRes.models, unit: `${dagRes.models}|dag`,
-        text: `Done in ${parts} parts by ${dagRes.models} in ${secs} s (StealthLab planned it from a similar fix made here and dispatched each part ` +
+        text: `Done in ${parts} parts by ${dagRes.models} in ${secs} s (StealthLab ${dagRes.dag.entry === "request" ? "split the request into the things it asks for"
+          : "planned it from a similar fix made here"} and dispatched each part ` +
           `before this session's model ran, $${(dagRes.cost_usd || 0).toFixed(4)}). All parts together passed ${checkLabel} in an isolated worktree ` +
           `and the change is applied: ${dagRes.files.join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
           (dagRes.undone ? " To put it back as it was: stealthlab-mcp undo." : "") + (explanation ? `\n\n${explanation}` : "") };
@@ -1292,7 +1295,8 @@ export function triedNote(d) {
     const yours = d.partial.nodes.filter((n) => n.status === "ready");
     const waiting = d.partial.nodes.filter((n) => n.status === "waiting");
     const list = (ns) => ns.map((n) => `${n.id} (${n.at.join(", ")})`).join(", ");
-    return `StealthLab split this task into ${d.partial.nodes.length} parts, planned from a similar fix already made here (${d.partial.entry}). ` +
+    return `StealthLab split this task into ${d.partial.nodes.length} parts, ` +
+      (d.partial.entry === "request" ? "one per thing the request asks for. " : `planned from a similar fix already made here (${d.partial.entry}). `) +
       (done.length && d.partial.applied.length
         ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; stealthlab-mcp undo removes them" : ""}. `
         : "No part was applied. ") +
