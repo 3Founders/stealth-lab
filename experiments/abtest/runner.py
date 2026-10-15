@@ -108,6 +108,18 @@ def gc_tokens_left(key: str) -> int | None:
         return None
 
 
+def read_token(arms: list[str]) -> str:
+    """The local test server's token (local_identity.py, written when run_backend.py starts). Only arms C and C0 talk to that server: a
+    run of arm A alone (a split run's A container starts no server) needs none."""
+    import local_identity
+    path = local_identity.paths()["token"]
+    if path.exists():
+        return path.read_text().strip()
+    if any(is_c(a) for a in arms):
+        raise SystemExit(f"{path} is missing: start the test server first (experiments/abtest/run_backend.py)")
+    return ""
+
+
 def secret_value(name: str) -> str:
     """A key by NAME: the environment first (Modal secrets, CI), else backend/.env when that file exists, else ''."""
     if os.environ.get(name):
@@ -569,8 +581,7 @@ def main() -> int:
     if args.dry_run:
         return dry_run(args, arms)
 
-    import local_identity
-    secrets = {"token": local_identity.paths()["token"].read_text().strip(),
+    secrets = {"token": read_token(arms),
                "gc": secret_value(args.gc_key_name), "zai": secret_value("Z_AI_KEY")}
     if not secrets["gc"]:
         raise SystemExit(f"no {args.gc_key_name} in the environment or backend/.env")

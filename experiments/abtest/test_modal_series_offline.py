@@ -591,3 +591,14 @@ def test_the_gold_checks_environment_findings_reach_the_arms_containers(tmp_path
     arm.out = arm.run_dir / "A"
     arm.run()
     assert (arm.local / "swe" / "validate_mini.json").read_text(encoding="utf-8") == expected
+
+
+def test_arm_a_alone_needs_no_test_server_token_but_c_and_c0_do(tmp_path, monkeypatch):
+    import local_identity
+    monkeypatch.setattr(local_identity, "paths", lambda: {"token": tmp_path / "token.txt"})
+    assert runner.read_token(["A"]) == "", "a split run's A container starts no server, so there is no token file"
+    for arms in (["C"], ["A", "C0"]):
+        with pytest.raises(SystemExit, match="start the test server"):
+            runner.read_token(arms)
+    (tmp_path / "token.txt").write_text("tok" + chr(10), encoding="utf-8")
+    assert runner.read_token(["C"]) == "tok" and runner.read_token(["A"]) == "tok"
