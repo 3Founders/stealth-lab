@@ -553,10 +553,11 @@ if modal is not None:
 
     @app.local_entrypoint()
     def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
-             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False):
+             series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
+             gc_key_name: str = "GENERAL_COMPUTE_API_KEY"):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
-                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms)
+                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, gc_key_name=gc_key_name)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))
@@ -674,6 +675,7 @@ def cli(argv: list[str] | None = None) -> int:
     p.add_argument("--run", default="")
     p.add_argument("--series-module", default=SERIES_MODULE)
     p.add_argument("--sequential-arms", action="store_true", help="all arms in one container, one after another (the slower layout)")
+    p.add_argument("--gc-key-name", default="GENERAL_COMPUTE_API_KEY", help="the General Compute key to use (its own daily quota), e.g. general_compute_api_key1")
     s = sub.add_parser("secrets", help="create the Modal secrets from your environment / backend/.env by NAME (values are never printed)")
     s.add_argument("--claude", action="store_true", help=f"{CLAUDE_SECRET} from $CLAUDE_CODE_OAUTH_TOKEN")
     s.add_argument("--api", action="store_true", help=f"{API_SECRET} from $ANTHROPIC_API_KEY")
@@ -684,7 +686,7 @@ def cli(argv: list[str] | None = None) -> int:
         return secrets_cli(args)
     spec = RunSpec(repos=[r.strip() for r in args.repos.split(",") if r.strip()], arms=[a.strip() for a in args.arms.split(",") if a.strip()],
                    max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module,
-                   split_arms=not args.sequential_arms)
+                   split_arms=not args.sequential_arms, gc_key_name=args.gc_key_name)
     problems = validate_spec(spec)
     if problems:
         print("; ".join(problems))

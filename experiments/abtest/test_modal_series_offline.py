@@ -633,3 +633,10 @@ def test_create_secret_replaces_an_existing_secret_instead_of_keeping_the_old_va
     monkeypatch.setattr(ms.modal.Secret, "objects", FakeObjects())
     ms.create_secret("stealthlab-keys", {"Z_AI_KEY": "new"})
     assert calls == [("delete", "stealthlab-keys", True), ("create", "stealthlab-keys", {"Z_AI_KEY": "new"})]
+
+
+def test_the_general_compute_key_can_be_chosen_and_reaches_the_runner(tmp_path, fake_series, capsys):
+    assert ms.cli(["plan", "--repos", "mini", "--series-module", "fake_series", "--gc-key-name", "general_compute_api_key1"]) == 0
+    c = container(tmp_path, max_issues=1, gc_key_name="general_compute_api_key1")
+    c.run()
+    assert "--gc-key-name general_compute_api_key1" in next(x["cmd"] for x in c.rec.calls if "runner.py" in x["cmd"])
