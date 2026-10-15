@@ -227,3 +227,20 @@ test("survey fill: a cheap model's facts about the code are kept only where the 
   assert.doesNotMatch(claims, /load_settings_from_yaml/, "an invented one is rejected");
   assert.match(fs.readFileSync(path.join(repo, ".stealth", "survey", "rejected.md"), "utf8"), /load_settings_from_yaml/);
 });
+
+test("test-first: tests that cannot even run on the unchanged code (an import of a name that does not exist) are asked for again", async () => {
+  const repo = repoWithPackage();
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "loc-home-"));
+  const broken = "```python\nfrom pkg._typehints import adapt_optional_hint\n\ndef test_x():\n    assert adapt_optional_hint(3) == 3\n```";
+  const good = "```python\nfrom __future__ import annotations\nimport typing\nfrom pkg._typehints import adapt_typehints\n\ndef test_optional():\n    assert adapt_typehints(3, typing.Optional) == 3\n```";
+  const asks = [];
+  const runClaude = (replies) => (args, input) => { asks.push(input); return { stdout: JSON.stringify({ result: replies[asks.length - 1], total_cost_usd: 0.01 }) }; };
+  const spec = await writeSpecTests({ prompt: "adapt_typehints drops Optional values", root: repo, mine: "claude-opus-5-5|claude-code",
+    env: { STEALTHLAB_HOME: home }, runClaude: runClaude([broken, good]), baseline: true });
+  assert.ok(spec?.file, "the second, runnable tests are kept");
+  assert.match(asks[1], /could not even run on the current code[\s\S]*import only names that exist now/);
+  assert.match(fs.readFileSync(spec.file, "utf8"), /^from __future__ import annotations\nimport os, sys\n/, "the path header after the __future__ import");
+  asks.length = 0;
+  assert.equal(await writeSpecTests({ prompt: "x", root: repo, mine: "claude-opus-5-5|claude-code", env: { STEALTHLAB_HOME: home },
+    runClaude: runClaude([broken, broken]), baseline: true }), null, "still crashing: no tests");
+});
