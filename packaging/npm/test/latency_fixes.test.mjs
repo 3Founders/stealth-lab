@@ -276,3 +276,51 @@ test("the cheap model's task carries the likely place; an area where cheap model
     env: { ...e, STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt3 });
   assert.equal(d.handled, true, "switch off: dispatched as before");
 });
+
+test("the strong model's extra time ends when it has finished: a hung small model is cut at the plain limit", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true, first: true } } }));
+  const calls = [];
+  const rt = { calls,
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) {
+      const m = calls[Number(id.slice(2)) - 1].model;
+      if (m === "glm-5.3-flash") return { run_id: id, state: "failed", cost_usd: 0.001, checks: [{ tail: "x" }] };
+      return new Promise(() => {});                         // the small model never finishes
+    },
+    async applyRun() { return { files: [] }; }, async cancelRun() {} };
+  const t0 = Date.now();
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-5.3-flash|stealth"] } },
+    root: repo, mine: MINE, env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_TIMEOUT_S: "10",
+      STEALTHLAB_DISPATCH_PARALLEL: "on", STEALTHLAB_DISPATCH_MODEL_CAP: "off" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.ok(Date.now() - t0 < 60000, `ended at the plain limit, not 240 s later (${Date.now() - t0} ms)`);
+});
+
+test("test-first hedged: a slow open writer gets the fallback beside it after the hedge time; the first usable tests win", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "glm-5.3" } } }));
+  fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
+  const good = (cost) => ({ stdout: JSON.stringify({ result: "```python\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```", total_cost_usd: cost }) });
+  const asked = [];
+  const runClaude = (args) => {
+    const m = args[args.indexOf("--model") + 1];
+    asked.push(m);
+    return m === "glm-5.3" ? new Promise((res) => setTimeout(() => res(good(0.001)), 3000)) : good(0.03);   // the open one is slow
+  };
+  const e = { ...env, K: "k", STEALTHLAB_DISPATCH_TESTFIRST_MODEL: "glm-5.3", STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S: "1" };
+  const t0 = Date.now();
+  const spec = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env: e, runClaude });
+  assert.ok(spec?.file && Date.now() - t0 < 2900, "the fallback's tests, without waiting for the slow writer");
+  assert.deepEqual(asked, ["glm-5.3", "claude-sonnet-5-5"]);
+  await new Promise((r) => setTimeout(r, 2500));
+  const led = fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8");
+  assert.match(led, /"what":"test-first","model":"claude-sonnet-5-5"/);
+  assert.match(led, /"what":"test-first-unused","model":"glm-5.3","cost_usd":0.001/, "the slower call is on the ledger too");
+  asked.length = 0;
+  const fast = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env: { ...e, STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S: "10" }, runClaude });
+  assert.ok(fast?.file);
+  assert.deepEqual(asked, ["glm-5.3"], "done within the hedge time: only the open writer is asked");
+});

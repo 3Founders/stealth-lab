@@ -379,12 +379,43 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   const args = argsFor(model);
   let usedModel = model;
+  // hedged: an open writer not done after STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S (30 s) gets the fallback writing beside
+  // it, and the first usable tests win -- instead of waiting out its whole timeout first. On real repository issues
+  // GLM-5.3 timed out on every turn (90 s each, Modal 2026-10-15) while its quick replies on small tasks are kept.
+  const hedgeS = Number(env.STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S ?? 30);
+  const ledger = path.join(path.dirname(path.dirname(out)), "dispatch_costs.jsonl");
+  const usable = (r) => {
+    try { const x = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); return !x.is_error && /def test_/.test(String(x.result || "")); } catch { return false; }
+  };
+  const bookLoser = (p) => p.then(({ r, m }) => {             // the slower call is paid too: on the ledger, as unused
+    try {
+      const x = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop());
+      fs.appendFileSync(ledger, JSON.stringify({ at: new Date().toISOString(), what: "test-first-unused", model: m, cost_usd: x.total_cost_usd ?? null }) + "\n");
+    } catch { /* no reply, nothing paid that we can see */ }
+  });
+  const hedged = async () => {
+    if (!fallback || !(hedgeS > 0)) return run(args, ask);
+    const p1 = Promise.resolve(run(args, ask)).then((r) => ({ r, m: model }));
+    let t;
+    const wait = new Promise((res) => { t = setTimeout(() => res(null), hedgeS * 1000); t.unref?.(); });
+    const early = await Promise.race([p1, wait]);
+    clearTimeout(t);
+    if (early) return early.r;
+    log(`test-first: ${model} not done in ${hedgeS} s; ${fallback} writes too, the first usable tests win`);
+    const p2 = Promise.resolve(claudeRun(argsFor(fallback), ask)).then((r) => ({ r, m: fallback }));
+    const first = await Promise.race([p1, p2]);
+    const other = first.m === model ? p2 : p1;
+    if (usable(first.r)) { usedModel = first.m; bookLoser(other); return first.r; }
+    const second = await other;
+    usedModel = second.m;
+    return second.r;
+  };
   // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
   let j = null;
   let code = "";
   for (let attempt = 1; attempt <= 2 && !code && !signal?.aborted; attempt++) {
     if (attempt === 2 && fallback) { usedModel = fallback; log(`test-first: ${model} gave no usable tests; ${fallback} writes them`); }
-    const r = attempt === 2 && fallback ? await claudeRun(argsFor(fallback), ask) : await run(args, ask);
+    const r = attempt === 2 && fallback ? await claudeRun(argsFor(fallback), ask) : await hedged();
     try {
       j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop());
     } catch {
@@ -904,10 +935,23 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
   // the strong model works more slowly (more context, more steps): its run gets extra time
-  const limitS = baseLimitS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
+  let limitS = baseLimitS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
   let timer;
-  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
+  let fireDeadline;
+  const triesStart = Date.now();
+  const deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
+  // the extra time is the strong model's: once it has finished without a pass (failed, stalled, capped), the others get
+  // the plain limit again -- on a real issue they waited 240 s more after flash had already stopped (Modal, 2026-10-15)
+  const dropStrongExtra = () => {
+    if (limitS === baseLimitS) return;
+    const strongLeft = queue.some((r) => strongSet.has(r.model)) || rungs.some((r) => strongSet.has(r.model) && pending.has(r.unit));
+    if (strongLeft) return;
+    limitS = baseLimitS;
+    clearTimeout(timer);
+    timer = setTimeout(() => fireDeadline({ timeout: true }), Math.max(0, baseLimitS * 1000 - (Date.now() - triesStart)));
+    timer.unref?.();
+  };
   let timedOut = false;
   const extraRuns = new Set();             // cross-check runs: cancelled with the rest when the time is up
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
@@ -935,6 +979,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     if (verdict) { winner = done; break; }
     if (ambiguous) break;
+    dropStrongExtra();
     // two models failing the SAME advance tests: the test is as likely wrong as both answers, and a third model rarely
     // rescues it (2 of 116 tasks in the A-vs-C runs) -- the session's model takes over now instead of at the time limit
     const fails = specFailures(done.result);
