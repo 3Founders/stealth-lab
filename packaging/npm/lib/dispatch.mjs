@@ -221,13 +221,32 @@ while not os.path.exists(f) and not os.path.exists(skip) and time.time() < end:
     time.sleep(0.5)
 if not os.path.exists(f):
     sys.exit(0)
-sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f]))
+sys.exit(run_inside(f, os.getcwd()))
+`;
+
+// The tests written for a task run from INSIDE the project -- copied into its own test folder (else its root), run there,
+// removed -- so the project's pytest config, plugins and conftest fixtures apply. Run from the specs folder they were
+// collected without them, and 22 of 27 sets of tests failed even with the real fix applied, many of them on that alone
+// ("invalid fixture loop scope", errors during collection -- pipeline survey, 2026-10-16).
+const RUN_INSIDE = `def run_inside(spec, cwd, name="test_zz_stealthlab_spec.py"):
+    import os, shutil, subprocess, sys
+    d = next((os.path.join(cwd, t) for t in ("tests", "test", "testing") if os.path.isdir(os.path.join(cwd, t))), cwd)
+    dest = os.path.join(d, name)
+    shutil.copyfile(spec, dest)
+    try:
+        return subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", dest], cwd=cwd)
+    finally:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
 `;
 
 // strict: the tests written for the task are the ONLY check (the project has no test command), so no tests = fail
 export function writeSpecRunner(dir, { strict = false } = {}) {
   const file = path.join(dir, "run_spec.py");
-  fs.writeFileSync(file, strict ? RUN_SPEC.replace("if not os.path.exists(f):\n    sys.exit(0)", "if not os.path.exists(f):\n    sys.exit(1)") : RUN_SPEC);
+  const body = `${RUN_INSIDE}\n${RUN_SPEC}`;
+  fs.writeFileSync(file, strict ? body.replace("if not os.path.exists(f):\n    sys.exit(0)", "if not os.path.exists(f):\n    sys.exit(1)") : body);
   return file;
 }
 
@@ -326,8 +345,10 @@ export function runAsync(cmd, args, { cwd, timeoutMs = 120000, signal = null } =
 }
 
 // tests for the task, run on the code as it is now (cwd: the project) -> pytest's exit code (0: all pass) or null
+// run inside the project, as the check does (RUN_INSIDE): a uniquely named copy in its test folder, removed after
 async function runPytestAsync(python, code, dir, cwd, signal) {
-  const f = path.join(dir, "test_spec_baseline.py");
+  const testDir = ["tests", "test", "testing"].map((t) => path.join(cwd, t)).find((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } }) || cwd;
+  const f = path.join(testDir, `test_zz_stealthlab_baseline_${process.pid}_${Date.now() % 100000}.py`);
   try { fs.writeFileSync(f, code); } catch { return null; }
   try {
     return await runAsync(python, ["-m", "pytest", "-q", "-p", "no:cacheprovider", f], { cwd, timeoutMs: 120000, signal });
