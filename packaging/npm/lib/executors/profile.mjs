@@ -84,9 +84,12 @@ export function normaliseProfile(name, raw) {
     no_system_role: flag(name, "no_system_role", raw.no_system_role) ?? false,
     // the model reads images (a GLM-V, say): tasks built on a screenshot may go to it, and it gets the image
     vision: flag(name, "vision", raw.vision) ?? false,
-    // the strongest cheap model (GLM-5.3-flash, say): it alone tries a task the brief calls large, starts in the first
-    // wave, and gets extra time (dispatch's STEALTHLAB_DISPATCH_STRONG_EXTRA_S)
+    // the strongest cheap model (GLM-5.3-flash, say): it alone tries a task the brief calls large, is never cut by the
+    // max-rungs limit, still gets its try after two small ones fail the same advance tests, and gets extra time
+    // (dispatch's STEALTHLAB_DISPATCH_STRONG_EXTRA_S). By default it is the last cheap try; first: true starts it in the
+    // first wave (a fast strong model loses nothing there)
     strong: flag(name, "strong", raw.strong) ?? false,
+    first: flag(name, "first", raw.first) ?? false,
   });
 }
 
