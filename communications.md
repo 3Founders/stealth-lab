@@ -343,3 +343,35 @@ Offline tests: `test_modal_series_offline.py` 58 passed. Not changed: the 168 s 
 
 **Next (owner):** decide the test-first login option above; then start the fresh run under a new name, e.g.
 `modal run experiments/abtest/modal_series.py --repos jsonargparse --max-issues 8 --run long-jsonargparse-v2`.
+
+
+---
+
+# Combined test build, update 3 (2026-10-15): the dry run on feat/ct-integration-3 (login via token pass-through, follow-ups, real backend keys)
+
+**Setup.** Branch `feat/ct-integration-3` (`4ee17b8` = Anuj's `feat/ct-integration-2` + one fix). The fix: `secrets --keys/--claude/--api` used Modal's `allow_existing=True`,
+which keeps the OLD values when the secret exists, so every earlier update silently did nothing (stealthlab-keys held only GENERAL_COMPUTE_API_KEY, so even the
+last run had no judge/embedding keys; now it has all but the optional JEV_MODEL). `create_secret` now deletes and recreates. Run:
+`modal run --detach experiments/abtest/modal_series.py --repos jsonargparse --max-issues 1 --turns 4 --run ct-jsonargparse-v2-dry` (new run name; arms in separate
+containers at the same time, the faster layout). The Claude token is the one in `claude-code-auth` (a container login test succeeded).
+
+**The brief's three checks (arm C):**
+1. The Sonnet test writer ran: `dispatch_costs.jsonl` has two `test-first` entries on `claude-sonnet-5-5` ($0.0248 turn 1, $0.0257 turn 2) and `hooks.log` has no
+   login/auth error lines. The token pass-through works.
+2. Cheap models were tried, every turn: gemma-4-31b-it, gpt-oss-120b, minimax-m2-7 and glm-5.3 (the last cheap try) failed or were cancelled; none passed.
+3. Every session had 2 user turns (vague opener, then the scripted follow-up, then "thanks"): A, C and C0 each.
+
+**Numbers, ONE issue (omni-us__jsonargparse-502), 2 turns, nothing to conclude from n = 1:**
+| | solved | total cost | of which Claude session | cheap models | test-first | wall time |
+|---|---|---|---|---|---|---|
+| A | yes | $0.387 | $0.387 | - | - | 58 s |
+| C | yes | $0.767 (+98%) | $0.528 | $0.238 | $0.051 | 907 s (464 + 438 per turn) |
+| C0 | yes | $0.758 | $0.398 | $0.360 | $0.045 | 937 s |
+Cheap delivered 0 of 2 turns in each of C and C0. Each turn waited the dispatch limit ("no cheap pass within 408 s; the session's model takes over") before Opus started.
+Includes: Claude Code's reported session cost, the open models' list-priced cost, the test-writer's cost. Does not include the server-side lookup (triage, embeddings).
+
+**What this says for Anuj's choice of cheap-model setup (one sample only).** With GLM-5.3 as the last cheap try the 408 s limit is spent on every turn and the cheap models'
+own tokens cost $0.24-0.36 per issue (more than the whole A session for this issue) without delivering. The earlier setup without GLM-5.3 spent about $0.0002-0.025 and 168 s.
+Whether GLM-5.3 delivers on other issues is not known from one issue. Not run: the 8-issue study (waits for Anuj's go and his choice of exec.json).
+
+**Also found:** local `main` had two commits duplicating origin's admin commits (same patch ids); `git pull --rebase --autostash` dropped them; main = origin/main = `b6dfba8`.
