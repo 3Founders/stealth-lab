@@ -307,6 +307,9 @@ def mcp_config(secrets: dict[str, str]) -> Path:
 
 LIMIT_WORDS = ("usage limit", "limit reached", "rate limit", "weekly limit", "5-hour limit", "out of extra usage",
                "session limit", "usage_limit_reached", "hit your")
+# the session could not log in (a wrong or expired token): Claude never ran
+AUTH_WORDS = ("Failed to authenticate", "Invalid bearer token", "Not logged in", "Please run /login",
+              "OAuth token has expired", "invalid x-api-key")
 
 
 def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log_path: Path,
@@ -630,6 +633,11 @@ def main() -> int:
                     return 4
             print(f"[{now()}] {task['task_id']} arm {arm} ...", flush=True)
             rec = run_one(task, arm, args.run, secrets, args.turns)
+            if any(w in str(rec.get("final") or "") for w in AUTH_WORDS):
+                # no login: the session never ran, so the record would be a fake "not solved" -- not written, run stops
+                print(f"Claude Code could not log in ({str(rec.get('final'))[:120]}): stopping, nothing recorded for this "
+                      "task. Fix the token (claude setup-token) and rerun the same command.", flush=True)
+                return 5
             with results.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec) + "\n")
             print(f"    {rec['status']} resolved={rec.get('resolved')} cost={rec.get('total_cost_usd')} "
