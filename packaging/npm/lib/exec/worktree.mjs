@@ -79,12 +79,14 @@ export async function workingTreeDiff(repo, env) {
   return git(["-C", repo, "diff", "--binary", "--no-color", "--no-ext-diff", "HEAD"], { env });
 }
 
-export async function createWorktree({ repo, commit, dir, patch, env }) {
+// extraPatches: applied in order after `patch` -- the accepted changes of the plan's earlier nodes (lib/dag_run.mjs), so a
+// node starts from them and its own diff (against the snapshot below) holds only its own change
+export async function createWorktree({ repo, commit, dir, patch, extraPatches = [], env }) {
   fs.mkdirSync(path.dirname(dir), { recursive: true, mode: 0o700 });
   if (fs.existsSync(dir)) throw new Error(`worktree path already exists: ${dir}`);
   await git(["-C", repo, "worktree", "add", "--detach", "--", dir, commit], { env });
-  if (patch && patch.length) {
-    await git(["-C", dir, "apply", "--binary", "--whitespace=nowarn", "-"], { env, input: patch });
+  for (const p of [patch, ...extraPatches]) {
+    if (p && p.length) await git(["-C", dir, "apply", "--binary", "--whitespace=nowarn", "-"], { env, input: p });
   }
   linkProjectDeps({ repo, dir, env });             // node_modules / venv of the project, linked (lib/exec/deps.mjs)
   return { dir, baseTree: await snapshotTree(dir, env) };

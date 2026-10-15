@@ -41,6 +41,7 @@ import { configDir } from "./config.mjs";
 import { logHook } from "./subagent_hook.mjs";
 import { autoTidy } from "./library_tidy.mjs";
 import { addEntry, codeWays, diffFromGit, ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
+import { wayStepsForEntry } from "./way_extract.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
 const SESSION_TTL_MS = 24 * 3600 * 1000;
@@ -300,7 +301,8 @@ export function recordLibraryEntry(s, { env = process.env, now = new Date(), git
   if (!last || last.verdict !== true || !last.command) return null;
   const diff = gitImpl ? diffFromGit(s.cwd, "HEAD", { gitImpl }) : diffFromGit(s.cwd);
   if (!diff.trim()) return null;                    // nothing changed: not a solved problem
-  const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null },
+  // the Way's steps from the diff (lib/way_extract.mjs): the shape a later, similar task is planned in
+  const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null, steps: wayStepsForEntry(diff) },
                          { now, ...(gitImpl ? { gitImpl } : {}) });
   s.library_added = entry.id;
   autoTidy(s.cwd, env);                              // an exact duplicate of an earlier entry is dropped, the newer one kept

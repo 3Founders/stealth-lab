@@ -27,6 +27,35 @@ export function renderDispatchRun({ task, loc, specFile, regressFile, python = "
   ].join("\n");
 }
 
+// A task done in parts (lib/dag_run.mjs): one NODE per part, its deps, the model that did it (or "session": yours).
+export function renderDagRun({ task, nodes, entry, interCheck, fullCheck }) {
+  const last = nodes.length;
+  return [
+    RUN_HEAD,
+    `# task: ${clean(task, 300)}`,
+    `# plan: from ${entry} (a similar fix already made here); parts with no deps between them can run in parallel`,
+    ...nodes.map((n, i) => `NODE|${n.id}|${n.status}|${clean(`The change in ${n.at.join(", ")}${n.gives?.length ? ` (past fix: ${n.gives.slice(0, 4).join(", ")})` : ""}`, 200)}` +
+      `|step=-|claims=-|deps=${n.deps.length ? n.deps.join(",") : "-"}|model=${clean(n.who || "session", 60)}|check=${i === last - 1 && fullCheck ? fullCheck : interCheck || "-"}`),
+    "",
+  ].join("\n");
+}
+
+export function writeDagRun(root, args) {
+  return writeRunText(root, renderDagRun(args));
+}
+
+function writeRunText(root, text) {
+  try {
+    const p = path.join(root, ".stealth", "run.md");
+    if (!fs.existsSync(path.dirname(p))) return false;
+    if (fs.existsSync(p) && !fs.readFileSync(p, "utf8").startsWith(RUN_HEAD)) return false;
+    fs.writeFileSync(p, text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // -> true when written; false when run.md is the planner's own (not written by dispatch) or .stealth is missing
 export function writeDispatchRun(root, args) {
   try {

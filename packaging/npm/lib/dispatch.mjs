@@ -21,7 +21,9 @@ import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { locate, renderForWriter, renderWhere } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
-import { writeDispatchRun } from "./dispatch_run.mjs";
+import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
+import { runDag } from "./dag_run.mjs";
+import { wayStepsForEntry } from "./way_extract.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
@@ -93,6 +95,10 @@ export function dispatchPolicy(env = process.env) {
     specBaseline: (env.STEALTHLAB_DISPATCH_SPEC_BASELINE || "on").toLowerCase() !== "off",
     // the project's pytest check: tests that already fail on the unchanged code do not fail an answer
     baselineCheck: (env.STEALTHLAB_DISPATCH_BASELINE_CHECK || "on").toLowerCase() !== "off",
+    // a task in parts (lib/dag_run.mjs): planned from the closest fix already made here; the accepted parts of an
+    // unfinished plan are applied for the session's model to continue from (STEALTHLAB_DISPATCH_DAG_PARTIAL=off: none)
+    dag: (env.STEALTHLAB_DISPATCH_DAG || "on").toLowerCase() !== "off",
+    dagPartialApply: (env.STEALTHLAB_DISPATCH_DAG_PARTIAL || "on").toLowerCase() !== "off",
     // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
     specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
@@ -928,6 +934,46 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     return ok;
   };
 
+  // a task in parts, planned from the closest fix already made here (lib/dag_run.mjs); no such fix -> whole, as before
+  if (policy.dag && !images.length) {
+    const py = pythonBin({ env });
+    // a part is checked by "no new failures": the project's check judged against the unchanged code, or with no check
+    // here, that the Python still compiles (the tests written for the whole task run on the parts together, at the end)
+    const interCheck = checkRun || `${py} -c "import compileall, sys; sys.exit(0 if compileall.compile_dir('.', quiet=1) else 1)"`;
+    let dagRes = null;
+    try {
+      dagRes = await runDag({ rt, root, payload, rawPayload, reply, loc, where, rungs, strongSet, policy, interCheck, fullCheck,
+        specDone, env, log, instanceKey: plan.instance_key, runShell: (cmd, o) => runShellCapture(cmd, { ...o, signal: specAbort.signal }),
+        undo: { enabled: undoEnabled(env) && !policy.ask,
+                create: (o) => createUndoPoint({ ...o, env }), finish: (p, o) => finishUndoPoint(p, { ...o, env }), discard: (p, o) => discardUndoPoint(p, { ...o, env }) } });
+    } catch (err) {
+      log(`dag: ${err.message}; the task goes whole`);
+    }
+    if (dagRes) {
+      specAbort.abort();
+      const runMd = writeDagRun(root, { task: rawPayload.prompt, nodes: dagRes.handled ? dagRes.dag.nodes : dagRes.partial.nodes,
+        entry: dagRes.handled ? dagRes.dag.entry : dagRes.partial.entry, interCheck, fullCheck });
+      if (!dagRes.handled) return { ...dagRes, spec, loc, runMd, remaining: plan.ladder || [] };
+      let entry = null, diff = "";
+      try {
+        const { promptTitle } = await import("./capture_hook.mjs");
+        diff = diffFromGit(root);
+        if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff,
+                                                  steps: wayStepsForEntry(diff) }).id;
+      } catch (err) { log(`dispatch: library entry not added (${err.message})`); }
+      const { explainChange } = await import("./explain.mjs");
+      const explanation = await explainChange({ request: rawPayload.prompt, diff, check: check || "tests written for this task", summary: "", env, fetchImpl, log });
+      const secs = Math.round((Date.now() - dispatchStart) / 1000);
+      const parts = dagRes.dag.nodes.length;
+      return { handled: true, dag: dagRes.dag, files: dagRes.files, tried: dagRes.tried, spec, loc, runMd, library_entry: entry, explanation,
+        model: dagRes.models, unit: `${dagRes.models}|dag`,
+        text: `Done in ${parts} parts by ${dagRes.models} in ${secs} s (StealthLab planned it from a similar fix made here and dispatched each part ` +
+          `before this session's model ran, $${(dagRes.cost_usd || 0).toFixed(4)}). All parts together passed ${checkLabel} in an isolated worktree ` +
+          `and the change is applied: ${dagRes.files.join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
+          (dagRes.undone ? " To put it back as it was: stealthlab-mcp undo." : "") + (explanation ? `\n\n${explanation}` : "") };
+    }
+  }
+
   const queue = [...rungs];
   const pending = new Map();               // unit -> promise of its finished run
   const width = policy.parallel ? Math.min(rungs.length, policy.maxParallel) : 1;
@@ -1082,7 +1128,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const { promptTitle } = await import("./capture_hook.mjs");
       diff = diffFromGit(root);
       if (diff.trim()) {
-        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff }).id;
+        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff, steps: wayStepsForEntry(diff) }).id;
         autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
       }
     } catch (err) {
@@ -1230,7 +1276,20 @@ export function triedNote(d) {
     return `StealthLab: ${d.notApplied.model} solved this and its check passed, but the change was NOT applied: you edited ` +
       `${d.notApplied.files.join(", ")} while it ran. Do the task yourself, starting from your current files; there is nothing to report.`;
   }
-  if (!d || d.handled || !d.tried?.length) return "";
+  if (!d || d.handled) return "";
+  if (d.partial) {
+    // the task was planned in parts from a similar fix made here; some were done by cheap models
+    const done = d.partial.nodes.filter((n) => n.status === "done");
+    const yours = d.partial.nodes.filter((n) => n.status !== "done");
+    const list = (ns) => ns.map((n) => `${n.id} (${n.at.join(", ")})`).join(", ");
+    return `StealthLab split this task into ${d.partial.nodes.length} parts, planned from a similar fix already made here (${d.partial.entry}). ` +
+      (done.length && d.partial.applied.length
+        ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; stealthlab-mcp undo removes them" : ""}. `
+        : "No part was applied. ") +
+      `Yours: ${list(yours)}. Finish the task from the code as it is now and check the whole of it` +
+      (d.runMd ? "; the plan is in .stealth/run.md." : ".") + handoffNote({ ...d, runMd: false });
+  }
+  if (!d.tried?.length) return "";
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
     (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +

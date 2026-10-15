@@ -352,7 +352,9 @@ export function linkKnowledge(lib) {
     }
     for (const p of e.procs || []) {
       if (p.way) continue;
-      const steps = (p.steps || []).map((st) => ({ order: st.order, kind: st.kind, do: st.do, check: st.check || null, extra: [] }));
+      // the step's at= / gives= / needs= carry over to the Way (they shape the plan; the id ignores them)
+      const steps = (p.steps || []).map((st) => ({ order: st.order, kind: st.kind, do: st.do, check: st.check || null,
+                                                   extra: (st.extra || []).filter((f) => /^(at|gives|needs)=/.test(f)) }));
       const id = wayIdFor(p.name, steps);
       if (!ways.has(id)) {
         const w = { id, name: p.name, goal: e.goal, p: p.p || null, v: 1, steps, extra: [] };
@@ -966,7 +968,9 @@ export function addEntry(root, opts, { gitImpl = git, now = new Date(), check = 
   const touched = diffPaths(diff);
   const shas = touched.length ? currentShas(root, touched, { gitImpl }) : new Map();
   const solution = diff ? `solutions/${id}.diff` : null;
-  const steps = (opts.steps || []).map((s, i) => ({ order: i + 1, kind: s.kind || "instruction", do: String(s.do || ""), check: s.check || null }));
+  // extra: the step's at= / gives= / needs= fields (lib/way_extract.mjs), already escaped k=v strings
+  const steps = (opts.steps || []).map((s, i) => ({ order: i + 1, kind: s.kind || "instruction", do: String(s.do || ""), check: s.check || null,
+                                                     ...(Array.isArray(s.extra) && s.extra.length ? { extra: s.extra.map(String) } : {}) }));
   if (opts.check && !steps.some((s) => s.check)) steps.push({ order: steps.length + 1, kind: "action", do: "Run the check", check: opts.check });
   const entry = {
     id, title, unit: opts.unit || ".", g: opts.g || null, outcome, status: "current", verified_at: verifiedAt,
