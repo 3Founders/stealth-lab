@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { dispatch, namedImages, specFailures, triedNote } from "../lib/dispatch.mjs";
+import { dispatch, namedImages, specFailures, triedNote, writeSpecTests } from "../lib/dispatch.mjs";
 import { preloadNamedFiles } from "../lib/agent/step_agent.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "gpt-oss-120b|stealth"] };
@@ -177,4 +177,84 @@ test("the strong cheap model is the last cheap try by default (never cut by max 
   const rt2 = stub(repo, fail);
   await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: { ...e, STEALTHLAB_DISPATCH_STRONG_FIRST: "on" }, runtime: rt2 });
   assert.equal(rt2.calls[0].model, "glm-5.3");
+});
+
+test("a strong profile with first: true starts in the first wave; two shared failures still leave the strong model its try", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true, first: true } } }));
+  const e = { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_FASTEST_FIRST: "off" };
+  const rt = stub(repo, { "glm-5.3-flash": ["verified", ""], "gemma-4-31b-it": ["failed", "x"], "minimax-m2-7": ["failed", "y"], "gpt-oss-120b": ["failed", "z"] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: e, runtime: rt });
+  assert.equal(rt.calls[0].model, "glm-5.3-flash", "first: true -> first in line");
+
+  // strong last (no first:) and the two small ones fail the same advance test: the third small one is skipped, the strong one runs and wins
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true } } }));
+  const rt2 = stub(repo, { "gemma-4-31b-it": ["failed", failTail("test_digits")], "minimax-m2-7": ["failed", failTail("test_digits")],
+                           "gpt-oss-120b": ["verified", ""], "glm-5.3-flash": ["verified", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: e, runtime: rt2 });
+  assert.equal(d.unit, "glm-5.3-flash|stealth");
+  assert.deepEqual(rt2.calls.map((c) => c.model), ["gemma-4-31b-it", "minimax-m2-7", "glm-5.3-flash"], "gpt-oss skipped, the strong one tried");
+
+  // the strong one fails the same test too: now the stop applies
+  const rt3 = stub(repo, { "gemma-4-31b-it": ["failed", failTail("test_digits")], "minimax-m2-7": ["failed", failTail("test_digits")],
+                           "gpt-oss-120b": ["verified", ""], "glm-5.3-flash": ["failed", failTail("test_digits")] });
+  const d3 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: e, runtime: rt3 });
+  assert.equal(d3.handled, false);
+  assert.equal(d3.sharedFail, "test_digits");
+});
+
+test("the cross-check counts against the cheap tries' time limit: a hung verifier does not hold the task", async () => {
+  const { env, repo } = setup();
+  const calls = [], cancelled = [];
+  const rt = { calls,
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) {
+      if (id === "r-1") return { run_id: id, state: "verified", cost_usd: 0.001, checks: [{ tail: "" }], diff: { worktree: repo, files: ["calc.py"] } };
+      return new Promise(() => {});                        // the verifier never finishes
+    },
+    async applyRun() { return { files: ["calc.py"] }; },
+    async cancelRun(id) { cancelled.push(id); } };
+  const t0 = Date.now();
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_CROSSCHECK: "strict", STEALTHLAB_DISPATCH_TIMEOUT_S: "10", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0",
+           STEALTHLAB_DISPATCH_FASTEST_FIRST: "off", STEALTHLAB_DISPATCH_MODEL_CAP: "off" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.ok(Date.now() - t0 < 40000, "ended near the limit, not when the verifier would have finished");
+  assert.ok(calls.length >= 2, "a cross-check run was started");
+  assert.ok(cancelled.includes("r-2"), "the hung cross-check run is cancelled");
+  assert.ok(d.tried.some((t) => /timed out while being checked/.test(t.state)));
+});
+
+test("test-first on an open model: a late or failed reply -> the fallback Claude model writes the tests", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "glm-5.3" } } }));
+  fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
+  const asked = [];
+  const runClaude = (args) => { asked.push(args[args.indexOf("--model") + 1]);
+    return asked.length === 1 ? { status: 1, stdout: "", stderr: "The operation was aborted due to timeout" }
+      : { stdout: JSON.stringify({ result: "```python\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```", total_cost_usd: 0.01 }) }; };
+  const e = { ...env, K: "k", STEALTHLAB_DISPATCH_TESTFIRST_MODEL: "glm-5.3" };
+  const spec = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env: e, runClaude });
+  assert.ok(spec?.file, "tests written by the fallback");
+  assert.deepEqual(asked, ["glm-5.3", "claude-sonnet-5-5"]);
+  assert.match(fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8"), /"model":"claude-sonnet-5-5"/);
+  asked.length = 0;
+  assert.equal(await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env: { ...e, STEALTHLAB_DISPATCH_TESTFIRST_FALLBACK: "off" },
+    runClaude: (args) => { asked.push(args[args.indexOf("--model") + 1]); return { status: 1, stdout: "" }; } }), null);
+  assert.deepEqual(asked, ["glm-5.3", "glm-5.3"], "fallback off: the open model twice, as before");
+});
+
+test("test-first: '# AMBIGUOUS: none' is not an ambiguity flag; a real one is", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
+  const reply = (first) => () => ({ stdout: JSON.stringify({ result: "```python\n" + first + "\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```", total_cost_usd: 0.01 }) });
+  for (const line of ["# AMBIGUOUS: none", "# AMBIGUOUS: None.", "# AMBIGUOUS: (none)", "# AMBIGUOUS: N/A"]) {
+    const spec = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude: reply(line) });
+    assert.equal(spec.ambiguous, undefined, line);
+  }
+  const real = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude: reply("# AMBIGUOUS: double could mean x*2 or x+x as strings") });
+  assert.match(real.ambiguous, /x\*2 or x\+x/);
 });

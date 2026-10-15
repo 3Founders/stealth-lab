@@ -6,7 +6,7 @@
         "gemma-4-31b-it",
         "gpt-oss-120b",
         "minimax-m2-7",
-        "glm-5.3"
+        "glm-5.3-flash"
       ]
     },
     "claude": {
@@ -46,9 +46,10 @@
       "output_per_mtok": 0.5,
       "vision": false,
       "request_extras": {
-        "reasoning_effort": "low"
+        "reasoning_effort": "high"
       },
-      "strong": false
+      "strong": true,
+      "first": true
     },
     "glm-5.3": {
       "model_id": "glm-5.3",
@@ -59,7 +60,7 @@
       "request_extras": {
         "reasoning_effort": "high"
       },
-      "strong": true
+      "strong": false
     }
   },
   "max_concurrent_runs": 2

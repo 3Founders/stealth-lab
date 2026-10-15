@@ -243,15 +243,24 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     "Write the acceptance tests for this task. Reply with only the Python test file.";
   // the prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that would cut an argument at
   // the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell
-  const run = runClaude || (openProfile ? (_args, input) => runOpenWriter(openProfile, env, input, signal)
-    : (args, input) => runClaudeAsync(env, args, input, signal));
-  const args = ["-p", "--model", model, "--system-prompt", SPEC_SYSTEM,
+  // an open writer gets STEALTHLAB_DISPATCH_TESTFIRST_OPEN_TIMEOUT_S (90 s); when it fails or is late, the second attempt
+  // goes to STEALTHLAB_DISPATCH_TESTFIRST_FALLBACK (Sonnet; "off": the open model again). GLM-5.3 at high reasoning took
+  // over 180 s twice on a task with a large schema, and a task without tests is checked far less well (2026-10-15).
+  const openTimeoutS = Math.max(10, Number(env.STEALTHLAB_DISPATCH_TESTFIRST_OPEN_TIMEOUT_S || 90));
+  const fbRaw = String(env.STEALTHLAB_DISPATCH_TESTFIRST_FALLBACK ?? "claude-sonnet-5-5").trim();
+  const fallback = openProfile && fbRaw && fbRaw.toLowerCase() !== "off" && fbRaw.includes("claude") ? fbRaw : null;
+  const claudeRun = runClaude || ((a, input) => runClaudeAsync(env, a, input, signal));
+  const run = openProfile && !runClaude ? (_args, input) => runOpenWriter(openProfile, env, input, signal, openTimeoutS) : claudeRun;
+  const argsFor = (m) => ["-p", "--model", m, "--system-prompt", SPEC_SYSTEM,
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
+  const args = argsFor(model);
+  let usedModel = model;
   // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
   let j = null;
   let code = "";
   for (let attempt = 1; attempt <= 2 && !code && !signal?.aborted; attempt++) {
-    const r = await run(args, ask);
+    if (attempt === 2 && fallback) { usedModel = fallback; log(`test-first: ${model} gave no usable tests; ${fallback} writes them`); }
+    const r = attempt === 2 && fallback ? await claudeRun(argsFor(fallback), ask) : await run(args, ask);
     try {
       j = JSON.parse(String(r.stdout || "").trim().split(/\r?\n/).pop());
     } catch {
@@ -278,7 +287,7 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
   try {
     fs.appendFileSync(path.join(path.dirname(path.dirname(out)), "dispatch_costs.jsonl"),
-      JSON.stringify({ at: new Date().toISOString(), what: "test-first", model, cost_usd: cost }) + "\n");
+      JSON.stringify({ at: new Date().toISOString(), what: "test-first", model: usedModel, cost_usd: cost }) + "\n");
   } catch { /* the ledger is best-effort */ }
   const bad = pythonSyntaxError(tmp);
   if (bad) {
@@ -287,7 +296,9 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   }
   fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
   const amb = /^#\s*AMBIGUOUS:\s*(.+)$/m.exec(code);
-  return { file, cost_usd: cost, ...(amb ? { ambiguous: amb[1].trim().slice(0, 300) } : {}) };
+  // "# AMBIGUOUS: none" (a writer that fills in the line anyway) is not a flag: it stopped the cheap tries on a clear task
+  const ambiguous = amb && !/^(none|no|n\/?a|not ambiguous|nothing)[\s.)]*$/i.test(amb[1].trim().replace(/^[(\[]/, "")) ? amb[1].trim().slice(0, 300) : null;
+  return { file, cost_usd: cost, ...(ambiguous ? { ambiguous } : {}) };
 }
 
 // An open model's exec.json profile with an OpenAI-compatible endpoint, or null.
@@ -302,14 +313,14 @@ export function openWriterProfile(env, model) {
 
 // The test writer on an open model: one chat call, the same instructions and request; -> what runClaudeAsync returns
 // ({status, stdout: Claude Code's JSON line}), so the rest of writeSpecTests is the same for both.
-async function runOpenWriter(profile, env, input, signal) {
+async function runOpenWriter(profile, env, input, signal, timeoutS = 180) {
   try {
     const messages = profile.no_system_role
       ? [{ role: "user", content: `${SPEC_SYSTEM}\n\n${input}` }]
       : [{ role: "system", content: SPEC_SYSTEM }, { role: "user", content: input }];
     const res = await fetch(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST", redirect: "error",
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutS * 1000)]) : AbortSignal.timeout(timeoutS * 1000),
       headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
       body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 12000, temperature: 0, ...(profile.request_extras || {}) }),
     });
@@ -511,6 +522,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // an image task keeps every candidate until the ones that can see are picked (a max-3 cut first dropped GLM-V)
   const seeOnly = images.length > 0 && !policy.vision;
   const strongSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set(Object.keys(ps).filter((k) => ps[k]?.strong)); } catch { return new Set(); } })();
+  // a strong profile with "first": true starts in the first wave -- a fast strong model (glm-5.3-flash) loses nothing there
+  const strongFirstSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set([...strongSet].filter((k) => ps[k]?.first === true)); } catch { return new Set(); } })();
   let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: seeOnly ? 16 : policy.maxRungs + strongSet.size, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
@@ -528,12 +541,13 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the strong cheap model (profile strong: true) is never cut by the max-rungs limit. By default it is the LAST cheap
   // try: the small models keep their slots and their cheap wins, and the strong one starts when one of them is done
   // without a pass (first, it took the slot a faster small model used to win in: 17 -> 15 cheap wins on 20 tasks).
-  // STEALTHLAB_DISPATCH_STRONG_FIRST=on starts it in the first wave instead.
+  // STEALTHLAB_DISPATCH_STRONG_FIRST=on, or "first": true on its profile, starts it in the first wave instead.
   {
     // an image task is cut to max-rungs only after the models that can see are picked (below)
     const weak = rungs.filter((r) => !strongSet.has(r.model)).slice(0, seeOnly ? 16 : policy.maxRungs);
     const strong = rungs.filter((r) => strongSet.has(r.model));
-    rungs = policy.strongFirst ? [...strong, ...weak] : [...weak, ...strong];
+    const first = policy.strongFirst ? strong : strong.filter((r) => strongFirstSet.has(r.model));
+    rungs = [...first, ...weak, ...strong.filter((r) => !first.includes(r))];
   }
   if (images.length && !policy.vision) {
     const profiles = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
@@ -657,7 +671,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // are weaker and, on code that is not a standalone module, can fail a correct answer. The cross-check covers only
     // a task test-first could not write tests for.
     if (ok && policy.crosscheck !== "off" && !spec) {
-      cross = await crossCheck({ rt, rung, result, rungs, env, payload, root, check, scope: policy.scope, log });
+      cross = await crossCheck({ rt, rung, result, rungs, env, payload, root, check, scope: policy.scope, log,
+                                 onStart: (id) => extraRuns.add(id) });
       if (cross.verdict === "disagree") ok = false;
       if (cross.verdict === "inconclusive" && policy.crosscheck === "strict") {
         // nothing could confirm the answer: not delivered, and not counted against the model either
@@ -691,6 +706,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
   let timedOut = false;
+  const extraRuns = new Set();             // cross-check runs: cancelled with the rest when the time is up
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
   let sharedFail = null;
   let ambiguous = null;                    // the test writer's note that the task reads two ways (stops the cheap tries)
@@ -706,12 +722,27 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (done.timeout) { timedOut = true; break; }
     pending.delete(done.rung.unit);
     running.delete(done.rung.unit);
-    if (await judge(done)) { winner = done; break; }
+    // the judging (waiting for the advance tests, a cross-check run) counts against the same time limit: a cross-check
+    // stuck in a model call held a task for 18 minutes past a 394 s limit (2026-10-15)
+    const verdict = await Promise.race([judge(done), deadline]);
+    if (verdict?.timeout) {
+      timedOut = true;
+      tried.push({ unit: done.rung.unit, state: "timed out while being checked", run_id: done.run_id ?? null, cost_usd: done.result?.cost_usd ?? null });
+      break;
+    }
+    if (verdict) { winner = done; break; }
     if (ambiguous) break;
     // two models failing the SAME advance tests: the test is as likely wrong as both answers, and a third model rarely
     // rescues it (2 of 116 tasks in the A-vs-C runs) -- the session's model takes over now instead of at the time limit
     const fails = specFailures(done.result);
-    if (fails && policy.sharedFailStop && seenFails.includes(fails)) { sharedFail = fails; break; }
+    if (fails && policy.sharedFailStop && seenFails.includes(fails)) {
+      // the strong cheap model still gets its try: the small ones queued are skipped, and the stop waits for the strong one
+      const strongLeft = queue.some((r) => strongSet.has(r.model)) || rungs.some((r) => strongSet.has(r.model) && pending.has(r.unit));
+      if (!strongLeft) { sharedFail = fails; break; }
+      for (const r of queue.filter((x) => !strongSet.has(x.model))) tried.push({ unit: r.unit, state: "skipped (two answers failed the same advance tests)" });
+      queue.splice(0, queue.length, ...queue.filter((x) => strongSet.has(x.model)));
+      log(`dispatch: two cheap answers failed the same advance tests (${fails}); the strong cheap model still tries`);
+    }
     if (fails) seenFails.push(fails);
   }
   clearTimeout(timer);
@@ -734,6 +765,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (timedOut) {
     // no pass in time: the runs still going are cancelled -- not counted against their models -- and the rest skipped
     log(`dispatch: no cheap pass within ${limitS} s; the session's model takes over`);
+    for (const id of extraRuns) try { await settleWithin(rt.cancelRun(id), SETTLE_MS); } catch { /* best effort */ }
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
       if (runId) try { await settleWithin(rt.cancelRun(runId), SETTLE_MS); } catch { /* best effort */ }
@@ -892,7 +924,7 @@ function pytestRun(cwd, args, timeoutMs = 300000) {
   return { status: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
 }
 
-export async function crossCheck({ rt, rung, result, rungs, env, payload, root, check, scope, log = () => {} }) {
+export async function crossCheck({ rt, rung, result, rungs, env, payload, root, check, scope, log = () => {}, onStart = () => {} }) {
   if (!/pytest/.test(check)) return { verdict: "inconclusive", reason: "not a pytest check" };
   const verifier = rungs.find((r) => r.model !== rung.model && r.executor !== "claude")
     || (() => {
@@ -916,6 +948,7 @@ export async function crossCheck({ rt, rung, result, rungs, env, payload, root, 
       task: taskText(`${payload.prompt}\n\nAlso write 3-6 extra pytest tests in ${EXTRA_TESTS} for behaviour this task ` +
         "describes or implies, especially edge cases the existing check may miss: boundary values, negative, empty " +
         "or invalid input, exact expected outputs, errors that should be raised. Keep the existing tests as they are.") });
+    onStart(started.run_id);
     do { v = await rt.runResult(started.run_id, 55); } while (!TERMINAL.has(v?.state));
   } catch (err) {
     log(`cross-check: ${err.message}`);
