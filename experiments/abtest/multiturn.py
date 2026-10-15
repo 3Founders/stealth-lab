@@ -67,7 +67,7 @@ def safe(name: str) -> str:
 
 # ---------------------------------------------------------------- the model behind the opener and the user
 
-def zai_llm(key: str, *, profile: str = LLM_PROFILE, config: Path = HERE / "exec.json", retries: int = 3,
+def zai_llm(key: str, *, profile: str = LLM_PROFILE, config: Path = HERE / "exec.json", retries: int = 8,
             timeout: int = 120, max_tokens: int = 700) -> Llm:
     """An `Llm` over the OpenAI-style chat endpoint of an exec.json profile. The key is passed in (the runner reads it
     from backend/.env by name); it is only ever sent as the Authorization header, never logged or put in an error."""
@@ -93,6 +93,13 @@ def zai_llm(key: str, *, profile: str = LLM_PROFILE, config: Path = HERE / "exec
                 last = f"HTTP {e.code}"
                 if e.code not in (429, 500, 502, 503, 504):
                     break
+                if e.code == 429:                      # a rate limit is waited out: the provider's own Retry-After, else a growing pause
+                    try:
+                        wait = float((getattr(e, "headers", None) or {}).get("Retry-After") or 0)
+                    except (TypeError, ValueError):
+                        wait = 0
+                    time.sleep(min(90, wait) if wait > 0 else min(60, 8 * (attempt + 1)))
+                    continue
             except Exception as e:  # noqa: BLE001 -- timeouts, resets: retried
                 last = type(e).__name__
             time.sleep(2 * (attempt + 1))

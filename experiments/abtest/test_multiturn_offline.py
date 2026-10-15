@@ -447,3 +447,25 @@ def test_every_task_gets_at_least_one_followup_by_default(tmp_path, monkeypatch)
     assert [c[0] for c in calls][1:] == ["it also breaks on empty input"], "the first follow-up, word for word from the script"
     assert [t["user_kind"] for t in out["turn_log"]] == ["opener", "followup"]
     assert out["user_turns"] == 2 and out["ended_by"] == "thanks"
+
+
+def test_a_rate_limit_is_waited_out_with_the_providers_retry_after_and_a_growing_pause_otherwise(monkeypatch):
+    sleeps, answers = [], []
+    ok = Resp({"choices": [{"message": {"content": "fine"}}]})
+
+    class H(dict):
+        pass
+
+    def limited(retry_after):
+        return multiturn.urllib.error.HTTPError("u", 429, "slow", H({"Retry-After": retry_after}) if retry_after else H(), None)
+
+    answers[:] = [limited("7"), limited(None), limited(None), ok]
+    monkeypatch.setattr(multiturn.urllib.request, "urlopen", lambda req, timeout: (_ for _ in ()).throw(answers.pop(0)) if isinstance(answers[0], Exception) else answers.pop(0))
+    monkeypatch.setattr(multiturn.time, "sleep", lambda s: sleeps.append(s))
+    assert multiturn.zai_llm("k")("s", "u") == "fine"
+    assert sleeps == [7.0, 16, 24], "the provider's Retry-After first, then a pause that grows with each attempt"
+    answers[:] = [limited(None)] * 8
+    sleeps.clear()
+    with pytest.raises(RuntimeError, match="HTTP 429") as e:
+        multiturn.zai_llm("SECRET")("s", "u")
+    assert len(sleeps) == 8 and "SECRET" not in str(e.value), "eight attempts, then a clear error that never contains the key"
