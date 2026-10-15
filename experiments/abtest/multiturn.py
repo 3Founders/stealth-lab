@@ -41,6 +41,7 @@ from typing import Callable
 
 HERE = Path(__file__).resolve().parent
 MAX_TURNS = 4                       # user turns in a session, the opener included
+MIN_FOLLOWUPS = max(0, int(os.environ.get("ABTEST_MIN_FOLLOWUPS", "1")))
 SEED = 20261014                     # written into the prompts: the model is asked at temperature 0 and the result cached
 LLM_PROFILE = "glm-5.3-flash"       # a profile of exec.json (base url, model id, key variable name, extras)
 OPENER_WORDS = (3, 60)
@@ -121,7 +122,7 @@ OPENER_SYSTEM = (
     "sentences (under 40 words); no file names unless the issue itself names them; it may say 'the parser' or 'that "
     "error' instead of a name; it keeps the ONE fact needed to find the problem; it drops the reproduction steps, code, "
     "tracebacks and the expected/actual layout; it never mentions tests or how to fix it; it is not a copy of the "
-    "issue's sentences. Rules for the follow-ups: up to 3 messages of under 25 words, each adding ONE detail from the "
+    "issue's sentences. Rules for the follow-ups: 1 to 3 messages (at least one) of under 25 words, each adding ONE detail from the "
     "issue, in the order a person would think of them; never a patch, never the tests. Reply with JSON only: "
     '{"opener": "...", "must_keep": "the one fact the opener keeps", "followups": ["...", "..."]}.')
 
@@ -236,6 +237,10 @@ class SimUser:
                 text = self.followups[sent]       # the script's words, never the model's
             else:
                 action = "done"
+        # every task gets at least MIN_FOLLOWUPS follow-ups (ABTEST_MIN_FOLLOWUPS, default 1): a session that ended at the
+        # first "done" never tested whether a later message that refers back ("now also...") is understood
+        if action == "done" and sent < MIN_FOLLOWUPS and sent < len(self.followups):
+            action, text = "followup", self.followups[sent]
         if action == "answer" and not text:
             text = "I don't have more detail than what I wrote."
         if action == "done":

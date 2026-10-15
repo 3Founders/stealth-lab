@@ -21,6 +21,13 @@ import multiturn  # noqa: E402
 import runner  # noqa: E402
 import series_toy_task as toy  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _no_minimum_followups(monkeypatch):
+    """These tests pin the plain rule (a "done" ends the session); the default minimum of one follow-up is tested below."""
+    monkeypatch.setattr(multiturn, "MIN_FOLLOWUPS", 0)
+
+
 OPENER = "the slug thing drops digits, can you look"
 GOOD = {
     "slugify": '''def slugify(text):
@@ -430,3 +437,13 @@ def test_turns_flag_dry_run_and_checks(sandbox, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["runner.py", "--run", "d", "--series", "series_toy_task", "--turns", bad])
         with pytest.raises(SystemExit, match="--turns is 1-4"):
             runner.main()
+
+
+def test_every_task_gets_at_least_one_followup_by_default(tmp_path, monkeypatch):
+    """ABTEST_MIN_FOLLOWUPS (default 1): an assistant that is done at once still gets the first scripted follow-up, so a
+    later message that refers back is always tested; after it, "done" ends the session as before."""
+    monkeypatch.setattr(multiturn, "MIN_FOLLOWUPS", 1)
+    out, calls = session(tmp_path, [turn("Fixed: added it.", 0.1), turn("Fixed the empty input too.", 0.1)])
+    assert [c[0] for c in calls][1:] == ["it also breaks on empty input"], "the first follow-up, word for word from the script"
+    assert [t["user_kind"] for t in out["turn_log"]] == ["opener", "followup"]
+    assert out["user_turns"] == 2 and out["ended_by"] == "thanks"

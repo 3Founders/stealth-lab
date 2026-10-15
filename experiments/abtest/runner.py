@@ -273,6 +273,9 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
                if os.environ.get("ABTEST_GC_MIN_TOKENS") else {}),
             "STEALTHLAB_EXEC_WORKTREE_ROOT": str(LOCAL / "worktrees"),
             "GENERAL_COMPUTE_API_KEY": secrets["gc"],
+            # Claude Code removes CLAUDE_CODE_OAUTH_TOKEN from its hooks' environment; StealthLab hands this copy to the
+            # claude processes its hooks start (test-first writer, audit, page judge) -- packaging/npm claudeChildEnv
+            **({"STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN": env["CLAUDE_CODE_OAUTH_TOKEN"]} if env.get("CLAUDE_CODE_OAUTH_TOKEN") else {}),
             # z.ai (GLM) for the cheap rungs and an open-model test writer, when backend/.env has it
             **({"Z_AI_KEY": secrets["zai"]} if secrets.get("zai") else {}),
         })
