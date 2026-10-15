@@ -326,15 +326,24 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
   } catch (err) {
     logHook(env, "capture-stop", `library entry not added (${err.message})`);
   }
-  if (!hasToken) return { status: "no-token", ...(added ? { library_entry: added } : {}) };
+  // the new entry's general Goal and Way (lib/way_describe.mjs): a cheap call, in the detached worker, token or not
+  const describe = added ? { cwd: s.cwd, id: added, task: s.title } : null;
+  const writeJob = (body) => {
+    const job = path.join(jobsDir(env), `${Date.now()}-${crypto.randomUUID()}.json`);
+    fs.mkdirSync(path.dirname(job), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(job, JSON.stringify(body), { mode: 0o600 });
+    return job;
+  };
+  if (!hasToken) {
+    if (describe) spawnWorker(writeJob({ describe }), env);
+    return { status: "no-token", ...(added ? { library_entry: added } : {}) };
+  }
   if (!s) return { status: "no-lookup" };
   const report = buildReport(s, { sessionId: payload.session_id, model });
   if (!report && !added) return { status: "nothing-to-report" };
   if (report) s.reported = true;
   writeSession(file, s);
-  const job = path.join(jobsDir(env), `${Date.now()}-${crypto.randomUUID()}.json`);
-  fs.mkdirSync(path.dirname(job), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(job, JSON.stringify({ ...(report ? { report } : {}), ...(added ? { code_ways: s.cwd } : {}) }), { mode: 0o600 });
+  const job = writeJob({ ...(report ? { report } : {}), ...(added ? { code_ways: s.cwd, describe } : {}) });
   spawnWorker(job, env);
   return { status: "detached", ...(report ? { report } : {}), ...(added ? { library_entry: added } : {}) };
 }
@@ -357,6 +366,19 @@ export async function runCaptureWorker(file, { env = process.env, report } = {})
       logHook(env, "capture-stop", `reported=${Boolean(r?.reported)} queued=${Boolean(r?.queued)} accepted=${job.report.accepted}`);
     } catch (err) {
       logHook(env, "capture-stop", `report failed (${err.message})`);
+    }
+  }
+  if (job.describe) {
+    // first the general Goal and Way, so the semantic codes below are made for the Way that stays
+    try {
+      const { describeEntry } = await import("./way_describe.mjs");
+      const sol = path.join(job.describe.cwd, ".stealth", "library", "solutions", `${job.describe.id}.diff`);
+      const diff = fs.existsSync(sol) ? fs.readFileSync(sol, "utf8") : "";
+      const ok = await Promise.race([describeEntry({ root: job.describe.cwd, id: job.describe.id, task: job.describe.task, diff, env,
+        log: (m) => logHook(env, "capture-stop", m) }), timer()]);
+      if (!ok) logHook(env, "capture-stop", "way not described (the steps keep their mechanical wording)");
+    } catch (err) {
+      logHook(env, "capture-stop", `way not described (${err.message})`);
     }
   }
   if (job.code_ways) {

@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { locate, renderForWriter, renderWhere } from "./locate.mjs";
@@ -24,6 +25,7 @@ import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
 import { runDag } from "./dag_run.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
+import { describeEntry } from "./way_describe.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
@@ -962,7 +964,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
                                                   steps: wayStepsForEntry(diff) }).id;
       } catch (err) { log(`dispatch: library entry not added (${err.message})`); }
       const { explainChange } = await import("./explain.mjs");
-      const explanation = await explainChange({ request: rawPayload.prompt, diff, check: check || "tests written for this task", summary: "", env, fetchImpl, log });
+      const [explanation] = await Promise.all([
+        explainChange({ request: rawPayload.prompt, diff, check: check || "tests written for this task", summary: "", env, fetchImpl, log }),
+        entry ? describeEntry({ root, id: entry, task: rawPayload.prompt, diff, env, fetchImpl, log }) : null]);
       const secs = Math.round((Date.now() - dispatchStart) / 1000);
       const parts = dagRes.dag.nodes.length;
       return { handled: true, dag: dagRes.dag, files: dagRes.files, tried: dagRes.tried, spec, loc, runMd, library_entry: entry, explanation,
@@ -1159,7 +1163,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     const cost = typeof result.cost_usd === "number" ? `, $${result.cost_usd.toFixed(4)}` : "";
     // what the user reads: a short explanation by a cheap model (started above), never the session's model
-    const explanation = await explaining;
+    // the entry in the global ingestion's shape: a general Goal and Way with parameters (lib/way_describe.mjs)
+    const [explanation] = await Promise.all([explaining,
+      entry ? describeEntry({ root, id: entry, task: rawPayload.prompt, diff, env, fetchImpl, log }) : null]);
     const secs = Math.round((Date.now() - dispatchStart) / 1000);
     recordArea(root, area, true);
     writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), winner: rung.model, tried });
@@ -1280,14 +1286,19 @@ export function triedNote(d) {
   if (d.partial) {
     // the task was planned in parts from a similar fix made here; some were done by cheap models
     const done = d.partial.nodes.filter((n) => n.status === "done");
-    const yours = d.partial.nodes.filter((n) => n.status !== "done");
+    const yours = d.partial.nodes.filter((n) => n.status === "ready");
+    const waiting = d.partial.nodes.filter((n) => n.status === "waiting");
     const list = (ns) => ns.map((n) => `${n.id} (${n.at.join(", ")})`).join(", ");
     return `StealthLab split this task into ${d.partial.nodes.length} parts, planned from a similar fix already made here (${d.partial.entry}). ` +
       (done.length && d.partial.applied.length
         ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; stealthlab-mcp undo removes them" : ""}. `
         : "No part was applied. ") +
-      `Yours: ${list(yours)}. Finish the task from the code as it is now and check the whole of it` +
-      (d.runMd ? "; the plan is in .stealth/run.md." : ".") + handoffNote({ ...d, runMd: false });
+      `Yours: ${list(yours)}.` +
+      (waiting.length && d.partial.resumable
+        ? ` Do only your part; then run \`${selfCommand()} dag continue\`: it checks your part, has cheap models do ${list(waiting)}, ` +
+          "and runs the full check. Finish whatever it reports as still yours."
+        : " Finish the task from the code as it is now and check the whole of it.") +
+      (d.runMd ? " The plan is in .stealth/run.md." : "") + handoffNote({ ...d, runMd: false });
   }
   if (!d.tried?.length) return "";
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
@@ -1296,6 +1307,12 @@ export function triedNote(d) {
                     "themselves be wrong, so judge the task from its own words." : "") +
     (d.ambiguous ? ` The task may be read two ways (${d.ambiguous}); settle which one is meant before answering.` : "") +
     handoffNote(d);
+}
+
+// this StealthLab's own command line, runnable from the session's shell whether or not stealthlab-mcp is on its PATH
+export function selfCommand() {
+  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+  return `node "${bin}"`;
 }
 
 // What the cheap tries found that saves the session's model its own search: where the task likely is, and tests written

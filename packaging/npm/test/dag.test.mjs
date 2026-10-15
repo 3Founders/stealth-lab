@@ -206,3 +206,89 @@ test("a part the cheap models cannot do: the done parts are applied, the session
     runtime: stubRt({ p1: off.p1, p2: off.p2 }, { p1: "failed", p2: "failed" }) });
   assert.equal(d2.partial, undefined, "switch off: the task goes whole, as before");
 });
+
+// ------------------------------------------------------------------ general Goals and Ways (lib/way_describe.mjs)
+
+import { describeEntry, parseDescription } from "../lib/way_describe.mjs";
+
+test("parseDescription: one step per step given, slots and invariants clipped; anything else is no description", () => {
+  const ok = parseDescription('sure: {"goal":"Support a new SQL function","way":"expression, parse, generate","slots":{"function":"ARRAY_FILTER"},' +
+    '"steps":["Add the {function} expression class","Parse {function}","Generate {function}"],"invariants":["other dialects unchanged"]}', 3);
+  assert.equal(ok.goal, "Support a new SQL function");
+  assert.deepEqual(ok.slots, { function: "ARRAY_FILTER" });
+  assert.equal(parseDescription('{"goal":"x","steps":["a"]}', 3), null, "wrong number of steps");
+  assert.equal(parseDescription("not json", 1), null);
+});
+
+test("two fixes of the same kind, described: one general Goal, one Way with {slot} steps, each fix keeping its own values", async () => {
+  const repo = gitRepo({ "pkg/expressions.py": "class Expression:\n    pass\n" });
+  const reply = (fn) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+    goal: "Support a new SQL function", way: "Expression class, then parser and generator", slots: { function: fn },
+    steps: ["Add the {function} expression class", "Parse {function} into its expression", "Generate SQL for {function}"],
+    invariants: ["existing functions unchanged"] }) } }] }) });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
+  const env = { STEALTHLAB_HOME: home, K: "k" };
+  const second = PAST.replace(/ArrayFilter/g, "ArraySlice").replace(/FILTER/g, "SLICE");
+  for (const [diff, fn] of [[PAST, "ARRAY_FILTER"], [second, "ARRAY_SLICE"]]) {
+    const e = addEntry(repo, { title: `support ${fn}`, check: "true", observed: true, diff, steps: wayStepsForEntry(diff) });
+    assert.equal(await describeEntry({ root: repo, id: e.id, task: `support ${fn}`, diff, env, fetchImpl: reply(fn) }), true);
+  }
+  const lib = loadLibrary(repo);
+  assert.equal(lib.goals.length, 1, "one general Goal for both");
+  assert.equal(lib.goals[0].title, "Support a new SQL function");
+  assert.equal(lib.ways.length, 1, "one Way: the same worded steps");
+  assert.equal(lib.ways[0].steps[0].do, "Add the {function} expression class");
+  assert.ok(lib.ways[0].extra.includes("slots=function") && lib.ways[0].extra.some((f) => f.startsWith("inv=")));
+  assert.deepEqual(lib.entries.map((e) => e.procs[0].extra.find((f) => f.startsWith("slots="))).sort(), ["slots=function:ARRAY_FILTER", "slots=function:ARRAY_SLICE"]);
+  assert.deepEqual(readStepExtras(lib.ways[0].steps[1].extra).needs, ["ArrayFilter"], "the steps keep where they are and what they need");
+  // the plan words each part with the Way's step and names the parameters
+  const plan = planFromLibrary({ root: repo, reply: {}, loc: { files: ["pkg/parser.py"] } });
+  const t = nodeTask({ task: "support ARRAY_SORT", node: plan.dag.nodes[1], total: 3, entry: plan.entry, diff: plan.diff, slots: plan.slots });
+  assert.match(t, /This part: Parse \{function\} into its expression -- in pkg\/parser\.py/);
+  assert.match(t, /\{function\} was ARRAY_(FILTER|SLICE); find their values for this task/);
+});
+
+// ------------------------------------------------------------------ after the session's part (stealthlab-mcp dag continue)
+
+import { continueDag, loadDagState } from "../lib/dag_run.mjs";
+import { recordArea } from "../lib/areas.mjs";
+import { runShellCapture } from "../lib/dispatch.mjs";
+
+test("a part for the session, then cheap parts after it: handed over, then `dag continue` checks yours and does the rest", async () => {
+  const { repo, p1, p2 } = sliceRepo();
+  for (let i = 0; i < 3; i++) recordArea(repo, "pkg/expressions.py", false);       // cheap models keep losing there: yours
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
+  const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+                             env: { ...env(home), STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.deepEqual(d.partial.nodes.map((n) => [n.id, n.status]), [["N-1", "ready"], ["N-2", "waiting"]]);
+  assert.equal(rt.calls.length, 0, "nothing ran yet: the first part is the session's, the second waits for it");
+  const note = triedNote(d);
+  assert.match(note, /Yours: N-1 \(pkg\/expressions\.py\)/);
+  assert.match(note, /Do only your part; then run `node "[^`]*stealthlab-mcp\.mjs" dag continue`[^.]*has cheap models do N-2 \(pkg\/parser\.py\)/);
+  assert.ok(loadDagState(repo));
+  // the session does its part
+  execFileSync("git", ["-C", repo, "apply", "-"], { input: p1 });
+  const out = await continueDag({ root: repo, env: env(home), rt, runShell: runShellCapture, undo: { enabled: false } });
+  assert.equal(out.ok, true, out.lines.join("\n"));
+  assert.match(out.lines.join("\n"), /Your part \(N-1\) passes[\s\S]*N-2 \(pkg\/parser\.py\): done by gemma-4-31b-it and applied[\s\S]*full check passes/);
+  assert.match(fs.readFileSync(path.join(repo, "pkg", "parser.py"), "utf8"), /ArraySlice\(\) if name == "SLICE"/);
+  assert.equal(loadDagState(repo), null, "the plan is finished: its state is gone");
+  assert.match(rt.calls[0].task, /Already done and in the code: N-1 in pkg\/expressions\.py/);
+});
+
+test("dag continue refuses to go on while the session's part does not pass", async () => {
+  const { repo, p1, p2 } = sliceRepo();
+  for (let i = 0; i < 3; i++) recordArea(repo, "pkg/expressions.py", false);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
+  const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
+  await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+                   env: { ...env(home), STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt });
+  fs.writeFileSync(path.join(repo, "pkg", "expressions.py"), "class Expression(:\n");      // a broken part
+  const out = await continueDag({ root: repo, env: env(home), rt, runShell: runShellCapture, undo: { enabled: false } });
+  assert.equal(out.ok, false);
+  assert.match(out.lines[0], /Your part \(N-1\) does not pass the check yet: nothing else was run/);
+  assert.equal(rt.calls.length, 0);
+});

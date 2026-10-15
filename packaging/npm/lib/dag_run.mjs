@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildDag } from "./dag.mjs";
-import { diffPiece, splitDiff, stepsFromDiff } from "./way_extract.mjs";
+import { diffPiece, readStepExtras, splitDiff, stepsFromDiff } from "./way_extract.mjs";
 import { loadLibrary } from "./library.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { createWorktree, git, headCommit, removeWorktree, repoTopLevel, workingTreeDiff } from "./exec/worktree.mjs";
@@ -55,15 +55,27 @@ export function planFromLibrary({ root, reply, loc }) {
     }
   }
   if (!best) return null;
-  return { entry: best.entry, diff: best.diff, steps: best.steps, dag: buildDag(best.steps) };
+  // the Way's general wording of each step and the parameters of that past fix (lib/way_describe.mjs), where it has them
+  const p = best.entry.procs?.[0] || {};
+  const words = new Map();
+  for (const s of p.steps || []) {
+    const at = readStepExtras(s.extra).at[0];
+    if (at && s.do && !/^In \S+: change /.test(s.do)) words.set(at, s.do);
+  }
+  for (const s of best.steps) if (words.has(s.at[0])) s.desc = words.get(s.at[0]);
+  const slots = ((p.extra || []).find((f) => f.startsWith("slots=")) || "").slice(6).split(",").filter(Boolean)
+    .map((x) => x.split(":").map((v) => decodeURIComponent(v.replace(/%(?![0-9A-Fa-f]{2})/g, "%25"))));
+  return { entry: best.entry, diff: best.diff, steps: best.steps, slots, way: p.name, dag: buildDag(best.steps) };
 }
 
 // the node's task: this part of the task, with the past fix's piece for the same file as the worked example
-export function nodeTask({ task, node, total, entry, diff, where = "", done = [] }) {
+export function nodeTask({ task, node, total, entry, diff, where = "", done = [], slots = [] }) {
   const s = node.step;
   const head = `Part ${node.id.slice(2)} of ${total} of this task (the other parts are done separately; change only what this part needs):\n`;
   const ask = String(task || "").trim();
-  const part = `\nThis part: the change in ${s.at.join(", ")}${s.gives.length ? ` (in the past fix: ${s.gives.slice(0, 5).join(", ")})` : ""}.` +
+  const said = s.desc ? `${s.desc} -- in ${s.at.join(", ")}` : `the change in ${s.at.join(", ")}`;
+  const part = `\nThis part: ${said}${s.gives.length ? ` (in the past fix: ${s.gives.slice(0, 5).join(", ")})` : ""}.` +
+    (slots.length ? ` In that fix ${slots.map(([k, v]) => `{${k}} was ${v}`).join(", ")}; find their values for this task.` : "") +
     (done.length ? ` Already done and in the code: ${done.join("; ")}.` : "");
   const tail = where ? `\n\n${where}` : "";
   const exHead = `\nWorked example -- this part in a similar fix already made in this repository ("${String(entry.title).slice(0, 120)}"); adapt it, do not copy it:\n`;
@@ -172,15 +184,18 @@ export async function runDag(ctx) {
       plan.dag.waves.map((w) => w.map((id) => `${id} ${nodes.find((n) => n.id === id).step.at[0]}`).join(" + ")).join(" -> "));
   const accepted = new Map();            // node id -> winner
   const tried = [];
-  const left = new Set();                // nodes for the session's model
+  const yours = new Set();               // parts for the session's model
+  const waiting = new Set();             // cheap parts after one of yours: `stealthlab-mcp dag continue` does them
+  const left = { get size() { return yours.size + waiting.size; } };
   const order = plan.dag.waves.flat();
   const patchesBefore = (n) => order.filter((id) => accepted.has(id) && id !== n.id).map((id) => accepted.get(id).patch);
   const doneText = () => order.filter((id) => accepted.has(id)).map((id) => `${id} in ${nodes.find((n) => n.id === id).step.at.join(", ")}`);
   const runOne = async (n) => {
     const m = nodeModels({ node: n, rungs, strongSet, root, areaSkipAfter: policy.areaSkipAfter });
-    if (!m.rungs.length || n.deps.some((d) => left.has(d))) { left.add(n.id); n.who = "session"; return; }
+    if (!m.rungs.length) { yours.add(n.id); n.who = "session"; return; }
+    if (n.deps.some((d) => yours.has(d) || waiting.has(d))) { waiting.add(n.id); n.who = m.who; n.rungUnits = m.rungs.map((r) => r.unit); return; }
     n.who = m.who;
-    const task = nodeTask({ task: rawPayload.prompt, node: n, total: nodes.length, entry: plan.entry, diff: plan.diff, where, done: doneText() });
+    const task = nodeTask({ task: rawPayload.prompt, node: n, total: nodes.length, entry: plan.entry, diff: plan.diff, where, done: doneText(), slots: plan.slots });
     const r = await runNode({ rt, repo, task, check: interCheck, scope: policy.scope, rungs: m.rungs, extraPatches: patchesBefore(n),
                               limitS: policy.timeoutS, width: policy.maxParallel, instanceKey, log });
     tried.push(...r.tried.map((t) => ({ ...t, node: n.id })));
@@ -192,8 +207,9 @@ export async function runDag(ctx) {
     const ns = wave.map((id) => nodes.find((n) => n.id === id));
     const results = await Promise.all(ns.map((n) => runOne(n)));
     // a node that failed beside others gets one more try with their accepted changes in (they may have been what it needed)
-    if (ns.length > 1) for (const [i, n] of ns.entries()) if (!results[i] && !left.has(n.id) && accepted.size) { await runOne(n); }
-    for (const n of ns) if (!accepted.has(n.id)) left.add(n.id);
+    if (ns.length > 1) for (const [i, n] of ns.entries()) if (!results[i] && !yours.has(n.id) && !waiting.has(n.id) && accepted.size) { await runOne(n); }
+    // a part the cheap models tried and could not do is the session's
+    for (const n of ns) if (!accepted.has(n.id) && !waiting.has(n.id)) { yours.add(n.id); n.who = "session"; }
   }
   const patches = order.filter((id) => accepted.has(id)).map((id) => accepted.get(id).patch);
   const models = [...new Set([...accepted.values()].map((w) => w.model))].join(", ");
@@ -213,7 +229,7 @@ export async function runDag(ctx) {
       return { handled: true, dag: { entry: plan.entry.id, nodes: nodes.map((n) => ({ id: n.id, at: n.step.at, deps: n.deps, who: n.who, status: "done" })) },
                files: applied.files, tried, undone: applied.undone, models, cost_usd: [...accepted.values()].reduce((s, w) => s + (w.cost_usd || 0), 0) };
     }
-    for (const id of order) left.add(id);           // the parts do not add up: nothing is applied, the session's model does it
+    for (const n of nodes) { yours.add(n.id); n.who = "session"; }   // the parts do not add up: nothing applied, all the session's
     accepted.clear();
   }
   // partial: the accepted parts are applied (they passed "no new failures"); the rest is the session's
@@ -222,8 +238,107 @@ export async function runDag(ctx) {
     try { applied = await applyParts({ repo, patches: order.filter((id) => accepted.has(id)).map((id) => accepted.get(id).patch), task: rawPayload.prompt, models, env, undo }); }
     catch (err) { log(`dag: the accepted parts could not be applied (${err.message})`); accepted.clear(); }
   }
+  const status = (n) => (accepted.has(n.id) ? "done" : waiting.has(n.id) ? "waiting" : "ready");
+  // the cheap parts after yours: saved so `stealthlab-mcp dag continue` can do them once your part is in
+  const resumable = waiting.size > 0 && saveDagState(root, {
+    task: rawPayload.prompt, entry: plan.entry.id, slots: plan.slots, where, interCheck, fullCheck, instanceKey,
+    policy: { timeoutS: policy.timeoutS, maxParallel: policy.maxParallel, scope: policy.scope },
+    rungs: rungs.map((r) => ({ unit: r.unit, model: r.model, executor: r.executor })),
+    nodes: nodes.map((n) => ({ id: n.id, deps: n.deps, step: n.step, who: n.who || "session", status: status(n), rungUnits: n.rungUnits || null })),
+  });
   return { handled: false, tried, partial: {
-    entry: plan.entry.id, applied: applied.files, undone: applied.undone,
-    nodes: nodes.map((n) => ({ id: n.id, at: n.step.at, deps: n.deps, who: n.who || "session", status: accepted.has(n.id) ? "done" : "ready",
-                               gives: n.step.gives })) } };
+    entry: plan.entry.id, applied: applied.files, undone: applied.undone, resumable,
+    nodes: nodes.map((n) => ({ id: n.id, at: n.step.at, deps: n.deps, who: n.who || "session", status: status(n), gives: n.step.gives })) } };
+}
+
+// ------------------------------------------------------------------ after the session's part: the rest, cheap
+
+const STATE = "dag_state.json";
+export function saveDagState(root, state) {
+  try { fs.writeFileSync(path.join(root, ".stealth", STATE), JSON.stringify({ ...state, saved_at: new Date().toISOString() }, null, 1)); return true; }
+  catch { return false; }
+}
+export function loadDagState(root) {
+  try { return JSON.parse(fs.readFileSync(path.join(root, ".stealth", STATE), "utf8")); } catch { return null; }
+}
+
+// `stealthlab-mcp dag continue`: the session has done its part(s) of the plan in the working tree. Checks them ("no new
+// failures"), then runs the waiting parts on cheap models wave by wave (each applied as it passes, with an undo
+// point), then the full check over the whole task. -> {ok, lines: [what happened], state}
+export async function continueDag({ root, env = process.env, rt, log = () => {}, runShell, undo }) {
+  const st = loadDagState(root);
+  const out = [];
+  if (!st) return { ok: false, lines: ["No plan to continue here (.stealth/dag_state.json): nothing was handed over in parts."] };
+  const repo = await repoTopLevel(root, env);
+  const yours = st.nodes.filter((n) => n.status === "ready");
+  if (yours.length) {
+    const c = await runShell(st.interCheck, { cwd: repo, timeoutMs: 600000 });
+    if (c.code !== 0) {
+      return { ok: false, lines: [`Your part (${yours.map((n) => n.id).join(", ")}) does not pass the check yet: nothing else was run.`,
+                                 String(c.out || "").slice(-1200)] };
+    }
+    for (const n of yours) { n.status = "done"; n.who = "session"; }
+    out.push(`Your part (${yours.map((n) => n.id).join(", ")}) passes the check (no new failures).`);
+  }
+  const byUnit = new Map(st.rungs.map((r) => [r.unit, r]));
+  const total = st.nodes.length;
+  const entry = { title: st.entry };
+  let diff = "";
+  try {
+    const e = loadLibrary(root).entries.find((x) => x.id === st.entry);
+    if (e) { entry.title = e.title; diff = readSolution(root, e); }
+  } catch { /* no example then */ }
+  for (let progress = true; progress;) {
+    progress = false;
+    const ready = st.nodes.filter((n) => n.status === "waiting" && n.deps.every((d) => st.nodes.find((x) => x.id === d)?.status === "done"));
+    for (const n of ready) {
+      const rungs = (n.rungUnits || st.rungs.map((r) => r.unit)).map((u) => byUnit.get(u)).filter(Boolean);
+      const done = st.nodes.filter((x) => x.status === "done").map((x) => `${x.id} in ${x.step.at.join(", ")}`);
+      const task = nodeTask({ task: st.task, node: n, total, entry, diff, where: st.where, done, slots: st.slots || [] });
+      const r = await runNode({ rt, repo, task, check: st.interCheck, scope: st.policy.scope, rungs, extraPatches: [],
+                                limitS: st.policy.timeoutS, width: st.policy.maxParallel, instanceKey: st.instanceKey, log });
+      for (const f of n.step.at) recordArea(root, f, !!r.winner);
+      if (r.winner) {
+        await applyParts({ repo, patches: [r.winner.patch], task: st.task, models: r.winner.model, env, undo });
+        n.status = "done"; n.who = r.winner.model;
+        out.push(`${n.id} (${n.step.at.join(", ")}): done by ${r.winner.model} and applied.`);
+        progress = true;
+      } else {
+        n.status = "ready"; n.who = "session";
+        out.push(`${n.id} (${n.step.at.join(", ")}): the cheap models could not do it; it is yours.`);
+      }
+    }
+  }
+  const open = st.nodes.filter((n) => n.status !== "done");
+  if (!open.length) {
+    const fin = await runShell(st.fullCheck, { cwd: repo, timeoutMs: 600000 });
+    out.push(fin.code === 0 ? "All parts are in; the full check passes." : `All parts are in, but the full check fails:\n${String(fin.out || "").slice(-1200)}`);
+    try { fs.unlinkSync(path.join(root, ".stealth", STATE)); } catch { /* */ }
+    return { ok: fin.code === 0, lines: out, state: st };
+  }
+  saveDagState(root, st);
+  out.push(`Still yours: ${open.map((n) => `${n.id} (${n.step.at.join(", ")})`).join(", ")}. Run this again after them.`);
+  return { ok: false, lines: out, state: st };
+}
+
+export async function runDagCli(argv, { cwd = process.cwd(), env = process.env, print = (s) => process.stdout.write(`${s}\n`) } = {}) {
+  if (argv[0] !== "continue") { print("usage: stealthlab-mcp dag continue   (after doing your part of a plan handed over in parts)"); return 2; }
+  const { findStealthRoot } = await import("./library.mjs");
+  const root = findStealthRoot(cwd);
+  if (!root) { print("No .stealth/ here."); return 1; }
+  const { ExecRuntime } = await import("./exec/runtime.mjs");
+  const { runShellCapture } = await import("./dispatch.mjs");
+  const { createUndoPoint, finishUndoPoint, discardUndoPoint, undoEnabled } = await import("./undo.mjs");
+  const r = await continueDag({ root, env, rt: new ExecRuntime({ env }), runShell: runShellCapture, log: () => {},
+    undo: { enabled: undoEnabled(env), create: (o) => createUndoPoint({ ...o, env }), finish: (p, o) => finishUndoPoint(p, { ...o, env }),
+            discard: (p, o) => discardUndoPoint(p, { ...o, env }) } });
+  for (const l of r.lines) print(l);
+  try {
+    if (r.state) {
+      const { writeDagRun } = await import("./dispatch_run.mjs");
+      writeDagRun(root, { task: r.state.task, entry: r.state.entry, interCheck: r.state.interCheck, fullCheck: r.state.fullCheck,
+        nodes: r.state.nodes.map((n) => ({ id: n.id, at: n.step.at, deps: n.deps, who: n.who, status: n.status, gives: n.step.gives })) });
+    }
+  } catch { /* run.md is a record */ }
+  return r.ok ? 0 : 1;
 }

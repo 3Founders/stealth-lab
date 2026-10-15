@@ -199,3 +199,31 @@ test("the project's check, judged against the unchanged code: old failures pass 
   fs.writeFileSync(path.join(dir, "BASE_NONE"), "0");
   assert.equal(run().status, 1, "nothing failed on the unchanged code: any failure is the answer's");
 });
+
+test("survey fill: a cheap model's facts about the code are kept only where the cited line shows them", async () => {
+  const { runSurvey } = await import("../lib/survey/survey.mjs");
+  const { fillWorklist, parseWorklist } = await import("../lib/survey/fill.mjs");
+  const repo = repoWithPackage();
+  fs.writeFileSync(path.join(repo, "pyproject.toml"), "[project]\nname = \"pkg\"\nversion = \"1.0\"\n");
+  execFileSync("git", ["-C", repo, "add", "-A"]); execFileSync("git", ["-C", repo, "commit", "-q", "-m", "toml"]);
+  runSurvey(repo, { history: false });
+  const work = parseWorklist(fs.readFileSync(path.join(repo, ".stealth", "survey", "worklist.md"), "utf8"));
+  assert.ok(work.length >= 1);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "fill-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
+  const lines = fs.readFileSync(path.join(repo, "pkg", "_typehints.py"), "utf8").split("\n");
+  const at = lines.findIndex((l) => l.startsWith("def adapt_typehints")) + 1;
+  const asked = [];
+  const fetchImpl = async (url, o) => { asked.push(JSON.parse(o.body)); return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify([
+    { topic: "layout", statement: "Type hints are adapted in `adapt_typehints` in pkg/_typehints.py", source: `pkg/_typehints.py:${at}` },
+    { topic: "layout", statement: "Configuration is loaded by `load_settings_from_yaml`", source: "pkg/_typehints.py:1" },
+    { topic: "nonsense", statement: "`x`", source: "pkg/_cli.py:1" }]) } }] }) }; };
+  const f = await fillWorklist({ root: repo, env: { STEALTHLAB_HOME: home, K: "k" }, fetchImpl });
+  assert.equal(f.added, 2, "the unknown topic is dropped before validation");
+  assert.match(asked[0].messages[1].content, /pkg\/_typehints\.py/, "the model sees the unit's source files");
+  runSurvey(repo, { validateOnly: true });
+  const claims = fs.readFileSync(path.join(repo, ".stealth", "claims.md"), "utf8");
+  assert.match(claims, /\|layout\|repository\|Type hints are adapted in `adapt_typehints`/, "a fact the cited line shows is kept");
+  assert.doesNotMatch(claims, /load_settings_from_yaml/, "an invented one is rejected");
+  assert.match(fs.readFileSync(path.join(repo, ".stealth", "survey", "rejected.md"), "utf8"), /load_settings_from_yaml/);
+});
