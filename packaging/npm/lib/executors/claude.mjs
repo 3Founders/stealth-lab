@@ -125,7 +125,7 @@ const adapter = {
     // prompt and its full tool list cost ~15k input tokens on EVERY call, paid at the open model's price
     // (STEALTHLAB_CLAUDE_LEAN=off: Claude Code's own prompt and tools)
     const lean = (env.STEALTHLAB_CLAUDE_LEAN || "on").toLowerCase() !== "off";
-    const args = [...launch.prefix, "-p", safeTaskArg(task), "--output-format", "json", "--no-session-persistence",
+    const args = [...launch.prefix, "-p", safeTaskArg(task), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
       "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--setting-sources", "user", "--strict-mcp-config",
       ...(lean ? ["--system-prompt", LEAN_SYSTEM, "--tools", CLAUDE_ALLOWED_TOOLS] : []),
       "--model", profile.model_id, "--allowedTools", CLAUDE_ALLOWED_TOOLS];
@@ -144,7 +144,7 @@ const adapter = {
     const args = [
       ...launch.prefix,
       "-p", safeTaskArg(task),
-      "--output-format", "json",
+      "--output-format", "stream-json", "--verbose",
       "--no-session-persistence",
       "--permission-mode", "acceptEdits",
       "--permission-prompts", "none",
