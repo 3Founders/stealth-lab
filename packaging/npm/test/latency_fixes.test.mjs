@@ -162,3 +162,19 @@ test("a large task goes only to the strong cheap model (profile strong: true), f
   assert.equal(await dispatch({ payload: { cwd: repo, prompt: "implement every endpoint of the contract" }, reply: { model_plan: PLAN },
     root: repo, mine: MINE, env: e, runtime: stub(repo, {}), briefImpl: large }), null);
 });
+
+test("the strong cheap model is the last cheap try by default (never cut by max rungs); STRONG_FIRST=on puts it first", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true } } }));
+  const fail = { "gemma-4-31b-it": ["failed", "x"], "minimax-m2-7": ["failed", "y"], "gpt-oss-120b": ["failed", "z"], "glm-5.3": ["verified", ""] };
+  const e = { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_FASTEST_FIRST: "off" };
+  const rt = stub(repo, fail);
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: e, runtime: rt });
+  assert.equal(d.unit, "glm-5.3|stealth");
+  assert.equal(rt.calls.at(-1).model, "glm-5.3", "the strong one runs after the small ones");
+  assert.equal(rt.calls.length, 4, "three small ones plus the strong one: not cut by max rungs (3)");
+  const rt2 = stub(repo, fail);
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: { ...e, STEALTHLAB_DISPATCH_STRONG_FIRST: "on" }, runtime: rt2 });
+  assert.equal(rt2.calls[0].model, "glm-5.3");
+});

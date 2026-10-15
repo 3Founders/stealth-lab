@@ -187,6 +187,19 @@ export function scrubEnv(env = process.env) {
   return out;
 }
 
+// The environment for a `claude` process StealthLab starts itself (the test writer, an audit, the page judge, the claude
+// executor). Claude Code removes CLAUDE_CODE_OAUTH_TOKEN from the environment of the hooks it runs, so where the login IS
+// that token (a container, CI, a server: no login stored in ~/.claude) the child started from a hook had none -- "Not
+// logged in", no test-first tests, every cheap answer rejected (Modal run, 2026-10-15). The same token under
+// STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN, which Claude Code leaves alone, is handed to that child only, under its own name, and
+// only when the child would otherwise have no credentials. A login stored in ~/.claude is used as before.
+export function claudeChildEnv(env = process.env) {
+  const out = scrubEnv(env);
+  const token = env.STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN;
+  if (token && !out.CLAUDE_CODE_OAUTH_TOKEN && !out.ANTHROPIC_API_KEY && !out.ANTHROPIC_AUTH_TOKEN) out.CLAUDE_CODE_OAUTH_TOKEN = token;
+  return out;
+}
+
 // A task is passed as a single argv element (never through a shell). The one
 // remaining parse risk is a task that starts with "-", which an agent's option
 // parser would read as a flag.

@@ -10,7 +10,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
-import { launchOrThrow, scrubEnv } from "./executors/common.mjs";
+import { claudeChildEnv, launchOrThrow } from "./executors/common.mjs";
 import { spawn } from "node:child_process";
 
 export const visualCheckEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_VISUAL_CHECK || "on").toLowerCase() !== "off";
@@ -128,7 +128,7 @@ export async function compareImagesClaude(target, page, model, { env = process.e
   const exec = run || ((a, input) => new Promise((resolve) => {
     let launch;
     try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
-    const c = spawn(launch.cmd, [...launch.prefix, ...a], { windowsHide: true, env: scrubEnv(env) });
+    const c = spawn(launch.cmd, [...launch.prefix, ...a], { windowsHide: true, env: claudeChildEnv(env) });
     let stdout = "";
     const timer = setTimeout(() => c.kill(), 180000);
     c.stdout.on("data", (d) => { stdout += d; });
