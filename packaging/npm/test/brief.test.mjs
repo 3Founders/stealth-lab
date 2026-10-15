@@ -19,7 +19,7 @@ const REPLY = (o) => JSON.stringify({ task: "Fix calc.py so x is 2", files_hinte
 test("parseBrief: a model reply becomes a checked brief; a fence, extra text or a bad value is handled", () => {
   const b = parseBrief("Here you go:\n```json\n" + REPLY({}) + "\n```");
   assert.deepEqual(b, { task: "Fix calc.py so x is 2", files_hinted: ["calc.py"], acceptance: "pytest passes", parts: [],
-                        clarity: "clear", kind: "code", size: "small" });
+                        clarity: "clear", kind: "code", size: "small", search_terms: [] });
   assert.equal(parseBrief(REPLY({ kind: "banana" })), null);
   assert.equal(parseBrief(REPLY({ size: "huge" })), null);
   assert.equal(parseBrief(REPLY({ task: "  " })), null);

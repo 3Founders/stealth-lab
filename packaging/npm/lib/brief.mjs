@@ -34,7 +34,7 @@ export const BRIEF_SYSTEM = [
   "You turn a developer's latest message in a coding session into a precise brief for a coding assistant.",
   "You get the last few turns (oldest first) and then the message. Reply with ONE JSON object and nothing else:",
   '{"task": string, "files_hinted": [string], "acceptance": string, "parts": [string], "clarity": "clear"|"unclear",',
-  '"kind": "code"|"question"|"chat", "size": "small"|"medium"|"large"}.',
+  '"kind": "code"|"question"|"chat", "size": "small"|"medium"|"large", "search_terms": [string]}.',
   "task: the request restated in full. Resolve 'that bug', 'it', 'the other one' from the earlier turns. Keep every name,",
   "number, value and example from the message; add no requirement it does not state.",
   "files_hinted: files or modules named or clearly implied (at most 8; may be empty).",
@@ -48,6 +48,9 @@ export const BRIEF_SYSTEM = [
   "The project's file names may follow too: a message naming a function or feature that plausibly lives in one of them",
   "('add is broken, fix it' with a calc.py) is clear; put that file in files_hinted.",
   "size: small = one function, file or query; large = many files or an open-ended redesign.",
+  "search_terms: up to 8 names to search this project's code for, as the code would spell them: the identifiers, file",
+  "or module names, keywords and operators the request is about, guessed from the project's file names where the",
+  "message uses plain words ('ms sql server' with a tsql.py -> tsql; 'double pipe' -> ||). May be empty.",
 ].join(" ");
 
 // ---- files the message names: "the task is in TASK.md" puts the details in the file, not the message ------------------
@@ -175,7 +178,7 @@ export function parseBrief(text) {
   if (!KINDS.includes(o.kind) || !SIZES.includes(o.size) || !CLARITIES.includes(o.clarity)) return null;
   if (!task && o.kind === "code") return null;
   return { task, files_hinted: asList(o.files_hinted, 8), acceptance: String(o.acceptance || "").trim(),
-           parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size };
+           parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size, search_terms: asList(o.search_terms, 8) };
 }
 
 // -> {ok: boolean, reason}. `brief` null = no brief could be made: today's behaviour, except what the guard rules out.

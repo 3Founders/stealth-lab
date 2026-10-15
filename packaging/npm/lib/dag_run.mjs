@@ -48,9 +48,14 @@ export function planFromLibrary({ root, reply, loc }) {
     if (!diff) continue;
     const steps = stepsFromDiff(diff);
     if (steps.length < 2) continue;
+    // a past fix shapes the plan only when it changed the code THIS task is located in (one of the top two located
+    // files): a lookup that merely calls it related is not enough -- a "related" regexp_extract fix planned an unrelated
+    // T-SQL issue as 5 parts in files it never needed, and the cheap models never saw the real task (Modal, sqlglot-4067)
+    const top = new Set((loc?.files || []).slice(0, 2));
+    const overlapTop = steps.filter((s) => s.at.some((f) => top.has(f))).length;
+    if (overlapTop < 1) continue;
     const overlap = steps.filter((s) => s.at.some((f) => located.has(f))).length;
     const score = overlap + (matched.has(e.id) ? 2 : 0);
-    if (score < 1) continue;                        // nothing ties this past fix to the task
     if (!best || score > best.score || (score === best.score && String(e.verified_at || "") > String(best.entry.verified_at || ""))) {
       best = { entry: e, diff, steps, score };
     }
