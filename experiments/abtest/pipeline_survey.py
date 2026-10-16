@@ -339,8 +339,15 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
 def report3(rows: list[dict]) -> str:
     ok = [r for r in rows if r.get("agents")]
     lines = [f"{len(ok)} issues with a working environment", ""]
+    # a run that never reached the model (its endpoint refused every try: no tokens, no change) says nothing about the
+    # agent; every other run counts, an empty diff or a stall included (the runtime sets "error" on those too)
+    unreached = lambda x: x.get("state") == "error" or (not x.get("files") and (
+        str(x.get("error") or "").startswith("the executor failed") or (x.get("tokens") or {}).get("in") in (0, None)))
     for agent in ("claude", "stealth"):
-        xs = [r["agents"][agent] for r in ok if agent in r["agents"] and "error" not in r["agents"][agent]]
+        runs = [r["agents"][agent] for r in ok if agent in r["agents"]]
+        xs = [x for x in runs if not unreached(x)]
+        if len(xs) < len(runs):
+            lines.append(f"agent {agent}: {len(runs) - len(xs)} runs never reached the model (left out below)")
         if not xs:
             continue
         solved = [x for x in xs if x.get("truly_solved")]
