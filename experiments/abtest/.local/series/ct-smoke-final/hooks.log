@@ -1,0 +1,9 @@
+2026-10-16T16:40:13.603Z prompt locate: narrowed to jsonargparse/_formatters.py, jsonargparse/_cli.py (_format_usage, add_usage)
+2026-10-16T16:40:13.612Z prompt dispatch: located jsonargparse/_formatters.py:88-98, jsonargparse/_formatters.py:150-152, jsonargparse/_cli.py:72-136, jsonargparse/_cli.py:1-38 (tests: jsonargparse_tests/test_formatters.py)
+2026-10-16T16:40:19.446Z prompt gpt-oss-120b|claude: the executor failed (exit 1): API Error: 400 upstream 400: {"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error","param":null}}
+2026-10-16T16:40:22.677Z prompt dispatch: 5 test(s) already fail on the unchanged code: answers are judged on new failures only
+2026-10-16T16:43:27.952Z prompt glm-5.3-flash|claude: the executor failed (exit 1): API Error: Request rejected (429) · upstream 429: {"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}
+2026-10-16T16:46:42.682Z prompt dispatch: the cheap models did not do it; glm-5.3 (tier 2) tries, 420 s
+2026-10-16T16:49:52.056Z prompt glm-5.3|stealth: the executor failed (exit 1): API Error: Request rejected (429) · upstream 429: {"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}
+2026-10-16T16:50:51.255Z capture-stop reported=true queued=false accepted=false
+2026-10-16T16:51:08.205Z prompt dispatch: not dispatched (kind=chat)
