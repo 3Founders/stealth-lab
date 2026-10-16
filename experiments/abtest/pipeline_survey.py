@@ -407,6 +407,14 @@ def stage4(iid: str, work: Path, prior: dict) -> dict:
     out = {"instance_id": iid, "existing": {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail),
                                             "seen": LAST_EXISTING.get("seen"),
                                             "tail": None if base_fail is not None else LAST_EXISTING.get("tail")}, "agents": {}}
+    # the real fix, graded the same way: where it does not pass the hidden tests here (a missing test dependency, a test
+    # unrelated to the issue), the issue says nothing about any answer and is left out of the scoring
+    out["gold_solved"], out["gold_tail"] = False, "the real fix does not apply"
+    if _apply(root, str(full["patch"])):
+        try:
+            out["gold_solved"], out["gold_tail"] = hidden_pass(py, root, str(full["test_patch"]), f2p)
+        finally:
+            _apply(root, str(full["patch"]), reverse=True)
     for agent, a in (prior.get("agents") or {}).items():
         patch = a.get("patch") or ""
         res = {"truly_solved": False, "existing_new_failures": None}

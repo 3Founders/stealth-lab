@@ -156,9 +156,12 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
             rv = (reviews or {}).get(key)
             rs = (strong or {}).get(key)
             # the label: the hidden tests; two runs on the same patch that disagree leave it unknown (left out)
-            uncertain = j4 is not None and bool(j4.get("truly_solved")) != bool(x.get("truly_solved"))
+            # with a stage 4 graded by the fixed harness (hidden tests' files reset to base first), its verdict is the label
+            fixed = j4 is not None and "hidden_tail" in j4
+            uncertain = (not fixed) and j4 is not None and bool(j4.get("truly_solved")) != bool(x.get("truly_solved"))
+            label = bool(j4.get("truly_solved")) if fixed else bool(x.get("truly_solved"))
             out.append({"iid": r["instance_id"], "agent": a, "key": key, "patch": x.get("patch") or "", "uncertain": uncertain,
-                        "solved": bool(x.get("truly_solved")), "cost": float(x.get("cost_usd") or 0),
+                        "solved": label, "cost": float(x.get("cost_usd") or 0),
                         "T": bool(x.get("passes_our_tests")), "Tstar": bool(x.get("passes_our_tests")) or not any_pass,
                         "F": focused(x.get("patch") or ""), "X": no_swallow(x.get("patch") or ""),
                         "Rno": bool(rv and rv.get("verdict") == "does_not_fix"),
