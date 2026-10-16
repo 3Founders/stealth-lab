@@ -12,7 +12,17 @@ const { ExecRuntime } = await import(pathToFileURL(path.join(npm, "lib", "exec",
 const { withWhere } = await import(pathToFileURL(path.join(npm, "lib", "dispatch.mjs")).href);
 const prompt = fs.readFileSync(promptFile, "utf8").trim();
 const where = fs.existsSync(whereFile) ? fs.readFileSync(whereFile, "utf8").trim() : "";
-const task = withWhere(prompt.length > 1900 ? `${prompt.slice(0, 1880)} [...]` : prompt, where);
+// SURVEY_CONTEXT_PACK=1: the context pack before the "likely place" line, as dispatch adds it (lib/context_pack.mjs)
+let pack = "";
+if (process.env.SURVEY_CONTEXT_PACK === "1") {
+  const { contextPack } = await import(pathToFileURL(path.join(npm, "lib", "context_pack.mjs")).href);
+  let loc = {};
+  try { loc = JSON.parse(fs.readFileSync(path.join(path.dirname(whereFile), "loc.json"), "utf8")); } catch { /* none */ }
+  pack = contextPack({ files: loc.files || [], testFile: loc.testFile || null });
+}
+const tail = [pack, where].filter(Boolean).join("\n\n");
+const room = 1990 - tail.length - 2;
+const task = withWhere(prompt.length > room ? `${prompt.slice(0, room - 8)} [...]` : prompt, tail);
 const rt = new ExecRuntime({ env: process.env });
 const t0 = Date.now();
 let r;
@@ -27,5 +37,7 @@ try {
 let patch = "";
 try { if (r.diff?.patch_path) patch = fs.readFileSync(r.diff.patch_path, "utf8"); } catch { /* none */ }
 process.stdout.write(JSON.stringify({ state: r.state, patch, files: r.diff?.files || [], secs: Math.round((Date.now() - t0) / 1000),
-  cost_usd: r.cost_usd ?? null, tokens: r.tokens || null, error: r.error || null }));
+  cost_usd: r.cost_usd ?? null, tokens: r.tokens || null, error: r.error || null,
+  // why it ended: the agent's last message ("stopped after 80 tool calls without finishing", say) and the run's reason
+  summary: String(r.summary || "").slice(0, 400), reason: r.reason || null, pack: !!pack }));
 process.exit(0);

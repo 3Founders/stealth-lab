@@ -91,6 +91,13 @@ def checkout(r: dict, dest: Path) -> None:
     S.export_tree(r["repo"], r["base_commit"], dest)
     for args in (["init", "-q"], ["config", "user.email", "s@s"], ["config", "user.name", "s"], ["add", "-A"], ["commit", "-q", "-m", "base"]):
         subprocess.run(["git", "-C", str(dest), *args], check=True, capture_output=True)
+    # SURVEY_HISTORY=1: the project's own commits up to the base commit (nothing after it), as in a developer's clone --
+    # `git log -- <file>` then shows how the maintainers change the code (the context pack asks the agent to look)
+    if os.environ.get("SURVEY_HISTORY") == "1":
+        try:
+            S.record_history(r, dest)
+        except Exception as e:  # noqa: BLE001 -- history is context, not a requirement
+            print(f"history: {e}", file=sys.stderr)
 
 
 def stage1(iid: str) -> dict:
@@ -343,7 +350,9 @@ def existing_fails(py: Path, root: Path, p2p: list[str]) -> set[str] | None:
     return {t for t, v in got.items() if v in ("FAILED", "ERROR")}
 
 
-def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth"), model: str = "glm-5.3-flash") -> dict:
+def stage3(iid: str, work: Path, agents: tuple[str, ...] | None = None, model: str = "glm-5.3-flash") -> dict:
+    # SURVEY_AGENTS: which drivers run (comma-separated: claude, stealth); default both
+    agents = agents or tuple(a.strip() for a in os.environ.get("SURVEY_AGENTS", "claude,stealth").split(",") if a.strip())
     import swe_series_task as S
     base = stage2(iid, work)                      # environment, our tests (and their validity), the where line
     if base.get("env_error") or base.get("error"):
@@ -370,7 +379,7 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
         except ValueError:
             out["agents"][agent] = {"error": p.stderr[-300:]}
             continue
-        res = {k: a.get(k) for k in ("state", "files", "secs", "cost_usd", "tokens", "error")}
+        res = {k: a.get(k) for k in ("state", "files", "secs", "cost_usd", "tokens", "error", "summary", "reason", "pack")}
         patch = a.get("patch") or ""
         res["patch"] = patch[:200000]       # kept: any later test writer or acceptance rule is judged on these same answers
         if patch.strip() and _apply(root, patch):
@@ -426,6 +435,67 @@ def stage4(iid: str, work: Path, prior: dict) -> dict:
             finally:
                 _apply(root, patch, reverse=True)
         out["agents"][agent] = res
+    out["cross"] = cross_tests(py, root, prior.get("agents") or {})
+    return out
+
+
+TEST_PATH = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$")
+
+
+def split_patch(patch: str) -> tuple[str, str]:
+    """An answer's patch -> (its source change, its test change), by file."""
+    blocks = re.split(r"(?=^diff --git )", patch or "", flags=re.M)
+    src = [b for b in blocks if b.startswith("diff --git ") and not TEST_PATH.search(b.split("\n", 1)[0].split(" b/")[-1])]
+    tst = [b for b in blocks if b.startswith("diff --git ") and TEST_PATH.search(b.split("\n", 1)[0].split(" b/")[-1])]
+    return "".join(src), "".join(tst)
+
+
+def _run_ids(py: Path, root: Path, files: list[str]) -> dict[str, str]:
+    import swe_series_task as S
+    files = [f for f in files if f.endswith(".py") and (root / f).exists()]
+    if not files:
+        return {}
+    code, out = S.TOOLCHAIN.pytest(py, ["-q", "-rA", "-p", "no:cacheprovider", *files], root, 600)
+    return {m.group(2).strip(): m.group(1) for m in re.finditer(r"^(PASSED|FAILED|ERROR) (.+?)(?: - .*)?$", out, re.M)}
+
+
+def cross_tests(py: Path, root: Path, agents: dict) -> dict:
+    """Two answers that pass each other's tests behave alike (signal C). An answer's own tests count only when they are
+    VALIDATED: they fail on the unchanged code and pass with that answer. Then each other answer's source change is run
+    against them. -> {agent: {"vs": other, "validated": n, "passes": bool}} for the answers that could be judged."""
+    parts = {a: split_patch(x.get("patch") or "") for a, x in agents.items()}
+    out = {}
+    for y, (y_src, y_tst) in parts.items():
+        if not y_tst.strip():
+            continue
+        files = sorted(set(re.findall(r"^diff --git a/\S+ b/(\S+)", y_tst, re.M)))
+        if not _apply(root, y_tst):
+            continue
+        try:
+            before = _run_ids(py, root, files)
+        finally:
+            _apply(root, y_tst, reverse=True)
+        full = y_src + y_tst
+        if not full.strip() or not _apply(root, full):
+            continue
+        try:
+            with_y = _run_ids(py, root, files)
+        finally:
+            _apply(root, full, reverse=True)
+        validated = {t for t, v in with_y.items() if v == "PASSED" and before.get(t) in ("FAILED", "ERROR")}
+        if not validated:
+            continue
+        for x, (x_src, _) in parts.items():
+            if x == y or not x_src.strip():
+                continue
+            both = x_src + y_tst
+            if not _apply(root, both):
+                continue
+            try:
+                got = _run_ids(py, root, files)
+            finally:
+                _apply(root, both, reverse=True)
+            out[x] = {"vs": y, "validated": len(validated), "passes": all(got.get(t) == "PASSED" for t in validated)}
     return out
 
 

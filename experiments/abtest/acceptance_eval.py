@@ -44,6 +44,8 @@ RULES = {
     "11 E S and Rs": lambda s: s["E"] and s["S"] and s["Rs"],
     "12 E S and Ro": lambda s: s["E"] and s["S"] and s["Ro"],
     "13 E S A and Ro": lambda s: s["E"] and s["S"] and s["A"] and s["Ro"],
+    "14 E S and C": lambda s: s["E"] and s["S"] and s["C"],
+    "15 E S C and Ro": lambda s: s["E"] and s["S"] and s["C"] and s["Ro"],
 }
 
 
@@ -181,7 +183,10 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
                         "R": bool(rv and rv.get("verdict") == "fixes"), "R_known": rv is not None,
                         "Rs": bool(rs and rs.get("verdict") == "fixes"), "Rs_no": bool(rs and rs.get("verdict") == "does_not_fix"),
                         "Rs_known": rs is not None,
-                        "Ro": bool(ro and ro.get("verdict") == "fixes"), "Ro_no": bool(ro and ro.get("verdict") == "does_not_fix")})
+                        "Ro": bool(ro and ro.get("verdict") == "fixes"), "Ro_no": bool(ro and ro.get("verdict") == "does_not_fix"),
+                        # C: passes the other answer's validated tests (stage 4 cross_tests); not judged = false
+                        "C": bool(((s4.get(r["instance_id"], {}).get("cross") or {}).get(a) or {}).get("passes")),
+                        "C_known": a in (s4.get(r["instance_id"], {}).get("cross") or {})})
     return out
 
 

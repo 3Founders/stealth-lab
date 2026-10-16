@@ -25,11 +25,15 @@ if (process.env.SURVEY_WRITER_MODE === "agent") {
   const rt = new ExecRuntime({ env });
   agentWriter = () => reproduceTests({ rt, root, prompt, where: renderWhere(loc), env, log: (m) => log.push(m), dir: outDir });
 }
-const spec = await writeSpecTests({ prompt, root, mine: "claude-opus-5-5|claude-code", env, dir: outDir, log: (m) => log.push(m),
-                                    located: renderForWriter(loc, root), baseline: true, python, agentWriter });
+// SURVEY_NO_WRITER=1: no tests written (a stage 3 run that compares agents only; saves the writer's calls)
+const spec = process.env.SURVEY_NO_WRITER === "1" ? null
+  : await writeSpecTests({ prompt, root, mine: "claude-opus-5-5|claude-code", env, dir: outDir, log: (m) => log.push(m),
+                           located: renderForWriter(loc, root), baseline: true, python, agentWriter });
 // the "likely place" line, for stage 3's agents (as dispatch would send it)
 const { renderWhere } = await import(pathToFileURL(path.join(npm, "lib", "locate.mjs")).href);
 fs.writeFileSync(path.join(outDir, "where.txt"), renderWhere(loc));
+// the located files and the module's tests, for the context pack (lib/context_pack.mjs)
+fs.writeFileSync(path.join(outDir, "loc.json"), JSON.stringify({ files: loc.files || [], testFile: loc.testFile || null }));
 const costs = (() => { try { return fs.readFileSync(path.join(path.dirname(path.dirname(outDir)), "dispatch_costs.jsonl"), "utf8"); } catch { return ""; } })();
 const model = (/"what":"test-first","model":"([^"]+)"/.exec(costs.split("\n").reverse().join("\n")) || [])[1] || null;
 process.stdout.write(JSON.stringify({ file: spec?.file || null, ambiguous: spec?.ambiguous || null, model, log, ms: Date.now() - t0 }));

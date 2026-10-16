@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -18,6 +19,13 @@ from modal_series import APP_DIR, CLAUDE_SECRET, KEYS_SECRET, VOL, VOLUME_NAME, 
 
 app = modal.App("stealthlab-survey")
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
+
+
+def _settings(job: dict) -> None:
+    """The run's settings (--set K=V,...) into this worker's environment: only SURVEY_, STEALTHLAB_ and ABTEST_ names."""
+    for k, v in (job.get("settings") or {}).items():
+        if re.match(r"^(SURVEY|STEALTHLAB|ABTEST)_[A-Z0-9_]+$", k):
+            os.environ[k] = str(v)
 
 
 def _keep(job: dict, row: dict) -> dict:
@@ -35,6 +43,7 @@ def _keep(job: dict, row: dict) -> dict:
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=7200, cpu=2.0, memory=8192, secrets=[modal.Secret.from_name(KEYS_SECRET)])
 def stage1_batch(job: dict) -> list[dict]:
     iids = job["iids"]
+    _settings(job)
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
     os.environ["STEALTHLAB_NPM_DIR"] = f"{APP_DIR}/packaging/npm"
     # the search, and the search narrowed by a cheap model (SURVEY_LOCATE_MODEL, an exec.json profile)
@@ -57,6 +66,7 @@ def stage1_batch(job: dict) -> list[dict]:
               secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)])
 def stage2_batch(job: dict) -> list[dict]:
     iids = job["iids"]
+    _settings(job)
     os.environ["SURVEY_WRITER_MODE"] = job.get("writer_mode", "call")
     """The test writer as dispatch runs it; the Claude token is for the Sonnet fallback (STEALTHLAB_ prefixed so the
     claude child gets it, as in the series runs)."""
@@ -86,6 +96,7 @@ def stage2_batch(job: dict) -> list[dict]:
               secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)])
 def stage3_batch(job: dict) -> list[dict]:
     iids = job["iids"]
+    _settings(job)
     """The cheap agent on each issue -- lean Claude Code and StealthLab's own loop, both on SURVEY_AGENT_MODEL -- judged by
     our tests and by the real hidden tests."""
     import shutil, tempfile
@@ -155,7 +166,8 @@ def save(run: str, stage: int, rows: list[dict]) -> str:
 
 
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=86400)
-def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mode: str = "call", ids: str = "", src_run: str = "") -> list[dict]:
+def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mode: str = "call", ids: str = "", src_run: str = "",
+               settings: dict | None = None) -> list[dict]:
     """The whole run, orchestrated inside Modal (launch with --detach: the laptop's connection can drop); issues already
     kept on the volume for this run are not run again."""
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
@@ -166,7 +178,7 @@ def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mod
     done = {p.stem for p in parts.glob("*.json")} if parts.exists() else set()
     todo = [i for i in ids if i not in done]
     fn = {1: stage1_batch, 2: stage2_batch, 3: stage3_batch, 4: stage4_batch}[stage]
-    jobs = [{"iids": todo[i::workers], "run": run, "stage": stage, "writer_mode": writer_mode, "src_run": src_run} for i in range(workers) if todo[i::workers]]
+    jobs = [{"iids": todo[i::workers], "run": run, "stage": stage, "writer_mode": writer_mode, "src_run": src_run, "settings": settings or {}} for i in range(workers) if todo[i::workers]]
     for _ in fn.map(jobs):
         pass
     volume.reload()                    # the workers' commits: without a reload this container still sees the volume as it was
@@ -184,17 +196,19 @@ def gather(run: str, stage: int) -> list[dict]:
 
 @app.local_entrypoint()
 def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call", ids: str = "", src_run: str = "",
-         wait: bool = False):
+         wait: bool = False, set: str = ""):
     import pipeline_survey as P
+    # --set "SURVEY_AGENTS=claude,SURVEY_AGENT_TIMEOUT_S=1200": settings for every worker of this run
+    settings = dict(kv.split("=", 1) for kv in set.split(",") if "=" in kv) if set else {}
     if not collect and not wait:
         # started and left running: a call this entrypoint waits on is CANCELLED when the launching terminal disconnects
         # (a laptop asleep stopped survey-s3-ch2 at 8 of 15, 2026-10-16), a spawned call on a detached app is not.
         # Launch with `modal run --detach`; the results are kept per issue -> --collect when it is done.
-        call = survey_run.spawn(stage, n, seed, run, workers, writer_mode, ids, src_run)
+        call = survey_run.spawn(stage, n, seed, run, workers, writer_mode, ids, src_run, settings)
         print(f"started {run} stage {stage} (call {call.object_id}); the terminal may now close. Progress: "
               f"modal volume ls {VOLUME_NAME} survey/{run}/stage{stage}.parts | then --collect")
         return
-    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode, ids, src_run)
+    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode, ids, src_run, settings)
     path = f"{VOL}/survey/{run}/stage{stage}.parts"
     local = HERE / ".local" / "survey"
     local.mkdir(parents=True, exist_ok=True)
