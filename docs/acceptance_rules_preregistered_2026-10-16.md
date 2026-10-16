@@ -57,6 +57,21 @@ fails here left out). The Sonnet and gpt-oss reviewers then still said "fixes" o
 14. E and S and C
 15. E and S and C and Ro
 
+## The final run's settings, decided by the A/B (fixed 2026-10-16, before the A/B was run)
+The A/B: stage 3 on the 25 valid issues (experiments/abtest/.local/survey/valid26.txt), both drivers per issue, with the
+new settings (80 tool calls for our loop, 1200 s per run, no test writer): R1 without the context pack, R2 with it and
+the project's history; then stage 4 on each (the fixed grader, the existing tests, cross-testing). Then, mechanically:
+1. Driver (--cheap-agent): the one with more answers solved in R2 (ties: claude).
+2. Context pack (--context-pack): on if R2's best driver solves at least as many as R1's.
+3. Acceptance rule (--accept-rule): every rule above, scored on R2's answers of the chosen driver, the second driver's
+   answer as the other candidate for A and C. Chosen: the largest estimated saving among the rules whose wrong
+   deliveries are at most 10% of ALL tasks (the user's goal: within 1-2 solved tasks of Opus over a series), where the
+   wrong deliveries are hidden-test failures. None qualifies -> rule 15 (E S C Ro). Rs/Ro map to the product's strong
+   reviewer with --review-model claude-sonnet-5-5 / claude-opus-5-5.
+4. Cheap time budget (--cheap-timeout-s): the 90th percentile of the solved runs' seconds in R2, rounded up to 60 s,
+   at least 300, at most 1200.
+The 10%-of-accepted criterion above (the one these rules were first judged by) is reported too.
+
 ## How one is chosen
 - For each rule: accepted, accepted-and-wrong, right-but-rejected, and the cost estimate
   (accepted -> cheap cost; rejected -> cheap cost + Opus ~$1.13).
