@@ -178,6 +178,7 @@ def stage2(iid: str, work: Path) -> dict:
     if not w.get("file"):
         return out
     spec = Path(w["file"])
+    out["spec_code"] = spec.read_text(encoding="utf-8")[:60000]     # kept: stage 3's saved answers are re-judged with it offline
     before, tail_b = run_spec(py, spec, root)
     # the real fix applied IN PLACE (the project is installed editable from root: a src/ layout imports root's code), then undone
     ok, err = S.apply_patch(root, r["patch"])
