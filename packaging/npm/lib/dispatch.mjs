@@ -22,6 +22,7 @@ import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { runClaudeAsync } from "./claude_call.mjs";
 import { answerEvidence, decide, evidenceLine, parseRule, ruleUses } from "./accept.mjs";
+import { contextPack, contextPackEnabled } from "./context_pack.mjs";
 import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
@@ -951,7 +952,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
 
   // the repo's own facts and the matched library entries, after the task (lib/task_context.mjs; STEALTHLAB_DISPATCH_CONTEXT=off)
   const ctx = repoContext({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env });
-  const taskWithContext = fitTask(withWhere(taskText(payload.prompt), where), ctx);
+  // the context pack (lib/context_pack.mjs; STEALTHLAB_DISPATCH_CONTEXT_PACK=on): what to read and run first, and the
+  // project's conventions, before the "likely place" line
+  const pack = contextPackEnabled(env) ? contextPack({ files: loc.files, testFile: loc.testFile }) : "";
+  const taskWithContext = fitTask(withWhere(taskText(payload.prompt), [pack, where].filter(Boolean).join("\n\n")), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
   const baseLimitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes

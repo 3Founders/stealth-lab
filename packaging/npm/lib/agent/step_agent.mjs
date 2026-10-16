@@ -385,7 +385,10 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   if (!cfg.base_url || !cfg.model_id) throw new Error("base_url and model_id are required");
   const extras = {};
   for (const [k, v] of Object.entries(cfg.request_extras || {})) { if (!PROTECTED.has(k)) extras[k] = v; }
-  const maxSteps = Math.min(100, Math.max(1, Number(cfg.max_steps) || 30));
+  // 30 tool calls was the default and nothing raised it: on real repositories our loop read the code for most of them and
+  // ended with no change at all (5 of 26 runs, survey stage 3, 2026-10-16) while Claude Code, driving the same model, had
+  // no cap. STEALTHLAB_AGENT_MAX_STEPS (default 80) or the task's own max_steps.
+  const maxSteps = Math.min(150, Math.max(1, Number(cfg.max_steps) || Number(process.env.STEALTHLAB_AGENT_MAX_STEPS) || 80));
   const maxCost = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
   const system = SYSTEM.replace("{max_steps}", String(maxSteps));
   // Some endpoints reject a system turn (General Compute's Gemma 4 answers 400 "invalid base64 image data",
