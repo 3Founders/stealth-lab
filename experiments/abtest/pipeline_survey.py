@@ -285,7 +285,8 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
     spec = next(iter(sorted((work / "home" / "specs" / "s").glob("test_spec.py"))), None)
     where = work / "home" / "specs" / "s" / "where.txt"
     f2p = list(full["FAIL_TO_PASS"])
-    out = {**base, "agents": {}}
+    out = {**base, "agents": {}, "spec_code": spec.read_text(encoding="utf-8")[:60000] if spec else None,
+           "where": where.read_text(encoding="utf-8") if where.exists() else ""}
     env = {**os.environ, "STEALTHLAB_HOME": str(work / "home"),
            "PATH": f"{py.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
     for agent in agents:
@@ -298,6 +299,7 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
             continue
         res = {k: a.get(k) for k in ("state", "files", "secs", "cost_usd", "tokens", "error")}
         patch = a.get("patch") or ""
+        res["patch"] = patch[:200000]       # kept: any later test writer or acceptance rule is judged on these same answers
         if patch.strip() and _apply(root, patch):
             try:
                 res["passes_our_tests"] = (run_spec(py, spec, root)[0] == 0) if spec else None
