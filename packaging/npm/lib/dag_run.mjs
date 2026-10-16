@@ -302,12 +302,14 @@ export function loadDagState(root) {
 // `stealthlab-mcp dag continue`: the session has done its part(s) of the plan in the working tree. Checks them ("no new
 // failures"), then runs the waiting parts on cheap models wave by wave (each applied as it passes, with an undo
 // point), then the full check over the whole task. -> {ok, lines: [what happened], state}
-export async function continueDag({ root, env = process.env, rt, log = () => {}, runShell, undo }) {
+export async function continueDag({ root, env = process.env, rt, log = () => {}, runShell, undo, fresh = false }) {
   const st = loadDagState(root);
   const out = [];
   if (!st) return { ok: false, lines: ["No plan to continue here (.stealth/dag_state.json): nothing was handed over in parts."] };
+  if (st.awaiting_plan) return { ok: false, lines: [`This task waits for your plan: \`${"stealthlab-mcp"} dag plan\` first (see its usage).`] };
   const repo = await repoTopLevel(root, env);
-  const yours = st.nodes.filter((n) => n.status === "ready");
+  // fresh: a plan just made -- the session's parts are not done yet, so only the cheap parts that need none of them run
+  const yours = fresh ? [] : st.nodes.filter((n) => n.status === "ready");
   if (yours.length) {
     const c = await runShell(st.interCheck, { cwd: repo, timeoutMs: 600000 });
     if (c.code !== 0) {
@@ -362,17 +364,82 @@ export async function continueDag({ root, env = process.env, rt, log = () => {},
   return { ok: false, lines: out, state: st };
 }
 
-export async function runDagCli(argv, { cwd = process.cwd(), env = process.env, print = (s) => process.stdout.write(`${s}\n`) } = {}) {
-  if (argv[0] !== "continue") { print("usage: stealthlab-mcp dag continue   (after doing your part of a plan handed over in parts)"); return 2; }
+// ------------------------------------------------------------------ a large task: the session's model plans, cheap models build
+
+// A large change (the brief's size=large) that the strong cheap model could not do whole goes back to the session's
+// model -- not to do it all, but to plan it: a few parts, each with its files, the names it gives and needs, and who
+// does it ("me": a part that needs a design decision; "cheap": one that follows from the plan). Planning is a small
+// share of a large change's tokens; the parts that follow from it go to cheap models (`dag plan`, then `dag continue`
+// after the session's own parts). dispatch saves the task's checks and models first (awaiting_plan).
+// STEALTHLAB_DISPATCH_SESSION_PLAN=off: the large task is handed back whole, as before.
+export const sessionPlanEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_SESSION_PLAN || "on").toLowerCase() !== "off";
+
+export const PLAN_USAGE = 'stealthlab-mcp dag plan < plan.json   with {"parts": [{"desc": "what this part does", ' +
+  '"files": ["path/a.py"], "gives": ["names it adds"], "needs": ["names it uses from other parts"], "who": "me" | "cheap"}]}';
+
+// -> {ok, steps, error}: the session's plan, checked (2-8 parts, each with a description; files must exist or be new
+// under an existing folder)
+export function readPlan(text, root) {
+  let o;
+  try { o = JSON.parse(String(text || "")); } catch { return { ok: false, error: "the plan is not JSON" }; }
+  const parts = Array.isArray(o?.parts) ? o.parts : [];
+  if (parts.length < 2 || parts.length > 8) return { ok: false, error: `a plan has 2-8 parts (got ${parts.length}); a smaller task is done whole` };
+  const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x || "").trim()).filter(Boolean).slice(0, 12);
+  const steps = [];
+  for (const [i, p] of parts.entries()) {
+    const desc = String(p?.desc || "").trim();
+    if (!desc) return { ok: false, error: `part ${i + 1} has no desc` };
+    const files = list(p.files).map((f) => f.replace(/\\/g, "/").replace(/^\.\//, ""));
+    const bad = files.find((f) => f.startsWith("/") || f.includes("..") || !fs.existsSync(path.join(root, path.dirname(f))));
+    if (bad) return { ok: false, error: `part ${i + 1}: ${bad} is not a path in this repository` };
+    steps.push({ order: i + 1, kind: "action", at: files, gives: list(p.gives), needs: list(p.needs), added: 0, desc: desc.slice(0, 400),
+                 who: String(p.who || "cheap").toLowerCase() === "me" ? "session" : "cheap" });
+  }
+  return { ok: true, steps };
+}
+
+// `stealthlab-mcp dag plan`: the session's plan -> the DAG (lib/dag.mjs: data flow, same file, unsure -> in order); its
+// own parts are "ready" (yours), the rest "waiting"; the cheap parts that need none of the session's run at once.
+export async function planDag({ root, text, env = process.env, rt, log = () => {}, runShell, undo }) {
+  const st = loadDagState(root);
+  if (!st?.awaiting_plan) return { ok: false, lines: ["No large task is waiting for a plan here."] };
+  const p = readPlan(text, root);
+  if (!p.ok) return { ok: false, lines: [`The plan was not taken: ${p.error}.`, `Usage: ${PLAN_USAGE}`] };
+  const dag = buildDag(p.steps);
+  st.nodes = dag.nodes.map((n) => ({ id: n.id, deps: n.deps, step: n.step, who: n.step.who,
+    status: n.step.who === "session" ? "ready" : "waiting", rungUnits: null }));
+  st.awaiting_plan = false;
+  saveDagState(root, st);
+  log(`dag plan: ${st.nodes.length} parts, yours: ${st.nodes.filter((n) => n.status === "ready").map((n) => n.id).join(", ") || "none"}`);
+  const r = await continueDag({ root, env, rt, log, runShell, undo, fresh: true });
+  return { ...r, lines: [`Plan taken: ${st.nodes.length} parts (${dag.waves.map((w) => w.join(" + ")).join(" -> ")}).`, ...r.lines] };
+}
+
+export async function runDagCli(argv, { cwd = process.cwd(), env = process.env, print = (s) => process.stdout.write(`${s}\n`), stdin = null } = {}) {
+  if (argv[0] !== "continue" && argv[0] !== "plan") {
+    print("usage: stealthlab-mcp dag continue   (after doing your part of a plan handed over in parts)");
+    print(`       ${PLAN_USAGE}`);
+    return 2;
+  }
   const { findStealthRoot } = await import("./library.mjs");
   const root = findStealthRoot(cwd);
   if (!root) { print("No .stealth/ here."); return 1; }
   const { ExecRuntime } = await import("./exec/runtime.mjs");
   const { runShellCapture } = await import("./dispatch.mjs");
   const { createUndoPoint, finishUndoPoint, discardUndoPoint, undoEnabled } = await import("./undo.mjs");
-  const r = await continueDag({ root, env, rt: new ExecRuntime({ env }), runShell: runShellCapture, log: () => {},
+  const ctx = { root, env, rt: new ExecRuntime({ env }), runShell: runShellCapture, log: () => {},
     undo: { enabled: undoEnabled(env), create: (o) => createUndoPoint({ ...o, env }), finish: (p, o) => finishUndoPoint(p, { ...o, env }),
-            discard: (p, o) => discardUndoPoint(p, { ...o, env }) } });
+            discard: (p, o) => discardUndoPoint(p, { ...o, env }) } };
+  let r;
+  if (argv[0] === "plan") {
+    // the plan: a file named after `plan`, else stdin
+    let text = "";
+    try { text = argv[1] ? fs.readFileSync(path.resolve(cwd, argv[1]), "utf8") : (stdin ?? fs.readFileSync(0, "utf8")); }
+    catch (err) { print(`The plan could not be read: ${err.message}`); return 2; }
+    r = await planDag({ ...ctx, text });
+  } else {
+    r = await continueDag(ctx);
+  }
   for (const l of r.lines) print(l);
   try {
     if (r.state) {

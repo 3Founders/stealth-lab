@@ -23,7 +23,7 @@ import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs"
 import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
-import { runDag } from "./dag_run.mjs";
+import { runDag, saveDagState, sessionPlanEnabled, PLAN_USAGE } from "./dag_run.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
 import { describeEntry } from "./way_describe.mjs";
 import { reproAgentEnabled, reproduceTests } from "./repro_agent.mjs";
@@ -834,6 +834,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
   let briefed = null;
+  let large = false;                       // the brief's size=large: when the cheap try fails, the session plans it
+  let planRungs = [];                      // the cheap models before the large-task filter: the plan's parts are smaller
   if (policy.brief) {
     const { briefGate, briefedPrompt, makeBrief } = await import("./brief.mjs");
     const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
@@ -841,7 +843,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     const gate = briefGate(brief, payload.prompt);
     // a large task: only the strong cheap model tries it (the small ones rarely manage); none -> the session's model
     if (!gate.ok && !force && gate.reason === "size=large" && rungs.some((r) => strongSet.has(r.model))) {
+      planRungs = rungs;
       rungs = rungs.filter((r) => strongSet.has(r.model));
+      large = true;
       log(`dispatch: a large task -- only ${rungs.map((r) => r.model).join(", ")} tries it`);
     } else if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
     // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there
@@ -1316,7 +1320,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // a loss for this area only when the models were really tried: not a task that reads two ways, not usage limits
   if (!ambiguous && tried.some((t) => !/usage_limited|^skipped|^cancelled$/.test(String(t.state)))) recordArea(root, area, false);
   const runMd = writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), tried });
-  return { handled: false, tried, spec, loc, runMd, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
+  // a large task the strong cheap model could not do whole: the session's model is asked for a plan, not the whole
+  // change -- the task's checks and models are kept for `dag plan` (lib/dag_run.mjs planDag)
+  const planAsk = large && policy.dag && !images.length && sessionPlanEnabled(env) && !ambiguous && saveDagState(root, {
+    awaiting_plan: true, task: rawPayload.prompt, entry: "session-plan", slots: [], where, fullCheck, instanceKey: plan.instance_key,
+    interCheck: checkRun || `${pythonBin({ env })} -c "import compileall, sys; sys.exit(0 if compileall.compile_dir('.', quiet=1) else 1)"`,
+    goalId: plan.goal_id || null, policy: { timeoutS: policy.timeoutS, maxParallel: policy.maxParallel, scope: policy.scope },
+    rungs: planRungs.map((r) => ({ unit: r.unit, model: r.model, executor: r.executor })), nodes: [] });
+  return { handled: false, tried, spec, loc, runMd, ...(planAsk ? { planAsk: true } : {}), remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
 }
 
 // The image files the request names that exist in the project ("recreate the page in screenshot.png"). The cheap models
@@ -1437,6 +1448,15 @@ export function triedNote(d) {
       (d.runMd ? " The plan is in .stealth/run.md." : "") + handoffNote({ ...d, runMd: false });
   }
   if (!d.tried?.length) return "";
+  if (d.planAsk) {
+    // a large change: the session plans it, cheap models build the parts that follow from the plan
+    return "StealthLab first tried this whole on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
+      "; it did not pass and nothing was applied. This is a large change: before doing it yourself, plan it in 2-8 parts " +
+      "(each part's files, the names it adds and uses from other parts, and who does it -- \"me\" for a part that needs a " +
+      "design decision, \"cheap\" for one that follows from the plan) and hand the plan over: " +
+      `${PLAN_USAGE.replace("stealthlab-mcp", selfCommand())}. Cheap models build the "cheap" parts that need none of yours at once; ` +
+      `do your parts, then run \`${selfCommand()} dag continue\` for the rest.` + handoffNote(d);
+  }
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
     (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +
