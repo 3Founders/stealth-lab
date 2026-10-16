@@ -1,0 +1,64 @@
+{
+  "instance_id": "offline-recovery-test",
+  "arm": "test",
+  "step": 2,
+  "error": "_ProviderBadRequestError: Error code: 400 - {'error': {'message': 'Provider request failed with status 400', 'type': 'provider_error', 'code': 'provider_error', 'param': None}}",
+  "n_messages": 6,
+  "approx_chars": 1913,
+  "roles": [
+    "system",
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool"
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing a real bug in the fake-repo repository, checked out at the commit where the issue was reported.\n\nWork by locating the relevant source, reading enough of it to understand the current behaviour, then making the change that fixes the issue. Hidden tests will be run against your change: they were written from the issue description, so implement what the issue actually asks for, not a narrower special case.\n\nRules:\n- If the issue calls for a module, hook, helper or config file that does not exist yet, CREATE it with create_file. Roughly a third of issues like this are fixed by adding a file, not by editing one -- if you cannot find the thing the issue describes, consider that it may need to be written rather than found.\n- Edit source files only. Do not edit anything under test/ -- test changes are discarded before grading and waste your budget.\n- PREFER list_symbols + read_symbol OVER read_file for any Python, Go, JS or TS file over ~100 lines. read_symbol returns one function's exact source for a fraction of the tokens read_file would spend on the surrounding file. Use read_file only for config/data files or when you need to see a file's overall shape rather than one named symbol.\n- You have at most 8 tool calls. Spend them on locating the right code, not on reading whole directories.\n- Call finish when done.\n"
+    },
+    {
+      "role": "user",
+      "content": "Issue to fix:\n\nanswer the question, no edits needed\n\nBegin."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call-1",
+          "type": "function",
+          "function": {
+            "name": "list_dir",
+            "arguments": "{\"path\": \"\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-1",
+      "content": "(empty)"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call-2",
+          "type": "function",
+          "function": {
+            "name": "list_dir",
+            "arguments": "{\"path\": \"\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call-2",
+      "content": "(empty)"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+core-a: RLS that denies when unset (migration 150); routing + sync paths bind their scope; legacy admin key opt-in
+
+For a 2,000-user production (owner request), closing the deferred P1-A items:
+- db/150: sl_tenant_scope_allows -> commons-only when app.tenant_id is unset (was: every row);
+  sl_owner_scope_allows -> deny when app.owner_subject is unset (was: every row; no code ever set it, so the sync
+  tables' RLS never enforced); new sl_routing_allows + FORCE RLS on routing_decisions / routing_observations
+  (public to all, others only to their owner's readers); app.rls_system = the explicit system scope.
+- access.py: scoped_transaction / bind_scope / routing_readers_of; TenantScope.unrestricted() binds the system scope.
+- sync: every path binds its owner; preview_sync / sync_project's conflict check use a narrow system scope.
+- routing: store.routing_scope set at every entry point (requests: recommend, load_instance, report_result,
+  report_model_run; workers/admin/imports: system); org-visible Goals' routing rows owned by the organisation.
+- search_group fan-out helpers take an optional RLS scope.
+- legacy admin key: on in TEST only unless ADMIN_API_KEY_LEGACY_ENABLED says otherwise.
+- scripts/provision_app_role.py: creates stealth_app on control/S###/K### (dry run default; NOT run on Neon).
+
+Found (read-only, 2026-10-08): the production role has BYPASSRLS, so every RLS policy is bypassed in production today.
+Switching the services to stealth_app is what turns the database layer on (runbook residual risk #3).
+
+Tests (fresh throwaway PostgreSQL 18, 143 migrations incl. 149/150):
+- as stealth_app: mcp_tenant 3/0, cross_user 3/0, retrieval_fixture 2/0, agents_download 1/0, episode_privacy 1/0,
+  product_model_privacy 2/0, h2_rls_backstop 22/0, access 9/0, routing_isolation 3/0, routing_e2e 3/0,
+  evaluation/privacy 2/0, p1a 11/0, org_governance 26/6 (the same setup-privilege failures; 32/0 as owner)
+- as owner: all pass; p1a 8/0 + 3 deliberate skips (the RLS tests refuse a bypass role)
+- offline: 285 passed (routing, health, ledger, library, sync, access, providers, v1 surface, governance, priors fast);
+  auth/runtime guard 126 passed, 2 already-failing and unrelated
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

@@ -1,0 +1,81 @@
+{
+  "operation": "POST /contentpro-similar-text",
+  "method": "POST",
+  "path_template": "/contentpro-similar-text",
+  "fingerprint": "ab280ede",
+  "case_id": "MPgiNO",
+  "code_sample": "curl -X POST -H 'Content-Type: application/json' -d '{\"text\": \"\"}' http://127.0.0.1:49739/contentpro-similar-text",
+  "sequence": [
+    {
+      "method": "POST",
+      "url": "http://127.0.0.1:49739/contentpro-similar-text",
+      "url_template": "http://127.0.0.1:49739/contentpro-similar-text",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "MPgiNO",
+        "Content-Type": "application/json",
+        "Content-Length": "12"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:29:11 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200, 400, 403, 501"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.16114270000252873,
+          "mode": "positive"
+        },
+        "components": {
+          "BODY": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "Valid object",
+            "location": null,
+            "parameter": "application/json",
+            "parameter_location": "BODY",
+            "scenario": "valid_object"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/contentpro-similar-text",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "json",
+        "value": {
+          "text": ""
+        }
+      },
+      "media_type": "application/json",
+      "parent_index": null
+    }
+  ]
+}

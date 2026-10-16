@@ -1,0 +1,16 @@
+data: 1007 items, 56864 observations, 384 cards (4s)
+E1008 16:32:46.084549    6124 algebraic_simplifier.cc:10879] Algebraic simplifier is likely stuck in a circular simplification loop and ran for 50 runs on computation wide.wide.wide.region_0.115.clone.clone.clone.clone.clone.clone
+{
+ "method": "vi_lowrank",
+ "seconds": 817,
+ "models": 57,
+ "draws": 128,
+ "cards": 384,
+ "bytes": 3350208,
+ "diagnostics": {
+  "final_elbo_loss": 19732.140343285897,
+  "svi_steps": 6000,
+  "rank": 32,
+  "elbo_tail_rel_change": 0.0009639349189235172
+ }
+}

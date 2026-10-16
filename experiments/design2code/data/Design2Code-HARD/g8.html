@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en-US">
+ <head>
+  <style>
+   @font-face{font-family:'Noto Sans';font-weight:400;font-style:normal;src:url("../fonts/Noto-Sans-regular/Noto-Sans-regular.eot");src:url("../fonts/Noto-Sans-regular/Noto-Sans-regular.eot?#iefix") format("embedded-opentype"),local("Noto Sans"),local("Noto-Sans-regular"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.woff2") format("woff2"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.woff") format("woff"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.ttf") format("truetype"),url("../fonts/Noto-Sans-regular/Noto-Sans-regular.svg#NotoSans") format("svg")}@font-face{font-family:'Noto Sans';font-weight:700;font-style:normal;src:url("../fonts/Noto-Sans-700/Noto-Sans-700.eot");src:url("../fonts/Noto-Sans-700/Noto-Sans-700.eot?#iefix") format("embedded-opentype"),local("Noto Sans Bold"),local("Noto-Sans-700"),url("../fonts/Noto-Sans-700/Noto-Sans-700.woff2") format("woff2"),url("../fonts/Noto-Sans-700/Noto-Sans-700.woff") format("woff"),url("../fonts/Noto-Sans-700/Noto-Sans-700.ttf") format("truetype"),url("../fonts/Noto-Sans-700/Noto-Sans-700.svg#NotoSans") format("svg")}@font-face{font-family:'Noto Sans';font-weight:400;font-style:italic;src:url("../fonts/Noto-Sans-italic/Noto-Sans-italic.eot");src:url("../fonts/Noto-Sans-italic/Noto-Sans-italic.eot?#iefix") format("embedded-opentype"),local("Noto Sans Italic"),local("Noto-Sans-italic"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.woff2") format("woff2"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.woff") format("woff"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.ttf") format("truetype"),url("../fonts/Noto-Sans-italic/Noto-Sans-italic.svg#NotoSans") format("svg")}@font-face{font-family:'Noto Sans';font-weight:700;font-style:italic;src:url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.eot");src:url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.eot?#iefix") format("embedded-opentype"),local("Noto Sans Bold Italic"),local("Noto-Sans-700italic"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.woff2") format("woff2"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.woff") format("woff"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.ttf") format("truetype"),url("../fonts/Noto-Sans-700italic/Noto-Sans-700italic.svg#NotoSans") format("svg")}.highlight table td{padding:5px}.highlight table pre{margin:0}.highlight .cm{color:#999988;font-style:italic}.highlight .cp{color:#999999;font-weight:bold}.highlight .c1{color:#999988;font-style:italic}.highlight .cs{color:#999999;font-weight:bold;font-style:italic}.highlight .c,.highlight .cd{color:#999988;font-style:italic}.highlight .err{color:#a61717;background-color:#e3d2d2}.highlight .gd{color:#000000;background-color:#ffdddd}.highlight .ge{color:#000000;font-style:italic}.highlight .gr{color:#aa0000}.highlight .gh{color:#999999}.highlight .gi{color:#000000;background-color:#ddffdd}.highlight .go{color:#888888}.highlight .gp{color:#555555}.highlight .gs{font-weight:bold}.highlight .gu{color:#aaaaaa}.highlight .gt{color:#aa0000}.highlight .kc{color:#000000;font-weight:bold}.highlight .kd{color:#000000;font-weight:bold}.highlight .kn{color:#000000;font-weight:bold}.highlight .kp{color:#000000;font-weight:bold}.highlight .kr{color:#000000;font-weight:bold}.highlight .kt{color:#445588;font-weight:bold}.highlight .k,.highlight .kv{color:#000000;font-weight:bold}.highlight .mf{color:#009999}.highlight .mh{color:#009999}.highlight .il{color:#009999}.highlight .mi{color:#009999}.highlight .mo{color:#009999}.highlight .m,.highlight .mb,.highlight .mx{color:#009999}.highlight .sb{color:#d14}.highlight .sc{color:#d14}.highlight .sd{color:#d14}.highlight .s2{color:#d14}.highlight .se{color:#d14}.highlight .sh{color:#d14}.highlight .si{color:#d14}.highlight .sx{color:#d14}.highlight .sr{color:#009926}.highlight .s1{color:#d14}.highlight .ss{color:#990073}.highlight .s{color:#d14}.highlight .na{color:#008080}.highlight .bp{color:#999999}.highlight .nb{color:#0086B3}.highlight .nc{color:#445588;font-weight:bold}.highlight .no{color:#008080}.highlight .nd{color:#3c5d5d;font-weight:bold}.highlight .ni{color:#800080}.highlight .ne{color:#990000;font-weight:bold}.highlight .nf{color:#990000;font-weight:bold}.highlight .nl{color:#990000;font-weight:bold}.highlight .nn{color:#555555}.highlight .nt{color:#000080}.highlight .vc{color:#008080}.highlight .vg{color:#008080}.highlight .vi{color:#008080}.highlight .nv{color:#008080}.highlight .ow{color:#000000;font-weight:bold}.highlight .o{color:#000000;font-weight:bold}.highlight .w{color:#bbbbbb}.highlight{background-color:#f8f8f8}body{background-color:#fff;padding:50px;font:14px/1.5 "Noto Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;color:#727272;font-weight:400}h1,h2,h3,h4,h5,h6{color:#222;margin:0 0 20px}p,ul,ol,table,pre,dl{margin:0 0 20px}h1,h2,h3{line-height:1.1}h1{font-size:28px}h2{color:#393939}h3,h4,h5,h6{color:#494949}a{color:#267CB9;text-decoration:none}a:hover,a:focus{color:#069;font-weight:bold}a small{font-size:11px;color:#777;margin-top:-0.3em;display:block}a:hover small{color:#777}.wrapper{width:860px;margin:0 auto}blockquote{border-left:1px solid #e5e5e5;margin:0;padding:0 0 0 20px;font-style:italic}code,pre{font-family:Monaco, Bitstream Vera Sans Mono, Lucida Console, Terminal, Consolas, Liberation Mono, DejaVu Sans Mono, Courier New, monospace;color:#333}pre{padding:8px 15px;background:#f8f8f8;border-radius:5px;border:1px solid #e5e5e5;overflow-x:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px 10px;border-bottom:1px solid #e5e5e5}dt{color:#444;font-weight:700}th{color:#444}img{max-width:100%}kbd{background-color:#fafbfc;border:1px solid #c6cbd1;border-bottom-color:#959da5;border-radius:3px;box-shadow:inset 0 -1px 0 #959da5;color:#444d56;display:inline-block;font-size:11px;line-height:10px;padding:3px 5px;vertical-align:middle}header{width:270px;float:left;position:fixed;-webkit-font-smoothing:subpixel-antialiased}ul.downloads{list-style:none;height:40px;padding:0;background:#f4f4f4;border-radius:5px;border:1px solid #e0e0e0;width:270px}.downloads li{width:89px;float:left;border-right:1px solid #e0e0e0;height:40px}.downloads li:first-child a{border-radius:5px 0 0 5px}.downloads li:last-child a{border-radius:0 5px 5px 0}.downloads a{line-height:1;font-size:11px;color:#676767;display:block;text-align:center;padding-top:6px;height:34px}.downloads a:hover,.downloads a:focus{color:#675C5C;font-weight:bold}.downloads ul a:active{background-color:#f0f0f0}strong{color:#222;font-weight:700}.downloads li+li+li{border-right:none;width:89px}.downloads a strong{font-size:14px;display:block;color:#222}section{width:500px;float:right;padding-bottom:50px}small{font-size:11px}hr{border:0;background:#e5e5e5;height:1px;margin:0 0 20px}footer{width:270px;float:left;position:fixed;bottom:50px;-webkit-font-smoothing:subpixel-antialiased}@media print, screen and (max-width: 960px){div.wrapper{width:auto;margin:0}header,section,footer{float:none;position:static;width:auto}header{padding-right:320px}section{border:1px solid #e5e5e5;border-width:1px 0;padding:20px 0;margin:0 0 20px}header a small{display:inline}header ul{position:absolute;right:50px;top:52px}}@media print, screen and (max-width: 720px){body{word-wrap:break-word}header{padding:0}header ul,header p.view{position:static}pre,code{word-wrap:normal}}@media print, screen and (max-width: 480px){body{padding:15px}.downloads{width:99%}.downloads li,.downloads li+li+li{width:33%}}@media print{body{padding:0.4in;font-size:12pt;color:#444}}
+  </style>
+  <meta charset="utf-8">
+  <meta content="IE=edge" http-equiv="X-UA-Compatible">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <!-- Begin Jekyll SEO tag v2.8.0 -->
+  <title>
+   WGS Extract (WGSE.bio) | WGS Extract Development Team
+  </title>
+  <meta content="Jekyll v3.10.0" name="generator">
+  <meta content="WGS Extract (WGSE.bio)" property="og:title">
+  <meta content="en_US" property="og:locale">
+  <meta content="WGS Extract WWW home" name="description">
+  <meta content="WGS Extract WWW home" property="og:description">
+  <meta content="" property="og:url">
+  <meta content="WGS Extract Development Team" property="og:site_name">
+  <meta content="website" property="og:type">
+  <meta content="summary" name="twitter:card">
+  <meta content="WGS Extract (WGSE.bio)" property="twitter:title">
+  <!-- End Jekyll SEO tag -->
+  <!--[if lt IE 9]>
+    
+    <![endif]-->
+  <!-- start custom head snippets, customize with your own _includes/head-custom.html file -->
+  <!-- Setup Google Analytics -->
+  <!-- You can set your favicon here -->
+  <!-- link rel="shortcut icon" type="image/x-icon"  -->
+  <!-- end custom head snippets -->
+ </head>
+ <body>
+  <div class="wrapper">
+   <header>
+    <h1>
+     <a>
+      WGS Extract Development Team
+     </a>
+    </h1>
+    <p>
+     WGS Extract WWW home
+    </p>
+    <p class="view">
+     <a>
+      View My GitHub Profile
+     </a>
+    </p>
+   </header>
+   <section>
+    <h1 id="wgs-extract--wgsebio">
+     WGS Extract  (WGSE.bio)
+    </h1>
+    <p>
+     is a desktop tool for verifying, analyzing and manipulating your
+     <strong>
+      Personal 30x
+      <a>
+       WGS
+      </a>
+      test
+     </strong>
+     result. It can also be used with any human genome based
+     <a>
+      BAM or CRAM
+     </a>
+     file including
+     <a>
+      WES
+     </a>
+     and Y-only test results.
+    </p>
+    <p>
+     <strong>
+      WGS Extract
+     </strong>
+     <strong>
+      User Manual
+     </strong>
+     :
+     <a>
+      v4 User Manual
+     </a>
+     (Google Doc)
+    </p>
+    <p>
+     <strong>
+      Latest Releases
+     </strong>
+     you can install on the
+     <a>
+      supported platforms
+     </a>
+     are:
+    </p>
+    <table>
+     <thead>
+      <tr>
+       <th style="text-align: left">
+        Track
+       </th>
+       <th style="text-align: center">
+        Version
+       </th>
+       <th style="text-align: center">
+        Date
+       </th>
+       <th style="text-align: center">
+        md5 hash signature
+       </th>
+      </tr>
+     </thead>
+     <tbody>
+      <tr>
+       <td style="text-align: left">
+        <strong>
+         <a>
+          BETA v4
+         </a>
+        </strong>
+       </td>
+       <td style="text-align: center">
+        44.5
+       </td>
+       <td style="text-align: center">
+        13 Jun 2024
+       </td>
+       <td style="text-align: center">
+        fbe59361caaf8cdb6f23df16a249c552
+       </td>
+      </tr>
+      <tr>
+       <td style="text-align: left">
+        <strong>
+         <a>
+          ALPHA v4
+         </a>
+        </strong>
+       </td>
+       <td style="text-align: center">
+        44.6
+       </td>
+       <td style="text-align: center">
+        20 Jun 2024
+       </td>
+       <td style="text-align: center">
+        c3c6a283dec9fa0dce66a6210adfb04d
+       </td>
+      </tr>
+      <tr>
+       <td style="text-align: left">
+        <strong>
+         <a>
+          Dev(eloper) v4+
+         </a>
+        </strong>
+       </td>
+       <td style="text-align: center">
+        44.9
+       </td>
+       <td style="text-align: center">
+        30 Sep 2024
+       </td>
+       <td style="text-align: center">
+        f69b432ef8ebe2364b7c66283bc314bb
+       </td>
+      </tr>
+     </tbody>
+    </table>
+    <p>
+     These are just the installer scripts.
+     <strong>
+      Installation Section
+     </strong>
+     in the
+     <a>
+      user manual
+     </a>
+     for details about installing on your platform.  See the
+     <strong>
+      v4 Release Notes
+     </strong>
+     in the installation directory for more information about the updates in the current release.
+     <a>
+      hashes to verify the Installer you download
+     </a>
+     .
+    </p>
+    <blockquote>
+     <ul>
+      <li>
+       With MacOS Sonoma 14.5 and later, Apple MacOS regressed and turned off allowing unsigned apps to be downloaded and run from outside their store.
+       <code class="language-plaintext highlighter-rouge">
+        sudo spctl --master-disable
+       </code>
+       . For older releases, the first time you run the app, follow the Ctrl-Click process from before as described in the manual.
+      </li>
+      <li>
+       With MacOS Sequoia 15.0 they have permanently removed the &ldquo;anywhere&rdquo; option completely.
+       <strong>
+        &ldquo;Install_macos.command&rdquo; was blocked to protect your Mac.
+       </strong>
+       with a button next to it that says &ldquo;Open Anyway&rdquo;.
+      </li>
+      <li>
+       Ubuntu 24, MacOS 14 and MacOS 15 require release 44.6 or later.
+      </li>
+     </ul>
+    </blockquote>
+    <p>
+     This tool is geared toward the needs of
+     <a>
+      genetic genealogy
+     </a>
+     and
+     <a>
+      Ancient DNA
+     </a>
+     (aDNA) studies but can be helpful for those looking into health-releated uses of
+     <a>
+      WGS
+     </a>
+     tests. The
+     <strong>
+      personal, sub-$500, Direct-to-Consumer (DTC), 30x Whole Genome Sequence (
+      <a>
+       WGS
+      </a>
+      ) tests
+     </strong>
+     are delivered with basic data files and reports. This tool serves to bridge the gap between the
+     <a>
+      WGS data files
+     </a>
+     delivered and the present day
+     <a>
+      genetic genealogy community tools
+     </a>
+     . Many health analysis sites accept the microarray and VCF files generated by this tool.
+    </p>
+    <blockquote>
+     <p>
+      Still waiting for your
+      <a>
+       WGS
+      </a>
+      test results?
+      <a>
+       International Genome Sample Resource (1K Genome archive)
+      </a>
+      for
+      <a>
+       BAM or CRAM
+      </a>
+      files that you can download and play with to learn the tool while waiting for your results.
+     </p>
+    </blockquote>
+    <p>
+     This tool is designed to be a simple, push-button manipulation of
+     <a>
+      WGS files
+     </a>
+     from any source.
+     <a>
+      UseGalaxy
+     </a>
+     ).
+    </p>
+    <p>
+     <a>
+      Dante Labs
+     </a>
+     ,
+     <a>
+      Nebula Genomics
+     </a>
+     ,
+     <a>
+      Sequencing
+     </a>
+     , and
+     <a>
+      YSEQ
+     </a>
+     are test results most commonly used with this tool.
+     <a>
+      Full Genomes Corp
+     </a>
+     ,
+     <a>
+      GeneDX
+     </a>
+     ,
+     <a>
+      Sano Genetics
+     </a>
+     and
+     <a>
+      Veritas (historical)
+     </a>
+     are other test providers whose output is processed here. These are all results from
+     <a>
+      Illumina
+     </a>
+     and
+     <a>
+      MGI
+     </a>
+     next generation sequencers (
+     <a>
+      NGS
+     </a>
+     ).  Results from
+     <a>
+      Oxford Nanopore
+     </a>
+     and
+     <a>
+      PacBio HiFi CCS
+     </a>
+     third generation, long-read sequencers can also be used; as can
+     <a>
+      FamilyTreeDNA
+     </a>
+     &rsquo;s BigY output. (This is not an endorsement of any company or service; simply reporting what is commonly used with the tool.)
+    </p>
+    <blockquote>
+     <p>
+      The tool acronym is
+      <strong>
+       WGSE
+      </strong>
+      and pronounced as &ldquo;wig-see&rdquo;. We encourage that use in conversation.
+     </p>
+    </blockquote>
+    <p>
+     We encourage the use of the Facebook group
+     <a>
+      Personal WGS
+     </a>
+     for discussions on how to make use of your
+     <strong>
+      personal, sub-$500, DTC 30x WGS test
+     </strong>
+     results.
+     <a>
+      Bioinformatics for Newbies
+     </a>
+     . We also maintain a number of
+     <a>
+      corrollary documents
+     </a>
+     .
+    </p>
+    <p>
+     User issues, if not brought up in the
+     <a>
+      Personal WGS
+     </a>
+     Facebook group, should be raised in the local
+     <a>
+      user issues section of this GitHub site
+     </a>
+     . The issues section is preferred so code bugs, use limitations and suggested improvements can be tracked within the development project.
+    </p>
+    <p>
+     There is a separate Facebook group for
+     <a>
+      WGSE Developers and Alpha testers
+     </a>
+     where bleeding edge issues are discussed and tested before wider availability.  Developer&rsquo;s should visit the main GitHub
+     <a>
+      WGS Extract Developers Code Repository
+     </a>
+     as well.  Development issues, Alpha code bugs and limitations should be raised in the
+     <a>
+      development issues section
+     </a>
+     so they are tracked till resolved in a release.
+     <strong>
+      Program
+     </strong>
+     folder for the
+     <strong>
+      Python
+     </strong>
+     source files.
+    </p>
+    <p>
+     There is a separate Reference Genome Library manager that can be run to check and update the library.  The
+     <strong>
+      WGSE
+     </strong>
+     program will check and determine when it needs a genome and prompt you to install any missing file then.
+    </p>
+    <p>
+     v4 entered Alpha on 1 April 2022 and was formally Beta released on 6th November 2022. v5 entered pre-Developer mode release on 10 March 2023 and had a first real release in July then Nov 2023. Old releases are documented in the
+     <a>
+      historical release section
+     </a>
+     . (v5&rsquo;s release in Dev has been delayed.)
+    </p>
+    <p>
+     The tool home page is
+     <a>
+      WGSE.bio
+     </a>
+     . With the developers and delivery platform using
+     <a>
+      WGSE.io
+     </a>
+     (note the slight difference; they will cross reference each other). Currently, both point to this page located at
+     <a>
+      https://WGSExtract.github.io/
+     </a>
+     .
+    </p>
+    <h1 id="supported-platforms">
+     Supported Platforms
+    </h1>
+    <p>
+     64 bit OS and processor platforms tested as part of the release process are:
+    </p>
+    <ul>
+     <li>
+      Microsoft Windows 10 and 11 on Intel and AMD 64 bit processors using Cygwin64 and soon Msys2 packages for the bioinformatic tools. WSLG in Win11 with a Linux Desktop (not server) can be used to install the Ubuntu or Linux release of this tool.
+     </li>
+     <li>
+      Apple MacOS 11 (Big Sur), 12 (Monterrey), 13 (Ventura), 14 (Sonoma) and 15 (Sequoia) on Intel and Apple M1/M2 processors. (note: We rely on Macports which has dropped support for Catalina and earlier already)
+     </li>
+     <li>
+      Ubuntu Linux LTS 20.04, 22.04 and 24.04. We recommend 24.04 to get the latest Samtools release.
+     </li>
+     <li>
+      Any Linux by using Conda (actually micromamba and bioconda). This will soon deprecate the Ubuntu only installer and is the preferred Linux install method.
+     </li>
+    </ul>
+    <p>
+     The tool has the potential to be a simple install in a
+     <a>
+      BioConda environment
+     </a>
+     as it is mostly just a
+     <a>
+      Python package
+     </a>
+     .
+    </p>
+    <h1 id="thanks">
+     Thanks
+    </h1>
+    <ul>
+     <li>
+      To the
+      <a>
+       JetBrains / PyCharm community
+      </a>
+      for the support of a Pro developers license for this and other open-source projects
+     </li>
+     <li>
+      To the
+      <a>
+       Github community
+      </a>
+      for their free support to open source projects like this one
+     </li>
+    </ul>
+    <h1 id="windows-release-users">
+     Windows Release Users
+    </h1>
+    <p>
+     Some have downloaded the
+     <strong>
+      WGS Extract
+     </strong>
+     tool solely to gain access to the MS Windows native executables of the Bioinformatic Tools we include.  You can use these Bioinformatic tools independent of the
+     <strong>
+      WGS Extract
+     </strong>
+     program.
+     <strong>
+      WGSE
+     </strong>
+     release, just delete everything except the cygwin64 folder and adjust your path for wherever you move the folder. For those using the new Msys2 release, it is the msys2/usr/bin and msys2/ucrt64/bin folders; respectively.
+    </p>
+    <p>
+     Since v4, this is a full, BASE environment of Cygwin64 that is captured as of the stated release date.
+     <strong>
+      WGSE
+     </strong>
+     .
+    </p>
+    <p>
+     Windows 11
+     <strong>
+      WSLG
+     </strong>
+     with Ubuntu Linux Desktop (not server) can be used to install and run
+     <strong>
+      WGS Extract
+     </strong>
+     . You have to tune
+     <strong>
+      WSLG
+     </strong>
+     parameters to get effective use of your disk space, CPU cores and memory under WSLG.
+    </p>
+   </section>
+   <footer>
+    <p>
+     <small>
+      Hosted on GitHub Pages &mdash; Theme by
+      <a>
+       orderedlist
+      </a>
+     </small>
+    </p>
+   </footer>
+  </div>
+ </body>
+</html>

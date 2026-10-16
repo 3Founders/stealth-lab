@@ -1,0 +1,15 @@
+feat(routing): model-card priors, public evidence, default model plan, between-nightly model updates
+
+- cards.py: a model with no predecessor starts from its public card (release date, size, price, open
+  weights, reasoning, family) via a shrunk regression learned across all models, not a pure guess
+- model.py: card prior, contamination term (kappa), aggregate-only binomial likelihood
+- evidence.py / public_evidence.py / import_public.py: SWE-bench experiments, SWE-rebench, SWE-agent
+  trajectories, RouterBench, OpenRouter cards -> admin routing-import-public (dry run by default)
+- goal_features.py: task-size features of the reference patch appended to phi
+- model_update.py: hourly posterior of each fitted model's ability drift from public observations
+  across Goals (no longer siloed per Goal until the nightly fit)
+- plan.py / server.py: my_model and STEALTH_DEFAULT_MODELS make the plan default; reply carries
+  basis / fit_id / as_of / per-rung p_ok interval and cost (plan section 5.2)
+- migrations 136/137; docs/routing_priors.md; offline tests; scripts/routing_priors_eval.py
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

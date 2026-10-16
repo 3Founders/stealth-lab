@@ -1,0 +1,104 @@
+{
+ "label": "",
+ "role": "stealth_app",
+ "results": {
+  "tests/test_mcp_tenant_isolation_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_cross_user_isolation_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_retrieval_fixture_isolation_e2e.py": {
+   "passed": 2,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_agents_file_download_isolation_e2e.py": {
+   "passed": 1,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_ingestion_episode_extraction_privacy_e2e.py": {
+   "passed": 1,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_product_model_privacy_e2e.py": {
+   "passed": 2,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_hardening_h2_rls_backstop.py": {
+   "passed": 22,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_access.py": {
+   "passed": 9,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_routing_isolation_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_routing_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_org_governance_e2e.py": {
+   "passed": 26,
+   "failed": 6,
+   "skipped": 0,
+   "errors": 0,
+   "failures": [
+    "FAILED tests/test_org_governance_e2e.py::test_an_unset_tenant_setting_sees_nothing_and_writes_nothing",
+    "FAILED tests/test_org_governance_e2e.py::test_the_usage_view_obeys_the_callers_row_level_security",
+    "FAILED tests/test_org_governance_e2e.py::test_audit_rows_cannot_be_updated_or_deleted_and_tampering_is_detected",
+    "FAILED tests/test_org_governance_e2e.py::test_erasure_needs_two_owners_stops_at_a_hold_and_never_claims_more_than_it_removed",
+    "FAILED tests/test_org_governance_e2e.py::test_the_performance_view_obeys_the_callers_row_level_security",
+    "FAILED tests/test_org_governance_e2e.py::test_denials_and_per_user_usage_obey_row_level_security"
+   ]
+  },
+  "tests/test_tenant_isolation_p1a_e2e.py": {
+   "passed": 11,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/evaluation/privacy": {
+   "passed": 2,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  }
+ }
+}

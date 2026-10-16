@@ -1,0 +1,28 @@
+core-a: P1-A isolation -- ownerless instance_key fail-open closed, routing JSON stored as objects, suites that never ran now run
+
+- routing/plan.py: an instance issued to NOBODY (pre-binding decision, or a plan for an unidentified caller) stays with
+  unidentified callers only; a signed-in user can no longer take it over (was fail-open). Same error text as unknown.
+- routing/store.py: jsonb writers pass objects (the pool codec encodes), not json.dumps() text that stored JSON strings
+  invisible to SQL ->>. db/149 unwraps the old rows (idempotent; verified on a throwaway DB; NOT applied to production).
+- tests that never ran: two suites set STEALTHLAB_MCP_TOKEN=test-token and errored on import wherever backend/.env
+  declares a token; the retrieval-fixture test called Vertex. Fixed (declared token; deterministic vectors with an
+  exact-match query and a new "unflagged is returned" control). Stale privacy test: find_goal returns (page, has_more).
+- new tests/test_tenant_isolation_p1a_e2e.py: same-text oracle, anonymous tool scopes, blank Bearer, billed-org checks,
+  pooled-connection tenant reset, strict-vs-fallback RLS without tenant_transaction, withdrawn content.
+- scripts/run_isolation_suites.py (loopback only; overrides every *_DATABASE_URL), scripts/sql/create_app_role.sql.
+- docs/security_runbook.md residual risks updated; final_prod_docs/p1_results.md P1-A section.
+
+Tests (2026-10-07, throwaway PostgreSQL 18 on 127.0.0.1:55432, 141 migrations + 149):
+- as stealth_app (no superuser / BYPASSRLS / DDL):
+  - mcp_tenant 3/0, cross_user 3/0, retrieval_fixture 2/0, agents_download 1/0, episode_privacy 1/0,
+    product_model_privacy 2/0, h2_rls_backstop 22/0, access 9/0, routing_isolation 3/0, evaluation/privacy 2/0,
+    new p1a 8/0
+  - org_governance 26/6: the 6 are setup privilege errors (the suite SET ROLEs itself); 32/0 as owner
+- as owner: all of the above pass; new p1a 7 passed / 1 deliberate skip (RLS test refuses a bypass role)
+- offline: 109 passed (routing plan/ladder/mcp, health, ledger, library, priors fast); service identity 20 passed
+- mutation: the old fail-open guard restored -> the new live oracle test and the offline plan test both fail
+
+Deferred (runbook residual risks #8 #9 #10): migration-29 fallback tables, routing tables without RLS, legacy admin key
+on a STAGING-mode host.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

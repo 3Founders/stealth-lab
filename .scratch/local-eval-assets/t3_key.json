@@ -1,0 +1,394 @@
+{
+ "obsidian-tasks-group__obsidian-tasks-2486": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "yannickcr__eslint-plugin-react-1527": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "alibaba__fescar-619": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "python-trio__trio-1129": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pion__turn-243": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "julialinearalgebra__genericlinearalgebra.jl-125": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "marshmallow-code__apispec-361": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-4642": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-5005": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyThaiNLP__pythainlp-399": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "gleam-lang__gleam-3486": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "briannesbitt__carbon-2745": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "PyCQA__flake8-bugbear-316": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kinnala__scikit-fem-667": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "ipython__traitlets-773": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "fika-lang__fika-37": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "corteva__rioxarray-14": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "agnostiqhq__covalent-1251": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "casey__just-2460": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "nipy__nipype-3248": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-8166": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "Krukov__cashews-29": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "modin-project__modin-7395": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "dwavesystems__dwave-cloud-client-455": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "PyCQA__isort-1717": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "Textualize__textual-3360": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "Axelrod-Python__Axelrod-653": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "laravel__framework-37487": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "gleam-lang__gleam-4354": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "eslint__doctrine-182": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "zulip__zulip-terminal-1463": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "mgechev__revive-876": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "sasstools__sass-lint-893": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "lunarphp__lunar-2124": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "serverless__serverless-2748": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "casey__just-1809": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "asottile__all-repos-138": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "plexis-js__plexis-60": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "equinor__webviz-config-656": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "fronzbot__blinkpy-268": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "electron__electron-packager-1449": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "aio-libs__aioftp-110": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "pynamodb__PynamoDB-864": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "spectacles-ci__spectacles-179": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-5906": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "bitshifter__glam-rs-187": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "PyCQA__isort-1432": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "urlaubsverwaltung__urlaubsverwaltung-4858": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "dandi__dandi-cli-208": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "petrobras__ross-966": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "argoproj-labs__applicationset-282": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "zulko__moviepy-1768": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "theacodes__nox-310": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "core-gatech-group__serpent-tools-34": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "iterative__dvc-3156": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "ajalt__mordant-77": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "datosgobar__pydatajson-137": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "goadesign__goa-2708": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kubernetes-incubator__client-python-50": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "apigee__registry-1100": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-2892": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "urlaubsverwaltung__urlaubsverwaltung-4789": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "kubernetes__kops-17270": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "dandi__dandi-cli-216": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "datalad__datalad-next-632": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "helidon-io__helidon-7988": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kubernetes__kops-11816": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "jenkinsci__prometheus-plugin-598": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "s-knibbs__dataclasses-jsonschema-82": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "geopandas__geopandas-3591": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "pypa__auditwheel-287": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "MatterMiners__tardis-150": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-9391": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "google__go-safeweb-54": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "iterative__dvc-7687": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "import-js__eslint-plugin-import-2334": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "duartegroup__autodE-242": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "getmoto__moto-6049": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "beetbox__beets-5022": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "ucfopen__canvasapi-467": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "PyCQA__flake8-1440": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kozea__weasyprint-2494": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "godbus__dbus-297": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "postlund__pyatv-978": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "wkeeling__selenium-wire-509": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "feature-engine__feature_engine-794": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "Adyen__adyen-python-api-library-102": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pre-commit__pre-commit-hooks-575": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "duartegroup__autodE-77": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "snowflakedb__snowflake-connector-python-1856": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "PyCQA__flake8-bugbear-287": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "pajlads__dinkplugin-273": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "klothoplatform__klotho-354": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "kytos__python-openflow-280": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "doctrine__orm-11826": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "tomerfiliba__plumbum-366": {
+  "A": "kel",
+  "B": "alone"
+ },
+ "orchestr7__ktoml-304": {
+  "A": "alone",
+  "B": "kel"
+ },
+ "vaskoz__dailycodingproblem-go-12": {
+  "A": "kel",
+  "B": "alone"
+ }
+}

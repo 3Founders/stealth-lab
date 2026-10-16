@@ -1,0 +1,3021 @@
+<!DOCTYPE html>
+<html itemscope itemtype="" lang="en">
+ <head>
+  <style>
+   html,body,div,span,applet,object,iframe,h1,h2,h3,h4,h5,h6,p,blockquote,pre,a,abbr,acronym,address,big,cite,code,del,dfn,em,img,ins,kbd,q,s,samp,small,strike,strong,sub,sup,tt,var,b,u,i,center,dl,dt,dd,ol,ul,li,fieldset,form,label,legend,table,caption,tbody,tfoot,thead,tr,th,td,article,aside,canvas,details,embed,figure,figcaption,footer,header,hgroup,menu,nav,output,ruby,section,summary,time,mark,audio,video{margin:0;padding:0;border:0;font-size:100%;font:inherit;vertical-align:baseline}article,aside,details,figcaption,figure,footer,header,hgroup,menu,nav,section{display:block}body{line-height:1}ol,ul{list-style:none}blockquote,q{quotes:none}blockquote:before,blockquote:after,q:before,q:after{content:'';content:none}table{border-collapse:collapse;border-spacing:0}/*! normalize.css v8.0.1 | MIT License | github.com/necolas/normalize.css */html{line-height:1.15;-webkit-text-size-adjust:100%}body{margin:0}main{display:block}h1{font-size:2em;margin:0.67em 0}hr{box-sizing:content-box;height:0;overflow:visible}pre{font-family:monospace, monospace;font-size:1em}a{background-color:transparent}abbr[title]{border-bottom:none;text-decoration:underline;text-decoration:underline dotted}b,strong{font-weight:bolder}code,kbd,samp{font-family:monospace, monospace;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-0.25em}sup{top:-0.5em}img{border-style:none}button,input,optgroup,select,textarea{font-family:inherit;font-size:100%;line-height:1.15;margin:0}button,input{overflow:visible}button,select{text-transform:none}button,[type="button"],[type="reset"],[type="submit"]{-webkit-appearance:button}button::-moz-focus-inner,[type="button"]::-moz-focus-inner,[type="reset"]::-moz-focus-inner,[type="submit"]::-moz-focus-inner{border-style:none;padding:0}button:-moz-focusring,[type="button"]:-moz-focusring,[type="reset"]:-moz-focusring,[type="submit"]:-moz-focusring{outline:1px dotted ButtonText}fieldset{padding:0.35em 0.75em 0.625em}legend{box-sizing:border-box;color:inherit;display:table;max-width:100%;padding:0;white-space:normal}progress{vertical-align:baseline}textarea{overflow:auto}[type="checkbox"],[type="radio"]{box-sizing:border-box;padding:0}[type="number"]::-webkit-inner-spin-button,[type="number"]::-webkit-outer-spin-button{height:auto}[type="search"]{-webkit-appearance:textfield;outline-offset:-2px}[type="search"]::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}details{display:block}summary{display:list-item}template{display:none}[hidden]{display:none}*,*:before,*:after{box-sizing:border-box}body{background:#03a9f4;padding:0px 8px;font-family:"Roboto",sans-serif}h1,h2,h3,h4,h5,h6{font-family:"PT Sans",sans-serif;font-weight:normal}h1{margin:24px 0px;font-size:32px}h2{margin:26px 0px;font-size:24px}h3{margin:20px 0px;font-size:20px}hr{background:#000;border:0px solid #000;border-top-width:1px;margin:15px 0px}p{margin:14px 0px 5px 0px}ul{display:block;margin:3px 0px 10px 0px;list-style-type:disc}li{margin:0px 0px 0px 40px;line-height:1.3}textarea{font-family:monospace}[v-cloak]{display:none}.container{max-width:1450px;background-color:#fff;background-image:url("../_imgs/xpda-top-bar.png");background-position:0px -60px;background-repeat:no-repeat;background-size:100% 127px;border-radius:35px 35px 9px 9px;margin:10px auto 40px auto;padding:10px}.full{width:100%}.half{display:inline-block;width:49%;vertical-align:top}.btn{background:#EAEAEA;border:1px solid #000;border-width:1px 0px;margin:4px 0px;padding:8px;font-size:14px;cursor:pointer}.btn:hover,.btn:focus{background:#fff;border-color:#bdbdbd;outline:none}.btn:first-of-type{border-left-width:1px}.btn:last-of-type{border-right-width:1px}.btn.active{background:#03a9f4}.btn.active:hover,.btn.active:focus{background:#81d4fa;border-color:#03a9f4}.text-center{text-align:center}.text-left{text-align:left}.text-right{text-align:right}.center{margin-right:auto;margin-left:auto;text-align:center}.section{margin-bottom:10px}.form{columns:2}.form>div{margin:10px 0px}.form label{font-weight:bold}.form textarea,.form input[type="text"]{width:500px}.truncate{text-overflow:ellipsis;white-space:nowrap;overflow:hidden}.spinner{width:120px;height:120px;border:16px solid #DDD;border-top-color:#03a9f4;border-radius:50%;margin:30px auto;animation:spin 2s linear infinite}@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}.cards{margin-right:auto;margin-left:auto;text-align:center;font-size:0px}.card,.card-spacer{display:inline-block;width:calc(100% - 22px);max-width:695px;margin:10px;font-size:16px}.card{border:1px solid #000;line-height:1.2;text-align:left}.unreviewed .card-header{background:#f50057}.card-header{background:#03a9f4;padding:0px 11px;color:#fff;font-family:"PT Sans Narrow","Roboto",sans-serif;font-size:22px;font-weight:700;line-height:48px}.card-header a,.card-header a:visited{color:#fff}.card-body{height:300px;padding:10px;overflow:auto}.deprecated .card-header{background:#D8D8D8;border-color:#D8D8D8}.deprecated .card-header a,.deprecated .card-header a:visited{color:#616161}.deprecated .card-body{background:#EAEAEA}.deprecated .expand svg,.deprecated .shrink svg{fill:#616161}.expand,.shrink{cursor:pointer;float:right}.expand svg,.shrink svg{fill:#fff}.shrink{display:none}.big-card .card{max-width:100%}.big-card .card-body{height:630px}.big-card .shrink{display:block}.big-card .expand{display:none}.news p{max-width:850px;margin:0px auto;line-height:1.15;text-align:left}.news-controls{padding-top:10px}.news-link{color:blue;cursor:pointer}.github-corner p{display:none}.github-corner svg{position:absolute;top:0px;right:0px;width:80px;height:80px;border:0px;fill:#fff;filter:drop-shadow(-7px 7px 0px #03a9f4)}.github-corner .octo-body{fill:#03a9f4}.github-corner .octo-arm{fill:#03a9f4;transform-origin:130px 106px}.github-corner:hover .octo-arm{animation:octocat-wave 560ms ease-in-out}@keyframes octocat-wave{0%,100%{transform:rotate(0deg)}20%,60%{transform:rotate(-25deg)}40%,80%{transform:rotate(10deg)}}@media (max-width: 500px){.github-corner .octo-arm{animation:octocat-wave 560ms ease-in-out}.github-corner:hover .octo-arm{animation:none}}@media (max-width: 320px){.github-corner svg{display:none}.github-corner p{display:block}}.wordmark{max-width:calc(100% - 10px);max-height:79px;margin:59px 0px 13px 0px}.logo{max-width:100px;max-height:100px;margin:0px 0px 13px 13px;float:right}.admin-preview{width:100%;height:348px;background:#f5f5f5;border:0px;margin:10px 0px;overflow-y:scroll}.plus,.minus{background:#eee;padding:1px 7px;cursor:pointer;vertical-align:top}@media screen and (max-width: 1230px){.form{columns:1}.half{width:100%}}
+
+
+
+  </style>
+  <!-- Global                                                                                             -->
+  <meta charset="utf-8">
+  <meta content="IE=edge" http-equiv="X-UA-Compatible">
+  <meta content="width=device-width, initial-scale=1, shrink-to-fit=no" name="viewport">
+  <title>
+   Cross-Platform Desktop App Development (XPDA)
+  </title>
+  <meta content="A comprehensive list of tools used to make cross-platform desktop apps (XPDA). Including pros/cons, and a variety of programming language support." name="description">
+  <meta content="xpda, cross-platform, dekstop app, development, devtools" name="keywords">
+  <meta content="0" http-equiv="Expires">
+  <meta content="Desktop App Development" name="subject">
+  <meta content="EN" name="language">
+  <meta content="index,follow" name="robots">
+  <meta content="The Jared Wilcurt" name="owner">
+  <meta content="General" name="rating">
+  <meta content="True" name="HandheldFriendly">
+  <!-- Google/Schema.org                                                                                  -->
+  <meta content="XPDA: Cross-Platform Desktop App Development" itemprop="name">
+  <meta content="A comprehensive list of tools used to make cross-platform desktop apps (XPDA). Including pros/cons, and a variety of programming language support." itemprop="description">
+  <meta content="" itemprop="image">
+  <!-- Twitter                                                                                            -->
+  <meta content="on" name="twitter:dnt">
+  <meta content="summary" name="twitter:card">
+  <meta content="@TheJaredwilcurt" name="twitter:creator">
+  <!-- Facebook/Reddit                                                                                    -->
+  <meta content="website" property="og:type">
+  <meta content="" property="og:url">
+  <meta content="XPDA: Cross-Platform Desktop App Development" property="og:title">
+  <meta content="XPDA: Cross-Platform Desktop App Development" property="og:site_name">
+  <meta content="" property="og:image">
+  <meta content="en_US" property="og:locale">
+  <meta content="A comprehensive list of tools used to make cross-platform desktop apps (XPDA). Including pros/cons, and a variety of programming language support." property="og:description">
+  <!-- Android                                                                                            -->
+  <meta content="#03A9F4" name="theme-color">
+  <meta content="yes" name="mobile-web-app-capable">
+  <!-- Microsoft                                                                                          -->
+  <meta content="XPDA.net" name="application-name">
+  <meta content="on" http-equiv="cleartype">
+  <meta content="#FFFFFF" name="msapplication-navbutton-color">
+  <meta content="#FFFFFF" name="msapplication-TileColor">
+  <meta content="/_imgs/meta/mstile01sm.png" name="msapplication-square70x70logo">
+  <meta content="/_imgs/meta/mstile02md.png" name="msapplication-square150x150logo">
+  <meta content="/_imgs/meta/mstile03wd.png" name="msapplication-wide310x150logo">
+  <meta content="/_imgs/meta/mstile04lg.png" name="msapplication-square310x310logo">
+  <meta content="skype_toolbar_parser_compatible" name="skype_toolbar">
+  <!-- Apple                                                                                              -->
+  <meta content="XPDA.net" name="apple-mobile-web-app-title">
+  <meta content="no" name="apple-mobile-web-app-capable">
+  <meta content="no" name="apple-touch-fullscreen">
+  <meta content="black" name="apple-mobile-web-app-status-bar-style">
+  <meta content="telephone=no" name="format-detection">
+  <!-- Styles/Scripts                                                                                     -->
+ </head>
+ <body>
+  <div class="container text-center" data-v-app id="app">
+   <a class="github-corner" title="Edit this page on GitHub">
+    <p>
+     Edit this page on GitHub
+    </p>
+   </a>
+   <div>
+    <a>
+     <img alt="XPDA.net" class="wordmark" src="rick.jpg">
+    </a>
+   </div>
+   <h2>
+    Cross-Platform Desktop Apps (XPDA)
+   </h2>
+   <h3>
+    Write Once Run Anywhere (WORA) development for desktop operating systems.
+   </h3>
+   <hr>
+   <div class="news">
+    <h2>
+     XPDA News: (8/26/2020)
+    </h2>
+    <h3>
+     <a rel="nofollow" target="_blank">
+      Electron drops ESM support
+     </a>
+    </h3>
+    <p>
+     <strong>
+      Summary:
+     </strong>
+     <span>
+      Electron has stated that it will be dropping support for JavaScript's modern, native, import/export. The popular
+      <code>
+       import module from './module.js'
+      </code>
+      pattern will be removed from Electron.
+     </span>
+     (
+     <a rel="nofollow" target="_blank">
+      Read more
+     </a>
+     )
+    </p>
+    <div class="news-controls">
+     &laquo;
+     <span class="">
+      Next Story
+     </span>
+     |
+     <span class="news-link">
+      Previous story
+     </span>
+     &raquo;
+    </div>
+   </div>
+   <hr>
+   <!-- -->
+   <div class="text-left">
+    <h3>
+     Filter Controls:
+    </h3>
+    <div>
+     <select>
+      <option value="subtractive">
+       Supports at least one of these:
+      </option>
+      <option value="additive">
+       Must support each selected:
+      </option>
+     </select>
+    </div>
+    <div>
+     <p>
+      Languages
+     </p>
+     <button class="active btn" title="Used by 15 tools">
+      HTML
+     </button>
+     <button class="active btn" title="Used by 15 tools">
+      JS
+     </button>
+     <button class="active btn" title="Used by 14 tools">
+      CSS
+     </button>
+     <button class="active btn" title="Used by 8 tools">
+      Node.js
+     </button>
+     <button class="active btn" title="Used by 5 tools">
+      C++
+     </button>
+     <button class="active btn" title="Used by 4 tools">
+      Python
+     </button>
+     <button class="active btn" title="Used by 3 tools">
+      C#
+     </button>
+     <button class="active btn" title="Used by 3 tools">
+      .NET
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      Rust
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      Go
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      ActionScript
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      C
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      Perl
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      Ruby
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      F#
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Lisp
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      D
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Haskell
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Kotlin
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Lua
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      PHP
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Scala
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Swift
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      TIScript
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Xojo
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Java
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      Scheme
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      ReasonML
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      OCaml
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      8th
+     </button>
+     <button class="active btn" title="Used by 1 tools">
+      XML
+     </button>
+    </div>
+    <div>
+     <p>
+      Platforms
+     </p>
+     <button class="active btn" title="Used by 29 tools">
+      Windows
+     </button>
+     <button class="active btn" title="Used by 29 tools">
+      OSX
+     </button>
+     <button class="active btn" title="Used by 26 tools">
+      Linux
+     </button>
+     <button class="active btn" title="Used by 9 tools">
+      iOS
+     </button>
+     <button class="active btn" title="Used by 8 tools">
+      Android
+     </button>
+     <button class="active btn" title="Used by 2 tools">
+      Windows Phone
+     </button>
+    </div>
+    <!-- -->
+    <!-- -->
+    <h3>
+     Matching Tools (29/29)
+    </h3>
+    <div class="cards">
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        NW.js
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="NW.js logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Very wide OS support (about twice as many OS's as Electron)
+         </li>
+         <li>
+          Legacy OS support to OSX 10.6 and XP (via NW.js 0.14.7 LTS)
+         </li>
+         <li>
+          Actually cares about proper Linux support
+         </li>
+         <li>
+          Allows for protected source code (important for proprietary/closed source code)
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Terrible Name/Branding/Marketing
+         </li>
+         <li>
+          Small-Medium ecosystem
+         </li>
+         <li>
+          Basically one person behind most of the code
+         </li>
+         <li>
+          Everything you need from the documentation is available, but the site is clunky
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with NW.js:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Construct
+          </a>
+          - Used under the hood for tens of thousands of games created using the Construct game dev toolkit.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           WeChat Mini Program SDK
+          </a>
+          - WeChat Mini Program SDK is built with NW.js.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           pgAdmin 4
+          </a>
+          - A very popular database tool, pgAdmin switched to NW.js in 2021 saying "By implementing the Desktop Runtime using NW.js we get rid of the separate server application and the independent browser. We also get rid of QT and C++ runtime logic".
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Gitter
+          </a>
+          - Gitter is a chat platform for open source projects that directly integrates with GitHub. The native Windows desktop app for it uses NW.js.
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Frameworks:
+        </strong>
+        <ul>
+         <li>
+          Vue -
+          <a rel="noopener noreferrer" target="_blank">
+           Vue-CLI + NW.js
+          </a>
+         </li>
+         <li>
+          Angular 8+ -
+          <a rel="noopener noreferrer" target="_blank">
+           Angular CLI + NW.js
+          </a>
+         </li>
+         <li>
+          More available at -
+          <a rel="noopener noreferrer" target="_blank">
+           NW Utils
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           dev.to
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Holy shit NW.js is so easy
+          </a>
+          <em>
+           by The Jared Wilcurt
+          </em>
+         </li>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           NW.js, Vue, Vuetify
+          </a>
+          <em>
+           by Ackzell
+          </em>
+         </li>
+         <li>
+          <strong>
+           GitLab
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Making a desktop app: For complete beginners
+          </a>
+          <em>
+           by The Jared Wilcurt
+          </em>
+         </li>
+         <li>
+          <strong>
+           GitHub
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Packaging and distributing NW.js apps
+          </a>
+          <em>
+           by Wouter Hisschem&ouml;ller
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Electron
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Electron logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Great name/marketing/branding
+         </li>
+         <li>
+          Big ecosystem
+         </li>
+         <li>
+          Good documentation
+         </li>
+         <li>
+          Used by a few big name projects
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Basically one person behind most of the code
+         </li>
+         <li>
+          Doesn't take Linux support seriously
+         </li>
+         <li>
+          Does not support any legacy OS's
+         </li>
+         <li>
+          Resource Hog
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Electron:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Discord
+          </a>
+          - Chat application aimed primarily at gamers
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           VSCode
+          </a>
+          - Open source text editor from Microsoft aimed at web developers.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Slack
+          </a>
+          - Slack is a chat application primarily aimed at inter-office and work-team communication.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           List of apps submitted to the Electron Website
+          </a>
+          - User submitted apps made with Electron
+         </li>
+         <!-- -->
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Frameworks:
+        </strong>
+        <ul>
+         <li>
+          Vue (Vue-CLI 2) -
+          <a rel="noopener noreferrer" target="_blank">
+           Electron-Vue
+          </a>
+         </li>
+         <li>
+          Vue (Vue-CLI 3) -
+          <a rel="noopener noreferrer" target="_blank">
+           Vue-CLI Plugin Electron Builder
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           dev.to
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Building a Desktop App with Vue: Electron
+          </a>
+          <em>
+           by Natalia Tepluhina
+          </em>
+         </li>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Login UI with Vuetify
+          </a>
+          <em>
+           by Paris Nakita Kejser
+          </em>
+         </li>
+         <li>
+          <strong>
+           QVault
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Automatic Cross-Platform Deployments with Electron and Travis-CI
+          </a>
+          <em>
+           by Lane Wagner
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Tauri
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Tauri logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Rust
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Once you have all the prerequisites installed, the initial project creation is extremely polished. A single command starts up a new project, which integrates with all popular WebDev CLI's (Vite, Vue-CLI, CRA, etc)
+         </li>
+         <li>
+          Has a build tool built right in. It's slow, but a phenomenal feature to have officially maintained
+         </li>
+         <li>
+          The documentation is probably the best I've seen for any project listed on XPDA.net. Though I found a few of my questions unanswered as I used it, especially basic things like what OS's are supported.
+         </li>
+         <li>
+          Produced a self-contained, portable, Windows executable that was under 7MB
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Takes around ~2 hours for initial machine and project setup (Visual Studio, OS Specific WebView, Rust, Node/npm, crate installs/compiling, etc). And this is NOT a "click a button and walk away" setup.
+         </li>
+         <li>
+          Builds must be done on target OS and can take 30-60 minutes per OS. Compared to NW.js or Electron where you can build for all OS's with a single command, which may take 15-30 minutes, but all will be done at the end; versus Tauri which takes twice as long for just one to finish.
+         </li>
+         <li>
+          Relies on the OS's built in webview, which means you need to build your UI in a cross-browser friendly manner, and use special tooling that those not deeply familiar with frontend development would be new to. Also you must use features based on the lowest common denomenator, meaning newer language or browser features will not be accessible
+         </li>
+         <li>
+          On Linux, you must build using the oldest Linux version you want to support, and may need to do multiple builds if the Linux versions differ greatly enough
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Tauri:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           "Awesome-Tauri" app list
+          </a>
+          - Bulleted list of apps made with Tauri, in seemingly no particular order or with any screenshots
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Xamarin
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Xamarin logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        C#, .NET, F#
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        iOS, Android, Windows Phone, Windows, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Currently supports OSX 10.7+ (though the upcoming versions will only support 10.9+)
+         </li>
+         <li>
+          Code can be shared across Desktop and Mobile apps
+         </li>
+         <li>
+          OSX apps can use XCode's interface builder, or create UI's with C#
+         </li>
+         <li>
+          Apps are written in C#/F#/.NET and can consume libraries written in VB and razor templates
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Very little abstraction is handled for you between the different OS's, versus something like NW.js where you write code to its API and it converts it for each OS
+         </li>
+         <li>
+          No Linux support
+         </li>
+         <li>
+          Windows support is limited to UWP (Microsoft Store) format, meaning it can only support Windows 8+
+         </li>
+         <li>
+          Developing for OSX apps requires a lot of knowledge of developing traditional native OSX desktop apps that talk directly to the OS API
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Xamarin:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Wails
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Wails logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Go
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Linux, OSX, Windows
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Does not ship a browser, uses what is installed
+         </li>
+         <li>
+          Builds to a single binary, packaging all frontend/backend code together (if all environment requirements are met)
+         </li>
+         <li>
+          Has decent Linux OS support, though requires extra effort for each to be set up
+         </li>
+         <li>
+          Has a decent CLI to generate projects that also has templates for many JS frameworks built in (Vue, Angular, Svelte, VanillaJS, Vuetify, React)
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Windows version relies on Internet Explorer 11's engine. IE11 was released in 2013 and many modern JS frameworks (like Vue 3) have dropped support for IE11 in order to use newer browser APIs like proxies for performance improvements and better developer ergonomics.
+         </li>
+         <li>
+          Saving changes on the frontend are not dynamically shown in the running app. You must kill the app and rebuild it to see changes.
+         </li>
+         <li>
+          Does not support making frameless apps, but does support fullscreen
+         </li>
+         <li>
+          Does not support making tray apps
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Wails:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Wails Official showcase
+          </a>
+          - Curated list of apps made with Wails
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Frameworks:
+        </strong>
+        <ul>
+         <li>
+          Vue, Angular, React, Svelte -
+          <a rel="noopener noreferrer" target="_blank">
+           Built into Wails-CLI
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Building Desktop App in Go using Wails
+          </a>
+          <em>
+           by Alex Pliutau
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Adobe Animate CC
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Adobe Animate CC logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        ActionScript
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Android, iOS
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Adobe Animate (formerly Adobe Flash Professional) allows you to produce Flash files (.swf), HTML5 compatible projects, and also export out to a self contained executable for Windows and OSX (so nothing additional needs to be installed to run it)
+         </li>
+         <li>
+          Versatile and powerful vector-based animation tools
+         </li>
+         <li>
+          Distribution sizes are small, typically around 6-20MB
+         </li>
+         <li>
+          Aimed primarily at animated short films, and 2D games
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Requires renting the software month-to-month. If you stop paying for a Creative Cloud subscription, you will no long be able to edit/modify your application.
+         </li>
+         <li>
+          Lacks true Linux support. There is a separate download for a standalone Linux projector file that a SWF can be loaded in, but no way to build your app into it in the same way the Windows/OSX version can
+         </li>
+         <li>
+          Very limited library/framework/tooling support
+         </li>
+         <li>
+          Very limited access to file system, hardware, storage, or OS features
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Adobe Animate CC:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Knights of the Stream
+          </a>
+          - A desktop app for Twitch streams that allows viewers to level up a character by participating in chat, and for the streamers to reward participants with in-game rewards.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Publishing your Flash project to a projector
+          </a>
+          <em>
+           by Brian Kelly
+          </em>
+         </li>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Publishing mobile and desktop applications
+          </a>
+          <em>
+           by Lynda.com
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        LibUI-Node
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <!-- -->
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Uses minimal amounts of resources, much less than NW.js and Electron
+         </li>
+         <li>
+          Built package can be as small as ~20MB (compared to ~70MB (NW) and ~120MB (Electron))
+         </li>
+         <li>
+          Distribution sizes can be as low as 10MB (packaged installer)
+         </li>
+         <li>
+          Can use node_modules
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Requires native build tools and to do builds on each target platform
+         </li>
+         <li>
+          Limited-to-no styling options, all apps look like vanilla form fields
+         </li>
+         <li>
+          Very new, not out of beta
+         </li>
+         <li>
+          Not great OS support, or build tools yet
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with LibUI-Node:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Frameworks:
+        </strong>
+        <ul>
+         <li>
+          React -
+          <a rel="noopener noreferrer" target="_blank">
+           Proton-Native
+          </a>
+         </li>
+         <li>
+          Vue.js -
+          <a rel="noopener noreferrer" target="_blank">
+           Vuido
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           dev.to
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Building a Desktop App with Vue: Vuido
+          </a>
+          <em>
+           by Natalia Tepluhina
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        LibUI
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <!-- -->
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        C, C++, C#, .NET, Lisp, D, Haskell, Node.js, Kotlin, Lua, Perl, PHP, Python, Ruby, Rust, Scala, Swift
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Uses the native OS UI, allowing for fairly small applications
+         </li>
+         <li>
+          Wide support of bindings for other languages
+         </li>
+         <li>
+          Uses very few resources
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Quality and level of completion of bindings varies quite a bit
+         </li>
+         <li>
+          You are limited to very basic form-like UI's
+         </li>
+         <li>
+          Most bindings require native build tools and doing builds on each target OS
+         </li>
+         <li>
+          Dev, build, and distribution tools are weak or completely lacking
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with LibUI:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Sciter
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Sciter logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, TIScript
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Supports Windows XP+ and OSX 10.7+
+         </li>
+         <li>
+          Distribution can be as small as 4MB for an installer (very impressive for what you get)
+         </li>
+         <li>
+          Uses very little resources to give similar UI experience as that of a browser
+         </li>
+         <li>
+          Source code is customizable for those wanting to tweak the build (at a cost)
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Has a limited free version, can become expensive in some scenarios
+         </li>
+         <li>
+          Does not support all CSS features (No CSS Grid support, for example)
+         </li>
+         <li>
+          Uses a proprietary scripting language that is based off of JavaScript (ES6), with a subset of features and missing many aspects of the Browser API. This gives you most of what you'd want, but for example, running vue.min.js will throw errors from Vue attempting to use JS features that are missing
+         </li>
+         <li>
+          Documentation is very lacking
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Sciter:
+        </strong>
+        <ul>
+         <li>
+          Norton Internet Security
+          <!-- -->
+         </li>
+         <li>
+          eSet Smart Security
+          <!-- -->
+         </li>
+         <li>
+          Avast Free Antivirus
+          <!-- -->
+         </li>
+         <li>
+          Bitdefender
+          <!-- -->
+         </li>
+         <!-- -->
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Xojo
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Xojo logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        Xojo
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux, iOS
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Very beginner friendly, uses a simple WYSIWYG editor
+         </li>
+         <li>
+          Streamlined wizard approach to creating new projects
+         </li>
+         <li>
+          Good Linux support
+         </li>
+         <li>
+          Offers cloud platform for easy deployments of web projects
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Uses the proprietary "Xojo language", an object oriented language similar to VB, Java, or C#
+         </li>
+         <li>
+          Exporting to each platform is simple and easy, but your options are fairly limited around executable details and packaging for distribution
+         </li>
+         <li>
+          Their documentation site is very easy to get lost in, typically defaulting to indexes of single-word links to other pages
+         </li>
+         <li>
+          Costs $300/year for cross-platform desktop license, cost goes up from there
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Xojo:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Products made with Xojo
+          </a>
+          - Curated list of products made with Xojo
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Creating a Desktop application using Xojo
+          </a>
+          <em>
+           by Xojo
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Chromely
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Chromely logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, .NET, C#
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Simplifies interacting with Chromium Embedded Framework (CEF) for .NET (5) and .NET Core developers
+         </li>
+         <li>
+          Based on CefSharp and CefGlue
+         </li>
+         <li>
+          Has Vue, React, Angular, and Blazor boilerplates
+         </li>
+         <li>
+          Uses Chromium dev tools
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          The abstraction from the OS layer is minimal compared to NW.js or Electron, some of this is to be resolved in future versions
+         </li>
+         <li>
+          Requires referencing documentation of 3rd parties (Xilium.CefGlue, CefSharp) to build more advanced apps
+         </li>
+         <li>
+          Basically one person behind most of the code
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Chromely:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           A List of Apps Built with Chromely
+          </a>
+          <!-- -->
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           Medium
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Chromely - Lightweight Alternative to Electron for .NET/.NET Core HTML5 Desktop Apps
+          </a>
+          <!-- -->
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Chromium Embedded Framework (CEF)
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Chromium Embedded Framework (CEF) logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        C, C++, Java
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          High amount of control
+         </li>
+         <li>
+          Good if you need to add in a browser view to an existing application
+         </li>
+         <li>
+          Relied on by a ton of projects/tools, making it likely to be around a long time
+         </li>
+         <li>
+          Has been ported to different languages for those that prefer .NET, Go, Delphi, or Python
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Considerably more complex than other options on this list
+         </li>
+         <li>
+          This is as bare-bones as it gets, many other projects listed on this site are built on top of CEF to simplify it and make development faster/easier
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Chromium Embedded Framework (CEF):
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Spotify
+          </a>
+          - Spotify is a streaming music platform. It's built with C++, JS, Handlebars, and Less and uses CEF under the hood.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tools:
+        </strong>
+        <ul>
+         <li>
+          Port -
+          <a rel="noopener noreferrer" target="_blank">
+           .NET CEF#
+          </a>
+         </li>
+         <li>
+          Port -
+          <a rel="noopener noreferrer" target="_blank">
+           .NET/Mono CEF Glue
+          </a>
+         </li>
+         <li>
+          Port -
+          <a rel="noopener noreferrer" target="_blank">
+           .NET CEF ChromiumFX
+          </a>
+         </li>
+         <li>
+          Port -
+          <a rel="noopener noreferrer" target="_blank">
+           Delphi CEF
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Kivy
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Kivy logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        Python
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux, iOS, Android
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Uses a simplified custom UI markup language called "Kv language" to handle the layout across all platforms
+         </li>
+         <li>
+          Detailed and complete documentation, including guide, tutorials, and API
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Separate build processes for each target platform
+         </li>
+         <li>
+          The size of the API will be overwhelming to those starting out with Kivy
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Kivy:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Kivy Projects Gallery
+          </a>
+          <!-- -->
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        PyQt
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="PyQt logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        Python
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX, iOS, Android
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Qt is built with C++ which can be cumbersome, the Python bindings simplify interacting with it
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          If your project is not licensed under GPLV3 then you will need to purchase a commercial license for PyQt which costs $550 per developer
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with PyQt:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           OpenShot
+          </a>
+          - Open source video editing software.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Manuskript
+          </a>
+          - Open source tool for writers to create their first draft
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tools:
+        </strong>
+        <ul>
+         <li>
+          Build System -
+          <a rel="noopener noreferrer" target="_blank">
+           fman
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Qt
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Qt logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        C++
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux, iOS, Android, Windows Phone
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Also supports other platforms: Embedded Linux, Integrity, QNX, VxWorks, Wayland, Windows Embedded (CE), Windows UWP (WinRT), and X11. Has been ported to additional platforms: Open Solaris, Haiku, OS/2, webOS, Kindle DX, AmigaOS, Tizen, and Sailfish OS
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Though it has an extremely wide support for platforms, it lacks support for legacy OS's, starting support from OSX 10.12+, Win 7+, and Ubuntu 16/18.
+         </li>
+         <li>
+          If your project is not licensed under GPLV2, GPLV3, or LGPL3 then Qt costs $459/developer/month
+         </li>
+         <li>
+          Many features in the commercial version are not available in the free version for open source projects
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Qt:
+        </strong>
+        <ul>
+         <li>
+          Adobe Photoshop Elements - Lower cost version of the professional Photoshop software for consumers.
+         </li>
+         <li>
+          Auodesk Maya - Industry standard 3D modeling/rendering software
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Dolphin
+          </a>
+          - Emulator for the Nintendo Wii and Nintendo GameCube systems.
+         </li>
+         <li>
+          Google Earth - Projects a 3D representation of Earth using satellite and GIS data.
+         </li>
+         <!-- -->
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        wxWidgets
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="wxWidgets logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        C++, Python, Perl, Ruby
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Uses the native UI elements of the OS
+         </li>
+         <li>
+          Has been ported to Python, Perl, and Ruby
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          From what I can see, wxWidgets hasn't kept up-to-date with modern (2010 and on) OS's. There are mentions of older (pre-iphone) smart phones, Windows 95-Vista, and OSX 10.5.
+         </li>
+         <li>
+          Requires a deeper knowledge of the target platform than other tools on this list
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with wxWidgets:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Audacity
+          </a>
+          - Open source audio editing tool.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           KiCad
+          </a>
+          - Electronic schematic diagrams and printed circuit board design application.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           wxWidgets' list of notable projects
+          </a>
+          - List with screenshots curated by wxWidgets
+         </li>
+         <!-- -->
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="deprecated card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Carlo
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <!-- -->
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Made by Google
+         </li>
+         <li>
+          Uses the user's installed copy of Chrome so you don't need to package and ship the browser in your distribution making dist sizes very small
+         </li>
+         <li>
+          Uses the Puppeteer API for communicating between Node and browser
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Is no longer maintained, as of Feb 2020
+         </li>
+         <li>
+          Though made by Google, it is part of their Chrome Lab experiments, which often become abandoned. (called it)
+         </li>
+         <li>
+          Requires the end user has Chrome 70+ installed on their system (released 2018-10-16)
+         </li>
+         <li>
+          You do not control the browser version, meaning usage of some new browser features in your app will require fallbacks to what Chrome 70 supported
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Carlo:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Lorca
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Lorca logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Go
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Inspired by Carlo, but for Go instead of Node.js
+         </li>
+         <li>
+          Unlike Carlo, Lorca can build an executable for most any platform via the go build command
+         </li>
+         <li>
+          Uses the user's installed copy of Chrome so you don't need to package and ship the browser in your distribution making dist sizes very small
+         </li>
+         <li>
+          Distribution sizes of 5-10MB
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Very new project, basically one person behind it
+         </li>
+         <li>
+          Requires the end user has Chrome 70+ installed on their system (released 2018-10-16)
+         </li>
+         <li>
+          You do not control the browser version, meaning usage of some new browser features in your app will require fallbacks to what Chrome 70 supported
+         </li>
+         <li>
+          Though building a native executable is available, you will still need to manually edit it to embed app icon, etc. and use tools for creating installers
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Lorca:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Ultralight
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Ultralight logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        C++, HTML, CSS
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Distribution sizes are as low as ~8MB
+         </li>
+         <li>
+          Low memory usage
+         </li>
+         <li>
+          GPU-Accelerated, drivers for Direct3D, Metal, and OpenGL (optimized for games)
+         </li>
+         <li>
+          Ultralight is designed for C++ developers, however it plans to add bindings for C, C#, .NET, Node.js, and Python
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Currently in beta and missing many features
+         </li>
+         <li>
+          Not free for all commercial use
+         </li>
+         <li>
+          Mostly closed source
+         </li>
+         <li>
+          Basically one person behind most of the code
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Ultralight:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        NeutralinoJs
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="NeutralinoJs logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Neutralino is a small executable that runs a static local http server to serve your application in the user's browser
+         </li>
+         <li>
+          Though it lacks in powerful features, its goal is to be small, lightweight, and easy to pick up, and it delivers on those goals very well
+         </li>
+         <li>
+          Has Vue, React, and Angular boilerplates
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Lacks many OS level features like being able to make a tray icon, or custom window chrome
+         </li>
+         <li>
+          Very limited access to file system, hardware, and OS level features through a tiny API
+         </li>
+         <li>
+          Your UI could run any browser the end user has, meaning that your app must be designed in a cross-browser friendly manner
+         </li>
+         <li>
+          Documentation is pretty light
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with NeutralinoJs:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        LambdaNative
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="LambdaNative logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        Scheme
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX, Android, iOS
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Also supports these platforms: OpenBSD, NetBSD, Free BSD, OpenWrt, and BlackBerry 10
+         </li>
+         <li>
+          Uses the Gambit-C version of Scheme
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Documentation is limited to a 900 page GitHub Wiki
+         </li>
+         <li>
+          The documentation itself lists the learning curve for Scheme as a negative
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with LambdaNative:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Slideshow of apps made with LambdaNative
+          </a>
+          <!-- -->
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Revery
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Revery logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        ReasonML, OCaml
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Designed with Functional Programming (FP) in mind for those that prefer it
+         </li>
+         <li>
+          A "React-Like" coding experience for building native UI's without a browser
+         </li>
+         <li>
+          Actively being developed, and has a Discord group to ask for guidance
+         </li>
+         <li>
+          There is intent to potentially support mobile platforms in the future
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          The project is described as "an experiment", and it feels like more of a proof-of-concept than a valid alternative for serious XPDA development.
+         </li>
+         <li>
+          Their documentation is very weak and assumes a familiarity with the Reason/OCaml ecosystems
+         </li>
+         <li>
+          No examples of hooking into the file system, hardware, or OS level
+         </li>
+         <li>
+          No examples of window management, frameless windows, taskbar apps, etc.
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Revery:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Onivim
+          </a>
+          - A "futuristic" text editor focused around Vim. Vim was a technology used in the 1980's, kinda like VCR's, remember those?
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           GitHub
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           Official Revery Quick-Start
+          </a>
+          <em>
+           by Outrun Labs
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Brackets-Shell
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Brackets-Shell logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Maintained by Adobe
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          No documentation
+         </li>
+         <li>
+          Only designed for Brackets text editor, not for general purpose use
+         </li>
+         <li>
+          They recommend using NW.js or Electron instead
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Brackets-Shell:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Brackets
+          </a>
+          - Brackets is a user friendly, open-source, text editor from Adobe aimed at Web designers.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        8th
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="8th logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        8th
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux, iOS, Android
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Runs on all platforms without the use of a browser or vm
+         </li>
+         <li>
+          May be appealing to more old-school devs that like Perl or Fourth
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Uses proprietary "8th" language (based on "fourth") that they describe as "If you&rsquo;re coming from a &ldquo;mainstream&rdquo; language, you may find 8th a bit puzzling."
+         </li>
+         <li>
+          I'm putting two more bullet points here for the language to emphasize how bad it is. It looks closer to regex than it does a modern programming language.
+         </li>
+         <li>
+          locals:
+: foobar
+  1000 "baz" w:! ;
+
+: bar 120 "baz" w:!
+         </li>
+         <li>
+          The tool ranges from free to "enterprise" ($3000) with additional features and support added to higher tiers. Source code for 8th is only available to Enterprise customers willing to sign an NDA
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with 8th:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           YouTube
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           8th: One Effort, Multiple Platforms
+          </a>
+          <!-- -->
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="deprecated card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Adobe AIR
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Adobe AIR logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, JS, ActionScript
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        iOS, Android, Windows, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Simple development environment
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Poor Linux support
+         </li>
+         <li>
+          Requires end users to install Adobe Air runtime separately
+         </li>
+         <li>
+          Limited documentation around desktop app development
+         </li>
+         <li>
+          Adobe dropped all support AIR in 2020 and transferred rights to Samsung owned HARMAN
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Adobe AIR:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Pownce
+          </a>
+          - Now defunct instant messaging/file sharing app
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <div class="section">
+        <strong>
+         Tutorials:
+        </strong>
+        <ul>
+         <li>
+          <strong>
+           forums.adobe.com
+          </strong>
+          -
+          <a rel="noopener noreferrer" target="_blank">
+           AIR Community Forums
+          </a>
+          <em>
+           by Adobe
+          </em>
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <div class="deprecated card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Muon
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Muon logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Fork of Electron with a less modified Chromium source, and goals to improve security and usage of Chrome extensions
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Project was deprecated in 2018.
+         </li>
+         <li>
+          This is literally just Electron with some very minor changes, all of which are things that NW.js already does much better than they are aiming for. I can't see any reason to recommend Muon to anyone.
+         </li>
+         <li>
+          Documentation is limited and mostly just a copy/paste job from Electron
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Muon:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Brave Browser
+          </a>
+          - Brave has since switched to patching the Chromium source code directly. Which makes sense becuase using Electron to make a browser, very possibly, is the laziest thing that could be done with the technology.
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="deprecated card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        Tint2
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="Tint2 logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, OSX, Linux
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Similar approach to that of NW.js or Electron
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Project is deprecated (last release was in 2016)
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with Tint2:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="deprecated card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        AppJS
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="AppJS logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        HTML, CSS, JS, Node.js
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Built on top of Chromium and Node
+         </li>
+         <li>
+          Distribution sizes around 20MB
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Project is deprecated (last release was in 2014)
+         </li>
+         <li>
+          No developer tools
+         </li>
+         <li>
+          Uses very old versions of Chromium and Node
+         </li>
+        </ul>
+       </div>
+       <div>
+        <strong>
+         Notable Projects made with AppJS:
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           tIRC
+          </a>
+          - Simple IRC Chat client for OSX
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Add a notable project made with this tool
+          </a>
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="deprecated card">
+      <div class="card-header">
+       <a rel="noopener noreferrer" target="_blank">
+        JSDB
+       </a>
+       <span class="expand">
+       </span>
+       <span class="shrink">
+       </span>
+      </div>
+      <div class="card-body">
+       <a rel="noopener noreferrer" target="_blank">
+        <img alt="JSDB logo" class="logo" src="rick.jpg">
+       </a>
+       <div class="section">
+        <strong>
+         Languages:
+        </strong>
+        JS, XML
+       </div>
+       <div class="section">
+        <strong>
+         Supported platforms:
+        </strong>
+        Windows, Linux, OSX
+       </div>
+       <div class="section">
+        <strong>
+         Pros:
+        </strong>
+        <ul>
+         <li>
+          Designed as a means to use JavaScript to interact with databases. For data-driven, network-centric programming.
+         </li>
+         <li>
+          Can make exes and they compress to less than 1MB
+         </li>
+         <li>
+          Though old, and no longer recieving updates, the author still answers questions in a Google Group
+         </li>
+         <li>
+          Based on Mozilla SpiderMonkey
+         </li>
+        </ul>
+       </div>
+       <div class="section">
+        <strong>
+         Cons:
+        </strong>
+        <ul>
+         <li>
+          Dated, last release was 2012. Code updates are effectively deprecated
+         </li>
+         <li>
+          Primarily focused on database related solutions, may be limited
+         </li>
+         <li>
+          Uses class libraries from Raosoft, Inc. making the open-source version free, however additional functionality or less restrictive license must be purchased (starting at $50)
+         </li>
+         <li>
+          Sort of like a poor-man's version of Node, but much smaller in size, for the trade off of using older JS, and having no access to modern JS frameworks or tooling
+         </li>
+        </ul>
+       </div>
+       <!-- -->
+       <!-- -->
+       <!-- -->
+       <!-- -->
+      </div>
+     </div>
+     <div class="card unreviewed" id="unreviewed">
+      <div class="card-header">
+       Tools that have not yet been reviewed:
+      </div>
+      <div class="card-body">
+       <div>
+        <strong>
+         Here are additional tools that have not been reviewed yet, but may still be of use to those visiting XPDA.net
+        </strong>
+        <ul>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           JavaFX
+          </a>
+          <!-- -->
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           Avalonia UI
+          </a>
+          <!-- -->
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           DeskGap
+          </a>
+          <!-- -->
+         </li>
+         <li>
+          <a rel="noopener noreferrer" target="_blank">
+           NodeGUI
+          </a>
+          - Qt based Node.js aproach to native UI's, includes React framework
+         </li>
+        </ul>
+       </div>
+      </div>
+     </div>
+     <!-- -->
+    </div>
+   </div>
+  </div>
+  <!-- end .container -->
+ </body>
+</html>

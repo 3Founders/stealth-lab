@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <meta charset="utf-8">
+  <title>
+   aWATTar Backtesting
+  </title>
+  <style>
+   body {
+	background-color: #fff;
+	margin: 20px;
+	padding: 0;
+}
+
+body, td {
+	font-family: verdana;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+table {
+    margin-left: 3em;
+    text-align: left;
+    padding: 2px;
+}
+table, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+  padding: 5px;
+  text-align: right;
+}
+
+th {
+	font-family: verdana;
+	font-size: 13px;
+        padding-left: 5px;
+        padding-right: 5px;
+	line-height: 18px;
+}
+
+.athead {
+	font-family: verdana;
+	font-size: 18px;
+        padding-left: 5px;
+        padding-right: 5px;
+        padding-bottom: 8px;
+}
+
+a {
+	text-decoration: none;
+	color: #777;
+}
+
+a:hover {
+	color: #999;
+}
+
+p {
+	margin-bottom: 12px;
+	margin-top: 12px;
+}
+
+form p {
+	margin-bottom: 8px;
+	margin-top: 8px;
+}
+
+li p {
+	margin-bottom: 6px;
+	margin-top: 6px;
+}
+
+form, h1, h2 {
+	margin: 0px;
+}
+
+h1 {
+	font-size: 18px;
+	line-height: 28px;
+}
+
+h2 {
+	font-size: 15px;
+	line-height: 25px;
+}
+
+.spacer_right {
+    margin-left: 70%;
+    margin-right: 10px;
+	float: right;
+}
+
+.container a {
+  padding: .2em;
+}
+
+@media (pointer: coarse) {
+  .container a {
+    padding: .8em;
+  }
+}
+.controls {
+	display: flex;
+	margin-top: 30px;
+	margin-bottom: 30px;
+    display: flex;
+    justify-content: center;
+}
+button {
+	background-color: #333;
+	color: #fff;
+	padding: 10px 20px;
+	border: none;
+	border-radius: 5px;
+	cursor: pointer;
+	margin: 0 10px;
+}
+
+.collapsible {
+  background-color: #777;
+  color: white;
+  cursor: pointer;
+  padding: 18px;
+  width: 100%;
+  border: none;
+  text-align: left;
+  outline: none;
+  font-size: 15px;
+}
+
+.active, .collapsible:hover {
+  background-color: #555;
+}
+
+.collapsible:after {
+  content: '\002B';
+  color: white;
+  font-weight: bold;
+  float: right;
+  margin-left: 5px;
+}
+
+.active:after {
+  content: "\2212";
+}
+
+.content {
+  padding: 0 18px;
+  max-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  transition: max-height 0.2s ease-out;
+  background-color: #f1f1f1;
+}
+
+.tablethickborderright {
+   border-right: 3px solid;
+}
+.tablethickborderbottom {
+   border-bottom: 4px solid;
+}
+.diff-price-good {
+    color: darkgreen;
+}
+.diff-price-bad {
+    color: darkred;
+}
+  </style>
+ </head>
+ <body>
+  <h3>
+   aWATTar Backtesting
+  </h3>
+  <p>
+  </p>
+  <button class="collapsible">
+   Um was geht es hier? &rarr;
+  </button>
+  <div class="content">
+   <p>
+    Dynamische Stromtarife haben keinen fixen Preis sondern einen Stunden variierenden Preis der sich nach den Ergebnissen der Stromb&ouml;rse EPEX SPOT ergibt.
+   </p>
+   <p>
+    Durch bewusstes Anwenden von Haushaltsger&auml;ten wie Waschmaschine oder Geschirrsp&uuml;ler mittels Zeitvorwahl kann man damit seinen pers&ouml;nlichen Strompreis verringern. Noch besser funktioniert das mit gro&szlig;en Verbraucher wie Elektroauto oder
+    <a>
+     W&auml;rmepumpe
+    </a>
+    .
+            Der B&ouml;rsenpreis ist in der Regel niedriger wenn viele erneuerbare Energien im Netz verf&uuml;gbar sind, aber keine Abnehmer finden.
+            Dynamische Stromtarife sind daher eines der vielen Puzzlesteine die wir f&uuml;r die Energiewende ben&ouml;tigen.
+   </p>
+   <p>
+    Backtesting ist ein Vorgang um ein Modell auf historische Daten zu testen. Mit diesem Tool kann man die Verbrauchsdaten seines Netzanbieters uploaden (siehe Anleitungen weiter unten), welches dann den erzielten Strompreis berechnet.
+   </p>
+   <p>
+    Hier ein Beispiel wie sowas aussieht:
+   </p>
+   <p>
+    <img src="rick.jpg" style="max-width: 100%; height: auto;">
+   </p>
+  </div>
+  <p>
+   Verbrauchsdaten vom Netzbetreiber uploaden (Beispieldatens&auml;tze gibt es
+   <a>
+    hier
+   </a>
+   zum Herunterladen):
+  </p>
+  <form id="file-form">
+   <input id="file-input" name="file-input" type="file">
+  </form>
+  <p id="warningHolder" style="color: red; visibility: hidden;">
+   warning place holder.
+  </p>
+  <canvas id="awattarChart">
+  </canvas>
+  <div class="controls">
+   <button id="prevBtn" style="visibility: hidden;">
+    prev
+   </button>
+   <p id="graphDescr" style="visibility: hidden;">
+    nothing
+   </p>
+   <button id="nextBtn" style="visibility: hidden;">
+    next
+   </button>
+  </div>
+  <button class="collapsible" id="costslblMonthly" style="visibility: hidden;">
+   &Uuml;bersicht Energiekosten/Einspeisung monatlich &rarr;
+  </button>
+  <div class="content">
+   <table id="costsMonthly" style="visibility: hidden;">
+   </table>
+  </div>
+  <button class="collapsible" id="costslblDaily" style="visibility: hidden;">
+   &Uuml;bersicht Energiekosten/Einspeisung t&auml;glich &rarr;
+  </button>
+  <div class="content">
+   <table id="costsDaily" style="visibility: hidden;">
+   </table>
+  </div>
+  <p>
+   <sup>
+    1
+   </sup>
+   Der H0-Durchschnittspreis ergibt sich aus dem Verbrauch laut dem
+   <a>
+    H0 Standardprofil
+   </a>
+   im selben Zeitraum und dient somit als Benchmark. Erzielt man einen Durchschnittspreis unter dem H0 &Oslash; hat man
+   <em>
+    sehr
+   </em>
+   gute Vorraussetzungen um von einem dynamischen Stromtarif zu profitieren, ist aber nicht notwendig um generell davon zu profitieren.
+  </p>
+  <h4>
+   Disclaimer
+  </h4>
+  Keine Garantie auf Richtigkeit der dargestellten Daten.
+  <h3>
+   Netzbetreiber Anleitungen
+  </h3>
+  <button class="collapsible">
+   Netz N&Ouml; &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Gehe auf
+      <a>
+       https://smartmeter.netz-noe.at
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      Einloggen
+     </p>
+    </li>
+    <li>
+     <p>
+      Tab
+      <i>
+       Verbrauch
+      </i>
+      ausw&auml;hlen
+     </p>
+    </li>
+    <li>
+     <p>
+      Richtigen Z&auml;hler ausw&auml;hlen unter
+      <i>
+       Vertragskonto
+      </i>
+      . Achtung, nicht den Einspeisepunkt w&auml;hlen.
+     </p>
+    </li>
+   </ol>
+   <p>
+    <b>
+     Hinweis
+    </b>
+    : Die 15-min-Profilwerte m&uuml;ssen explizit aktiviert werden, siehe Spalte "Opt-in" im Screenshot.
+                Ist das nicht der Fall, kann die heruntergeladene CSV trotzdem nur Tageswerte enthalten. Solche Eintr&auml;ge werden von diesem Tool ignoriert.
+                Es kann auch sein, dass der Inhalt gemischt ist.
+                Beispiel: Opt-In wurde am 15. September gemacht, dann ist der Verbrauch bis zum Stichtag als Tageswerte enthalt, danach folgen erst die 15-min-Profilwerte. Ersteres wird vom Tool ignoriert.
+    <img src="rick.jpg">
+   </p>
+  </div>
+  <button class="collapsible">
+   Netz O&Ouml; &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Download der 15-Minutenwerte &uuml;ber das
+      <a>
+       NetzO&Ouml; e-Service-Portal
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      Vertrag ausw&auml;hlen
+     </p>
+    </li>
+    <li>
+     <p>
+      Verbrauchs&uuml;bersicht
+     </p>
+    </li>
+    <li>
+     <p>
+      Zeitraum ausw&auml;hlen
+     </p>
+    </li>
+   </ol>
+  </div>
+  <button class="collapsible">
+   K&auml;rnten Netz &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Gehe auf
+      <a>
+       kaerntennetz.at
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      Kundenportal
+     </p>
+    </li>
+    <li>
+     <p>
+      Einloggen
+     </p>
+    </li>
+    <li>
+     <p>
+      "Profildownload" unter "meine.messwerte" ausw&auml;hlen
+     </p>
+    </li>
+   </ol>
+  </div>
+  <button class="collapsible">
+   Salzburg Netz &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Login auf
+      <a>
+       https://portal.salzburgnetz.at
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      Klick auf Anlagendetails
+     </p>
+    </li>
+    <li>
+     <p>
+      Anlage bzw. Vertrag ausw&auml;hlen
+     </p>
+    </li>
+    <li>
+     <p>
+      Daten ausw&auml;hlen und &uuml;ber das "Burger Men&uuml;" den Download ansto&szlig;en
+     </p>
+     <img src="rick.jpg">
+    </li>
+   </ol>
+  </div>
+  <button class="collapsible">
+   TINETZ &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Einloggen beim Tinetz Kundenportal:
+      <a>
+       https://kundenportal.tinetz.at/
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      Unter "Z&auml;hler" auf Verbrauchshistorie gehen
+     </p>
+     <img src="rick.jpg">
+    </li>
+    <li>
+     <p>
+      Zeitraum ausw&auml;hlen
+     </p>
+     <img src="rick.jpg">
+    </li>
+    <li>
+     <p>
+      Herunterladen, "Rohdaten als CSV"
+     </p>
+     <img src="rick.jpg">
+    </li>
+   </ol>
+  </div>
+  <button class="collapsible">
+   Wiener Netze &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Gehe auf
+      <a>
+       smartmeter-web.wienernetze.at
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      Klicke auf
+      <i>
+       Datenexport
+      </i>
+     </p>
+    </li>
+    <li>
+     <p>
+      Zeitfenster w&auml;hlen
+     </p>
+    </li>
+    <li>
+     <p>
+      <i>
+       Viertelstundewerte
+      </i>
+      ausw&auml;hlen
+     </p>
+    </li>
+   </ol>
+  </div>
+  <button class="collapsible">
+   Clam Strom &rarr;
+  </button>
+  <div class="content">
+   <ol>
+    <li>
+     <p>
+      Gehe auf
+      <a>
+       https://www.endkundenwebportal.at
+      </a>
+     </p>
+    </li>
+    <li>
+     <p>
+      W&auml;hle
+      <i>
+       Strom
+      </i>
+     </p>
+    </li>
+    <li>
+     <p>
+      Zeitfenster auf
+      <i>
+       Tag
+      </i>
+      einstellen (nur so werden 15-Minuten Werte geliefert!)
+     </p>
+    </li>
+    <li>
+     <p>
+      Auf
+      <i>
+       Angezeigte Werte als CSV-Datei speichern
+      </i>
+      klicken
+     </p>
+    </li>
+   </ol>
+  </div>
+  Andere Netzbetreiber die funktionieren, aber keine Anleitung vorhanden:
+  <ol>
+   <li>
+    Ebner Strom
+   </li>
+   <li>
+    Energienetze Steiermark
+   </li>
+   <li>
+    Innsbrucker Kommunalbetriebe (IKB)
+   </li>
+   <li>
+    LinzAG
+   </li>
+  </ol>
+  Sollte ein Netzbetreiber der funktioniert nicht hier aufgelistet sein w&uuml;rde ich mich &uuml;ber eine Nachricht freuen (siehe f&uuml;r Kontaktdaten ganz unten).
+  <h3>
+   F.A.Q.
+  </h3>
+  <ul>
+   <li>
+    <b>
+     <i>
+      Es funktioniert nicht!
+     </i>
+    </b>
+    Bitte ein neues Issue hier &ouml;ffnen:
+    <a>
+     github.com/awattar-backtesting/awattar-backtesting.github.io/issues
+    </a>
+   </li>
+   <li>
+    <b>
+     <i>
+      Mein Netzbetreiber wird noch nicht unterst&uuml;tzt
+     </i>
+    </b>
+    Bitte ebenfalls ein Issue er&ouml;ffnen und die Datei deines Netzbetreibers anh&auml;ngen. Oder am besten gleich ein PR :-)
+   </li>
+   <li>
+    <b>
+     <i>
+      Was passiert mit die Daten die hier upgeloaded werden?
+     </i>
+    </b>
+    Die bleiben lokal, d.h. die verlassen den Computer nicht. Gerne kann das auch im Source Code verifiziert werden.
+   </li>
+   <li>
+    <b>
+     <i>
+      Wirst Du von aWATTar bezahlt?
+     </i>
+    </b>
+    Nein, und auch von keinem anderen Energielieferanten, Netzanbieter oder &auml;hnlichem.
+   </li>
+  </ul>
+ </body>
+</html>

@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html>
+ <head>
+  <style>
+   progress,sub,sup{vertical-align:baseline}button,hr,input{overflow:visible}[type=checkbox],[type=radio],legend{box-sizing:border-box;padding:0}html{font-family:sans-serif;-ms-text-size-adjust:100%;-webkit-text-size-adjust:100%}body{margin:0}article,aside,details,figcaption,figure,footer,header,main,menu,nav,section,summary{display:block}audio,canvas,progress,video{display:inline-block}audio:not([controls]){display:none;height:0}[hidden],template{display:none}a{background-color:transparent;-webkit-text-decoration-skip:objects}a:active,a:hover{outline-width:0}abbr[title]{border-bottom:none;text-decoration:underline;text-decoration:underline dotted}b,strong{font-weight:bolder}dfn{font-style:italic}h1{font-size:2em;margin:.67em 0}mark{background-color:#ff0;color:#000}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative}sub{bottom:-0.25em}sup{top:-0.5em}img{border-style:none}svg:not(:root){overflow:hidden}code,kbd,pre,samp{font-family:monospace,monospace;font-size:1em}figure{margin:1em 40px}hr{box-sizing:content-box;height:0}button,input,select,textarea{font:inherit;margin:0}optgroup{font-weight:700}button,select{text-transform:none}[type=reset],[type=submit],button,html [type=button]{-webkit-appearance:button}[type=button]::-moz-focus-inner,[type=reset]::-moz-focus-inner,[type=submit]::-moz-focus-inner,button::-moz-focus-inner{border-style:none;padding:0}[type=button]:-moz-focusring,[type=reset]:-moz-focusring,[type=submit]:-moz-focusring,button:-moz-focusring{outline:ButtonText dotted 1px}fieldset{border:1px solid silver;margin:0 2px;padding:.35em .625em .75em}legend{color:inherit;display:table;max-width:100%;white-space:normal}textarea{overflow:auto}[type=number]::-webkit-inner-spin-button,[type=number]::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}[type=search]::-webkit-search-cancel-button,[type=search]::-webkit-search-decoration{-webkit-appearance:none}::-webkit-input-placeholder{color:inherit;opacity:.54}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}
+
+
+
+@font-face{font-family:"Adam";src:local("ADAM.CG PRO"),url(../assets/font/adam.woff2) format("woff2"),url(../assets/font/adam.woff) format("woff");unicode-range:U+0000-00FF}@font-face{font-family:"Roboto";font-weight:350;src:local("Roboto Light"),local("Roboto-Light");src:url(../assets/font/roboto.woff2) format("woff2");unicode-range:U+0000-00FF}*{margin:0;padding:0;font-size:100%;box-sizing:border-box}body{font-family:"Roboto",sans-serif;font-weight:150;color:#fff;background:#222;overflow-x:hidden;line-height:1;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}::-moz-selection{background-color:#d12727}::selection{background-color:#d12727}a{color:inherit}a:hover{text-decoration:none}h1,h2,h3,h5,header,.jumbotron,.banners,footer table{font-family:"Adam","Roboto",sans-serif}#content-skip{position:absolute;z-index:-1;clip:rect(1px, 1px, 1px, 1px)}#content-skip:focus{clip:auto;visibility:auto;z-index:2000}header{display:flex;position:fixed;top:0;left:0;z-index:1000;height:140px;width:100%;padding:15px 15px 0;background:rgba(51,51,51,0.85);backdrop-filter:saturate(200%) blur(20px);box-shadow:3px 3px 12px rgba(12,12,12,0.5);-webkit-transition:height .2s;transition:height .2s}header .title-simple{display:none}header #logo{-webkit-transition:.5s;transition:.5s}header>*{display:inline-block;vertical-align:top}header>a img{width:180px;margin-bottom:-2px;cursor:pointer}header>a,header h2 a,header h3 a{text-decoration:none}header h3{margin-left:25px;margin-top:12px;letter-spacing:1px}header .socal{width:min-content}header>nav{display:flex;flex-direction:row;flex-wrap:nowrap;flex:1 0 auto;align-items:center;margin-left:7px}h2{font-size:90px;line-height:.85;margin-top:5px}h3{font-size:20px}header.shrink{-webkit-transition:height .2s;transition:height .2s;height:80px;position:fixed}header.shrink .social:first-child{margin-right:0}header.shrink .social{flex-direction:row;width:auto}header.shrink .social div{margin-left:5px;display:inline-block}header.shrink #logo{transform:rotate(-90deg) scale(.4);-webkit-transition:.2s;transition:.2s;margin-top:-2.3em;margin-left:-1.3em}header.shrink .title,header.shrink h3{display:none}header.shrink .title-simple{display:inline-block}header.shrink .title-simple a{color:#fff;text-decoration:none}header.shrink .header-group h5{font-size:50px;margin-left:-78px;vertical-align:middle;position:relative;width:max-content;margin-top:1px}.social:first-child{margin-left:15px;margin-right:10px}.social{position:relative;cursor:default;list-style:none;display:inline-block;width:26px}.social div{margin:0px}.social a{cursor:pointer;z-index:100}.social img{cursor:pointer;margin-left:2px;height:37px;width:35px;-webkit-transition:.3s;transition:.3s}.social img:hover{-webkit-transition:.5s;transition:.5s;-webkit-filter:invert(.5);filter:invert(.5)}#nav-button{background:#333;border:solid 20px #333;display:none;width:90px;height:80px;position:fixed;top:0;right:0;transform:rotate(0);-webkit-transition:.5s ease-in-out;transition:.5s ease-in-out;cursor:pointer;z-index:200}#nav-button span{display:block;position:absolute;height:2px;width:100%;background:#fff;opacity:1;left:0;transform:rotate(0);-webkit-transition:.25s ease-in-out;transition:.25s ease-in-out}#nav-button span:nth-child(1){top:0}#nav-button span:nth-child(2){top:18px}#nav-button span:nth-child(3){top:36px}#nav-button.open span:nth-child(1){top:18px;transform:rotate(-135deg)}#nav-button.open span:nth-child(2){opacity:0;right:-60px}#nav-button.open span:nth-child(3){top:18px;transform:rotate(135deg)}nav{display:inline;position:relative;right:10px;z-index:100}nav ul,nav li{position:relative;border-radius:10px}nav ul{list-style:none}nav>ul{margin-left:auto}nav li>*{text-decoration:none;display:block;color:#fff;padding:12px 15px}nav span{color:#ccc;cursor:default}nav li{float:left;padding:0}nav li:hover{background:#444;border-radius:8px}nav .active{background:#222;border-radius:8px}nav .active:hover{background:#222;border-radius:8px}nav .active a{color:#ddd;cursor:default}nav ul ul{display:none;position:absolute;top:100%;background:#2c2c2c;padding:0}nav ul ul li{width:100%}nav ul li:hover>ul{display:block;min-width:100%}nav>ul>li:last-child ul{margin-left:-40px}.button-container{display:flex;justify-content:center;width:100%}.button{font-family:"Adam","Roboto",sans-serif;padding:12px 10px;text-align:right;margin:20px;text-decoration:none;background:#d12727;color:#fff;border-radius:7px}.button:hover{background:#9e2020;border-radius:4px}main{padding:40px;background:#222;line-height:1.8;margin-top:80px}main h1{font-size:60px}h5,p,blockquote{max-width:10in;display:block;margin:5px auto}main ul,main>img{max-width:10in;display:block;margin:100px auto}.img-row,table,.iframe-ext-wrapper{display:block;margin:5px auto}.img-row-2,table,.iframe-ext-wrapper{display:block;margin:5px auto}iframe{display:block;margin:20px auto;border:0}td{width:30%}main>img,.img-row,table{margin:20px auto}.img-row img{width:31%;margin:1%}.img-row-2 img{width:47%;margin:1%}.iframe-wrapper{position:relative;padding-bottom:56.25%;padding-top:25px;height:0}.iframe-wrapper iframe{position:absolute;top:0;left:0;width:100%;height:100%}table img{width:100%}main h1{text-align:center}h5{margin-top:30px;font-size:30px}blockquote{font-size:25px;font-style:italic}main ul{padding-left:20px}main li{padding-left:15px}table{text-align:center}tbody,tr{display:block;width:100%;margin:0 auto}td{width:auto;display:inline-block;vertical-align:top}td ul,td li{list-style-type:none;padding:0}footer{text-align:center;color:#666;background:#333;padding:5%}footer .emphasized{color:#fff}footer h5{color:#fff}footer table{color:#fff;display:flex;width:100%}footer table td{padding:20px;vertical-align:middle;max-width:200px}.sponsor-large{width:60%}.sponsor-medium{width:80%}footer ul{line-height:1.25}.first-logo{width:50px;margin-top:10px}@media (max-width: 1099px){#nav-button{display:block}header.shrink>nav{top:0;margin:0;right:-120vw;background:#333;width:100vw;height:100vh;overflow:scroll;visibility:hidden;-webkit-transition:.2s;transition:.2s;flex-direction:column}header.shrink>nav.open{right:0;-webkit-transition:.2s;transition:.2s;visibility:visible;position:fixed}header.shrink>nav>ul{margin:0;padding:20px;padding-bottom:20px;right:auto;position:relative;width:100px}header.shrink>nav li{display:block;clear:both}header.shrink>nav li:last-of-type{margin-bottom:15px}header.shrink>nav ul ul li{margin-left:20px;padding-left:10px;border-left:solid 4px #fff}header.shrink>nav li:hover{background:#333}header.shrink>nav li>*{font-size:50px;display:inline-block;padding:10px 0;vertical-align:middle}header.shrink>nav a{transform:translateZ(0);position:relative;overflow:hidden}header.shrink>nav .social{align-items:flex-start;display:inline;flex-direction:row}header.shrink>nav .social div:not(:first-of-type){margin-left:20px}header.shrink>nav .social img{height:45px;width:45px}header.shrink>nav .social-container{order:2;margin-top:-40px;margin-bottom:20px}header.shrink>nav .social:first-child{margin-left:0px;margin-right:20px}header.shrink>nav .active{background:#333}header.shrink>nav .active:hover{background:#333}header.shrink>nav .active a{color:#fff}header.shrink>nav>ul a:after{content:"";position:absolute;right:100%;left:0;bottom:0;background:#fff;height:4px;-webkit-transition:.3s ease-out;transition:.3s ease-out}header.shrink>nav>ul a:hover:after,header.shrink>nav>ul a:focus:after,header.shrink>nav>ul a:active:after{right:0}header.shrink>nav .active:after{right:0}header.shrink>nav>ul>li:last-child ul{margin-left:0}main img{width:100%}footer h5,footer table{display:none}}@media (max-width: 850px){header{position:static;padding-bottom:20px}header>img{display:block;z-index:50;margin-top:70}header .header-group{width:auto}header h2,header h3{position:relative;line-height:1;top:auto}.banners,h3{display:none}h1{line-height:1.2}h2{margin-left:10px}nav li>*{font-size:30px}.img-row img{width:100%}}@media (min-width: 756px) and (max-width: 850px){header{padding-right:90px}}@media (max-width: 585px){tbody,tr{display:block;margin:0 auto;width:100%}nav{height:100%}.social{display:block !important}}
+
+
+
+.banners{display:block;margin:0 auto;width:100vw;height:199px;text-align:center;padding:0 20px;line-height:1.2}.banners::-webkit-scrollbar{display:none}.banners li{vertical-align:top;display:inline-block;margin:0 3px 30px;width:120px;position:relative;background:#d12727;color:#fff;padding:10px}.banners img{width:75px;margin-bottom:5px}.banners li{-webkit-filter:drop-shadow(0 10px 5px rgba(0,0,0,0.1))}.banners li:after{content:"";position:absolute;display:block;border:60px solid #d12727;border-top-width:5px;border-bottom:20px transparent solid;top:100%;left:0;-webkit-filter:drop-shadow(0 10px 5px rgba(0,0,0,0.1))}@media (max-width: 1211px){.banners{display:none}}
+
+
+
+.bg{background-image:url(/assets/img/background-blur.jpg);background-size:cover;position:fixed;height:100vh;width:100vw;z-index:-15}header{width:100%}.video-ext-container{height:100vh;position:relative;z-index:-10;overflow:hidden}.video-container{top:-50%;left:-50%;width:200vw;height:200vh}video,.bg{top:0;left:0;right:0;bottom:0;margin:auto;min-width:50%;min-height:50%}video{position:relative}.jumbotron{position:absolute;bottom:0;height:calc(100vh - 139px);width:100vw;display:-webkit-box;display:-webkit-flex;display:-ms-flexbox;display:flex;-webkit-box-pack:center;-webkit-justify-content:center;-ms-flex-pack:center;justify-content:center;-webkit-box-align:center;-webkit-align-items:center;-ms-flex-align:center;align-items:center;-webkit-box-orient:vertical;-webkit-box-direction:normal;-webkit-flex-direction:column;-ms-flex-direction:column;flex-direction:column;text-align:center}h1{font-size:5em;margin-bottom:10px;text-transform:uppercase}.jumbotron h3{max-width:8in;line-height:1.4;padding:.6%}main{margin-top:0}main div{max-width:13in;margin:0 auto}main div>img{width:50%;margin:10px 20px 10px 0px;float:left}main p{margin:0 auto;max-width:100%}.banners{float:right;width:50%;margin:10px 20px 10px 0px}@media (min-width: 850px) and (max-width: 1070px){.banners{display:none}}@media (max-width: 850px){.jumbotron,.video-ext-container,.video-container,video{display:none}header{position:static}main>div>img{float:none;width:100%;margin:0;margin-top:65px}article{padding-top:50px}}#countdown-section{margin:20px auto;padding:20px;text-align:center;background-color:#3336;border-radius:10px;width:80%;max-width:1200px;box-shadow:0 4px 8px rgba(0,0,0,0.3)}#countdown-section h1{font-size:200%;margin-bottom:20px;color:#fff}#countdown-section table{width:100%;border-collapse:collapse;margin-top:10px}#countdown-section table th,#countdown-section table td{padding:10px;font-size:250%;color:#fff;text-align:center}#countdown-section table th{font-weight:normal;text-align:center}#countdown-section table td{font-weight:bold}#countdown-section table span{font-size:300%;padding-top:5px;font-weight:bold}@keyframes flash{0%, 50%{color:#d12727}100%{color:#fff}}#countdown-section.flashing{animation:flash 1s infinite}
+
+
+
+@media (max-width: 1200px){footer table,footer h5{display:block}}
+  </style>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1, maximum-scale=1" name="viewport">
+  <title>
+   1418 - Vae Victis
+  </title>
+  <meta content="#d12727" name="theme-color">
+  <meta content="We are team 1418 Vae Victis, a FIRST Robotics Competition (FRC) Team from Meridian High School in Falls Church, VA. We strive for student enrichment, technical advancement, and success in the FIRST Robotics Competition." name="description">
+  <meta content="summary_large_image" name="twitter:card">
+  <meta content="Vae Victis" property="og:title">
+  <meta content="We are team 1418 Vae Victis, a FIRST Robotics Competition (FRC) Team from Meridian High School in Falls Church, VA. We strive for student enrichment, technical advancement, and success in the FIRST Robotics Competition." property="og:description">
+  <meta content="" property="og:image">
+ </head>
+ <body>
+  <a id="content-skip" tabindex="1">
+   Skip to content
+  </a>
+  <header class="shrink">
+   <a>
+    <img alt="1418 logo" id="logo" src="rick.jpg">
+   </a>
+   <div class="header-group">
+    <h2 class="title">
+     <a>
+      Vae Victis
+     </a>
+    </h2>
+    <h5 class="title-simple">
+     <a id="title-mini">
+      TEAM 1418
+     </a>
+    </h5>
+    <h3>
+     <a>
+      FRC Team 1418 - Meridian High School
+     </a>
+    </h3>
+   </div>
+   <div id="nav-button">
+    <span>
+    </span>
+    <span>
+    </span>
+    <span>
+    </span>
+   </div>
+   <nav>
+    <div class="social-container">
+     <div class="social" id="social">
+      <div>
+       <a target="_blank">
+        <img alt="Email icon" src="rick.jpg">
+       </a>
+      </div>
+      <div>
+       <a target="_blank">
+        <img alt="Instagram logo" src="rick.jpg">
+       </a>
+      </div>
+      <div>
+       <a target="_blank">
+        <img alt="Youtube logo" src="rick.jpg">
+       </a>
+      </div>
+     </div>
+     <div class="social">
+      <div>
+       <a target="_blank">
+        <img alt="Twitter logo" src="rick.jpg">
+       </a>
+      </div>
+      <div>
+       <a target="_blank">
+        <img alt="Facebook logo" src="rick.jpg">
+       </a>
+      </div>
+      <div>
+       <a target="_blank">
+        <img alt="GitHub logo" src="rick.jpg">
+       </a>
+      </div>
+     </div>
+    </div>
+    <ul>
+     <li>
+      <a class="active">
+       Home
+      </a>
+     </li>
+     <li>
+      <a>
+       Robots
+      </a>
+      <ul>
+       <li>
+        <a>
+         2023
+        </a>
+       </li>
+       <li>
+        <a>
+         2022
+        </a>
+       </li>
+       <li>
+        <a>
+         2021
+        </a>
+       </li>
+       <li>
+        <a>
+         2020
+        </a>
+       </li>
+      </ul>
+     </li>
+     <li>
+      <a>
+       The Team
+      </a>
+      <ul>
+       <li>
+        <a>
+         Alumni
+        </a>
+       </li>
+      </ul>
+     </li>
+     <li>
+      <a>
+       Sponsor Us
+      </a>
+     </li>
+    </ul>
+   </nav>
+   <div id="content">
+   </div>
+  </header>
+  <div class="bg">
+  </div>
+  <div class="video-ext-container">
+   <div class="video-container">
+    <!-- This video's src is added by JavaScript.
+            That way it won't load the extra data on a mobile device.
+            The muted attribute must be included despite the video having no sound.
+            Otherwise Safari will report that the page is playing audio. -->
+   </div>
+  </div>
+  <div class="jumbotron">
+   <h1 id="welcome">
+    Welcome!
+   </h1>
+   <h3>
+    Striving for student enrichment, technical advancement, and success in the FIRST Robotics Competition.
+   </h3>
+   <a class="button">
+    View our 2023 Robot
+   </a>
+   <div id="countdown-section">
+    <h1 id="title">
+     2025 FIRST Robotics Competition Kickoff:
+    </h1>
+    <table>
+     <tbody>
+      <tr>
+       <td id="days">
+        85
+       </td>
+       <span>
+        :
+       </span>
+       <td id="hours">
+        11
+       </td>
+       <span>
+        :
+       </span>
+       <td id="minutes">
+        58
+       </td>
+       <span>
+        :
+       </span>
+       <td id="seconds">
+        02
+       </td>
+      </tr>
+     </tbody>
+    </table>
+   </div>
+  </div>
+  <main>
+   <div>
+    <img alt="The team at Meridian High School during the build season, 2023." src="rick.jpg">
+    <ul class="banners">
+     <li>
+      <img src="rick.jpg">
+      2019
+      <br>
+      Oxon Hill District Event Winner
+     </li>
+     <li>
+      <img src="rick.jpg">
+      2019
+      <br>
+      Oxon Hill Innovation in Control
+     </li>
+     <li>
+      <img src="rick.jpg">
+      2019
+      <br>
+      Haymarket District Event Finalist
+     </li>
+     <li>
+      <img src="rick.jpg">
+      2019
+      <br>
+      Haymarket Excellence in Engineering
+     </li>
+    </ul>
+    <p>
+     We are team 1418 Vae Victis, a
+     <a>
+      FIRST Robotics Competition (FRC)
+     </a>
+     team from Meridian High School in Falls Church, VA.
+     <a>
+      here
+     </a>
+     .
+    </p>
+    <br>
+    <p>
+     If you'd like to help us with fundraising, please visit
+     <a>
+      this page
+     </a>
+     .
+    </p>
+    <p>
+     To see our competition schedule for this year, visit
+     <a>
+      this page
+     </a>
+     .
+    </p>
+   </div>
+  </main>
+  <footer>
+   <h5>
+    We love our sponsors!
+   </h5>
+   <p class="emphasized">
+    Please consider
+    <a>
+     sponsoring us
+    </a>
+    !
+   </p>
+   <table>
+    <tbody>
+     <tr>
+      <td>
+       <a target="_blank">
+        <img class="sponsor-large" src="rick.jpg">
+       </a>
+      </td>
+      <td>
+       <a target="_blank">
+        <img src="rick.jpg">
+       </a>
+      </td>
+      <!-- <td><a  target="_blank"><img class="sponsor-large" src="rick.jpg"></a></td> -->
+      <td>
+       <a target="_blank">
+        <img src="rick.jpg">
+       </a>
+      </td>
+      <td>
+       <a target="_blank">
+        <img src="rick.jpg">
+       </a>
+      </td>
+      <td>
+       <a target="_blank">
+        <img src="rick.jpg">
+       </a>
+      </td>
+      <td>
+       <a target="_blank">
+        <img src="rick.jpg">
+       </a>
+      </td>
+      <td>
+       <a target="_blank">
+        <img src="rick.jpg" target="_blank">
+       </a>
+      </td>
+      <td>
+       <img src="rick.jpg">
+      </td>
+     </tr>
+    </tbody>
+   </table>
+   <p>
+    &copy; 2024 Team 1418.
+   </p>
+   <p>
+    <a>
+     View site source on GitHub
+    </a>
+   </p>
+   <a>
+    <img class="first-logo" src="rick.jpg">
+   </a>
+  </footer>
+ </body>
+</html>

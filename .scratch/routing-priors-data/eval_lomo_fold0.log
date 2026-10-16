@@ -1,0 +1,16 @@
+data: 500 items, 39441 observations, 51 models
+E1007 12:49:46.074184    9536 slow_operation_alarm.cc:73] Constant folding an instruction is taking > 1s:
+
+  %max.352 = s32[40]{0} maximum(%max.351, %constant.4191), metadata={op_name="jit(_fori_collect_loop)/while/body/eval_jaxpr/jit(_body_fn)/while/body/while/body/jvp(jit(clip))/max" stack_frame_id=1771}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+E1007 12:49:46.199446   12188 slow_operation_alarm.cc:140] The operation took 1.1376898s
+Constant folding an instruction is taking > 1s:
+
+  %max.352 = s32[40]{0} maximum(%max.351, %constant.4191), metadata={op_name="jit(_fori_collect_loop)/while/body/eval_jaxpr/jit(_body_fn)/while/body/while/body/jvp(jit(clip))/max" stack_frame_id=1771}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.

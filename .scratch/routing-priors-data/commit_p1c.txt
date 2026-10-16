@@ -1,0 +1,23 @@
+ship: /healthz and /readyz, drain on SIGTERM, abandoned ledger reservations (securityp1.md P1-C)
+
+- /healthz: liveness only. /readyz: pool, SELECT 1 within 2 s, newest control migration applied, not draining;
+  503 names the failed check and never a connection string; unauthenticated, rate-limited per process. GET / unchanged.
+- SIGTERM/SIGINT/SIGBREAK mark the process draining before uvicorn's own handler runs; the container runs
+  --timeout-graceful-shutdown 25; the lifespan closes the pool and flushes Sentry / OpenTelemetry.
+- Docker HEALTHCHECK -> /healthz, Railway healthcheckPath -> /readyz. NOT deployed.
+- org_governance.settle_abandoned[_all] + `admin ledger-settle-abandoned [--apply]`: reservations a dead process left
+  open are settled at their reserved worst case (cost_source upper_bound), never under-counting a budget.
+- scripts/live_shutdown_check.py: live drain test on a loopback scratch DB only (overrides every *_DATABASE_URL).
+
+Tests (2026-10-07):
+- tests/test_mcp_health_offline.py: 12 passed
+- tests/test_ledger_abandoned_offline.py: 3 passed
+- tests/test_org_governance_offline.py: unchanged, passing (92 passed together with the two above)
+- live: scripts/live_shutdown_check.py on a throwaway PostgreSQL 18 (127.0.0.1:55432): passed on Windows
+  (CTRL_BREAK_EVENT). An in-flight request completed (200 after 5.0 s), the shutdown log was complete, and the exit
+  status was 3, the re-raised signal (uvicorn re-raises after a clean shutdown; 143 on Linux).
+- NOT run: SIGTERM in a Linux container (no Docker on this machine).
+
+Evidence: final_prod_docs/p1_results.md
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>

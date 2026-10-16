@@ -1,0 +1,86 @@
+{
+ "label": "owner",
+ "role": "kel_owner",
+ "results": {
+  "tests/test_mcp_tenant_isolation_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_cross_user_isolation_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_retrieval_fixture_isolation_e2e.py": {
+   "passed": 2,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_agents_file_download_isolation_e2e.py": {
+   "passed": 1,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_ingestion_episode_extraction_privacy_e2e.py": {
+   "passed": 1,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_product_model_privacy_e2e.py": {
+   "passed": 2,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_hardening_h2_rls_backstop.py": {
+   "passed": 22,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_access.py": {
+   "passed": 9,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_routing_isolation_e2e.py": {
+   "passed": 3,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_org_governance_e2e.py": {
+   "passed": 32,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  },
+  "tests/test_tenant_isolation_p1a_e2e.py": {
+   "missing": true
+  },
+  "tests/evaluation/privacy": {
+   "passed": 2,
+   "failed": 0,
+   "skipped": 0,
+   "errors": 0,
+   "failures": []
+  }
+ }
+}

@@ -1,0 +1,86 @@
+{
+  "operation": "GET /v1/{parent}/books",
+  "method": "GET",
+  "path_template": "/v1/{parent}/books",
+  "fingerprint": "d10c482f",
+  "case_id": "z6egfW",
+  "code_sample": "curl -X GET 'http://127.0.0.1:55664/v1/%F4%8D%A3%82%F3%8A%83%A1%C3%AB%1A%C3%B1%0A/books?pageSize=-99621195645&quotaUser=B%C2%B1&%24.xgafv=1&access_token=%5BFiltered%5D&oauth_token=%5BFiltered%5D&upload_protocol=%F0%AF%80%AE%27%F1%BF%91%A3u%C3%83%C3%95%C3%BC%C2%BAv%C3%A0i'",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:55664/v1/%F4%8D%A3%82%F3%8A%83%A1%C3%AB%1A%C3%B1%0A/books?pageSize=-99621195645&quotaUser=B%C2%B1&%24.xgafv=1&access_token=%5BFiltered%5D&oauth_token=%5BFiltered%5D&upload_protocol=%F0%AF%80%AE%27%F1%BF%91%A3u%C3%83%C3%95%C3%BC%C2%BAv%C3%A0i",
+      "url_template": "http://127.0.0.1:55664/v1/{parent}/books",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "z6egfW"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Thu, 15 Oct 2026 11:49:05 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.005699899997125613,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive",
+          "PATH": "positive"
+        },
+        "phase": {
+          "name": "fuzzing",
+          "data": {
+            "type": "FuzzingPhaseData",
+            "description": "Positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "mutations": []
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {}
+      },
+      "path": "/v1/{parent}/books",
+      "path_parameters": {
+        "parent": "%F4%8D%A3%82%F3%8A%83%A1%C3%AB%1A%C3%B1%0A"
+      },
+      "query": {
+        "pageSize": -99621195645,
+        "quotaUser": "B\u00b1",
+        "$.xgafv": "1",
+        "access_token": "[Filtered]",
+        "oauth_token": "[Filtered]",
+        "upload_protocol": "\ud87c\udc2e'\ud9bd\udc63u\u00c3\u00d5\u00fc\u00bav\u00e0i"
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "operation": "GET /similar",
+  "method": "GET",
+  "path_template": "/similar",
+  "fingerprint": "c5718b76",
+  "case_id": "Xw29gm",
+  "code_sample": "curl -X GET 'http://127.0.0.1:49739/similar?link='",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:49739/similar?link=",
+      "url_template": "http://127.0.0.1:49739/similar",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "X-Schemathesis-TestCaseId": "Xw29gm"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:29:11 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200, 400, 403, 501"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 2.4799956008791924e-05,
+          "mode": "positive"
+        },
+        "components": {
+          "QUERY": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "Only required properties",
+            "location": null,
+            "parameter": null,
+            "parameter_location": "QUERY",
+            "scenario": "object_only_required"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "QUERY": {
+            "link": ""
+          }
+        }
+      },
+      "path": "/similar",
+      "path_parameters": {},
+      "query": {
+        "link": ""
+      },
+      "case_headers": {},
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

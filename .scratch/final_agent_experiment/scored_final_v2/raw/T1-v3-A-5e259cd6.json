@@ -1,0 +1,58 @@
+{
+  "trial_id": "T1-v3-A-5e259cd6",
+  "task_id": "T1-v3",
+  "arm": "A",
+  "frozen_commit": "bd768e62a887b13a94fdd118693a5c671df1cf95",
+  "scored": true,
+  "budget_exceeded": false,
+  "error": null,
+  "wall_clock_seconds_total": 80.99295669991989,
+  "task_success": false,
+  "graph_status": "failure",
+  "files_touched": [],
+  "tool_calls": 14,
+  "recoveries": 2,
+  "tool_names": [
+    "list_dir",
+    "list_dir",
+    "list_symbols",
+    "list_symbols",
+    "read_symbol",
+    "__recovered__",
+    "read_symbol",
+    "__recovered__",
+    "read_symbol",
+    "read_symbol",
+    "read_symbol",
+    "read_symbol",
+    "read_symbol",
+    "read_symbol"
+  ],
+  "final_message": "**_resolve_live_procedure** \u2013 this helper is called by `get_procedure`, `check_procedure`, `check_applicability`, `report_execution`, and `decide_procedure` to resolve a given identifier (either the stable `procedures.procedure_id` handle or a per\u2011version `procedures.id` row key) to the current live procedure row.",
+  "wall_clock_seconds": 78.62123399996199,
+  "notes": "step 0 (In this repository at commit bd768e62a887b13a94fdd118693a5c671df1cf95, examine backend/app/mcp_server/server.py and answer ONE question: which single function is the SHARED resolver that get_procedure, check_procedure, check_applicability, report_execution, and decide_procedure all use to accept either a procedures.procedure_id family handle or a procedures.id row key? Write only the function name (with a one-sentence justification) to answer.md. Do not attempt to enumerate every @server.tool()-decorated function in the file -- that is not part of this task and is not checked.): stop_reason=no_tool_call, tool_calls=14",
+  "stealth_retrieval_decision": null,
+  "input_tokens": 41830,
+  "output_tokens": 1249,
+  "total_tokens": 43079,
+  "model_calls": 13,
+  "cost_usd": null,
+  "cost_unavailable_reason": "no versioned GENERAL_COMPUTE/gpt-oss-120b pricing config exists in this repo (economics.py and openrouter_arms.py price OpenRouter only; PRICE_PER_MTOK's sole 'default' entry is an OpenRouter fallback for a different provider, not an authoritative GENERAL_COMPUTE price)",
+  "usage_raw": [
+    {
+      "instance_id": "local_agent_cfd90fae8aad_step0",
+      "prompt_tokens": 41830,
+      "completion_tokens": 1249,
+      "total_tokens": 43079,
+      "api_calls": 13
+    }
+  ],
+  "deterministic_correctness": 0.0,
+  "verification_quality": {
+    "answer_file_found": false
+  },
+  "verification_details": {
+    "reason": "no answer.md/answer.txt found in worktree"
+  },
+  "failure_category": "model_failure"
+}

@@ -1,0 +1,551 @@
+{
+  "instance_id": "local_agent_c1ce51cab8db_step0",
+  "arm": "local_agent",
+  "step": 32,
+  "error": "BadRequestError: Error code: 400 - {'error': {'message': 'Provider request failed with status 400', 'type': 'provider_error', 'code': 'provider_error', 'param': None}}",
+  "n_messages": 55,
+  "approx_chars": 41292,
+  "roles": [
+    "system",
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "user",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "assistant",
+    "tool",
+    "user",
+    "user",
+    "user",
+    "assistant",
+    "tool",
+    "user",
+    "assistant",
+    "tool"
+  ],
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are fixing a real bug in the trial-b107bffe20 repository, checked out at the commit where the issue was reported.\n\nWork by locating the relevant source, reading enough of it to understand the current behaviour, then making the change that fixes the issue. Hidden tests will be run against your change: they were written from the issue description, so implement what the issue actually asks for, not a narrower special case.\n\nRules:\n- If the issue calls for a module, hook, helper or config file that does not exist yet, CREATE it with create_file. Roughly a third of issues like this are fixed by adding a file, not by editing one -- if you cannot find the thing the issue describes, consider that it may need to be written rather than found.\n- Edit source files only. Do not edit anything under test/ -- test changes are discarded before grading and waste your budget.\n- PREFER list_symbols + read_symbol OVER read_file for any Python, Go, JS or TS file over ~100 lines. read_symbol returns one function's exact source for a fraction of the tokens read_file would spend on the surrounding file. Use read_file only for config/data files or when you need to see a file's overall shape rather than one named symbol.\n- You have at most 40 tool calls. Spend them on locating the right code, not on reading whole directories.\n- Call finish when done.\n"
+    },
+    {
+      "role": "user",
+      "content": "Issue to fix:\n\nIn this repository at commit bd768e62a887b13a94fdd118693a5c671df1cf95, examine backend/app/mcp_server/server.py and answer ONE question: which single function is the SHARED resolver that get_procedure, check_procedure, check_applicability, report_execution, and decide_procedure all use to accept either a procedures.procedure_id family handle or a procedures.id row key? Write only the function name (with a one-sentence justification) to answer.md. Do not attempt to enumerate every @server.tool()-decorated function in the file -- that is not part of this task and is not checked.\n\nCurrent step: In this repository at commit bd768e62a887b13a94fdd118693a5c671df1cf95, examine backend/app/mcp_server/server.py and answer ONE question: which single function is the SHARED resolver that get_procedure, check_procedure, check_applicability, report_execution, and decide_procedure all use to accept either a procedures.procedure_id family handle or a procedures.id row key? Write only the function name (with a one-sentence justification) to answer.md. Do not attempt to enumerate every @server.tool()-decorated function in the file -- that is not part of this task and is not checked.\n\nBegin."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_fa3c1783a6af491483",
+          "type": "function",
+          "function": {
+            "name": "list_dir",
+            "arguments": "{\"path\": \"\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_fa3c1783a6af491483",
+      "content": "dir  .agents\ndir  .claude\nfile .dockerignore\nfile .gitattributes\ndir  .github\nfile .gitignore\nfile .mcp.json\ndir  .scratch\nfile 0xAlphaplan.md\nfile ARCHITECTURE.md\nfile BAND0_DECISIONS.md\nfile BAND0_REVIEW.md\nfile BAND1_CLOSURE_REVIEW.md\nfile BAND2_CLOSURE_REVIEW.md\nfile Claude-Chat handoff and file preparation-20260815-1316.md\nfile DATA_STATEMENT.md\nfile Exec.md\nfile FUNDING_APPLICATIONS.md\nfile PRODUCTION_READINESS.md\nfile README.md\nfile RESEARCH_INTEGRATION_PLAN.md\nfile ROADMAP.md\nfile SECURITY.md\nfile TEST.md\nfile TESTING_GUIDE_V0.1.md\nfile after_task_index.json\ndir  backend\nfile backend.zip\nfile check_results.py\nfile commLLM.md\nfile current_stack.md\nfile demo.md\nfile dist.md\nfile docker-compose.yml\ndir  docs\nfile done.md\ndir  experiments\nfile explain.md\ndir  frontend\ndir  frontendv1\nfile handoff.md\nfile ingestion.md\nfile inspect_runs.py\nfile install-no-docker.ps1\nfile install.ps1\ndir  packaging\ndir  plat_v1\nfile proj_status.md\nfile prompts.md\nfile reasons-cites.md\nfile render.yaml\nfile research_exa.py\nfile schema.html\nfile schema.md\nfile skills-lock.json\nfile spec.md\nfile tasty.py\nfile trial_implementation.md\nfile updates.md\nfile verified_procedural_experience_system_ideal_specification_v3.md\n... 1 more"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_94bef1ff758f452b9e",
+          "type": "function",
+          "function": {
+            "name": "list_dir",
+            "arguments": "{\"path\": \"backend/app/mcp_server\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_94bef1ff758f452b9e",
+      "content": "file __init__.py\nfile claim_graph_page.py\nfile procedure_graph_page.py\nfile server.py\nfile tasks_extension.py\ndir  vendor"
+    },
+    {
+      "role": "user",
+      "content": "[a provider error occurred; 2 message(s) of history were dropped to recover. Any edit you already made is still applied.]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_d84835ae972f41cfa6",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 1, \"line_end\": 400}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_d84835ae972f41cfa6",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_3f90d312714f476387",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server\", \"pattern\": \"def get_procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_3f90d312714f476387",
+      "content": "backend/app/mcp_server/server.py:2103: async def get_procedure(procedure_id: str, ctx: Context) -> str:"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_949c252369b44eb180",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 2070, \"line_end\": 2150}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_949c252369b44eb180",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_0757ef044a264b96b4",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server\", \"pattern\": \"procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_0757ef044a264b96b4",
+      "content": "backend/app/mcp_server/procedure_graph_page.py:3: The procedure-side counterpart of `claim_graph_page.py`. Same renderer\nbackend/app/mcp_server/procedure_graph_page.py:8: It calls `./procedure-graph/data` for `{nodes, edges, counts, ...}`.\nbackend/app/mcp_server/procedure_graph_page.py:9: Nodes are live procedures + live task_nodes; edges are procedure version\nbackend/app/mcp_server/procedure_graph_page.py:10: chains (`SUPERSEDES`), procedure -> task decomposition (`DECOMPOSES_TO`),\nbackend/app/mcp_server/procedure_graph_page.py:11: task -> task hierarchy (`PARENT_OF`), and step-level subprocedure\nbackend/app/mcp_server/procedure_graph_page.py:21: <title>StealthLab \u2014 procedure & task graph</title>\nbackend/app/mcp_server/procedure_graph_page.py:86: <div id=\"loading\">loading procedure graph\u2026</div>\nbackend/app/mcp_server/procedure_graph_page.py:89:   <span class=\"brand\">StealthLab \u00b7 procedures &amp; tasks</span>\nbackend/app/mcp_server/procedure_graph_page.py:91:   <select id=\"group\" title=\"colour procedures by\">\nbackend/app/mcp_server/procedure_graph_page.py:192: function linkArrowColor(l){ return VERSION_KIND.has(l.kind) ? '#e0574b' : (l.kind === 'subprocedure' ? '#b98cff' : '#5b8dd6'); }\nbackend/app/mcp_server/procedure_graph_page.py:197:   if (l.kind === 'subprocedure') return `rgba(185,140,255,${dim ? 0.08 : (on ? 0.95 : 0.5)})`;\nbackend/app/mcp_server/procedure_graph_page.py:213:     // task nodes are squares, to read apart from the round procedures.\nbackend/app/mcp_server/procedure_graph_page.py:257:   p.set('kinds', $('#tasks').checked ? 'procedure,task' : 'procedure');\nbackend/app/mcp_server/procedure_graph_page.py:264:     const r = await fetch('./procedure-graph/data?' + p.toString(), {headers:{accept:'application/json'}});\nbackend/app/mcp_server/procedure_graph_page.py:296:     `(${bk.procedure||0} proc, ${bk.task||0} task) \u00b7 ${links.length} links ` +\nbackend/app/mcp_server/procedure_graph_page.py:297:     `(${ek.version||0} ver, ${ek.decomposition||0} dec, ${ek.hierarchy||0} hier, ${ek.subprocedure||0} sub)` +\nbackend/app/mcp_server/procedure_graph_page.py:309:     const present = new Set(nodes.filter(n => n.kind === 'procedure').map(n => n.verification_state || 'unknown'));\nbackend/app/mcp_server/procedure_graph_page.py:313:     const keys = [...new Set(nodes.filter(n => n.kind === 'procedure').map(groupKey))].slice(0, 12);\nbackend/app/mcp_server/procedure_graph_page.py:318:     `<div class=\"row\"><i></i>procedure</div>` +\nbackend/app/mcp_server/procedure_graph_page.py:320:     `<div class=\"row\"><i class=\"ring\" style=\"background:${VSTATE.candidate}\"></i>stale procedure</div>` +\nbackend/app/mcp_server/procedure_graph_page.py:326:     `<div class=\"row\"><span class=\"e sub\"></span>subprocedure</div>`;\nbackend/app/mcp_server/procedure_graph_page."
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_200f99570a154279ba",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server\", \"pattern\": \"def check_procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_200f99570a154279ba",
+      "content": "backend/app/mcp_server/server.py:1870: async def check_procedure(procedure_id: str, query: str, ctx: Context) -> str:"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_7ebed816057c4f8583",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 1850, \"line_end\": 1900}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_7ebed816057c4f8583",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_d4f21c609e03464293",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 1860, \"line_end\": 1920}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_d4f21c609e03464293",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_da8ca4748f1b4fd2b9",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"resolve\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_da8ca4748f1b4fd2b9",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_b013441b60e246c1ac",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"def check_applicability\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_b013441b60e246c1ac",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_8fc4eb97b6db4937ac",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server\", \"pattern\": \"def decide_procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_8fc4eb97b6db4937ac",
+      "content": "backend/app/mcp_server/server.py:2321: async def decide_procedure(procedure_id: str, approver_id: str, decision: str, ctx: Context) -> str:"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_87c139ae67aa4ee0a5",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 2090, \"line_end\": 2125}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_87c139ae67aa4ee0a5",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_7b1ba739a38340bf88",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"resolve\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_7b1ba739a38340bf88",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_64bc7a514c91490382",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server\", \"pattern\": \"def get_procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_64bc7a514c91490382",
+      "content": "backend/app/mcp_server/server.py:2103: async def get_procedure(procedure_id: str, ctx: Context) -> str:"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_102f681a38b742fabb",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 2090, \"line_end\": 2130}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_102f681a38b742fabb",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_66391430af964f03b6",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"resolve_\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_66391430af964f03b6",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_3fb4b76dd7264b7692",
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"line_start\": 2100, \"line_end\": 2150}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_3fb4b76dd7264b7692",
+      "content": "     1| \"\"\"\n     2| StealthLab MCP server. Representative tools:\n     3|   - retrieve_precedent: thin read wrapper, zero new business logic, wraps\n     4|     an already-tested retrieval function.\n     5|   - submit_approval / decide_decomposition: the ONLY paths that mutate the\n     6|     knowledge graph. Each loads a persisted proposal (a debate scorecard\n     7|     row / a decompositions row), enforces its gate (PENDING_APPROVAL /\n     8|     status='proposed'), applies THAT row's stored change_set -- never a\n     9|     caller-supplied one -- and writes an audit row. The former ungated\n    10|     `apply_change_set` tool, which applied an arbitrary caller-supplied\n    11|     change_set with no gate or audit row, was removed in the post-freeze\n    12|     security hardening (v1-final-2026-09-03.1).\n    13|   - propose_synthesis: thin wrapper around LoopOrchestrator.run(), the real\n    14|     debate orchestration used throughout this project.\n    15|   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its\n    16|     own docstring's HONEST STATUS section. Reuses RepoSandbox/Agent\n    17|     verbatim for its tier-2 execution path, but adds real new orchestration\n    18|     (a generic, non-SWE-bench-specific instance/prompt path, plus the\n    19|     tier-1 fast-lookup path) on top.\n    20|   - check_procedure: demo.md C5's audit-mode ALLOW/WOULD_REFUSE tool; thin\n    21|     wrapper around app.services.applicability.check_procedure_reuse().\n    22| \n    23| (\"Four tools\" above is stale relative to the full @server.tool() list this\n    24| file actually defines today -- a pre-existing doc-drift gap, not one this\n    25| addition introduces or fixes; flagged on the board rather than silently\n    26| expanded into an out-of-scope rewrite.)\n    27| \n    28| Built against the real, installed mcp==2.0.0 SDK (2026-07-28 spec),\n    29| verified by direct introspection of the installed package -- not against\n    30| remembered pre-2.0 API names. Confirmed real: MCPServer (not FastMCP,\n    31| renamed in v2), the .tool() decorator, Context.lifespan for accessing the\n    32| DB pool from within a tool call.\n    33| \n    34| propose_synthesis/find_best_way are genuinely long-running (multi-round\n    35| debate / multi-step agent loop). Long-run semantics come from\n    36| tasks_extension.py, a real, hand-built implementation of SEP-2663 -- see\n    37| that module's own docstring for why (mcp==2.0.0 ships no Tasks runtime at\n    38| all yet; confirmed via exhaustive grep of the installed package plus the\n    39| SDK's own release notes, not assumed).\n    40| \"\"\"\n    41| from __future__ import annotations\n    42| \n    43| import asyncio\n    44| import json\n    45| import os\n    46| import secrets\n    47| import subprocess\n    48| import s"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_c4036edba3c44c97a2",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"resolve_\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_c4036edba3c44c97a2",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_82192ebc05294fc484",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server\", \"pattern\": \"resolve\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_82192ebc05294fc484",
+      "content": "backend/app/mcp_server/server.py:54: sys.path.insert(0, str(Path(__file__).resolve().parents[2]))\nbackend/app/mcp_server/server.py:107:     Path(__file__).resolve().parents[3] / \"experiments\" / \"swebench_pro\"\nbackend/app/mcp_server/server.py:184:     -- `_resolve_caller_identity`'s FIRST real identity source, below --\nbackend/app/mcp_server/server.py:185:     resolve a genuine, per-caller, spoof-proof identity over this\nbackend/app/mcp_server/server.py:188:     `_resolve_caller_identity`'s own docstring used to describe as always\nbackend/app/mcp_server/server.py:438: def _resolve_caller_identity(fallback: str) -> str:\nbackend/app/mcp_server/server.py:467:        token's real `sub`, so two different OIDC identities now resolve\nbackend/app/mcp_server/server.py:493:     when a REAL identity was resolved) -- never a fabricated identity.\nbackend/app/mcp_server/server.py:504:     test_decide_procedure_resolved_identity_overrides_spoofed_approver_id,\nbackend/app/mcp_server/server.py:505:     which calls decide_procedure with both a mocked-real resolved\nbackend/app/mcp_server/server.py:507:     the PERSISTED `procedures.approved_by` row shows the resolved\nbackend/app/mcp_server/server.py:519:         self-asserted parameter), so a resolved real identity OVERRIDES\nbackend/app/mcp_server/server.py:545:     A real resolved OIDC identity (the same two contextvar sources\nbackend/app/mcp_server/server.py:546:     ``_resolve_caller_identity`` checks) -> that user's scope\nbackend/app/mcp_server/server.py:766:     \"\"\"Directive Sec 20's \"resolve -> bind\" stage, run for real, over the\nbackend/app/mcp_server/server.py:777:     back byte-identical, matching the registry's own \"nothing resolved\"\nbackend/app/mcp_server/server.py:783:     merely resolved in memory and discarded.\nbackend/app/mcp_server/server.py:796:     UNCHANGED -- never re-resolved -- so a newer implementation activated\nbackend/app/mcp_server/server.py:799:     existing row for this pair) resolves and freezes a fresh binding.\nbackend/app/mcp_server/server.py:907:         created_by=_resolve_caller_identity(fallback=\"find_best_way\"),\nbackend/app/mcp_server/server.py:942:     references already expanded, dependencies already resolved) as data\nbackend/app/mcp_server/server.py:1284:             created_by=_resolve_caller_identity(fallback=\"find_best_way_adhoc\"),\nbackend/app/mcp_server/server.py:1375:         created_by=_resolve_caller_identity(fallback=\"find_best_way\"),\nbackend/app/mcp_server/server.py:1629:             detected_by=_resolve_caller_identity(\nbackend/app/mcp_server/server.py:1682:             created_by=_resolve_caller_identity(fallback=\"reproduce_procedure\"),\nbackend/app/mcp_server/server.py:1716:             created_by=_resolve_caller_identity(fallback=\"reproduce_procedure\"),\nbackend/app/mcp_"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_2ca4d8f06a7f4699bd",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"procedure_id\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_2ca4d8f06a7f4699bd",
+      "content": "no matches"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_5c440311cac74744b6",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_5c440311cac74744b6",
+      "content": "no matches"
+    },
+    {
+      "role": "user",
+      "content": "[a provider error occurred; 2 message(s) of history were dropped to recover. Any edit you already made is still applied.]"
+    },
+    {
+      "role": "user",
+      "content": "[a provider error occurred; 0 message(s) of history were dropped to recover. Any edit you already made is still applied.]"
+    },
+    {
+      "role": "user",
+      "content": "[a provider error occurred; 0 message(s) of history were dropped to recover. Any edit you already made is still applied.]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_b9fedfec3fee4e1997",
+          "type": "function",
+          "function": {
+            "name": "search",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\", \"pattern\": \"async def get_procedure\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_b9fedfec3fee4e1997",
+      "content": "no matches\n\n[11 tool calls remaining] You have not edited any file yet. Stop searching and make your best edit now with edit_file, then call finish."
+    },
+    {
+      "role": "user",
+      "content": "[a provider error occurred; 2 message(s) of history were dropped to recover. Any edit you already made is still applied.]"
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "id": "call_bb1120c4cf734a7abd",
+          "type": "function",
+          "function": {
+            "name": "list_symbols",
+            "arguments": "{\"path\": \"backend/app/mcp_server/server.py\"}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_bb1120c4cf734a7abd",
+      "content": "def        lifespan                                 lines 153-168\nclass      OidcAwareTokenVerifier                   lines 171-235\ndef        OidcAwareTokenVerifier.__init__          lines 214-217\ndef        OidcAwareTokenVerifier.verify_token      lines 219-235\ndef        _require_mcp_token                       lines 238-247\ndef        _build_token_verifier                    lines 250-273\ndef        _graph_pool                              lines 335-339\ndef        claim_graph_page                         lines 343-344\ndef        claim_graph_vendor_forcegraph            lines 348-350\ndef        claim_graph_data                         lines 354-383\ndef        _int                                     lines 357-361\ndef        _float                                   lines 363-367\ndef        _bool                                    lines 369-370\ndef        procedure_graph_page                     lines 395-396\ndef        procedure_graph_data                     lines 400-432\ndef        _int                                     lines 403-407\ndef        _bool                                    lines 409-413\ndef        _resolve_caller_identity                 lines 438-538\ndef        _caller_access_scope                     lines 541-565\ndef        retrieve_precedent                       lines 569-629\ndef        propose_synthesis                        lines 645-743\ndef        _render_step                             lines 746-762\ndef        _bind_plan_to_registry                   lines 765-818\ndef        _respond_tier1_hit                       lines 821-923\ndef        run_node                                 lines 888-899\ndef        _respond_plan_only                       lines 926-1005\ndef        find_best_way                            lines 1009-1458\ndef        run_node                                 lines 1337-1361\ndef        reproduce_procedure                      lines 1462-1799\ndef        _staleness_report                        lines 1608-1639\ndef        _run_tier                                lines 1667-1747\ndef        run_node                                 lines 1690-1705\ndef        detect_conflict_trigger                  lines 1803-1866\ndef        check_procedure                          lines 1870-1932\ndef        _canonical_procedure_id                  lines 1947-1965\ndef        _resolve_live_procedure                  lines 1968-1992\ndef        search_procedures                        lines 1996-2056\ndef        get_claim_graph                          lines 2060-2099\ndef        get_procedure                            lines 2103-2121\ndef        check_applicability                      lines 2125-2170\ndef        report_execution                         lines 2174-2251\ndef        submit_procedure                         lines 2255-\n\n[8 tool calls remaining] You have not edited any file yet. Stop searching and make your best edit now with edit_file, then call finish."
+    }
+  ]
+}

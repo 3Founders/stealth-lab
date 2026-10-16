@@ -1,0 +1,16 @@
+codebook cb1-20261008: {'version': 'cb1-20261008', 'embedding_model_id': 'vertex:gemini-embedding-2', 'codes': 192, 'coarse_groups': 24, 'built_from': 20731}; 20561 goals coded (14s)
+data: 18282 items, 117731 observations, 946 aggregates, 384 cards, 216 code nodes (41s)
+E1008 18:57:36.813678    8580 algebraic_simplifier.cc:10879] Algebraic simplifier is likely stuck in a circular simplification loop and ran for 50 runs on computation wide.wide.region_0.128.clone.clone.clone
+{
+ "method": "vi_lowrank",
+ "seconds": 2961,
+ "models": 70,
+ "goals": 21659,
+ "code_nodes": 216,
+ "diagnostics": {
+  "final_elbo_loss": 250816.70487327696,
+  "svi_steps": 6000,
+  "rank": 32,
+  "elbo_tail_rel_change": 0.00099503155710259
+ }
+}

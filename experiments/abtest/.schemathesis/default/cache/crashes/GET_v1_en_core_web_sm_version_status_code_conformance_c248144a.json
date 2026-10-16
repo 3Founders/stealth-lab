@@ -1,0 +1,83 @@
+{
+  "operation": "GET /v1/en_core_web_sm/version",
+  "method": "GET",
+  "path_template": "/v1/en_core_web_sm/version",
+  "fingerprint": "c248144a",
+  "case_id": "vUOSwE",
+  "code_sample": "curl -X GET -H 'Authorization: [Filtered]' http://127.0.0.1:50285/v1/en_core_web_sm/version",
+  "sequence": [
+    {
+      "method": "GET",
+      "url": "http://127.0.0.1:50285/v1/en_core_web_sm/version",
+      "url_template": "http://127.0.0.1:50285/v1/en_core_web_sm/version",
+      "headers": {
+        "User-Agent": "schemathesis/4.30.1",
+        "Accept-Encoding": "gzip, deflate, zstd",
+        "Accept": "*/*",
+        "Connection": "keep-alive",
+        "Authorization": "[Filtered]",
+        "X-Schemathesis-TestCaseId": "vUOSwE"
+      },
+      "response": {
+        "status_code": 404,
+        "headers": {
+          "date": "Sat, 10 Oct 2026 18:32:36 GMT",
+          "server": "uvicorn",
+          "content-length": "22",
+          "content-type": "application/json"
+        },
+        "body": "{\"detail\":\"Not Found\"}"
+      },
+      "link": null,
+      "checks": [
+        {
+          "name": "status_code_conformance",
+          "status": "failure",
+          "message": "Undocumented HTTP status code\n\nReceived: 404\nDocumented: 200"
+        }
+      ],
+      "meta": {
+        "generation": {
+          "time": 0.00021689996356144547,
+          "mode": "positive"
+        },
+        "components": {
+          "HEADER": "positive"
+        },
+        "phase": {
+          "name": "coverage",
+          "data": {
+            "type": "CoveragePhaseData",
+            "description": "Default positive test case",
+            "location": null,
+            "parameter": null,
+            "parameter_location": null,
+            "scenario": "default_positive_test"
+          }
+        },
+        "pool_draws": [],
+        "pool_misses": [],
+        "semantic_draws": [],
+        "dictionary_draws": [],
+        "constants_draws": [],
+        "raw_containers": {
+          "HEADER": {
+            "Authorization": "Bearer "
+          }
+        }
+      },
+      "path": "/v1/en_core_web_sm/version",
+      "path_parameters": {},
+      "query": {},
+      "case_headers": {
+        "Authorization": "[Filtered]"
+      },
+      "cookies": {},
+      "case_body": {
+        "encoding": "none"
+      },
+      "media_type": null,
+      "parent_index": null
+    }
+  ]
+}

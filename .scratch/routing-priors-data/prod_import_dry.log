@@ -1,0 +1,24 @@
+{
+  "applied": false,
+  "task_goals_known": 20954,
+  "cards": 384,
+  "evidence_items": 18282,
+  "of_which_our_goals": 16993,
+  "observations": 117731,
+  "observations_on_our_goals": 53571,
+  "models": 70,
+  "scaffolds": {
+    "swe-agent": 65030,
+    "mini-swe-agent": 24601,
+    "openhands": 3600,
+    "rag-baseline": 2200,
+    "moatless-tools": 2000,
+    "agentless-1-5": 1100,
+    "swe-fixer": 1100,
+    "tools": 1000,
+    "lingxi-v1-5": 1000,
+    "undisclosed": 1000
+  },
+  "aggregates": 946,
+  "skipped": []
+}

@@ -1,0 +1,15 @@
+.................F....                                                   [100%]
+================================== FAILURES ===================================
+____________ test_card_fit_converges_and_learns_the_release_slope _____________
+
+card_fit = {'cards': {'lab0/m0': ModelCard(model_key='lab0/m0', family='lab0', provider=None, release_date=datetime.date(2026, 2,...mini'], 'reporters': [], ...}, {'max_r_hat': 1.0941585474600375, 'min_ess': 26.9315746120805, 'divergences': 0})}, ...}
+
+    def test_card_fit_converges_and_learns_the_release_slope(card_fit):
+        g, samples, info, diag = card_fit["fits"]["cards"]
+>       assert diag["divergences"] <= 2 and diag["max_r_hat"] < 1.1
+E       assert (0 <= 2 and 1.2032402688402164 < 1.1)
+
+tests\test_routing_priors_offline.py:237: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_routing_priors_offline.py::test_card_fit_converges_and_learns_the_release_slope
+1 failed, 21 passed in 243.11s (0:04:03)

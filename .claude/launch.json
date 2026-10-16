@@ -1,0 +1,82 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "storybook",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "storybook",
+        "--prefix",
+        "frontend"
+      ],
+      "port": 6006
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "frontend"
+      ],
+      "port": 3000
+    },
+    {
+      "name": "frontendv1",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "frontendv1",
+        "--",
+        "-p",
+        "3001"
+      ],
+      "port": 3001
+    },
+    {
+      "name": "prod_frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--prefix",
+        "prod_frontend"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8000",
+        "--app-dir",
+        "backend"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "abtest-backend",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "experiments/abtest/run_backend.py"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "backend-demo",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "backend/scripts/run_local_demo.py"
+      ],
+      "port": 8000
+    }
+  ]
+}

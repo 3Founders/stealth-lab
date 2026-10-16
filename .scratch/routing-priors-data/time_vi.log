@@ -1,0 +1,2 @@
+method vi_lowrank latents 4007 work 473292
+fit vi_lowrank 817 s {'final_elbo_loss': 13507.963687665671, 'svi_steps': 6000, 'rank': 32, 'elbo_tail_rel_change': 0.0006500273020255212}

@@ -1,0 +1,151 @@
+{
+ "note": "embedding + judges stubbed: server + database overhead only",
+ "levels": {
+  "find_ways": [
+   {
+    "clients": 1,
+    "requests": 1173,
+    "throughput_rps": 78.2,
+    "error_rate": 0.0,
+    "p50_ms": 11.1,
+    "p95_ms": 21.8,
+    "p99_ms": 32.5,
+    "mean_ms": 12.7
+   },
+   {
+    "clients": 5,
+    "requests": 2236,
+    "throughput_rps": 149.1,
+    "error_rate": 0.0,
+    "p50_ms": 32.6,
+    "p95_ms": 41.0,
+    "p99_ms": 55.9,
+    "mean_ms": 33.5
+   },
+   {
+    "clients": 10,
+    "requests": 2176,
+    "throughput_rps": 145.1,
+    "error_rate": 0.0,
+    "p50_ms": 65.3,
+    "p95_ms": 96.1,
+    "p99_ms": 160.9,
+    "mean_ms": 68.9
+   },
+   {
+    "clients": 25,
+    "requests": 2224,
+    "throughput_rps": 148.3,
+    "error_rate": 0.0,
+    "p50_ms": 163.4,
+    "p95_ms": 207.0,
+    "p99_ms": 334.0,
+    "mean_ms": 168.8
+   },
+   {
+    "clients": 50,
+    "requests": 2130,
+    "throughput_rps": 142.0,
+    "error_rate": 0.0,
+    "p50_ms": 325.5,
+    "p95_ms": 628.4,
+    "p99_ms": 917.4,
+    "mean_ms": 354.2
+   },
+   {
+    "clients": 100,
+    "requests": 1615,
+    "throughput_rps": 107.7,
+    "error_rate": 0.0,
+    "p50_ms": 684.2,
+    "p95_ms": 2936.4,
+    "p99_ms": 5635.5,
+    "mean_ms": 937.1
+   }
+  ],
+  "find_ways_summary": [
+   {
+    "clients": 1,
+    "requests": 1226,
+    "throughput_rps": 81.7,
+    "error_rate": 0.0,
+    "p50_ms": 11.1,
+    "p95_ms": 21.1,
+    "p99_ms": 26.7,
+    "mean_ms": 12.2
+   },
+   {
+    "clients": 5,
+    "requests": 2180,
+    "throughput_rps": 145.3,
+    "error_rate": 0.0,
+    "p50_ms": 32.6,
+    "p95_ms": 43.2,
+    "p99_ms": 57.9,
+    "mean_ms": 34.4
+   },
+   {
+    "clients": 10,
+    "requests": 2163,
+    "throughput_rps": 144.2,
+    "error_rate": 0.0,
+    "p50_ms": 65.5,
+    "p95_ms": 94.9,
+    "p99_ms": 150.2,
+    "mean_ms": 69.3
+   },
+   {
+    "clients": 25,
+    "requests": 2242,
+    "throughput_rps": 149.5,
+    "error_rate": 0.0,
+    "p50_ms": 163.6,
+    "p95_ms": 199.5,
+    "p99_ms": 285.9,
+    "mean_ms": 167.7
+   },
+   {
+    "clients": 50,
+    "requests": 1633,
+    "throughput_rps": 108.9,
+    "error_rate": 0.0006,
+    "p50_ms": 341.4,
+    "p95_ms": 1257.7,
+    "p99_ms": 2551.4,
+    "mean_ms": 462.0
+   },
+   {
+    "clients": 100,
+    "requests": 871,
+    "throughput_rps": 58.1,
+    "error_rate": 0.0,
+    "p50_ms": 1111.0,
+    "p95_ms": 5401.4,
+    "p99_ms": 6395.3,
+    "mean_ms": 1774.1
+   }
+  ]
+ },
+ "breaking_point": {
+  "find_ways": {
+   "clients": 100,
+   "requests": 1615,
+   "throughput_rps": 107.7,
+   "error_rate": 0.0,
+   "p50_ms": 684.2,
+   "p95_ms": 2936.4,
+   "p99_ms": 5635.5,
+   "mean_ms": 937.1
+  },
+  "find_ways_summary": {
+   "clients": 100,
+   "requests": 871,
+   "throughput_rps": 58.1,
+   "error_rate": 0.0,
+   "p50_ms": 1111.0,
+   "p95_ms": 5401.4,
+   "p99_ms": 6395.3,
+   "mean_ms": 1774.1
+  }
+ }
+}
