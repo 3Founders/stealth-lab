@@ -44,6 +44,15 @@ Ground truth for judging a rule: the hidden FAIL_TO_PASS tests. They grade the r
 - Report with the counts, not only percentages; n is small (~35 answers per set).
 - Final confirmation on different repositories: the main series (sqlglot, jsonargparse).
 
+## Clarifications, added before the rules table was looked at (after survey-s4-ch1 showed two measurement problems)
+- E unknown (the existing tests could not be run or judged for that issue): counts as "no new failure", as the
+  product's baseline rule treats tests that cannot run on the unchanged code. How many answers this applies to is
+  reported with the table.
+- An answer whose hidden-test verdict differs between two runs on the same saved patch (stage 3 vs stage 4) has an
+  unknown label: it is left out of the scoring and counted separately.
+- E is measured with the existing-test run fixed (by file, read back per test id; it had stopped whole when one id was
+  not found). Stage 4 is re-run for all judged issues with that fix before the table is made.
+
 ## Product consequence, decided now from the literature (not the data)
 A cheap agent must not iterate against our written tests: refining code until generated tests pass raises false
 accepts to ~60% (Ahmed et al., FSE 2026). In the chosen rule's product form, the cheap agent's own check is the
