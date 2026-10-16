@@ -5,10 +5,11 @@
 // Why: one tool-less call wrote tests that were valid (fail before, pass with the real fix) for 41% of 32 real issues;
 // the rest asserted behaviour the real fix does not have, imported helpers that do not exist, or did not run at all
 // (pipeline survey stage 2). Published reproduction agents that run their tests reach ~50-65% (Agentless, e-Otter++).
-// The one-call writer stays as the fallback, and it is shown the agent's last test and why it was not accepted (it passed
-// on the current code, or could not run): on 22 issues the agent alone got a failing test 4 times -- 10 times its test
-// never failed by assertion, 8 times it ran out of time (survey stage 2, 2026-10-16) -- and that try is what the writer
-// should not repeat. STEALTHLAB_DISPATCH_TESTFIRST_AGENT=on (measured before it is the default).
+// The one-call writer stays as the fallback. STEALTHLAB_DISPATCH_TESTFIRST_AGENT=on (measured before it is the default).
+// On 22 issues the agent got a failing test 4 times (10 times its test never failed by assertion, 8 times it ran out of
+// time). Showing the writer the agent's rejected test, with 360 s for the agent, did not help: 1 more valid set of tests
+// in 21, 2 lost in 3, and ~400 s per issue (survey stage 2, 2026-10-16) -- so that is opt-in,
+// STEALTHLAB_DISPATCH_TESTFIRST_AGENT_HANDOFF=on.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -79,11 +80,11 @@ export async function reproduceTests({ rt, root, prompt, where = "", env = proce
   try {
     const task = `${reproTask(prompt, testDir)}${where ? `\n\n${where}` : ""}`.slice(0, 2000);
     const st = await rt.achieve({ repo_path: root, task, checks: [`python "${check}"`], scope: [`**/${REPRO_FILE}`, REPRO_FILE],
-      executor, model, base: "working-tree", timeout_s: Number(env.STEALTHLAB_DISPATCH_TESTFIRST_AGENT_TIMEOUT_S || 360) });
+      executor, model, base: "working-tree", timeout_s: Number(env.STEALTHLAB_DISPATCH_TESTFIRST_AGENT_TIMEOUT_S || 240) });
     runId = st.run_id;
     let r;
     do { r = await rt.runResult(runId, 55); } while (!["verified", "failed", "timed_out", "cancelled", "error"].includes(r?.state));
-    if (r.state !== "verified") { log(`test-first: the reproduction agent did not get a failing test (${r.state})`); return lastTry(r); }
+    if (r.state !== "verified") { log(`test-first: the reproduction agent did not get a failing test (${r.state})`); return (env.STEALTHLAB_DISPATCH_TESTFIRST_AGENT_HANDOFF || "off").toLowerCase() === "on" ? lastTry(r) : null; }
     const wt = r.diff?.worktree;
     const f = (r.diff?.files || []).find((x) => x.endsWith(REPRO_FILE));
     const code = wt && f ? fs.readFileSync(path.join(wt, f), "utf8") : null;
