@@ -79,7 +79,8 @@ export class ExecRuntime {
     const cfg = readExecConfig(this.env);
     if (typeof input.repo_path !== "string" || !input.repo_path) throw new Error("repo_path is required");
     if (typeof input.task !== "string" || !input.task.trim()) throw new Error("task is required");
-    if (input.task.length > 2000) throw new Error(`task is ${input.task.length} chars; the limit is 2,000 (objective + NODE lines + claims)`);
+    // 12,000: a real issue whole plus the pointers (at 2,000, 8 of 25 issues reached the agent cut; survey 2026-10-16)
+    if (input.task.length > 12000) throw new Error(`task is ${input.task.length} chars; the limit is 12,000 (objective + NODE lines + claims)`);
     const nodes = parseNodeLines(input.task);
     let checks = Array.isArray(input.checks) ? input.checks.map(String).filter((c) => c.trim()) : [];
     if (!checks.length) checks = nodes.map((n) => n.check).filter(Boolean);

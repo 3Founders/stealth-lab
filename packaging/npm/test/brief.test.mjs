@@ -306,11 +306,11 @@ test("briefedPrompt: the brief, then 'Original request:' and the user's words; w
 test("dispatch: a long original request still fits the task limit, brief whole, original cut with an ellipsis", async () => {
   const { env, repo } = setup();
   const rt = stubRuntime(repo);
-  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(120)}`;
+  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(500)}`;
   await dispatch({ payload: { cwd: repo, prompt: raw }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
                    briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
   const task = rt.calls[0].task;
-  assert.ok(task.length <= 2000, String(task.length));
+  assert.ok(task.length <= 12000, String(task.length));
   assert.match(task, /^Fix calc\.py so x is 2 \(the bug discussed above\)/);
   assert.match(task, /\n\nOriginal request:\nyes fix it and also keep/);
   assert.ok(task.endsWith("..."));

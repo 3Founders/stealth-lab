@@ -207,11 +207,11 @@ test("B1 through dispatch: the executor's task is the prompt then the context; w
   }
 });
 
-test("the task text never exceeds the executor's 2000 characters: the request first, the context in what is left", async () => {
+test("the task text never exceeds the executor's 12,000 characters: the request first, the context in what is left", async () => {
   const { fitTask } = await import("../lib/dispatch.mjs");
-  const ctx = "Context from this repository:\n" + "fact. ".repeat(800);
+  const ctx = "Context from this repository:\n" + "fact. ".repeat(3000);
   assert.equal(fitTask("short task", "").length, "short task".length);
-  const a = fitTask("t".repeat(1200), ctx);
-  assert.ok(a.length <= 2000 && a.startsWith("t".repeat(1200)) && a.includes("Context from this repository"));
-  assert.equal(fitTask("t".repeat(1800), ctx), "t".repeat(1800), "under 300 characters of room: no context");
+  const a = fitTask("t".repeat(7000), ctx);
+  assert.ok(a.length <= 12000 && a.startsWith("t".repeat(7000)) && a.includes("Context from this repository"));
+  assert.equal(fitTask("t".repeat(11800), ctx), "t".repeat(11800), "under 300 characters of room: no context");
 });
