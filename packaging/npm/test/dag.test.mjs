@@ -80,12 +80,12 @@ test("library: an entry's steps keep at= / gives= / needs=, and so does the Way 
   assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /^S\|W-[0-9a-f]+:2\|action\|In pkg\/parser\.py[^\n]*\|at=pkg\/parser\.py\|gives=[^\n]*\|needs=ArrayFilter$/m);
 });
 
-test("nodeTask: this part, what is done, and the past fix's piece for the same file, within 2,000 characters", () => {
+test("nodeTask: this part, what is done, and the past fix's piece for the same file, within 12,000 characters", () => {
   const steps = stepsFromDiff(PAST);
   const d = buildDag(steps);
-  const t = nodeTask({ task: "Support ARRAY_SLICE: parse and generate it. ".repeat(80), node: d.nodes[1], total: 3, entry: { title: "support FILTER" },
+  const t = nodeTask({ task: "Support ARRAY_SLICE: parse and generate it. ".repeat(320), node: d.nodes[1], total: 3, entry: { title: "support FILTER" },
                        diff: PAST, where: "Likely place: pkg/parser.py:1-3 (parse).", done: ["N-1 in pkg/expressions.py"] });
-  assert.ok(t.length <= 2000);
+  assert.ok(t.length <= 12000);
   assert.match(t, /^Part 2 of 3 of this task/);
   assert.match(t, /This part: the change in pkg\/parser\.py/);
   assert.match(t, /Already done and in the code: N-1 in pkg\/expressions\.py/);

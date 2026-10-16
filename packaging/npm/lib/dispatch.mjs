@@ -41,7 +41,8 @@ import { repoTopLevel } from "./exec/worktree.mjs";
 import { createUndoPoint, discardUndoPoint, finishUndoPoint, undoEnabled } from "./undo.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
-const TASK_MAX = 2000;
+// the executor's task text: the issue whole plus the pointers; at 2,000 it cut 8 of 25 real issues (survey 2026-10-16)
+const TASK_MAX = 12000;
 
 export function dispatchPolicy(env = process.env) {
   return {
