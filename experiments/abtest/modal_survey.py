@@ -92,7 +92,7 @@ def stage2_batch(job: dict) -> list[dict]:
     return out
 
 
-@app.function(image=build_image(), volumes={VOL: volume}, timeout=14400, cpu=2.0, memory=8192,
+@app.function(image=build_image(), volumes={VOL: volume}, timeout=28800, cpu=2.0, memory=8192,
               secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)])
 def stage3_batch(job: dict) -> list[dict]:
     iids = job["iids"]
