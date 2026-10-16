@@ -44,6 +44,12 @@ function price(name, field, value) {
   return value;
 }
 
+function tierOf(name, value) {
+  if (value === undefined || value === null) return 1;
+  if (!Number.isInteger(value) || value < 1 || value > 3) throw new Error(`profile ${name}: tier must be 1, 2 or 3`);
+  return value;
+}
+
 function flag(name, field, value) {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "boolean") throw new Error(`profile ${name}: ${field} must be true or false (or absent when unknown)`);
@@ -90,6 +96,9 @@ export function normaliseProfile(name, raw) {
     // first wave (a fast strong model loses nothing there)
     strong: flag(name, "strong", raw.strong) ?? false,
     first: flag(name, "first", raw.first) ?? false,
+    // a middle model (tier 2+, GLM-5.3, say): dispatch tries it only after every cheaper model has finished without an
+    // accepted answer, before the session's own model, with time of its own (STEALTHLAB_DISPATCH_TIER_S)
+    tier: tierOf(name, raw.tier),
   });
 }
 
