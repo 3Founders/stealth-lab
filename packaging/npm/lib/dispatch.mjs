@@ -26,6 +26,7 @@ import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
 import { runDag } from "./dag_run.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
 import { describeEntry } from "./way_describe.mjs";
+import { reproAgentEnabled, reproduceTests } from "./repro_agent.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
@@ -393,7 +394,7 @@ function runClaudeAsync(env, args, input, signal) {
 // the same time, and their check waits for the file (run_spec.py). `dir`: where to write (specDir() when omitted);
 // the file appears only once it is complete and parses, and SKIP appears instead when no tests could be written.
 export async function writeSpecTests({ prompt, root, mine, check = "", env = process.env, log = () => {}, runClaude,
-                                       dir = null, signal = null, located = "", baseline = false, python = "python" }) {
+                                       dir = null, signal = null, located = "", baseline = false, python = "python", agentWriter = null }) {
   const out = dir || specDir(env);
   const skip = () => { try { fs.writeFileSync(path.join(out, "SKIP"), ""); } catch { /* best effort */ } return null; };
   // the writer: the session's model, or STEALTHLAB_DISPATCH_TESTFIRST_MODEL -- a Claude model (through Claude Code), or
@@ -456,6 +457,18 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   // one retry: a failed call (a transient error, an empty reply) would leave every cheap answer unchecked by tests
   let j = null;
   let code = "";
+  // a reproduction agent that ran its test (lib/repro_agent.mjs) first; its test already fails on the current code by
+  // assertion -- it still goes through the parse check below. None: the one-call writer, as before.
+  if (agentWriter && !signal?.aborted) {
+    const c = await agentWriter();
+    if (c && /def test_/.test(c)) {
+      const probe = path.join(out, "test_spec.py.probe");
+      fs.writeFileSync(probe, withHeader(c));
+      const bad = pythonSyntaxError(probe);
+      try { fs.unlinkSync(probe); } catch { /* */ }
+      if (!bad) { code = c; usedModel = "reproduction-agent"; j = { total_cost_usd: null }; }
+    }
+  }
   for (let attempt = 1; attempt <= 2 && !code && !signal?.aborted; attempt++) {
     if (attempt === 2 && fallback) { usedModel = fallback; log(`test-first: ${model} gave no usable tests; ${fallback} writes them`); }
     const r = attempt === 2 && fallback ? await claudeRun(argsFor(fallback), ask) : await hedged();
@@ -891,7 +904,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     specDone = writeSpecTests({ prompt: payload.prompt, root: payload.cwd || root, mine, check, env, log, runClaude, dir,
                                 signal: specAbort.signal, located: renderForWriter(loc, payload.cwd || root),
-                                baseline: policy.specBaseline && !runClaude, python: py })
+                                baseline: policy.specBaseline && !runClaude, python: py,
+                                // the reproduction agent (lib/repro_agent.mjs; STEALTHLAB_DISPATCH_TESTFIRST_AGENT=on)
+                                agentWriter: reproAgentEnabled(env) && !runClaude
+                                  ? () => reproduceTests({ rt, root: payload.cwd || root, prompt: payload.prompt, where, env, log, signal: specAbort.signal, dir })
+                                  : null })
       .then((s) => { spec = s; return s; })
       .catch((err) => { log(`test-first: ${err.message}`); try { fs.writeFileSync(path.join(dir, "SKIP"), ""); } catch { /* */ } return null; });
   }
