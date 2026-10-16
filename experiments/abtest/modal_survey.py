@@ -199,7 +199,15 @@ def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", worker
          wait: bool = False, set: str = ""):
     import pipeline_survey as P
     # --set "SURVEY_AGENTS=claude,SURVEY_AGENT_TIMEOUT_S=1200": settings for every worker of this run
-    settings = dict(kv.split("=", 1) for kv in set.split(",") if "=" in kv) if set else {}
+    # a piece without "=" continues the value before it: SURVEY_AGENTS=claude,stealth keeps both (it was cut to claude)
+    settings: dict[str, str] = {}
+    last = None
+    for kv in (set.split(",") if set else []):
+        if "=" in kv:
+            last, v = kv.split("=", 1)
+            settings[last] = v
+        elif last is not None:
+            settings[last] += "," + kv
     if not collect and not wait:
         # started and left running: a call this entrypoint waits on is CANCELLED when the launching terminal disconnects
         # (a laptop asleep stopped survey-s3-ch2 at 8 of 15, 2026-10-16), a spawned call on a detached app is not.
