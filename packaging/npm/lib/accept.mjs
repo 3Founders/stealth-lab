@@ -12,6 +12,8 @@
 //   F      focused: at most 3 source files and 60 changed lines
 //   X      it adds no catch-all exception swallow
 //   A      another candidate answer changed the same source files
+//   C      it passes another candidate's VALIDATED tests (tests that answer added, failing without its source change and
+//          passing with it) -- the two behave alike (crossTest; the strongest oracle-free signal in the literature)
 //   R/Rno  the cheap reviewer says it fixes / does not fix the request     (STEALTHLAB_REVIEW_MODEL, gpt-oss-120b)
 //   Rs/Rs_no  the strong reviewer says so                                  (STEALTHLAB_REVIEW_STRONG_MODEL, claude-sonnet-5-5)
 // In this mode the cheap agents work against the project's check only, never our written tests: refining code until
@@ -22,7 +24,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { changesSource, reviewPatch } from "./review.mjs";
 
-export const SIGNALS = ["E", "T", "T*", "S", "F", "X", "A", "R", "Rno", "Rs", "Rs_no"];
+export const SIGNALS = ["E", "T", "T*", "S", "F", "X", "A", "C", "R", "Rno", "Rs", "Rs_no"];
 
 // -> [[{sig, neg}]] (an AND of OR-groups) | null when the text is not a rule (unknown signal) or is "check"
 export function parseRule(text) {
@@ -91,6 +93,67 @@ export function decide(cands, rule) {
   }
   const ok = cands.filter((c) => evalRule(rule, c.evidence || {}));
   return ok.find((c) => c.evidence.A) || ok[0] || null;
+}
+
+const TEST_PATH = /(^|\/)(tests?|testing)\/|(^|\/)test_[^/]*\.py$|_test\.py$/;
+
+// an answer's patch -> {src, tst}: its source change and its test change, by file
+export function splitPatch(patch) {
+  const blocks = String(patch || "").split(/(?=^diff --git )/m).filter((b) => b.startsWith("diff --git "));
+  const isTest = (b) => TEST_PATH.test((/ b\/(\S+)/.exec(b.split("\n", 1)[0]) || [])[1] || "");
+  return { src: blocks.filter((b) => !isTest(b)).join(""), tst: blocks.filter(isTest).join("") };
+}
+
+function gitApply(cwd, patch, reverse = false) {
+  return new Promise((resolve) => {
+    if (!String(patch || "").trim()) { resolve(false); return; }
+    const c = spawn("git", ["-C", cwd, "apply", ...(reverse ? ["-R"] : []), "--whitespace=nowarn", "-"], { windowsHide: true });
+    c.on("error", () => resolve(false));
+    c.on("close", (code) => resolve(code === 0));
+    c.stdin.end(patch);
+  });
+}
+
+function pytestIds(python, cwd, files) {
+  return new Promise((resolve) => {
+    if (!files.length) { resolve({}); return; }
+    const c = spawn(python, ["-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", ...files], { cwd, windowsHide: true });
+    let out = "";
+    const t = setTimeout(() => c.kill(), 300000);
+    c.stdout.on("data", (d) => { out += d; });
+    c.stderr.on("data", (d) => { out += d; });
+    c.on("error", () => { clearTimeout(t); resolve({}); });
+    c.on("close", () => {
+      clearTimeout(t);
+      const ids = {};
+      for (const m of out.matchAll(/^(PASSED|FAILED|ERROR) (.+?)(?: - .*)?$/gm)) ids[m[2].trim()] = m[1];
+      resolve(ids);
+    });
+  });
+}
+
+// signal C on every candidate (in place): each candidate's validated tests run on the others, in their worktrees. A
+// candidate's own source change is taken out of its worktree for a moment to see its tests fail without it, then put back.
+export async function crossTest(cands, { python = "python", log = () => {} } = {}) {
+  const parts = cands.map((c) => ({ c, wt: c.result?.diff?.worktree, ...splitPatch(c.evidence?.patch) }));
+  for (const p of parts) if (p.c.evidence) p.c.evidence.C = false;
+  for (const y of parts) {
+    if (!y.wt || !y.tst.trim() || !y.src.trim()) continue;
+    const files = [...new Set([...y.tst.matchAll(/^diff --git a\/\S+ b\/(\S+\.py)$/gm)].map((m) => m[1]))];
+    const withY = await pytestIds(python, y.wt, files);
+    if (!(await gitApply(y.wt, y.src, true))) continue;
+    let before;
+    try { before = await pytestIds(python, y.wt, files); } finally { await gitApply(y.wt, y.src); }
+    const validated = Object.keys(withY).filter((t) => withY[t] === "PASSED" && ["FAILED", "ERROR"].includes(before[t]));
+    if (!validated.length) continue;
+    for (const x of parts) {
+      if (x === y || !x.wt || !x.src.trim() || !(await gitApply(x.wt, y.tst))) continue;
+      let got;
+      try { got = await pytestIds(python, x.wt, files); } finally { await gitApply(x.wt, y.tst, true); }
+      if (validated.every((t) => got[t] === "PASSED")) x.c.evidence.C = true;
+      log(`accept: ${x.c.rung?.unit || "?"} ${validated.every((t) => got[t] === "PASSED") ? "passes" : "fails"} the ${validated.length} validated test(s) of ${y.c.rung?.unit || "?"}`);
+    }
+  }
 }
 
 // what a rule decided, for the log and run.md

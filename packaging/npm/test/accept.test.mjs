@@ -111,3 +111,32 @@ test("a middle model (tier: 2) starts only after every cheap one has finished wi
   const glm = order.indexOf("start glm-5.3");
   assert.ok(glm > order.indexOf("end gemma-4-31b-it") && glm > order.indexOf("end minimax-m2-7"), order.join(", "));
 });
+
+import { crossTest, splitPatch } from "../lib/accept.mjs";
+
+test("crossTest: an answer passes another's validated tests (fail without its fix, pass with it) -> C; a different fix does not", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "acc-x-"));
+  const g = (cwd, ...a) => execFileSync("git", ["-C", cwd, ...a], { stdio: "pipe" });
+  g(base, "init", "-q"); g(base, "config", "user.email", "t@e"); g(base, "config", "user.name", "t");
+  fs.writeFileSync(path.join(base, "calc.py"), "def f():\n    return 1\n");
+  fs.mkdirSync(path.join(base, "tests")); fs.writeFileSync(path.join(base, "tests", "__init__.py"), "");
+  g(base, "add", "-A"); g(base, "commit", "-q", "-m", "base");
+  const SRC2 = "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 2\n";
+  const SRC3 = SRC2.replace("+    return 2", "+    return 3");
+  const TST = "diff --git a/tests/test_calc.py b/tests/test_calc.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_calc.py\n@@ -0,0 +1,4 @@\n+from calc import f\n+\n+def test_f():\n+    assert f() == 2\n";
+  const wt = (patch) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "acc-wt-"));
+    fs.cpSync(base, d, { recursive: true });
+    execFileSync("git", ["-C", d, "apply", "-"], { input: patch });
+    return d;
+  };
+  const mk = (unit, patch) => ({ rung: { unit }, result: { diff: { worktree: wt(patch) } }, evidence: { patch } });
+  const y = mk("y", SRC2 + TST), x = mk("x", SRC2), z = mk("z", SRC3);
+  assert.deepEqual(splitPatch(SRC2 + TST), { src: SRC2, tst: TST });
+  await crossTest([y, x, z], { python: "python" });
+  assert.equal(x.evidence.C, true, "the same fix passes y's validated test");
+  assert.equal(z.evidence.C, false, "a different fix does not");
+  assert.equal(y.evidence.C, false, "no other answer has validated tests for y");
+  assert.match(fs.readFileSync(path.join(y.result.diff.worktree, "calc.py"), "utf8"), /return 2/, "y's own change is back in place");
+  assert.equal(fs.existsSync(path.join(x.result.diff.worktree, "tests", "test_calc.py")), false, "y's test is taken out of x again");
+});
