@@ -287,15 +287,32 @@ def _apply(root: Path, patch: str, reverse: bool = False) -> bool:
 
 
 def hidden_pass(py: Path, root: Path, test_patch: str, f2p: list[str]) -> tuple[bool, str]:
-    """The real hidden tests (the merged PR's): its test patch applied, FAIL_TO_PASS must pass."""
+    """The real hidden tests (the merged PR's): FAIL_TO_PASS must pass. As the SWE-bench harness grades: the files the test
+    patch touches are first put back as they were at the base commit (an answer may have edited the same test file, as a
+    developer would), then the test patch is applied; afterwards the answer's own versions are restored exactly.
+    Before this, an answer that had edited a test file the hidden tests also change was scored wrong without being
+    tested: 42 of 107 graded answers (survey-s3-ch1/ch2 + s4, 2026-10-16)."""
     import swe_series_task as S
-    if not _apply(root, test_patch):
-        return False, "test patch does not apply"
+    touched = sorted(set(re.findall(r"^diff --git a/\S+ b/(\S+)", test_patch or "", re.M)))
+    saved = {f: ((root / f).read_bytes() if (root / f).exists() else None) for f in touched}
+    for f in touched:
+        tracked = subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"HEAD:{f}"], capture_output=True).returncode == 0
+        if tracked:
+            subprocess.run(["git", "-C", str(root), "checkout", "-q", "HEAD", "--", f], capture_output=True)
+        else:
+            (root / f).unlink(missing_ok=True)
     try:
+        if not _apply(root, test_patch):
+            return False, "test patch does not apply (even on the base versions of its files)"
         code, out = S.TOOLCHAIN.pytest(py, ["-q", "-p", "no:cacheprovider", *f2p], root, 600)
-        return code == 0, out[-300:]
+        return code == 0, out[-600:]
     finally:
-        _apply(root, test_patch, reverse=True)
+        for f, data in saved.items():
+            if data is None:
+                (root / f).unlink(missing_ok=True)
+            else:
+                (root / f).parent.mkdir(parents=True, exist_ok=True)
+                (root / f).write_bytes(data)
 
 
 LAST_EXISTING: dict = {}                   # the last existing_fails run: how many of the ids it saw, and the output's tail
