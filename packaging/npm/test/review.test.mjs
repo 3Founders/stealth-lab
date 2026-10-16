@@ -33,3 +33,16 @@ test("reviewPatch: one call to the review profile with the request and the diff;
   assert.equal(await reviewPatch({ prompt: "x", diff: "d", env: { ...env, STEALTHLAB_REVIEW_MODEL: "off" }, fetchImpl }), null);
   assert.equal(await reviewPatch({ prompt: "x", diff: "d", env: { ...env, STEALTHLAB_REVIEW_MODEL: "nope" }, fetchImpl }), null);
 });
+
+test("reviewPatch with a Claude model: one lean claude -p call, the verdict from its JSON result", async () => {
+  let args = null, input = null;
+  const runClaude = async (a, i) => { args = a; input = i;
+    return { status: 0, stdout: JSON.stringify({ result: '{"verdict": "fixes", "why": "both cases"}', total_cost_usd: 0.012 }) }; };
+  const r = await reviewPatch({ prompt: "fix f", diff: "+++ b/f.py\n+x", env: {}, model: "claude-sonnet-5-5", runClaude });
+  assert.deepEqual([r.verdict, r.model, r.cost_usd], ["fixes", "claude-sonnet-5-5", 0.012]);
+  assert.deepEqual(args.slice(0, 3), ["-p", "--model", "claude-sonnet-5-5"]);
+  assert.ok(args.includes("--tools") && args[args.indexOf("--tools") + 1] === "", "no tools");
+  assert.match(input, /fix f[\s\S]*\+\+\+ b\/f\.py/);
+  const bad = await reviewPatch({ prompt: "x", diff: "d", env: {}, model: "claude-sonnet-5-5", runClaude: async () => ({ status: 1, stdout: "" }) });
+  assert.equal(bad, null);
+});

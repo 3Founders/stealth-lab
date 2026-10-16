@@ -33,15 +33,29 @@ export function parseVerdict(text) {
   } catch { return null; }
 }
 
-export async function reviewPatch({ prompt, diff, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 90000 }) {
-  const name = String(env.STEALTHLAB_REVIEW_MODEL || "gpt-oss-120b").trim();
+// model: an exec.json profile (one chat call on its endpoint), or a Claude model (one lean, tool-less `claude -p` under
+// the user's own login: a strong reviewer reads only the request and the diff, a small share of what solving costs).
+// runClaude: for tests, a stand-in for lib/claude_call.mjs runClaudeAsync.
+export async function reviewPatch({ prompt, diff, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 90000,
+                                    model = null, runClaude = null, signal = null }) {
+  const name = String(model || env.STEALTHLAB_REVIEW_MODEL || "gpt-oss-120b").trim();
   if (name.toLowerCase() === "off" || !String(diff || "").trim()) return null;
+  const d = String(diff);
+  const user = `The request:\n${String(prompt || "").slice(0, 6000)}\n\nThe change:\n` +
+    (d.length > DIFF_MAX ? `${d.slice(0, DIFF_MAX)}\n[... the rest of the diff is cut]` : d);
+  if (name.includes("claude")) {
+    const { leanArgs, runClaudeAsync } = await import("./claude_call.mjs");
+    const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, 120000))))(leanArgs(name, REVIEW_SYSTEM), user);
+    let j = null;
+    try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
+    const v = j && !j.is_error ? parseVerdict(j.result) : null;
+    if (!v) { log(`review: ${name} gave no usable verdict (exit ${r?.status ?? "?"})`); return null; }
+    log(`review: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
+    return { ...v, model: name, cost_usd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : null };
+  }
   try {
     const profile = readExecConfig(env).profiles?.[name];
     if (!profile?.openai_base_url) return null;
-    const d = String(diff);
-    const user = `The request:\n${String(prompt || "").slice(0, 6000)}\n\nThe change:\n` +
-      (d.length > DIFF_MAX ? `${d.slice(0, DIFF_MAX)}\n[... the rest of the diff is cut]` : d);
     const messages = profile.no_system_role ? [{ role: "user", content: `${REVIEW_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: REVIEW_SYSTEM }, { role: "user", content: user }];
     const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
