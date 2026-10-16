@@ -98,6 +98,7 @@ class RunSpec:
     testfirst_model: str = "glm-5.3"            # the test writer; a slow or failed open writer falls back to Sonnet (dispatch)
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     cheap_agent: str = "stealth"                 # who drives the cheap models: stealth (StealthLab's own loop) or claude (Claude Code)
+    accept_rule: str = ""                        # arm C's acceptance rule (STEALTHLAB_DISPATCH_ACCEPT); "" keeps "check"
     allow_cold_resume: bool = False
     validate: bool = True                  # the gold check on the issues about to run (swe_series_task only); False skips it
     split_arms: bool = True                # one container per arm, so A, C and C0 run at the same time; False: all arms in one container
@@ -244,7 +245,8 @@ class Container:
         # the dataset cache lives on the Volume; its variable is set HERE, not in the image: a cache directory that exists in the image under
         # the Volume's mount path makes Modal refuse the mount ("cannot mount volume on non-empty path")
         self.environ = {**auth_env(spec.auth, environ if environ is not None else dict(os.environ)),
-                        "HF_HOME": str(self.vol / "cache" / "hf"), "ABTEST_CHEAP_AGENT": spec.cheap_agent}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+                        "HF_HOME": str(self.vol / "cache" / "hf"), "ABTEST_CHEAP_AGENT": spec.cheap_agent,
+                        **({"ABTEST_ACCEPT_RULE": spec.accept_rule} if spec.accept_rule else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.run_dir = self.vol / spec.run_name() / repo                  # the repository's directory on the volume
@@ -557,10 +559,10 @@ if modal is not None:
     @app.local_entrypoint()
     def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
              series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
-             testfirst_model: str = "glm-5.3", gc_key_name: str = "GENERAL_COMPUTE_API_KEY", cheap_agent: str = "stealth"):
+             testfirst_model: str = "glm-5.3", gc_key_name: str = "GENERAL_COMPUTE_API_KEY", cheap_agent: str = "stealth", accept_rule: str = ""):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
-                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model, gc_key_name=gc_key_name, cheap_agent=cheap_agent)
+                       allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model, gc_key_name=gc_key_name, cheap_agent=cheap_agent, accept_rule=accept_rule)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))

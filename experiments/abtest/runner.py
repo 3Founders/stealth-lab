@@ -274,6 +274,8 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             **({"STEALTHLAB_DISPATCH_TESTFIRST_MODEL": os.environ["ABTEST_TESTFIRST_MODEL"]}
                if os.environ.get("ABTEST_TESTFIRST_MODEL") else {}),
             **({"STEALTHLAB_DISPATCH_PARALLEL": "on"} if os.environ.get("ABTEST_PARALLEL") else {}),
+            # how a passing cheap answer is accepted (packaging/npm lib/accept.mjs; docs/acceptance_rules_preregistered_2026-10-16.md)
+            **({"STEALTHLAB_DISPATCH_ACCEPT": os.environ["ABTEST_ACCEPT_RULE"]} if os.environ.get("ABTEST_ACCEPT_RULE") else {}),
             # dispatch's own skip-a-provider floor matches the runner's pause point, so no task between the two
             # quietly goes to the session's model
             **({"STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS": os.environ["ABTEST_GC_MIN_TOKENS"]}
