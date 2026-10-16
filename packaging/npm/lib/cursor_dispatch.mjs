@@ -18,7 +18,7 @@
 // (docs/abtest_followups_2026-10.md, queued fix 1); this module picks it up when lib/dispatch.mjs does.
 import fs from "node:fs";
 import path from "node:path";
-import { configDir } from "./config.mjs";
+import { configDir, readConfig } from "./config.mjs";
 import { callFindWays, callTriage, ensureDispatchRoot, execCandidates, formatKnowledge, hookPolicy, readClaims, routingArgs,
   shouldLookUp } from "./hook.mjs";
 import { parseOverride } from "./brief.mjs";
@@ -41,7 +41,10 @@ export function cursorDispatchEnabled(env = process.env) {
 // (and Claude Code, for the test writer) knows "claude-sonnet-4-5". "auto"/"default" is not a model: then
 // STEALTHLAB_CURSOR_MODEL names the model to plan against, else there is no plan (and no dispatch).
 export function cursorPlanModel(payload, env = process.env) {
-  const named = String(env.STEALTHLAB_CURSOR_MODEL || "").trim();
+  // the env var wins; otherwise the model `stealthlab-mcp setup --cursor-model` saved (so no environment variable is needed)
+  let saved = "";
+  try { saved = String(readConfig(env).cursor_model || ""); } catch { /* an unreadable config: no saved model */ }
+  const named = String(env.STEALTHLAB_CURSOR_MODEL || saved || "").trim();
   if (named) return named;
   const m = String(payload?.model || payload?.model_id || "").trim();
   if (!m || /^(auto|default)$/i.test(m)) return null;

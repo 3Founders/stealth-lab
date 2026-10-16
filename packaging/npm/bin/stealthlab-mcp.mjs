@@ -13,16 +13,32 @@
 // Claude Code agent files and SubagentStart/SubagentStop hooks. Without
 // --with-exec nothing of it is installed or run.
 import { parseArgs } from "node:util";
-import { clients, launchSpec, SERVER_NAME } from "../lib/clients.mjs";
 import { configPath, readConfig, readPackage, resolveSettings, writeConfig } from "../lib/config.mjs";
-import { runStdioRelay } from "../lib/proxy.mjs";
-import { runPromptHook } from "../lib/hook.mjs";
-import { freshToken, login as oauthLogin, logoutConfig } from "../lib/oauth.mjs";
-import { describeExec, installExec, uninstallExec } from "../lib/claude_exec.mjs";
-import { logHook, runStopWorker, runSubagentHook } from "../lib/subagent_hook.mjs";
-import { runCaptureHook, runCaptureWorker } from "../lib/capture_hook.mjs";
-import { applyInstructions } from "../lib/instructions.mjs";
-import { runCursorHook, runCursorLookupWorker } from "../lib/cursor_hooks.mjs";
+import fs from "node:fs";
+
+// Everything else is imported by the command that needs it. A hook is a fresh node process on EVERY prompt, and each module
+// costs 5-50 ms to load (measured), so a hook now loads only its own path instead of the installer, the OAuth flow and the
+// relay as well.
+const lazy = {
+  clients: () => import("../lib/clients.mjs"),
+  proxy: () => import("../lib/proxy.mjs"),
+  hook: () => import("../lib/hook.mjs"),
+  oauth: () => import("../lib/oauth.mjs"),
+  claudeExec: () => import("../lib/claude_exec.mjs"),
+  subagent: () => import("../lib/subagent_hook.mjs"),
+  capture: () => import("../lib/capture_hook.mjs"),
+  instructions: () => import("../lib/instructions.mjs"),
+  cursorHooks: () => import("../lib/cursor_hooks.mjs"),
+  setup: () => import("../lib/setup.mjs"),
+  store: () => import("../lib/exec/store.mjs"),
+};
+// kept in step with clients() by a test (test/setup.test.mjs); written out so --help does not load the installer
+const CLIENT_IDS = "claude-code, cursor, vscode, windsurf, cline, codex, claude-desktop";
+// freshToken() returns the saved token unless a refresh token is stored, so the OAuth module is loaded only for a signed-in session
+async function renewToken(settings) {
+  if (!readConfig().refresh_token) return settings.token;
+  return (await lazy.oauth()).freshToken(settings);
+}
 
 const pkg = readPackage();
 const UA = `stealthlab-mcp/${pkg.version} node/${process.versions.node}`;
@@ -31,6 +47,9 @@ const out = (m = "") => process.stderr.write(m + "\n");
 const HELP = `stealthlab-mcp ${pkg.version} -- connect your coding agent to StealthLab
 
 Usage:
+  npx -y stealthlab-mcp setup [options]      the whole first-time install in one command: register your agents,
+                                             write exec.json, remember the Cursor model, then check what is still
+                                             missing and say how to fix it (exit 0 = ready, 3 = not ready yet)
   npx -y stealthlab-mcp install [options]    register StealthLab with your agents
   stealthlab-mcp uninstall [--client <id>]   remove it again
   stealthlab-mcp doctor                      check the hosted server is reachable
@@ -84,8 +103,15 @@ Usage:
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
+Setup options (setup also takes the install options below):
+  --token-file <f>   read the bearer token from a file (no pasting a long token onto a command line)
+  --key-env <NAME>   the environment variable that holds YOUR provider key (default: GENERAL_COMPUTE_API_KEY)
+  --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
+  --no-exec          connect only: no cheap-model dispatch, nothing blocks a prompt
+  --guided           go one step at a time: say what the next step changes and wait for Enter (q quits)
+
 Install options:
-  --client <id>   only these clients (repeatable, or "all"): ${clients().map((c) => c.id).join(", ")}
+  --client <id>   only these clients (repeatable, or "all"): ${CLIENT_IDS}
                   default: every client detected on this machine
   --url <url>     MCP endpoint (default: $STEALTHLAB_MCP_URL, saved config, or the built-in URL)
   --token <tok>   bearer token to send (optional; reads are anonymous)
@@ -112,7 +138,8 @@ function requireUrl(settings) {
   return settings.url;
 }
 
-function pickClients(requested) {
+async function pickClients(requested) {
+  const { clients } = await lazy.clients();
   const all = clients();
   if (!requested?.length) return { chosen: all.filter((c) => c.detect()), explicit: false };
   if (requested.includes("all")) return { chosen: all, explicit: true };
@@ -124,7 +151,8 @@ function pickClients(requested) {
 async function cmdInstall(v) {
   const settings = resolveSettings(v);
   const url = requireUrl(settings);
-  const { chosen } = pickClients(v.client);
+  const { chosen } = await pickClients(v.client);
+  const { launchSpec, SERVER_NAME } = await lazy.clients();
   const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] },
                 hooks: !v["no-hooks"], dispatch: Boolean(v["with-exec"]), keepMcp: Boolean(v["keep-mcp"]), launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
 
@@ -165,9 +193,11 @@ async function cmdInstall(v) {
       }
       out("  Other MCP clients can run the executor server as a stdio command: stealthlab-mcp exec");
     } else if (v["dry-run"]) {
+      const { describeExec } = await lazy.claudeExec();
       for (const f of describeExec()) out(`  would write  ${f}`);
     } else {
       try {
+        const { installExec } = await lazy.claudeExec();
         const r = installExec({ launch: launchSpec() });
         out(`  ok    ${"Executor layer".padEnd(15)} ${[...r.agents, r.settings].join(", ")}`);
       } catch (err) {
@@ -180,8 +210,72 @@ async function cmdInstall(v) {
   if (failed) process.exitCode = 1;
 }
 
+// One command for the first-time install. Order matters: the token and URL are saved by the install, exec.json is written
+// only if absent, and the checklist at the end tests what a program cannot do for the user (server, key, model).
+async function cmdSetup(v) {
+  const { checklist, DEFAULT_KEY_ENV, ensureExecConfig, keyIsSetAsync, probeServer } = await lazy.setup();
+  const { readExecConfig } = await lazy.store();
+  // --guided: before each step say what it changes and wait for Enter. Without a terminal there is nobody to ask, so it runs straight through.
+  const guided = Boolean(v.guided) && process.stdin.isTTY && !v["dry-run"];
+  const step = async (title, changes) => {
+    if (!guided) return;
+    const rl = (await import("node:readline/promises")).createInterface({ input: process.stdin, output: process.stderr });
+    const a = (await rl.question(`\nNext: ${title}\n  ${changes}\n  Enter to continue, q to stop: `)).trim().toLowerCase();
+    rl.close();
+    if (a === "q" || a === "quit") { out("Stopped. Nothing after this step was done; run setup again any time."); process.exit(0); }
+  };
+  if (v["token-file"]) {
+    try { v.token = fs.readFileSync(v["token-file"], "utf8").trim(); } catch (err) { die(`cannot read --token-file: ${err.message}`, 2); }
+    if (!v.token) die("--token-file is empty", 2);
+  }
+  const keyEnv = v["key-env"] || DEFAULT_KEY_ENV;
+  const dispatch = !v["no-exec"];
+  if (v["dry-run"]) {
+    out(`setup (dry run): would install${dispatch ? " with dispatch" : " connect-only"}, ${dispatch ? `write exec.json if absent (key variable ${keyEnv}), ` : ""}save the Cursor model, then check readiness`);
+    return cmdInstall({ ...v, "with-exec": dispatch });
+  }
+  await step("register your agents", `adds the StealthLab server and hooks to ${(await pickClients(v.client)).chosen.map((c) => c.label).join(", ") || "no detected agent"} (the hooks run in every workspace), and saves the URL${v.token ? " and token" : ""} in ~/.stealthlab/config.json. Undo: stealthlab-mcp uninstall.`);
+  await cmdInstall({ ...v, "with-exec": dispatch });
+  if (process.exitCode) return;
+  await step("model list and Cursor model", dispatch ? `writes ~/.stealthlab/exec.json (cheap open models; your key is read from $${keyEnv}, never stored) if there is none${v["cursor-model"] ? `, and saves the Cursor model ${v["cursor-model"]}` : ""}.` : "saves the Cursor model only (connect-only mode).");        // the install failed for a client: nothing to check yet
+  if (v["cursor-model"]) writeConfig({ cursor_model: String(v["cursor-model"]).trim() });
+  let created = false;
+  if (dispatch) {
+    try { created = ensureExecConfig({ keyEnv }).created; } catch (err) { die(err.message, 2); }
+  }
+  await step("check readiness", "makes one request to the server and looks for your key variable; it spends nothing and changes nothing.");
+  const settings = resolveSettings(v);
+  // the server probe (network) and the key lookup (a child process on Windows) wait on different things: run them together
+  const keyNameFirst = (() => { try { return Object.values(readExecConfig().profiles)[0]?.key_env || keyEnv; } catch { return keyEnv; } })();
+  const [server, key] = await Promise.all([probeServer(settings.url, settings.token), keyIsSetAsync(keyNameFirst)]);
+  let execOk = true, execDetail = "", models = [];
+  if (dispatch) {
+    try {
+      const cfg = readExecConfig();
+      models = Object.values(cfg.executors).flatMap((e) => (Array.isArray(e?.models) ? e.models : []).map(String));
+      if (!models.length) { execOk = false; execDetail = "no models listed under executors"; }
+    } catch (err) { execOk = false; execDetail = err.message; }
+  }
+  // the key variable the first profile names (the template names one for all three); a hand-edited file may differ
+  let keyName = keyEnv;
+  try { keyName = Object.values(readExecConfig().profiles)[0]?.key_env || keyEnv; } catch { /* reported above */ }
+  const chosenIds = (await pickClients(v.client)).chosen.map((c) => c.id);
+  const cfgNow = readConfig();
+  const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: keyName,
+                          key: keyName === keyNameFirst ? key : await keyIsSetAsync(keyName), dispatch, cursorModel: cfgNow.cursor_model || process.env.STEALTHLAB_CURSOR_MODEL,
+                          wantsCursor: chosenIds.includes("cursor") });
+  out(created ? `\nWrote ${"~/.stealthlab/exec.json"} (open models on General Compute; your key stays in $${keyName}).` : "");
+  out("\nReadiness:");
+  for (const i of res.items) out(`  ${i.ok ? "ok     " : "MISSING"} ${i.name.padEnd(16)} ${i.detail}`);
+  if (res.ready) { out("\nReady. Restart your agent (Cursor: close every window), then send a small task with a test."); return; }
+  out("\nStill to do:");
+  for (const i of res.items.filter((x) => !x.ok && x.fix)) out(`  - ${i.name}: ${i.fix}`);
+  out("\nRun `stealthlab-mcp setup` again to re-check; it changes nothing that is already in place.");
+  process.exitCode = 3;
+}
+
 async function cmdUninstall(v) {
-  const { chosen } = pickClients(v.client?.length ? v.client : ["all"]);
+  const { chosen } = await pickClients(v.client?.length ? v.client : ["all"]);
   for (const c of chosen) {
     try {
       const removed = c.uninstall();
@@ -192,6 +286,7 @@ async function cmdUninstall(v) {
   }
   if (chosen.some((c) => c.id === "claude-code")) {
     try {
+      const { uninstallExec } = await lazy.claudeExec();
       if (uninstallExec().changed) out("  removed  Executor layer (agents + SubagentStart/SubagentStop hooks)");
       if (readConfig().dispatch) { writeConfig({ dispatch: null }); out("  removed  Dispatch (hooks-only install)"); }
     } catch (err) {
@@ -317,6 +412,11 @@ async function main() {
         "no-hooks": { type: "boolean" },
         "with-exec": { type: "boolean" },
         "keep-mcp": { type: "boolean" },
+        "token-file": { type: "string" },
+        "key-env": { type: "string" },
+        "cursor-model": { type: "string" },
+        "no-exec": { type: "boolean" },
+        guided: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -331,6 +431,8 @@ async function main() {
   if (v.help || cmd === "help") return out(HELP);
 
   switch (cmd) {
+    case "setup":
+      return cmdSetup(v);
     case "install":
       return cmdInstall(v);
     case "uninstall":
@@ -339,6 +441,7 @@ async function main() {
       return cmdDoctor(v);
     case "instructions": {
       const dir = v.dir || process.cwd();
+      const { applyInstructions } = await lazy.instructions();
       for (const r of applyInstructions(dir, { clients: v.client || [], remove: !!v.remove, dryRun: !!v["dry-run"] })) {
         out(`${r.result.padEnd(12)} ${r.file}`);
       }
@@ -353,6 +456,7 @@ async function main() {
       const settings = resolveSettings(v);
       if (!settings.url) die("no server URL: pass --url <https://host/mcp> or run `install` first", 2);
       try {
+        const { login: oauthLogin } = await lazy.oauth();
         await oauthLogin({ url: settings.url, noBrowser: Boolean(v["no-browser"]), print: out });
       } catch (err) {
         die(`sign-in failed: ${err.message}`);
@@ -360,13 +464,15 @@ async function main() {
       return out(`signed in; token saved to ${configPath()} (the hooks refresh it themselves)`);
     }
     case "logout":
-      logoutConfig();
+      (await lazy.oauth()).logoutConfig();
       return out("signed out: token and refresh token removed");
     case "hook-prompt": {
       const chunks = [];
       for await (const c of process.stdin) chunks.push(c);
       const settings = resolveSettings(v);
-      settings.token = await freshToken(settings);          // a signed-in token is renewed shortly before it expires
+      const { runPromptHook } = await lazy.hook();
+      const { logHook } = await lazy.subagent();
+      settings.token = await renewToken(settings);          // a signed-in token is renewed shortly before it expires
       return runPromptHook({
         stdinText: Buffer.concat(chunks).toString("utf8"), settings, userAgent: UA,
         write: (s) => process.stdout.write(s + "\n"),
@@ -392,23 +498,25 @@ async function main() {
           // Cursor reads one JSON object from stdout. The lookup worker is detached and prints nothing.
           if (sub === "cursor-lookup") {
             if (process.env.STEALTHLAB_CURSOR_JOB) {
+              const { runCursorLookupWorker } = await lazy.cursorHooks();
               const settings = resolveSettings({});
-              settings.token = await freshToken(settings);
+              settings.token = await renewToken(settings);
               await runCursorLookupWorker(process.env.STEALTHLAB_CURSOR_JOB, { settings, userAgent: UA });
             }
           } else {
             const chunks = [];
             for await (const c of process.stdin) chunks.push(c);
             const settings = resolveSettings({});
+            const { runCursorHook } = await lazy.cursorHooks();
             // the prompt hook may call the server itself (dispatch): a signed-in token is renewed first
-            if (sub === "cursor-prompt") { try { settings.token = await freshToken(settings); } catch { /* as saved */ } }
+            if (sub === "cursor-prompt") { try { settings.token = await renewToken(settings); } catch { /* as saved */ } }
             const r = await runCursorHook(sub.slice("cursor-".length), {
               stdinText: Buffer.concat(chunks).toString("utf8"), settings, userAgent: UA, hasToken: Boolean(settings.token),
             });
             process.stdout.write(JSON.stringify(r || {}) + "\n");
           }
         } else if (sub === "capture-stop" && process.env.STEALTHLAB_CAPTURE_JOB) {
-          await runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
+          await (await lazy.capture()).runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
         } else if (sub === "route-subagent" || sub === "route-report") {
           const chunks = [];
           for await (const c of process.stdin) chunks.push(c);
@@ -418,14 +526,16 @@ async function main() {
         } else if (sub === "capture-tool" || sub === "capture-stop") {
           const chunks = [];
           for await (const c of process.stdin) chunks.push(c);
+          const { runCaptureHook } = await lazy.capture();
           await runCaptureHook(sub, {
             stdinText: Buffer.concat(chunks).toString("utf8"), hasToken: Boolean(resolveSettings({}).token),
           });
         } else if (sub === "subagent-stop" && process.env.STEALTHLAB_HOOK_WORKER_FILE) {
-          await runStopWorker(process.env.STEALTHLAB_HOOK_WORKER_FILE);
+          await (await lazy.subagent()).runStopWorker(process.env.STEALTHLAB_HOOK_WORKER_FILE);
         } else {
           const chunks = [];
           for await (const c of process.stdin) chunks.push(c);
+          const { runSubagentHook } = await lazy.subagent();
           await runSubagentHook(sub, { stdinText: Buffer.concat(chunks).toString("utf8") });
         }
       } catch { /* logged inside; never fail the hook */ }
@@ -437,6 +547,7 @@ async function main() {
     case "serve": {
       if (!cmd && process.stdin.isTTY) return out(HELP); // a human typed it; agents pipe stdin
       const settings = resolveSettings(v);
+      const { runStdioRelay } = await lazy.proxy();
       return runStdioRelay({ url: requireUrl(settings), token: settings.token, userAgent: UA });
     }
     default:
