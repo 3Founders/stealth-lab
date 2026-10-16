@@ -229,14 +229,16 @@ sys.exit(run_inside(f, os.getcwd()))
 // The tests written for a task run from INSIDE the project -- copied into its own test folder (else its root), run there,
 // removed -- so the project's pytest config, plugins and conftest fixtures apply. Run from the specs folder they were
 // collected without them, and 22 of 27 sets of tests failed even with the real fix applied, many of them on that alone
-// ("invalid fixture loop scope", errors during collection -- pipeline survey, 2026-10-16).
+// ("invalid fixture loop scope", errors during collection -- pipeline survey, 2026-10-16). Coverage is off for these runs
+// (--no-cov, when pytest-cov is installed): a project's fail-under applies to its whole suite, and on one file of tests it
+// turns every pass into a failure.
 const RUN_INSIDE = `def run_inside(spec, cwd, name="test_zz_stealthlab_spec.py"):
     import os, shutil, subprocess, sys
     d = next((os.path.join(cwd, t) for t in ("tests", "test", "testing") if os.path.isdir(os.path.join(cwd, t))), cwd)
     dest = os.path.join(d, name)
     shutil.copyfile(spec, dest)
     try:
-        return subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", dest], cwd=cwd)
+        return subprocess.call([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *(["--no-cov"] if __import__("importlib.util").util.find_spec("pytest_cov") else []), dest], cwd=cwd)
     finally:
         try:
             os.remove(dest)
@@ -264,7 +266,7 @@ while not os.path.exists(ok) and not os.path.exists(skip) and time.time() < end:
 if not os.path.exists(ok):
     sys.exit(0)
 t = open(ok, encoding="utf-8").read().strip()
-sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", t]))
+sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *(["--no-cov"] if __import__("importlib.util").util.find_spec("pytest_cov") else []), t]))
 `;
 
 // The project's check, judged against the unchanged code: run it; on failure, wait for dispatch's run of it on the
@@ -346,6 +348,19 @@ export function runAsync(cmd, args, { cwd, timeoutMs = 120000, signal = null } =
   });
 }
 
+// ["--no-cov"] when this python has pytest-cov (the flag is an error without it): our runs cover a file or two of
+// tests, so a project's coverage fail-under would fail every one of them
+const noCov = new Map();
+export function noCovArgs(python, cwd) {
+  const k = `${python}|${cwd || ""}`;
+  if (!noCov.has(k)) {
+    const r = spawnSync(String(python).replace(/^"|"$/g, ""), ["-c", "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pytest_cov') else 1)"],
+      { cwd: cwd || undefined, encoding: "utf8", timeout: 30000, windowsHide: true });
+    noCov.set(k, r.status === 0 ? ["--no-cov"] : []);
+  }
+  return noCov.get(k);
+}
+
 // tests for the task, run on the code as it is now (cwd: the project) -> pytest's exit code (0: all pass) or null
 // the test file as run: the project root first on the import path -- placed after any `from __future__` imports, which
 // Python requires first in a file (above them it broke 2 of 30 writers' tests: pipeline survey, 2026-10-16)
@@ -365,7 +380,7 @@ async function runPytestAsync(python, code, dir, cwd, signal) {
   const f = path.join(testDir, `test_zz_stealthlab_baseline_${process.pid}_${Date.now() % 100000}.py`);
   try { fs.writeFileSync(f, code); } catch { return null; }
   try {
-    const r = await runShellCapture(`"${python}" -m pytest -q -p no:cacheprovider "${f}"`, { cwd, timeoutMs: 120000, signal });
+    const r = await runShellCapture(`"${python}" -m pytest -q -p no:cacheprovider ${noCovArgs(python, cwd).join(" ")} "${f}"`, { cwd, timeoutMs: 120000, signal });
     return r.code === null ? null : r;
   } finally {
     try { fs.unlinkSync(f); } catch { /* */ }
@@ -460,7 +475,13 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   // a reproduction agent that ran its test (lib/repro_agent.mjs) first; its test already fails on the current code by
   // assertion -- it still goes through the parse check below. None: the one-call writer, as before.
   if (agentWriter && !signal?.aborted) {
-    const c = await agentWriter();
+    const got = await agentWriter();
+    const c = typeof got === "string" ? got : got?.code;
+    // its test that was not accepted, and why: the one-call writer is told, so it does not write the same test again
+    if (!c && got?.tried) {
+      ask += `\n\nAn agent that could run the tests tried this test first, and it was not accepted because ${got.why}. ` +
+        `Do not repeat its mistake:\n\`\`\`python\n${got.tried}\n\`\`\``;
+    }
     if (c && /def test_/.test(c)) {
       const probe = path.join(out, "test_spec.py.probe");
       fs.writeFileSync(probe, withHeader(c));
@@ -895,7 +916,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // the located module's existing tests: in the check when they pass on the unchanged code (run now, alongside)
     if (policy.regression && loc.testFile && /\.py$/.test(loc.testFile) && specOnly) {
       fullCheck += ` && ${py} "${writeRegressRunner(dir)}"`;
-      runAsync(py, ["-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", loc.testFile], { cwd: payload.cwd || root, timeoutMs: 180000, signal: specAbort.signal })
+      runAsync(py, ["-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", ...noCovArgs(py, payload.cwd || root), loc.testFile], { cwd: payload.cwd || root, timeoutMs: 180000, signal: specAbort.signal })
         .then((code) => {
           const ok = code === 0;
           log(`dispatch: ${loc.testFile} ${ok ? "passes on the unchanged code: it joins the check" : "does not pass on the unchanged code: not in the check"}`);
@@ -1323,7 +1344,7 @@ export function specFailures(result) {
 export const EXTRA_TESTS = "tests_extra/test_extra.py";
 
 function pytestRun(cwd, args, timeoutMs = 300000) {
-  const r = spawnSync("python", ["-m", "pytest", "-q", "-p", "no:cacheprovider", ...args],
+  const r = spawnSync("python", ["-m", "pytest", "-q", "-p", "no:cacheprovider", ...noCovArgs("python", cwd), ...args],
     { cwd, encoding: "utf8", timeout: timeoutMs, windowsHide: true });
   return { status: r.status, out: `${r.stdout || ""}${r.stderr || ""}` };
 }
