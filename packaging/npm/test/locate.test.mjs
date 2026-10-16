@@ -244,3 +244,29 @@ test("test-first: tests that cannot even run on the unchanged code (an import of
   assert.equal(await writeSpecTests({ prompt: "x", root: repo, mine: "claude-opus-5-5|claude-code", env: { STEALTHLAB_HOME: home },
     runClaude: runClaude([broken, broken]), baseline: true }), null, "still crashing: no tests");
 });
+
+test("reproduction agent: its check passes only a test that fails on the current code by assertion; the agent's test is used", async () => {
+  const { reproduceTests, REPRO_FILE } = await import("../lib/repro_agent.mjs");
+  const repo = repoWithPackage();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "repro-dir-"));
+  const tests = {
+    fails: "from pkg._typehints import adapt_typehints\nimport typing\n\ndef test_optional():\n    assert adapt_typehints(3, typing.Optional) == 3\n",
+    passes: "from pkg._typehints import adapt_typehints\n\ndef test_int():\n    assert adapt_typehints(1, int) == 1\n",
+    crashes: "from pkg._typehints import does_not_exist\n\ndef test_x():\n    assert does_not_exist()\n",
+  };
+  const run = async (kind) => {
+    fs.writeFileSync(path.join(repo, "tests", REPRO_FILE), tests[kind]);
+    let checkCmd = null;
+    const rt = { async achieve(i) { checkCmd = i.checks[0]; return { run_id: "r1" }; },
+      async runResult() {
+        const ok = spawnSync(checkCmd, { cwd: repo, shell: true }).status === 0;
+        return { state: ok ? "verified" : "failed", diff: { worktree: repo, files: [`tests/${REPRO_FILE}`] } };
+      }, async cancelRun() {} };
+    const code = await reproduceTests({ rt, root: repo, prompt: "adapt_typehints drops Optional values", dir, env: {} });
+    fs.unlinkSync(path.join(repo, "tests", REPRO_FILE));
+    return code;
+  };
+  assert.match(await run("fails"), /def test_optional/, "fails by assertion: used");
+  assert.equal(await run("passes"), null, "passes on the current code: not a reproduction");
+  assert.equal(await run("crashes"), null, "an import error is not a failure");
+});
