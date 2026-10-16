@@ -18,6 +18,7 @@
 //
 // The compliance fields are declarations by whoever wrote the file, kept so a run can show what was claimed. Unknown
 // stays unknown (absent), never "true". Nothing here proves what a provider does with prompts.
+import { readConfig } from "../config.mjs";
 const REGION = /^[a-z]{2,8}(-[a-z0-9]{1,8})?$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 export const KEY_ENV_FOR_CHILD = "OPEN_MODEL_API_KEY";   // the one variable a child reads the provider key from
@@ -53,8 +54,14 @@ function flag(name, field, value) {
 // Validate one raw profile; throws with a message the user can act on. Returns a frozen normalised copy.
 export function normaliseProfile(name, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`profile ${name}: must be an object`);
-  const keyEnv = raw.key_env;
-  if (typeof keyEnv !== "string" || !NAME.test(keyEnv)) throw new Error(`profile ${name}: key_env must be the NAME of an environment variable`);
+  // The key comes from ONE place: an environment variable (key_env: the user's own provider key), or the StealthLab token the
+  // user is already signed in with (key_from "stealthlab": for a profile that points at the StealthLab gateway, where the
+  // provider keys live on the server and no developer machine holds one).
+  const keyFrom = raw.key_from;
+  if (keyFrom !== undefined && keyFrom !== null && keyFrom !== "stealthlab") throw new Error(`profile ${name}: key_from can only be "stealthlab"`);
+  if (keyFrom && raw.key_env) throw new Error(`profile ${name}: give key_env or key_from, not both`);
+  const keyEnv = keyFrom ? null : raw.key_env;
+  if (!keyFrom && (typeof keyEnv !== "string" || !NAME.test(keyEnv))) throw new Error(`profile ${name}: key_env must be the NAME of an environment variable`);
   const modelId = String(raw.model_id || name).trim();
   if (!modelId || /[\s|]/.test(modelId)) throw new Error(`profile ${name}: model_id must be a single token`);
   const anthropic = httpsUrl(name, "anthropic_base_url", raw.anthropic_base_url);
@@ -76,7 +83,7 @@ export function normaliseProfile(name, raw) {
   const outP = price(name, "output_per_mtok", raw.output_per_mtok);
   if ((inP === undefined) !== (outP === undefined)) throw new Error(`profile ${name}: give both input_per_mtok and output_per_mtok, or neither`);
   return Object.freeze({
-    name, model_id: modelId, key_env: keyEnv, anthropic_base_url: anthropic, openai_base_url: openai,
+    name, model_id: modelId, key_env: keyEnv, key_from: keyFrom || null, anthropic_base_url: anthropic, openai_base_url: openai,
     input_per_mtok: inP, output_per_mtok: outP,
     zdr: flag(name, "zdr", raw.zdr), no_training: flag(name, "no_training", raw.no_training),
     dpa_signed: flag(name, "dpa_signed", raw.dpa_signed) ?? false, region,
@@ -103,9 +110,27 @@ export function normaliseProfiles(rawProfiles) {
 
 // The key for a profile from the user's environment, or throws saying which variable is missing.
 export function profileKey(profile, env = process.env) {
+  if (profile.key_from === "stealthlab") return stealthlabKey(profile, env);
   const v = env[profile.key_env];
   if (!v || !String(v).trim()) throw new Error(`profile ${profile.name}: environment variable ${profile.key_env} is not set`);
   return String(v);
+}
+
+const hostOf = (u) => { try { return new URL(String(u)).hostname.toLowerCase(); } catch { return ""; } };
+
+// The saved StealthLab token, for a gateway profile. It is sent ONLY to the host of the user's own StealthLab server: an
+// exec.json edited to point such a profile somewhere else must not be able to carry the token away.
+function stealthlabKey(profile, env) {
+  let cfg = {};
+  try { cfg = readConfig(env); } catch { /* an unreadable config: no saved token */ }
+  const token = String(env.STEALTHLAB_TOKEN || cfg.token || "").trim();
+  if (!token) throw new Error(`profile ${profile.name}: no StealthLab token is saved (run stealthlab-mcp login, or setup --token-file <file>)`);
+  const server = hostOf(env.STEALTHLAB_MCP_URL || cfg.url || "");
+  const target = hostOf(profile.openai_base_url || profile.anthropic_base_url);
+  if (!server || !target || server !== target) {
+    throw new Error(`profile ${profile.name}: key_from "stealthlab" sends your StealthLab token, so its base URL must be on your StealthLab server's host (${server || "none configured"}), not ${target || "unknown"}`);
+  }
+  return token;
 }
 
 // What a profile declares about data handling, for display next to a run's result.

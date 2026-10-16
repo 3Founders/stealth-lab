@@ -66,6 +66,52 @@ export function keyIsSetAsync(name, { env = process.env, platform = process.plat
   });
 }
 
+// The gateway's /v1 base: --gateway-url, else the StealthLab server's own origin + /v1 (the same host serves both when it is hosted).
+export function gatewayBase(mcpUrl, override) {
+  if (override) return String(override).replace(/[/]+$/, "");
+  const u = new URL(mcpUrl);
+  return `${u.origin}/v1`;
+}
+
+// Which models may this token use? GET {base}/models lists them with their prices; the admin decides the list, not this file.
+export async function fetchGatewayModels(base, token, { fetchImpl = fetch, timeoutMs = 15000 } = {}) {
+  let res;
+  try {
+    res = await fetchImpl(`${base}/models`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    return { ok: false, models: [], detail: `unreachable (${err.cause?.message || err.message})` };
+  }
+  if (res.status === 401 || res.status === 403) return { ok: false, models: [], detail: `the gateway refused the token (HTTP ${res.status})` };
+  if (res.status === 404) return { ok: false, models: [], detail: "no gateway at that address (HTTP 404)" };
+  if (!res.ok) return { ok: false, models: [], detail: `HTTP ${res.status}` };
+  let json;
+  try { json = await res.json(); } catch { return { ok: false, models: [], detail: "the gateway's model list is not JSON" }; }
+  const models = (Array.isArray(json?.data) ? json.data : []).filter((m) => typeof m?.id === "string" && /^[A-Za-z0-9._-]+$/.test(m.id)).map((m) => ({
+    id: m.id, input_per_mtok: m.stealthlab?.input_per_mtok ?? undefined, output_per_mtok: m.stealthlab?.output_per_mtok ?? undefined,
+  }));
+  return models.length ? { ok: true, models, detail: "" } : { ok: false, models: [], detail: "the gateway lists no models for this token" };
+}
+
+// exec.json for gateway mode: every profile points at the gateway and takes its key from the saved StealthLab token.
+export function gatewayExecConfig(base, models) {
+  const profiles = {};
+  for (const m of models) {
+    profiles[m.id] = { model_id: m.id, key_from: "stealthlab", openai_base_url: base,
+      ...(m.input_per_mtok !== undefined && m.output_per_mtok !== undefined ? { input_per_mtok: m.input_per_mtok, output_per_mtok: m.output_per_mtok } : {}),
+      // Gemma's endpoint rejects a system turn; the gateway passes the body through, so the profile has to say so
+      ...(/gemma/i.test(m.id) ? { no_system_role: true } : {}) };
+  }
+  return { executors: { stealth: { models: models.map((m) => m.id) } }, profiles, max_concurrent_runs: 2 };
+}
+
+export function ensureGatewayExecConfig({ env = process.env, base, models } = {}) {
+  const file = execConfigPath(env);
+  if (fs.existsSync(file)) return { file, created: false };
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, JSON.stringify(gatewayExecConfig(base, models), null, 2) + "\n", { mode: 0o600 });
+  return { file, created: true };
+}
+
 export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 15000 } = {}) {
   const headers = { accept: "application/json, text/event-stream", "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
@@ -85,7 +131,7 @@ export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 1
 }
 
 // -> { ready, items: [{ name, ok, detail, fix? }] }. Pure given its inputs, so tests can drive every branch.
-export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv, key, dispatch, cursorModel, wantsCursor, platform = process.platform }) {
+export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv, key, dispatch, cursorModel, wantsCursor, gateway, platform = process.platform }) {
   const items = [];
   items.push({ name: "server", ok: server.ok, detail: server.detail, fix: server.ok ? undefined : "start it, or pass --url <https://host/mcp>; check with `stealthlab-mcp doctor`" });
   items.push({ name: "token", ok: hasToken, detail: hasToken ? "saved" : "none (reads are anonymous; reporting outcomes needs one)",
@@ -93,8 +139,12 @@ export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv
   if (dispatch) {
     items.push({ name: "exec.json", ok: execOk, detail: execOk ? `${models.length} model(s): ${models.join(", ")}` : execDetail,
                  fix: execOk ? undefined : "fix or delete ~/.stealthlab/exec.json, then run setup again" });
+    if (gateway) {
+      items.push({ name: "gateway", ok: gateway.ok, detail: gateway.ok ? `${gateway.url}: ${gateway.detail}` : `${gateway.url}: ${gateway.detail}`,
+                   fix: gateway.ok ? undefined : "ask your admin to enable the gateway for you (a provider connection and a data-egress policy), or check --gateway-url" });
+    }
     const setx = platform === "win32" ? `setx ${keyEnv} "<your key>"   then restart the agent` : `export ${keyEnv}=<your key>   (in your shell profile), then restart the agent`;
-    items.push({ name: `key ${keyEnv}`, ok: key.set, detail: key.set ? `set in ${key.where}` : "not set", fix: key.set ? undefined : setx });
+    if (!gateway) items.push({ name: `key ${keyEnv}`, ok: key.set, detail: key.set ? `set in ${key.where}` : "not set", fix: key.set ? undefined : setx });
     if (wantsCursor) {
       items.push({ name: "cursor model", ok: Boolean(cursorModel), detail: cursorModel ? cursorModel : "not set ('auto' is not a model: dispatch stays off)",
                    fix: cursorModel ? undefined : "stealthlab-mcp setup --cursor-model <the model you picked in Cursor>" });

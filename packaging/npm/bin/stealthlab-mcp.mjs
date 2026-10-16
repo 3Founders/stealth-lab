@@ -108,6 +108,10 @@ Setup options (setup also takes the install options below):
   --key-env <NAME>   the environment variable that holds YOUR provider key (default: GENERAL_COMPUTE_API_KEY)
   --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
   --no-exec          connect only: no cheap-model dispatch, nothing blocks a prompt
+  --gateway          no provider key on this machine: reach the cheap models through the StealthLab server's /v1 gateway
+                     with your StealthLab token (your admin put the provider keys on the server once); exec.json is
+                     written from the gateway's own model list
+  --gateway-url <u>  the gateway's /v1 address when it is not the StealthLab server's own host
   --guided           go one step at a time: say what the next step changes and wait for Enter (q quits)
 
 Install options:
@@ -213,7 +217,7 @@ async function cmdInstall(v) {
 // One command for the first-time install. Order matters: the token and URL are saved by the install, exec.json is written
 // only if absent, and the checklist at the end tests what a program cannot do for the user (server, key, model).
 async function cmdSetup(v) {
-  const { checklist, DEFAULT_KEY_ENV, ensureExecConfig, keyIsSetAsync, probeServer } = await lazy.setup();
+  const { checklist, DEFAULT_KEY_ENV, ensureExecConfig, ensureGatewayExecConfig, fetchGatewayModels, gatewayBase, keyIsSetAsync, probeServer } = await lazy.setup();
   const { readExecConfig } = await lazy.store();
   // --guided: before each step say what it changes and wait for Enter. Without a terminal there is nobody to ask, so it runs straight through.
   const guided = Boolean(v.guided) && process.stdin.isTTY && !v["dry-run"];
@@ -230,24 +234,39 @@ async function cmdSetup(v) {
   }
   const keyEnv = v["key-env"] || DEFAULT_KEY_ENV;
   const dispatch = !v["no-exec"];
+  // --gateway: the provider keys live on the StealthLab server (the organisation's admin put them there once); this machine
+  // holds only the StealthLab token, and the cheap models are called through the server's /v1 gateway
+  const gateway = Boolean(v.gateway || v["gateway-url"]) && dispatch;
+  if (v.gateway && !dispatch) die("--gateway and --no-exec do not go together: the gateway is how the cheap models are reached", 2);
   if (v["dry-run"]) {
-    out(`setup (dry run): would install${dispatch ? " with dispatch" : " connect-only"}, ${dispatch ? `write exec.json if absent (key variable ${keyEnv}), ` : ""}save the Cursor model, then check readiness`);
+    out(`setup (dry run): would install${dispatch ? " with dispatch" : " connect-only"}, ${dispatch ? (gateway ? "write exec.json from the gateway's model list if absent (no provider key on this machine), " : `write exec.json if absent (key variable ${keyEnv}), `) : ""}save the Cursor model, then check readiness`);
     return cmdInstall({ ...v, "with-exec": dispatch });
   }
   await step("register your agents", `adds the StealthLab server and hooks to ${(await pickClients(v.client)).chosen.map((c) => c.label).join(", ") || "no detected agent"} (the hooks run in every workspace), and saves the URL${v.token ? " and token" : ""} in ~/.stealthlab/config.json. Undo: stealthlab-mcp uninstall.`);
   await cmdInstall({ ...v, "with-exec": dispatch });
-  if (process.exitCode) return;
-  await step("model list and Cursor model", dispatch ? `writes ~/.stealthlab/exec.json (cheap open models; your key is read from $${keyEnv}, never stored) if there is none${v["cursor-model"] ? `, and saves the Cursor model ${v["cursor-model"]}` : ""}.` : "saves the Cursor model only (connect-only mode).");        // the install failed for a client: nothing to check yet
+  if (process.exitCode) return;          // the install failed for a client: nothing to check yet
+  await step("model list and Cursor model", dispatch
+    ? (gateway ? `asks the gateway which models you may use and writes ~/.stealthlab/exec.json from them if there is none (your StealthLab token is the only credential; no provider key is read or stored)` : `writes ~/.stealthlab/exec.json (cheap open models; your key is read from $${keyEnv}, never stored) if there is none`) + (v["cursor-model"] ? `, and saves the Cursor model ${v["cursor-model"]}.` : ".")
+    : "saves the Cursor model only (connect-only mode).");
   if (v["cursor-model"]) writeConfig({ cursor_model: String(v["cursor-model"]).trim() });
+  const settings = resolveSettings(v);
   let created = false;
-  if (dispatch) {
+  let gw = null;
+  const base = gateway ? gatewayBase(settings.url, v["gateway-url"]) : "";
+  if (dispatch && gateway) {
+    gw = await fetchGatewayModels(base, settings.token);
+    if (gw.ok && gw.models.length) {
+      try { created = ensureGatewayExecConfig({ base, models: gw.models }).created; } catch (err) { die(err.message, 2); }
+    }
+  } else if (dispatch) {
     try { created = ensureExecConfig({ keyEnv }).created; } catch (err) { die(err.message, 2); }
   }
-  await step("check readiness", "makes one request to the server and looks for your key variable; it spends nothing and changes nothing.");
-  const settings = resolveSettings(v);
+  await step("check readiness", gateway ? "makes two requests to the server (is it up, which models may you use); it spends nothing and changes nothing." : "makes one request to the server and looks for your key variable; it spends nothing and changes nothing.");
   // the server probe (network) and the key lookup (a child process on Windows) wait on different things: run them together
-  const keyNameFirst = (() => { try { return Object.values(readExecConfig().profiles)[0]?.key_env || keyEnv; } catch { return keyEnv; } })();
-  const [server, key] = await Promise.all([probeServer(settings.url, settings.token), keyIsSetAsync(keyNameFirst)]);
+  let profileKeyEnv = null;
+  try { profileKeyEnv = Object.values(readExecConfig().profiles)[0]?.key_env || null; } catch { /* reported below */ }
+  const keyNameFirst = profileKeyEnv || keyEnv;
+  const [server, key] = await Promise.all([probeServer(settings.url, settings.token), gateway ? Promise.resolve({ set: true, where: "not needed" }) : keyIsSetAsync(keyNameFirst)]);
   let execOk = true, execDetail = "", models = [];
   if (dispatch) {
     try {
@@ -256,15 +275,15 @@ async function cmdSetup(v) {
       if (!models.length) { execOk = false; execDetail = "no models listed under executors"; }
     } catch (err) { execOk = false; execDetail = err.message; }
   }
-  // the key variable the first profile names (the template names one for all three); a hand-edited file may differ
-  let keyName = keyEnv;
-  try { keyName = Object.values(readExecConfig().profiles)[0]?.key_env || keyEnv; } catch { /* reported above */ }
   const chosenIds = (await pickClients(v.client)).chosen.map((c) => c.id);
   const cfgNow = readConfig();
+  // an exec.json that already existed keeps its own key variable(s): check that one, not the template's
+  const keyName = profileKeyEnv || keyEnv;
   const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: keyName,
-                          key: keyName === keyNameFirst ? key : await keyIsSetAsync(keyName), dispatch, cursorModel: cfgNow.cursor_model || process.env.STEALTHLAB_CURSOR_MODEL,
-                          wantsCursor: chosenIds.includes("cursor") });
-  out(created ? `\nWrote ${"~/.stealthlab/exec.json"} (open models on General Compute; your key stays in $${keyName}).` : "");
+                          key: gateway ? key : (keyName === keyNameFirst ? key : await keyIsSetAsync(keyName)), dispatch,
+                          gateway: gateway ? { url: base, ok: Boolean(gw?.ok && gw.models.length), detail: gw?.ok ? `${gw.models.length} model(s) available` : (gw?.detail || "not asked") } : undefined,
+                          cursorModel: cfgNow.cursor_model || process.env.STEALTHLAB_CURSOR_MODEL, wantsCursor: chosenIds.includes("cursor") });
+  out(created ? (gateway ? `\nWrote ~/.stealthlab/exec.json from the gateway at ${base} (no provider key on this machine).` : `\nWrote ~/.stealthlab/exec.json (open models on General Compute; your key stays in $${keyName}).`) : "");
   out("\nReadiness:");
   for (const i of res.items) out(`  ${i.ok ? "ok     " : "MISSING"} ${i.name.padEnd(16)} ${i.detail}`);
   if (res.ready) { out("\nReady. Restart your agent (Cursor: close every window), then send a small task with a test."); return; }
@@ -417,6 +436,8 @@ async function main() {
         "cursor-model": { type: "string" },
         "no-exec": { type: "boolean" },
         guided: { type: "boolean" },
+        gateway: { type: "boolean" },
+        "gateway-url": { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
