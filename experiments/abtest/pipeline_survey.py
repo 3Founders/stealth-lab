@@ -143,7 +143,10 @@ def run_spec(py: Path, spec: Path, cwd: Path) -> tuple[int, str]:
     dest = d / "test_zz_stealthlab_spec.py"
     shutil.copyfile(spec, dest)
     try:
-        return S.TOOLCHAIN.pytest(py, ["-q", "-x", "-p", "no:cacheprovider", str(dest)], cwd, 300)
+        # coverage off, as the product runs them: a project's fail-under on one file of tests fails every run
+        has_cov = subprocess.run([str(py), "-c", "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('pytest_cov') else 1)"],
+                                 capture_output=True).returncode == 0
+        return S.TOOLCHAIN.pytest(py, ["-q", "-x", "-p", "no:cacheprovider", *(["--no-cov"] if has_cov else []), str(dest)], cwd, 300)
     finally:
         dest.unlink(missing_ok=True)
 
@@ -193,8 +196,15 @@ def stage2(iid: str, work: Path) -> dict:
             for f in re.findall(r"^diff --git a/\S+ b/(\S+)\nnew file mode", r["patch"], re.M):
                 (root / f).unlink(missing_ok=True)
     out.update({"fails_before": before != 0, "passes_with_fix": after == 0, "valid": before != 0 and after == 0,
-                "rejects_right_answer": after != 0, "tail_with_fix": tail_a[-400:] if after != 0 else ""})
+                "rejects_right_answer": after != 0, "tail_with_fix": _why(tail_a) if after != 0 else ""})
     return out
+
+
+def _why(out: str) -> str:
+    """pytest's own verdict on a failing run -- its FAILED / ERROR lines, the error lines and the summary -- not the warnings
+    printed after it (a trailing deprecation warning hid the real reason in 3 of 11 runs)."""
+    keep = [l for l in out.splitlines() if re.match(r"(FAILED|ERROR) |E  |\S*Error\b|=+ .*(failed|error|passed)|\d+ (failed|error)", l)]
+    return "\n".join(keep[-12:])[-1200:] or out[-400:]
 
 
 def report2(rows: list[dict]) -> str:

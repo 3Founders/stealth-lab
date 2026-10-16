@@ -130,12 +130,13 @@ def save(run: str, stage: int, rows: list[dict]) -> str:
 
 
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=86400)
-def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mode: str = "call") -> list[dict]:
+def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mode: str = "call", ids: str = "") -> list[dict]:
     """The whole run, orchestrated inside Modal (launch with --detach: the laptop's connection can drop); issues already
     kept on the volume for this run are not run again."""
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
     import pipeline_survey as P
-    ids = P.select(n, seed)
+    # ids: a probe of named issues (comma-separated) instead of the seeded sample
+    ids = [i.strip() for i in ids.split(",") if i.strip()] or P.select(n, seed)
     parts = Path(VOL) / "survey" / run / f"stage{stage}.parts"
     done = {p.stem for p in parts.glob("*.json")} if parts.exists() else set()
     todo = [i for i in ids if i not in done]
@@ -157,9 +158,9 @@ def gather(run: str, stage: int) -> list[dict]:
 
 
 @app.local_entrypoint()
-def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call"):
+def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call", ids: str = ""):
     import pipeline_survey as P
-    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode)
+    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode, ids)
     path = f"{VOL}/survey/{run}/stage{stage}.parts"
     local = HERE / ".local" / "survey"
     local.mkdir(parents=True, exist_ok=True)
