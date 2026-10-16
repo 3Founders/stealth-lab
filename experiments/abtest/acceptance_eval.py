@@ -33,6 +33,9 @@ RULES = {
     "4 E and S and R": lambda s: s["E"] and s["S"] and s["R"],
     "5 E and S and A": lambda s: s["E"] and s["S"] and s["A"],
     "6 E and S and (A or R)": lambda s: s["E"] and s["S"] and (s["A"] or s["R"]),
+    "7 E S F X, no R-veto": lambda s: s["E"] and s["S"] and s["F"] and s["X"] and not s["Rno"],
+    "8 E S F X T*, no R-veto": lambda s: s["E"] and s["S"] and s["F"] and s["X"] and s["Tstar"] and not s["Rno"],
+    "9 E S T* and (A or R)": lambda s: s["E"] and s["S"] and s["Tstar"] and (s["A"] or s["R"]),
 }
 
 
@@ -44,6 +47,26 @@ def changes_source(files: list[str]) -> bool:
     test = re.compile(r"(^|/)(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.(py|go|js|ts)$|\.(test|spec)\.[jt]sx?$", re.I)
     doc = re.compile(r"\.(md|rst|txt|cfg|ini|toml|ya?ml|json|lock)$|(^|/)docs?/", re.I)
     return any(not test.search(f) and not doc.search(f) for f in files)
+
+
+def focused(patch: str) -> bool:
+    """F: at most 3 source files and 60 changed lines (docs/acceptance_rules_preregistered_2026-10-16.md)."""
+    files = [f for f in files_of(patch) if changes_source([f])]
+    changed = sum(1 for l in (patch or "").splitlines() if (l.startswith("+") or l.startswith("-")) and not l.startswith(("+++", "---")))
+    return len(files) <= 3 and changed <= 60
+
+
+SWALLOW = re.compile(r"^\+\s*except(\s+(Exception|BaseException)(\s+as\s+\w+)?)?\s*:\s*(pass|continue|return\b.*)?\s*$")
+
+
+def no_swallow(patch: str) -> bool:
+    """X: no added catch-all except whose body (same or next added line) is pass / continue / return."""
+    added = [l for l in (patch or "").splitlines() if l.startswith("+") and not l.startswith("+++")]
+    for i, l in enumerate(added):
+        m = SWALLOW.match(l)
+        if m and (m.group(4) or (i + 1 < len(added) and re.match(r"^\+\s*(pass|continue|return\b.*)\s*$", added[i + 1]))):
+            return False
+    return True
 
 
 def unreached(x: dict) -> bool:
@@ -109,6 +132,8 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
         if not ags:
             continue
         srcs = {a: set(f for f in files_of(x.get("patch") or "") if changes_source([f])) for a, x in ags.items()}
+        # T*: our tests count only when at least one candidate answer passes them (else they likely guessed wrong)
+        any_pass = any(bool(x.get("passes_our_tests")) for x in ags.values() if not unreached(x))
         for a, x in ags.items():
             if unreached(x):
                 continue
@@ -120,7 +145,10 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
             rv = (reviews or {}).get(key)
             out.append({"iid": r["instance_id"], "agent": a, "key": key, "patch": x.get("patch") or "",
                         "solved": bool(x.get("truly_solved")), "cost": float(x.get("cost_usd") or 0),
-                        "T": bool(x.get("passes_our_tests")), "E": e_new == 0, "E_known": e_new is not None,
+                        "T": bool(x.get("passes_our_tests")), "Tstar": bool(x.get("passes_our_tests")) or not any_pass,
+                        "F": focused(x.get("patch") or ""), "X": no_swallow(x.get("patch") or ""),
+                        "Rno": bool(rv and rv.get("verdict") == "does_not_fix"),
+                        "E": e_new == 0, "E_known": e_new is not None,
                         "S": changes_source(files_of(x.get("patch") or "")),
                         "A": bool(srcs[a]) and any(srcs[a] == srcs[b] for b in other),
                         "R": bool(rv and rv.get("verdict") == "fixes"), "R_known": rv is not None})
