@@ -112,6 +112,31 @@ def stage3_batch(job: dict) -> list[dict]:
     return out
 
 
+@app.function(image=build_image(), volumes={VOL: volume}, timeout=14400, cpu=2.0, memory=8192)
+def stage4_batch(job: dict) -> list[dict]:
+    """Stage 3's saved answers (run job["src_run"], on this volume) re-judged with no model call: the project's existing
+    tests and the hidden tests on each saved patch."""
+    import shutil, tempfile
+    os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
+    volume.reload()
+    src = Path(VOL) / "survey" / job["src_run"] / "stage3.parts"
+    import pipeline_survey as P
+    out = []
+    for iid in job["iids"]:
+        f = src / f"{iid}.json"
+        if not f.exists():
+            out.append({"instance_id": iid, "error": f"no saved answers in {job['src_run']}"})
+            continue
+        work = Path(tempfile.mkdtemp())
+        try:
+            out.append(_keep(job, P.stage4(iid, work, json.loads(f.read_text(encoding="utf-8")))))
+        except Exception as e:  # noqa: BLE001
+            out.append({"instance_id": iid, "error": f"{type(e).__name__}: {str(e)[:200]}"})
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    return out
+
+
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=1800)
 def select_ids(n: int, seed: int) -> list[str]:
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
@@ -130,7 +155,7 @@ def save(run: str, stage: int, rows: list[dict]) -> str:
 
 
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=86400)
-def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mode: str = "call", ids: str = "") -> list[dict]:
+def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mode: str = "call", ids: str = "", src_run: str = "") -> list[dict]:
     """The whole run, orchestrated inside Modal (launch with --detach: the laptop's connection can drop); issues already
     kept on the volume for this run are not run again."""
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
@@ -140,8 +165,8 @@ def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mod
     parts = Path(VOL) / "survey" / run / f"stage{stage}.parts"
     done = {p.stem for p in parts.glob("*.json")} if parts.exists() else set()
     todo = [i for i in ids if i not in done]
-    fn = {1: stage1_batch, 2: stage2_batch, 3: stage3_batch}[stage]
-    jobs = [{"iids": todo[i::workers], "run": run, "stage": stage, "writer_mode": writer_mode} for i in range(workers) if todo[i::workers]]
+    fn = {1: stage1_batch, 2: stage2_batch, 3: stage3_batch, 4: stage4_batch}[stage]
+    jobs = [{"iids": todo[i::workers], "run": run, "stage": stage, "writer_mode": writer_mode, "src_run": src_run} for i in range(workers) if todo[i::workers]]
     for _ in fn.map(jobs):
         pass
     volume.reload()                    # the workers' commits: without a reload this container still sees the volume as it was
@@ -158,12 +183,12 @@ def gather(run: str, stage: int) -> list[dict]:
 
 
 @app.local_entrypoint()
-def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call", ids: str = ""):
+def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call", ids: str = "", src_run: str = ""):
     import pipeline_survey as P
-    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode, ids)
+    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode, ids, src_run)
     path = f"{VOL}/survey/{run}/stage{stage}.parts"
     local = HERE / ".local" / "survey"
     local.mkdir(parents=True, exist_ok=True)
     (local / f"{run}-stage{stage}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    print({1: P.report, 2: P.report2, 3: P.report3}[stage](rows))
+    print({1: P.report, 2: P.report2, 3: P.report3, 4: P.report4}[stage](rows))
     print(f"\nsaved: {path} (volume) and {local / f'{run}-stage{stage}.jsonl'}")

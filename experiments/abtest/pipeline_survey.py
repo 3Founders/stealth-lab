@@ -298,6 +298,24 @@ def hidden_pass(py: Path, root: Path, test_patch: str, f2p: list[str]) -> tuple[
         _apply(root, test_patch, reverse=True)
 
 
+def existing_fails(py: Path, root: Path, p2p: list[str]) -> set[str] | None:
+    """The project's own existing tests (the dataset's PASS_TO_PASS: they pass before and after the real fix) -> the ids
+    that fail here, or None when they could not run (a timeout). A real project has these tests, so whether an answer
+    keeps them passing is a signal an acceptance rule may use; judged against the unchanged code, so a test this
+    environment breaks anyway is not counted against an answer. Many ids: run by file instead (the command line)."""
+    import swe_series_task as S
+    if not p2p:
+        return set()
+    args = list(p2p) if sum(len(t) + 1 for t in p2p) < 200000 else sorted({t.split("::")[0] for t in p2p})
+    code, out = S.TOOLCHAIN.pytest(py, ["-q", "-rfE", "-p", "no:cacheprovider", *args], root, 900)
+    if code == 124:
+        return None
+    fails = {m.group(2) for m in re.finditer(r"^(FAILED|ERROR) (\S+)", out, re.M)}
+    if code not in (0, 1) and not fails:
+        fails = {"<did not run>"}             # collection or usage error: nothing ran
+    return fails
+
+
 def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth"), model: str = "glm-5.3-flash") -> dict:
     import swe_series_task as S
     base = stage2(iid, work)                      # environment, our tests (and their validity), the where line
@@ -313,6 +331,9 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
            "where": where.read_text(encoding="utf-8") if where.exists() else ""}
     env = {**os.environ, "STEALTHLAB_HOME": str(work / "home"),
            "PATH": f"{py.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
+    p2p = list(full["PASS_TO_PASS"])
+    base_fail = existing_fails(py, root, p2p)
+    out["existing"] = {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail)}
     for agent in agents:
         p = subprocess.run(["node", str(HERE / "survey_agent.mjs"), str(root), str(work / "prompt.txt"), str(where), agent, model],
                            capture_output=True, text=True, timeout=1500, env=env)
@@ -328,12 +349,57 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
             try:
                 res["passes_our_tests"] = (run_spec(py, spec, root)[0] == 0) if spec else None
                 res["truly_solved"], res["hidden_tail"] = hidden_pass(py, root, str(full["test_patch"]), f2p)
+                after = existing_fails(py, root, p2p) if base_fail is not None else None
+                res["existing_new_failures"] = None if after is None else len(after - base_fail)
             finally:
                 _apply(root, patch, reverse=True)
         else:
             res.update({"passes_our_tests": False if spec else None, "truly_solved": False, "no_change": not patch.strip()})
         out["agents"][agent] = res
     return out
+
+
+def stage4(iid: str, work: Path, prior: dict) -> dict:
+    """Re-judging a finished stage 3 issue's SAVED answers with no model call: the environment rebuilt, each answer's
+    patch applied, the project's existing tests (existing_new_failures) and the hidden tests run -- for the runs that
+    were made before stage 3 recorded the existing tests."""
+    import swe_series_task as S
+    r = record(iid)
+    full = S.load_split()
+    full = full[full.instance_id == iid].iloc[0]
+    r["install_config"], r["requirements"] = full["install_config"], full["requirements"]
+    root = work / "repo"
+    try:
+        checkout(r, root)
+        py = environment(r, root, work / "venvs")
+    except Exception as e:  # noqa: BLE001
+        return {"instance_id": iid, "env_error": str(e)[:300]}
+    p2p, f2p = list(full["PASS_TO_PASS"]), list(full["FAIL_TO_PASS"])
+    base_fail = existing_fails(py, root, p2p)
+    out = {"instance_id": iid, "existing": {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail)}, "agents": {}}
+    for agent, a in (prior.get("agents") or {}).items():
+        patch = a.get("patch") or ""
+        res = {"truly_solved": False, "existing_new_failures": None}
+        if patch.strip() and _apply(root, patch):
+            try:
+                res["truly_solved"], _ = hidden_pass(py, root, str(full["test_patch"]), f2p)
+                after = existing_fails(py, root, p2p) if base_fail is not None else None
+                res["existing_new_failures"] = None if after is None else len(after - base_fail)
+            finally:
+                _apply(root, patch, reverse=True)
+        out["agents"][agent] = res
+    return out
+
+
+def report4(rows: list[dict]) -> str:
+    lines = [f"{len(rows)} issues re-judged"]
+    for agent in ("claude", "stealth"):
+        xs = [r["agents"][agent] for r in rows if agent in (r.get("agents") or {})]
+        keep = [x for x in xs if x.get("existing_new_failures") == 0]
+        lines.append(f"agent {agent}: {len(xs)} answers; keep the existing tests passing {len(keep)} "
+                     f"(of them truly solved {sum(1 for x in keep if x['truly_solved'])}); "
+                     f"truly solved but break existing tests {sum(1 for x in xs if x['truly_solved'] and (x.get('existing_new_failures') or 0) > 0)}")
+    return "\n".join(lines)
 
 
 def report3(rows: list[dict]) -> str:
