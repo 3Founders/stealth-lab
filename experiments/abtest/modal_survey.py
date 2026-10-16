@@ -183,8 +183,17 @@ def gather(run: str, stage: int) -> list[dict]:
 
 
 @app.local_entrypoint()
-def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call", ids: str = "", src_run: str = ""):
+def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False, writer_mode: str = "call", ids: str = "", src_run: str = "",
+         wait: bool = False):
     import pipeline_survey as P
+    if not collect and not wait:
+        # started and left running: a call this entrypoint waits on is CANCELLED when the launching terminal disconnects
+        # (a laptop asleep stopped survey-s3-ch2 at 8 of 15, 2026-10-16), a spawned call on a detached app is not.
+        # Launch with `modal run --detach`; the results are kept per issue -> --collect when it is done.
+        call = survey_run.spawn(stage, n, seed, run, workers, writer_mode, ids, src_run)
+        print(f"started {run} stage {stage} (call {call.object_id}); the terminal may now close. Progress: "
+              f"modal volume ls {VOLUME_NAME} survey/{run}/stage{stage}.parts | then --collect")
+        return
     rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers, writer_mode, ids, src_run)
     path = f"{VOL}/survey/{run}/stage{stage}.parts"
     local = HERE / ".local" / "survey"

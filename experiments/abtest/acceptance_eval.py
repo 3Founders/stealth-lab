@@ -138,17 +138,20 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
             if unreached(x):
                 continue
             other = [b for b in ags if b != a]
-            e_new = x.get("existing_new_failures")
-            if e_new is None:
-                e_new = (s4.get(r["instance_id"], {}).get("agents", {}).get(a) or {}).get("existing_new_failures")
+            # a stage 4 re-judge (the existing tests run by file, fixed) is preferred to stage 3's own measurement
+            j4 = s4.get(r["instance_id"], {}).get("agents", {}).get(a)
+            e_new = j4.get("existing_new_failures") if j4 is not None else x.get("existing_new_failures")
             key = f"{r['instance_id']}|{a}"
             rv = (reviews or {}).get(key)
-            out.append({"iid": r["instance_id"], "agent": a, "key": key, "patch": x.get("patch") or "",
+            # the label: the hidden tests; two runs on the same patch that disagree leave it unknown (left out)
+            uncertain = j4 is not None and bool(j4.get("truly_solved")) != bool(x.get("truly_solved"))
+            out.append({"iid": r["instance_id"], "agent": a, "key": key, "patch": x.get("patch") or "", "uncertain": uncertain,
                         "solved": bool(x.get("truly_solved")), "cost": float(x.get("cost_usd") or 0),
                         "T": bool(x.get("passes_our_tests")), "Tstar": bool(x.get("passes_our_tests")) or not any_pass,
                         "F": focused(x.get("patch") or ""), "X": no_swallow(x.get("patch") or ""),
                         "Rno": bool(rv and rv.get("verdict") == "does_not_fix"),
-                        "E": e_new == 0, "E_known": e_new is not None,
+                        # unknown (could not run or judge) counts as no new failure (pre-registered clarification)
+                        "E": e_new in (0, None), "E_known": e_new is not None,
                         "S": changes_source(files_of(x.get("patch") or "")),
                         "A": bool(srcs[a]) and any(srcs[a] == srcs[b] for b in other),
                         "R": bool(rv and rv.get("verdict") == "fixes"), "R_known": rv is not None})
@@ -156,8 +159,11 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
 
 
 def table(sig: list[dict], label: str) -> str:
+    unsure = [s for s in sig if s.get("uncertain")]
+    sig = [s for s in sig if not s.get("uncertain")]
     n, right = len(sig), sum(s["solved"] for s in sig)
-    lines = [f"{label}: {n} answers that reached the model, {right} right (hidden tests); E known for "
+    lines = [f"{label}: {n} answers that reached the model ({len(unsure)} more left out: hidden-test verdict differs between "
+             f"two runs), {right} right (hidden tests); E known for "
              f"{sum(s['E_known'] for s in sig)}, R known for {sum(s['R_known'] for s in sig)}",
              f"{'rule':28} {'accepted':>8} {'wrong':>6} {'wrong%':>7} {'right kept':>10} {'right lost':>10}  est. cost vs Opus-only"]
     for name, rule in RULES.items():

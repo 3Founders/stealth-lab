@@ -298,22 +298,32 @@ def hidden_pass(py: Path, root: Path, test_patch: str, f2p: list[str]) -> tuple[
         _apply(root, test_patch, reverse=True)
 
 
+LAST_EXISTING: dict = {}                   # the last existing_fails run: how many of the ids it saw, and the output's tail
+
+
 def existing_fails(py: Path, root: Path, p2p: list[str]) -> set[str] | None:
     """The project's own existing tests (the dataset's PASS_TO_PASS: they pass before and after the real fix) -> the ids
-    that fail here, or None when they could not run (a timeout). A real project has these tests, so whether an answer
-    keeps them passing is a signal an acceptance rule may use; judged against the unchanged code, so a test this
-    environment breaks anyway is not counted against an answer. Many ids: run by file instead (the command line)."""
+    that fail here, or None when nothing could be judged (a timeout, or none of the ids ran). A real project has these
+    tests, so whether an answer keeps them passing is a signal an acceptance rule may use; judged against the unchanged
+    code, so a test this environment breaks anyway is not counted against an answer.
+    Run by FILE and read back per id (-rA): pytest given test ids stops the whole run when one id is not found (exit 4),
+    which on 9 of 25 issues left the signal empty (survey-s4-ch1, 2026-10-16)."""
     import swe_series_task as S
+    LAST_EXISTING.clear()
     if not p2p:
         return set()
-    args = list(p2p) if sum(len(t) + 1 for t in p2p) < 200000 else sorted({t.split("::")[0] for t in p2p})
-    code, out = S.TOOLCHAIN.pytest(py, ["-q", "-rfE", "-p", "no:cacheprovider", *args], root, 900)
-    if code == 124:
+    files = sorted({t.split("::")[0] for t in p2p if (root / t.split("::")[0]).exists()})
+    if not files:
+        LAST_EXISTING.update({"seen": 0, "tail": "none of the test files exist"})
         return None
-    fails = {m.group(2) for m in re.finditer(r"^(FAILED|ERROR) (\S+)", out, re.M)}
-    if code not in (0, 1) and not fails:
-        fails = {"<did not run>"}             # collection or usage error: nothing ran
-    return fails
+    code, out = S.TOOLCHAIN.pytest(py, ["-q", "-rA", "-p", "no:cacheprovider", *files], root, 900)
+    seen = {m.group(2).strip(): m.group(1) for m in re.finditer(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (.+?)(?: - .*)?$", out, re.M)}
+    want = set(p2p)
+    got = {t: v for t, v in seen.items() if t in want}
+    LAST_EXISTING.update({"seen": len(got), "exit": code, "tail": out[-600:]})
+    if code == 124 or not got:
+        return None
+    return {t for t, v in got.items() if v in ("FAILED", "ERROR")}
 
 
 def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth"), model: str = "glm-5.3-flash") -> dict:
@@ -333,7 +343,8 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] = ("claude", "stealth")
            "PATH": f"{py.parent}{os.pathsep}{os.environ.get('PATH', '')}"}
     p2p = list(full["PASS_TO_PASS"])
     base_fail = existing_fails(py, root, p2p)
-    out["existing"] = {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail)}
+    out["existing"] = {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail),
+                       "seen": LAST_EXISTING.get("seen"), "tail": None if base_fail is not None else LAST_EXISTING.get("tail")}
     for agent in agents:
         p = subprocess.run(["node", str(HERE / "survey_agent.mjs"), str(root), str(work / "prompt.txt"), str(where), agent, model],
                            capture_output=True, text=True, timeout=1500, env=env)
@@ -376,13 +387,15 @@ def stage4(iid: str, work: Path, prior: dict) -> dict:
         return {"instance_id": iid, "env_error": str(e)[:300]}
     p2p, f2p = list(full["PASS_TO_PASS"]), list(full["FAIL_TO_PASS"])
     base_fail = existing_fails(py, root, p2p)
-    out = {"instance_id": iid, "existing": {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail)}, "agents": {}}
+    out = {"instance_id": iid, "existing": {"n": len(p2p), "fail_on_unchanged": None if base_fail is None else len(base_fail),
+                                            "seen": LAST_EXISTING.get("seen"),
+                                            "tail": None if base_fail is not None else LAST_EXISTING.get("tail")}, "agents": {}}
     for agent, a in (prior.get("agents") or {}).items():
         patch = a.get("patch") or ""
         res = {"truly_solved": False, "existing_new_failures": None}
         if patch.strip() and _apply(root, patch):
             try:
-                res["truly_solved"], _ = hidden_pass(py, root, str(full["test_patch"]), f2p)
+                res["truly_solved"], res["hidden_tail"] = hidden_pass(py, root, str(full["test_patch"]), f2p)
                 after = existing_fails(py, root, p2p) if base_fail is not None else None
                 res["existing_new_failures"] = None if after is None else len(after - base_fail)
             finally:
