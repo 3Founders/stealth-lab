@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { runClaudeAsync } from "./claude_call.mjs";
+import { answerEvidence, decide, evidenceLine, parseRule, ruleUses } from "./accept.mjs";
 import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
@@ -53,6 +54,11 @@ export function dispatchPolicy(env = process.env) {
     // "strict" (default): a cross-check that cannot decide counts as NOT verified -- the task goes up the ladder;
     // "on": inconclusive is accepted as before; "off": no cross-check
     crosscheck: (env.STEALTHLAB_DISPATCH_CROSSCHECK || "strict").toLowerCase(),
+    // how a passing answer is accepted (lib/accept.mjs): "check" (the check alone, our written tests included) or a rule
+    // on evidence ("E S F X !Rs_no"); agreeWaitS: after a first passing answer, how long the other running models may
+    // still finish, so answers can agree
+    accept: (env.STEALTHLAB_DISPATCH_ACCEPT || "check").trim(),
+    agreeWaitS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_AGREE_WAIT_S || 90)),
     // test-first: the session's own model writes a few tests from the task before any cheap rung runs; every cheap
     // answer must pass them too. "off" turns it off.
     testFirst: (env.STEALTHLAB_DISPATCH_TESTFIRST || "on").toLowerCase() !== "off",
@@ -88,6 +94,9 @@ export function dispatchPolicy(env = process.env) {
     visualCheck: (env.STEALTHLAB_DISPATCH_VISUAL_CHECK || "on").toLowerCase() !== "off",
     // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them
     strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 240)),
+    // a middle model (an exec.json profile with tier: 2, say GLM-5.3) starts only once every cheaper one has finished
+    // without an accepted answer, with this much time of its own
+    tierS: Math.max(60, Number(env.STEALTHLAB_DISPATCH_TIER_S ?? 420)),
     strongFirst: (env.STEALTHLAB_DISPATCH_STRONG_FIRST || "off").toLowerCase() === "on",
     // a repo area (lib/areas.mjs) where the cheap models lost this many times and never won is not dispatched to
     areaSkip: (env.STEALTHLAB_DISPATCH_AREA_SKIP || "on").toLowerCase() !== "off",
@@ -783,8 +792,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const seeOnly = images.length > 0 && !policy.vision;
   const strongSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set(Object.keys(ps).filter((k) => ps[k]?.strong)); } catch { return new Set(); } })();
   // a strong profile with "first": true starts in the first wave -- a fast strong model (glm-5.3-flash) loses nothing there
+  // a profile's tier (1: the cheap models, the default; 2+: a middle model, tried only after them, before the session's)
+  const tierOf = (() => { let ps = {}; try { ps = readExecConfig(env).profiles || {}; } catch { /* */ } return (m) => Math.max(1, Number(ps[m]?.tier) || 1); })();
   const strongFirstSet = (() => { try { const ps = readExecConfig(env).profiles || {}; return new Set([...strongSet].filter((k) => ps[k]?.first === true)); } catch { return new Set(); } })();
-  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: seeOnly ? 16 : policy.maxRungs + strongSet.size, claude: policy.claude,
+  const tierCount = (() => { try { const ps = readExecConfig(env).profiles || {}; return Object.keys(ps).filter((k) => tierOf(k) > 1).length; } catch { return 0; } })();
+  let rungs = await withQuota(cheapCandidates(plan, mine, env, { max: seeOnly ? 16 : policy.maxRungs + strongSet.size + tierCount, claude: policy.claude,
                                                                     explore: force ? 1 : policy.explore }), env,
     { min: policy.minQuotaTokens, fetchImpl: fetchImpl || globalThis.fetch, log });
   if (!rungs.length) {
@@ -829,7 +841,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // a large task: only the strong cheap model tries it (the small ones rarely manage); none -> the session's model
     if (!gate.ok && !force && gate.reason === "size=large" && rungs.some((r) => strongSet.has(r.model))) {
       planRungs = rungs;
-      rungs = rungs.filter((r) => strongSet.has(r.model));
+      rungs = rungs.filter((r) => strongSet.has(r.model) || tierOf(r.model) > 1);
       large = true;
       log(`dispatch: a large task -- only ${rungs.map((r) => r.model).join(", ")} tries it`);
     } else if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
@@ -881,10 +893,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // containers 5 permission tests fail as root on any code, and they failed all 13 cheap answers of a real issue.
   // Only with the tests written for the task (they check the change itself; the project's suite then guards what
   // already worked), and never for a test the task names (a failing test for this very bug must still fail the answer).
-  const testFirstOn = policy.testFirst && (runClaude || pytestAvailable());
+  // a rule on evidence (lib/accept.mjs) when the project has its own check: the agents work against that check alone, and
+  // tests are written only when the rule uses them
+  const acceptRule = check && !specOnly ? parseRule(policy.accept) : null;
+  const evidence = !!acceptRule;
+  const testFirstOn = policy.testFirst && (runClaude || pytestAvailable()) && (!evidence || ruleUses(acceptRule, "T", "T*"));
   const workDir = testFirstOn || (check && policy.baselineCheck) ? specDir(env) : null;
   let checkRun = check;
-  if (check && !specOnly && testFirstOn && policy.baselineCheck && /\bpytest\b/.test(check)) {
+  if (check && !specOnly && (testFirstOn || evidence) && policy.baselineCheck && /\bpytest\b/.test(check)) {
     const bdir = workDir;
     checkRun = `${pythonBin({ env })} "${writeBaselineCheckRunner(bdir, check)}"`;
     const named = String(`${rawPayload.prompt || ""}\n${payload.prompt || ""}`);
@@ -902,13 +918,15 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   let fullCheck = checkRun;
   let specDirPath = null;
+  let specRunnerPath = null;               // evidence mode: our tests are run on a passing answer, not in its check
   // the module's own tests, when they joined the check (for run.md and the note to the session's model)
   const regressIn = () => (specDirPath && fs.existsSync(path.join(specDirPath, "REGRESS_OK")) ? loc.testFile : null);
   if (testFirstOn) {
     const dir = workDir;
     specDirPath = dir;
     const py = pythonBin({ env });
-    fullCheck = specOnly ? `${py} "${writeSpecRunner(dir, { strict: true })}"`
+    if (evidence) specRunnerPath = writeSpecRunner(dir);
+    else fullCheck = specOnly ? `${py} "${writeSpecRunner(dir, { strict: true })}"`
       : `${checkRun} && ${py} "${writeSpecRunner(dir)}"`;
     // the located module's existing tests: in the check when they pass on the unchanged code (run now, alongside)
     if (policy.regression && loc.testFile && /\.py$/.test(loc.testFile) && specOnly) {
@@ -970,7 +988,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
   };
   // a finished rung -> true when its answer is accepted
-  const judge = async ({ rung, result, error, startedAt, capped, capS }) => {
+  const judge = async (d) => {
+    const { rung, result, error, startedAt, capped, capS } = d;
     if (result?.state === "verified") await specDone;     // settled by then: the check waited for the tests
     if (error) {
       log(`dispatch ${rung.unit}: ${error.message}`);
@@ -1013,6 +1032,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // by its own model's cap (slower than its wins here usually are): not a failure of the model either
       tried.push({ unit: rung.unit, state: capped ? `capped at ${Math.round(capS * 10) / 10} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
       return false;
+    }
+    if (ok && evidence) {
+      // passed the project's check: the rule decides with the evidence (and the other answers), in the loop below
+      await specDone;
+      d.evidence = await answerEvidence({ rule: acceptRule, result, spec, specRunner: specRunnerPath, python: pythonBin({ env }),
+        prompt: rawPayload.prompt || payload.prompt, env, log, signal: specAbort.signal, fetchImpl });
+      log(`dispatch ${rung.unit}: passes the project's check; evidence: ${evidenceLine(d.evidence)}`);
+      return true;
     }
     let cross = null;
     // The session model's own tests (test-first) are the independent judge when they exist: a cheap verifier's tests
@@ -1090,8 +1117,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
   }
 
-  const queue = [...rungs];
+  const queue = [...rungs].map((r, i) => [r, i]).sort((a, b) => tierOf(a[0].model) - tierOf(b[0].model) || a[1] - b[1]).map(([r]) => r);
   const pending = new Map();               // unit -> promise of its finished run
+  let tierStarted = false;                 // a middle model has started: it has its own time (policy.tierS)
   const width = policy.parallel ? Math.min(rungs.length, policy.maxParallel) : 1;
   const profilesNow = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
   // a rung's provider: its profile's endpoint host, else its executor
@@ -1104,12 +1132,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let timer;
   let fireDeadline;
   const triesStart = Date.now();
-  const deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
+  let deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
   timer.unref?.();
   // the extra time is the strong model's: once it has finished without a pass (failed, stalled, capped), the others get
   // the plain limit again -- on a real issue they waited 240 s more after flash had already stopped (Modal, 2026-10-15)
   const dropStrongExtra = () => {
-    if (limitS === baseLimitS) return;
+    if (limitS === baseLimitS || tierStarted) return;
     const strongLeft = queue.some((r) => strongSet.has(r.model)) || rungs.some((r) => strongSet.has(r.model) && pending.has(r.unit));
     if (strongLeft) return;
     limitS = baseLimitS;
@@ -1118,6 +1146,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     timer.unref?.();
   };
   let timedOut = false;
+  const cands = [];                        // evidence mode: answers that passed the project's check
   const extraRuns = new Set();             // cross-check runs: cancelled with the rest when the time is up
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
   let sharedFail = null;
@@ -1132,14 +1161,42 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // a strong model meant to go last (no first: true) still waits until the small ones have all started
       const holdLast = strongSet.has(queue[i].model) && !policy.strongFirst && !strongFirstSet.has(queue[i].model)
         && queue.some((r) => !strongSet.has(r.model));
-      if (!holdLast && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < width) {
+      // a middle model waits for every cheaper one to finish (queued or running)
+      const t = tierOf(queue[i].model);
+      const holdTier = t > 1 && [...queue, ...rungs.filter((r) => pending.has(r.unit))].some((r) => tierOf(r.model) < t);
+      if (!holdLast && !holdTier && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < width) {
         const rung = queue.splice(i, 1)[0];
+        if (t > 1 && !tierStarted) {
+          // the middle model's own time from now: the cheap models' limit has been used up by them
+          tierStarted = true;
+          limitS = Math.round((Date.now() - triesStart) / 1000) + policy.tierS;
+          clearTimeout(timer);
+          deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), policy.tierS * 1000); });
+          timer.unref?.();
+          log(`dispatch: the cheap models did not do it; ${rung.model} (tier ${t}) tries, ${policy.tierS} s`);
+        }
         pending.set(rung.unit, runRung(rung));
       } else i++;
     }
     // the test writer's ambiguity flag (~20 s in) ends the cheap tries at once, not when the first one finishes
     const done = await Promise.race([...pending.values(), deadline, ambiguityKnown]);
     if (done.ambiguityFlag) { ambiguous = done.ambiguityFlag; break; }
+    if (done.timeout && !tierStarted && queue.some((r) => tierOf(r.model) > 1)) {
+      // the cheap models' time is up: the ones still running stop, the cheap ones queued are skipped, the middle model tries
+      for (const unit of pending.keys()) {
+        const runId = running.get(unit);
+        if (runId) try { await settleWithin(rt.cancelRun(runId), SETTLE_MS); } catch { /* best effort */ }
+      }
+      for (const [unit, p] of pending) {
+        const r = await settleWithin(p, SETTLE_MS);
+        tried.push({ unit, state: "timed out", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
+        running.delete(unit);
+      }
+      pending.clear();
+      for (const r of queue.filter((x) => tierOf(x.model) === 1)) tried.push({ unit: r.unit, state: "skipped (time limit)" });
+      queue.splice(0, queue.length, ...queue.filter((x) => tierOf(x.model) > 1));
+      continue;
+    }
     if (done.timeout) { timedOut = true; break; }
     pending.delete(done.rung.unit);
     running.delete(done.rung.unit);
@@ -1150,6 +1207,44 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       timedOut = true;
       tried.push({ unit: done.rung.unit, state: "timed out while being checked", run_id: done.run_id ?? null, cost_usd: done.result?.cost_usd ?? null });
       break;
+    }
+    if (verdict && evidence) {
+      cands.push(done);
+      // the other models still running may finish a little later: answers that agree are stronger evidence
+      const until = Date.now() + policy.agreeWaitS * 1000;
+      while (pending.size && Date.now() < until && cands.length < 3) {
+        let tick;
+        const over = new Promise((res) => { tick = setTimeout(() => res({ waitOver: true }), Math.max(0, until - Date.now())); });
+        const more = await Promise.race([...pending.values(), deadline, over]);
+        clearTimeout(tick);
+        if (more.waitOver || more.timeout) break;
+        pending.delete(more.rung.unit);
+        running.delete(more.rung.unit);
+        const v2 = await Promise.race([judge(more), deadline]);
+        if (v2?.timeout) break;
+        if (v2) cands.push(more);
+      }
+      const pick = decide(cands, acceptRule);
+      if (pick) {
+        winner = pick;
+        try { if (plan.goal_id) recordObs(root, ensureRoute(root, plan.goal_id), pick.rung.model, pick.rung.executor, true); } catch { /* best effort */ }
+        recordModelWin(root, pick.rung.model, pick.rung.executor, (Date.now() - pick.startedAt) / 1000);
+        log(`dispatch: ${pick.rung.unit} accepted by the rule (${policy.accept}): ${evidenceLine(pick.evidence)}`);
+        tried.push({ unit: pick.rung.unit, state: "verified", run_id: pick.result.run_id, cost_usd: pick.result.cost_usd, evidence: evidenceLine(pick.evidence) });
+        for (const c of cands) if (c !== pick && !c.recorded) {
+          tried.push({ unit: c.rung.unit, state: "passed the check, another answer was taken", run_id: c.result.run_id, cost_usd: c.result.cost_usd });
+          try { await rt.cancelRun(c.result.run_id); } catch { /* best effort */ }
+        }
+        break;
+      }
+      // not accepted: no verdict on the model (the answer may be right); a later answer may still agree with it
+      for (const c of cands) if (!c.recorded) {
+        c.recorded = true;
+        tried.push({ unit: c.rung.unit, state: `passed the check, not accepted by the rule (${evidenceLine(c.evidence)})`,
+                     run_id: c.result.run_id, cost_usd: c.result.cost_usd });
+      }
+      if (timedOut) break;
+      continue;
     }
     if (verdict) { winner = done; break; }
     if (ambiguous) break;

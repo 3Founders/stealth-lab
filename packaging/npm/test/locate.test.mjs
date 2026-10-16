@@ -266,7 +266,7 @@ test("reproduction agent: its check passes only a test that fails on the current
     fs.unlinkSync(path.join(repo, "tests", REPRO_FILE));
     return code;
   };
-  assert.match(await run("fails"), /def test_optional/, "fails by assertion: used");
+  assert.match((await run("fails"))?.code, /def test_optional/, "fails by assertion: used");
   assert.equal(await run("passes"), null, "passes on the current code: not a reproduction");
   assert.equal(await run("crashes"), null, "an import error is not a failure");
 });
