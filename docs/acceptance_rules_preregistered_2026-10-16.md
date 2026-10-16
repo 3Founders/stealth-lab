@@ -50,6 +50,13 @@ fails here left out). The Sonnet and gpt-oss reviewers then still said "fixes" o
 12. E and S and Ro                       (Opus's short review as the acceptor)
 13. E and S and A and Ro                 (agreement plus Opus's review)
 
+## Added before measuring it (2026-10-16: cross-testing, the behavioural form of A)
+- C: the answer passes the OTHER answer's validated tests -- tests the other answer added that fail on the unchanged code
+  and pass with that other answer (experiments/abtest/pipeline_survey.py cross_tests). Not judged (no validated tests
+  from the other answer) = C false.
+14. E and S and C
+15. E and S and C and Ro
+
 ## How one is chosen
 - For each rule: accepted, accepted-and-wrong, right-but-rejected, and the cost estimate
   (accepted -> cheap cost; rejected -> cheap cost + Opus ~$1.13).
