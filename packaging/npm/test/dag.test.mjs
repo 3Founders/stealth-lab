@@ -344,3 +344,92 @@ test("a past fix plans a task only when it changed the code the task is located 
   assert.equal(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/tsql.py", "pkg/other.py"] } }), null, "located elsewhere: the task goes whole");
   assert.ok(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/parser.py"] } }), "located in a file the past fix changed");
 });
+
+import { planDag, readPlan } from "../lib/dag_run.mjs";
+
+// a large task whose whole try fails; its parts (the plan's) pass
+function planRt(answers) {
+  const calls = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "plan-patches-"));
+  return { calls,
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) {
+      const input = calls[Number(id.slice(2)) - 1];
+      const at = /This part:.*?likely in (pkg\/\w+\.py)/.exec(input.task)?.[1];
+      if (!at) return { run_id: id, state: "failed", cost_usd: 0.001, checks: [{ tail: "the whole task did not pass" }] };
+      const part = at === "pkg/expressions.py" ? "p1" : "p2";
+      const f = path.join(dir, `${id}.patch`);
+      fs.writeFileSync(f, answers[part]);
+      return { run_id: id, state: "verified", cost_usd: 0.002, diff: { files: [at], patch_path: f } };
+    },
+    async cancelRun() {}, async applyRun() { throw new Error("a plan applies its parts itself"); } };
+}
+function largeSetup() {
+  const repo = gitRepo({ "pkg/__init__.py": "", "pkg/expressions.py": "class Expression:\n    pass\n", "pkg/parser.py": "def parse(name):\n    return None\n" });
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" });
+  fs.writeFileSync(path.join(repo, "pkg", "expressions.py"), "class Expression:\n    pass\nclass ArraySlice(Expression):\n    pass\n");
+  const p1 = g("diff", "--", "pkg/expressions.py");
+  fs.writeFileSync(path.join(repo, "pkg", "parser.py"), "def parse(name):\n    from pkg.expressions import ArraySlice\n    return ArraySlice() if name == \"SLICE\" else None\n");
+  const p2 = g("diff", "--", "pkg/parser.py");
+  g("checkout", "--", "pkg");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "plan-home-"));
+  const e = { ...env(home), K: "k", STEALTHLAB_BRIEF: "on" };
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true } } }));
+  return { repo, p1, p2, e };
+}
+const LARGE = async () => ({ task: PROMPT, files_hinted: [], acceptance: "", parts: [], clarity: "clear", kind: "code", size: "large" });
+const LPLAN = { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-5.3-flash|stealth"] };
+
+test("a large task the strong cheap model cannot do whole: the session is asked for a plan; its parts go to cheap models", async () => {
+  const { repo, p1, p2, e } = largeSetup();
+  const rt = planRt({ p1, p2 });
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: LPLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+                             env: e, runtime: rt, briefImpl: LARGE });
+  assert.equal(d.handled, false);
+  assert.equal(d.planAsk, true);
+  assert.deepEqual(rt.calls.map((c) => c.model), ["glm-5.3-flash"], "the whole try: the strong model only");
+  assert.match(triedNote(d), /This is a large change: before doing it yourself, plan it in 2-8 parts[\s\S]*dag plan[\s\S]*dag continue/);
+  assert.equal(loadDagState(repo).awaiting_plan, true);
+  // the session's plan: the new class is its own (a design decision), parsing it follows from it
+  const plan = JSON.stringify({ parts: [
+    { desc: "add the ArraySlice expression", files: ["pkg/expressions.py"], gives: ["ArraySlice"], who: "me" },
+    { desc: "parse SLICE into ArraySlice", files: ["pkg/parser.py"], needs: ["ArraySlice"], who: "cheap" }] });
+  const ctx = { root: repo, env: e, rt, runShell: runShellCapture, undo: { enabled: false } };
+  const r1 = await planDag({ ...ctx, text: plan });
+  assert.equal(r1.ok, false);
+  assert.match(r1.lines.join("\n"), /Plan taken: 2 parts \(N-1 -> N-2\)[\s\S]*Still yours: N-1 \(pkg\/expressions\.py\)/);
+  assert.equal(rt.calls.length, 1, "the cheap part needs the session's: it waits");
+  execFileSync("git", ["-C", repo, "apply", "-"], { input: p1 });             // the session does its part
+  const r2 = await continueDag(ctx);
+  assert.equal(r2.ok, true, r2.lines.join("\n"));
+  assert.match(r2.lines.join("\n"), /N-2 \(pkg\/parser\.py\): done by (gemma-4-31b-it|glm-5\.3-flash) and applied[\s\S]*full check passes/);
+  assert.match(fs.readFileSync(path.join(repo, "pkg", "parser.py"), "utf8"), /ArraySlice\(\) if name == "SLICE"/);
+});
+
+test("a plan of cheap parts only runs them all at once; a bad plan is refused and the task still waits for one", async () => {
+  const { repo, p1, p2, e } = largeSetup();
+  const rt = planRt({ p1, p2 });
+  await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: LPLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+                   env: e, runtime: rt, briefImpl: LARGE });
+  const ctx = { root: repo, env: e, rt, runShell: runShellCapture, undo: { enabled: false } };
+  const bad = await planDag({ ...ctx, text: JSON.stringify({ parts: [{ desc: "x", files: ["nowhere/a.py"] }, { desc: "y" }] }) });
+  assert.match(bad.lines[0], /not taken: part 1: nowhere\/a\.py is not a path/);
+  assert.equal(loadDagState(repo).awaiting_plan, true);
+  assert.match((await continueDag(ctx)).lines[0], /waits for your plan/);
+  const r = await planDag({ ...ctx, text: JSON.stringify({ parts: [
+    { desc: "add the ArraySlice expression", files: ["pkg/expressions.py"], gives: ["ArraySlice"] },
+    { desc: "parse SLICE into ArraySlice", files: ["pkg/parser.py"], needs: ["ArraySlice"] }] }) });
+  assert.equal(r.ok, true, r.lines.join("\n"));
+  assert.match(r.lines.join("\n"), /N-1[\s\S]*applied[\s\S]*N-2[\s\S]*applied[\s\S]*full check passes/);
+});
+
+test("readPlan: 2-8 parts, each with a desc; files inside the repository; who is me or cheap", () => {
+  const root = gitRepo({ "a/x.py": "" });
+  assert.equal(readPlan("nope", root).ok, false);
+  assert.match(readPlan(JSON.stringify({ parts: [{ desc: "one" }] }), root).error, /2-8 parts/);
+  assert.match(readPlan(JSON.stringify({ parts: [{ desc: "a", files: ["../x.py"] }, { desc: "b" }] }), root).error, /not a path/);
+  const ok = readPlan(JSON.stringify({ parts: [{ desc: "a", files: ["a/x.py", "a/new.py"], who: "me" }, { desc: "b", gives: ["F"] }] }), root);
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.steps.map((s) => [s.at, s.who]), [[["a/x.py", "a/new.py"], "session"], [[], "cheap"]]);
+});
