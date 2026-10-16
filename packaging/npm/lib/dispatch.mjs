@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { runClaudeAsync } from "./claude_call.mjs";
-import { answerEvidence, decide, evidenceLine, parseRule, ruleUses } from "./accept.mjs";
+import { answerEvidence, crossTest, decide, evidenceLine, parseRule, ruleUses } from "./accept.mjs";
 import { contextPack, contextPackEnabled } from "./context_pack.mjs";
 import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
@@ -1228,6 +1228,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         if (v2?.timeout) break;
         if (v2) cands.push(more);
       }
+      // C: the answers run each other's validated tests (only when the rule uses it: it runs their tests)
+      if (ruleUses(acceptRule, "C") && cands.length > 1) await crossTest(cands, { python: pythonBin({ env }), log });
       const pick = decide(cands, acceptRule);
       if (pick) {
         winner = pick;
