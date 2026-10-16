@@ -16,8 +16,17 @@ const log = [];
 const { narrowLocation } = await import(pathToFileURL(path.join(npm, "lib", "locate_model.mjs")).href);
 const loc = await narrowLocation({ prompt, root, loc: locate({ prompt, root, env }), env });   // as dispatch does
 fs.mkdirSync(outDir, { recursive: true });
+// SURVEY_WRITER_MODE=agent: the reproduction agent first (lib/repro_agent.mjs), the one-call writer as its fallback
+let agentWriter = null;
+if (process.env.SURVEY_WRITER_MODE === "agent") {
+  const { ExecRuntime } = await import(pathToFileURL(path.join(npm, "lib", "exec", "runtime.mjs")).href);
+  const { reproduceTests } = await import(pathToFileURL(path.join(npm, "lib", "repro_agent.mjs")).href);
+  const { renderWhere } = await import(pathToFileURL(path.join(npm, "lib", "locate.mjs")).href);
+  const rt = new ExecRuntime({ env });
+  agentWriter = () => reproduceTests({ rt, root, prompt, where: renderWhere(loc), env, log: (m) => log.push(m), dir: outDir });
+}
 const spec = await writeSpecTests({ prompt, root, mine: "claude-opus-5-5|claude-code", env, dir: outDir, log: (m) => log.push(m),
-                                    located: renderForWriter(loc, root), baseline: true, python });
+                                    located: renderForWriter(loc, root), baseline: true, python, agentWriter });
 // the "likely place" line, for stage 3's agents (as dispatch would send it)
 const { renderWhere } = await import(pathToFileURL(path.join(npm, "lib", "locate.mjs")).href);
 fs.writeFileSync(path.join(outDir, "where.txt"), renderWhere(loc));
