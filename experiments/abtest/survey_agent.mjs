@@ -21,7 +21,7 @@ if (process.env.SURVEY_CONTEXT_PACK === "1") {
   pack = contextPack({ files: loc.files || [], testFile: loc.testFile || null });
 }
 const tail = [pack, where].filter(Boolean).join("\n\n");
-const room = 1990 - tail.length - 2;
+const room = 11990 - tail.length - 2;   // the executor takes 12,000 characters (it took 2,000: 8 of 25 issues were cut)
 const task = withWhere(prompt.length > room ? `${prompt.slice(0, room - 8)} [...]` : prompt, tail);
 const rt = new ExecRuntime({ env: process.env });
 const t0 = Date.now();
