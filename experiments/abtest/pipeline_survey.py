@@ -139,6 +139,10 @@ def environment(r: dict, root: Path, venvs: Path) -> Path:
         subprocess.run(["apt-get", "install", "-y", "-qq", *pkgs], capture_output=True, timeout=600)
     py = S.TOOLCHAIN.venv(venvs / r["instance_id"], str(cfg.get("python") or "3.11"))
     extra = [str(p) for p in (cfg.get("pip_packages") if cfg.get("pip_packages") is not None else [])]
+    # "packages": a requirements file's name, or the project's own packages listed by name ("ply rdflib click")
+    pk = str(cfg.get("packages") or "")
+    if pk and not re.search(r"\.(txt|yml|yaml|toml|cfg)\b", pk):
+        extra += pk.split()
     S.TOOLCHAIN.install(py, S.env_requirements(r.get("requirements"), extra))
     S.TOOLCHAIN.install_editable(py, root, S.editable_extras(cfg.get("install")))
     return py
