@@ -42,6 +42,21 @@ Ground truth for judging a rule: the hidden FAIL_TO_PASS tests. They grade the r
 Note: offline, A compares two agents on the SAME model; in the product the answers come from different models, which the
 literature finds more informative -- so A is if anything under-estimated here.
 
+## Added before measuring it (2026-10-16, after the grader fix: an Opus reviewer)
+The grader was fixed (hidden tests' files reset to base before the test patch, as SWE-bench does; issues whose real fix
+fails here left out). The Sonnet and gpt-oss reviewers then still said "fixes" on 15/28 and 18/28 wrong answers.
+- Ro / Ro_no: the same reviewer prompt (REVIEW_SYSTEM) on claude-opus-5-5 (one lean, tool-less `claude -p`), reading
+  only the request and the diff.
+12. E and S and Ro                       (Opus's short review as the acceptor)
+13. E and S and A and Ro                 (agreement plus Opus's review)
+
+## Added before measuring it (2026-10-16: cross-testing, the behavioural form of A)
+- C: the answer passes the OTHER answer's validated tests -- tests the other answer added that fail on the unchanged code
+  and pass with that other answer (experiments/abtest/pipeline_survey.py cross_tests). Not judged (no validated tests
+  from the other answer) = C false.
+14. E and S and C
+15. E and S and C and Ro
+
 ## How one is chosen
 - For each rule: accepted, accepted-and-wrong, right-but-rejected, and the cost estimate
   (accepted -> cheap cost; rejected -> cheap cost + Opus ~$1.13).
