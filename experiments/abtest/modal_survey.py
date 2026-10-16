@@ -20,8 +20,21 @@ app = modal.App("stealthlab-survey")
 volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
 
+def _keep(job: dict, row: dict) -> dict:
+    """Each issue's result is on the volume the moment it is made: a dropped connection or a stopped run loses nothing."""
+    try:
+        d = Path(VOL) / "survey" / job["run"] / f"stage{job['stage']}.parts"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{row.get('instance_id', 'x')}.json").write_text(json.dumps(row), encoding="utf-8")
+        volume.commit()
+    except Exception:  # noqa: BLE001 -- keeping is best-effort; the row is returned either way
+        pass
+    return row
+
+
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=7200, cpu=2.0, memory=8192, secrets=[modal.Secret.from_name(KEYS_SECRET)])
-def stage1_batch(iids: list[str]) -> list[dict]:
+def stage1_batch(job: dict) -> list[dict]:
+    iids = job["iids"]
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
     os.environ["STEALTHLAB_NPM_DIR"] = f"{APP_DIR}/packaging/npm"
     # the search, and the search narrowed by a cheap model (SURVEY_LOCATE_MODEL, an exec.json profile)
@@ -34,7 +47,7 @@ def stage1_batch(iids: list[str]) -> list[dict]:
     out = []
     for iid in iids:
         try:
-            out.append(P.stage1(iid))
+            out.append(_keep(job, P.stage1(iid)))
         except Exception as e:  # noqa: BLE001
             out.append({"instance_id": iid, "error": f"{type(e).__name__}: {str(e)[:200]}"})
     return out
@@ -42,7 +55,8 @@ def stage1_batch(iids: list[str]) -> list[dict]:
 
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=7200, cpu=2.0, memory=8192,
               secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)])
-def stage2_batch(iids: list[str]) -> list[dict]:
+def stage2_batch(job: dict) -> list[dict]:
+    iids = job["iids"]
     """The test writer as dispatch runs it; the Claude token is for the Sonnet fallback (STEALTHLAB_ prefixed so the
     claude child gets it, as in the series runs)."""
     import tempfile
@@ -61,7 +75,7 @@ def stage2_batch(iids: list[str]) -> list[dict]:
         (work / "home").mkdir()
         shutil.copyfile(home / "exec.json", work / "home" / "exec.json")
         try:
-            out.append(P.stage2(iid, work))
+            out.append(_keep(job, P.stage2(iid, work)))
         except Exception as e:  # noqa: BLE001
             out.append({"instance_id": iid, "error": f"{type(e).__name__}: {str(e)[:200]}"})
     return out
@@ -69,7 +83,8 @@ def stage2_batch(iids: list[str]) -> list[dict]:
 
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=14400, cpu=2.0, memory=8192,
               secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(CLAUDE_SECRET)])
-def stage3_batch(iids: list[str]) -> list[dict]:
+def stage3_batch(job: dict) -> list[dict]:
+    iids = job["iids"]
     """The cheap agent on each issue -- lean Claude Code and StealthLab's own loop, both on SURVEY_AGENT_MODEL -- judged by
     our tests and by the real hidden tests."""
     import shutil, tempfile
@@ -88,7 +103,7 @@ def stage3_batch(iids: list[str]) -> list[dict]:
         (work / "home").mkdir()
         (work / "home" / "exec.json").write_text(json.dumps(cfg), encoding="utf-8")
         try:
-            out.append(P.stage3(iid, work, model=model))
+            out.append(_keep(job, P.stage3(iid, work, model=model)))
         except Exception as e:  # noqa: BLE001
             out.append({"instance_id": iid, "error": f"{type(e).__name__}: {str(e)[:200]}"})
         finally:
@@ -113,14 +128,36 @@ def save(run: str, stage: int, rows: list[dict]) -> str:
     return str(p)
 
 
-@app.local_entrypoint()
-def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8):
+@app.function(image=build_image(), volumes={VOL: volume}, timeout=86400)
+def survey_run(stage: int, n: int, seed: int, run: str, workers: int) -> list[dict]:
+    """The whole run, orchestrated inside Modal (launch with --detach: the laptop's connection can drop); issues already
+    kept on the volume for this run are not run again."""
+    os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
     import pipeline_survey as P
-    ids = select_ids.remote(n, seed)
-    batches = [ids[i::workers] for i in range(workers)]
+    ids = P.select(n, seed)
+    parts = Path(VOL) / "survey" / run / f"stage{stage}.parts"
+    done = {p.stem for p in parts.glob("*.json")} if parts.exists() else set()
+    todo = [i for i in ids if i not in done]
     fn = {1: stage1_batch, 2: stage2_batch, 3: stage3_batch}[stage]
-    rows = [r for b in fn.map(batches) for r in b]
-    path = save.remote(run, stage, rows)
+    jobs = [{"iids": todo[i::workers], "run": run, "stage": stage} for i in range(workers) if todo[i::workers]]
+    for _ in fn.map(jobs):
+        pass
+    rows = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(parts.glob("*.json"))] if parts.exists() else []
+    save.local(run, stage, rows)
+    return rows
+
+
+@app.function(image=build_image(), volumes={VOL: volume}, timeout=600)
+def gather(run: str, stage: int) -> list[dict]:
+    parts = Path(VOL) / "survey" / run / f"stage{stage}.parts"
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(parts.glob("*.json"))] if parts.exists() else []
+
+
+@app.local_entrypoint()
+def main(stage: int = 1, n: int = 48, seed: int = 1, run: str = "survey", workers: int = 8, collect: bool = False):
+    import pipeline_survey as P
+    rows = gather.remote(run, stage) if collect else survey_run.remote(stage, n, seed, run, workers)
+    path = f"{VOL}/survey/{run}/stage{stage}.parts"
     local = HERE / ".local" / "survey"
     local.mkdir(parents=True, exist_ok=True)
     (local / f"{run}-stage{stage}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
