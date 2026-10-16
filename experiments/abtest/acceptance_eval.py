@@ -142,6 +142,9 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
         ags = r.get("agents") or {}
         if not ags:
             continue
+        # an issue whose real fix does not pass its hidden tests here grades nothing (stage 4 gold_solved)
+        if s4.get(r["instance_id"], {}).get("gold_solved") is False:
+            continue
         srcs = {a: set(f for f in files_of(x.get("patch") or "") if changes_source([f])) for a, x in ags.items()}
         # T*: our tests count only when at least one candidate answer passes them (else they likely guessed wrong)
         any_pass = any(bool(x.get("passes_our_tests")) for x in ags.values() if not unreached(x))
