@@ -432,8 +432,16 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
   const openTimeoutS = Math.max(10, Number(env.STEALTHLAB_DISPATCH_TESTFIRST_OPEN_TIMEOUT_S || 90));
   const fbRaw = String(env.STEALTHLAB_DISPATCH_TESTFIRST_FALLBACK ?? "claude-sonnet-5-5").trim();
   const fallback = openProfile && fbRaw && fbRaw.toLowerCase() !== "off" && fbRaw.includes("claude") ? fbRaw : null;
-  const claudeRun = runClaude || ((a, input) => runClaudeAsync(env, a, input, signal));
-  const run = openProfile && !runClaude ? (_args, input) => runOpenWriter(openProfile, env, input, signal, openTimeoutS) : claudeRun;
+  // each writer call's own time, in the log: the hedge (Sonnet after 30 s, GLM cut at 90 s) is to be set from these
+  const timed = (m, f) => async (a, input) => {
+    const t0 = Date.now();
+    const r = await f(a, input);
+    const ok = r?.status === 0 && /def test_/.test(String(r?.stdout || ""));
+    log(`test-first: ${m} replied in ${Math.round((Date.now() - t0) / 1000)} s${ok ? "" : " (no usable tests)"}`);
+    return r;
+  };
+  const claudeRun = timed(fallback || model, runClaude || ((a, input) => runClaudeAsync(env, a, input, signal)));
+  const run = openProfile && !runClaude ? timed(model, (_args, input) => runOpenWriter(openProfile, env, input, signal, openTimeoutS)) : claudeRun;
   const argsFor = (m) => ["-p", "--model", m, "--system-prompt", SPEC_SYSTEM,
     "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
   const args = argsFor(model);
