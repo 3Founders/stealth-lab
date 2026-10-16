@@ -34,6 +34,14 @@ Ground truth for judging a rule: the hidden FAIL_TO_PASS tests. They grade the r
 8. E and S and F and X and T* and not Rno
 9. E and S and T* and (A or R)
 
+## Added before the table (2026-10-16, lever 3: a strong but short review)
+- Rs / Rs_no: the same reviewer prompt (REVIEW_SYSTEM) on claude-sonnet-5-5 (one lean, tool-less `claude -p`), reading only
+  the request and the diff; "fixes" / "does_not_fix" as for R.
+10. E and S and F and X and not Rs_no   (rule 7 with the strong reviewer's veto)
+11. E and S and Rs                       (the strong reviewer's "fixes" as the acceptor)
+Note: offline, A compares two agents on the SAME model; in the product the answers come from different models, which the
+literature finds more informative -- so A is if anything under-estimated here.
+
 ## How one is chosen
 - For each rule: accepted, accepted-and-wrong, right-but-rejected, and the cost estimate
   (accepted -> cheap cost; rejected -> cheap cost + Opus ~$1.13).

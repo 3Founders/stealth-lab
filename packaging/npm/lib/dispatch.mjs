@@ -20,6 +20,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { readExecConfig } from "./exec/store.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
+import { runClaudeAsync } from "./claude_call.mjs";
 import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
@@ -387,22 +388,6 @@ async function runPytestAsync(python, code, dir, cwd, signal) {
   }
 }
 
-function runClaudeAsync(env, args, input, signal) {
-  return new Promise((resolve) => {
-    let launch;
-    try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
-    const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: claudeChildEnv(env) });
-    let stdout = "", stderr = "";
-    const timer = setTimeout(() => child.kill(), 180000);
-    const abort = () => child.kill();
-    signal?.addEventListener?.("abort", abort);
-    child.stdout.on("data", (d) => { stdout += d; });
-    child.stderr.on("data", (d) => { stderr += d; });
-    child.on("error", (err) => { stderr += err.message; });
-    child.on("close", (status) => { clearTimeout(timer); signal?.removeEventListener?.("abort", abort); resolve({ status, stdout, stderr }); });
-    child.stdin.end(input);
-  });
-}
 
 // -> {file, cost_usd} (a pytest file outside the repo, run from the worktree) or null. One lean, tool-less call to
 // a Claude model: a short system prompt, no tools, no project settings. Async: dispatch starts the cheap models at
