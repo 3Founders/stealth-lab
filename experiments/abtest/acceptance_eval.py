@@ -25,6 +25,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / ".local" / "survey" / "reviews.jsonl"
+STRONG = "claude-sonnet-5-5"                # the strong reviewer (rules 10-11)
+CACHE_STRONG = HERE / ".local" / "survey" / "reviews_strong.jsonl"
 OPUS_USD = 1.13              # Opus per issue (the one series issue, arm A); an assumption, stated in the report
 RULES = {
     "1 T (today)": lambda s: s["T"],
@@ -36,6 +38,8 @@ RULES = {
     "7 E S F X, no R-veto": lambda s: s["E"] and s["S"] and s["F"] and s["X"] and not s["Rno"],
     "8 E S F X T*, no R-veto": lambda s: s["E"] and s["S"] and s["F"] and s["X"] and s["Tstar"] and not s["Rno"],
     "9 E S T* and (A or R)": lambda s: s["E"] and s["S"] and s["Tstar"] and (s["A"] or s["R"]),
+    "10 E S F X, no Rs-veto": lambda s: s["E"] and s["S"] and s["F"] and s["X"] and not s["Rs_no"],
+    "11 E S and Rs": lambda s: s["E"] and s["S"] and s["Rs"],
 }
 
 
@@ -98,10 +102,14 @@ def review_env() -> dict[str, str]:
     return env
 
 
-def run_reviews(answers: list[dict]) -> dict[str, dict]:
+def read_cache(path: Path) -> dict[str, dict]:
+    return {json.loads(l)["key"]: json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()} if path.exists() else {}
+
+
+def run_reviews(answers: list[dict], model: str | None = None, cache_path: Path = CACHE) -> dict[str, dict]:
     cache = {}
-    if CACHE.exists():
-        for l in CACHE.read_text(encoding="utf-8").splitlines():
+    if cache_path.exists():
+        for l in cache_path.read_text(encoding="utf-8").splitlines():
             if l.strip():
                 o = json.loads(l)
                 cache[o["key"]] = o
@@ -109,10 +117,13 @@ def run_reviews(answers: list[dict]) -> dict[str, dict]:
     if todo:
         prompts = problem_statements({a["iid"] for a in todo})
         lines = "".join(json.dumps({"key": a["key"], "prompt": prompts.get(a["iid"], ""), "patch": a["patch"]}) + "\n" for a in todo)
+        env = review_env()
+        if model:
+            env["REVIEW_MODEL"] = model
         p = subprocess.run(["node", str(HERE / "acceptance_review.mjs")], input=lines, capture_output=True, text=True,
-                           env=review_env(), timeout=3600, encoding="utf-8")
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        with CACHE.open("a", encoding="utf-8") as f:
+                           env=env, timeout=3600, encoding="utf-8")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with cache_path.open("a", encoding="utf-8") as f:
             for l in p.stdout.splitlines():
                 if l.strip():
                     o = json.loads(l)
@@ -124,7 +135,7 @@ def run_reviews(answers: list[dict]) -> dict[str, dict]:
     return cache
 
 
-def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | None) -> list[dict]:
+def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | None, strong: dict[str, dict] | None = None) -> list[dict]:
     s4 = {r["instance_id"]: r for r in rows4 if r.get("agents")}
     out = []
     for r in rows3:
@@ -143,6 +154,7 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
             e_new = j4.get("existing_new_failures") if j4 is not None else x.get("existing_new_failures")
             key = f"{r['instance_id']}|{a}"
             rv = (reviews or {}).get(key)
+            rs = (strong or {}).get(key)
             # the label: the hidden tests; two runs on the same patch that disagree leave it unknown (left out)
             uncertain = j4 is not None and bool(j4.get("truly_solved")) != bool(x.get("truly_solved"))
             out.append({"iid": r["instance_id"], "agent": a, "key": key, "patch": x.get("patch") or "", "uncertain": uncertain,
@@ -154,7 +166,9 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
                         "E": e_new in (0, None), "E_known": e_new is not None,
                         "S": changes_source(files_of(x.get("patch") or "")),
                         "A": bool(srcs[a]) and any(srcs[a] == srcs[b] for b in other),
-                        "R": bool(rv and rv.get("verdict") == "fixes"), "R_known": rv is not None})
+                        "R": bool(rv and rv.get("verdict") == "fixes"), "R_known": rv is not None,
+                        "Rs": bool(rs and rs.get("verdict") == "fixes"), "Rs_no": bool(rs and rs.get("verdict") == "does_not_fix"),
+                        "Rs_known": rs is not None})
     return out
 
 
@@ -188,8 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     rows3, rows4 = load(a.stage3), load(a.stage4)
     sig = signals(rows3, rows4, None)
-    reviews = run_reviews(sig) if a.review else ({json.loads(l)["key"]: json.loads(l) for l in CACHE.read_text(encoding="utf-8").splitlines() if l.strip()} if CACHE.exists() else {})
-    print(table(signals(rows3, rows4, reviews), a.label))
+    reviews = run_reviews(sig) if a.review else read_cache(CACHE)
+    strong = run_reviews(sig, STRONG, CACHE_STRONG) if a.review else read_cache(CACHE_STRONG)
+    print(table(signals(rows3, rows4, reviews, strong), a.label))
     return 0
 
 

@@ -13,7 +13,7 @@ let next = 0;
 async function worker() {
   while (next < items.length) {
     const it = items[next++];
-    const r = await reviewPatch({ prompt: it.prompt, diff: it.patch, env: process.env });
+    const r = await reviewPatch({ prompt: it.prompt, diff: it.patch, env: process.env, model: process.env.REVIEW_MODEL || null });
     process.stdout.write(JSON.stringify({ key: it.key, verdict: r?.verdict ?? null, why: r?.why ?? null, cost_usd: r?.cost_usd ?? null }) + "\n");
   }
 }
