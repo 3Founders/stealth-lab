@@ -1013,6 +1013,13 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id, cost_usd: result.cost_usd });
       return false;
     }
+    // the executor failed before changing anything (its endpoint kept refusing, say): the model was not reached, so this
+    // is no verdict on it either -- not a loss in the route's counts (lib/exec/runtime.mjs "the executor failed")
+    if (result.state === "failed" && /^the executor failed/.test(String(result.error || ""))) {
+      log(`${rung.unit}: ${String(result.error).slice(0, 200)}`);
+      tried.push({ unit: rung.unit, state: "executor error", error: String(result.error).slice(0, 200), run_id: result.run_id, cost_usd: result.cost_usd });
+      return false;
+    }
     if (result.state === "cancelled") {    // stopped from outside: no verdict on the model either
       // by its own model's cap (slower than its wins here usually are): not a failure of the model either
       tried.push({ unit: rung.unit, state: capped ? `capped at ${Math.round(capS * 10) / 10} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });

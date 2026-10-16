@@ -381,6 +381,14 @@ export class ExecRuntime {
         a.scopeViolations = scopeViolations(d.files, run.input.scope);
       }
       if (terminal) return this.setState(run, a, terminal, { reason: r.reason, ...(a.stalled ? { stalled: a.stalled.rule } : {}) });
+      // the executor itself failed and changed nothing (its endpoint kept answering 429, say): that is its error, not an
+      // "empty diff" -- a model that was never reached did not fail the task (survey stage 3, 2026-10-16: 12 of 32 issues
+      // per agent were rate-limited on every try and were reported as empty diffs, with 0 tokens spent)
+      if (r.exitCode !== 0 && a.diff && a.diff.files.length === 0 && !run.input.noChangeExpected) {
+        a.error = this.red(`the executor failed (exit ${r.exitCode}): ${cut(a.summary || stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" | "), 300)}`);
+        a.executorFailed = true;
+        return this.setState(run, a, "failed", { reason: "executor_error" });
+      }
 
       this.setState(run, a, "verifying");
       const checkOpts = {

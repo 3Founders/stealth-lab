@@ -85,6 +85,21 @@ test("failing check (spec 8.2): verified=false, tail present and redacted; logs 
   assert.ok(fs.existsSync(res.diff.worktree), "failed WITH a diff: worktree kept for inspection");
 });
 
+test("an executor that fails before changing anything is reported with its own error, not as an empty diff", async () => {
+  const repo = makeRepo();
+  const env = testEnv();
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { edits: [], finalMessage: "error: the endpoint kept failing: HTTP 429: rate limited", exitCode: 1 } }) });
+  const started = await rt.achieve({ repo_path: repo, task: TASK, checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1" });
+  const res = await rt.runResult(started.run_id, 30);
+  assert.equal(res.state, "failed");
+  assert.match(res.error, /^the executor failed \(exit 1\): error: the endpoint kept failing: HTTP 429/);
+  assert.equal(res.checks.length, 0, "no check runs on a change that does not exist");
+  // an executor that exits 0 with no change is still an empty diff (the model was reached and did nothing)
+  const rt2 = runtime(env, { stub: stubAdapter({ scenario: { edits: [], finalMessage: "nothing to do" } }) });
+  const s2 = await rt2.achieve({ repo_path: repo, task: TASK, checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1" });
+  assert.match((await rt2.runResult(s2.run_id, 30)).error, /empty diff/);
+});
+
 test("scope violation (spec 8.3): verified=false and the out-of-scope file is listed", async () => {
   const repo = makeRepo();
   const env = testEnv();
