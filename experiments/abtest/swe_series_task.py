@@ -200,6 +200,30 @@ def clean_requirements(text: str) -> list[str]:
     return out
 
 
+def env_requirements(text: str, extra: list[str] | tuple = ()) -> list[str]:
+    """What an instance's venv gets: its pip freeze, pytest, the dataset's own test packages (`extra`: install_config
+    pip_packages, those the freeze does not name already), and setuptools<81 when the freeze does not pin setuptools --
+    81 removed pkg_resources, a venv seeded today gets 82, and projects of these issues' age import it (in the survey,
+    2 of 21 sets of tests failed on that alone, 2026-10-16)."""
+    reqs = clean_requirements(text)
+    name = lambda s: re.split(r"[<>=!~\[; ]", s.strip(), maxsplit=1)[0].lower().replace("_", "-")
+    named = {name(s) for s in reqs}
+    out = list(reqs)
+    for p in ["pytest", *extra]:
+        if name(p) not in named:
+            out.append(p)
+            named.add(name(p))
+    if "setuptools" not in named:
+        out.append("setuptools<81")
+    return out
+
+
+def editable_extras(install_cmd: str) -> str:
+    """The extras of the dataset's install command ("pip install -e .[dev,tests]" -> "[dev,tests]"), else ""."""
+    m = re.search(r"-e\s+\.(\[[^\]]+\])", str(install_cmd or ""))
+    return m.group(1) if m else ""
+
+
 class UvToolchain:
     """venvs and installs through `uv` (it fetches the Python version itself); tests replace this with a stand-in."""
 
@@ -220,8 +244,9 @@ class UvToolchain:
         if r.returncode != 0:
             raise RuntimeError("installing the pinned requirements failed: " + r.stderr.decode("utf-8", "replace")[-600:])
 
-    def install_editable(self, py: Path, project: Path) -> None:
-        r = run(["uv", "pip", "install", "--python", str(py), "-q", "--no-deps", "-C", "editable_mode=compat", "-e", str(project)],
+    def install_editable(self, py: Path, project: Path, extras: str = "") -> None:
+        # extras ("[dev]"): the optional dependencies the dataset's install command names; --no-deps keeps the freeze's pins
+        r = run(["uv", "pip", "install", "--python", str(py), "-q", "--no-deps", "-C", "editable_mode=compat", "-e", f"{project}{extras}"],
                 check=False)
         if r.returncode != 0:
             raise RuntimeError("the editable install failed: " + r.stderr.decode("utf-8", "replace")[-600:])
@@ -260,7 +285,7 @@ def grade_python(task: dict) -> Path:
     py = TOOLCHAIN.venv(VENVS / f"grade-{task['series_name']}", series_of(task)["python"])
     marker = VENVS / f"grade-{task['series_name']}.ready"
     if not marker.exists():
-        TOOLCHAIN.install(py, clean_requirements(first_record(task)["requirements"]) + ["pytest"])
+        TOOLCHAIN.install(py, env_requirements(first_record(task)["requirements"]))
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text("", encoding="utf-8")
     return py
@@ -269,7 +294,7 @@ def grade_python(task: dict) -> Path:
 def setup_project(task: dict, ws: Path) -> None:
     """Once per workspace and arm: the arm's venv with the first issue's pinned requirements (the agents' `python`)."""
     py = arm_python(task, ws)
-    TOOLCHAIN.install(py, clean_requirements(first_record(task)["requirements"]) + ["pytest"])
+    TOOLCHAIN.install(py, env_requirements(first_record(task)["requirements"]))
 
 
 def record_history(r: dict, ws: Path) -> None:

@@ -21,6 +21,7 @@ import json
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -126,12 +127,20 @@ def stage1(iid: str) -> dict:
 
 
 def environment(r: dict, root: Path, venvs: Path) -> Path:
-    """The issue's own Python with its pinned requirements, the project installed editable -> the venv's python."""
+    """The issue's own Python as the dataset sets it up -- its system packages (pre_install apt lines, where apt is here),
+    pinned requirements plus its test packages (pip_packages), the project installed editable with its install command's
+    extras -> the venv's python. Before, only the freeze was installed, and some tests failed on the environment alone."""
     import swe_series_task as S
     cfg = r.get("install_config") or {}
+    apt = [str(x) for x in (cfg.get("pre_install") if cfg.get("pre_install") is not None else [])]
+    pkgs = sorted({p for line in apt for m in re.findall(r"apt-get install -y ((?:[\w.+-]+\s*)+)", line) for p in m.split()})
+    if pkgs and shutil.which("apt-get") and hasattr(os, "geteuid") and os.geteuid() == 0:
+        subprocess.run(["apt-get", "update", "-qq"], capture_output=True, timeout=300)
+        subprocess.run(["apt-get", "install", "-y", "-qq", *pkgs], capture_output=True, timeout=600)
     py = S.TOOLCHAIN.venv(venvs / r["instance_id"], str(cfg.get("python") or "3.11"))
-    S.TOOLCHAIN.install(py, S.clean_requirements(r.get("requirements")) + ["pytest"])
-    S.TOOLCHAIN.install_editable(py, root)
+    extra = [str(p) for p in (cfg.get("pip_packages") if cfg.get("pip_packages") is not None else [])]
+    S.TOOLCHAIN.install(py, S.env_requirements(r.get("requirements"), extra))
+    S.TOOLCHAIN.install_editable(py, root, S.editable_extras(cfg.get("install")))
     return py
 
 
