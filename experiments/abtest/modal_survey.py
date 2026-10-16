@@ -143,6 +143,7 @@ def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mod
     jobs = [{"iids": todo[i::workers], "run": run, "stage": stage, "writer_mode": writer_mode} for i in range(workers) if todo[i::workers]]
     for _ in fn.map(jobs):
         pass
+    volume.reload()                    # the workers' commits: without a reload this container still sees the volume as it was
     rows = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(parts.glob("*.json"))] if parts.exists() else []
     save.local(run, stage, rows)
     return rows
@@ -150,6 +151,7 @@ def survey_run(stage: int, n: int, seed: int, run: str, workers: int, writer_mod
 
 @app.function(image=build_image(), volumes={VOL: volume}, timeout=600)
 def gather(run: str, stage: int) -> list[dict]:
+    volume.reload()
     parts = Path(VOL) / "survey" / run / f"stage{stage}.parts"
     return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(parts.glob("*.json"))] if parts.exists() else []
 
