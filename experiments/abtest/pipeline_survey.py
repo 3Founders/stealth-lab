@@ -396,6 +396,13 @@ def stage3(iid: str, work: Path, agents: tuple[str, ...] | None = None, model: s
     return out
 
 
+def merge_answers(priors: dict[str, dict]) -> dict:
+    """Several runs' saved stage 3 answers for ONE issue as one record, so stage 4 cross-tests them against each other:
+    agent "claude" of run "survey-ab-r1" becomes "claude@survey-ab-r1" (R1 against R2: one driver, two independent tries)."""
+    agents = {f"{a}@{run}": x for run, p in priors.items() for a, x in (p.get("agents") or {}).items()}
+    return {**next(iter(priors.values())), "agents": agents}
+
+
 def stage4(iid: str, work: Path, prior: dict) -> dict:
     """Re-judging a finished stage 3 issue's SAVED answers with no model call: the environment rebuilt, each answer's
     patch applied, the project's existing tests (existing_new_failures) and the hidden tests run -- for the runs that

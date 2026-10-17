@@ -186,7 +186,8 @@ def signals(rows3: list[dict], rows4: list[dict], reviews: dict[str, dict] | Non
                         "Ro": bool(ro and ro.get("verdict") == "fixes"), "Ro_no": bool(ro and ro.get("verdict") == "does_not_fix"),
                         # C: passes the other answer's validated tests (stage 4 cross_tests); not judged = false
                         "C": bool(((s4.get(r["instance_id"], {}).get("cross") or {}).get(a) or {}).get("passes")),
-                        "C_known": a in (s4.get(r["instance_id"], {}).get("cross") or {})})
+                        # known: stage 4 cross-tested this issue (an answer it could not judge is left out of "cross")
+                        "C_known": "cross" in s4.get(r["instance_id"], {}) and a in (s4[r["instance_id"]].get("agents") or {})})
     return out
 
 
@@ -211,19 +212,104 @@ def table(sig: list[dict], label: str) -> str:
     return "\n".join(lines)
 
 
+# each rule in the product's form (packaging/npm lib/accept.mjs) and the strong reviewer it needs (--review-model):
+# Rs and Ro are both the product's strong reviewer, on Sonnet or on Opus (docs/acceptance_rules_preregistered_2026-10-16.md)
+PRODUCT = {"1": ("T", ""), "2": ("E S", ""), "3": ("E S T|R", ""), "4": ("E S R", ""), "5": ("E S A", ""), "6": ("E S A|R", ""),
+           "7": ("E S F X !Rno", ""), "8": ("E S F X T* !Rno", ""), "9": ("E S T* A|R", ""),
+           "10": ("E S F X !Rs_no", STRONG), "11": ("E S Rs", STRONG), "12": ("E S Rs", OPUS), "13": ("E S A Rs", OPUS),
+           "14": ("E S C", ""), "15": ("E S C Rs", OPUS)}
+USES_T = {"1", "3", "8", "9"}
+MAX_WRONG_SHARE = 0.10        # wrong deliveries at most 10% of ALL tasks (the user's goal: within 1-2 solved tasks of Opus)
+FALLBACK = "15"
+
+
+def pair_rows(paths: list[str]) -> list[dict]:
+    """Several runs' stage 3 files (<run>-stage3.jsonl) as one row per issue, agent "a" of run "r" named "a@r" -- the same
+    names stage 4 gives a paired --src-run r1+r2 (pipeline_survey.merge_answers)."""
+    by: dict[str, dict] = {}
+    for p in paths:
+        run = Path(p).name.removesuffix(".jsonl").removesuffix("-stage3")
+        for r in load([p]):
+            row = by.setdefault(r["instance_id"], {**r, "agents": {}})
+            row["agents"].update({f"{a}@{run}": x for a, x in (r.get("agents") or {}).items()})
+    return list(by.values())
+
+
+def needs(num: str) -> set[str]:
+    """The signals a rule reads that come from a reviewer or the cross-tests (each must be known before it is scored)."""
+    rule, model = PRODUCT[num]
+    used = {x.lstrip("!") for g in rule.split() for x in g.split("|")}
+    out = {"R"} if used & {"R", "Rno"} else set()
+    if used & {"Rs", "Rs_no"}:
+        out.add("Ro" if model == OPUS else "Rs")
+    return out | ({"C"} if "C" in used else set())
+
+
+def choose(sig: list[dict], n_tasks: int, have_t: bool, missing: dict[str, int] | None = None) -> tuple[str | None, list[str]]:
+    """The pre-registered choice: the largest estimated saving among the rules whose wrong deliveries are at most
+    MAX_WRONG_SHARE of all tasks; ties -> the simpler rule (fewer signals); none qualifies -> rule 15. No choice while a
+    signal some rule needs is missing (a rule never qualifies on a signal that was not measured)."""
+    sig = [s for s in sig if not s.get("uncertain")]
+    gaps = {k: v for k, v in (missing or {}).items() if v}
+    lines, ok = [], []
+    for name, rule in RULES.items():
+        num = name.split()[0]
+        if num in USES_T and not have_t:
+            lines.append(f"  rule {num}: not scorable (no written tests in these runs)")
+            continue
+        if needs(num) & set(gaps):
+            lines.append(f"  rule {num}: not scored ({', '.join(f'{k} missing for {gaps[k]}' for k in sorted(needs(num) & set(gaps)))})")
+            continue
+        acc = [s for s in sig if rule(s)]
+        wrong = sum(not s["solved"] for s in acc)
+        cost = sum(s["cost"] for s in sig) + OPUS_USD * (n_tasks - len(acc))
+        saving = 1 - cost / (OPUS_USD * n_tasks)
+        fits = wrong <= MAX_WRONG_SHARE * n_tasks
+        lines.append(f"  rule {num}: {wrong} wrong of {n_tasks} tasks ({100 * wrong / n_tasks:.0f}%), "
+                     f"{100 * saving:.0f}% saved -> {'qualifies' if fits else 'does not qualify'}")
+        if fits:
+            ok.append((-saving, len(PRODUCT[num][0].split()), int(num)))
+    if gaps:
+        lines.append("NOT DECIDED: a signal is missing (" + ", ".join(f"{k} {v}" for k, v in gaps.items())
+                     + "); run with --review, and with the paired stage 4 for C")
+        return None, lines
+    pick = str(min(ok)[2]) if ok else FALLBACK
+    lines.append(f"chosen: rule {pick}" + ("" if ok else f" (none qualifies: the pre-registered fallback)"))
+    rule, model = PRODUCT[pick]
+    lines.append(f'final run: --accept-rule "{rule}"' + (f" --review-model {model}" if model else ""))
+    return pick, lines
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage3", nargs="+", required=True)
     ap.add_argument("--stage4", nargs="*", default=[])
     ap.add_argument("--review", action="store_true")
     ap.add_argument("--label", default="answers")
+    ap.add_argument("--pair", action="store_true", help="the --stage3 files are runs to pair per issue (agents named agent@run)")
+    ap.add_argument("--score", default="", help="score only this agent's answers (e.g. claude@survey-ab-r1); the others are "
+                                                "candidates for A and C only, and are not reviewed")
+    ap.add_argument("--choose", action="store_true", help="apply the pre-registered choice and print the final run's rule")
     a = ap.parse_args(argv)
-    rows3, rows4 = load(a.stage3), load(a.stage4)
-    sig = signals(rows3, rows4, None)
+    rows3, rows4 = (pair_rows(a.stage3) if a.pair else load(a.stage3)), load(a.stage4)
+    pick = (lambda sig: [s for s in sig if s["agent"] == a.score]) if a.score else (lambda sig: sig)
+    sig = pick(signals(rows3, rows4, None))
     reviews = run_reviews(sig) if a.review else read_cache(CACHE)
     strong = run_reviews(sig, STRONG, CACHE_STRONG) if a.review else read_cache(CACHE_STRONG)
     opus = run_reviews(sig, OPUS, CACHE_OPUS) if a.review else read_cache(CACHE_OPUS)
-    print(table(signals(rows3, rows4, reviews, strong, opus), a.label))
+    sig = pick(signals(rows3, rows4, reviews, strong, opus))
+    print(table(sig, a.label))
+    missing = {k: sum(not s[f"{k}_known"] for s in sig if s["E"] and s["S"]) for k in ("R", "Rs", "C")}
+    missing["Ro"] = sum(1 for s in sig if s["E"] and s["S"] and s["key"] not in opus)
+    if any(missing.values()):
+        print("signal not known for answers with E and S: " + ", ".join(f"{k} {v}" for k, v in missing.items() if v))
+    if a.choose:
+        # ALL tasks: every issue the hidden tests can grade, also those where the scored answer never reached its model
+        gold_out = {r["instance_id"] for r in rows4 if r.get("gold_solved") is False}
+        n_tasks = len({r["instance_id"] for r in rows3 if r.get("agents") and r["instance_id"] not in gold_out})
+        have_t = any(r.get("written") for r in rows3)
+        print(f"tasks: {n_tasks}; at most {int(MAX_WRONG_SHARE * n_tasks)} wrong deliveries qualify")
+        print("\n".join(choose(sig, n_tasks, have_t, missing)[1]))
     return 0
 
 

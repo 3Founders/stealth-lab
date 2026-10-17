@@ -130,17 +130,21 @@ def stage4_batch(job: dict) -> list[dict]:
     import shutil, tempfile
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")
     volume.reload()
-    src = Path(VOL) / "survey" / job["src_run"] / "stage3.parts"
+    # --src-run a+b: the runs' answers paired per issue (pipeline_survey.merge_answers), so they are cross-tested
+    runs = [r for r in job["src_run"].split("+") if r]
     import pipeline_survey as P
     out = []
     for iid in job["iids"]:
-        f = src / f"{iid}.json"
-        if not f.exists():
-            out.append({"instance_id": iid, "error": f"no saved answers in {job['src_run']}"})
+        files = {r: Path(VOL) / "survey" / r / "stage3.parts" / f"{iid}.json" for r in runs}
+        missing = [r for r, f in files.items() if not f.exists()]
+        if missing:
+            out.append({"instance_id": iid, "error": f"no saved answers in {', '.join(missing)}"})
             continue
+        priors = {r: json.loads(f.read_text(encoding="utf-8")) for r, f in files.items()}
+        prior = priors[runs[0]] if len(runs) == 1 else P.merge_answers(priors)
         work = Path(tempfile.mkdtemp())
         try:
-            out.append(_keep(job, P.stage4(iid, work, json.loads(f.read_text(encoding="utf-8")))))
+            out.append(_keep(job, P.stage4(iid, work, prior)))
         except Exception as e:  # noqa: BLE001
             out.append({"instance_id": iid, "error": f"{type(e).__name__}: {str(e)[:200]}"})
         finally:
