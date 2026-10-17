@@ -163,14 +163,18 @@ function env(home) {
   return { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -c \"import pkg.expressions, pkg.parser\"", STEALTHLAB_DISPATCH_TESTFIRST: "off",
            STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" };
 }
+// the lookup's judge says the past fix matches this task (a plan from the library needs that, lib/dag_run.mjs planFromLibrary)
+const judged = (repo) => ({ library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation: "matches" })) });
 const PROMPT = "Support ARRAY_SLICE like FILTER: add the expression in pkg/expressions.py and parse it in pkg/parser.py";
 
 test("a task in parts: planned from the similar past fix, part 2 starts from part 1, all parts checked together, applied", async () => {
   const { repo, p1, p2 } = sliceRepo();
   const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
-  assert.ok(planFromLibrary({ root: repo, reply: {}, loc: { files: ["pkg/parser.py"] } }), "the FILTER fix plans the task");
-  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+  const matches = { library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation: "matches" })) };
+  assert.equal(planFromLibrary({ root: repo, reply: {}, loc: { files: ["pkg/parser.py"] } }), null, "no judged match: the task goes whole");
+  assert.ok(planFromLibrary({ root: repo, reply: matches, loc: { files: ["pkg/parser.py"] } }), "the FILTER fix, judged a match, plans the task");
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN, ...matches }, root: repo, mine: "claude-opus-5-5|claude-code",
                              env: env(home), runtime: rt });
   assert.equal(d.handled, true, JSON.stringify(d.tried));
   assert.equal(d.dag.nodes.length, 2);
@@ -191,7 +195,7 @@ test("a part the cheap models cannot do: the done parts are applied, the session
   const { repo, p1, p2 } = sliceRepo();
   const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "failed" });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
-  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN, ...judged(repo) }, root: repo, mine: "claude-opus-5-5|claude-code",
                              env: { ...env(home), STEALTHLAB_DISPATCH_TIMEOUT_S: "10" }, runtime: rt });
   assert.equal(d.handled, false);
   assert.deepEqual(d.partial.nodes.map((n) => n.status), ["done", "ready"]);
@@ -244,7 +248,7 @@ test("two fixes of the same kind, described: one general Goal, one Way with {slo
   assert.deepEqual(lib.entries.map((e) => e.procs[0].extra.find((f) => f.startsWith("slots="))).sort(), ["slots=function:ARRAY_FILTER", "slots=function:ARRAY_SLICE"]);
   assert.deepEqual(readStepExtras(lib.ways[0].steps[1].extra).needs, ["ArrayFilter"], "the steps keep where they are and what they need");
   // the plan words each part with the Way's step and names the parameters
-  const plan = planFromLibrary({ root: repo, reply: {}, loc: { files: ["pkg/parser.py"] } });
+  const plan = planFromLibrary({ root: repo, reply: { library_matches: lib.entries.map((e) => ({ id: e.id, relation: "matches" })) }, loc: { files: ["pkg/parser.py"] } });
   const t = nodeTask({ task: "support ARRAY_SORT", node: plan.dag.nodes[1], total: 3, entry: plan.entry, diff: plan.diff, slots: plan.slots });
   assert.match(t, /This part: Parse \{function\} into its expression -- in pkg\/parser\.py/);
   assert.match(t, /\{function\} was ARRAY_(FILTER|SLICE); find their values for this task/);
@@ -261,7 +265,7 @@ test("a part for the session, then cheap parts after it: handed over, then `dag 
   for (let i = 0; i < 3; i++) recordArea(repo, "pkg/expressions.py", false);       // cheap models keep losing there: yours
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
   const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
-  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN, ...judged(repo) }, root: repo, mine: "claude-opus-5-5|claude-code",
                              env: { ...env(home), STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt });
   assert.equal(d.handled, false);
   assert.deepEqual(d.partial.nodes.map((n) => [n.id, n.status]), [["N-1", "ready"], ["N-2", "waiting"]]);
@@ -285,7 +289,7 @@ test("dag continue refuses to go on while the session's part does not pass", asy
   for (let i = 0; i < 3; i++) recordArea(repo, "pkg/expressions.py", false);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
   const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
-  await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+  await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN, ...judged(repo) }, root: repo, mine: "claude-opus-5-5|claude-code",
                    env: { ...env(home), STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt });
   fs.writeFileSync(path.join(repo, "pkg", "expressions.py"), "class Expression(:\n");      // a broken part
   const out = await continueDag({ root: repo, env: env(home), rt, runShell: runShellCapture, undo: { enabled: false } });
@@ -297,7 +301,7 @@ test("dag continue refuses to go on while the session's part does not pass", asy
 test("each part's outcome counts for its model on the task's route (routing.md OBS), as a whole-task try does", async () => {
   const { repo, p1, p2 } = sliceRepo();
   const rt = stubRt({ p1, p2 }, { p1: "verified", p2: "verified" });
-  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+  const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN, ...judged(repo) }, root: repo, mine: "claude-opus-5-5|claude-code",
                              env: env(fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"))), runtime: rt });
   assert.equal(d.handled, true);
   const routing = fs.readFileSync(path.join(repo, ".stealth", "routing.md"), "utf8");
@@ -338,11 +342,27 @@ test("Claude Code's own messages in the prompt stream are not tasks: no lookup, 
   assert.equal(shouldLookUp("fix the <task-notification> handling in the parser", policy), true, "a real prompt that mentions the tag");
 });
 
-test("a past fix plans a task only when it changed the code the task is located in, whatever the lookup calls it", () => {
+test("a past fix plans a task only when the judge says it matches AND it changed the code the task is located in", () => {
   const { repo } = sliceRepo();
-  const reply = { library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation: "related" })) };
-  assert.equal(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/tsql.py", "pkg/other.py"] } }), null, "located elsewhere: the task goes whole");
-  assert.ok(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/parser.py"] } }), "located in a file the past fix changed");
+  const as = (relation) => ({ library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation })) });
+  assert.equal(planFromLibrary({ root: repo, reply: as("related"), loc: { files: ["pkg/parser.py"] } }), null, "only related: the task goes whole");
+  assert.equal(planFromLibrary({ root: repo, reply: as("matches"), loc: { files: ["pkg/tsql.py", "pkg/other.py"] } }), null, "located elsewhere: whole");
+  assert.ok(planFromLibrary({ root: repo, reply: as("matches"), loc: { files: ["pkg/parser.py"] } }), "a match, located in a file the past fix changed");
+});
+
+test("this session's own fix never plans its follow-up: entries recorded after the session started are skipped", async () => {
+  const { sessionStartedAt } = await import("../lib/dag_run.mjs");
+  const { repo } = sliceRepo();
+  const reply = { library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation: "matches" })) };
+  const latest = loadLibrary(repo).entries.map((e) => String(e.verified_at || "")).sort().pop();
+  const t = path.join(os.tmpdir(), `dag-t-${process.pid}.jsonl`);
+  const before = new Date(Date.parse(latest) - 60000).toISOString();
+  fs.writeFileSync(t, JSON.stringify({ type: "user", timestamp: before, message: { content: "x" } }) + "\n");
+  assert.equal(sessionStartedAt(t), before);
+  assert.equal(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/parser.py"] }, since: before }), null, "recorded in this session: not a plan");
+  const after = new Date(Date.parse(latest) + 60000).toISOString();
+  assert.ok(planFromLibrary({ root: repo, reply, loc: { files: ["pkg/parser.py"] }, since: after }), "recorded before the session: a plan");
+  assert.equal(sessionStartedAt(path.join(os.tmpdir(), "no-such-transcript.jsonl")), null);
 });
 
 import { planDag, readPlan } from "../lib/dag_run.mjs";

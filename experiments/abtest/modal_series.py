@@ -352,6 +352,12 @@ class Container:
         for line in self.provider_lines:                # in the launcher's log and in providers.txt next to the results
             print(line, flush=True)
         (self.out / "providers.txt").write_text("\n".join(self.provider_lines) + "\n", encoding="utf-8")
+        # arm C without a judge or the codebook's embeddings cannot use its library: C would equal C0 by construction, so
+        # the run would measure nothing about .stealth -- refused, not run with a warning
+        bad = [l for l in self.provider_lines if l.startswith("WARNING:")]
+        if bad and any(a in ("C", "C0") for a in self.spec.arms):
+            raise RuntimeError("the test server is not set up for arm C: " + " | ".join(bad) +
+                               " -- add the keys to the Modal secret stealthlab-keys (modal_series.py secrets --keys)")
         self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN,
                                                                            # the server refuses to start without a static MCP token (locally it is in backend/.env)
                                                                            "STEALTHLAB_MCP_TOKEN": secrets.token_urlsafe(32)},

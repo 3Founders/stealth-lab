@@ -20,8 +20,10 @@ import modal_series as ms  # noqa: E402
 import runner  # noqa: E402
 
 TOKEN = "TOKEN-VALUE-THAT-MUST-NEVER-BE-PRINTED"
-ENV_SUB = {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "ANTHROPIC_API_KEY": "stale-key", "PATH": "p"}
-ENV_API = {"ANTHROPIC_API_KEY": "api-key-value", "CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "PATH": "p"}
+# the keys stealthlab-keys holds for arm C's server: a judge (JEV) and the codebook's embeddings (OpenRouter)
+SERVER_KEYS = {"JEV_BASE_URL": "https://jev.example", "JEV_API_KEY": "jev-key", "OPENROUTER_API_KEY": "or-key"}
+ENV_SUB = {"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "ANTHROPIC_API_KEY": "stale-key", "PATH": "p", **SERVER_KEYS}
+ENV_API = {"ANTHROPIC_API_KEY": "api-key-value", "CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "PATH": "p", **SERVER_KEYS}
 
 
 @pytest.fixture()
@@ -652,3 +654,8 @@ def test_the_provider_report_says_which_judge_and_embeddings_the_server_gets():
     assert "semantic judge gemini" in lines[0] and any("JEV is not configured" in l for l in lines)
     lines = ms.provider_report({})
     assert any(l.startswith("WARNING: no semantic judge") for l in lines) and any("routing codes are refused" in l for l in lines)
+
+
+def test_arm_c_is_refused_when_its_server_has_no_judge_or_no_embeddings(tmp_path, fake_series):
+    with pytest.raises(RuntimeError, match="not set up for arm C"):
+        container(tmp_path / "nokeys", environ={"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "PATH": "p"}).run()
