@@ -95,3 +95,14 @@ The 10%-of-accepted criterion above (the one these rules were first judged by) i
 A cheap agent must not iterate against our written tests: refining code until generated tests pass raises false
 accepts to ~60% (Ahmed et al., FSE 2026). In the chosen rule's product form, the cheap agent's own check is the
 project's check (E); our written tests and the reviewer judge the finished answer afterwards.
+
+## Deviations, recorded 2026-10-17 before any reviewer or cross-test result on the A/B answers
+- One driver only: the survey launcher cut `SURVEY_AGENTS=claude,stealth` to `claude` (fixed in 940b616), so R1 and R2
+  have no answers from our own loop. Step 1 (driver) is decided by the tie rule: claude. A and C use R1's and R2's
+  answers on the same issue as the two independent answers (same model, with and without the pack).
+- Step 2 (context pack): R1 solved 14 of 25, R2 12 of 25 -> off.
+- Step 3 (rule) is scored on R1's answers, not R2's: the pack is off in the final run, which is R1's setting. R2's
+  answer is the other candidate for A and C. Rules 1, 3, 8 and 9 read our written tests, which these runs do not have
+  (no test writer): they are not scorable and not chosen.
+- Step 4 (time budget) is replaced by the owner's decision: arm C's limits only catch hangs and service errors
+  (experiments/abtest/runner.py LIMITS_S = 3600 s for the cheap tries, the middle model and each run).
