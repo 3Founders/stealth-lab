@@ -36,14 +36,37 @@ function readSolution(root, entry) {
 }
 
 // -> {entry, diff, steps, dag} | null
-export function planFromLibrary({ root, reply, loc }) {
+// When this session started: the first timestamp in its transcript (ISO), or null.
+export function sessionStartedAt(transcriptPath) {
+  if (!transcriptPath) return null;
+  try {
+    const fd = fs.openSync(transcriptPath, "r");
+    const buf = Buffer.alloc(65536);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    for (const line of buf.toString("utf8", 0, n).split(/\r?\n/)) {
+      try { const t = JSON.parse(line)?.timestamp; if (t && !Number.isNaN(Date.parse(t))) return new Date(t).toISOString(); } catch { /* next line */ }
+    }
+  } catch { /* no transcript */ }
+  return null;
+}
+
+// since: the session's start (sessionStartedAt) -- an entry recorded after it is this session's own work
+export function planFromLibrary({ root, reply, loc, since = null }) {
   let lib;
   try { lib = loadLibrary(root); } catch { return null; }
-  const matched = new Set((reply?.library_matches || []).filter((m) => m?.id && m.relation !== "unrelated").map((m) => m.id));
+  // only a past fix the lookup's judge says MATCHES this task: touching the same file is not the same task (in a real
+  // repository most tasks touch the same few files; an unrelated task in parser.py was planned as the parts of an old
+  // parser.py fix). No judgement (no server, no judge): the task goes whole.
+  const matched = new Set((reply?.library_matches || []).filter((m) => m?.id && m.relation === "matches").map((m) => m.id));
   const located = new Set(loc?.files || []);
   let best = null;
   for (const e of lib.entries || []) {
     if (e.outcome === "fail") continue;
+    if (!matched.has(e.id)) continue;
+    // this session's own fix of this very task is not a plan for its follow-up (sqlglot-4051: turn 2 was split from the
+    // entry turn 1 had recorded 12 s earlier, ct-series-v4)
+    if (since && String(e.verified_at || "") >= since) continue;
     const diff = readSolution(root, e);
     if (!diff) continue;
     const steps = stepsFromDiff(diff);
@@ -55,7 +78,7 @@ export function planFromLibrary({ root, reply, loc }) {
     const overlapTop = steps.filter((s) => s.at.some((f) => top.has(f))).length;
     if (overlapTop < 1) continue;
     const overlap = steps.filter((s) => s.at.some((f) => located.has(f))).length;
-    const score = overlap + (matched.has(e.id) ? 2 : 0);
+    const score = overlap;
     if (!best || score > best.score || (score === best.score && String(e.verified_at || "") > String(best.entry.verified_at || ""))) {
       best = { entry: e, diff, steps, score };
     }
@@ -209,7 +232,7 @@ export async function runDag(ctx) {
   const { rt, root, payload, rawPayload, reply, loc, where, rungs, strongSet, policy, interCheck, fullCheck, specDone, env, log,
           runShell, undo, instanceKey, obs = () => {}, goalId = null } = ctx;
   if (!dagEnabled(env)) return null;
-  const plan = planFromLibrary({ root, reply, loc }) || planFromParts({ parts: ctx.parts, root, env });
+  const plan = planFromLibrary({ root, reply, loc, since: sessionStartedAt(payload?.transcript_path) }) || planFromParts({ parts: ctx.parts, root, env });
   if (!plan || plan.dag.nodes.length < 2) return null;
   const repo = await repoTopLevel(payload.cwd || root, env);
   const nodes = plan.dag.nodes;

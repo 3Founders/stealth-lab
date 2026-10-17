@@ -368,8 +368,8 @@ export class ExecRuntime {
       // a bridged run: the bridge's count of what the provider billed is the truth, also for a run that was killed before
       // Claude Code printed its summary (a timed-out or cancelled try cost money too)
       if (a.executor === "claude" && profile) {
-        const { bridgeUsage } = await import("../anthropic_bridge.mjs");
-        const u = bridgeUsage(runTag);
+        const { takeBridgeUsage } = await import("../anthropic_bridge.mjs");
+        const u = takeBridgeUsage(runTag);
         if (u && u.calls) a.tokens = { in: u.in, out: u.out };
       }
       if (profile && (profile.input_per_mtok || profile.output_per_mtok) && a.tokens?.in !== null && a.tokens?.in !== undefined && a.executor === "claude") {

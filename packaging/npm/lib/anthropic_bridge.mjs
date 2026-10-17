@@ -25,12 +25,21 @@ export function bridgeUsage(tag) {
   return u ? { ...u } : null;
 }
 
+// the run's count, removed from the bridge (the runtime reads it once, when the attempt ends: a long-lived process
+// such as the MCP exec server must not keep one entry per run forever)
+export function takeBridgeUsage(tag) {
+  const u = bridgeUsage(tag);
+  usage.delete(String(tag));
+  return u;
+}
+
 // a provider error that a second sample usually does not repeat: the model's tool call came out malformed or cut
 // (General Compute on gpt-oss-120b: "Model started a function call but did not complete it", "Failed to parse tool
 // call"; gemma: "max_tokens or model output limit was reached"), or the provider is briefly unavailable. Claude Code
-// does not retry a 400, so one such reply ended the whole try (every gpt-oss try in ct-series-v4).
+// does not retry a 400, so one such reply ended the whole try (every gpt-oss try in ct-series-v4). The bridge retries
+// these itself, a bounded number of times, and then passes the provider's own error on unchanged.
 export const TRANSIENT_400 = /provider_error|function call|tool call|Invalid \\escape|output limit/i;
-const RETRIES = 2;
+const RETRIES = 3;
 
 const textOf = (c) => (typeof c === "string" ? c
   : Array.isArray(c) ? c.map((b) => (b?.type === "text" ? b.text : b?.type === "image" ? "[image omitted]" : "")).filter(Boolean).join("\n") : "");
@@ -145,11 +154,8 @@ async function handle(req, res, state, fetchImpl) {
       await new Promise((r) => setTimeout(r, state.retryMs ?? 1000 * (i + 1)));
     }
     if (!up.ok) {
-      // a transient error that outlived the retries goes back as "overloaded" (529), which Claude Code retries itself;
-      // any other 400 is the request's own fault and stays fatal
-      const transient400 = up.status === 400 && TRANSIENT_400.test(text);
-      const kind = up.status === 429 ? "rate_limit_error" : up.status >= 500 || transient400 ? "overloaded_error" : "invalid_request_error";
-      return send(up.status === 429 ? 429 : up.status >= 500 || transient400 ? 529 : 400, { type: "error", error: { type: kind, message: `upstream ${up.status}: ${text.slice(0, 300)}` } });
+      const kind = up.status === 429 ? "rate_limit_error" : up.status >= 500 ? "api_error" : "invalid_request_error";
+      return send(up.status === 429 ? 429 : up.status >= 500 ? 529 : 400, { type: "error", error: { type: kind, message: `upstream ${up.status}: ${text.slice(0, 300)}` } });
     }
     const parsedUp = JSON.parse(text);
     if (m[2]) {

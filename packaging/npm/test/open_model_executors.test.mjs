@@ -123,7 +123,7 @@ test("bridge: Claude Code's request becomes an OpenAI one and the reply comes ba
   closeBridge();
 });
 
-test("bridge: a malformed tool call from the provider is retried; one that keeps failing goes back as 529 (Claude Code retries it); a real 400 stays 400", async () => {
+test("bridge: a malformed tool call from the provider is retried a bounded number of times; a real 400 is not retried", async () => {
   const { bridgeFor, closeBridge } = await import("../lib/anthropic_bridge.mjs");
   const p = normaliseProfile("gpt-oss-120b", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1" });
   const GC400 = '{"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error"}}';
@@ -138,9 +138,11 @@ test("bridge: a malformed tool call from the provider is retried; one that keeps
   let r = await call();
   assert.equal(r.status, 200, "the second sample is used");
   assert.equal(calls, 2);
-  replies = [[400, GC400], [400, GC400], [400, GC400]];
+  replies = [[400, GC400], [400, GC400], [400, GC400], [400, GC400]];
+  calls = 0;
   r = await call();
-  assert.equal(r.status, 529, "still failing after the retries: overloaded, which Claude Code retries");
+  assert.equal(r.status, 400, "after the retries the provider's own error goes back unchanged");
+  assert.equal(calls, 4, "one call and three retries, no more");
   replies = [[400, '{"error":{"message":"unknown field foo","type":"invalid_request_error"}}']];
   calls = 0;
   r = await call();
@@ -161,6 +163,9 @@ test("bridge: tokens are counted per run, so a run killed before Claude Code's s
   }
   assert.deepEqual(bridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
   assert.equal(bridgeUsage("r-other"), null);
+  const { takeBridgeUsage } = await import("../lib/anthropic_bridge.mjs");
+  assert.deepEqual(takeBridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
+  assert.equal(bridgeUsage("r-2.a1"), null, "read once, then removed");
   closeBridge();
 });
 
