@@ -1030,6 +1030,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     if (result.usage_limited) {            // the executor's account or the provider hit a limit: no verdict on the model
       tried.push({ unit: rung.unit, state: "usage_limited", run_id: result.run_id, cost_usd: result.cost_usd });
+      log(`dispatch ${rung.unit}: no pass (the executor or provider hit a usage limit: no verdict on the model)`);
       return false;
     }
     // the executor failed before changing anything (its endpoint kept refusing, say): the model was not reached, so this
@@ -1042,6 +1043,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (result.state === "cancelled") {    // stopped from outside: no verdict on the model either
       // by its own model's cap (slower than its wins here usually are): not a failure of the model either
       tried.push({ unit: rung.unit, state: capped ? `capped at ${Math.round(capS * 10) / 10} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
+      log(`dispatch ${rung.unit}: no pass (${tried[tried.length - 1].state})`);
       return false;
     }
     if (ok && evidence) {
@@ -1106,7 +1108,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       specAbort.abort();
       const runMd = writeDagRun(root, { task: rawPayload.prompt, nodes: dagRes.handled ? dagRes.dag.nodes : dagRes.partial.nodes,
         entry: dagRes.handled ? dagRes.dag.entry : dagRes.partial.entry, interCheck, fullCheck });
-      if (!dagRes.handled) return { ...dagRes, spec, loc, runMd, remaining: plan.ladder || [] };
+      if (!dagRes.handled) {
+        log("dispatch: the parts were not all done by cheap models; the session's model takes over");
+        return { ...dagRes, spec, loc, runMd, remaining: plan.ladder || [] };
+      }
       let entry = null, diff = "";
       try {
         const { promptTitle } = await import("./capture_hook.mjs");

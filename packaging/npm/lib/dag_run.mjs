@@ -148,6 +148,8 @@ async function runNode({ rt, repo, task, check, scope, rungs, extraPatches, limi
     const files = done.res?.diff?.files || [];
     const ok = done.res?.state === "verified" && files.length > 0 && done.res?.diff?.patch_path;
     tried.push({ unit: done.r.unit, state: done.err ? "error" : done.res?.state, run_id: done.res?.run_id ?? null, cost_usd: done.res?.cost_usd ?? null });
+    // each part's try has its own line, as a whole-task try does (a part's flash try had none, ct-smoke-final6)
+    if (!ok) log(`dag ${done.r.unit}: no pass (${done.err ? `error: ${String(done.err.message).slice(0, 120)}` : done.res?.state})`);
     if (ok) {
       let patch = "";
       try { patch = fs.readFileSync(done.res.diff.patch_path, "utf8"); } catch { /* unreadable: not a win */ }

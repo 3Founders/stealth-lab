@@ -129,6 +129,21 @@ test("a middle model is not cut by the max-rungs limit: three cheap models befor
   assert.ok(logs.some((l) => /no cheap answer accepted \(4 tried\); the session's model takes over/.test(l)), logs.join("\n"));
 });
 
+test("a usage-limited or cancelled try has its own line too (minimax had none, ct-smoke-final6)", async () => {
+  const { env, repo } = setup();
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["cancelled", ""] });
+  const result = rt.runResult.bind(rt);
+  rt.runResult = async (id) => {
+    const r = await result(id);
+    return rt.calls[Number(id.slice(2)) - 1].model === "minimax-m2-7" ? { ...r, usage_limited: true } : r;
+  };
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
+    log: (m) => logs.push(m) });
+  assert.ok(logs.some((l) => /minimax-m2-7\|stealth: no pass \(the executor or provider hit a usage limit/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /gpt-oss-120b\|stealth: no pass \(cancelled\)/.test(l)), logs.join("\n"));
+});
+
 test("the executor's max_concurrent_runs: a rung waits for a free slot instead of failing at start", async () => {
   const { env, repo } = setup();
   fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
