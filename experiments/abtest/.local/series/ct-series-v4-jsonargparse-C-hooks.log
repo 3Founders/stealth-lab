@@ -1,0 +1,12 @@
+2026-10-17T16:05:33.094Z prompt locate: narrowed to jsonargparse/_formatters.py, jsonargparse/_core.py, jsonargparse/_cli.py (_format_usage)
+2026-10-17T16:05:33.101Z prompt dispatch: located jsonargparse/_formatters.py:88-98, jsonargparse/_formatters.py:6-56, jsonargparse/_core.py:17-79, jsonargparse/_core.py:1245-1247 (tests: jsonargparse_tests/test_formatters.py)
+2026-10-17T16:05:41.520Z prompt dispatch: 5 test(s) already fail on the unchanged code: answers are judged on new failures only
+2026-10-17T16:11:51.874Z prompt dispatch gemma-4-31b-it|stealth: no pass (failed)
+2026-10-17T16:11:57.434Z prompt gpt-oss-120b|claude: the executor failed (exit 1): API Error: 400 upstream 400: {"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error","param":null}}
+2026-10-17T16:15:00.889Z prompt dispatch glm-5.3-flash|claude: no pass (failed)
+2026-10-17T16:25:34.638Z prompt dispatch minimax-m2-7|stealth: no pass (timed_out)
+2026-10-17T16:25:34.638Z prompt dispatch: the cheap models did not do it; glm-5.3 (tier 2) tries, 600 s
+2026-10-17T16:32:23.609Z prompt dispatch glm-5.3|claude: no pass (failed)
+2026-10-17T16:32:23.609Z prompt dispatch: no cheap answer accepted (5 tried); the session's model takes over
+2026-10-17T16:33:21.811Z capture-stop reported=true queued=false accepted=false
+2026-10-17T16:33:29.607Z prompt dispatch: not dispatched (kind=chat)
