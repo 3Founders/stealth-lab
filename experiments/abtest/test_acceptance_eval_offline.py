@@ -64,3 +64,16 @@ def test_choose_decides_nothing_while_a_signal_is_missing():
     assert pick is None and lines[-1].startswith("NOT DECIDED")
     assert any("rule 12: not scored (Ro missing for 1)" in l for l in lines)
     assert any("rule 1: not scorable" in l for l in lines)
+
+
+def test_series_answers_become_stage3_parts_one_agent_per_try(tmp_path):
+    import series_to_parts as SP
+    rows = [{"task_id": "i1", "arm": "C", "attempts": [
+        {"model": "glm-5.3-flash", "state": "verified", "role": "attempt", "patch": SRC},
+        {"model": "gemma", "state": "failed", "role": "attempt", "patch": None},
+        {"model": "glm-5.3-flash", "state": "failed", "role": "attempt", "patch": SRC}]},
+            {"task_id": "i1", "arm": "C0", "attempts": [{"model": "minimax", "state": "timed_out", "role": "attempt", "patch": SRC}]}]
+    f = write(tmp_path, "r.jsonl", rows)
+    got = SP.parts([f])
+    assert set(got["i1"]["agents"]) == {"C.glm-5.3-flash.1", "C.glm-5.3-flash.3", "C0.minimax.1"}, "no patch, no answer"
+    assert SP.main([str(tmp_path / "out"), f]) == 0 and (tmp_path / "out" / "i1.json").exists()
