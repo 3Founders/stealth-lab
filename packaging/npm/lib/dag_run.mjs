@@ -162,7 +162,7 @@ async function runNode({ rt, repo, task, check, scope, rungs, extraPatches, limi
     live.set(r.unit, { run_id: null, promise: p });
   };
   let timer;
-  const deadline = new Promise((res) => { timer = setTimeout(() => res({ timeout: true }), limitS * 1000); timer.unref?.(); });
+  const deadline = new Promise((res) => { timer = setTimeout(() => res({ timeout: true }), limitS * 1000); });   // awaited, cleared below
   while (!winner && (queue.length || live.size)) {
     while (queue.length && live.size < width) start(queue.shift());
     const done = await Promise.race([...[...live.values()].map((v) => v.promise), deadline]);

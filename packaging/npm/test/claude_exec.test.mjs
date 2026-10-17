@@ -188,7 +188,8 @@ function fakeClaudeDir() {
     fs.writeFileSync(path.join(dir, "claude.cmd"), '@echo %*>> "%~dp0claude.log"\r\n@exit /b 0\r\n');
   } else {
     const f = path.join(dir, "claude");
-    fs.writeFileSync(f, '#!/bin/sh\necho "$@" >> "$(dirname "$0")/claude.log"\nexit 0\n');
+    // ${0%/*}, not $(dirname "$0"): the CLI runs it with PATH set to this folder alone, where dirname does not exist
+    fs.writeFileSync(f, '#!/bin/sh\necho "$@" >> "${0%/*}/claude.log"\nexit 0\n');
     fs.chmodSync(f, 0o755);
   }
   return dir;

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -6,6 +6,12 @@ import path from "node:path";
 
 import { callFindWays, callTriage, formatKnowledge, hookPolicy, runPromptHook, shouldLookUp, triageUrl } from "../lib/hook.mjs";
 import { removeClaudeHook, upsertClaudeHook } from "../lib/clients.mjs";
+
+// fetch stubs open no socket, and a request's timeout (AbortSignal.timeout) does not keep the event loop alive by
+// design: without this, node ends the file at the first stub that waits for its timeout and cancels every test after
+// it (19 tests never ran). A real request's socket keeps the loop alive, so the product needs nothing of this.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
 
 const policy = hookPolicy({});
 

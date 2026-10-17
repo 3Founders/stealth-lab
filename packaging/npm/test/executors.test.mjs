@@ -135,7 +135,8 @@ test("detect: not on PATH -> not installed, buildCommand throws, health unhealth
   }
 });
 
-test("resolveBin: PATHEXT order and the Windows 'Path' key; parseCmdShim on real npm shim shapes", () => {
+// Windows paths resolve only on a Windows file system: on Linux the joined path does not exist
+test("resolveBin: PATHEXT order and the Windows 'Path' key; parseCmdShim on real npm shim shapes", { skip: process.platform !== "win32" }, () => {
   const dir = tmp();
   fs.writeFileSync(path.join(dir, "agent.cmd"), "x");
   fs.writeFileSync(path.join(dir, "agent.exe"), "x");
