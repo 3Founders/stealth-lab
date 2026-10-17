@@ -51,29 +51,36 @@ export function dispatchPolicy(env = process.env) {
     // find the project's own test command (lib/detect_check.mjs) when none is configured and no library entry has one;
     // "off" restores "no configured check, no dispatch"
     detect: (env.STEALTHLAB_DISPATCH_DETECT || "on").toLowerCase() !== "off",
-    maxRungs: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS || 3)),
+    // how many configured cheap models are tried: all of them unless set (each is a chance at the task; there is no
+    // measured reason to try fewer)
+    maxRungs: Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS) > 0 ? Number(env.STEALTHLAB_DISPATCH_MAX_RUNGS) : Infinity,
     scope: String(env.STEALTHLAB_DISPATCH_SCOPE || "*,**/*").split(",").map((s) => s.trim()).filter(Boolean),
     // "strict" (default): a cross-check that cannot decide counts as NOT verified -- the task goes up the ladder;
     // "on": inconclusive is accepted as before; "off": no cross-check
     crosscheck: (env.STEALTHLAB_DISPATCH_CROSSCHECK || "strict").toLowerCase(),
-    // how a passing answer is accepted (lib/accept.mjs): "check" (the check alone, our written tests included) or a rule
-    // on evidence ("E S F X !Rs_no"); agreeWaitS: after a first passing answer, how long the other running models may
-    // still finish, so answers can agree
-    accept: (env.STEALTHLAB_DISPATCH_ACCEPT || "check").trim(),
+    // how a passing answer is accepted (lib/accept.mjs). Default: E (no new failure in the project's own tests) S (it
+    // changes source code) T (the reproduction test written from the task before any answer -- it fails on the unchanged
+    // code -- now passes: how SWE-bench itself grades a fix) X (no catch-all exception swallowing, a known overfitting
+    // pattern) and no "does not fix" from the strong reviewer. "check": the check alone, as before 2026-10-17.
+    // agreeWaitS: after a first passing answer, how long the others may still finish -- only for a rule that uses A or C
+    accept: (env.STEALTHLAB_DISPATCH_ACCEPT || "E S T X !Rs_no").trim(),
     agreeWaitS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_AGREE_WAIT_S || 90)),
     // test-first: the session's own model writes a few tests from the task before any cheap rung runs; every cheap
     // answer must pass them too. "off" turns it off.
     testFirst: (env.STEALTHLAB_DISPATCH_TESTFIRST || "on").toLowerCase() !== "off",
-    // "on": the cheap rungs run at once, the first answer that passes wins and the rest are cancelled (faster, same
-    // cost); default: one after another
-    parallel: (env.STEALTHLAB_DISPATCH_PARALLEL || "off").toLowerCase() === "on",
+    // the cheap models run at once, the first accepted answer wins and the rest are cancelled: the user waits for the
+    // fastest good answer, not for each model in turn. "off": one after another
+    parallel: (env.STEALTHLAB_DISPATCH_PARALLEL || "on").toLowerCase() !== "off",
     // Claude models run by the claude executor (headless Claude Code): off by default -- on a small task their cost is
     // Claude Code's own overhead, about what the session model costs to do the task, so a failed try only adds cost
     claude: (env.STEALTHLAB_DISPATCH_CLAUDE || "off").toLowerCase() === "on",
-    // the time limit on all the cheap tries together, from their start: past it the session's model takes over
-    timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 150)),
-    // how many cheap runs at once: three agents on one provider can exceed its tokens-per-minute limit
-    maxParallel: Math.max(1, Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL || 2)),
+    // the time the cheap tries get, together, from their start: past it the session's model takes over. 600 s: 12 of
+    // the 14 cheap solves of real repository issues finished within it (pipeline survey R1, 2026-10-16: solve times
+    // 46-594 s, then 1053 and 1201). One run gets the same limit (a run cannot outlast the tries it is part of).
+    timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 600)),
+    // at most this many cheap runs at once on one provider: unset, no limit (a provider's rate limit answers 429, which
+    // the bridge retries)
+    maxParallel: Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL) > 0 ? Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL) : Infinity,
     // when the plan puts the session's model first, still try the cheap models this often (a skipped kind recovers)
     explore: Math.min(1, Math.max(0, Number(env.STEALTHLAB_DISPATCH_EXPLORE ?? 0.2))),
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
@@ -94,16 +101,18 @@ export function dispatchPolicy(env = process.env) {
     ambiguityStop: (env.STEALTHLAB_DISPATCH_AMBIGUITY || "on").toLowerCase() !== "off",
     // an image task's passing page is compared with the screenshot by a model that can see (lib/visual_check.mjs)
     visualCheck: (env.STEALTHLAB_DISPATCH_VISUAL_CHECK || "on").toLowerCase() !== "off",
-    // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them
-    strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 240)),
+    // extra seconds for the cheap tries when a strong cheap model (exec.json profile strong: true) is among them: none
+    // unless set
+    strongExtraS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_STRONG_EXTRA_S ?? 0)),
     // a middle model (an exec.json profile with tier: 2, say GLM-5.3) starts only once every cheaper one has finished
     // without an accepted answer, with this much time of its own
     tierS: Math.max(60, Number(env.STEALTHLAB_DISPATCH_TIER_S ?? 420)),
-    // one cheap run's own time limit in the executor (lib/exec/runtime.mjs, at most 3600 s); unset keeps its 900 s
+    // one cheap run's own time limit in the executor (lib/exec/runtime.mjs, at most 3600 s): unset, the tries' limit
     runTimeoutS: Number(env.STEALTHLAB_DISPATCH_RUN_TIMEOUT_S) > 0 ? Number(env.STEALTHLAB_DISPATCH_RUN_TIMEOUT_S) : null,
     strongFirst: (env.STEALTHLAB_DISPATCH_STRONG_FIRST || "off").toLowerCase() === "on",
-    // a repo area (lib/areas.mjs) where the cheap models lost this many times and never won is not dispatched to
-    areaSkip: (env.STEALTHLAB_DISPATCH_AREA_SKIP || "on").toLowerCase() !== "off",
+    // a repo area (lib/areas.mjs) where the cheap models lost this many times and never won is not dispatched to: off
+    // unless set -- the model plan already learns from this repo's outcomes (routing.md OBS), with no fixed threshold
+    areaSkip: (env.STEALTHLAB_DISPATCH_AREA_SKIP || "off").toLowerCase() === "on",
     areaSkipAfter: Math.max(1, Number(env.STEALTHLAB_DISPATCH_AREA_SKIP_AFTER || 3)),
     // a follow-up about code this session's own model is already changing is not dispatched (STEALTHLAB_DISPATCH_FOLLOWUPS=on
     // dispatches it anyway): the cheap models would redo the session's work from a one-line follow-up
@@ -950,6 +959,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const acceptRule = check && !specOnly ? parseRule(policy.accept) : null;
   const evidence = !!acceptRule;
   const testFirstOn = policy.testFirst && (runClaude || pytestAvailable()) && (!evidence || ruleUses(acceptRule, "T", "T*"));
+  if (evidence && ruleUses(acceptRule, "T") && !testFirstOn) {
+    log("dispatch: not dispatched (the acceptance rule needs a reproduction test and no test writer can run here)");
+    return null;
+  }
   const workDir = testFirstOn || (check && policy.baselineCheck) ? specDir(env) : null;
   let checkRun = check;
   if (check && !specOnly && (testFirstOn || evidence) && policy.baselineCheck && /\bpytest\b/.test(check)) {
@@ -1008,7 +1021,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const pack = contextPackEnabled(env) ? contextPack({ files: loc.files, testFile: loc.testFile }) : "";
   const taskWithContext = fitTask(withWhere(taskText(payload.prompt), [pack, where].filter(Boolean).join("\n\n")), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
-  const baseLimitS = policy.timeoutS + taskAllowanceS(payload.cwd || root);
+  const baseLimitS = policy.timeoutS;
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
   const runRung = async (rung) => {
@@ -1020,7 +1033,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     try {
       const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskWithContext, checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
-        ...(policy.runTimeoutS ? { timeout_s: policy.runTimeoutS } : {}),
+        // one run's limits are the tries' own: it cannot usefully outlast them, and a run that prints nothing for that
+        // long has stopped working
+        timeout_s: Math.min(3600, Math.ceil(policy.runTimeoutS || baseLimitS)), hang_s: Math.min(3600, Math.ceil(policy.runTimeoutS || baseLimitS)),
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
       runId = started.run_id;
       running.set(rung.unit, runId);
@@ -1187,7 +1202,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const profilesNow = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
   // the executor's own limit on runs at once (exec.json max_concurrent_runs): a rung past it waits for a slot instead of
   // failing at start -- minimax lost its only try to "2 runs already active" (ct-smoke-final4, 2026-10-17)
-  const runCap = (() => { try { return readExecConfig(env).max_concurrent_runs || 4; } catch { return 4; } })();
+  const runCap = (() => { try { return readExecConfig(env).max_concurrent_runs || Infinity; } catch { return Infinity; } })();
   // a rung's provider: its profile's endpoint host, else its executor
   const providerOf = (r) => { try { return new URL(profilesNow[r.model]?.openai_base_url).host; } catch { return r.executor || "?"; } };
   let winner = null;
@@ -1217,7 +1232,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
   let sharedFail = null;
   let ambiguous = null;                    // the test writer's note that the task reads two ways (stops the cheap tries)
-  const ambiguityKnown = specDone.then((s) => (s?.ambiguous && policy.ambiguityStop ? { ambiguityFlag: s.ambiguous } : new Promise(() => {})));
+  const ambiguityKnown = specDone.then((s) => (s?.ambiguous && policy.ambiguityStop ? { ambiguityFlag: s.ambiguous }
+    // no valid reproduction test (the writer could not write one that fails on the unchanged code): an answer the rule
+    // needs T for can never be accepted, so the tries stop now instead of at the limit
+    : !s && testFirstOn && (specOnly || ruleUses(acceptRule, "T")) ? { noSpec: true } : new Promise(() => {})));
+  let noSpec = false;
   while (!winner && (queue.length || pending.size)) {
     // the limit is per provider: it is there because 3 agents on one provider exceed its tokens-per-minute; a model on
     // another provider (glm-5.3-flash on z.ai) does not take a General Compute slot (Modal, sqlglot-4051: minimax got
@@ -1247,6 +1266,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // the test writer's ambiguity flag (~20 s in) ends the cheap tries at once, not when the first one finishes
     const done = await Promise.race([...pending.values(), deadline, ambiguityKnown]);
     if (done.ambiguityFlag) { ambiguous = done.ambiguityFlag; break; }
+    if (done.noSpec) { noSpec = true; break; }
     if (done.timeout && !tierStarted && queue.some((r) => tierOf(r.model) > 1)) {
       // the cheap models' time is up: the ones still running stop, the cheap ones queued are skipped, the middle model tries
       for (const unit of pending.keys()) {
@@ -1278,7 +1298,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (verdict && evidence) {
       cands.push(done);
       // the other models still running may finish a little later: answers that agree are stronger evidence
-      const until = Date.now() + policy.agreeWaitS * 1000;
+      // waiting for a second answer only helps a rule that compares answers (A, C)
+      const until = Date.now() + (ruleUses(acceptRule, "A", "C") ? policy.agreeWaitS : 0) * 1000;
       while (pending.size && Date.now() < until && cands.length < 3) {
         let tick;
         const over = new Promise((res) => { tick = setTimeout(() => res({ waitOver: true }), Math.max(0, until - Date.now())); });
@@ -1333,8 +1354,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (fails) seenFails.push(fails);
   }
   clearTimeout(timer);
-  if (sharedFail || ambiguous) {
-    log(ambiguous ? `dispatch: the task reads two ways (${ambiguous}); the session's model takes over`
+  if (sharedFail || ambiguous || noSpec) {
+    log(noSpec ? "dispatch: no reproduction test could be written for this task (none that fails on the unchanged code); the session's model takes over"
+      : ambiguous ? `dispatch: the task reads two ways (${ambiguous}); the session's model takes over`
       : `dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
@@ -1345,12 +1367,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       tried.push({ unit, state: "cancelled", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     pending.clear();
-    for (const rung of queue) tried.push({ unit: rung.unit, state: ambiguous ? "skipped (the task reads two ways)"
+    for (const rung of queue) tried.push({ unit: rung.unit, state: noSpec ? "skipped (no reproduction test)" : ambiguous ? "skipped (the task reads two ways)"
                                                                    : "skipped (two answers failed the same advance tests)" });
     queue.length = 0;
   }
   // every cheap try finished and none was accepted: this ending had no line of its own (ct-smoke-final4)
-  if (!winner && !timedOut && !sharedFail && !ambiguous) {
+  if (!winner && !timedOut && !sharedFail && !ambiguous && !noSpec) {
     log(`dispatch: no cheap answer accepted (${tried.length} tried); the session's model takes over`);
   }
   if (timedOut) {

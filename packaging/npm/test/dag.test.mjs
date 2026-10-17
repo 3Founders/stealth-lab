@@ -160,7 +160,7 @@ function stubRt(answers, outcomes) {
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth"] };
 function env(home) {
   fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } } }));
-  return { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -c \"import pkg.expressions, pkg.parser\"", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  return { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -c \"import pkg.expressions, pkg.parser\"", STEALTHLAB_DISPATCH_TESTFIRST: "off",
            STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" };
 }
 // the lookup's judge says the past fix matches this task (a plan from the library needs that, lib/dag_run.mjs planFromLibrary)
@@ -366,6 +366,7 @@ test("this session's own fix never plans its follow-up: entries recorded after t
 });
 
 import { planDag, readPlan } from "../lib/dag_run.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 // a large task whose whole try fails; its parts (the plan's) pass
 function planRt(answers) {

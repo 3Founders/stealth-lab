@@ -6,6 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { dispatch, namedImages, specFailures, triedNote, writeSpecTests } from "../lib/dispatch.mjs";
 import { preloadNamedFiles } from "../lib/agent/step_agent.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "gpt-oss-120b|stealth"] };
 const MINE = "claude-opus-5-5|claude-code";
@@ -19,7 +20,7 @@ function setup() {
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n");
   fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                   STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off" }, repo };
 }
 const failTail = (t) => `FAILED ../specs/x/test_spec.py::${t}

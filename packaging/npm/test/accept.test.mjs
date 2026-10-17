@@ -22,7 +22,7 @@ function setup() {
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n"); fs.writeFileSync(path.join(repo, "other.py"), "y = 1\n");
   fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "node -e 0", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "node -e 0", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                   STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_LOCATE_MODEL: "off",
                   STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_AGREE_WAIT_S: "5" }, repo };
 }
@@ -222,7 +222,7 @@ test("the executor's max_concurrent_runs: a rung waits for a free slot instead o
   assert.ok(!d.tried.some((t) => t.state === "error"), JSON.stringify(d.tried));
 });
 
-test("STEALTHLAB_DISPATCH_RUN_TIMEOUT_S sets each cheap run's own time limit; unset leaves the executor's default", async () => {
+test("STEALTHLAB_DISPATCH_RUN_TIMEOUT_S sets each cheap run's own time limit; unset, a run gets the tries' limit", async () => {
   const { env, repo } = setup();
   const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
   await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
@@ -230,10 +230,12 @@ test("STEALTHLAB_DISPATCH_RUN_TIMEOUT_S sets each cheap run's own time limit; un
   assert.equal(rt.calls[0].timeout_s, 3600);
   const rt2 = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
   await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt2 });
-  assert.equal(rt2.calls[0].timeout_s, undefined);
+  assert.equal(rt2.calls[0].timeout_s, 150, "the tries' limit (150 s here)");
+  assert.equal(rt2.calls[0].hang_s, 150, "and the same no-output limit");
 });
 
 import { crossTest, splitPatch } from "../lib/accept.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 test("crossTest: an answer passes another's validated tests (fail without its fix, pass with it) -> C; a different fix does not", async () => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "acc-x-"));

@@ -21,7 +21,7 @@ function setup(execModels = ["gemma-4-31b-it", "minimax-m2-7"]) {
   fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   // these tests are about the dispatch loop: test-first and the cross-check have tests of their own below
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q",
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q",
                   STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off" }, repo };
 }
 
@@ -147,6 +147,7 @@ test("cross-check: an answer that passes the other model's tests is accepted; no
 // --- test-first and the strict cross-check ---------------------------------------------------------------------
 
 import { writeSpecTests } from "../lib/dispatch.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 test("test-first: the session model's tests are saved outside the repo, sized, and the cost recorded", async () => {
   const { env, repo } = setup();

@@ -60,7 +60,8 @@ export function readExecConfig(env = process.env) {
     default_order: Array.isArray(cfg.default_order) ? cfg.default_order.map(String) : [],
     hang_s: Number(cfg.hang_s) > 0 ? Number(cfg.hang_s) : undefined,
     race_interval_width: Number(cfg.race_interval_width) > 0 ? Number(cfg.race_interval_width) : 0.5,
-    max_concurrent_runs: Number(cfg.max_concurrent_runs) > 0 ? Number(cfg.max_concurrent_runs) : 4,
+    // unset: no cap (a limit of 4 had no measured basis and made a dispatched model fail at start, ct-smoke-final4)
+    max_concurrent_runs: Number(cfg.max_concurrent_runs) > 0 ? Number(cfg.max_concurrent_runs) : Infinity,
   };
 }
 

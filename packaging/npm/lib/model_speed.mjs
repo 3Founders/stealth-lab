@@ -21,7 +21,9 @@ export const MIN_WINS = 5;
 const SEP = "|";
 const COMMENT = "# WIN|<model>|<scaffold>|n=<wins>|last=<date>|p90s=<s>|wins=<s,s,...>  (seconds a verified cheap answer took; local only, the last 20)\n";
 
-export const modelCapEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_MODEL_CAP || "on").toLowerCase() !== "off";
+// off unless set: one time budget for the cheap tries (dispatch timeoutS) is the limit; a per-model multiple of past win times
+// (3 x p90) had no measured basis
+export const modelCapEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_MODEL_CAP || "off").toLowerCase() === "on";
 export const fastestFirstEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_FASTEST_FIRST || "on").toLowerCase() !== "off";
 export const capMult = (env = process.env) => Math.max(1, Number(env.STEALTHLAB_DISPATCH_CAP_MULT) || 3);
 // the cap's floor in seconds (60); STEALTHLAB_DISPATCH_CAP_FLOOR_S lowers or raises it (tests use a fraction of a second)
