@@ -123,6 +123,58 @@ test("bridge: Claude Code's request becomes an OpenAI one and the reply comes ba
   closeBridge();
 });
 
+test("bridge: a malformed tool call from the provider is retried; one that keeps failing goes back as 529 (Claude Code retries it); a real 400 stays 400", async () => {
+  const { bridgeFor, closeBridge } = await import("../lib/anthropic_bridge.mjs");
+  const p = normaliseProfile("gpt-oss-120b", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1" });
+  const GC400 = '{"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error"}}';
+  const OK = JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "done" } }], usage: { prompt_tokens: 7, completion_tokens: 2 } });
+  let replies = [];
+  let calls = 0;
+  const fetchImpl = async () => { calls++; const [status, text] = replies.shift(); return { ok: status === 200, status, text: async () => text }; };
+  const b = await bridgeFor(p, { env: ENV, fetchImpl, retryMs: 0, runTag: "r-1.a1" });
+  const call = () => fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": b.secret },
+    body: JSON.stringify({ model: "x", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }) });
+  replies = [[400, GC400], [200, OK]];
+  let r = await call();
+  assert.equal(r.status, 200, "the second sample is used");
+  assert.equal(calls, 2);
+  replies = [[400, GC400], [400, GC400], [400, GC400]];
+  r = await call();
+  assert.equal(r.status, 529, "still failing after the retries: overloaded, which Claude Code retries");
+  replies = [[400, '{"error":{"message":"unknown field foo","type":"invalid_request_error"}}']];
+  calls = 0;
+  r = await call();
+  assert.equal(r.status, 400, "a request that is wrong is not retried");
+  assert.equal(calls, 1);
+  closeBridge();
+});
+
+test("bridge: tokens are counted per run, so a run killed before Claude Code's summary still has its spend", async () => {
+  const { bridgeFor, bridgeUsage, closeBridge } = await import("../lib/anthropic_bridge.mjs");
+  const p = normaliseProfile("minimax-m2-7", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1" });
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "x" } }],
+    usage: { prompt_tokens: 1000, completion_tokens: 50 } }) });
+  const b = await bridgeFor(p, { env: ENV, fetchImpl, runTag: "r-2.a1" });
+  for (let i = 0; i < 3; i++) {
+    await fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": b.secret },
+      body: JSON.stringify({ model: "x", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }) });
+  }
+  assert.deepEqual(bridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
+  assert.equal(bridgeUsage("r-other"), null);
+  closeBridge();
+});
+
+test("bridge: max_tokens stays inside a profile's context window and output cap", async () => {
+  const { toOpenAI } = await import("../lib/anthropic_bridge.mjs");
+  const big = "x".repeat(300000);                       // ~100k tokens by the bridge's estimate
+  const p = normaliseProfile("gemma", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1", context_window: 131072, max_output_tokens: 8192 });
+  assert.equal(toOpenAI({ max_tokens: 32000, messages: [{ role: "user", content: "hi" }] }, p).max_tokens, 8192, "the output cap");
+  const o = toOpenAI({ max_tokens: 32000, messages: [{ role: "user", content: big }] }, normaliseProfile("g2", { key_env: "ZAI_API_KEY",
+    openai_base_url: "https://gc.example/v1", context_window: 110000 }));
+  assert.ok(o.max_tokens < 16000 && o.max_tokens >= 1024, `input + max_tokens fits the window (${o.max_tokens})`);
+  assert.throws(() => normaliseProfile("bad", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1", context_window: -5 }), /positive whole number/);
+});
+
 // ------------------------------------------------------------------ opencode
 
 test("opencode in open-model mode declares the provider inline and keeps the key out of the config text", () => {

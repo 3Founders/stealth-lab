@@ -105,6 +105,9 @@ export function dispatchPolicy(env = process.env) {
     // a repo area (lib/areas.mjs) where the cheap models lost this many times and never won is not dispatched to
     areaSkip: (env.STEALTHLAB_DISPATCH_AREA_SKIP || "on").toLowerCase() !== "off",
     areaSkipAfter: Math.max(1, Number(env.STEALTHLAB_DISPATCH_AREA_SKIP_AFTER || 3)),
+    // a follow-up about code this session's own model is already changing is not dispatched (STEALTHLAB_DISPATCH_FOLLOWUPS=on
+    // dispatches it anyway): the cheap models would redo the session's work from a one-line follow-up
+    followups: (env.STEALTHLAB_DISPATCH_FOLLOWUPS || "off").toLowerCase() === "on",
     // the located module's existing test file joins the check when it passes on the unchanged code (a cheap answer
     // must not break what already works there)
     regression: (env.STEALTHLAB_DISPATCH_REGRESSION || "on").toLowerCase() !== "off",
@@ -746,6 +749,35 @@ export function dispatchCheck(policy, reply, root) {
   return policy.detect && root ? detectCheck(root) : null;
 }
 
+// The files this session's own model has edited so far (its transcript's Edit / Write / MultiEdit / NotebookEdit calls),
+// relative to root. Reads at most the transcript's last 4 MB; no transcript -> none.
+export function sessionEdits(transcriptPath, root) {
+  const out = new Set();
+  if (!transcriptPath) return out;
+  try {
+    const st = fs.statSync(transcriptPath);
+    const len = Math.min(st.size, 4 * 1024 * 1024);
+    const fd = fs.openSync(transcriptPath, "r");
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    for (const line of buf.toString("utf8").split(/\r?\n/)) {
+      if (!line.includes("tool_use")) continue;
+      let o;
+      try { o = JSON.parse(line); } catch { continue; }
+      if (o?.type !== "assistant") continue;
+      for (const b of o?.message?.content || []) {
+        if (b?.type !== "tool_use" || !/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(String(b.name))) continue;
+        const f = b.input?.file_path || b.input?.notebook_path;
+        if (!f) continue;
+        const rel = path.isAbsolute(f) ? path.relative(root, f) : f;
+        if (rel && !rel.startsWith("..")) out.add(rel.split(path.sep).join("/"));
+      }
+    }
+  } catch { /* unreadable: none */ }
+  return out;
+}
+
 const firstLine = (text) => String(text || "").split("\n").map((l) => l.trim()).find(Boolean)?.slice(0, 200) || "";
 
 // The executor takes at most TASK_MAX characters in all (lib/exec/runtime.mjs). The request comes first and is never cut
@@ -845,6 +877,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
                                                   cwd: payload.cwd || root, env, fetchImpl, log });
     const gate = briefGate(brief, payload.prompt);
+    // what the cheap models will be told, and why the gate let it through: the brief decides both
+    if (brief) log(`dispatch: brief kind=${brief.kind} clarity=${brief.clarity} size=${brief.size}: ${String(brief.task || "").replace(/\s+/g, " ").slice(0, 240)}`);
     // a large task: only the strong cheap model tries it (the small ones rarely manage); none -> the session's model
     if (!gate.ok && !force && gate.reason === "size=large" && rungs.some((r) => strongSet.has(r.model))) {
       planRungs = rungs;
@@ -876,6 +910,17 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // the brief is cut to leave the line its room inside the executor's TASK_MAX
     const { brief, briefedPrompt } = briefed;
     payload = { ...payload, prompt: briefedPrompt(brief, rawPayload.prompt, TASK_MAX - where.length - 2) };
+  }
+  // a follow-up in a session whose own model is already changing the located code: the session finishes its own work
+  // (sqlglot-4051 turn 2: the follow-up was dispatched, split from the entry recorded 12 s earlier from turn 1, every
+  // cheap model failed part 1 after 19 min, and the session then reworked the fix, ct-series-v4)
+  if (!force && !policy.followups && payload.transcript_path) {
+    const edited = sessionEdits(payload.transcript_path, payload.cwd || root);
+    const overlap = (loc.files || []).filter((f) => edited.has(f));
+    if (overlap.length) {
+      log(`dispatch: not dispatched (a follow-up: this session already changed ${overlap.join(", ")})`);
+      return null;
+    }
   }
   // a repo area where the cheap models keep losing (lib/areas.mjs): straight to the session's model, which saves the
   // wait and the cheap models' spend there; now and then (explore) they still try, so an area can recover
@@ -1211,6 +1256,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       for (const [unit, p] of pending) {
         const r = await settleWithin(p, SETTLE_MS);
         tried.push({ unit, state: "timed out", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
+        log(`dispatch ${unit}: no pass (timed out at the cheap models' limit)`);
         running.delete(unit);
       }
       pending.clear();
@@ -1264,7 +1310,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       for (const c of cands) if (!c.recorded) {
         c.recorded = true;
         tried.push({ unit: c.rung.unit, state: `passed the check, not accepted by the rule (${evidenceLine(c.evidence)})`,
-                     run_id: c.result.run_id, cost_usd: c.result.cost_usd });
+                     run_id: c.result.run_id, cost_usd: c.result.cost_usd, patch: c.result.diff?.patch_path || null,
+                     review: c.evidence?.Rs_why || c.evidence?.R_why || null });
       }
       if (timedOut) break;
       continue;
@@ -1308,7 +1355,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   if (timedOut) {
     // no pass in time: the runs still going are cancelled -- not counted against their models -- and the rest skipped
-    log(`dispatch: no cheap pass within ${limitS} s; the session's model takes over`);
+    log(cands.length
+      ? `dispatch: no cheap answer accepted within ${limitS} s (${cands.length} passed the check, not accepted by the rule); the session's model takes over`
+      : `dispatch: no cheap pass within ${limitS} s; the session's model takes over`);
     for (const id of extraRuns) try { await settleWithin(rt.cancelRun(id), SETTLE_MS); } catch { /* best effort */ }
     for (const unit of pending.keys()) {
       const runId = running.get(unit);
@@ -1317,6 +1366,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     for (const [unit, p] of pending) {
       const r = await settleWithin(p, SETTLE_MS);         // a cancelled run stuck in a model call is not waited for
       tried.push({ unit, state: "timed out", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
+      log(`dispatch ${unit}: no pass (timed out at the limit)`);
     }
     pending.clear();
     for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (time limit)" });
@@ -1563,6 +1613,18 @@ export function triedNote(d) {
       "design decision, \"cheap\" for one that follows from the plan) and hand the plan over: " +
       `${PLAN_USAGE.replace("stealthlab-mcp", selfCommand())}. Cheap models build the "cheap" parts that need none of yours at once; ` +
       `do your parts, then run \`${selfCommand()} dag continue\` for the rest.` + handoffNote(d);
+  }
+  // an answer that passed the check but was not accepted is not "nothing": the session gets it to judge, instead of
+  // being told none passed and redoing the work (sqlglot-4051: glm-5.3-flash passed, a review said it fixes, and the
+  // session was told "none passed", ct-series-v4)
+  const passed = d.tried.filter((t) => /^passed the check/.test(String(t.state)) && t.patch);
+  if (passed.length) {
+    const p = passed[0];
+    return `StealthLab first tried this on ${d.tried.map((t) => t.unit.split("|")[0]).join(", ")}. ${p.unit.split("|")[0]}'s answer ` +
+      `passed the project's check but was not applied: the acceptance rule did not accept it ` +
+      `(evidence: ${String(p.state).replace(/^passed the check, not accepted by the rule \(|\)$/g, "").slice(0, 300)}). Its change is in ${p.patch}. Read it first: ` +
+      "if it does what the task asks, apply it (`git apply` that file), run the tests and finish from there; if not, do the " +
+      "task yourself. There is nothing to report." + handoffNote(d);
   }
   return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +

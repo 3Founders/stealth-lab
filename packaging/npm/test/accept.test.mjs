@@ -75,6 +75,67 @@ test("evidence mode: two cheap answers that agree are accepted; the check alone 
   assert.ok(!rt.calls.some((c) => (c.checks || []).some((k) => /run_spec/.test(k))), "no written tests in the agents' check");
 });
 
+test("a passing answer the rule does not accept is handed to the session with its patch, not reported as 'none passed'", async () => {
+  const { env, repo } = setup();
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A" }, runtime: rt });
+  assert.equal(d.handled, false);
+  const note = triedNote(d);
+  assert.match(note, /gemma-4-31b-it's answer passed the project's check but was not applied/);
+  assert.match(note, /acc-patches-[^ ]*r-1\.patch/, "the patch's path is given");
+  assert.doesNotMatch(note, /none passed the check/);
+});
+
+test("a follow-up about code this session already changed is not dispatched; a new session's prompt is", async () => {
+  const { env, repo } = setup();
+  const transcript = path.join(repo, "..", `t-${path.basename(repo)}.jsonl`);
+  fs.writeFileSync(transcript, [
+    JSON.stringify({ type: "user", message: { content: "calc is wrong" } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: path.join(repo, "calc.py") } }] } }),
+  ].join("\n") + "\n");
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: rt, log: (m) => logs.push(m) });
+  assert.equal(d, null);
+  assert.equal(rt.calls.length, 0, "no cheap model ran");
+  assert.ok(logs.some((l) => /not dispatched \(a follow-up: this session already changed calc\.py\)/.test(l)), logs.join("\n"));
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_FOLLOWUPS: "on" }, runtime: stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] }) });
+  assert.equal(d2?.handled, true, "the switch dispatches it anyway");
+});
+
+test("the time-limit line says when an answer did pass but was not accepted", async () => {
+  const { env, repo } = setup();
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const result = rt.runResult.bind(rt);
+  // minimax never finishes: the limit ends the tries while gemma's answer waits for a second one
+  rt.runResult = async (id) => (rt.calls[Number(id.slice(2)) - 1].model === "minimax-m2-7" ? new Promise(() => {}) : result(id));
+  const keep = setInterval(() => {}, 1000);           // dispatch's own timers are unref'd: keep the test's event loop alive
+  try {
+    await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+      env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A", STEALTHLAB_DISPATCH_TIMEOUT_S: "10", STEALTHLAB_DISPATCH_AGREE_WAIT_S: "0",
+             STEALTHLAB_DISPATCH_PARALLEL: "on" }, runtime: rt, log: (m) => logs.push(m) });
+  } finally { clearInterval(keep); }
+  assert.ok(logs.some((l) => /no cheap answer accepted within \d+ s \(1 passed the check, not accepted by the rule\)/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /minimax-m2-7\|stealth: no pass \(timed out/.test(l)), "the cut-off try has its own line");
+});
+
+test("the reviewers' cost goes to the spend ledger, so it counts in what StealthLab cost", async () => {
+  const { reviewPatch } = await import("../lib/review.mjs");
+  const { env } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": {
+    openai_base_url: "https://example.test/v1", key_env: "K", input_per_mtok: 1, output_per_mtok: 2 } } }));
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"verdict":"fixes","why":"ok"}' } }],
+    usage: { prompt_tokens: 1000000, completion_tokens: 0 } }) });
+  const v = await reviewPatch({ prompt: "p", diff: FIX, env: { ...env, K: "k" }, fetchImpl });
+  assert.equal(v.cost_usd, 1);
+  const rows = fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.ok(rows.some((r) => r.what === "review" && r.cost_usd === 1), JSON.stringify(rows));
+});
+
 test("evidence mode: a lone passing answer the rule does not accept goes to the session; one that swallows exceptions too", async () => {
   const { env, repo } = setup();
   const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });

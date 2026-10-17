@@ -10,6 +10,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readExecConfig } from "../exec/store.mjs";
 import { profileKey } from "../executors/profile.mjs";
+import { costOf, recordSpend } from "../spend.mjs";
 import { TOPICS, parseClaim, renderClaim, scopeFor } from "./claims.mjs";
 
 export const fillEnabled = (env = process.env) => (env.STEALTHLAB_SURVEY_FILL || "on").toLowerCase() !== "off";
@@ -123,6 +124,7 @@ export async function fillWorklist({ root, env = process.env, fetchImpl = global
       });
       if (!r.ok) { log(`survey fill: HTTP ${r.status}`); continue; }
       const body = await r.json();
+      recordSpend(env, { what: "survey-fill", model: profile.name, cost_usd: costOf(profile, body?.usage) });
       const pagePath = path.join(sdir, w.page);
       const pageText = fs.existsSync(pagePath) ? fs.readFileSync(pagePath, "utf8") : "";
       const lines = claimsFromReply(body?.choices?.[0]?.message?.content, { pageText, unit: w.unit, topics: w.missing });

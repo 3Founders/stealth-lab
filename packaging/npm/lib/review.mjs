@@ -9,6 +9,7 @@
 // STEALTHLAB_REVIEW_MODEL names the model (an exec.json profile; default gpt-oss-120b); "off": no review.
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { recordSpend } from "./spend.mjs";
 
 export const REVIEW_SYSTEM = [
   "You review a code change made by another engineer for a request. You get the request and the change as a unified",
@@ -51,7 +52,9 @@ export async function reviewPatch({ prompt, diff, env = process.env, fetchImpl =
     const v = j && !j.is_error ? parseVerdict(j.result) : null;
     if (!v) { log(`review: ${name} gave no usable verdict (exit ${r?.status ?? "?"})`); return null; }
     log(`review: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
-    return { ...v, model: name, cost_usd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : null };
+    const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
+    recordSpend(env, { what: "review", model: name, cost_usd: cost });
+    return { ...v, model: name, cost_usd: cost };
   }
   try {
     const profile = readExecConfig(env).profiles?.[name];
@@ -71,6 +74,7 @@ export async function reviewPatch({ prompt, diff, env = process.env, fetchImpl =
     const cost = (profile.input_per_mtok || profile.output_per_mtok)
       ? ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 : null;
     log(`review: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
+    recordSpend(env, { what: "review", model: name, cost_usd: cost });
     return { ...v, model: name, cost_usd: cost };
   } catch (err) {
     log(`review: ${err.name === "TimeoutError" ? "timed out" : err.message}`);
