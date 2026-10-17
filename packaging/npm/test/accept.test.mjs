@@ -112,6 +112,51 @@ test("a middle model (tier: 2) starts only after every cheap one has finished wi
   assert.ok(glm > order.indexOf("end gemma-4-31b-it") && glm > order.indexOf("end minimax-m2-7"), order.join(", "));
 });
 
+test("a middle model is not cut by the max-rungs limit: three cheap models before it, and it still gets its try", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", tier: 2 } } }));
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""], "glm-5.3": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" },
+    reply: { model_plan: { ...PLAN, ladder: [...PLAN.ladder, "glm-5.3|stealth"] } }, root: repo, mine: MINE,
+    env: { ...env, K: "k" }, runtime: rt, log: (m) => logs.push(m) });
+  assert.equal(d.handled, false);
+  assert.deepEqual(rt.calls.map((c) => c.model).sort(), ["gemma-4-31b-it", "glm-5.3", "gpt-oss-120b", "minimax-m2-7"]);
+  assert.ok(logs.some((l) => /glm-5\.3 \(tier 2\) tries/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /gemma-4-31b-it\|stealth: no pass \(failed\)/.test(l)), "a failed answer has its own line");
+  assert.ok(logs.some((l) => /no cheap answer accepted \(4 tried\); the session's model takes over/.test(l)), logs.join("\n"));
+});
+
+test("the executor's max_concurrent_runs: a rung waits for a free slot instead of failing at start", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b"] } }, max_concurrent_runs: 1 }));
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["verified", FIX] });
+  let active = 0;
+  const achieve = rt.achieve.bind(rt);
+  rt.achieve = async (i) => { if (active >= 1) throw new Error(`${active} runs already active (max_concurrent_runs=1)`); active++; return achieve(i); };
+  const result = rt.runResult.bind(rt);
+  rt.runResult = async (id) => { const r = await result(id); active--; return r; };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_PARALLEL: "on" }, runtime: rt });
+  assert.equal(d?.handled, true);
+  assert.equal(d.model, "gpt-oss-120b");
+  assert.ok(!d.tried.some((t) => t.state === "error"), JSON.stringify(d.tried));
+});
+
+test("STEALTHLAB_DISPATCH_RUN_TIMEOUT_S sets each cheap run's own time limit; unset leaves the executor's default", async () => {
+  const { env, repo } = setup();
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_RUN_TIMEOUT_S: "3600" }, runtime: rt });
+  assert.equal(rt.calls[0].timeout_s, 3600);
+  const rt2 = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt2 });
+  assert.equal(rt2.calls[0].timeout_s, undefined);
+});
+
 import { crossTest, splitPatch } from "../lib/accept.mjs";
 
 test("crossTest: an answer passes another's validated tests (fail without its fix, pass with it) -> C; a different fix does not", async () => {
