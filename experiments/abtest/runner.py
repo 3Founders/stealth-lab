@@ -59,10 +59,25 @@ REPO = HERE.parents[1]
 LOCAL = HERE / ".local"
 MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
-# arm C's dispatch limits (arm_env): large, so they only catch hangs and service errors; 3600 s is the executor's ceiling
-LIMITS_S = 3600
-# the session is silent while dispatch runs inside its prompt hook (up to 3 * LIMITS_S), so its hang limit is longer
-HANG_S = 3 * LIMITS_S + 10 * 60
+# arm C's dispatch time budget (arm_env; Anuj, 2026-10-17, option B): the cheap tries together get CHEAP_S -- the longest
+# cheap solve in the A/B's R1 took 1053 s -- and the middle model (glm-5.3, tier 2) TIER_S of its own after them. With no
+# limit, one sqlglot issue spent 68 min and $3.88 on cheap tries before Opus started (ct-smoke-final6).
+CHEAP_S = 1200
+TIER_S = 600
+
+
+def cheap_s() -> int:
+    return int(os.environ.get("ABTEST_CHEAP_TIMEOUT_S") or CHEAP_S)
+
+
+def hook_s() -> int:
+    # the prompt hook's kill timer: past the cheap tries, the middle model and the judging (reviews, cross-tests), so
+    # dispatch's own limits end a try, never the hook's
+    return max(3600, cheap_s() + TIER_S + 1200)
+
+
+# the session is silent while dispatch runs inside its prompt hook, so its hang limit is longer than the hook's
+HANG_S = hook_s() + 10 * 60
 # Claude subagents the plan may use besides the session's own model; open models come from exec.json
 # the session model is the last rung; every cheaper rung (open models, Sonnet via the claude executor) comes from
 # exec.json and is dispatched before the session starts -- nothing is delegated inside the session
@@ -256,8 +271,8 @@ def install_c(ws: Path) -> None:
     # STEALTHLAB_HOME: the install's saved config (dispatch: true) goes to arm C's home, never the person's own
     subprocess.run(["node", str(HERE / "setup_c.mjs"), str(ws)], check=True, capture_output=True, text=True,
                    env={**os.environ, "STEALTHLAB_HOME": str(c_home()),
-                        # the prompt hook outlasts dispatch's limits below (LIMITS_S), so it never cuts a try short
-                        "STEALTHLAB_PROMPT_HOOK_TIMEOUT_S": str(3 * LIMITS_S)})
+                        # the prompt hook outlasts dispatch's limits below, so it never cuts a try short
+                        "STEALTHLAB_PROMPT_HOOK_TIMEOUT_S": str(hook_s())})
 
 
 def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str, str]:
@@ -283,12 +298,11 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             **({"STEALTHLAB_DISPATCH_ACCEPT": os.environ["ABTEST_ACCEPT_RULE"]} if os.environ.get("ABTEST_ACCEPT_RULE") else {}),
             # the cheap models' time budget, the context pack, the strong reviewer's model (packaging/npm dispatch.mjs,
             # context_pack.mjs, accept.mjs): set per run, so the final series can use what the survey measured
-            # the time limits only catch hangs and service errors, never cut a real try short (Anuj, 2026-10-17): the
-            # cheap tries, the middle model and one run each get LIMITS_S, there is no per-model cap and no strong extra,
-            # and every configured model gets its try (no max-rungs cut). ABTEST_CHEAP_TIMEOUT_S still overrides the first.
-            "STEALTHLAB_DISPATCH_TIMEOUT_S": os.environ.get("ABTEST_CHEAP_TIMEOUT_S") or str(LIMITS_S),
-            "STEALTHLAB_DISPATCH_TIER_S": str(LIMITS_S),
-            "STEALTHLAB_DISPATCH_RUN_TIMEOUT_S": str(LIMITS_S),
+            # the time budget (CHEAP_S, TIER_S above; ABTEST_CHEAP_TIMEOUT_S overrides the first): one run gets at most the
+            # cheap tries' budget; no per-model cap and no strong extra; every configured model gets its try (no max-rungs cut)
+            "STEALTHLAB_DISPATCH_TIMEOUT_S": str(cheap_s()),
+            "STEALTHLAB_DISPATCH_TIER_S": str(TIER_S),
+            "STEALTHLAB_DISPATCH_RUN_TIMEOUT_S": str(cheap_s()),
             "STEALTHLAB_DISPATCH_STRONG_EXTRA_S": "0",
             "STEALTHLAB_DISPATCH_MODEL_CAP": "off",
             "STEALTHLAB_DISPATCH_MAX_RUNGS": "16",

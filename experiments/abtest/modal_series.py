@@ -99,7 +99,7 @@ class RunSpec:
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     cheap_agent: str = "stealth"                 # who drives the cheap models: stealth (StealthLab's own loop) or claude (Claude Code)
     accept_rule: str = ""                        # arm C's acceptance rule (STEALTHLAB_DISPATCH_ACCEPT); "" keeps "check"
-    cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps runner.LIMITS_S
+    cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps runner.CHEAP_S (1200)
     context_pack: bool = False                   # arm C's context pack for cheap agents (STEALTHLAB_DISPATCH_CONTEXT_PACK)
     review_model: str = ""                       # the strong reviewer (STEALTHLAB_REVIEW_STRONG_MODEL); "" keeps Sonnet
     allow_cold_resume: bool = False
@@ -128,6 +128,20 @@ def validate_spec(spec: RunSpec) -> list[str]:
     if spec.unit_arm and spec.arms != [spec.unit_arm]:
         problems.append("a one-arm unit runs exactly its own arm")
     return problems
+
+
+CODEBOOK_MODEL = "gemini-embedding-2"        # backend/app/routing/data/codebook.npz: embedding_model_id "vertex:gemini-embedding-2"
+
+
+def codebook_embedding_env(environ: dict[str, str]) -> dict[str, str]:
+    """The test server's embedding settings, so its vectors are in the routing codebook's space. backend/.env never
+    reaches the image, so the server fell back to gemini-embedding-001 and refused every routing code with a 409 ("the
+    embedding model differs from the codebook's", ct-smoke-final6). OpenRouter and the Gemini API both serve
+    gemini-embedding-2 in that space (backend/app/services/embeddings.py embedding_model_id). Settings already given win."""
+    if environ.get("EMBEDDING_PROVIDER_CHAIN"):
+        return {}
+    provider = "openrouter" if environ.get("OPENROUTER_API_KEY") else "gemini" if environ.get("GEMINI_API_KEY") else ""
+    return {"EMBEDDING_PROVIDER_CHAIN": provider, "GEMINI_EMBEDDING_MODEL": CODEBOOK_MODEL} if provider else {}
 
 
 def series_tasks(spec: RunSpec, repo: str) -> list[dict]:
@@ -253,6 +267,7 @@ class Container:
                         **({"ABTEST_CHEAP_TIMEOUT_S": str(spec.cheap_timeout_s)} if spec.cheap_timeout_s else {}),
                         **({"ABTEST_CONTEXT_PACK": "on"} if spec.context_pack else {}),
                         **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+        self.environ.update(codebook_embedding_env(self.environ))
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.run_dir = self.vol / spec.run_name() / repo                  # the repository's directory on the volume

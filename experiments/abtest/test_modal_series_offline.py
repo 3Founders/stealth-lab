@@ -633,3 +633,12 @@ def test_create_secret_replaces_an_existing_secret_instead_of_keeping_the_old_va
     monkeypatch.setattr(ms.modal.Secret, "objects", FakeObjects())
     ms.create_secret("stealthlab-keys", {"Z_AI_KEY": "new"})
     assert calls == [("delete", "stealthlab-keys", True), ("create", "stealthlab-keys", {"Z_AI_KEY": "new"})]
+
+
+def test_the_test_server_embeds_in_the_routing_codebooks_space():
+    # backend/.env never reaches the image: without these the server used gemini-embedding-001 and refused every code (409)
+    assert ms.codebook_embedding_env({"OPENROUTER_API_KEY": "k"}) == {"EMBEDDING_PROVIDER_CHAIN": "openrouter",
+                                                                      "GEMINI_EMBEDDING_MODEL": "gemini-embedding-2"}
+    assert ms.codebook_embedding_env({"GEMINI_API_KEY": "k"})["EMBEDDING_PROVIDER_CHAIN"] == "gemini"
+    assert ms.codebook_embedding_env({"EMBEDDING_PROVIDER_CHAIN": "voyage", "OPENROUTER_API_KEY": "k"}) == {}, "a given setting wins"
+    assert ms.codebook_embedding_env({}) == {}
