@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -7,6 +7,13 @@ import { execFileSync } from "node:child_process";
 import { BRIEF_SYSTEM, briefGate, briefText, briefedPrompt, guardKind, makeBrief, parseBrief, parseOverride, recentTurns } from "../lib/brief.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
+
+// fetch stubs open no socket, and a request's timeout (AbortSignal.timeout) does not keep the event loop alive by
+// design: without this, node ends the file at the first stub that waits for its timeout and cancels every test after
+// it (19 tests never ran). A real request's socket keeps the loop alive, so the product needs nothing of this.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
 
 const FIXTURE = JSON.parse(fs.readFileSync(new URL("./fixtures/brief_prompts.json", import.meta.url), "utf8")).prompts;
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
@@ -159,7 +166,7 @@ function setup(extra = {}) {
   fs.mkdirSync(path.join(repo, ".stealth"));
   fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                   STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...extra }, repo };
 }
 function stubRuntime(repo) {

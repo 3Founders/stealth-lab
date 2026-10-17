@@ -474,7 +474,7 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     if (!fallback || !(hedgeS > 0)) return run(args, ask);
     const p1 = Promise.resolve(run(args, ask)).then((r) => ({ r, m: model }));
     let t;
-    const wait = new Promise((res) => { t = setTimeout(() => res(null), hedgeS * 1000); t.unref?.(); });
+    const wait = new Promise((res) => { t = setTimeout(() => res(null), hedgeS * 1000); });   // awaited, cleared below
     const early = await Promise.race([p1, wait]);
     clearTimeout(t);
     if (early) return early.r;
@@ -1213,8 +1213,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let timer;
   let fireDeadline;
   const triesStart = Date.now();
+  // the deadline timers are NOT unref'd: dispatch awaits them, so they must keep the hook's process alive while it waits
+  // (unref'd, a dispatch whose runs were stuck in pure waits let the process exit with nothing delivered); every one is
+  // cleared when the tries end
   let deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
-  timer.unref?.();
   // the extra time is the strong model's: once it has finished without a pass (failed, stalled, capped), the others get
   // the plain limit again -- on a real issue they waited 240 s more after flash had already stopped (Modal, 2026-10-15)
   const dropStrongExtra = () => {
@@ -1224,7 +1226,6 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     limitS = baseLimitS;
     clearTimeout(timer);
     timer = setTimeout(() => fireDeadline({ timeout: true }), Math.max(0, baseLimitS * 1000 - (Date.now() - triesStart)));
-    timer.unref?.();
   };
   let timedOut = false;
   const cands = [];                        // evidence mode: answers that passed the project's check
@@ -1257,7 +1258,6 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
           limitS = Math.round((Date.now() - triesStart) / 1000) + policy.tierS;
           clearTimeout(timer);
           deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), policy.tierS * 1000); });
-          timer.unref?.();
           log(`dispatch: the cheap models did not do it; ${rung.model} (tier ${t}) tries, ${policy.tierS} s`);
         }
         pending.set(rung.unit, runRung(rung));
@@ -1527,7 +1527,7 @@ const SETTLE_MS = 5000;
 function settleWithin(promise, ms) {
   let timer;
   return Promise.race([Promise.resolve(promise).catch(() => null),
-                       new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); timer.unref?.(); })])
+                       new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); })])   // awaited: keeps the process alive, cleared below
     .finally(() => clearTimeout(timer));
 }
 
