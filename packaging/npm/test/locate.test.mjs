@@ -92,11 +92,12 @@ test("preload: path:start-end in the task reads those lines, not the file's star
   assert.doesNotMatch(out, /def helper_0\b/);
 });
 
-test("withWhere: the line always fits inside the executor's 2,000 characters; the request is cut, not the line", () => {
+test("withWhere: the line always fits inside the executor's 12,000 characters; the request is cut, not the line", () => {
   const where = "Likely place in this repository: pkg/_typehints.py:900-910 (adapt_typehints).";
   assert.equal(withWhere("short task", where), `short task\n\n${where}`);
-  const long = withWhere("x".repeat(2500), where);
-  assert.ok(long.length <= 2000 && long.endsWith(where));
+  assert.equal(withWhere("x".repeat(5000), where), `${"x".repeat(5000)}\n\n${where}`, "a 5,000-character issue is whole (2,000 cut 8 of 25 real issues)");
+  const long = withWhere("x".repeat(13000), where);
+  assert.ok(long.length <= 12000 && long.endsWith(where));
   assert.equal(withWhere("task", ""), "task");
 });
 

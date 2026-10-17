@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { dispatch, triedNote } from "../lib/dispatch.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth"] };
 const MINE = "claude-opus-5-5|claude-code";
@@ -18,7 +19,7 @@ function setup() {
   fs.writeFileSync(path.join(repo, "perm.py"), "def apply(a, p):\n    return a\n");
   fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
                   STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_DISPATCH_TESTFIRST: "on" }, repo };
 }
 function stub(repo, waitMs = 0) {

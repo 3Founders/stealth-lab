@@ -118,7 +118,7 @@ function setup(extra = {}) {
   const { repo } = repoWith({ "calc.py": "x = 1\n" });
   fs.mkdirSync(path.join(repo, ".stealth"));
   fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
-  return { repo, env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  return { repo, env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                         STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", ...extra } };
 }
 function stubRuntime(repo, { applyError = null } = {}) {
@@ -188,6 +188,7 @@ test("dispatch: STEALTHLAB_DISPATCH_UNDO=off applies without a point, as before"
 import { applyWithUndo } from "../lib/undo.mjs";
 import { ExecRuntime } from "../lib/exec/runtime.mjs";
 import { git as gitIn, makeRepo, stubAdapter, testEnv } from "./fixtures/exec/helpers.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 async function verifiedRun(extraEnv = {}) {
   const repo = makeRepo();

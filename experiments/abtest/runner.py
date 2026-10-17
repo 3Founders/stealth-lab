@@ -59,21 +59,20 @@ REPO = HERE.parents[1]
 LOCAL = HERE / ".local"
 MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
-# arm C's dispatch time budget (arm_env; Anuj, 2026-10-17, option B): the cheap tries together get CHEAP_S -- the longest
-# cheap solve in the A/B's R1 took 1053 s -- and the middle model (glm-5.3, tier 2) TIER_S of its own after them. With no
-# limit, one sqlglot issue spent 68 min and $3.88 on cheap tries before Opus started (ct-smoke-final6).
-CHEAP_S = 1200
-TIER_S = 600
+# arm C runs the PRODUCT's dispatch defaults (packaging/npm lib/dispatch.mjs dispatchPolicy: every model at once, one
+# 600 s budget, the reproduction-test rule): the series measures what a user gets. ABTEST_CHEAP_TIMEOUT_S overrides
+# the budget only when a run asks for it (modal_series --cheap-timeout-s).
+PRODUCT_BUDGET_S = 600
 
 
 def cheap_s() -> int:
-    return int(os.environ.get("ABTEST_CHEAP_TIMEOUT_S") or CHEAP_S)
+    return int(os.environ.get("ABTEST_CHEAP_TIMEOUT_S") or PRODUCT_BUDGET_S)
 
 
 def hook_s() -> int:
-    # the prompt hook's kill timer: past the cheap tries, the middle model and the judging (reviews, cross-tests), so
-    # dispatch's own limits end a try, never the hook's
-    return max(3600, cheap_s() + TIER_S + 1200)
+    # the prompt hook's kill timer: past the budget, the test writer and the reviews, so dispatch's own limit ends a
+    # try, never the hook's (the product's own default is 1200 s, which this keeps for the 600 s budget)
+    return max(1200, cheap_s() + 600)
 
 
 # the session is silent while dispatch runs inside its prompt hook, so its hang limit is longer than the hook's
@@ -298,14 +297,7 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             **({"STEALTHLAB_DISPATCH_ACCEPT": os.environ["ABTEST_ACCEPT_RULE"]} if os.environ.get("ABTEST_ACCEPT_RULE") else {}),
             # the cheap models' time budget, the context pack, the strong reviewer's model (packaging/npm dispatch.mjs,
             # context_pack.mjs, accept.mjs): set per run, so the final series can use what the survey measured
-            # the time budget (CHEAP_S, TIER_S above; ABTEST_CHEAP_TIMEOUT_S overrides the first): one run gets at most the
-            # cheap tries' budget; no per-model cap and no strong extra; every configured model gets its try (no max-rungs cut)
-            "STEALTHLAB_DISPATCH_TIMEOUT_S": str(cheap_s()),
-            "STEALTHLAB_DISPATCH_TIER_S": str(TIER_S),
-            "STEALTHLAB_DISPATCH_RUN_TIMEOUT_S": str(cheap_s()),
-            "STEALTHLAB_DISPATCH_STRONG_EXTRA_S": "0",
-            "STEALTHLAB_DISPATCH_MODEL_CAP": "off",
-            "STEALTHLAB_DISPATCH_MAX_RUNGS": "16",
+            **({"STEALTHLAB_DISPATCH_TIMEOUT_S": os.environ["ABTEST_CHEAP_TIMEOUT_S"]} if os.environ.get("ABTEST_CHEAP_TIMEOUT_S") else {}),
             **({"STEALTHLAB_DISPATCH_CONTEXT_PACK": "on"} if os.environ.get("ABTEST_CONTEXT_PACK") == "on" else {}),
             **({"STEALTHLAB_REVIEW_STRONG_MODEL": os.environ["ABTEST_REVIEW_MODEL"]} if os.environ.get("ABTEST_REVIEW_MODEL") else {}),
             # dispatch's own skip-a-provider floor matches the runner's pause point, so no task between the two

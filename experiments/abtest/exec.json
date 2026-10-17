@@ -1,5 +1,5 @@
 {
-  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: headless Claude Code on Sonnet with the person's own login (a dispatched rung, no in-session delegation). glm-5.3: the middle tier (tier 2): tried only after the cheap models finish without an accepted answer, before the session's Opus.",
+  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: headless Claude Code on Sonnet with the person's own login (a dispatched rung, no in-session delegation). glm-5.3: runs with the others (no tier: a second, sequential window would double the wait).",
   "executors": {
     "stealth": {
       "models": [
@@ -61,10 +61,7 @@
       "request_extras": {
         "reasoning_effort": "high"
       },
-      "strong": false,
-      "tier": 2
+      "strong": false
     }
-  },
-  "max_concurrent_runs": 8,
-  "hang_s": 600
+  }
 }

@@ -98,8 +98,8 @@ class RunSpec:
     testfirst_model: str = "glm-5.3"            # the test writer; a slow or failed open writer falls back to Sonnet (dispatch)
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     cheap_agent: str = "stealth"                 # who drives the cheap models: stealth (StealthLab's own loop) or claude (Claude Code)
-    accept_rule: str = ""                        # arm C's acceptance rule (STEALTHLAB_DISPATCH_ACCEPT); "" keeps "check"
-    cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps runner.CHEAP_S (1200)
+    accept_rule: str = ""                        # arm C's acceptance rule (STEALTHLAB_DISPATCH_ACCEPT); "" keeps the product's default
+    cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps the product's budget (600)
     context_pack: bool = False                   # arm C's context pack for cheap agents (STEALTHLAB_DISPATCH_CONTEXT_PACK)
     review_model: str = ""                       # the strong reviewer (STEALTHLAB_REVIEW_STRONG_MODEL); "" keeps Sonnet
     allow_cold_resume: bool = False

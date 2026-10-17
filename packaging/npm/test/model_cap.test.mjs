@@ -9,6 +9,7 @@ import { WINS_MAX, median, modelCapS, modelSpeeds, modelWins, orderFastestFirst,
 import { parseRouting, recordObs, requestPayload, upsertRoutes } from "../lib/library.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { loadAttempts, replay } from "../scripts/replay_model_cap.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,7 +114,7 @@ function setup(envExtra = {}) {
   fs.mkdirSync(path.join(root, ".stealth"));
   fs.writeFileSync(path.join(root, "calc.py"), "x = 1\n");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { root, env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
+  return { root, env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
                         STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_PARALLEL: "on", STEALTHLAB_DISPATCH_MAX_PARALLEL: "2", STEALTHLAB_DISPATCH_CAP_FLOOR_S: "0.3", ...envExtra } };
 }
 const seed = (root, model, secs, n = 5) => { for (let i = 0; i < n; i++) recordModelWin(root, model, "stealth", secs); };
