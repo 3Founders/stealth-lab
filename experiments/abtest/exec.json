@@ -65,5 +65,6 @@
       "tier": 2
     }
   },
-  "max_concurrent_runs": 2
+  "max_concurrent_runs": 8,
+  "hang_s": 600
 }

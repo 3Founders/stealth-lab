@@ -99,7 +99,7 @@ class RunSpec:
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
     cheap_agent: str = "stealth"                 # who drives the cheap models: stealth (StealthLab's own loop) or claude (Claude Code)
     accept_rule: str = ""                        # arm C's acceptance rule (STEALTHLAB_DISPATCH_ACCEPT); "" keeps "check"
-    cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps 150
+    cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps runner.LIMITS_S
     context_pack: bool = False                   # arm C's context pack for cheap agents (STEALTHLAB_DISPATCH_CONTEXT_PACK)
     review_model: str = ""                       # the strong reviewer (STEALTHLAB_REVIEW_STRONG_MODEL); "" keeps Sonnet
     allow_cold_resume: bool = False

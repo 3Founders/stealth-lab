@@ -59,7 +59,10 @@ REPO = HERE.parents[1]
 LOCAL = HERE / ".local"
 MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
-HANG_S = 30 * 60
+# arm C's dispatch limits (arm_env): large, so they only catch hangs and service errors; 3600 s is the executor's ceiling
+LIMITS_S = 3600
+# the session is silent while dispatch runs inside its prompt hook (up to 3 * LIMITS_S), so its hang limit is longer
+HANG_S = 3 * LIMITS_S + 10 * 60
 # Claude subagents the plan may use besides the session's own model; open models come from exec.json
 # the session model is the last rung; every cheaper rung (open models, Sonnet via the claude executor) comes from
 # exec.json and is dispatched before the session starts -- nothing is delegated inside the session
@@ -252,7 +255,9 @@ def workspace(arm: str, name: str) -> Path:
 def install_c(ws: Path) -> None:
     # STEALTHLAB_HOME: the install's saved config (dispatch: true) goes to arm C's home, never the person's own
     subprocess.run(["node", str(HERE / "setup_c.mjs"), str(ws)], check=True, capture_output=True, text=True,
-                   env={**os.environ, "STEALTHLAB_HOME": str(c_home())})
+                   env={**os.environ, "STEALTHLAB_HOME": str(c_home()),
+                        # the prompt hook outlasts dispatch's limits below (LIMITS_S), so it never cuts a try short
+                        "STEALTHLAB_PROMPT_HOOK_TIMEOUT_S": str(3 * LIMITS_S)})
 
 
 def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str, str]:
@@ -278,7 +283,15 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
             **({"STEALTHLAB_DISPATCH_ACCEPT": os.environ["ABTEST_ACCEPT_RULE"]} if os.environ.get("ABTEST_ACCEPT_RULE") else {}),
             # the cheap models' time budget, the context pack, the strong reviewer's model (packaging/npm dispatch.mjs,
             # context_pack.mjs, accept.mjs): set per run, so the final series can use what the survey measured
-            **({"STEALTHLAB_DISPATCH_TIMEOUT_S": os.environ["ABTEST_CHEAP_TIMEOUT_S"]} if os.environ.get("ABTEST_CHEAP_TIMEOUT_S") else {}),
+            # the time limits only catch hangs and service errors, never cut a real try short (Anuj, 2026-10-17): the
+            # cheap tries, the middle model and one run each get LIMITS_S, there is no per-model cap and no strong extra,
+            # and every configured model gets its try (no max-rungs cut). ABTEST_CHEAP_TIMEOUT_S still overrides the first.
+            "STEALTHLAB_DISPATCH_TIMEOUT_S": os.environ.get("ABTEST_CHEAP_TIMEOUT_S") or str(LIMITS_S),
+            "STEALTHLAB_DISPATCH_TIER_S": str(LIMITS_S),
+            "STEALTHLAB_DISPATCH_RUN_TIMEOUT_S": str(LIMITS_S),
+            "STEALTHLAB_DISPATCH_STRONG_EXTRA_S": "0",
+            "STEALTHLAB_DISPATCH_MODEL_CAP": "off",
+            "STEALTHLAB_DISPATCH_MAX_RUNGS": "16",
             **({"STEALTHLAB_DISPATCH_CONTEXT_PACK": "on"} if os.environ.get("ABTEST_CONTEXT_PACK") == "on" else {}),
             **({"STEALTHLAB_REVIEW_STRONG_MODEL": os.environ["ABTEST_REVIEW_MODEL"]} if os.environ.get("ABTEST_REVIEW_MODEL") else {}),
             # dispatch's own skip-a-provider floor matches the runner's pause point, so no task between the two

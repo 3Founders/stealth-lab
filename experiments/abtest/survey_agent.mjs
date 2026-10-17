@@ -28,7 +28,7 @@ const t0 = Date.now();
 let r;
 try {
   const st = await rt.achieve({ repo_path: root, task, checks: ["python -c \"print('done')\""], scope: ["*", "**/*"], executor, model,
-                                base: "working-tree", timeout_s: Number(process.env.SURVEY_AGENT_TIMEOUT_S || 600) });
+                                base: "working-tree", timeout_s: Number(process.env.SURVEY_AGENT_TIMEOUT_S || 3600) });
   do { r = await rt.runResult(st.run_id, 55); } while (!["verified", "failed", "timed_out", "cancelled", "error"].includes(r?.state));
 } catch (err) {
   process.stdout.write(JSON.stringify({ state: "error", error: String(err.message).slice(0, 300) }));

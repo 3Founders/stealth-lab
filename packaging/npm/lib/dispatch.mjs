@@ -99,6 +99,8 @@ export function dispatchPolicy(env = process.env) {
     // a middle model (an exec.json profile with tier: 2, say GLM-5.3) starts only once every cheaper one has finished
     // without an accepted answer, with this much time of its own
     tierS: Math.max(60, Number(env.STEALTHLAB_DISPATCH_TIER_S ?? 420)),
+    // one cheap run's own time limit in the executor (lib/exec/runtime.mjs, at most 3600 s); unset keeps its 900 s
+    runTimeoutS: Number(env.STEALTHLAB_DISPATCH_RUN_TIMEOUT_S) > 0 ? Number(env.STEALTHLAB_DISPATCH_RUN_TIMEOUT_S) : null,
     strongFirst: (env.STEALTHLAB_DISPATCH_STRONG_FIRST || "off").toLowerCase() === "on",
     // a repo area (lib/areas.mjs) where the cheap models lost this many times and never won is not dispatched to
     areaSkip: (env.STEALTHLAB_DISPATCH_AREA_SKIP || "on").toLowerCase() !== "off",
@@ -818,10 +820,13 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // STEALTHLAB_DISPATCH_STRONG_FIRST=on, or "first": true on its profile, starts it in the first wave instead.
   {
     // an image task is cut to max-rungs only after the models that can see are picked (below)
-    const weak = rungs.filter((r) => !strongSet.has(r.model)).slice(0, seeOnly ? 16 : policy.maxRungs);
+    // a middle model (tier 2+) is not cut either: it was cut as one of the "weak" ones, so GLM-5.3 never ran when three
+    // cheap models came before it (ct-smoke-final4, 2026-10-17)
+    const weak = rungs.filter((r) => !strongSet.has(r.model) && tierOf(r.model) === 1).slice(0, seeOnly ? 16 : policy.maxRungs);
     const strong = rungs.filter((r) => strongSet.has(r.model));
+    const middle = rungs.filter((r) => !strongSet.has(r.model) && tierOf(r.model) > 1);
     const first = policy.strongFirst ? strong : strong.filter((r) => strongFirstSet.has(r.model));
-    rungs = [...first, ...weak, ...strong.filter((r) => !first.includes(r))];
+    rungs = [...first, ...weak, ...strong.filter((r) => !first.includes(r)), ...middle];
   }
   if (images.length && !policy.vision) {
     const profiles = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
@@ -970,6 +975,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     try {
       const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskWithContext, checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
+        ...(policy.runTimeoutS ? { timeout_s: policy.runTimeoutS } : {}),
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
       runId = started.run_id;
       running.set(rung.unit, runId);
@@ -1071,6 +1077,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
                  tail: ok ? "" : (cross?.verdict === "disagree" ? cross.tail
                    : String((result.checks || []).map((c) => c.tail || "").join("\n")).slice(-600)) });
     if (!ok && cross?.verdict === "disagree") try { await rt.cancelRun(result.run_id); } catch { /* best effort */ }
+    // a failed answer is logged too: the hooks log showed nothing for gemma and flash failing (ct-smoke-final4)
+    if (!ok) log(`dispatch ${rung.unit}: no pass (${tried[tried.length - 1].state})`);
     return ok;
   };
 
@@ -1127,6 +1135,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let tierStarted = false;                 // a middle model has started: it has its own time (policy.tierS)
   const width = policy.parallel ? Math.min(rungs.length, policy.maxParallel) : 1;
   const profilesNow = (() => { try { return readExecConfig(env).profiles || {}; } catch { return {}; } })();
+  // the executor's own limit on runs at once (exec.json max_concurrent_runs): a rung past it waits for a slot instead of
+  // failing at start -- minimax lost its only try to "2 runs already active" (ct-smoke-final4, 2026-10-17)
+  const runCap = (() => { try { return readExecConfig(env).max_concurrent_runs || 4; } catch { return 4; } })();
   // a rung's provider: its profile's endpoint host, else its executor
   const providerOf = (r) => { try { return new URL(profilesNow[r.model]?.openai_base_url).host; } catch { return r.executor || "?"; } };
   let winner = null;
@@ -1169,7 +1180,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // a middle model waits for every cheaper one to finish (queued or running)
       const t = tierOf(queue[i].model);
       const holdTier = t > 1 && [...queue, ...rungs.filter((r) => pending.has(r.unit))].some((r) => tierOf(r.model) < t);
-      if (!holdLast && !holdTier && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < width) {
+      if (!holdLast && !holdTier && pending.size < runCap && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < width) {
         const rung = queue.splice(i, 1)[0];
         if (t > 1 && !tierStarted) {
           // the middle model's own time from now: the cheap models' limit has been used up by them
@@ -1285,6 +1296,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     for (const rung of queue) tried.push({ unit: rung.unit, state: ambiguous ? "skipped (the task reads two ways)"
                                                                    : "skipped (two answers failed the same advance tests)" });
     queue.length = 0;
+  }
+  // every cheap try finished and none was accepted: this ending had no line of its own (ct-smoke-final4)
+  if (!winner && !timedOut && !sharedFail && !ambiguous) {
+    log(`dispatch: no cheap answer accepted (${tried.length} tried); the session's model takes over`);
   }
   if (timedOut) {
     // no pass in time: the runs still going are cancelled -- not counted against their models -- and the rest skipped
