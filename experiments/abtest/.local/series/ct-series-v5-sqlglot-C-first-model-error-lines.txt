@@ -1,0 +1,6 @@
+2026-10-17T20:20:08.116Z prompt locate: narrowed to sqlglot/dialects/presto.py, sqlglot/dialects/spark.py, sqlglot/dialects/dialect.py
+2026-10-17T20:20:08.125Z prompt dispatch: located sqlglot/dialects/presto.py:233-344, sqlglot/dialects/presto.py:1-54, sqlglot/dialects/spark.py:1-41, sqlglot/dialects/spark.py:92-193 (tests: tests/dialects/test_presto.py)
+2026-10-17T20:20:38.752Z prompt test-first: glm-5.3 not done in 30 s; claude-sonnet-5-5 writes too, the first usable tests win
+2026-10-17T20:20:46.068Z prompt test-first: claude-sonnet-5-5 replied in 7 s
+2026-10-17T20:20:55.401Z prompt test-first: glm-5.3 replied in 47 s
+2026-10-17T20:21:05.857Z prompt gpt-oss-120b|claude: the executor failed (exit 1): API Error: 400 upstream 400: {"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error","param":null}}
