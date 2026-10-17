@@ -458,9 +458,20 @@ def open_model_runs(home: Path, since: str, until: str) -> dict:
             continue
         runs += 1
         role = "verifier" if "tests_extra/test_extra.py" in str((r.get("input") or {}).get("task") or "") else "attempt"
-        for a in r.get("attempts") or []:
+        for i, a in enumerate(r.get("attempts") or []):
+            # what the try did and why it failed, so a discarded answer can be graded afterwards (a passing glm-5.3-flash
+            # answer was thrown away on sqlglot-4051 and nobody could tell whether it was right, ct-series-v4)
+            pp = (a.get("diff") or {}).get("patch_path") or str(rj.parent / f"a{i + 1}.patch")
+            try:
+                patch = Path(pp).read_text(encoding="utf-8", errors="replace")[:40000] if Path(pp).exists() else ""
+            except OSError:
+                patch = ""
+            checks = a.get("checks") or []
+            tail = str((checks[-1] or {}).get("tail") or "")[-800:] if checks and isinstance(checks[-1], dict) else ""
             attempts.append({"model": a.get("model"), "executor": a.get("executor"), "state": a.get("state"),
-                             "cost_usd": a.get("cost_usd"), "tokens": a.get("tokens"), "role": role})
+                             "cost_usd": a.get("cost_usd"), "tokens": a.get("tokens"), "role": role,
+                             "run_id": r.get("id"), "duration_s": a.get("duration_s"), "error": str(a.get("error") or "")[:400] or None,
+                             "summary": str(a.get("summary") or "")[:400] or None, "check_tail": tail or None, "patch": patch or None})
             cost += float(a.get("cost_usd") or 0)
     return {"open_cost_usd": round(cost, 6), "exec_runs": runs, "attempts": attempts}
 

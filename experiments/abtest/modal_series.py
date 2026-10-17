@@ -144,6 +144,26 @@ def codebook_embedding_env(environ: dict[str, str]) -> dict[str, str]:
     return {"EMBEDDING_PROVIDER_CHAIN": provider, "GEMINI_EMBEDDING_MODEL": CODEBOOK_MODEL} if provider else {}
 
 
+def provider_report(environ: dict[str, str]) -> list[str]:
+    """Which embedding and judge providers the test server will use, from the variable NAMES it gets (never values). The
+    server's library matching needs a judge (JEV, else Gemini; Vertex and a local Gemma do not exist on Modal) and its
+    routing codes need the codebook's embedding space; without them arm C cannot use its library and C = C0 by
+    construction, silently. Printed when the server starts, so the first issue shows it."""
+    has = lambda k: bool(str(environ.get(k) or "").strip())  # noqa: E731
+    chain = environ.get("EMBEDDING_PROVIDER_CHAIN") or "gemini,voyage (the default: not the codebook's space)"
+    judge = "jev" if has("JEV_BASE_URL") and has("JEV_API_KEY") else "gemini" if has("GEMINI_API_KEY") else "NONE"
+    lines = [f"test server: embeddings {chain} ({environ.get('GEMINI_EMBEDDING_MODEL') or 'gemini-embedding-001'}); "
+             f"semantic judge {judge}" + (f" (JEV capabilities: {environ.get('JEV_CAPABILITIES') or 'applicability'})" if judge == "jev" else "")]
+    if judge == "NONE":
+        lines.append("WARNING: no semantic judge (no JEV_BASE_URL + JEV_API_KEY, no GEMINI_API_KEY in stealthlab-keys): library "
+                     "matches cannot be judged, so arm C cannot use its library")
+    if judge == "gemini":
+        lines.append("note: JEV is not configured; the Gemini fallback judges library matches")
+    if "EMBEDDING_PROVIDER_CHAIN" not in environ:
+        lines.append("WARNING: no embedding provider for the codebook (no OPENROUTER_API_KEY / GEMINI_API_KEY): routing codes are refused (409)")
+    return lines
+
+
 def series_tasks(spec: RunSpec, repo: str) -> list[dict]:
     """The series' tasks (swe_series_task.series(<repo>)), cut to --max-issues."""
     tasks = importlib.import_module(spec.series_module).series(repo)
@@ -268,6 +288,7 @@ class Container:
                         **({"ABTEST_CONTEXT_PACK": "on"} if spec.context_pack else {}),
                         **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         self.environ.update(codebook_embedding_env(self.environ))
+        self.provider_lines = provider_report(self.environ)
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.run_dir = self.vol / spec.run_name() / repo                  # the repository's directory on the volume
@@ -328,6 +349,9 @@ class Container:
                            cwd=self.app / "backend", env=self.environ), "migrate.py")
         self.out.mkdir(parents=True, exist_ok=True)
         self.backend_log = self.out / "backend.log"
+        for line in self.provider_lines:                # in the launcher's log and in providers.txt next to the results
+            print(line, flush=True)
+        (self.out / "providers.txt").write_text("\n".join(self.provider_lines) + "\n", encoding="utf-8")
         self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN,
                                                                            # the server refuses to start without a static MCP token (locally it is in backend/.env)
                                                                            "STEALTHLAB_MCP_TOKEN": secrets.token_urlsafe(32)},

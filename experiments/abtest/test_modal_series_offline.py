@@ -642,3 +642,13 @@ def test_the_test_server_embeds_in_the_routing_codebooks_space():
     assert ms.codebook_embedding_env({"GEMINI_API_KEY": "k"})["EMBEDDING_PROVIDER_CHAIN"] == "gemini"
     assert ms.codebook_embedding_env({"EMBEDDING_PROVIDER_CHAIN": "voyage", "OPENROUTER_API_KEY": "k"}) == {}, "a given setting wins"
     assert ms.codebook_embedding_env({}) == {}
+
+
+def test_the_provider_report_says_which_judge_and_embeddings_the_server_gets():
+    env = {"JEV_BASE_URL": "u", "JEV_API_KEY": "k", **ms.codebook_embedding_env({"OPENROUTER_API_KEY": "k"}), "OPENROUTER_API_KEY": "k"}
+    lines = ms.provider_report(env)
+    assert "embeddings openrouter (gemini-embedding-2); semantic judge jev" in lines[0] and len(lines) == 1
+    lines = ms.provider_report({"GEMINI_API_KEY": "k", **ms.codebook_embedding_env({"GEMINI_API_KEY": "k"})})
+    assert "semantic judge gemini" in lines[0] and any("JEV is not configured" in l for l in lines)
+    lines = ms.provider_report({})
+    assert any(l.startswith("WARNING: no semantic judge") for l in lines) and any("routing codes are refused" in l for l in lines)

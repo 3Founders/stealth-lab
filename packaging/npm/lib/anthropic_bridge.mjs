@@ -16,6 +16,21 @@ import crypto from "node:crypto";
 import { profileKey } from "./executors/profile.mjs";
 
 let shared = null;          // {server, port, secret, profiles: Map(name -> profile), env}
+// tokens per run (the runtime's attempt tag in the route): a run that is killed (time limit, cancel) never prints Claude
+// Code's final summary, so its spend was unknown (recorded as $0: minimax's 20-minute tries, ct-series-v4)
+const usage = new Map();
+
+export function bridgeUsage(tag) {
+  const u = usage.get(String(tag));
+  return u ? { ...u } : null;
+}
+
+// a provider error that a second sample usually does not repeat: the model's tool call came out malformed or cut
+// (General Compute on gpt-oss-120b: "Model started a function call but did not complete it", "Failed to parse tool
+// call"; gemma: "max_tokens or model output limit was reached"), or the provider is briefly unavailable. Claude Code
+// does not retry a 400, so one such reply ended the whole try (every gpt-oss try in ct-series-v4).
+export const TRANSIENT_400 = /provider_error|function call|tool call|Invalid \\escape|output limit/i;
+const RETRIES = 2;
 
 const textOf = (c) => (typeof c === "string" ? c
   : Array.isArray(c) ? c.map((b) => (b?.type === "text" ? b.text : b?.type === "image" ? "[image omitted]" : "")).filter(Boolean).join("\n") : "");
@@ -48,7 +63,12 @@ export function toOpenAI(req, profile) {
     function: { name: t.name, description: String(t.description || "").slice(0, 4000), parameters: t.input_schema } }));
   const choice = req.tool_choice?.type === "any" ? "required" : req.tool_choice?.type === "tool" ? { type: "function", function: { name: req.tool_choice.name } }
     : req.tool_choice?.type === "none" ? "none" : undefined;
-  const maxOut = Math.min(Number(req.max_tokens) || 8000, Number(profile.max_output_tokens) || 16000);
+  let maxOut = Math.min(Number(req.max_tokens) || 8000, Number(profile.max_output_tokens) || 16000);
+  // inside the model's context window: a request whose input plus max_tokens passes it is refused by the provider
+  if (profile.context_window) {
+    const estIn = Math.ceil(JSON.stringify(messages).length / 3) + Math.ceil(JSON.stringify(req.tools || []).length / 3);
+    maxOut = Math.max(1024, Math.min(maxOut, profile.context_window - estIn - 1024));
+  }
   return {
     model: profile.model_id, messages, max_tokens: maxOut,
     ...(tools.length ? { tools } : {}), ...(tools.length && choice ? { tool_choice: choice } : {}),
@@ -99,7 +119,7 @@ export function sseOf(message) {
 
 async function handle(req, res, state, fetchImpl) {
   const send = (code, obj) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
-  const m = /^\/p\/([^/]+)(\/v1\/messages(?:\/count_tokens)?)/.exec(req.url || "");
+  const m = /^\/p\/([^/]+)(?:\/r\/([A-Za-z0-9_.-]{1,80}))?(\/v1\/messages(?:\/count_tokens)?)/.exec(req.url || "");
   const token = req.headers["x-api-key"] || String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (token !== state.secret) return send(401, { type: "error", error: { type: "authentication_error", message: "bad bridge secret" } });
   const profile = m && state.profiles.get(decodeURIComponent(m[1]));
@@ -108,19 +128,38 @@ async function handle(req, res, state, fetchImpl) {
   for await (const chunk of req) raw += chunk;
   let body;
   try { body = JSON.parse(raw || "{}"); } catch { return send(400, { type: "error", error: { type: "invalid_request_error", message: "bad JSON" } }); }
-  if (m[2].endsWith("count_tokens")) return send(200, { input_tokens: Math.ceil(raw.length / 4) });
+  if (m[3].endsWith("count_tokens")) return send(200, { input_tokens: Math.ceil(raw.length / 4) });
   try {
-    const up = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(600000),
-      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, state.env)}` },
-      body: JSON.stringify(toOpenAI(body, profile)),
-    });
-    const text = await up.text();
-    if (!up.ok) {
-      const kind = up.status === 429 ? "rate_limit_error" : up.status >= 500 ? "api_error" : "invalid_request_error";
-      return send(up.status === 429 ? 429 : up.status >= 500 ? 529 : 400, { type: "error", error: { type: kind, message: `upstream ${up.status}: ${text.slice(0, 300)}` } });
+    const upBody = JSON.stringify(toOpenAI(body, profile));
+    let up;
+    let text = "";
+    for (let i = 0; ; i++) {
+      up = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST", redirect: "error", signal: AbortSignal.timeout(600000),
+        headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, state.env)}` },
+        body: upBody,
+      });
+      text = await up.text();
+      const transient = up.status >= 500 || up.status === 429 || (up.status === 400 && TRANSIENT_400.test(text));
+      if (up.ok || !transient || i >= RETRIES) break;
+      await new Promise((r) => setTimeout(r, state.retryMs ?? 1000 * (i + 1)));
     }
-    const message = toAnthropic(JSON.parse(text), profile.model_id);
+    if (!up.ok) {
+      // a transient error that outlived the retries goes back as "overloaded" (529), which Claude Code retries itself;
+      // any other 400 is the request's own fault and stays fatal
+      const transient400 = up.status === 400 && TRANSIENT_400.test(text);
+      const kind = up.status === 429 ? "rate_limit_error" : up.status >= 500 || transient400 ? "overloaded_error" : "invalid_request_error";
+      return send(up.status === 429 ? 429 : up.status >= 500 || transient400 ? 529 : 400, { type: "error", error: { type: kind, message: `upstream ${up.status}: ${text.slice(0, 300)}` } });
+    }
+    const parsedUp = JSON.parse(text);
+    if (m[2]) {
+      const u = usage.get(m[2]) || { in: 0, out: 0, calls: 0 };
+      u.in += Number(parsedUp?.usage?.prompt_tokens) || 0;
+      u.out += Number(parsedUp?.usage?.completion_tokens) || 0;
+      u.calls += 1;
+      usage.set(m[2], u);
+    }
+    const message = toAnthropic(parsedUp, profile.model_id);
     if (body.stream) {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
       return res.end(sseOf(message));
@@ -132,7 +171,7 @@ async function handle(req, res, state, fetchImpl) {
 }
 
 // -> {baseUrl, secret} for this profile (the bridge starts on first use and lives as long as this process)
-export async function bridgeFor(profile, { env = process.env, fetchImpl = globalThis.fetch } = {}) {
+export async function bridgeFor(profile, { env = process.env, fetchImpl = globalThis.fetch, runTag = null, retryMs } = {}) {
   if (!profile?.openai_base_url) throw new Error(`profile ${profile?.name} has no openai_base_url for the bridge`);
   if (!shared) {
     const state = { secret: crypto.randomBytes(24).toString("hex"), profiles: new Map(), env, fetchImpl };
@@ -144,7 +183,9 @@ export async function bridgeFor(profile, { env = process.env, fetchImpl = global
   shared.state.profiles.set(profile.name, profile);
   shared.state.env = env;
   shared.state.fetchImpl = fetchImpl;
-  return { baseUrl: `http://127.0.0.1:${shared.port}/p/${encodeURIComponent(profile.name)}`, secret: shared.state.secret };
+  if (retryMs !== undefined) shared.state.retryMs = retryMs;
+  const tag = runTag && /^[A-Za-z0-9_.-]{1,80}$/.test(String(runTag)) ? `/r/${runTag}` : "";
+  return { baseUrl: `http://127.0.0.1:${shared.port}/p/${encodeURIComponent(profile.name)}${tag}`, secret: shared.state.secret };
 }
 
 export function closeBridge() {

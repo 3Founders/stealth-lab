@@ -325,8 +325,10 @@ export class ExecRuntime {
       // An open-model profile for this model (exec.json "profiles"), if any. Adapters that cannot use one ignore it.
       const profile = readExecConfig(env).profiles[a.model] || undefined;
       // awaited: the claude executor starts its local bridge for an open model on first use (lib/anthropic_bridge.mjs)
+      // runTag: the bridge counts this attempt's tokens under it (lib/anthropic_bridge.mjs bridgeUsage)
+      const runTag = `${run.id}.${tag}`;
       const spec = await adapter.buildCommand({ task: run.input.task, model: a.model, worktree: a.worktree, timeoutS: run.input.timeoutS,
-                                                env, bin: probe.bin || undefined, profile });
+                                                env, bin: probe.bin || undefined, profile, runTag });
       if (!spec || !spec.cmd) throw new Error(`adapter "${a.executor}" returned no command`);
       const outLog = redactingLog(path.join(dir, `${tag}.stdout.log`), (s) => this.red(s));
       const errLog = redactingLog(path.join(dir, `${tag}.stderr.log`), (s) => this.red(s));
@@ -363,6 +365,13 @@ export class ExecRuntime {
       a.costUsd = parsed.costUsd ?? parsed.cost ?? null;
       // an open model with prices: its cost is its tokens at ITS price -- Claude Code driving it reports a cost at
       // Claude's prices for a model it does not know (lib/anthropic_bridge.mjs)
+      // a bridged run: the bridge's count of what the provider billed is the truth, also for a run that was killed before
+      // Claude Code printed its summary (a timed-out or cancelled try cost money too)
+      if (a.executor === "claude" && profile) {
+        const { bridgeUsage } = await import("../anthropic_bridge.mjs");
+        const u = bridgeUsage(runTag);
+        if (u && u.calls) a.tokens = { in: u.in, out: u.out };
+      }
       if (profile && (profile.input_per_mtok || profile.output_per_mtok) && a.tokens?.in !== null && a.tokens?.in !== undefined && a.executor === "claude") {
         a.costUsd = ((a.tokens.in || 0) * (profile.input_per_mtok || 0) + (a.tokens.out || 0) * (profile.output_per_mtok || 0)) / 1e6;
       }

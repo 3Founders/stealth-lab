@@ -114,11 +114,11 @@ const adapter = {
     return this.buildDirect(opts);
   },
 
-  async buildBridged({ task, worktree, timeoutS, env = process.env, bin, profile, configDir } = {}) {
+  async buildBridged({ task, worktree, timeoutS, env = process.env, bin, profile, configDir, runTag = null } = {}) {
     const launch = launchOrThrow(BIN, { env, bin });
     profileKey(profile, env);                       // the provider key must be set (it stays in this process)
     const { bridgeFor } = await import("../anthropic_bridge.mjs");
-    const b = await bridgeFor(profile, { env });
+    const b = await bridgeFor(profile, { env, runTag });
     const overlay = openModelEnv({ ...profile, anthropic_base_url: b.baseUrl }, env, { configDir, token: b.secret });
     overlay[profile.key_env] = undefined;           // the provider key's own variable stays out of the child too
     // lean (default): a short system prompt of our own and only the tools it may use defined -- Claude Code's own

@@ -12,6 +12,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { costOf, recordSpend } from "./spend.mjs";
 import { enclosingBlock, isSource } from "./locate.mjs";
 
 export const NARROW_SYSTEM = [
@@ -93,6 +94,7 @@ export async function narrowLocation({ prompt, root, loc, env = process.env, fet
     });
     if (!res.ok) { log(`locate: narrowing HTTP ${res.status}`); return loc; }
     const body = await res.json();
+    recordSpend(env, { what: "locate", model: profile.name, cost_usd: costOf(profile, body?.usage) });
     const picks = checkPicks(body?.choices?.[0]?.message?.content, root, known);
     if (!picks || (!picks.files.length && !picks.functions.length)) { log("locate: narrowing gave nothing usable"); return loc; }
     // files: the model's, then its functions' files, then the search's; spots: its functions, then the search's spots
