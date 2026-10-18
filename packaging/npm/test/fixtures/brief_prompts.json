@@ -38,6 +38,7 @@
     { "prompt": "got it, thank you", "kind": "chat" },
     { "prompt": "hmm interesting", "kind": "chat" },
     { "prompt": "going to lunch, back in 20", "kind": "chat" },
-    { "prompt": "that was a lot faster than i expected honestly", "kind": "chat" }
+    { "prompt": "that was a lot faster than i expected honestly", "kind": "chat" },
+    { "prompt": "When transpiling from Presto to Spark, regexp_extract comes out without a group argument, but Spark's default is 1 while Presto's is 0.", "kind": "code", "clarity": "clear", "size": "small" }
   ]
 }

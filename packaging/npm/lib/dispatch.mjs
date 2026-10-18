@@ -26,7 +26,7 @@ import { contextPack, contextPackEnabled } from "./context_pack.mjs";
 import { locate, locateEnabled, renderForWriter, renderWhere, testFileFor } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
 import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
-import { runDag, saveDagState, sessionPlanEnabled, PLAN_USAGE } from "./dag_run.mjs";
+import { runDag, sessionStartedAt } from "./dag_run.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
 import { describeEntry } from "./way_describe.mjs";
 import { reproAgentEnabled, reproduceTests } from "./repro_agent.mjs";
@@ -790,6 +790,30 @@ export function sessionEdits(transcriptPath, root) {
   return out;
 }
 
+// The files in the working tree changed since `since` (an ISO time, the session's start): modified, added or new files
+// whose last write is at or after it. What the session changed, however it changed them (an Edit, or a script run by
+// Bash, which the transcript's Edit calls do not show -- sqlglot-4051 turn 2 was dispatched while the session's own
+// fix of the same files was there, ct-series-v5). None when there is no start or no git.
+export function changedSince(root, since) {
+  const out = new Set();
+  const t = since ? Date.parse(since) : NaN;
+  if (!root || Number.isNaN(t)) return out;
+  try {
+    const r = spawnSync("git", ["-C", root, "status", "--porcelain", "-z", "--untracked-files=all"], { encoding: "utf8", timeout: 5000, windowsHide: true });
+    if (r.status !== 0) return out;
+    const parts = r.stdout.split("\0");
+    for (let i = 0; i < parts.length; i++) {
+      const e = parts[i];
+      if (e.length < 4) continue;
+      if (e[0] === "R" || e[0] === "C") i++;                     // a rename/copy: the next field is the old name
+      const f = e.slice(3);
+      if (f.startsWith(".stealth/")) continue;
+      try { if (fs.statSync(path.join(root, f)).mtimeMs >= t - 1000) out.add(f); } catch { /* deleted: not a file to compare */ }
+    }
+  } catch { /* none */ }
+  return out;
+}
+
 const firstLine = (text) => String(text || "").split("\n").map((l) => l.trim()).find(Boolean)?.slice(0, 200) || "";
 
 // The executor takes at most TASK_MAX characters in all (lib/exec/runtime.mjs). The request comes first and is never cut
@@ -880,26 +904,19 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       return null;
     }
   }
-  // the brief: what the cheap models and the test writer are told, and whether this prompt is a task for them at all
+  // the brief: whether this prompt is a code task for the cheap models at all (a strong model judges it, lib/brief.mjs),
+  // and the names to search the code for. The cheap models are told the conversation and the request as the user said it.
   let briefed = null;
-  let large = false;                       // the brief's size=large: when the cheap try fails, the session plans it
-  let planRungs = [];                      // the cheap models before the large-task filter: the plan's parts are smaller
   if (policy.brief) {
-    const { briefGate, briefedPrompt, makeBrief } = await import("./brief.mjs");
+    const { briefGate, conversationPrompt, makeBrief, recentTurns } = await import("./brief.mjs");
     const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
                                                   cwd: payload.cwd || root, env, fetchImpl, log });
-    const gate = briefGate(brief, payload.prompt);
-    // what the cheap models will be told, and why the gate let it through: the brief decides both
+    const gate = briefGate(brief);
     if (brief) log(`dispatch: brief kind=${brief.kind} clarity=${brief.clarity} size=${brief.size}: ${String(brief.task || "").replace(/\s+/g, " ").slice(0, 240)}`);
-    // a large task: only the strong cheap model tries it (the small ones rarely manage); none -> the session's model
-    if (!gate.ok && !force && gate.reason === "size=large" && rungs.some((r) => strongSet.has(r.model))) {
-      planRungs = rungs;
-      rungs = rungs.filter((r) => strongSet.has(r.model) || tierOf(r.model) > 1);
-      large = true;
-      log(`dispatch: a large task -- only ${rungs.map((r) => r.model).join(", ")} tries it`);
-    } else if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
-    // the brief first, then the user's own words ("Original request:"): a detail the brief dropped is still there
-    if (brief) { payload = { ...payload, prompt: briefedPrompt(brief, payload.prompt, TASK_MAX) }; briefed = { brief, briefedPrompt }; }
+    if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
+    const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: payload.prompt }) : [];
+    payload = { ...payload, prompt: conversationPrompt(turns, payload.prompt, TASK_MAX) };
+    briefed = { brief, turns, conversationPrompt };
   }
   // where in this repository the task is (lib/locate.mjs): the test writer gets that code, the cheap models a
   // path:start-end line their agent preloads, and the session's model the same pointer if the cheap tries fail
@@ -919,15 +936,15 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const where = renderWhere(loc);
   if (loc.spots.length) log(`dispatch: located ${loc.spots.map((s) => `${s.file}:${s.start}-${s.end}`).join(", ")}${loc.testFile ? ` (tests: ${loc.testFile})` : ""}`);
   if (where && briefed) {
-    // the brief is cut to leave the line its room inside the executor's TASK_MAX
-    const { brief, briefedPrompt } = briefed;
-    payload = { ...payload, prompt: briefedPrompt(brief, rawPayload.prompt, TASK_MAX - where.length - 2) };
+    // the earlier turns are cut to leave the location line its room inside the executor's TASK_MAX
+    payload = { ...payload, prompt: briefed.conversationPrompt(briefed.turns, rawPayload.prompt, TASK_MAX - where.length - 2) };
   }
   // a follow-up in a session whose own model is already changing the located code: the session finishes its own work
   // (sqlglot-4051 turn 2: the follow-up was dispatched, split from the entry recorded 12 s earlier from turn 1, every
   // cheap model failed part 1 after 19 min, and the session then reworked the fix, ct-series-v4)
   if (!force && !policy.followups && payload.transcript_path) {
-    const edited = sessionEdits(payload.transcript_path, payload.cwd || root);
+    const edited = new Set([...sessionEdits(payload.transcript_path, payload.cwd || root),
+                            ...changedSince(payload.cwd || root, sessionStartedAt(payload.transcript_path))]);
     const overlap = (loc.files || []).filter((f) => edited.has(f));
     if (overlap.length) {
       log(`dispatch: not dispatched (a follow-up: this session already changed ${overlap.join(", ")})`);
@@ -1502,14 +1519,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // a loss for this area only when the models were really tried: not a task that reads two ways, not usage limits
   if (!ambiguous && tried.some((t) => !/usage_limited|^skipped|^cancelled$/.test(String(t.state)))) recordArea(root, area, false);
   const runMd = writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), tried });
-  // a large task the strong cheap model could not do whole: the session's model is asked for a plan, not the whole
-  // change -- the task's checks and models are kept for `dag plan` (lib/dag_run.mjs planDag)
-  const planAsk = large && policy.dag && !images.length && sessionPlanEnabled(env) && !ambiguous && saveDagState(root, {
-    awaiting_plan: true, task: rawPayload.prompt, entry: "session-plan", slots: [], where, fullCheck, instanceKey: plan.instance_key,
-    interCheck: checkRun || `${pythonBin({ env })} -c "import compileall, sys; sys.exit(0 if compileall.compile_dir('.', quiet=1) else 1)"`,
-    goalId: plan.goal_id || null, policy: { timeoutS: policy.timeoutS, maxParallel: policy.maxParallel, scope: policy.scope },
-    rungs: planRungs.map((r) => ({ unit: r.unit, model: r.model, executor: r.executor })), nodes: [] });
-  return { handled: false, tried, spec, loc, runMd, ...(planAsk ? { planAsk: true } : {}), remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
+  return { handled: false, tried, spec, loc, runMd, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
 }
 
 // The image files the request names that exist in the project ("recreate the page in screenshot.png"). The cheap models
@@ -1630,15 +1640,6 @@ export function triedNote(d) {
       (d.runMd ? " The plan is in .stealth/run.md." : "") + handoffNote({ ...d, runMd: false });
   }
   if (!d.tried?.length) return "";
-  if (d.planAsk) {
-    // a large change: the session plans it, cheap models build the parts that follow from the plan
-    return "StealthLab first tried this whole on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
-      "; it did not pass and nothing was applied. This is a large change: before doing it yourself, plan it in 2-8 parts " +
-      "(each part's files, the names it adds and uses from other parts, and who does it -- \"me\" for a part that needs a " +
-      "design decision, \"cheap\" for one that follows from the plan) and hand the plan over: " +
-      `${PLAN_USAGE.replace("stealthlab-mcp", selfCommand())}. Cheap models build the "cheap" parts that need none of yours at once; ` +
-      `do your parts, then run \`${selfCommand()} dag continue\` for the rest.` + handoffNote(d);
-  }
   // an answer that passed the check but was not accepted is not "nothing": the session gets it to judge, instead of
   // being told none passed and redoing the work (sqlglot-4051: glm-5.3-flash passed, a review said it fixes, and the
   // session was told "none passed", ct-series-v4)

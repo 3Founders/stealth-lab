@@ -1,18 +1,17 @@
-// The task brief: what the cheap models and the test writer are told FIRST (then the user's own words, see briefedPrompt), and the rule that
-// decides whether a prompt is dispatched at all.
+// The task brief: whether a prompt is a code task for the cheap models at all, judged by a strong model, never by word
+// rules, plus the names to search the code for (search_terms) and the parts of a multi-part request.
 //
-// A real prompt is often not a clean task: "now do the same for the other one", "that bug again", a question, "thanks".
-// Sent as it is, the cheap models guess at it, the test writer writes tests for a guess, and a question gets "answered"
-// with a diff. One cheap call (gpt-oss-120b on the user's own provider key, from exec.json -- never a Claude model) turns
-// the last few turns plus the prompt into
-//   { task, files_hinted, acceptance, parts[], clarity: clear|unclear, kind: code|question|chat, size: small|medium|large }
-// and dispatch goes ahead only for kind=code, clarity=clear, size != large (and a check, as before). Everything else is
-// left to the session's own model, as with no StealthLab. Nothing here ever asks the user a question.
-//
-// Fails open: no profile, a timeout (8 s hard), an error or an unparseable reply give `null`, and dispatch behaves as it
-// did before this module (the raw prompt). One deterministic guard only ever pushes DOWN: a prompt that is plainly a
-// question or pleasantry is never a code task, whatever the model said. STEALTHLAB_BRIEF=off turns the brief and the gate
-// off; STEALTHLAB_BRIEF_MODEL (default gpt-oss-120b) and STEALTHLAB_BRIEF_TIMEOUT_MS (default 8000) tune it.
+// A real prompt is often not a clean task: "now do the same for the other one", a question, a confirmation of what
+// the assistant just did, "thanks". One call to a strong model (STEALTHLAB_BRIEF_MODEL, default claude-sonnet-5-5, a
+// lean tool-less `claude -p` under the user's own login; an exec.json profile name runs one chat call on its endpoint)
+// reads the last few turns plus the prompt and returns
+//   { task, files_hinted, acceptance, parts[], clarity: clear|unclear, kind: code|question|chat, size, search_terms }
+// Dispatch goes ahead only for kind=code and clarity=clear. No brief (an error, a timeout, an unusable reply) is not a
+// judgment that this is a code task, so nothing is dispatched: the session's own model does it, as with no StealthLab.
+// The cheap models are told what the user said (conversationPrompt), never the brief's rewording of it: on sqlglot-4051
+// a confirmation ("so it needs the group index written out explicitly") was restated as an order ("ALWAYS include
+// it"), and every cheap model built that (ct-series-v5). Word rules ("When ..." = a question) blocked real bug
+// reports and are gone. STEALTHLAB_BRIEF=off turns the brief and the gate off (the raw prompt is dispatched).
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -41,7 +40,8 @@ export const BRIEF_SYSTEM = [
   "acceptance: how to tell it is done, in one sentence, only from what the message says (may be empty).",
   "parts: one string per separate thing the message asks for when there are several; otherwise [].",
   "kind: 'code' only if the message asks for a change to code, files, queries or tests in this project; 'question' if it asks",
-  "for an explanation or information; 'chat' for anything else (thanks, opinions, small talk).",
+  "for an explanation or information; 'chat' for anything else (thanks, opinions, small talk). A message that confirms,",
+  "restates or asks about what the assistant already did in the earlier turns asks for no new change: not 'code'.",
   "clarity: 'unclear' if an assistant could not start without asking the user something (no target, an ambiguous 'that',",
   "no stated goal). A message that points to a file for the details ('the task is in TASK.md', 'see notes.txt') is clear",
   "when that file exists: its start may be included after the message, and the assistant can read the rest.",
@@ -137,31 +137,6 @@ export function recentTurns(transcriptPath, { n = TURNS, current = "" } = {}) {
   return out.slice(-n);
 }
 
-// ---- the deterministic guard: a plain question or pleasantry is never a code task -------------------------------------
-
-// a pleasantry: only these words, at most 5 of them ("perfect, looks good", "got it, thank you", "great work")
-const PLEASANTRY = new Set(("hi hello hey thanks thank you thx ty ok okay cool great nice perfect awesome lgtm got it yes yep no nope sure " +
-  "good looks sounds work job well done that all so very much").split(" "));
-const isPleasantry = (p) => {
-  const words = p.toLowerCase().match(/[a-z']+/g) || [];
-  return words.length > 0 && words.length <= 5 && words.every((w) => PLEASANTRY.has(w));
-};
-const QUESTION = /^\s*(?:explain|describe|tell me|what(?:'s| is| are| does| do)|why\b|how (?:does|do|is|are)\b|where (?:is|are|does)\b|who\b|which\b|when\b|is there\b|does\b|do you\b)/i;
-// Anything that asks for a change ANYWHERE in the prompt, or names a file: such a prompt is never ruled out. This matters:
-// the benchmark's own task prompts open with a question ("What is the percentage of borderless cards? -- Write one SQLite
-// query ...") and a guard that looked only at the start would have blocked 18 of the 210 cheap wins on the saved runs.
-const ASKS_FOR_CHANGE = /\b(?:fix|add|write|create|refactor|rename|remove|delete|implement|modify|replace|convert|generate|install|extract|merge|save|edit|patch)\b|\b[\w./-]+\.(?:py|js|mjs|ts|tsx|jsx|sql|md|json|ya?ml|toml|txt|html|css|csv|sh)\b/i;
-
-// -> "chat" | "question" | null (no opinion: leave it to the model)
-export function guardKind(prompt) {
-  const p = String(prompt || "").trim();
-  if (!p) return "chat";
-  if (p.length <= 60 && isPleasantry(p)) return "chat";
-  if (ASKS_FOR_CHANGE.test(p)) return null;
-  if (QUESTION.test(p)) return "question";
-  return null;
-}
-
 // ---- the brief ---------------------------------------------------------------------------------------------------------
 
 const asList = (v, max) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, max) : []);
@@ -181,39 +156,25 @@ export function parseBrief(text) {
            parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size, search_terms: asList(o.search_terms, 8) };
 }
 
-// -> {ok: boolean, reason}. `brief` null = no brief could be made: today's behaviour, except what the guard rules out.
-export function briefGate(brief, prompt) {
-  const guard = guardKind(prompt);
-  if (guard) return { ok: false, reason: `the prompt is a ${guard}, not a code task` };
-  if (!brief) return { ok: true, reason: "no brief (raw prompt)" };
+// -> {ok: boolean, reason}: the strong model's judgment decides, and no judgment (null) is not a yes
+export function briefGate(brief) {
+  if (!brief) return { ok: false, reason: "no brief: nothing judged this a code task" };
   if (brief.kind !== "code") return { ok: false, reason: `kind=${brief.kind}` };
   if (brief.clarity !== "clear") return { ok: false, reason: "the request is unclear" };
-  if (brief.size === "large") return { ok: false, reason: "size=large" };
-  return { ok: true, reason: "clear, small or medium code task" };
+  return { ok: true, reason: "a clear code task" };
 }
 
-// The brief as text (briefedPrompt adds the original request after it).
-export function briefText(brief) {
-  const lines = [brief.task];
-  if (brief.parts.length > 1) lines.push("", "This is several things; do all of them:", ...brief.parts.map((p, i) => `${i + 1}. ${p}`));
-  if (brief.files_hinted.length) lines.push("", `Files likely involved: ${brief.files_hinted.join(", ")}`);
-  if (brief.acceptance) lines.push("", `Done when: ${brief.acceptance}`);
-  return lines.join("\n");
-}
-
-// What the cheap models and the test writer are given: the brief FIRST, then the user's own words after "Original request:", so a
-// detail the brief dropped is still there. Within `max` characters (dispatch's task limit): the original request is shortened first (never
-// below 200 characters), the brief only if it alone is too long.
-export const ORIGINAL_LABEL = "\n\nOriginal request:\n";
-export function briefedPrompt(brief, raw, max = 2000) {
-  const head = briefText(brief);
-  const original = String(raw || "").trim();
-  if (!original) return head.slice(0, max);
-  const room = max - head.length - ORIGINAL_LABEL.length;
-  if (room >= original.length) return head + ORIGINAL_LABEL + original;
-  if (room >= 200) return head + ORIGINAL_LABEL + original.slice(0, room - 3) + "...";
-  const cut = Math.max(0, max - 200 - ORIGINAL_LABEL.length);
-  return head.slice(0, cut) + ORIGINAL_LABEL + original.slice(0, 197) + "...";
+// What the cheap models are told: the conversation so far as it was said, then the user's request word for word --
+// what the session's own model sees, not anyone's rewording of it. Within `max` characters: the earlier turns are cut
+// (oldest first) before the request is; the request alone is cut only when it is longer than `max`.
+export const REQUEST_LABEL = "The request:\n";
+export function conversationPrompt(turns, raw, max = 2000) {
+  const request = String(raw || "").trim();
+  if (request.length + REQUEST_LABEL.length >= max) return `${REQUEST_LABEL}${request}`.slice(0, max);
+  let history = (turns || []).map((t) => `${t.role === "user" ? "Developer" : "Assistant"}: ${t.text}`).join("\n\n");
+  const room = max - request.length - REQUEST_LABEL.length - "Earlier in this conversation:\n".length - 2;
+  if (history.length > room) history = room > 200 ? `...${history.slice(history.length - room + 3)}` : "";
+  return history ? `Earlier in this conversation:\n${history}\n\n${REQUEST_LABEL}${request}` : request;
 }
 
 // ---- the call -----------------------------------------------------------------------------------------------------------
@@ -227,12 +188,12 @@ function ledger(env, row) {
 
 // -> brief | null. Never throws, never waits longer than the timeout.
 export async function makeBrief({ prompt, transcriptPath, cwd = null, env = process.env, fetchImpl = globalThis.fetch, log = () => {},
-                                  readConfig = readExecConfig }) {
+                                  readConfig = readExecConfig, runClaude = null }) {
   try {
     if (!briefEnabled(env)) return null;
-    const name = String(env.STEALTHLAB_BRIEF_MODEL || "gpt-oss-120b").trim();
-    const profile = readConfig(env).profiles?.[name];
-    if (!profile?.openai_base_url) { log(`brief: no profile for ${name}`); return null; }
+    const name = String(env.STEALTHLAB_BRIEF_MODEL || "claude-sonnet-5-5").trim();
+    const profile = name.includes("claude") ? null : readConfig(env).profiles?.[name];
+    if (!name.includes("claude") && !profile?.openai_base_url) { log(`brief: no profile for ${name}`); return null; }
     const turns = transcriptPath ? recentTurns(transcriptPath, { current: prompt }) : [];
     let history = turns.map((t) => `${t.role === "user" ? "Developer" : "Assistant"}: ${t.text}`).join("\n\n");
     if (history.length > CONTEXT_CHARS) history = history.slice(history.length - CONTEXT_CHARS);
@@ -241,6 +202,16 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
     const user = `${history ? `Earlier turns:\n${history}\n\n` : ""}Latest message:\n${String(prompt || "").trim()}` +
       (files ? `\n\nFiles the message names:\n${files}` : "") +
       (listing ? `\n\nThe project's files (to tell where a named function or feature lives):\n${listing}` : "");
+    if (!profile) {
+      const { leanArgs, runClaudeAsync } = await import("./claude_call.mjs");
+      const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, null, Math.max(60000, Number(env.STEALTHLAB_BRIEF_TIMEOUT_MS || 0)))))(leanArgs(name, BRIEF_SYSTEM), user);
+      let j = null;
+      try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
+      if (typeof j?.total_cost_usd === "number") ledger(env, { what: "brief", model: name, cost_usd: j.total_cost_usd });
+      const brief = j && !j.is_error ? parseBrief(j.result) : null;
+      if (!brief) log(`brief: ${name} gave no usable brief (exit ${r?.status ?? "?"})`);
+      return brief;
+    }
     const messages = profile.no_system_role
       ? [{ role: "user", content: `${BRIEF_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: BRIEF_SYSTEM }, { role: "user", content: user }];

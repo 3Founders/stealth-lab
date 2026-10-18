@@ -106,6 +106,28 @@ test("a follow-up about code this session already changed is not dispatched; a n
   assert.equal(d2?.handled, true, "the switch dispatches it anyway");
 });
 
+test("a follow-up is caught however the session changed the files (a script, not an Edit); edits from before the session are not its own", async () => {
+  const { env, repo } = setup();
+  const transcript = path.join(repo, "..", `t2-${path.basename(repo)}.jsonl`);
+  const started = new Date(Date.now() - 60000);
+  // the session ran a script that rewrote calc.py: the transcript holds no Edit call (sqlglot-4051 turn 2, ct-series-v5)
+  fs.writeFileSync(transcript, [JSON.stringify({ type: "user", timestamp: started.toISOString(), message: { content: "calc is wrong" } }),
+    JSON.stringify({ type: "assistant", timestamp: started.toISOString(), message: { content: [{ type: "tool_use", name: "Bash", input: { command: "python fix.py" } }] } })].join("\n") + "\n");
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: rt, log: (m) => logs.push(m) });
+  assert.equal(d, null, logs.join("\n"));
+  assert.ok(logs.some((l) => /a follow-up: this session already changed calc\.py/.test(l)), logs.join("\n"));
+  // the same uncommitted change, made before this session started (the developer's own work in progress): dispatched
+  const old = new Date(started.getTime() - 3600000);
+  fs.utimesSync(path.join(repo, "calc.py"), old, old);
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] }) });
+  assert.notEqual(d2, null);
+});
+
 test("the time-limit line says when an answer did pass but was not accepted", async () => {
   const { env, repo } = setup();
   const logs = [];
