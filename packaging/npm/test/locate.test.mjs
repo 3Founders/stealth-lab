@@ -175,6 +175,8 @@ test("the project's check, judged against the unchanged code: old failures pass,
   const { failingTests, writeBaselineCheckRunner } = await import("../lib/dispatch.mjs");
   assert.deepEqual(failingTests("x\nFAILED tests/test_env.py::test_perm - Failed: DID NOT RAISE\nERROR tests/test_b.py::test_c\n1 failed"),
     ["tests/test_env.py::test_perm", "tests/test_b.py::test_c"]);
+  assert.deepEqual(failingTests("SUBFAILED[REGEXP_EXTRACT('abc') -> spark] tests/dialects/test_presto.py::TestPresto::test_presto - Assert\nPASSED tests/x.py::t"),
+    ["tests/dialects/test_presto.py::TestPresto::test_presto"], "a failing subtest fails its test");
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "base-repo-"));
   fs.mkdirSync(path.join(repo, "tests"));
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");
@@ -183,7 +185,8 @@ test("the project's check, judged against the unchanged code: old failures pass,
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "base-dir-"));
   const runner = writeBaselineCheckRunner(dir, "python -m pytest -q -p no:cacheprovider tests");
   fs.writeFileSync(path.join(dir, "BASE_FAILS"), "tests/test_env.py::test_perm\n");
-  const run = () => spawnSync("python", [runner], { cwd: repo, encoding: "utf8" });
+  // no bytecode: calc.py is rewritten with a same-size change within a second, and a stale .pyc would hide it
+  const run = () => spawnSync("python", [runner], { cwd: repo, encoding: "utf8", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
   // no test written for the task (the default rule writes none): judged on the project's tests alone, at once -- it
   // once waited 300 s for a test file that never came and then failed every answer on the old failures (ct-series-v6)
   const t0 = Date.now();
