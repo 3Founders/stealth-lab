@@ -164,6 +164,10 @@ def provider_report(environ: dict[str, str]) -> list[str]:
     return lines
 
 
+# .local/ entries that belong to one unit (an arm of one repository) and come back only from that unit's own snapshot
+UNIT_STATE = ("ws", "C_home", "openers", "simuser", "results", "logs")
+
+
 def series_tasks(spec: RunSpec, repo: str) -> list[dict]:
     """The series' tasks (swe_series_task.series(<repo>)), cut to --max-issues."""
     tasks = importlib.import_module(spec.series_module).series(repo)
@@ -408,7 +412,15 @@ class Container:
             tasks = [t for t in full if t["task_id"] in set(s.task_ids)]            # in series order
         else:
             tasks = series_tasks(s, self.repo)
+        # Modal reuses containers: a unit started where another repository's or arm's unit ran found that unit's workspaces,
+        # home and logs in .local/ (ct-series-v5: sqlglot C's hooks.log began with jsonargparse C0's lines). Only what this
+        # unit's own snapshot brings back may be there.
+        for name in UNIT_STATE:
+            shutil.rmtree(self.local / name, ignore_errors=True)
         state = self.restore()
+        shared_openers = self.run_dir / "openers"
+        if s.turns > 1 and shared_openers.exists():   # the run's openers, written once by prepare: the same for every arm
+            shutil.copytree(shared_openers, self.local / "openers", dirs_exist_ok=True)
         results = self.local / "results" / f"{s.run_name()}.jsonl"
         done = done_tasks(results, s.arms)
         if state == "cold" and done and any(a in ("C", "C0") for a in s.arms) and not s.allow_cold_resume:
@@ -488,6 +500,7 @@ class Container:
         if record_path.exists():
             rec = json.loads(record_path.read_text(encoding="utf-8"))
             if rec.get("max_issues") == s.max_issues and rec.get("usable"):
+                self.shared_openers(rec["usable"], fetched=False)
                 return {"task_ids": rec["usable"], "gold_check": rec, "reused": True}
         self._must(self.sh([sys.executable, str(self.ab / f"{s.series_module}.py"), "fetch", self.repo], env=self.environ, cwd=self.ab),
                    "fetching the series' data")
@@ -500,8 +513,22 @@ class Container:
         record["max_issues"] = s.max_issues
         self.run_dir.mkdir(parents=True, exist_ok=True)
         record_path.write_text(json.dumps(record, indent=1), encoding="utf-8")
+        self.shared_openers(record["usable"], fetched=True)
         self.commit()
         return {"task_ids": record["usable"], "gold_check": record, "reused": False}
+
+    def shared_openers(self, task_ids: list[str], *, fetched: bool) -> None:
+        """A conversation run (--turns > 1): every issue's opener written once, into the run's shared folder, before any arm
+        starts -- each arm's container copies it in (run), so A, C and C0 are told exactly the same thing."""
+        if self.spec.turns <= 1 or not task_ids:
+            return
+        if not fetched:                                 # the reused gold check: this container has not fetched the issues yet
+            self._must(self.sh([sys.executable, str(self.ab / f"{self.spec.series_module}.py"), "fetch", self.repo], env=self.environ,
+                               cwd=self.ab), "fetching the series' data")
+        self._must(self.sh([sys.executable, str(self.ab / "make_openers.py"), self.spec.series_module, self.repo,
+                            str(self.run_dir / "openers"), self.spec.gc_key_name, *task_ids], env=self.environ, cwd=self.ab),
+                   "writing the shared openers")
+        self.commit()
 
     def finish(self) -> dict:
         """A split run's last step: every arm's results in one file, then report.py's summary and learning curve over all of them."""

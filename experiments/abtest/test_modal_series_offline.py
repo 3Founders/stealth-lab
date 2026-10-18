@@ -659,3 +659,33 @@ def test_the_provider_report_says_which_judge_and_embeddings_the_server_gets():
 def test_arm_c_is_refused_when_its_server_has_no_judge_or_no_embeddings(tmp_path, fake_series):
     with pytest.raises(RuntimeError, match="not set up for arm C"):
         container(tmp_path / "nokeys", environ={"CLAUDE_CODE_OAUTH_TOKEN": TOKEN, "PATH": "p"}).run()
+
+
+def test_a_conversation_runs_openers_are_written_once_by_prepare_for_every_arm(tmp_path, fake_series):
+    c = container(tmp_path, max_issues=2, turns=3)
+    c.prepare()
+    made = [t for t in commands(c) if "make_openers.py" in t]
+    assert len(made) == 1 and made[0].endswith("x__mini-1 x__mini-2"), made
+    assert str(c.run_dir / "openers") in made[0] and f" {c.spec.gc_key_name} " in made[0]
+    again = container(tmp_path, max_issues=2, turns=3)
+    again.prepare()
+    assert any("fetch mini" in t for t in commands(again)) and any("make_openers.py" in t for t in commands(again)), \
+        "a reused gold check still has its openers made (cached per issue), from the fetched issues"
+    one = container(tmp_path / "one", max_issues=2)
+    one.prepare()
+    assert not any("make_openers.py" in t for t in commands(one)), "a one-turn run has no opener"
+
+
+def test_a_unit_starts_from_its_own_state_only_and_takes_the_runs_shared_openers(tmp_path, fake_series):
+    c = unit(tmp_path, "C", ["x__mini-1"], turns=3)
+    (c.local / "logs").mkdir(parents=True, exist_ok=True)
+    (c.local / "logs" / "hooks.log").write_text("another unit's lines\n", encoding="utf-8")   # a reused container
+    (c.local / "openers").mkdir(parents=True, exist_ok=True)
+    (c.local / "openers" / "x__mini-1.json").write_text('{"opener": "this container\'s own"}', encoding="utf-8")
+    shared = c.run_dir / "openers"
+    shared.mkdir(parents=True, exist_ok=True)
+    (shared / "x__mini-1.json").write_text('{"opener": "the run\'s"}', encoding="utf-8")
+    c.run()
+    assert "another unit's lines" not in ((c.local / "logs" / "hooks.log").read_text(encoding="utf-8")
+                                          if (c.local / "logs" / "hooks.log").exists() else "")
+    assert json.loads((c.local / "openers" / "x__mini-1.json").read_text(encoding="utf-8"))["opener"] == "the run's"
