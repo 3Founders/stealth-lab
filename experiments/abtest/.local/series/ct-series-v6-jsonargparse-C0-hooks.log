@@ -1,0 +1,15 @@
+2026-10-18T10:10:24.338Z prompt stealthlab hook: triage kind=reusable_task work=change (jev)
+2026-10-18T10:10:25.772Z prompt dispatch: the judge (jev) says work=change
+2026-10-18T10:10:26.809Z prompt dispatch: brief: Fix the LookupError raised by format_usage() when called on a parser created via capture_parser (the error mentions the parent_parser context variable), ensuring format_usage() works correctly just like print_usage() for such parsers.
+2026-10-18T10:10:28.093Z prompt locate: narrowed to jsonargparse/_core.py, jsonargparse/_util.py, jsonargparse/_deprecated.py
+2026-10-18T10:10:28.103Z prompt dispatch: located jsonargparse/_core.py:1245-1247, jsonargparse/_core.py:996-1008, jsonargparse/_util.py:93-112, jsonargparse/_util.py:87-90 (tests: jsonargparse_tests/test_core.py)
+2026-10-18T10:10:37.853Z prompt dispatch: 5 test(s) already fail on the unchanged code: answers are judged on new failures only
+2026-10-18T10:11:13.577Z prompt gpt-oss-120b|claude: the executor failed (exit 1): API Error: 400 upstream 400: {"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error","param":null}}
+2026-10-18T10:16:40.778Z prompt dispatch gemma-4-31b-it|stealth: no pass (failed)
+2026-10-18T10:17:52.550Z prompt dispatch glm-5.3-flash|stealth: no pass (failed)
+2026-10-18T10:20:29.420Z prompt dispatch: no cheap pass within 600 s; the session's model takes over
+2026-10-18T10:20:29.563Z prompt dispatch minimax-m2-7|claude: no pass (timed out at the limit)
+2026-10-18T10:21:28.492Z capture-stop reported=true queued=false accepted=false
+2026-10-18T10:21:30.672Z prompt stealthlab hook: triage kind=repo_specific work=conversation (jev): repo_specific below confidence 0.6
+2026-10-18T10:21:43.369Z prompt answer-review: claude-sonnet-5-5 says good (The reply correctly confirms that `parent_parser.get()` at `_formatters.py:90` raises `LookupError` when the var is unse)
+2026-10-18T10:21:43.370Z prompt answer: glm-5.3-flash answered in 13 s; review: good
