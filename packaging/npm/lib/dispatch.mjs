@@ -321,10 +321,7 @@ bf, bn = os.path.join(d, "BASE_FAILS"), os.path.join(d, "BASE_NONE")
 end = time.time() + 300
 while not os.path.exists(bf) and not os.path.exists(bn) and time.time() < end:
     time.sleep(0.5)
-spec, skip = os.path.join(d, "test_spec.py"), os.path.join(d, "SKIP")
-while not os.path.exists(spec) and not os.path.exists(skip) and time.time() < end:
-    time.sleep(0.5)
-if fails and os.path.exists(bf) and os.path.exists(spec):
+if fails and os.path.exists(bf):
     base = set(open(bf, encoding="utf-8").read().split())
     new = sorted(fails - base)
     if not new:
@@ -993,8 +990,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the project's pytest check judged against the unchanged code: tests that already fail there (an environment-bound
   // test, a flaky one) do not fail an answer, only NEW failures do (STEALTHLAB_DISPATCH_BASELINE_CHECK). In the Modal
   // containers 5 permission tests fail as root on any code, and they failed all 13 cheap answers of a real issue.
-  // Only with the tests written for the task (they check the change itself; the project's suite then guards what
-  // already worked), and never for a test the task names (a failing test for this very bug must still fail the answer).
+  // Never for a test the task names (a failing test for this very bug must still fail the answer). It does not wait
+  // for, or need, tests written for the task: it once did, and with no test writer (the default rule) every check
+  // waited 300 s for a file that never came and then failed every answer on those 5 tests (ct-series-v6).
   // a rule on evidence (lib/accept.mjs) when the project has its own check: the agents work against that check alone, and
   // tests are written only when the rule uses them
   const acceptRule = check && !specOnly ? parseRule(policy.accept) : null;
