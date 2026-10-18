@@ -533,6 +533,24 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
     });
     log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
   }
+  // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
+  // the session's model would run (lib/answer.mjs); a reply not called good is never shown
+  if (dispatchInstalled(env) && override.kind !== "cheap" && (verdict?.work === "answer" || verdict?.work === "conversation")) {
+    try {
+      const { answerTurn } = await import("./answer.mjs");
+      const a = await answerTurn({ prompt: payload.prompt, root: payload.cwd || process.cwd(), transcriptPath: payload.transcript_path,
+                                   sessionId: payload.session_id, env, fetchImpl, log });
+      if (a?.handled) {
+        try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
+        recordDispatch({ sessionId: payload.session_id, model: a.model, files: [], task: promptTitle(payload.prompt),
+                         prompt: payload.prompt, text: a.text, kind: "answer" }, { env });
+        write(JSON.stringify({ decision: "block", reason: a.text }));
+        return;
+      }
+    } catch (err) {
+      log(`stealthlab hook: answer skipped (${err.message})`);
+    }
+  }
   if (policy.triage) {
     if (verdict && verdict.needs_retrieval === false) {
       // No lookup for this prompt. Clear the previous prompt's remembered Goal so the capture hooks

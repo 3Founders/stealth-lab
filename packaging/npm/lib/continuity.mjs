@@ -55,6 +55,7 @@ function oneLine(text, max) {
 
 // The line for one dispatch. The model name, the files it changed (at most 5, then "and N more") and the task.
 export function continuityLine(e) {
+  if (e.kind === "answer") return `Earlier in this session, ${e.model} answered "${oneLine(e.task, TASK_MAX)}" (StealthLab, checked by a reviewer).`;
   const files = (e.files || []).map(String);
   const shown = files.slice(0, FILES_SHOWN).join(", ") || "no files";
   const more = files.length > FILES_SHOWN ? ` and ${files.length - FILES_SHOWN} more` : "";
@@ -62,7 +63,7 @@ export function continuityLine(e) {
 }
 
 // After a verified cheap answer was applied. Never throws: remembering must not fail the hook.
-export function recordDispatch({ sessionId, model, files = [], task = "", prompt = "", text = "", root = null },
+export function recordDispatch({ sessionId, model, files = [], task = "", prompt = "", text = "", root = null, kind = "change" },
                                { env = process.env, now = Date.now() } = {}) {
   try {
     if (!continuityEnabled(env)) return false;
@@ -73,7 +74,8 @@ export function recordDispatch({ sessionId, model, files = [], task = "", prompt
       try { if (root) written[f] = fs.statSync(path.join(root, f)).mtimeMs; } catch { /* deleted: nothing to compare */ }
     }
     const entries = [...read(file), { at: now, model: String(model), files: files.map(String), task: oneLine(task, TASK_MAX), shown: false,
-                                      prompt: String(prompt || "").slice(0, TURN_MAX), text: String(text || "").slice(0, TURN_MAX), written }];
+                                      prompt: String(prompt || "").slice(0, TURN_MAX), text: String(text || "").slice(0, TURN_MAX), written,
+                                      ...(kind === "answer" ? { kind } : {}) }];
     write(file, entries.slice(-KEEP));
     sweep(env, now);
     return true;
