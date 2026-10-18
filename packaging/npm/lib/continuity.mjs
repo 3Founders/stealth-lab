@@ -6,8 +6,12 @@
 //
 // Kept per session, under the StealthLab home (hooks/continuity/<session_id>.json): the last 5 dispatches, each marked
 // `shown` once it has been put in a prompt's context -- the session's own transcript carries it from then on, so it is
-// said once, not on every later prompt. Swept after 24 h. Only the model name, the file names and the prompt's first
-// line stay on disk, and never leave the machine. STEALTHLAB_CONTINUITY=off turns it off.
+// said once, not on every later prompt. Swept after 24 h. Never leaves the machine. STEALTHLAB_CONTINUITY=off turns it off.
+//
+// Each dispatch also keeps the request and the reply the developer saw (dispatchedTurns): the session's transcript may
+// not hold a blocked turn, and the server's judge and the cheap models read the conversation from it. And the time each
+// changed file was written (cheapWritten): a follow-up on a change a cheap model made, with the file still as it left
+// it, may go to the cheap models again; a file the session or the developer changed after it may not.
 import fs from "node:fs";
 import path from "node:path";
 import { configDir } from "./config.mjs";
@@ -15,6 +19,7 @@ import { configDir } from "./config.mjs";
 export const KEEP = 5;                        // dispatches remembered per session
 const FILES_SHOWN = 5;
 const TASK_MAX = 160;
+const TURN_MAX = 700;                         // the request and the reply kept per dispatch (as lib/brief.mjs keeps a turn)
 const TTL_MS = 24 * 3600 * 1000;
 
 export const continuityEnabled = (env = process.env) => (env.STEALTHLAB_CONTINUITY || "on").toLowerCase() !== "off";
@@ -57,18 +62,53 @@ export function continuityLine(e) {
 }
 
 // After a verified cheap answer was applied. Never throws: remembering must not fail the hook.
-export function recordDispatch({ sessionId, model, files = [], task = "" }, { env = process.env, now = Date.now() } = {}) {
+export function recordDispatch({ sessionId, model, files = [], task = "", prompt = "", text = "", root = null },
+                               { env = process.env, now = Date.now() } = {}) {
   try {
     if (!continuityEnabled(env)) return false;
     const file = continuityFile(env, sessionId);
     if (!file || !model) return false;
-    const entries = [...read(file), { at: now, model: String(model), files: files.map(String), task: oneLine(task, TASK_MAX), shown: false }];
+    const written = {};
+    for (const f of files.map(String)) {
+      try { if (root) written[f] = fs.statSync(path.join(root, f)).mtimeMs; } catch { /* deleted: nothing to compare */ }
+    }
+    const entries = [...read(file), { at: now, model: String(model), files: files.map(String), task: oneLine(task, TASK_MAX), shown: false,
+                                      prompt: String(prompt || "").slice(0, TURN_MAX), text: String(text || "").slice(0, TURN_MAX), written }];
     write(file, entries.slice(-KEEP));
     sweep(env, now);
     return true;
   } catch {
     return false;
   }
+}
+
+// The dispatched turns of this session as conversation turns, oldest first: [{at, role, text}].
+export function dispatchedTurns(sessionId, { env = process.env } = {}) {
+  try {
+    if (!continuityEnabled(env)) return [];
+    const file = continuityFile(env, sessionId);
+    if (!file) return [];
+    return read(file).filter((e) => e.prompt).flatMap((e) => [{ at: e.at, role: "user", text: e.prompt },
+                                                               ...(e.text ? [{ at: e.at + 1, role: "assistant", text: e.text }] : [])]);
+  } catch {
+    return [];
+  }
+}
+
+// The files a cheap model changed in this session that are still exactly as it left them (not written since).
+export function cheapWritten(sessionId, root, { env = process.env } = {}) {
+  const out = new Set();
+  try {
+    if (!continuityEnabled(env) || !root) return out;
+    const file = continuityFile(env, sessionId);
+    if (!file) return out;
+    for (const e of read(file)) {
+      for (const [f, t] of Object.entries(e.written || {})) {
+        try { if (Math.abs(fs.statSync(path.join(root, f)).mtimeMs - t) < 1) out.add(f); else out.delete(f); } catch { out.delete(f); }
+      }
+    }
+  } catch { /* none */ }
+  return out;
 }
 
 // The lines not yet put in a prompt's context for this session: [] when there are none.
