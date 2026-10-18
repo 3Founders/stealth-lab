@@ -63,6 +63,45 @@ export function linkProjectDeps({ repo, dir, env = process.env }) {
   return linked;
 }
 
+// Files the project's install generated inside its source tree -- git ignores them, so a fresh worktree lacks them --
+// are copied in, so the worktree behaves like the developer's checkout. ct-series-v7, sqlglot: the worktree had no
+// sqlglot/_version.py (written by `pip install -e .`), so importing the code there printed "Unable to set __version__";
+// minimax switched to `python -I` to get past it, which imports the INSTALLED copy, and none of its edits seemed to
+// have any effect for 40 steps. Copied, never linked (an edit must not reach the developer's checkout); only files in
+// a directory git tracks; never a dot-file or anything under a dot-directory (.env and the like stay where they are),
+// caches or dependency trees (linked above); at most COPY_MAX_FILE bytes each and COPY_MAX_FILES files; and only when
+// the copy is ignored in the worktree too, so it is never part of an answer. -> the paths copied
+const COPY_MAX_FILE = 5 * 1024 * 1024;
+const COPY_MAX_FILES = 200;
+const SKIP_PART = new Set(["__pycache__", ...LINK_NAMES, "build", "dist", "site-packages"]);
+export function copyGeneratedFiles({ repo, dir, env = process.env }) {
+  const copied = [];
+  if (!linkDepsEnabled(env)) return copied;
+  try {
+    const out = execFileSync("git", ["-C", repo, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+      { encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    const tracked = new Set(execFileSync("git", ["-C", repo, "ls-files", "-z"], { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 * 1024 })
+      .split("\0").filter(Boolean).map((f) => path.posix.dirname(f)));
+    for (const f of out.split("\0").filter(Boolean)) {
+      if (copied.length >= COPY_MAX_FILES) break;
+      if (f.endsWith("/")) continue;                                  // an ignored directory: not generated source
+      const parts = f.split("/");
+      if (parts.some((p) => p.startsWith(".") || SKIP_PART.has(p) || p.endsWith(".egg-info"))) continue;
+      if (/\.(pyc|pyo|log)$/.test(f) || !tracked.has(path.posix.dirname(f))) continue;
+      const src = path.join(repo, f);
+      const dst = path.join(dir, f);
+      try {
+        const st = fs.statSync(src);
+        if (!st.isFile() || st.size > COPY_MAX_FILE || fs.existsSync(dst)) continue;
+        fs.copyFileSync(src, dst);
+        if (!ignored(dir, f)) { fs.rmSync(dst, { force: true }); continue; }
+        copied.push(f);
+      } catch { /* this one is not copied */ }
+    }
+  } catch { /* no git listing: nothing copied */ }
+  return copied;
+}
+
 // Before a worktree is removed: take every link out first.
 export function unlinkProjectDeps(dir) {
   for (const name of LINK_NAMES) removeLink(path.join(dir, name));

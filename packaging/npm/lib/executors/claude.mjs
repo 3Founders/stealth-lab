@@ -47,8 +47,10 @@ export const LEAN_SYSTEM = [
   "completely, by changing the repository's files; nobody will answer questions. Work this way: find the relevant code",
   "first (Grep, Glob, Read only what you need -- use offset and limit for long files); understand the cause before",
   "editing; make the smallest change that does what the task asks, in the style of the surrounding code; then run the",
-  "relevant tests or a quick check with Bash and fix what fails. Do not add new files unless the task needs them, do not",
-  "reformat unrelated code, and do not edit tests to make them pass unless the task is about the tests. Use the tools",
+  "relevant tests or a quick check with Bash and fix what fails (run them from this directory, as the project does: `python",
+  "-I` ignores this directory and runs the installed copy, not your change). Do not add new files unless the task needs them, do not",
+  "reformat unrelated code, and never edit a test to hide a failure your change causes. When the task changes a behaviour",
+  "that an existing test asserts, the test is out of date: update it to the new behaviour. Use the tools",
   "directly; several independent reads or searches may go in one turn. When done, reply with two or three sentences on",
   "what you changed and how you checked it.",
 ].join(" ");
