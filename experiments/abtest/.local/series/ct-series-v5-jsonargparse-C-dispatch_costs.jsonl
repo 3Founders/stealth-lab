@@ -1,0 +1,10 @@
+{"at":"2026-10-17T20:15:04.963Z","what":"brief","model":"gpt-oss-120b","cost_usd":0.000126627}
+{"at":"2026-10-17T20:15:06.816Z","what":"survey-fill","model":"gpt-oss-120b","cost_usd":0.000715572}
+{"at":"2026-10-17T20:15:07.209Z","what":"locate","model":"gpt-oss-120b","cost_usd":0.000236435}
+{"at":"2026-10-17T20:15:47.599Z","what":"test-first","model":"claude-sonnet-5-5","cost_usd":0.032648}
+{"at":"2026-10-17T20:16:19.759Z","what":"review","model":"claude-sonnet-5-5","cost_usd":0.00719}
+{"at":"2026-10-17T20:16:58.643Z","what":"review","model":"claude-sonnet-5-5","cost_usd":0.0034454000000000004}
+{"at":"2026-10-17T20:17:18.318Z","what":"review","model":"claude-sonnet-5-5","cost_usd":0.008202000000000001}
+{"at":"2026-10-17T20:17:25.551Z","what":"review","model":"claude-sonnet-5-5","cost_usd":0.011606}
+{"at":"2026-10-17T20:18:28.538Z","what":"brief","model":"gpt-oss-120b","cost_usd":0.000113734}
+{"at":"2026-10-17T20:18:48.216Z","what":"brief","model":"gpt-oss-120b","cost_usd":0.000175806}

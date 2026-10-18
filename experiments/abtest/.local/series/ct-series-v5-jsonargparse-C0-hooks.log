@@ -1,0 +1,9 @@
+2026-10-17T20:15:07.873Z prompt dispatch: brief kind=code clarity=clear size=medium: Fix the LookupError raised by format_usage() when called on a parser obtained from capture_parser (the error mentions a missing 'parent_parser' context variable), ensuring that format_usage works correctly (returns the usage string) just li
+2026-10-17T20:15:07.873Z prompt dispatch: not dispatched (the prompt is a question, not a code task)
+2026-10-17T20:16:05.225Z capture-stop reported=true queued=false accepted=false
+2026-10-17T20:16:09.359Z prompt dispatch: brief kind=code clarity=clear size=small: Modify jsonargparse/_formatters.py so that the _format_usage function does not raise a LookupError when the 'parent_parser' context variable is missing (e.g., when format_usage() is called directly on a parser returned by capture_parser). E
+2026-10-17T20:16:10.909Z prompt locate: narrowed to jsonargparse/_formatters.py, jsonargparse/_core.py, jsonargparse/_util.py (_format_usage)
+2026-10-17T20:16:10.919Z prompt dispatch: located jsonargparse/_formatters.py:88-98, jsonargparse/_formatters.py:6-56, jsonargparse/_core.py:1245-1248, jsonargparse/_core.py:17-79 (tests: jsonargparse_tests/test_formatters.py)
+2026-10-17T20:16:10.921Z prompt dispatch: not dispatched (a follow-up: this session already changed jsonargparse/_core.py)
+2026-10-17T20:16:28.617Z prompt dispatch: brief kind=chat clarity=unclear size=small: The developer only provided environment details (jsonargparse 4.28.0 on Python 3.10 installed via pip) without a specific request.
+2026-10-17T20:16:28.617Z prompt dispatch: not dispatched (kind=chat)

@@ -1,0 +1,1 @@
+test server: embeddings openrouter (gemini-embedding-2); semantic judge jev (JEV capabilities: applicability,identity,claim_relation,triage)

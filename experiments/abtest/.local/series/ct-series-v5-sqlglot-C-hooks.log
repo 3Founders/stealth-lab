@@ -1,0 +1,30 @@
+2026-10-17T20:15:07.873Z prompt dispatch: brief kind=code clarity=clear size=medium: Fix the LookupError raised by format_usage() when called on a parser obtained from capture_parser (the error mentions a missing 'parent_parser' context variable), ensuring that format_usage works correctly (returns the usage string) just li
+2026-10-17T20:15:07.873Z prompt dispatch: not dispatched (the prompt is a question, not a code task)
+2026-10-17T20:16:05.225Z capture-stop reported=true queued=false accepted=false
+2026-10-17T20:16:09.359Z prompt dispatch: brief kind=code clarity=clear size=small: Modify jsonargparse/_formatters.py so that the _format_usage function does not raise a LookupError when the 'parent_parser' context variable is missing (e.g., when format_usage() is called directly on a parser returned by capture_parser). E
+2026-10-17T20:16:10.909Z prompt locate: narrowed to jsonargparse/_formatters.py, jsonargparse/_core.py, jsonargparse/_util.py (_format_usage)
+2026-10-17T20:16:10.919Z prompt dispatch: located jsonargparse/_formatters.py:88-98, jsonargparse/_formatters.py:6-56, jsonargparse/_core.py:1245-1248, jsonargparse/_core.py:17-79 (tests: jsonargparse_tests/test_formatters.py)
+2026-10-17T20:16:10.921Z prompt dispatch: not dispatched (a follow-up: this session already changed jsonargparse/_core.py)
+2026-10-17T20:16:28.617Z prompt dispatch: brief kind=chat clarity=unclear size=small: The developer only provided environment details (jsonargparse 4.28.0 on Python 3.10 installed via pip) without a specific request.
+2026-10-17T20:16:28.617Z prompt dispatch: not dispatched (kind=chat)
+2026-10-17T21:28:20.399Z prompt dispatch: brief kind=code clarity=clear size=medium: Adjust the Presto-to-Spark transpilation so that calls to regexp_extract include an explicit group argument matching Presto's default of 0 (instead of Spark's default of 1), ensuring the generated Spark SQL contains the correct group index.
+2026-10-17T21:28:20.399Z prompt dispatch: not dispatched (the prompt is a question, not a code task)
+2026-10-17T21:33:47.027Z capture-stop library entry L-15ee3c added
+2026-10-17T21:33:47.195Z capture-stop reported=true queued=false accepted=true
+2026-10-17T21:33:48.879Z capture-stop way: L-15ee3c -> "Align default REGEXP_EXTRACT group across dialects" / "Introduce default constant and builder, adjust rendering" (function, default_group, hive_default_group)
+2026-10-17T21:33:50.143Z capture-stop ways coded=1
+2026-10-17T21:33:52.901Z prompt dispatch: brief kind=code clarity=clear size=small: Update the SQL generation logic so that when converting between dialects, the REGEXP_EXTRACT function always includes an explicit group index argument (e.g., REGEXP_EXTRACT(a, p, 0) or REGEXP_EXTRACT(a, p, 1)) instead of omitting it.
+2026-10-17T21:33:55.222Z prompt locate: narrowed to sqlglot/generator.py, sqlglot/dialects/dialect.py, sqlglot/dialects/hive.py (group_sql)
+2026-10-17T21:33:55.230Z prompt dispatch: located sqlglot/generator.py:2020-2050, sqlglot/dialects/dialect.py:1369-1374, sqlglot/dialects/dialect.py:221-281, sqlglot/dialects/hive.py:1-56 (tests: tests/test_generator.py)
+2026-10-17T21:34:25.564Z prompt test-first: glm-5.3 not done in 30 s; claude-sonnet-5-5 writes too, the first usable tests win
+2026-10-17T21:34:34.383Z prompt test-first: claude-sonnet-5-5 replied in 9 s
+2026-10-17T21:35:25.564Z prompt test-first: glm-5.3 replied in 90 s (no usable tests)
+2026-10-17T21:36:00.037Z prompt dispatch gpt-oss-120b|claude: no pass (failed)
+2026-10-17T21:37:54.080Z prompt dispatch minimax-m2-7|claude: no pass (failed)
+2026-10-17T21:42:25.614Z prompt review: claude-sonnet-5-5 says does_not_fix (The request is vague, but this change removes the dialect-default omission for every dialect, so even same-dialect round)
+2026-10-17T21:42:25.615Z prompt dispatch glm-5.3-flash|stealth: passes the project's check; evidence: E T S F X Rs_no -- strong review: The request is vague, but this change removes the dialect-default omission for every dialect, so even same-dialect round
+2026-10-17T21:43:55.569Z prompt dispatch: no cheap answer accepted within 600 s (1 passed the check, not accepted by the rule); the session's model takes over
+2026-10-17T21:43:55.676Z prompt dispatch gemma-4-31b-it|stealth: no pass (timed out at the limit)
+2026-10-17T21:43:55.676Z prompt dispatch glm-5.3|claude: no pass (timed out at the limit)
+2026-10-17T21:45:44.201Z prompt dispatch: brief kind=chat clarity=clear size=small: 
+2026-10-17T21:45:44.202Z prompt dispatch: not dispatched (kind=chat)
