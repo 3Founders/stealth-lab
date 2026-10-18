@@ -111,7 +111,6 @@ test("not applicable (no executor, no .stealth, auto model, short prompt): null,
   const b = setup();
   assert.equal(await run(b.env, payload(fs.mkdtempSync(path.join(os.tmpdir(), "sl-nostealth-")))), null);
   assert.equal(await run(b.env, payload(b.ws, { model: "auto" })), null);
-  assert.equal(await run(b.env, payload(b.ws, { prompt: "fix it" })), null);
 });
 
 test("triage saying no knowledge is needed: dispatch still decides (a quick fix is a task), nothing reaches the context", async () => {

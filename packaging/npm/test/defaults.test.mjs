@@ -26,6 +26,19 @@ test("the defaults: the evidence rule, all models at once, a 600 s budget, and n
   assert.equal(p.areaSkip, false);
   assert.equal(p.testFirst, true);
   assert.equal(p.specBaseline, true, "the reproduction test must fail on the unchanged code");
+  assert.equal(p.gate, true, "only what the server's judge calls a change goes to the cheap models");
+});
+
+test("the server judge decides: only work=change is dispatched; an answer, conversation, an unclear change or no verdict is not", { skip: !hasPytest }, async () => {
+  for (const verdict of [{ work: "answer" }, { work: "conversation" }, { work: "unclear_change" }, { needs_retrieval: true, reason: "triage over 4s" }, null]) {
+    const s = setup({ "gemma-4-31b-it": "x = 2\n" });
+    const logs = [];
+    const d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
+      env: s.env, runtime: s.rt, runClaude: writer(SPEC), triage: verdict, fetchImpl: reviewer("fixes"), log: (m) => logs.push(m) });
+    assert.equal(d, null, JSON.stringify(verdict));
+    assert.equal(s.rt.calls.length, 0);
+    assert.ok(logs.some((l) => /not dispatched \((the judge says work=|no verdict from the server's judge)/.test(l)), logs.join("\n"));
+  }
 });
 
 // a repo where calc.x is 1 and the task is to make it 2; each model's answer is the calc.py it leaves in its own worktree
@@ -59,6 +72,7 @@ function setup(answers) {
                 STEALTHLAB_LOCATE_MODEL: "off", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_REVIEW_STRONG_MODEL: "reviewer", K: "k" };
   return { env, repo, rt };
 }
+const CHANGE = { needs_retrieval: true, kind: "reusable_task", work: "change", provider: "jev" };   // the server judge's verdict
 const writer = (code) => () => ({ stdout: JSON.stringify({ result: code, total_cost_usd: 0.01 }) });
 const reviewer = (verdict) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ verdict, why: "w" }) } }] }) });
 
@@ -66,7 +80,7 @@ test("default rule: a passing answer the strong reviewer says fixes is delivered
   const right = setup({ "gemma-4-31b-it": "x = 2\n" });
   let wrote = 0;
   const d = await dispatch({ payload: { cwd: right.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: right.repo, mine: MINE,
-    env: right.env, runtime: right.rt, runClaude: () => { wrote++; return writer(SPEC)(); }, fetchImpl: reviewer("fixes") });
+    env: right.env, runtime: right.rt, runClaude: () => { wrote++; return writer(SPEC)(); }, triage: CHANGE, fetchImpl: reviewer("fixes") });
   assert.equal(d?.handled, true, JSON.stringify(d?.tried));
   assert.equal(wrote, 0, "the default rule has no reproduction test: none is written");
 });
@@ -75,7 +89,7 @@ test("default rule: 'does not fix' or an unsure review is not an accept", { skip
   for (const verdict of ["does_not_fix", "unsure"]) {
     const s = setup({ "gemma-4-31b-it": "x = 2\n" });
     const d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
-      env: s.env, runtime: s.rt, runClaude: writer(SPEC), fetchImpl: reviewer(verdict) });
+      env: s.env, runtime: s.rt, runClaude: writer(SPEC), triage: CHANGE, fetchImpl: reviewer(verdict) });
     assert.equal(d.handled, false, verdict);
     assert.match(d.tried.find((t) => t.unit.startsWith("gemma")).state, /not accepted by the rule/);
   }
@@ -85,11 +99,11 @@ test("a rule with T: an answer that makes the reproduction test pass is delivere
   const T = { STEALTHLAB_DISPATCH_ACCEPT: "E T Rs" };
   const right = setup({ "gemma-4-31b-it": "x = 2\n" });
   const d = await dispatch({ payload: { cwd: right.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: right.repo, mine: MINE,
-    env: { ...right.env, ...T }, runtime: right.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
+    env: { ...right.env, ...T }, runtime: right.rt, runClaude: writer(SPEC), triage: CHANGE, fetchImpl: reviewer("fixes") });
   assert.equal(d?.handled, true, JSON.stringify(d?.tried));
   const wrong = setup({ "gemma-4-31b-it": "x = 3\n" });
   const d2 = await dispatch({ payload: { cwd: wrong.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: wrong.repo, mine: MINE,
-    env: { ...wrong.env, ...T }, runtime: wrong.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
+    env: { ...wrong.env, ...T }, runtime: wrong.rt, runClaude: writer(SPEC), triage: CHANGE, fetchImpl: reviewer("fixes") });
   assert.equal(d2.handled, false, "it passed the project's check but not the reproduction test");
 });
 
@@ -104,7 +118,7 @@ test("a rule with T and no reproduction test can be written: the cheap tries sto
   let d;
   try {
     d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
-      env: s.env, runtime: s.rt, runClaude: writer("no tests here"), fetchImpl: reviewer("fixes"), log: (m) => logs.push(m) });
+      env: s.env, runtime: s.rt, runClaude: writer("no tests here"), triage: CHANGE, fetchImpl: reviewer("fixes"), log: (m) => logs.push(m) });
   } finally { clearInterval(keep); }
   assert.ok(Date.now() - t0 < 60000, "stopped well before the budget");
   assert.equal(d.handled, false);
@@ -122,7 +136,7 @@ test("every configured model starts at once, with the budget as each run's own l
   const rr = s.rt.runResult.bind(s.rt);
   s.rt.runResult = async (id) => { await gate; return rr(id); };   // no run finishes before all three have started
   const d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
-    env: s.env, runtime: s.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
+    env: s.env, runtime: s.rt, runClaude: writer(SPEC), triage: CHANGE, fetchImpl: reviewer("fixes") });
   assert.equal(d.handled, true);
   assert.equal(started, 3);
   assert.ok(s.rt.calls.every((c) => c.timeout_s === 600 && c.hang_s === 600), JSON.stringify(s.rt.calls.map((c) => [c.timeout_s, c.hang_s])));

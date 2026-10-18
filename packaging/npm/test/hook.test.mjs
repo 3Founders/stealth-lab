@@ -17,7 +17,8 @@ const policy = hookPolicy({});
 
 test("policy: slash commands, short prompts and STEALTHLAB_HOOK=off are skipped", () => {
   assert.equal(shouldLookUp("/compact", policy), false);
-  assert.equal(shouldLookUp("fix it", policy), false);
+  assert.equal(shouldLookUp("fix it", policy), true, "no word count: the server's judge reads every prompt");
+  assert.equal(shouldLookUp("   ", policy), false);
   assert.equal(shouldLookUp("add a DOCX export to the report page with a download button", policy), true);
   assert.equal(shouldLookUp("add a DOCX export to the report page with a download button", hookPolicy({ STEALTHLAB_HOOK: "off" })), false);
 });
@@ -91,7 +92,7 @@ test("runPromptHook: writes additionalContext; fails open on errors", async () =
     settings: { url: "http://x/mcp" }, userAgent: "t", env: {},
     fetchImpl: async () => { throw new Error("down"); }, write: (s) => out2.push(s), log: (m) => logs.push(m) });
   assert.equal(out2.length, 0);
-  assert.match(logs[0], /no knowledge added/);
+  assert.ok(logs.some((l) => /no knowledge added/.test(l)), logs.join("\n"));
 });
 
 test("settings.json: hook upsert keeps other hooks; uninstall removes only ours", () => {

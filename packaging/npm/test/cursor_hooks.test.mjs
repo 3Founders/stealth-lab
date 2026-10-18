@@ -56,7 +56,6 @@ test("beforeSubmitPrompt never blocks: it answers continue and hands the lookup 
 
 test("short prompts, slash commands, no URL and STEALTHLAB_HOOK=off start no lookup", () => {
   for (const [prompt, env, settings] of [
-    ["fix it", tmpEnv(), SETTINGS],
     ["/review the whole thing please now", tmpEnv(), SETTINGS],
     [PROMPT, tmpEnv(), { url: "" }],
     [PROMPT, tmpEnv({ STEALTHLAB_HOOK: "off" }), SETTINGS],

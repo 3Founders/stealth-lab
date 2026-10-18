@@ -21,7 +21,7 @@ import path from "node:path";
 import { configDir } from "./config.mjs";
 import { callFindWays, callTriage, ensureDispatchRoot, execCandidates, formatKnowledge, hookPolicy, readClaims, routingArgs,
   shouldLookUp } from "./hook.mjs";
-import { parseOverride } from "./brief.mjs";
+import { parseOverride, recentTurns, turnsText } from "./brief.mjs";
 import { rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, requestPayload, upsertRoutes } from "./library.mjs";
 import { logHook } from "./subagent_hook.mjs";
@@ -79,9 +79,12 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   writeState(env, payload.conversation_id, { generation_id: generation, status: "empty", at: now, waited: true });
 
   let planOnly = false;
+  // the server's judgment (JEV first): a lookup worth it? and, for dispatch, a change asked for now? (the earlier turns
+  // are its context when Cursor names a transcript)
+  const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: prompt }) : [];
+  const verdict = await callTriage({ url: settings.url, token: settings.token, userAgent, query: prompt, context: turnsText(turns),
+    timeoutMs: policy.triageTimeoutMs, fetchImpl });
   if (policy.triage) {
-    const verdict = await callTriage({ url: settings.url, token: settings.token, userAgent, query: prompt,
-      timeoutMs: policy.triageTimeoutMs, fetchImpl });
     if (verdict && verdict.needs_retrieval === false) {
       // no knowledge needed -- but a quick fix may still be a task for the cheap models: the lookup goes on, for the
       // model plan only, and nothing it returns reaches Cursor's context unless a dispatch happened (as in Claude Code)
@@ -103,7 +106,7 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   const run = dispatchImpl || (await import("./dispatch.mjs")).dispatch;
   const { triedNote } = await import("./dispatch.mjs");
   const d = await run({ payload: { prompt, cwd: workspace, ...(payload.transcript_path ? { transcript_path: payload.transcript_path } : {}) },
-    reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap" });
+    reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict });
   if (d?.handled) {
     try { rememberLookup(ids, null, { env }); } catch { /* capture is best-effort */ }
     log(`dispatch: handled by ${d.unit}`);

@@ -9,4 +9,6 @@ export const LEGACY_POLICY = Object.freeze({
   // the brief (a strong model's judgment of whether a prompt is a code task) is off: these tests drive dispatch with
   // prompts no model judges; the brief and its gate have their own tests (test/brief.test.mjs)
   STEALTHLAB_BRIEF: "off",
+  // nor is there a server judge's verdict (the hook asks it, POST /triage): the gate on it has its own tests
+  STEALTHLAB_DISPATCH_GATE: "off",
 });

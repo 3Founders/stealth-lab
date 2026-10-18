@@ -21,7 +21,7 @@ function setup() {
   fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off",
-                  STEALTHLAB_DISPATCH_TESTFIRST: "on" }, repo };
+                  STEALTHLAB_DISPATCH_TESTFIRST: "on", STEALTHLAB_DISPATCH_GATE: "off" }, repo };
 }
 function stub(repo) {
   const calls = [];
