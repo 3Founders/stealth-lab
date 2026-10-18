@@ -327,10 +327,15 @@ test("fake: spawnGrandchild announces agent/child/grandchild pids and all exit w
   assert.equal(out.exitCode, 0);
   const pids = Object.fromEntries(fs.readFileSync(pidFile, "utf8").trim().split(/\r?\n/).map((l) => l.split(" ")));
   assert.deepEqual(Object.keys(pids).sort(), ["agent", "child", "grandchild"]);
-  await new Promise((r) => setTimeout(r, 1500));
+  // gone within a few seconds of its 1.2 s life (a loaded machine starts it late); an exited process nobody has reaped
+  // yet (a zombie, in a container whose init does not reap) has exited too
+  const alive = (pid) => {
+    try { process.kill(Number(pid), 0); } catch { return false; }
+    try { return !/^\d+ \(.*\) Z/.test(fs.readFileSync(`/proc/${pid}/stat`, "utf8")); } catch { return true; }
+  };
   for (const [who, pid] of Object.entries(pids)) {
-    let alive = true;
-    try { process.kill(Number(pid), 0); } catch { alive = false; }
-    assert.equal(alive, false, `${who} ${pid} still alive`);
+    const end = Date.now() + 6000;
+    while (alive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+    assert.equal(alive(pid), false, `${who} ${pid} still alive`);
   }
 });

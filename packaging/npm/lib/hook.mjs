@@ -53,7 +53,9 @@ export function hookPolicy(env = process.env) {
     minWords: Number(env.STEALTHLAB_HOOK_MIN_WORDS || 1),
     timeoutMs: Number(env.STEALTHLAB_HOOK_TIMEOUT_MS || 25000),
     triage: (env.STEALTHLAB_HOOK_TRIAGE || "on").toLowerCase() !== "off",
-    triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 4000),
+    // a hang guard only: no verdict means no dispatch, so a slow judge must not be cut off (the server's own judge limit
+    // is find_ways_triage_timeout_ms)
+    triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 30000),
     routing: (env.STEALTHLAB_HOOK_ROUTING || "on").toLowerCase() !== "off",
     candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES, env),
     // how sure a plan must be before it trusts a cheaper model (server defaults: 0.90 / 0.90). Lower = cheaper

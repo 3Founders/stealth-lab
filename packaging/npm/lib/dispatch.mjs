@@ -127,11 +127,16 @@ export function dispatchPolicy(env = process.env) {
     // the project's pytest check: tests that already fail on the unchanged code do not fail an answer
     baselineCheck: (env.STEALTHLAB_DISPATCH_BASELINE_CHECK || "on").toLowerCase() !== "off",
     // a task in parts (lib/dag_run.mjs): planned from the closest fix already made here; the accepted parts of an
-    // unfinished plan are applied for the session's model to continue from (STEALTHLAB_DISPATCH_DAG_PARTIAL=off: none)
-    dag: (env.STEALTHLAB_DISPATCH_DAG || "on").toLowerCase() !== "off",
+    // unfinished plan are applied for the session's model to continue from (STEALTHLAB_DISPATCH_DAG_PARTIAL=off: none).
+    // Off unless "on": a task is tried whole. Split by file from a past fix, every part of both plans it made failed
+    // (sqlglot-4051, Modal 2026-10-17: 4 and 5 parts, part 1 failed on every model), and a part's check is weaker
+    // than the whole task's.
+    dag: (env.STEALTHLAB_DISPATCH_DAG || "off").toLowerCase() === "on",
     dagPartialApply: (env.STEALTHLAB_DISPATCH_DAG_PARTIAL || "on").toLowerCase() !== "off",
-    // no test command in the project: the tests written for the task are the check (needs the test writer); "off": no dispatch
-    specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "on").toLowerCase() !== "off",
+    // no test command in the project: the tests written for the task are the check (needs the test writer). Off unless
+    // "on": with no project tests nothing but a guessed test would judge an answer (tests written before any answer
+    // guess the behaviour wrong about half the time, pipeline survey 2026-10-16), so the session's model does it.
+    specOnly: (env.STEALTHLAB_DISPATCH_SPEC_ONLY || "off").toLowerCase() === "on",
     // "on": a cheap model can read images, so a task built on a screenshot may be dispatched (default off: text-only models)
     vision: (env.STEALTHLAB_DISPATCH_VISION || "off").toLowerCase() === "on",
     // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
