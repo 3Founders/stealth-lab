@@ -1,0 +1,6 @@
+{"at":"2026-10-18T12:57:18.473Z","what":"brief","model":"gpt-oss-120b","cost_usd":0.00011639099999999999}
+{"at":"2026-10-18T12:57:20.269Z","what":"locate","model":"gpt-oss-120b","cost_usd":0.00021832499999999998}
+{"at":"2026-10-18T12:57:20.328Z","what":"survey-fill","model":"gpt-oss-120b","cost_usd":0.000620882}
+{"at":"2026-10-18T12:59:01.277Z","what":"review","model":"claude-sonnet-5-5","cost_usd":0.00723}
+{"at":"2026-10-18T12:59:21.784Z","what":"answer","model":"glm-5.3-flash","cost_usd":0.0006699}
+{"at":"2026-10-18T12:59:27.331Z","what":"answer-review","model":"claude-sonnet-5-5","cost_usd":0.021830000000000002}

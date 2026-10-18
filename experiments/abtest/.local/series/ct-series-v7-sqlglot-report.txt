@@ -1,0 +1,16 @@
+suite       n | A solved     A $ | C solved     C $  saving |   A p50/p95/p99 s |   C p50/p95/p99 s | cheap delivered | not dispatched
+--------------------------------------------------------------------------------------------------------------------------------------
+swe         1 |        1    1.00 |        1    2.40   -140% |   235/  235/  235 |   838/  838/  838 |       1/1       | 0/1
+ALL         1 |        1    1.00 |        1    2.40   -140% |   235/  235/  235 |   838/  838/  838 |       1/1       | 0/1
+
+C turns done by cheap models: 1 of 2 (0 changes, 1 answers)
+C cheap answers, graded against the merged fix: 1 correct, 0 incorrect, 0 unclear, 0 not graded
+
+C unsolved: 0 (of which A also unsolved: 0): []
+
+
+position task                       |  A solved     A $ |  C solved     C $ | C0 solved    C0 $
+-----------------------------------------------------------------------------------------------
+       1 tobymao__sqlglot-4051      |       yes   0.997 |       yes   2.396 |       yes   3.546
+-----------------------------------------------------------------------------------------------
+     all                            |   1/1       0.997 |   1/1       2.396 |   1/1       3.546

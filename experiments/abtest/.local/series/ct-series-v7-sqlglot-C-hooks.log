@@ -1,0 +1,17 @@
+2026-10-18T13:01:02.994Z prompt stealthlab hook: triage kind=reusable_task work=change (jev)
+2026-10-18T13:01:04.387Z prompt dispatch: the judge (jev) says work=change
+2026-10-18T13:01:05.748Z prompt dispatch: brief: Update the Presto to Spark conversion for regexp_extract so that the group index is preserved (or correctly handled) given the differing default values between the two functions, ensuring the output matches expectations. All changes must be
+2026-10-18T13:01:07.449Z prompt locate: narrowed to sqlglot/dialects/presto.py, sqlglot/dialects/spark.py, sqlglot/dialects/dialect.py
+2026-10-18T13:01:07.459Z prompt dispatch: located sqlglot/dialects/dialect.py:1366-1373, sqlglot/dialects/dialect.py:1280-1330, sqlglot/dialects/presto.py:233-344, sqlglot/dialects/presto.py:1-54 (tests: tests/dialects/test_presto.py)
+2026-10-18T13:07:36.852Z prompt dispatch gpt-oss-120b|claude: no pass (failed)
+2026-10-18T13:11:08.010Z prompt dispatch: no cheap pass within 600 s; the session's model takes over
+2026-10-18T13:11:08.284Z prompt dispatch glm-5.3-flash|stealth: no pass (timed out at the limit)
+2026-10-18T13:11:08.285Z prompt dispatch gemma-4-31b-it|claude: no pass (timed out at the limit)
+2026-10-18T13:11:08.285Z prompt dispatch minimax-m2-7|claude: no pass (timed out at the limit)
+2026-10-18T13:14:37.668Z capture-stop library entry L-8249c3 added
+2026-10-18T13:14:37.830Z capture-stop reported=true queued=false accepted=true
+2026-10-18T13:14:40.336Z prompt stealthlab hook: triage kind=reusable_task work=conversation (jev)
+2026-10-18T13:14:40.737Z capture-stop way: L-8249c3 -> "Standardize REGEXP_EXTRACT default group handling" / "Add dialect default and central builder, adjust rendering" (function, default_group_attr)
+2026-10-18T13:14:41.286Z capture-stop ways coded=1
+2026-10-18T13:14:57.022Z prompt answer-review: claude-sonnet-5-5 says good (The reply matches the diff and tests: the group is dropped when it equals the target dialect's default and rendered expl)
+2026-10-18T13:14:57.046Z prompt answer: glm-5.3-flash answered in 17 s; review: good
