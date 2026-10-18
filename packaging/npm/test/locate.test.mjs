@@ -171,7 +171,7 @@ test("the regression check: runs the module's tests when they passed on the unch
   assert.notEqual(spawnSync("python", [runner], { cwd: repo }).status, 0, "an answer that breaks them fails the check");
 });
 
-test("the project's check, judged against the unchanged code: old failures pass only with the task's own tests; new ones fail", async () => {
+test("the project's check, judged against the unchanged code: old failures pass, new ones fail, with or without tests written for the task", async () => {
   const { failingTests, writeBaselineCheckRunner } = await import("../lib/dispatch.mjs");
   assert.deepEqual(failingTests("x\nFAILED tests/test_env.py::test_perm - Failed: DID NOT RAISE\nERROR tests/test_b.py::test_c\n1 failed"),
     ["tests/test_env.py::test_perm", "tests/test_b.py::test_c"]);
@@ -184,11 +184,11 @@ test("the project's check, judged against the unchanged code: old failures pass 
   const runner = writeBaselineCheckRunner(dir, "python -m pytest -q -p no:cacheprovider tests");
   fs.writeFileSync(path.join(dir, "BASE_FAILS"), "tests/test_env.py::test_perm\n");
   const run = () => spawnSync("python", [runner], { cwd: repo, encoding: "utf8" });
-  fs.writeFileSync(path.join(dir, "SKIP"), "");
-  assert.equal(run().status, 1, "no tests written for the task: the old failure still fails the answer");
-  fs.unlinkSync(path.join(dir, "SKIP"));
-  fs.writeFileSync(path.join(dir, "test_spec.py"), "def test_ok():\n    assert True\n");
+  // no test written for the task (the default rule writes none): judged on the project's tests alone, at once -- it
+  // once waited 300 s for a test file that never came and then failed every answer on the old failures (ct-series-v6)
+  const t0 = Date.now();
   const ok = run();
+  assert.ok(Date.now() - t0 < 30000, "no wait for tests that are never written");
   assert.equal(ok.status, 0, ok.stdout);
   assert.match(ok.stdout, /all failing on the unchanged code too/);
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 3\n");
