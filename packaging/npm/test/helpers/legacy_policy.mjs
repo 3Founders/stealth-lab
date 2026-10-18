@@ -6,4 +6,7 @@ export const LEGACY_POLICY = Object.freeze({
   STEALTHLAB_DISPATCH_ACCEPT: "check", STEALTHLAB_DISPATCH_PARALLEL: "off", STEALTHLAB_DISPATCH_TIMEOUT_S: "150",
   STEALTHLAB_DISPATCH_MAX_PARALLEL: "2", STEALTHLAB_DISPATCH_MAX_RUNGS: "3", STEALTHLAB_DISPATCH_STRONG_EXTRA_S: "240",
   STEALTHLAB_DISPATCH_MODEL_CAP: "on", STEALTHLAB_DISPATCH_AREA_SKIP: "on",
+  // the brief (a strong model's judgment of whether a prompt is a code task) is off: these tests drive dispatch with
+  // prompts no model judges; the brief and its gate have their own tests (test/brief.test.mjs)
+  STEALTHLAB_BRIEF: "off",
 });
