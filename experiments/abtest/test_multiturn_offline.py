@@ -488,10 +488,11 @@ def test_each_cheap_answer_is_graded_against_the_merged_fix_and_reported(monkeyp
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     mod = types.SimpleNamespace(issue_text=lambda t: "the issue", rec=lambda t: {"patch": "diff --git a/x b/x"})
-    rec = {"turn_log": [{"dispatched": True, "answered": False, "shown": "Done by m in 5 s"},
+    rec = {"turn_log": [{"dispatched": True, "answered": False, "shown": "Done by m in 5 s", "diff": "diff --git a/y b/y"},
                         {"dispatched": True, "answered": True, "user_text": "so it works?", "shown": "Answered by glm-5.3-flash in 4 s ...\n\nYes."}]}
     runner.grade_answers({"task_id": "t"}, mod, rec, {})
     assert len(seen) == 1 and "The merged fix:\ndiff --git a/x b/x" in seen[0][1] and "The reply:\nAnswered by" in seen[0][1]
+    assert "What the session had changed when the reply was written:\ndiff --git a/y b/y" in seen[0][1]
     assert rec["turn_log"][1]["answer_grade"]["grade"] == "correct" and "answer_grade" not in rec["turn_log"][0]
     rows = {("t", "A"): {"task_id": "t", "suite": "swe", "resolved": True, "total_cost_usd": 1.0},
             ("t", "C"): {"task_id": "t", "suite": "swe", "resolved": True, "total_cost_usd": 0.5, **rec}}

@@ -464,7 +464,7 @@ def open_model_runs(home: Path, since: str, until: str) -> dict:
             tail = str((checks[-1] or {}).get("tail") or "")[-800:] if checks and isinstance(checks[-1], dict) else ""
             attempts.append({"model": a.get("model"), "executor": a.get("executor"), "state": a.get("state"),
                              "cost_usd": a.get("cost_usd"), "tokens": a.get("tokens"), "role": role,
-                             "run_id": r.get("id"), "duration_s": a.get("duration_s"), "error": str(a.get("error") or "")[:400] or None,
+                             "run_id": r.get("id") or r.get("run_id") or rj.parent.name, "duration_s": a.get("duration_s"), "error": str(a.get("error") or "")[:400] or None,
                              "summary": str(a.get("summary") or "")[:400] or None, "check_tail": tail or None, "patch": patch or None})
             cost += float(a.get("cost_usd") or 0)
     return {"open_cost_usd": round(cost, 6), "exec_runs": runs, "attempts": attempts}
@@ -537,9 +537,10 @@ def run_conversation(task: dict, arm: str, mod, ws: Path, env: dict[str, str], e
 ANSWER_JUDGE_MODEL = "claude-sonnet-5-5"
 ANSWER_JUDGE_SYSTEM = (
     "You grade a reply an assistant gave a developer in a coding session, for an experiment. You get the issue the session "
-    "was about, the fix the project really merged for it, the developer's message and the reply. Grade only the reply's "
-    "content: is what it says about the code, the change and the issue correct, and does it answer the message? It may "
-    "describe a different but valid fix than the merged one. Reply with only a JSON object: "
+    "was about, the fix the project really merged for it, what the session itself had changed when the reply was written "
+    "(its diff), the developer's message and the reply. Grade only the reply's content: is what it says about the code, "
+    "the session's change and the issue correct, and does it answer the message? A reply that describes the session's own "
+    "change correctly is correct even when that change differs from the merged fix. Reply with only a JSON object: "
     '{"grade": "correct" | "incorrect" | "unclear", "why": one sentence}.'
 )
 
@@ -560,8 +561,11 @@ def grade_answers(task: dict, mod, rec: dict, env: dict[str, str]) -> None:
     except Exception:  # noqa: BLE001
         gold = ""
     exe = shutil.which("claude") or "claude"
+    log = rec.get("turn_log") or []
     for t in turns:
+        before = "\n".join(str(x.get("diff") or "") for x in log[: log.index(t)]).strip()   # the session's changes so far
         user = (f"The issue:\n{issue[:6000]}\n\nThe merged fix:\n{gold[:12000] or '(not available)'}\n\n"
+                f"What the session had changed when the reply was written:\n{before[:12000] or '(nothing)'}\n\n"
                 f"The developer's message:\n{str(t.get('user_text') or '')[:3000]}\n\nThe reply:\n{str(t['shown'])[:8000]}")
         cmd = [exe, "-p", "--model", ANSWER_JUDGE_MODEL, "--system-prompt", ANSWER_JUDGE_SYSTEM, "--tools", "", "--setting-sources", "user",
                "--strict-mcp-config", "--output-format", "json"]

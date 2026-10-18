@@ -90,3 +90,10 @@ def test_only_first_turn_answers_are_graded(tmp_path):
     got = SP.parts([write(tmp_path, "r.jsonl", rows)])
     assert set(got["i1"]["agents"]) == {"C.flash.1"}
     assert got["i2"]["agents"] == {} and set(got["i3"]["agents"]) == {"C.gemma.1"}
+
+
+def test_a_row_whose_attempts_carry_no_run_id_falls_back_to_the_run_counts(tmp_path):
+    import series_to_parts as SP
+    att = {"model": "flash", "state": "failed", "role": "attempt", "patch": SRC, "run_id": None}
+    rows = [{"task_id": "i1", "arm": "C", "exec_runs": 1, "turn_log": [{"exec_runs": 1, "run_ids": []}, {"exec_runs": 0, "run_ids": []}], "attempts": [att]}]
+    assert set(SP.parts([write(tmp_path, "r.jsonl", rows)])["i1"]["agents"]) == {"C.flash.1"}

@@ -26,9 +26,11 @@ def first_turn(row: dict):
     turns = row.get("turn_log") or []
     if not turns:
         return lambda a: True                                   # one prompt, one turn
-    if "run_ids" in turns[0]:
-        ids = set(turns[0]["run_ids"] or [])
+    if turns[0].get("run_ids") and all(a.get("run_id") for a in row.get("attempts") or []):
+        ids = set(turns[0]["run_ids"])
         return lambda a: a.get("run_id") in ids
+    # no run ids (a row from before 2026-10-18, or ct-series-v6, whose attempts carried none): the tries are the first
+    # turn's only when that turn made every run
     every = (turns[0].get("exec_runs") or 0) == (row.get("exec_runs") or 0)
     return lambda a: every
 
