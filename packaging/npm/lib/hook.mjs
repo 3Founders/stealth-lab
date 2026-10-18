@@ -26,7 +26,7 @@
 // 2026-09-28 (docs/findings.md): full is the only mode shown to help (open models, +8.5); on DS-1000 Sonnet
 // gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
-import { parseOverride, recentTurns, turnsText } from "./brief.mjs";
+import { parseOverride, sessionTurns, turnsText } from "./brief.mjs";
 import { markShown, pendingLines, recordDispatch } from "./continuity.mjs";
 import { maybeStartSurvey } from "./auto_survey.mjs";
 import fs from "node:fs";
@@ -524,7 +524,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
   // for a change now. It reads the earlier turns too: "so it needs X?" after a fix is a confirmation, not a new task.
   let verdict = null;
   if (policy.triage || dispatchInstalled(env)) {
-    const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: payload.prompt }) : [];
+    const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.session_id, current: payload.prompt, env });
     verdict = await callTriage({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(), context: turnsText(turns),
       timeoutMs: policy.triageTimeoutMs, fetchImpl,
@@ -566,7 +566,8 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
       const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict });
       if (d?.handled) {
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
-        recordDispatch({ sessionId: payload.session_id, model: d.model, files: d.files, task: promptTitle(payload.prompt) }, { env });
+        recordDispatch({ sessionId: payload.session_id, model: d.model, files: d.files, task: promptTitle(payload.prompt),
+                         prompt: payload.prompt, text: d.text, root: payload.cwd || root }, { env });
         write(JSON.stringify({ decision: "block", reason: d.text }));
         return;
       }

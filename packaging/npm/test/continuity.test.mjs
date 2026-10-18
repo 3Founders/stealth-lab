@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { KEEP, continuityFile, continuityLine, markShown, pendingLines, recordDispatch } from "../lib/continuity.mjs";
+import { KEEP, cheapWritten, continuityFile, continuityLine, dispatchedTurns, markShown, pendingLines, recordDispatch } from "../lib/continuity.mjs";
+import { sessionTurns } from "../lib/brief.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
 
 const home = () => fs.mkdtempSync(path.join(os.tmpdir(), "cont-"));
@@ -115,4 +116,27 @@ test("hook: STEALTHLAB_CONTINUITY=off records and says nothing", async () => {
   await prompt(env, { text: "fix the constant in calc.py so that it returns 2 please", dispatchImpl: handled });
   const next = await prompt(env, { text: "now add a DOCX export to the report page please", dispatchImpl: async () => null });
   assert.doesNotMatch(next[0].hookSpecificOutput.additionalContext, /Earlier in this session/);
+});
+
+
+test("a dispatched turn is kept as conversation, and merged into the session's turns in time order", () => {
+  const env = { STEALTHLAB_HOME: home() };
+  recordDispatch({ sessionId: "s1", model: "glm-5.3-flash", files: [], task: "fix calc", prompt: "calc.x should be 2, fix it", text: "Done by glm-5.3-flash in 40 s" }, { env, now: 2000 });
+  assert.deepEqual(dispatchedTurns("s1", { env }).map((t) => [t.role, t.text]), [["user", "calc.x should be 2, fix it"], ["assistant", "Done by glm-5.3-flash in 40 s"]]);
+  const tr = path.join(home(), "t.jsonl");
+  fs.writeFileSync(tr, [JSON.stringify({ type: "user", timestamp: new Date(1000).toISOString(), message: { role: "user", content: "hi, calc is broken" } }),
+    JSON.stringify({ type: "assistant", timestamp: new Date(1500).toISOString(), message: { role: "assistant", content: [{ type: "text", text: "Which part?" }] } })].join("\n") + "\n");
+  assert.deepEqual(sessionTurns({ transcriptPath: tr, sessionId: "s1", env }).map((t) => t.text),
+    ["hi, calc is broken", "Which part?", "calc.x should be 2, fix it", "Done by glm-5.3-flash in 40 s"]);
+});
+
+test("cheapWritten: a file still as the cheap model left it is its change; one written since is not", () => {
+  const env = { STEALTHLAB_HOME: home() };
+  const root = home();
+  fs.writeFileSync(path.join(root, "calc.py"), "x = 2\n");
+  recordDispatch({ sessionId: "s1", model: "m", files: ["calc.py"], task: "t", prompt: "p", text: "Done", root }, { env });
+  assert.deepEqual([...cheapWritten("s1", root, { env })], ["calc.py"]);
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(root, "calc.py"), later, later);         // the session edited it after
+  assert.deepEqual([...cheapWritten("s1", root, { env })], []);
 });

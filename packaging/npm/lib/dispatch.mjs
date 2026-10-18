@@ -39,6 +39,7 @@ import { detectCheck, pythonBin } from "./detect_check.mjs";
 import { repoContext } from "./task_context.mjs";
 import { repoTopLevel } from "./exec/worktree.mjs";
 import { createUndoPoint, discardUndoPoint, finishUndoPoint, undoEnabled } from "./undo.mjs";
+import { cheapWritten } from "./continuity.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 // the executor's task text: the issue whole plus the pointers; at 2,000 it cut 8 of 25 real issues (survey 2026-10-16)
@@ -919,8 +920,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     log(`dispatch: the judge${triage.provider ? ` (${triage.provider})` : ""} says work=change`);
   }
   // what the cheap models are told: the conversation and the request as the user said it (lib/brief.mjs)
-  const { conversationPrompt, makeBrief, recentTurns } = await import("./brief.mjs");
-  const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: payload.prompt }) : [];
+  const { conversationPrompt, makeBrief, sessionTurns } = await import("./brief.mjs");
+  const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.session_id, current: payload.prompt, env });
   payload = { ...payload, prompt: conversationPrompt(turns, payload.prompt, TASK_MAX) };
   // the brief: names to search the code for, and the parts of a request that asks for several things (no gate)
   let brief = null;
@@ -954,9 +955,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // a follow-up in a session whose own model is already changing the located code: the session finishes its own work
   // (sqlglot-4051 turn 2: the follow-up was dispatched, split from the entry recorded 12 s earlier from turn 1, every
   // cheap model failed part 1 after 19 min, and the session then reworked the fix, ct-series-v4)
+  // A change a cheap model made earlier in this session, with the file still as it left it, is not the session's own
+  // work: a follow-up on it may go to the cheap models again (they are told the conversation, that turn included).
   if (!force && !policy.followups && payload.transcript_path) {
+    const theirs = cheapWritten(payload.session_id, payload.cwd || root, { env });
     const edited = new Set([...sessionEdits(payload.transcript_path, payload.cwd || root),
-                            ...changedSince(payload.cwd || root, sessionStartedAt(payload.transcript_path))]);
+                            ...changedSince(payload.cwd || root, sessionStartedAt(payload.transcript_path))].filter((f) => !theirs.has(f)));
     const overlap = (loc.files || []).filter((f) => edited.has(f));
     if (overlap.length) {
       log(`dispatch: not dispatched (a follow-up: this session already changed ${overlap.join(", ")})`);

@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { dispatchedTurns } from "./continuity.mjs";
 
 export const KINDS = ["code", "question", "chat"];
 export const SIZES = ["small", "medium", "large"];
@@ -121,7 +122,8 @@ export function recentTurns(transcriptPath, { n = TURNS, current = "" } = {}) {
         if ((role !== "user" && role !== "assistant") || o.isSidechain || o.isMeta) continue;
         const text = textOf(o.message.content).replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
         if (!text) continue;
-        out.push({ role, text: text.length > TURN_CHARS ? `${text.slice(0, TURN_CHARS - 3)}...` : text });
+        const at = Date.parse(o.timestamp || "");
+        out.push({ role, text: text.length > TURN_CHARS ? `${text.slice(0, TURN_CHARS - 3)}...` : text, ...(Number.isNaN(at) ? {} : { at }) });
       }
     } finally {
       fs.closeSync(fd);
@@ -149,6 +151,20 @@ export function parseBrief(text) {
   if (!task && o.kind === "code") return null;
   return { task, files_hinted: asList(o.files_hinted, 8), acceptance: String(o.acceptance || "").trim(),
            parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size, search_terms: asList(o.search_terms, 8) };
+}
+
+// The session's earlier turns: the transcript's, and the turns a cheap model did (lib/continuity.mjs), which the
+// transcript may not hold (a dispatched prompt is blocked). In time order, the last `n`; a dispatched turn the
+// transcript does hold is not counted twice.
+export function sessionTurns({ transcriptPath, sessionId, current = "", env = process.env, n = TURNS }) {
+  const fromTranscript = transcriptPath ? recentTurns(transcriptPath, { current, n: 50 }) : [];
+  const seen = new Set(fromTranscript.map((t) => t.text.slice(0, 80)));
+  const dispatched = sessionId ? dispatchedTurns(sessionId, { env }).filter((t) => !seen.has(String(t.text).slice(0, 80)))
+    .map((t) => ({ ...t, text: t.text.length > TURN_CHARS ? `${t.text.slice(0, TURN_CHARS - 3)}...` : t.text })) : [];
+  if (!dispatched.length) return fromTranscript.slice(-n);
+  const all = [...fromTranscript.map((t, i) => ({ ...t, i })), ...dispatched.map((t, i) => ({ ...t, i: 1e6 + i }))];
+  all.sort((a, b) => (a.at != null && b.at != null ? a.at - b.at : a.i - b.i));
+  return all.slice(-n).map(({ i, ...t }) => t);
 }
 
 // The earlier turns as one text (oldest first, at most `max` characters, the oldest cut first): what the server's

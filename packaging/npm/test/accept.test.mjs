@@ -128,6 +128,32 @@ test("a follow-up is caught however the session changed the files (a script, not
   assert.notEqual(d2, null);
 });
 
+test("a follow-up on a change a cheap model made goes to the cheap models again; once the session edits the file, it does not", async () => {
+  const { env, repo } = setup();
+  const { recordDispatch } = await import("../lib/continuity.mjs");
+  const transcript = path.join(repo, "..", `t3-${path.basename(repo)}.jsonl`);
+  fs.writeFileSync(transcript, JSON.stringify({ type: "user", timestamp: new Date(Date.now() - 60000).toISOString(), message: { content: "hi" } }) + "\n");
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");                       // turn 1: a cheap model's change, applied
+  recordDispatch({ sessionId: "s1", model: "gemma-4-31b-it", files: ["calc.py"], task: "Fix calc.py so x is 2", prompt: "Fix calc.py so x is 2",
+                   text: "Done by gemma-4-31b-it", root: repo }, { env });
+  const FIX3 = "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x = 2\n+x = 3\n";
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX3], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const logs = [];
+  const d = await dispatch({ payload: { cwd: repo, prompt: "now make calc.py x equal 3", transcript_path: transcript, session_id: "s1" }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: rt, log: (m) => logs.push(m) });
+  assert.notEqual(d, null, logs.join("\n"));
+  assert.ok(rt.calls.length > 0, "the cheap models got the follow-up");
+  assert.match(rt.calls[0].task, /Developer: Fix calc\.py so x is 2[\s\S]*Assistant: Done by gemma-4-31b-it[\s\S]*The request:\nnow make calc\.py x equal 3/);
+  // the session then edits calc.py itself: a follow-up on it is the session's
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(repo, "calc.py"), later, later);
+  const logs2 = [];
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "now make calc.py x equal 3", transcript_path: transcript, session_id: "s1" }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: stub(repo, {}), log: (m) => logs2.push(m) });
+  assert.equal(d2, null);
+  assert.ok(logs2.some((l) => /a follow-up: this session already changed calc\.py/.test(l)), logs2.join("\n"));
+});
+
 test("the time-limit line says when an answer did pass but was not accepted", async () => {
   const { env, repo } = setup();
   const logs = [];

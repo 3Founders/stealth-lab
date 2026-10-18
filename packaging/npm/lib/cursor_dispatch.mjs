@@ -21,7 +21,7 @@ import path from "node:path";
 import { configDir } from "./config.mjs";
 import { callFindWays, callTriage, ensureDispatchRoot, execCandidates, formatKnowledge, hookPolicy, readClaims, routingArgs,
   shouldLookUp } from "./hook.mjs";
-import { parseOverride, recentTurns, turnsText } from "./brief.mjs";
+import { parseOverride, sessionTurns, turnsText } from "./brief.mjs";
 import { rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, requestPayload, upsertRoutes } from "./library.mjs";
 import { logHook } from "./subagent_hook.mjs";
@@ -81,7 +81,7 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   let planOnly = false;
   // the server's judgment (JEV first): a lookup worth it? and, for dispatch, a change asked for now? (the earlier turns
   // are its context when Cursor names a transcript)
-  const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: prompt }) : [];
+  const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.conversation_id, current: prompt, env });
   const verdict = await callTriage({ url: settings.url, token: settings.token, userAgent, query: prompt, context: turnsText(turns),
     timeoutMs: policy.triageTimeoutMs, fetchImpl });
   if (policy.triage) {
