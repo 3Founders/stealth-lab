@@ -4,8 +4,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { dispatch, triedNote } from "../lib/dispatch.mjs";
-import { decide, evalRule, parseRule, patchSignals } from "../lib/accept.mjs";
+import { dispatch, triedNote, writeSpecRunner } from "../lib/dispatch.mjs";
+import { answerEvidence, decide, evalRule, parseRule, patchSignals } from "../lib/accept.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "gpt-oss-120b|stealth"] };
 const MINE = "claude-opus-5-5|claude-code";
@@ -262,4 +262,31 @@ test("crossTest: an answer passes another's validated tests (fail without its fi
   assert.equal(y.evidence.C, false, "no other answer has validated tests for y");
   assert.match(fs.readFileSync(path.join(y.result.diff.worktree, "calc.py"), "utf8"), /return 2/, "y's own change is back in place");
   assert.equal(fs.existsSync(path.join(x.result.diff.worktree, "tests", "test_calc.py")), false, "y's test is taken out of x again");
+});
+
+// ct-series-v5, jsonargparse: our tests failed on 4 answers the hidden tests grade correct -- they ran without the
+// environment the check had, so the installed (unchanged) copy of the project could be what they imported
+test("the reproduction test imports the answer's code, not the installed copy of the project", async () => {
+  const py = (() => { for (const b of ["python3", "python"]) { try { execFileSync(b, ["-m", "pytest", "--version"], { stdio: "ignore" }); return b; } catch { /* */ } } return null; })();
+  if (!py) return;                                                    // no pytest on this machine
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "acc-spec-"));
+  const installed = path.join(tmp, "site"), wt = path.join(tmp, "wt"), specs = path.join(tmp, "specs");
+  for (const d of [path.join(installed, "pkg"), path.join(wt, "src", "pkg"), path.join(wt, "tests"), specs]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(installed, "pkg", "__init__.py"), "X = 1\n");          // the user's checkout, as installed
+  fs.writeFileSync(path.join(wt, "pyproject.toml"), "[project]\nname = 'pkg'\n");
+  fs.writeFileSync(path.join(wt, "src", "pkg", "__init__.py"), "X = 2\n");          // the answer's fix, in its worktree
+  fs.writeFileSync(path.join(specs, "test_spec.py"), "from pkg import X\n\ndef test_fixed():\n    assert X == 2\n");
+  const runner = writeSpecRunner(specs);
+  const lines = [];
+  const ev = await answerEvidence({ rule: parseRule("E T"), result: { diff: { worktree: wt } }, spec: { file: path.join(specs, "test_spec.py") },
+    specRunner: runner, python: py, env: { ...process.env, PYTHONPATH: installed }, log: (l) => lines.push(l), unit: "m|stealth" });
+  assert.equal(ev.T, true, lines.join("\n"));
+  assert.ok(lines.some((l) => l === "dispatch m|stealth: reproduction test passes"), lines.join("\n"));
+  // the same test on an answer that does not fix it: it fails, and the log says how
+  fs.writeFileSync(path.join(wt, "src", "pkg", "__init__.py"), "X = 1  # not fixed\n");             // another size than X = 2: no stale .pyc
+  lines.length = 0;
+  const bad = await answerEvidence({ rule: parseRule("E T"), result: { diff: { worktree: wt } }, spec: { file: path.join(specs, "test_spec.py") },
+    specRunner: runner, python: py, env: { ...process.env, PYTHONPATH: installed }, log: (l) => lines.push(l), unit: "m|stealth" });
+  assert.equal(bad.T, false);
+  assert.ok(lines.some((l) => /reproduction test fails \(exit 1\): .*assert/.test(l)), lines.join("\n"));
 });

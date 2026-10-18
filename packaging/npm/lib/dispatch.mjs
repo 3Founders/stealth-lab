@@ -566,6 +566,8 @@ export async function writeSpecTests({ prompt, root, mine, check = "", env = pro
     return skip();                                 // the call is paid (ledger) either way
   }
   fs.renameSync(tmp, file);                        // whole and parsing, or not there at all
+  const names = [...code.matchAll(/^\s*(?:async\s+)?def (test_\w+)/gm)].map((m) => m[1]);
+  log(`test-first: ${names.length} test(s) by ${usedModel || "the writer"} (${names.slice(0, 6).join(", ")}${names.length > 6 ? ", ..." : ""}) -> ${file}`);
   const amb = /^#\s*AMBIGUOUS:\s*(.+)$/m.exec(code);
   // "# AMBIGUOUS: none" (a writer that fills in the line anyway) is not a flag: it stopped the cheap tries on a clear task
   const ambiguous = amb && !/^(none|no|n\/?a|not ambiguous|nothing)[\s.)]*$/i.test(amb[1].trim().replace(/^[(\[]/, "")) ? amb[1].trim().slice(0, 300) : null;
@@ -1110,7 +1112,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // passed the project's check: the rule decides with the evidence (and the other answers), in the loop below
       await specDone;
       d.evidence = await answerEvidence({ rule: acceptRule, result, spec, specRunner: specRunnerPath, python: pythonBin({ env }),
-        prompt: rawPayload.prompt || payload.prompt, env, log, signal: specAbort.signal, fetchImpl });
+        prompt: rawPayload.prompt || payload.prompt, env, log, signal: specAbort.signal, fetchImpl, unit: rung.unit });
       log(`dispatch ${rung.unit}: passes the project's check; evidence: ${evidenceLine(d.evidence)}`);
       return true;
     }
@@ -1313,7 +1315,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         if (v2) cands.push(more);
       }
       // C: the answers run each other's validated tests (only when the rule uses it: it runs their tests)
-      if (ruleUses(acceptRule, "C") && cands.length > 1) await crossTest(cands, { python: pythonBin({ env }), log });
+      if (ruleUses(acceptRule, "C") && cands.length > 1) await crossTest(cands, { python: pythonBin({ env }), log, env });
       const pick = decide(cands, acceptRule);
       if (pick) {
         winner = pick;
