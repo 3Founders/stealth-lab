@@ -1,0 +1,98 @@
+{
+  "run_id": "r-20261018130108-75485b",
+  "repo": "/app/experiments/abtest/.local/ws/C/swe-sqlglot",
+  "commit": "d65373e55bf97e5c13cee684e1dd700dcddcae7c",
+  "base": "working-tree",
+  "created_at": "2026-10-18T13:01:08.388Z",
+  "finished_at": "2026-10-18T13:11:08.103Z",
+  "settled": true,
+  "state": "cancelled",
+  "winner": null,
+  "applied": null,
+  "discarded": true,
+  "error": null,
+  "selection": {
+    "source": "explicit",
+    "race": 1,
+    "note": "",
+    "recommendation": null
+  },
+  "instance_key": "74d3ad3f-e57d-5a85-abfc-09434c17716d.7ebfe5e4fed64856",
+  "input": {
+    "task": "Converting a regexp_extract from Presto to Spark drops the group index, but the two functions have different defaults, so the output is wrong. Work only inside this directory: do not open, list or search files outside it.\n\nLikely place in this repository (found by searching it for the task's names; confirm before relying on it): sqlglot/dialects/dialect.py:1366-1373 (regexp_extract_sql), sqlglot/dialects/dialect.py:1280-1330, sqlglot/dialects/presto.py:233-344 (Presto). Existing tests for it: tests/dialects/test_presto.py.\n\nContext from this repository (use what applies to the task above; it is not part of the request):\n\nFacts about this repository (from its survey; each cites a file):\n# claims.md -- facts about this repository. Written by stealthlab-mcp survey (by=scanner lines) and the agent (survey_repo).\nCLAIM|R-001|current|stack|repository|Source files in the repository are Python (~81%), SQL (~18%) by file count (vendored and generated files excluded)|source=search:file extensions in . (git ls-files)|version=1|by=scanner|key=languages\nCLAIM|R-002|current|runtime|repository|The repository root requires Python `>=3.7` (setup.py python_requires)|source=setup.py:29#sha=c435b8e|version=1|by=scanner|key=python_requires\nCLAIM|R-003|current|build|repository|At the repository root, `make install` runs `pip install -e .` (Makefile)|source=Makefile:3#sha=bcf5777|version=1|by=scanner|key=make:install\nCLAIM|R-004|current|build|repository|At the repository root, `make docs` runs `python pdoc/cli.py -o docs` (Makefile)|source=Makefile:38#sha=7bf7092|version=1|by=scanner|key=make:docs\nCLAIM|R-005|current|test|repository|At the repository root, `make test` runs `SQLGLOTRS_TOKENIZER=0 python -m unittest` (Makefile)|source=Makefile:21#sha=13f2e45|version=1|by=scanner|key=make:test\nCLAIM|R-006|current|test|repository|At the repository root, `make unit` runs `SKIP_INTEGRATION=1 SQLGLOTRS_TOKENIZER=0 python -m unittest` (Makefile)|source=Makefile:27#sha=6ffa94d|version=1|by=scanner|key=make:unit\nCLAIM|R-007|current|test|repository|At the repository root, `make check` is a target (Makefile)|source=Makefile:36#sha=2919f20|version=1|by=scanner|key=make:check\nCLAIM|R-008|current|lint|repository|pre-commit hooks run: ruff, ruff-format, mypy (.pre-commit-config.yaml)|source=.pre-commit-config.yaml:4#sha=a319760|version=1|by=scanner|key=pre-commit\nCLAIM|R-009|current|lint|repository|At the repository root, `make style` runs `pre-commit run --all-files` (Makefile)|source=Makefile:33#sha=f579cb3|version=1|by=scanner|key=make:style\nCLAIM|R-010|current|ci|repository|CI workflow .github/workflows/python-package.yml (job `build`) runs `make install-dev`|so\n[...cut to fit]",
+    "checks": [
+      "python \"/app/experiments/abtest/.local/C_home/specs/1792328467999-fe462f/run_check.py\""
+    ],
+    "scope": [
+      "*",
+      "**/*"
+    ],
+    "goal_id": null,
+    "procedure_id": null,
+    "step_order": null,
+    "executor": "claude",
+    "model": "glm-5.3-flash",
+    "timeoutS": 600,
+    "hangS": 600,
+    "checkTimeoutS": 600,
+    "escalate": 0,
+    "base": "working-tree",
+    "noChangeExpected": false,
+    "instance_key": "74d3ad3f-e57d-5a85-abfc-09434c17716d.7ebfe5e4fed64856"
+  },
+  "attempts": [
+    {
+      "run_id": "r-20261018130108-75485b",
+      "state": "cancelled",
+      "verified": false,
+      "checks": [
+        {
+          "cmd": "python \"/app/experiments/abtest/.local/C_home/specs/1792328467999-fe462f/run_check.py\"",
+          "exit": 128,
+          "seconds": 78.6,
+          "tail": "\n[stealthlab: check killed: run cancelled]"
+        }
+      ],
+      "scope_violations": [],
+      "summary": "The fix is complete and verified. \n\n**What changed:** Presto/Hive/DuckDB's `REGEXP_EXTRACT` parsers now use a shared `build_regexp_extract` helper that materializes the group index with each dialect's default (`Dialect.REGEXP_EXTRACT_DEFAULT_GROUP = 0`, overridden to `1` for Hive/Spark), and `regexp_extract_sql` only emits the group when it differs from the target dialect's default — so Presto→Spark now yields `REGEXP_EXTRACT(x, '(a)(b)', 0)` while Presto→Presto stays unchanged; Spark's `regexpextract_sql` in Snowflake's generator was also adjusted to treat group `0` as \"no group\" to avoid emitting a bogus default chain.\n\n**How I checked it:** Added regression tests in `tests/dialects/test_presto.py` for both the default and explicit-group cases, updated `tests/dialects/test_snowflake.py` to match the corrected (non-lossy) round-trips, and ran the full unit suite with and without the Rust tokenizer (`688 tests, OK`), plus ruff and mypy — all passing.",
+      "learned": [],
+      "diff": {
+        "files": [
+          "sqlglot/dialects/dialect.py",
+          "sqlglot/dialects/duckdb.py",
+          "sqlglot/dialects/hive.py",
+          "sqlglot/dialects/presto.py",
+          "sqlglot/dialects/snowflake.py",
+          "tests/dialects/test_presto.py",
+          "tests/dialects/test_snowflake.py"
+        ],
+        "stat": " sqlglot/dialects/dialect.py      | 21 ++++++++++++++++++---\n sqlglot/dialects/duckdb.py       |  5 ++---\n sqlglot/dialects/hive.py         |  6 +++---\n sqlglot/dialects/presto.py       |  5 ++---\n sqlglot/dialects/snowflake.py    |  6 ++++++\n tests/dialects/test_presto.py    | 14 ++++++++++++++\n tests/dialects/test_snowflake.py | 19 +++++++++++++++----\n 7 files changed, 60 insertions(+), 16 deletions(-)",
+        "worktree": null,
+        "patch_path": "/app/experiments/abtest/.local/C_home/runs/r-20261018130108-75485b/a1.patch"
+      },
+      "executor": "claude",
+      "model": "glm-5.3-flash",
+      "attempt": 1,
+      "duration_s": 599.6,
+      "tokens": {
+        "in": 856207,
+        "out": 17660
+      },
+      "cost_usd": 0.13726105,
+      "evidence": {
+        "reported": false,
+        "queued": false,
+        "skipped": "cancelled: not a model outcome",
+        "instance_key": "74d3ad3f-e57d-5a85-abfc-09434c17716d.7ebfe5e4fed64856"
+      },
+      "executor_exit": 0,
+      "base_tree": "e899acb470a8c921bde7d94920e37823582d7487",
+      "worktree": "/app/experiments/abtest/.local/worktrees/r-20261018130108-75485b-a1",
+      "worktree_removed": true,
+      "did_not_run": false,
+      "escalated": false,
+      "started_at": "2026-10-18T13:01:08.390Z",
+      "finished_at": "2026-10-18T13:11:08.019Z"
+    }
+  ]
+}
