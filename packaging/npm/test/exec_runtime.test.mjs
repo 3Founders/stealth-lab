@@ -344,3 +344,34 @@ test("lazy adapter registry: the real `fake` adapter runs end to end (STEALTHLAB
   const prod = new ExecRuntime({ env: { ...env, STEALTHLAB_EXEC_ALLOW_FAKE: "" } });
   assert.ok(!(await prod.listExecutors()).some((x) => x.id === "fake"), "fake is never selectable in production");
 });
+
+// ct-series-v7, sqlglot: a cheap answer that solves the issue was cut at the time limit and never checked
+test("an agent stopped at its time limit with a change made: the change is checked like a finished one's", async () => {
+  const repo = makeRepo();
+  const env = testEnv();
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { ...FIX, chatterMs: 60000 } }) });
+  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 2, hang_s: 30 });
+  const res = await rt.runResult(run_id, 30);
+  assert.equal(res.state, "verified", JSON.stringify(res.error));
+  assert.equal(res.checks[0].exit, 0);
+  assert.ok(readEvents(env, run_id).some((e) => e.event === "checked_at_limit" && e.reason === "timeout"));
+  await rt.cancelRun(run_id);
+});
+
+test("finishRun: the caller's time is up -- each agent still working hands in its change, which is checked", async () => {
+  const repo = makeRepo();
+  const env = testEnv();
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { ...FIX, chatterMs: 60000 } }) });
+  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 600, hang_s: 600 });
+  await waitFor(async () => (await rt.runStatus(run_id)).state === "running");
+  await sleep(800);                                          // the stub has written its edit and keeps working
+  const t0 = Date.now();
+  await rt.finishRun(run_id);
+  const res = await rt.runResult(run_id, 30);
+  assert.ok(Date.now() - t0 < 15000);
+  assert.equal(res.state, "verified");
+  // a change that does not pass the check fails, as any other
+  const bad = runtime(testEnv(), { stub: stubAdapter({ scenario: { edits: [{ path: "calc.txt", content: "still broken\n" }], chatterMs: 60000 } }) });
+  const b = await bad.achieve({ repo_path: makeRepo(), task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 2, hang_s: 30 });
+  assert.equal((await bad.runResult(b.run_id, 30)).state, "failed");
+});

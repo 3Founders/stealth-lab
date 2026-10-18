@@ -297,6 +297,15 @@ export class ExecRuntime {
     this.persist(run);
   }
 
+  // Time is up for this run (the caller's limit): each agent still working stops, and a change it has made is checked
+  // like a finished one's -- the limit bounds the work, not the judging of it. An agent that changed nothing ends timed
+  // out, as before. (ct-series-v7, sqlglot: a cheap answer that solves the issue was discarded at the limit, unchecked.)
+  async finishRun(runId) {
+    const run = this.load(runId);
+    for (const a of run.attempts) if (a.handle && !a.cancelRequested) { a.handIn = true; a.handle.kill("timeout"); }
+    return { run_id: run.id, state: this.stateOf(run) };
+  }
+
   cancelAttempt(a) {
     a.cancelRequested = true;
     a.handle?.kill("cancelled");
@@ -389,6 +398,12 @@ export class ExecRuntime {
         writePrivate(patchPath, d.patch);
         a.diff = { files: d.files, stat: d.stat, worktree: a.worktree, patch_path: patchPath };
         a.scopeViolations = scopeViolations(d.files, run.input.scope);
+      }
+      // stopped at a time limit (its own, or the caller's hand-in) with a change made: the change is checked, not dropped
+      if (terminal === "timed_out" && a.diff?.files?.length) {
+        a.stoppedAt = r.reason;
+        this.event(run, { event: "checked_at_limit", attempt: a.index + 1, reason: r.reason, files: a.diff.files.length });
+        terminal = null;
       }
       if (terminal) return this.setState(run, a, terminal, { reason: r.reason, ...(a.stalled ? { stalled: a.stalled.rule } : {}) });
       // the executor itself failed and changed nothing (its endpoint kept answering 429, say): that is its error, not an
