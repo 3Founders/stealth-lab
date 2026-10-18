@@ -58,12 +58,13 @@ export function dispatchPolicy(env = process.env) {
     // "strict" (default): a cross-check that cannot decide counts as NOT verified -- the task goes up the ladder;
     // "on": inconclusive is accepted as before; "off": no cross-check
     crosscheck: (env.STEALTHLAB_DISPATCH_CROSSCHECK || "strict").toLowerCase(),
-    // how a passing answer is accepted (lib/accept.mjs). Default: E (no new failure in the project's own tests) S (it
-    // changes source code) T (the reproduction test written from the task before any answer -- it fails on the unchanged
-    // code -- now passes: how SWE-bench itself grades a fix) X (no catch-all exception swallowing, a known overfitting
-    // pattern) and no "does not fix" from the strong reviewer. "check": the check alone, as before 2026-10-17.
+    // how a passing answer is accepted (lib/accept.mjs). Default: E (no new failure in the project's own tests) and Rs
+    // (the strong reviewer says the diff fixes the request; "does not fix" or unsure is not an accept). Nothing else
+    // gates by default: a reproduction test written before any answer guesses the behaviour wrong about half the time
+    // (pipeline survey, 2026-10-16), and as a gate it rejected 4 of 4 right answers (ct-series-v5, jsonargparse) -- so
+    // no test is written for this rule. "check": the check alone, as before 2026-10-17.
     // agreeWaitS: after a first passing answer, how long the others may still finish -- only for a rule that uses A or C
-    accept: (env.STEALTHLAB_DISPATCH_ACCEPT || "E S T X !Rs_no").trim(),
+    accept: (env.STEALTHLAB_DISPATCH_ACCEPT || "E Rs").trim(),
     agreeWaitS: Math.max(0, Number(env.STEALTHLAB_DISPATCH_AGREE_WAIT_S || 90)),
     // test-first: the session's own model writes a few tests from the task before any cheap rung runs; every cheap
     // answer must pass them too. "off" turns it off.

@@ -1,6 +1,6 @@
-// The dispatch defaults (2026-10-17): what a user gets with no STEALTHLAB_DISPATCH_* setting -- every configured cheap
-// model at once, one 600 s budget, and an answer delivered only on evidence led by a reproduction test written from
-// the task before any answer exists (it must fail on the unchanged code and pass on the answer).
+// The dispatch defaults (2026-10-18): what a user gets with no STEALTHLAB_DISPATCH_* setting -- every configured cheap
+// model at once, one 600 s budget, and an answer delivered when it passes the project's own tests and the strong
+// reviewer says it fixes the request.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -16,7 +16,7 @@ const SPEC = "from calc import x\n\ndef test_x_is_two():\n    assert x == 2\n";
 
 test("the defaults: the evidence rule, all models at once, a 600 s budget, and none of the limits without a measured basis", () => {
   const p = dispatchPolicy({});
-  assert.equal(p.accept, "E S T X !Rs_no");
+  assert.equal(p.accept, "E Rs", "the project's tests and the strong reviewer: nothing else gates");
   assert.equal(p.parallel, true);
   assert.equal(p.timeoutS, 600);
   assert.equal(p.maxParallel, Infinity, "no per-provider limit");
@@ -62,27 +62,40 @@ function setup(answers) {
 const writer = (code) => () => ({ stdout: JSON.stringify({ result: code, total_cost_usd: 0.01 }) });
 const reviewer = (verdict) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ verdict, why: "w" }) } }] }) });
 
-test("default rule: an answer that makes the reproduction test pass is delivered; one that does not is not", { skip: !hasPytest }, async () => {
+test("default rule: a passing answer the strong reviewer says fixes is delivered, and no test is written for it", { skip: !hasPytest }, async () => {
+  const right = setup({ "gemma-4-31b-it": "x = 2\n" });
+  let wrote = 0;
+  const d = await dispatch({ payload: { cwd: right.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: right.repo, mine: MINE,
+    env: right.env, runtime: right.rt, runClaude: () => { wrote++; return writer(SPEC)(); }, fetchImpl: reviewer("fixes") });
+  assert.equal(d?.handled, true, JSON.stringify(d?.tried));
+  assert.equal(wrote, 0, "the default rule has no reproduction test: none is written");
+});
+
+test("default rule: 'does not fix' or an unsure review is not an accept", { skip: !hasPytest }, async () => {
+  for (const verdict of ["does_not_fix", "unsure"]) {
+    const s = setup({ "gemma-4-31b-it": "x = 2\n" });
+    const d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
+      env: s.env, runtime: s.rt, runClaude: writer(SPEC), fetchImpl: reviewer(verdict) });
+    assert.equal(d.handled, false, verdict);
+    assert.match(d.tried.find((t) => t.unit.startsWith("gemma")).state, /not accepted by the rule/);
+  }
+});
+
+test("a rule with T: an answer that makes the reproduction test pass is delivered; one that does not is not", { skip: !hasPytest }, async () => {
+  const T = { STEALTHLAB_DISPATCH_ACCEPT: "E T Rs" };
   const right = setup({ "gemma-4-31b-it": "x = 2\n" });
   const d = await dispatch({ payload: { cwd: right.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: right.repo, mine: MINE,
-    env: right.env, runtime: right.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
+    env: { ...right.env, ...T }, runtime: right.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
   assert.equal(d?.handled, true, JSON.stringify(d?.tried));
   const wrong = setup({ "gemma-4-31b-it": "x = 3\n" });
   const d2 = await dispatch({ payload: { cwd: wrong.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: wrong.repo, mine: MINE,
-    env: wrong.env, runtime: wrong.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
+    env: { ...wrong.env, ...T }, runtime: wrong.rt, runClaude: writer(SPEC), fetchImpl: reviewer("fixes") });
   assert.equal(d2.handled, false, "it passed the project's check but not the reproduction test");
-  assert.match(d2.tried.find((t) => t.unit.startsWith("gemma")).state, /not accepted by the rule/);
 });
 
-test("default rule: the strong reviewer's 'does not fix' vetoes an answer the reproduction test passes", { skip: !hasPytest }, async () => {
-  const s = setup({ "gemma-4-31b-it": "x = 2\n" });
-  const d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
-    env: s.env, runtime: s.rt, runClaude: writer(SPEC), fetchImpl: reviewer("does_not_fix") });
-  assert.equal(d.handled, false);
-});
-
-test("no reproduction test can be written: the cheap tries stop at once and the session takes over", { skip: !hasPytest }, async () => {
+test("a rule with T and no reproduction test can be written: the cheap tries stop at once and the session takes over", { skip: !hasPytest }, async () => {
   const s = setup({ "gemma-4-31b-it": null, "minimax-m2-7": null, "gpt-oss-120b": null });
+  s.env.STEALTHLAB_DISPATCH_ACCEPT = "E T Rs";
   const logs = [];
   // the runs never finish on their own: only the missing test may end the tries (the budget is 600 s)
   s.rt.runResult = () => new Promise(() => {});
