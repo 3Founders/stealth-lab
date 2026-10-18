@@ -77,3 +77,16 @@ def test_series_answers_become_stage3_parts_one_agent_per_try(tmp_path):
     got = SP.parts([f])
     assert set(got["i1"]["agents"]) == {"C.glm-5.3-flash.1", "C.glm-5.3-flash.3", "C0.minimax.1"}, "no patch, no answer"
     assert SP.main([str(tmp_path / "out"), f]) == 0 and (tmp_path / "out" / "i1.json").exists()
+
+
+def test_only_first_turn_answers_are_graded(tmp_path):
+    import series_to_parts as SP
+    att = lambda m, rid: {"model": m, "state": "verified", "role": "attempt", "patch": SRC, "run_id": rid}
+    rows = [{"task_id": "i1", "arm": "C", "exec_runs": 2, "turn_log": [{"run_ids": ["r1"]}, {"run_ids": ["r2"]}],
+             "attempts": [att("flash", "r1"), att("minimax", "r2")]},
+            # an older row (no run ids): turn 1 made no run, so none of its tries is on the original code
+            {"task_id": "i2", "arm": "C", "exec_runs": 1, "turn_log": [{"exec_runs": 0}, {"exec_runs": 1}], "attempts": [att("glm", None)]},
+            {"task_id": "i3", "arm": "C", "exec_runs": 1, "turn_log": [{"exec_runs": 1}, {"exec_runs": 0}], "attempts": [att("gemma", None)]}]
+    got = SP.parts([write(tmp_path, "r.jsonl", rows)])
+    assert set(got["i1"]["agents"]) == {"C.flash.1"}
+    assert got["i2"]["agents"] == {} and set(got["i3"]["agents"]) == {"C.gemma.1"}

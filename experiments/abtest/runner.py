@@ -523,7 +523,7 @@ def run_conversation(task: dict, arm: str, mod, ws: Path, env: dict[str, str], e
             shown = multiturn.shown_message(paths[n - 1]) if n - 1 < len(paths) else None
             m = multiturn.DONE_BY.search(shown or "")
             info.update({"open_cost_usd": round(runs["open_cost_usd"] + testfirst_cost(LOCAL / "C_home", since, until), 6),
-                         "exec_runs": runs["exec_runs"], "shown": shown, "dispatched": bool(shown),
+                         "exec_runs": runs["exec_runs"], "run_ids": sorted({a["run_id"] for a in runs["attempts"] if a.get("run_id")}), "shown": shown, "dispatched": bool(shown),
                          "dispatched_model": m.group(1) if m else None})
         return info
 

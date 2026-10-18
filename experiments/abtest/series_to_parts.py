@@ -8,12 +8,29 @@ did not accept would have been.
 
 Each answer is one "agent" named <arm>.<model>.<n> (n: its order among that arm's tries of the issue). Only tries that
 left a patch are kept; the results' attempts carry it since 2026-10-17 (runner.py open_model_runs).
+
+Only the first turn's tries are graded: a later turn's try works on top of the session's own changes, so its patch does
+not apply to the original code the hidden tests are run against (ct-series-v5 sqlglot: every turn-2 answer "failed"
+that way). A turn's tries are known by run id (turn_log[].run_ids, since 2026-10-18); in an older row, the tries are
+the first turn's only when that turn made every run.
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+
+
+def first_turn(row: dict):
+    """-> a test: was this try made in the row's first turn (on the original code)?"""
+    turns = row.get("turn_log") or []
+    if not turns:
+        return lambda a: True                                   # one prompt, one turn
+    if "run_ids" in turns[0]:
+        ids = set(turns[0]["run_ids"] or [])
+        return lambda a: a.get("run_id") in ids
+    every = (turns[0].get("exec_runs") or 0) == (row.get("exec_runs") or 0)
+    return lambda a: every
 
 
 def parts(results_files: list[str]) -> dict[str, dict]:
@@ -25,8 +42,9 @@ def parts(results_files: list[str]) -> dict[str, dict]:
             r = json.loads(line)
             iid, arm = r["task_id"], r.get("arm", "?")
             rec = out.setdefault(iid, {"instance_id": iid, "agents": {}})
+            first = first_turn(r)
             for n, a in enumerate(r.get("attempts") or [], 1):
-                if not (a.get("patch") or "").strip() or a.get("role") != "attempt":
+                if not (a.get("patch") or "").strip() or a.get("role") != "attempt" or not first(a):
                     continue
                 rec["agents"][f"{arm}.{a.get('model')}.{n}"] = {"patch": a["patch"], "state": a.get("state"), "files": [],
                                                                  "cost_usd": a.get("cost_usd")}

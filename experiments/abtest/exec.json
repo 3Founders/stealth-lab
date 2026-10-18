@@ -1,13 +1,12 @@
 {
-  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: headless Claude Code on Sonnet with the person's own login (a dispatched rung, no in-session delegation). glm-5.3: runs with the others (no tier: a second, sequential window would double the wait).",
+  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: headless Claude Code on Sonnet with the person's own login (a dispatched rung, no in-session delegation). glm-5.3 is not a cheap model here (its profile stays for pricing and as an optional test writer): a failed glm-5.3 try cost about what Opus spends on the whole task (ct-series-v5 sqlglot: $1.31 vs $1.62), so it cannot save money.",
   "executors": {
     "stealth": {
       "models": [
         "gemma-4-31b-it",
         "gpt-oss-120b",
         "minimax-m2-7",
-        "glm-5.3-flash",
-        "glm-5.3"
+        "glm-5.3-flash"
       ]
     },
     "claude": {
