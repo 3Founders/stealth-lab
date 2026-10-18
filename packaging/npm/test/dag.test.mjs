@@ -161,7 +161,8 @@ const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gem
 function env(home) {
   fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } } }));
   return { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -c \"import pkg.expressions, pkg.parser\"", STEALTHLAB_DISPATCH_TESTFIRST: "off",
-           STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" };
+           STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0",
+           STEALTHLAB_DISPATCH_DAG: "on" };                       // off by default: these test the mechanism
 }
 // the lookup's judge says the past fix matches this task (a plan from the library needs that, lib/dag_run.mjs planFromLibrary)
 const judged = (repo) => ({ library_matches: loadLibrary(repo).entries.map((e) => ({ id: e.id, relation: "matches" })) });

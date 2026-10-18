@@ -215,7 +215,7 @@ test("triage: STEALTHLAB_HOOK_TRIAGE=off never asks; the question has its own sh
   assert.equal(calls.filter((c) => c.triage).length, 0);
   assert.ok(calls.some((c) => c.rpc === "tools/call"));
   assert.equal(hookPolicy({ STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS: "1500" }).triageTimeoutMs, 1500);
-  assert.equal(hookPolicy({}).triageTimeoutMs, 4000);
+  assert.equal(hookPolicy({}).triageTimeoutMs, 30000, "a hang guard: no verdict means no dispatch");
   // a hung triage call is abandoned at its own timeout, not the lookup's 25 s
   const t0 = Date.now();
   const hung = (_u, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));

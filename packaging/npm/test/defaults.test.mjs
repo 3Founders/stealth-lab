@@ -27,6 +27,8 @@ test("the defaults: the evidence rule, all models at once, a 600 s budget, and n
   assert.equal(p.testFirst, true);
   assert.equal(p.specBaseline, true, "the reproduction test must fail on the unchanged code");
   assert.equal(p.gate, true, "only what the server's judge calls a change goes to the cheap models");
+  assert.equal(p.dag, false, "a task is tried whole");
+  assert.equal(p.specOnly, false, "no project tests: nothing but a guessed test would judge, so no dispatch");
 });
 
 test("the server judge decides: only work=change is dispatched; an answer, conversation, an unclear change or no verdict is not", { skip: !hasPytest }, async () => {
