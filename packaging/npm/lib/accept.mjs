@@ -23,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { changesSource, reviewPatch } from "./review.mjs";
+import { depsEnv } from "./exec/deps.mjs";
 
 export const SIGNALS = ["E", "T", "T*", "S", "F", "X", "A", "C", "R", "Rno", "Rs", "Rs_no"];
 
@@ -54,25 +55,44 @@ export function patchSignals(patch) {
   return { S: changesSource(files), F: src.length <= 3 && changed <= 60, X: !swallow, src: [...new Set(src)].sort() };
 }
 
-function runSpecIn(python, runner, cwd, signal) {
+// Our tests run in the answer's worktree with the environment its check had (lib/exec/runtime.mjs: depsEnv) -- the
+// project's venv first on PATH, the worktree's own code first on PYTHONPATH. Without it the installed copy of the project
+// (an editable install points at the user's checkout) can be what the tests import, and they test the unchanged code:
+// ct-series-v5, jsonargparse: 4 answers the hidden tests grade correct, our tests failed on all 4. -> {code, out}
+function runSpecIn(python, runner, cwd, env, signal) {
   return new Promise((resolve) => {
-    const c = spawn(python, [runner], { cwd, windowsHide: true });
+    let out = "";
+    const c = spawn(python, [runner], { cwd, env: depsEnv(cwd, { ...process.env, ...env }), windowsHide: true });
     const t = setTimeout(() => c.kill(), 300000);
     signal?.addEventListener?.("abort", () => c.kill());
-    c.on("error", () => { clearTimeout(t); resolve(null); });
-    c.on("close", (code) => { clearTimeout(t); resolve(code); });
+    c.stdout.on("data", (d) => { out = (out + d).slice(-20000); });
+    c.stderr.on("data", (d) => { out = (out + d).slice(-20000); });
+    c.on("error", (err) => { clearTimeout(t); resolve({ code: null, out: err.message }); });
+    c.on("close", (code) => { clearTimeout(t); resolve({ code, out }); });
   });
+}
+
+// the lines of a pytest run that say what happened: its failures and errors, and the summary line
+export function pytestGist(out) {
+  const lines = String(out || "").split(/\r?\n/).filter((l) => l.trim());
+  const keep = lines.filter((l) => /^(FAILED|ERROR) |^E\s|Error:|^=+ .*(passed|failed|error)/.test(l));
+  return (keep.length ? keep : lines).slice(-8).join(" | ").slice(0, 600);
 }
 
 // the evidence on one answer that passed the project's check -> signals (only those the rule needs) + its patch
 export async function answerEvidence({ rule, result, spec, specRunner, python = "python", prompt, env = process.env, log = () => {},
-                                       signal = null, fetchImpl, review = reviewPatch }) {
+                                       signal = null, fetchImpl, review = reviewPatch, unit = "" }) {
   let patch = "";
   try { patch = result?.diff?.patch_path ? fs.readFileSync(result.diff.patch_path, "utf8") : ""; } catch { /* no patch read */ }
   const ev = { E: true, ...patchSignals(patch), T: false, R: false, Rno: false, Rs: false, Rs_no: false, specKnown: false };
   const jobs = [];
   if (ruleUses(rule, "T", "T*") && spec?.file && specRunner && result?.diff?.worktree) {
-    jobs.push(runSpecIn(python, specRunner, result.diff.worktree, signal).then((code) => { ev.T = code === 0; ev.specKnown = code !== null; }));
+    jobs.push(runSpecIn(python, specRunner, result.diff.worktree, env, signal).then(({ code, out }) => {
+      ev.T = code === 0;
+      ev.specKnown = code !== null;
+      log(`dispatch${unit ? ` ${unit}` : ""}: reproduction test ${code === 0 ? "passes" : code === null ? "did not run" : `fails (exit ${code})`}` +
+          `${code === 0 ? "" : `: ${pytestGist(out)}`}`);
+    }));
   }
   const ask = (model, yes, no) => review({ prompt, diff: patch, env, log, model, fetchImpl, signal })
     .then((v) => { ev[yes] = v?.verdict === "fixes"; ev[no] = v?.verdict === "does_not_fix"; ev[`${yes}_why`] = v?.why || null; ev.review_cost = (ev.review_cost || 0) + (v?.cost_usd || 0); });
@@ -114,10 +134,10 @@ function gitApply(cwd, patch, reverse = false) {
   });
 }
 
-function pytestIds(python, cwd, files) {
+function pytestIds(python, cwd, files, env = process.env) {
   return new Promise((resolve) => {
     if (!files.length) { resolve({}); return; }
-    const c = spawn(python, ["-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", ...files], { cwd, windowsHide: true });
+    const c = spawn(python, ["-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", ...files], { cwd, env: depsEnv(cwd, { ...process.env, ...env }), windowsHide: true });
     let out = "";
     const t = setTimeout(() => c.kill(), 300000);
     c.stdout.on("data", (d) => { out += d; });
@@ -134,22 +154,22 @@ function pytestIds(python, cwd, files) {
 
 // signal C on every candidate (in place): each candidate's validated tests run on the others, in their worktrees. A
 // candidate's own source change is taken out of its worktree for a moment to see its tests fail without it, then put back.
-export async function crossTest(cands, { python = "python", log = () => {} } = {}) {
+export async function crossTest(cands, { python = "python", log = () => {}, env = process.env } = {}) {
   const parts = cands.map((c) => ({ c, wt: c.result?.diff?.worktree, ...splitPatch(c.evidence?.patch) }));
   for (const p of parts) if (p.c.evidence) p.c.evidence.C = false;
   for (const y of parts) {
     if (!y.wt || !y.tst.trim() || !y.src.trim()) continue;
     const files = [...new Set([...y.tst.matchAll(/^diff --git a\/\S+ b\/(\S+\.py)$/gm)].map((m) => m[1]))];
-    const withY = await pytestIds(python, y.wt, files);
+    const withY = await pytestIds(python, y.wt, files, env);
     if (!(await gitApply(y.wt, y.src, true))) continue;
     let before;
-    try { before = await pytestIds(python, y.wt, files); } finally { await gitApply(y.wt, y.src); }
+    try { before = await pytestIds(python, y.wt, files, env); } finally { await gitApply(y.wt, y.src); }
     const validated = Object.keys(withY).filter((t) => withY[t] === "PASSED" && ["FAILED", "ERROR"].includes(before[t]));
     if (!validated.length) continue;
     for (const x of parts) {
       if (x === y || !x.wt || !x.src.trim() || !(await gitApply(x.wt, y.tst))) continue;
       let got;
-      try { got = await pytestIds(python, x.wt, files); } finally { await gitApply(x.wt, y.tst, true); }
+      try { got = await pytestIds(python, x.wt, files, env); } finally { await gitApply(x.wt, y.tst, true); }
       if (validated.every((t) => got[t] === "PASSED")) x.c.evidence.C = true;
       log(`accept: ${x.c.rung?.unit || "?"} ${validated.every((t) => got[t] === "PASSED") ? "passes" : "fails"} the ${validated.length} validated test(s) of ${y.c.rung?.unit || "?"}`);
     }
