@@ -316,7 +316,7 @@ p = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.ST
 sys.stdout.write(p.stdout[-20000:])
 if p.returncode != 1:
     sys.exit(p.returncode)
-fails = set(re.findall(r"^(?:FAILED|ERROR) (\\S+)", p.stdout, re.M))
+fails = set(re.findall(r"^(?:FAILED|ERROR|SUBFAIL(?:ED)?\\[.*?\\]) (\\S+)", p.stdout, re.M))
 bf, bn = os.path.join(d, "BASE_FAILS"), os.path.join(d, "BASE_NONE")
 end = time.time() + 300
 while not os.path.exists(bf) and not os.path.exists(bn) and time.time() < end:
@@ -338,9 +338,11 @@ export function writeBaselineCheckRunner(dir, check) {
   return file;
 }
 
-// pytest's short summary -> the failing test ids ("FAILED tests/test_x.py::test_y - msg" -> tests/test_x.py::test_y)
+// pytest's short summary -> the failing test ids ("FAILED tests/test_x.py::test_y - msg" -> tests/test_x.py::test_y). A
+// failing subtest ("SUBFAILED[case] tests/test_x.py::T::test_y") fails its test: pytest still lists the test PASSED
+// (sqlglot's dialect tests are all subtests).
 export function failingTests(out) {
-  return [...new Set([...String(out || "").matchAll(/^(?:FAILED|ERROR) (\S+)/gm)].map((m) => m[1]))];
+  return [...new Set([...String(out || "").matchAll(/^(?:FAILED|ERROR|SUBFAIL(?:ED)?\[.*?\]) (\S+)/gm)].map((m) => m[1]))];
 }
 
 // a shell command -> {code, out} (code null: could not start, timed out or aborted); never blocks the event loop
