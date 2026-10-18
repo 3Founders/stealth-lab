@@ -45,9 +45,11 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -524,11 +526,56 @@ def run_conversation(task: dict, arm: str, mod, ws: Path, env: dict[str, str], e
             m = multiturn.DONE_BY.search(shown or "")
             info.update({"open_cost_usd": round(runs["open_cost_usd"] + testfirst_cost(LOCAL / "C_home", since, until), 6),
                          "exec_runs": runs["exec_runs"], "run_ids": sorted({a["run_id"] for a in runs["attempts"] if a.get("run_id")}), "shown": shown, "dispatched": bool(shown),
+                         "answered": bool(shown) and shown.startswith("Answered by "),
                          "dispatched_model": m.group(1) if m else None})
         return info
 
     return multiturn.run_session(task_id=task["task_id"], arm=arm, issue=issue, rule=rule, max_turns=turns, llm=sim_llm(secrets),
                                  openers_dir=LOCAL / "openers", simuser_dir=LOCAL / "simuser", run_turn=run_turn, observe=observe)
+
+
+ANSWER_JUDGE_MODEL = "claude-sonnet-5-5"
+ANSWER_JUDGE_SYSTEM = (
+    "You grade a reply an assistant gave a developer in a coding session, for an experiment. You get the issue the session "
+    "was about, the fix the project really merged for it, the developer's message and the reply. Grade only the reply's "
+    "content: is what it says about the code, the change and the issue correct, and does it answer the message? It may "
+    "describe a different but valid fix than the merged one. Reply with only a JSON object: "
+    '{"grade": "correct" | "incorrect" | "unclear", "why": one sentence}.'
+)
+
+
+def grade_answers(task: dict, mod, rec: dict, env: dict[str, str]) -> None:
+    """Each turn a cheap model ANSWERED (StealthLab's "Answered by ...") gets `answer_grade`: a strong model's verdict on it
+    against the issue and the merged fix. The final code's hidden tests say nothing about an explanation, so this is how
+    a cheap answer's quality is measured. Grading, not the arm's work: its cost is kept apart (answer_grade.cost_usd)."""
+    turns = [t for t in rec.get("turn_log") or [] if t.get("answered") and t.get("shown")]
+    if not turns:
+        return
+    try:
+        issue = mod.issue_text(task) if hasattr(mod, "issue_text") else mod.prompt(task)
+    except Exception:  # noqa: BLE001
+        issue = ""
+    try:
+        gold = str(mod.rec(task).get("patch") or "") if hasattr(mod, "rec") else ""
+    except Exception:  # noqa: BLE001
+        gold = ""
+    exe = shutil.which("claude") or "claude"
+    for t in turns:
+        user = (f"The issue:\n{issue[:6000]}\n\nThe merged fix:\n{gold[:12000] or '(not available)'}\n\n"
+                f"The developer's message:\n{str(t.get('user_text') or '')[:3000]}\n\nThe reply:\n{str(t['shown'])[:8000]}")
+        cmd = [exe, "-p", "--model", ANSWER_JUDGE_MODEL, "--system-prompt", ANSWER_JUDGE_SYSTEM, "--tools", "", "--setting-sources", "user",
+               "--strict-mcp-config", "--output-format", "json"]
+        try:
+            with tempfile.TemporaryDirectory() as cwd:
+                p = subprocess.run(cmd, input=user, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", timeout=300)
+            j = json.loads(p.stdout.strip().splitlines()[-1])
+            m = re.search(r"\{[\s\S]*\}", str(j.get("result") or ""))
+            v = json.loads(m.group(0)) if m else {}
+            grade = v.get("grade") if v.get("grade") in ("correct", "incorrect", "unclear") else None
+            t["answer_grade"] = {"grade": grade, "why": str(v.get("why") or "")[:300], "model": ANSWER_JUDGE_MODEL,
+                                 "cost_usd": j.get("total_cost_usd")}
+        except (OSError, subprocess.SubprocessError, ValueError, IndexError) as e:
+            t["answer_grade"] = {"grade": None, "why": f"not graded: {type(e).__name__}", "model": ANSWER_JUDGE_MODEL}
 
 
 def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int = 1) -> dict:
@@ -592,6 +639,8 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
             rec["grade"] = mod.grade(task, solution)
         rec["resolved"] = rec["grade"]["resolved"]
         rec["total_cost_usd"] = round(float(rec.get("claude_cost_usd") or 0) + float(rec.get("open_cost_usd") or 0), 6)
+    if is_c(arm):
+        grade_answers(task, mod, rec, arm_env("A", secrets))
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "--allow-empty", "-m", f"after {task['task_id']}")
     return rec

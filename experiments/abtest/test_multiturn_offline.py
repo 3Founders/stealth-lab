@@ -465,3 +465,36 @@ def test_the_simulated_user_falls_back_to_gpt_oss_when_z_ai_fails(monkeypatch):
     assert llm("s", "u") == "from gpt-oss" and made == [multiturn.LLM_PROFILE, "gpt-oss-120b"]
     with pytest.raises(RuntimeError):
         runner.sim_llm({"zai": "z"})("s", "u")
+
+
+def test_a_cheap_answer_is_the_shown_message_too(tmp_path):
+    log = tmp_path / "t.jsonl"
+    reason = "Answered by glm-5.3-flash in 7 s (StealthLab answered it before this session's model ran; checked by claude-sonnet-5-5).\n\nYes, it does."
+    log.write_text(json.dumps({"type": "system", "hook_output": json.dumps({"decision": "block", "reason": reason})}) + "\n", encoding="utf-8")
+    msg = multiturn.shown_message(log)
+    assert msg == reason
+    assert multiturn.DONE_BY.search(msg).groups() == ("glm-5.3-flash", "7")
+
+
+def test_each_cheap_answer_is_graded_against_the_merged_fix_and_reported(monkeypatch):
+    import types
+    import report
+    import runner
+    seen = []
+
+    def fake_run(cmd, input, **kw):
+        seen.append((cmd, input))
+        return types.SimpleNamespace(stdout=json.dumps({"result": '{"grade": "correct", "why": "matches the fix"}', "total_cost_usd": 0.01}))
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    mod = types.SimpleNamespace(issue_text=lambda t: "the issue", rec=lambda t: {"patch": "diff --git a/x b/x"})
+    rec = {"turn_log": [{"dispatched": True, "answered": False, "shown": "Done by m in 5 s"},
+                        {"dispatched": True, "answered": True, "user_text": "so it works?", "shown": "Answered by glm-5.3-flash in 4 s ...\n\nYes."}]}
+    runner.grade_answers({"task_id": "t"}, mod, rec, {})
+    assert len(seen) == 1 and "The merged fix:\ndiff --git a/x b/x" in seen[0][1] and "The reply:\nAnswered by" in seen[0][1]
+    assert rec["turn_log"][1]["answer_grade"]["grade"] == "correct" and "answer_grade" not in rec["turn_log"][0]
+    rows = {("t", "A"): {"task_id": "t", "suite": "swe", "resolved": True, "total_cost_usd": 1.0},
+            ("t", "C"): {"task_id": "t", "suite": "swe", "resolved": True, "total_cost_usd": 0.5, **rec}}
+    text = report.summarise(rows)
+    assert "C turns done by cheap models: 2 of 2 (1 changes, 1 answers)" in text, text
+    assert "C cheap answers, graded against the merged fix: 1 correct, 0 incorrect" in text, text

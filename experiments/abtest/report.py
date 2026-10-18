@@ -70,6 +70,16 @@ def summarise(rows: dict) -> str:
         out.append(f"{suite:8} {len(ts):>4} | {solved(a):>8} {ca:>7.2f} | {solved(c):>8} {cc:>7.2f} "
                    f"{(ca - cc) / ca * 100 if ca else 0:>6.0f}% | {lat(secs(a)):>17} | {lat(secs(c)):>17} | "
                    f"{cheap:>7}/{len(ts):<7} | {skipped}/{len(ts)}")
+    # the turns the cheap models handled in C: changes ("Done by") and answers ("Answered by"), of all of C's turns
+    turns = [t for t in tasks for t in (rows[(t, "C")].get("turn_log") or [])]
+    if turns:
+        changes = sum(1 for t in turns if t.get("dispatched") and not t.get("answered"))
+        answers = sum(1 for t in turns if t.get("answered"))
+        out.append(f"\nC turns done by cheap models: {changes + answers} of {len(turns)} ({changes} changes, {answers} answers)")
+        grades = [(t.get("answer_grade") or {}).get("grade") for t in turns if t.get("answered")]
+        if grades:
+            out.append(f"C cheap answers, graded against the merged fix: {grades.count('correct')} correct, "
+                       f"{grades.count('incorrect')} incorrect, {grades.count('unclear')} unclear, {grades.count(None)} not graded")
     wrong = [(t, rows[(t, "C")].get("suite")) for t in tasks if not rows[(t, "C")].get("resolved")]
     both = [t for t, _ in wrong if not rows[(t, "A")].get("resolved")]
     out.append(f"\nC unsolved: {len(wrong)} (of which A also unsolved: {len(both)}): {[t for t, _ in wrong]}")

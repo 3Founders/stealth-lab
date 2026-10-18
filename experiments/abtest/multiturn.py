@@ -285,11 +285,14 @@ def tree_diff(ws: Path, before: str | None, after: str | None, limit: int = 2000
     return out if len(out) <= limit else out[:limit] + "\n[diff cut]"
 
 
-DONE_BY = re.compile(r"Done by (\S+) in (\d+) s")
+DONE_BY = re.compile(r"(?:Done|Answered) by (\S+) in (\d+) s")
+# what StealthLab shows when a cheap model did the turn: a change ("Done by ...") or an answer ("Answered by ...")
+SHOWN = (("Done by ", "StealthLab dispatched it"), ("Answered by ", "StealthLab answered it"))
 
 
 def shown_message(log_path: Path) -> str | None:
-    """The message StealthLab showed the user when a cheap model did the turn ("Done by <model> in N s ..."), found in
+    """The message StealthLab showed the user when a cheap model did the turn ("Done by <model> in N s ..." for a change,
+    "Answered by <model> in N s ..." for an answer), found in
     the turn's stream-json log: the hook's output reaches the log inside some message field, so every string in every
     line is searched. None when the turn was not dispatched."""
     if not log_path.exists():
@@ -298,7 +301,7 @@ def shown_message(log_path: Path) -> str | None:
 
     def walk(x: object) -> None:
         if isinstance(x, str):
-            if "Done by " in x and "StealthLab dispatched it" in x:
+            if any(head in x and mark in x for head, mark in SHOWN):
                 found.append(x)
         elif isinstance(x, dict):
             for v in x.values():
@@ -317,12 +320,12 @@ def shown_message(log_path: Path) -> str | None:
     text = found[0]
     try:                                    # a hook's stdout is JSON ({"decision": "block", "reason": ...}): keep the reason
         reason = json.loads(text).get("reason")
-        if isinstance(reason, str) and "Done by " in reason:
+        if isinstance(reason, str) and any(head in reason for head, _ in SHOWN):
             text = reason
     except (json.JSONDecodeError, AttributeError):
         pass
-    i = text.find("Done by ")
-    return text[i:i + 4000]
+    i = min((text.find(head) for head, _ in SHOWN if head in text), default=0)
+    return text[i:i + 8000]
 
 
 # ---------------------------------------------------------------- the session loop
