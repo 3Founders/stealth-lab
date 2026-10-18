@@ -303,10 +303,11 @@ def test_one_turn_is_the_old_single_prompt_and_its_record_is_unchanged(sandbox):
 
 class FakePopen:
     last: list = []
+    answered = True                      # the model ran (an assistant message); False: the hook stopped the prompt
 
     def __init__(self, cmd, **kw):
         FakePopen.last = cmd
-        msgs = [{"type": "system", "subtype": "init"},
+        msgs = [{"type": "system", "subtype": "init"}, *([{"type": "assistant", "message": {"content": []}}] if FakePopen.answered else []),
                 {"type": "result", "is_error": False, "result": "x" * 1000, "session_id": "abc-123", "total_cost_usd": 0.5,
                  "num_turns": 3, "duration_ms": 10, "modelUsage": {"m": {}}}]
         self.stdout = io.StringIO("".join(json.dumps(m) + "\n" for m in msgs))
@@ -499,3 +500,11 @@ def test_each_cheap_answer_is_graded_against_the_merged_fix_and_reported(monkeyp
     text = report.summarise(rows)
     assert "C turns done by cheap models: 2 of 2 (1 changes, 1 answers)" in text, text
     assert "C cheap answers, graded against the merged fix: 1 correct, 0 incorrect" in text, text
+
+
+def test_a_turn_the_hook_stopped_costs_no_claude_even_when_claude_code_repeats_the_last_cost(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    assert runner.run_claude(tmp_path, "q", {}, [], tmp_path / "log.jsonl", resume="abc-123")["claude_cost_usd"] == 0.5
+    monkeypatch.setattr(FakePopen, "answered", False)
+    out = runner.run_claude(tmp_path, "q", {}, [], tmp_path / "log.jsonl", resume="abc-123")
+    assert out["claude_cost_usd"] == 0.0 and out["claude_cost_reported"] == 0.5

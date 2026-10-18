@@ -363,7 +363,7 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     lines: "queue.Queue[str | None]" = queue.Queue()
     threading.Thread(target=lambda: ([lines.put(x) for x in proc.stdout], lines.put(None)), daemon=True).start()
-    result, last = None, time.time()
+    result, last, answered = None, time.time(), 0
     with log_path.open("w", encoding="utf-8") as log:
         while True:
             try:
@@ -383,6 +383,8 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
                 continue
             if msg.get("type") == "result":
                 result = msg
+            elif msg.get("type") == "assistant":
+                answered += 1
     proc.wait()
     if result is None:
         tail = log_path.read_text(encoding="utf-8")[-800:]
@@ -391,7 +393,12 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
     text = str(result.get("result") or "")
     if result.get("is_error") and any(w in text.lower() for w in LIMIT_WORDS):
         return {"status": "rate_limited", "error": text[:300]}
-    return {"status": "done", "is_error": bool(result.get("is_error")), "claude_cost_usd": result.get("total_cost_usd"),
+    # a prompt the hook stopped (StealthLab's cheap model did the turn) never reaches the model: no assistant message, and
+    # Claude Code's result then repeats the session's previous cost -- that is not this turn's (ct-series-v7: every
+    # cheap turn after an Opus turn was charged that Opus turn again)
+    cost = result.get("total_cost_usd") if answered else 0.0
+    return {"status": "done", "is_error": bool(result.get("is_error")), "claude_cost_usd": cost,
+            "claude_cost_reported": result.get("total_cost_usd"),
             "turns": result.get("num_turns"), "duration_ms": result.get("duration_ms"),
             "models": sorted((result.get("modelUsage") or {}).keys()), "model_usage": result.get("modelUsage"),
             "final": text[:400], "text": text[:6000], "session_id": result.get("session_id")}
