@@ -164,9 +164,10 @@ class SemanticJudge:
         result is ok=False and the caller must fail closed / retry."""
         return await self._run("identity", CAP_IDENTITY, lambda p: p.identity(kind, a, b))
 
-    async def judge_triage(self, query: str) -> ChainResult:
-        """What kind of request `query` is (prompts.TRIAGE_KINDS): whether a find_ways lookup is worth it."""
-        return await self._run("triage", CAP_TRIAGE, lambda p: p.triage(query))
+    async def judge_triage(self, query: str, context: str = "") -> ChainResult:
+        """What kind of request `query` is (prompts.TRIAGE_KINDS: whether a find_ways lookup is worth it) and whether
+        it asks for a change now (prompts.WORK_KINDS); `context`: the conversation's earlier turns, or ""."""
+        return await self._run("triage", CAP_TRIAGE, lambda p: p.triage(query, context))
 
     async def judge_identity_batch(self, kind: str, a: str, candidates: list) -> ChainResult:
         if not candidates:

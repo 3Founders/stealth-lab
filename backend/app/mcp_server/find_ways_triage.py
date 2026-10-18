@@ -41,13 +41,14 @@ class Triage:
     needs_retrieval: bool
     kind: Optional[str] = None          # a prompts.TRIAGE_KINDS key, or None when no judgment was made
     confidence: Optional[float] = None
+    work: Optional[str] = None          # a prompts.WORK_KINDS key: does it ask for a change now (None: no answer)
     provider: Optional[str] = None
     reason: str = ""                    # why the lookup runs when it runs without a "reusable_task" verdict
     latency_ms: float = 0.0
 
     def as_dict(self) -> dict:
         out: dict[str, Any] = {"needs_retrieval": self.needs_retrieval, "latency_ms": round(self.latency_ms, 1)}
-        for key in ("kind", "confidence", "provider"):
+        for key in ("kind", "work", "confidence", "provider"):
             if getattr(self, key) is not None:
                 out[key] = getattr(self, key)
         if self.reason:
@@ -55,16 +56,16 @@ class Triage:
         return out
 
 
-async def triage(query: str, judge: Any, *, timeout_s: float = 4.0, min_confidence: float = 0.6) -> Triage:
-    """Classify `query`. `judge` is a SemanticJudge (anything with `judge_triage`); None or a judge without it
-    means no triage, and the lookup runs."""
+async def triage(query: str, judge: Any, *, context: str = "", timeout_s: float = 4.0, min_confidence: float = 0.6) -> Triage:
+    """Classify `query` (`context`: the conversation's earlier turns, or ""). `judge` is a SemanticJudge (anything with
+    `judge_triage`); None or a judge without it means no triage, and the lookup runs."""
     method = getattr(judge, "judge_triage", None)
     if not callable(method):
         return Triage(True, reason="no triage judge configured")
     loop = asyncio.get_running_loop()
     t0 = loop.time()
     try:
-        result = await asyncio.wait_for(method(query), timeout=timeout_s)
+        result = await asyncio.wait_for(method(query, context) if context else method(query), timeout=timeout_s)
     except asyncio.TimeoutError:
         return Triage(True, reason=f"triage over {timeout_s:g}s", latency_ms=(loop.time() - t0) * 1000)
     except Exception as exc:  # noqa: BLE001 -- triage never fails a request; the lookup just runs
@@ -75,13 +76,14 @@ async def triage(query: str, judge: Any, *, timeout_s: float = 4.0, min_confiden
         return Triage(True, reason=f"no triage verdict ({getattr(result, 'reason', '') or 'judge unavailable'})",
                       latency_ms=ms)
     kind, confidence = result.value.get("kind"), result.value.get("confidence")
+    work = result.value.get("work")
     provider = getattr(result, "provider", None)
     if kind == RETRIEVE_KIND:
-        return Triage(True, kind, confidence, provider, latency_ms=ms)
+        return Triage(True, kind, confidence, work, provider, latency_ms=ms)
     if not isinstance(confidence, (int, float)) or confidence < min_confidence:
-        return Triage(True, kind, confidence, provider, reason=f"{kind} below confidence {min_confidence:g}",
+        return Triage(True, kind, confidence, work, provider, reason=f"{kind} below confidence {min_confidence:g}",
                       latency_ms=ms)
-    return Triage(False, kind, confidence, provider, latency_ms=ms)
+    return Triage(False, kind, confidence, work, provider, latency_ms=ms)
 
 
 class TriageCache:
@@ -97,11 +99,12 @@ class TriageCache:
         self._items: "OrderedDict[str, tuple[float, Triage]]" = OrderedDict()
 
     @staticmethod
-    def _key(query: str) -> str:
-        return hashlib.sha256(query.strip().encode("utf-8", "replace")).hexdigest()
+    def _key(query: str, context: str = "") -> str:
+        text = query.strip() + ("\n\0" + context.strip() if context and context.strip() else "")
+        return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
-    def get(self, query: str) -> Optional[Triage]:
-        key = self._key(query)
+    def get(self, query: str, context: str = "") -> Optional[Triage]:
+        key = self._key(query, context)
         hit = self._items.get(key)
         if hit is None:
             return None
@@ -111,10 +114,10 @@ class TriageCache:
         self._items.move_to_end(key)
         return replace(hit[1], latency_ms=0.0)
 
-    def put(self, query: str, verdict: Optional[Triage]) -> None:
+    def put(self, query: str, verdict: Optional[Triage], context: str = "") -> None:
         if verdict is None or verdict.kind is None:
             return
-        key = self._key(query)
+        key = self._key(query, context)
         self._items[key] = (self._clock() + self._ttl, verdict)
         self._items.move_to_end(key)
         while len(self._items) > self._max:
@@ -148,6 +151,7 @@ CACHE = TriageCache()
 RATE_PER_MIN = int(os.environ.get("FIND_WAYS_TRIAGE_RATE_PER_MIN", "30") or 30)
 WINDOW = CallWindow(RATE_PER_MIN)
 QUERY_MAX = 1500          # the hook sends at most this much of a prompt (find_ways cuts it the same way)
+CONTEXT_MAX = 4000        # and at most this much of the conversation's earlier turns
 
 
 def not_needed_reply(t: Triage) -> str:

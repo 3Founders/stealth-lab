@@ -1000,13 +1000,15 @@ async def triage_route(request: Request) -> JSONResponse:
     if not isinstance(query, str) or not query.strip():
         return JSONResponse({"error": "send JSON with a non-empty string `query`"}, status_code=400)
     query = query.strip()[: _ft.QUERY_MAX]
+    context = body.get("context") if isinstance(body.get("context"), str) else ""
+    context = context.strip()[-_ft.CONTEXT_MAX:]
     token = await _route_token(request)
     key = (token.subject if token is not None and token.subject else None) or (
         request.client.host if request.client else "unknown")
     if not _ft.WINDOW.allow(key):
         return JSONResponse(_ft.Triage(True, reason="triage rate limit").as_dict())
     try:
-        verdict = await _find_ways_triage(query)
+        verdict = await _find_ways_triage(query, context)
     except Exception:  # noqa: BLE001 -- a classifier problem must never keep the agent from its knowledge
         logging.getLogger(__name__).warning("triage route failed", exc_info=True)
         verdict = None
@@ -1823,25 +1825,28 @@ async def find_ways(
     return final
 
 
-async def _find_ways_triage(query: str):
+async def _find_ways_triage(query: str, context: str = ""):
     """The triage verdict for this request (app/mcp_server/find_ways_triage.py), or None when triage is off.
-    Runs only for a request the governor admitted: a cached or refused request never reaches it."""
+    Runs only for a request the governor admitted: a cached or refused request never reaches it. `context`: the
+    conversation's earlier turns the hook sent to `POST /triage` (find_ways itself sends none)."""
     if not settings.find_ways_triage:
         return None
     from app.mcp_server.find_ways_triage import CACHE, triage
     from app.services import retrieval_service as _rs
 
-    hit = CACHE.get(query)      # the hook's `POST /triage` just judged this exact text: do not judge it twice
-    if hit is not None:
+    hit = CACHE.get(query, context)
+    if hit is not None:           # the hook's `POST /triage` just judged this exact text: do not judge it twice
         return hit
     try:
         judge = _rs.default_judge()
     except Exception:  # noqa: BLE001 -- no judge is no triage; the lookup runs
         judge = None
     with _stages.stage("triage_judge"):
-        verdict = await triage(query, judge, timeout_s=settings.find_ways_triage_timeout_ms / 1000.0,
+        verdict = await triage(query, judge, context=context, timeout_s=settings.find_ways_triage_timeout_ms / 1000.0,
                                min_confidence=settings.find_ways_triage_min_confidence)
-    CACHE.put(query, verdict)
+    CACHE.put(query, verdict, context)
+    if context:
+        CACHE.put(query, verdict)   # find_ways, which follows with the request alone, reuses this verdict
     return verdict
 
 

@@ -1,17 +1,12 @@
-// The task brief: whether a prompt is a code task for the cheap models at all, judged by a strong model, never by word
-// rules, plus the names to search the code for (search_terms) and the parts of a multi-part request.
-//
-// A real prompt is often not a clean task: "now do the same for the other one", a question, a confirmation of what
-// the assistant just did, "thanks". One call to a strong model (STEALTHLAB_BRIEF_MODEL, default claude-sonnet-5-5, a
-// lean tool-less `claude -p` under the user's own login; an exec.json profile name runs one chat call on its endpoint)
-// reads the last few turns plus the prompt and returns
-//   { task, files_hinted, acceptance, parts[], clarity: clear|unclear, kind: code|question|chat, size, search_terms }
-// Dispatch goes ahead only for kind=code and clarity=clear. No brief (an error, a timeout, an unusable reply) is not a
-// judgment that this is a code task, so nothing is dispatched: the session's own model does it, as with no StealthLab.
-// The cheap models are told what the user said (conversationPrompt), never the brief's rewording of it: on sqlglot-4051
-// a confirmation ("so it needs the group index written out explicitly") was restated as an order ("ALWAYS include
-// it"), and every cheap model built that (ct-series-v5). Word rules ("When ..." = a question) blocked real bug
-// reports and are gone. STEALTHLAB_BRIEF=off turns the brief and the gate off (the raw prompt is dispatched).
+// The task brief: one cheap call (STEALTHLAB_BRIEF_MODEL, an exec.json profile; default gpt-oss-120b) that turns the
+// last few turns plus the prompt into
+//   { task, files_hinted, acceptance, parts[], clarity, kind, size, search_terms }
+// Dispatch uses only search_terms (names to search the code for: a plain-language issue names nothing the code
+// spells) and parts (a request that asks for several things). It decides nothing: whether a prompt goes to the cheap
+// models at all is the server's judge's call (JEV first, POST /triage, lib/dispatch.mjs policy.gate), and the cheap
+// models are told the conversation and the request as the user said it (conversationPrompt), never a rewording --
+// on sqlglot-4051 a confirmation was restated as an order and every cheap model built it (ct-series-v5).
+// No brief (no profile, a timeout, an error) only means no search terms. STEALTHLAB_BRIEF=off skips the call.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -156,12 +151,11 @@ export function parseBrief(text) {
            parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size, search_terms: asList(o.search_terms, 8) };
 }
 
-// -> {ok: boolean, reason}: the strong model's judgment decides, and no judgment (null) is not a yes
-export function briefGate(brief) {
-  if (!brief) return { ok: false, reason: "no brief: nothing judged this a code task" };
-  if (brief.kind !== "code") return { ok: false, reason: `kind=${brief.kind}` };
-  if (brief.clarity !== "clear") return { ok: false, reason: "the request is unclear" };
-  return { ok: true, reason: "a clear code task" };
+// The earlier turns as one text (oldest first, at most `max` characters, the oldest cut first): what the server's
+// judge reads as context for the request (POST /triage).
+export function turnsText(turns, max = 4000) {
+  const t = (turns || []).map((x) => `${x.role === "user" ? "Developer" : "Assistant"}: ${x.text}`).join("\n\n");
+  return t.length > max ? t.slice(t.length - max) : t;
 }
 
 // What the cheap models are told: the conversation so far as it was said, then the user's request word for word --
@@ -188,12 +182,12 @@ function ledger(env, row) {
 
 // -> brief | null. Never throws, never waits longer than the timeout.
 export async function makeBrief({ prompt, transcriptPath, cwd = null, env = process.env, fetchImpl = globalThis.fetch, log = () => {},
-                                  readConfig = readExecConfig, runClaude = null }) {
+                                  readConfig = readExecConfig }) {
   try {
     if (!briefEnabled(env)) return null;
-    const name = String(env.STEALTHLAB_BRIEF_MODEL || "claude-sonnet-5-5").trim();
-    const profile = name.includes("claude") ? null : readConfig(env).profiles?.[name];
-    if (!name.includes("claude") && !profile?.openai_base_url) { log(`brief: no profile for ${name}`); return null; }
+    const name = String(env.STEALTHLAB_BRIEF_MODEL || "gpt-oss-120b").trim();
+    const profile = readConfig(env).profiles?.[name];
+    if (!profile?.openai_base_url) { log(`brief: no profile for ${name}`); return null; }
     const turns = transcriptPath ? recentTurns(transcriptPath, { current: prompt }) : [];
     let history = turns.map((t) => `${t.role === "user" ? "Developer" : "Assistant"}: ${t.text}`).join("\n\n");
     if (history.length > CONTEXT_CHARS) history = history.slice(history.length - CONTEXT_CHARS);
@@ -202,16 +196,6 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
     const user = `${history ? `Earlier turns:\n${history}\n\n` : ""}Latest message:\n${String(prompt || "").trim()}` +
       (files ? `\n\nFiles the message names:\n${files}` : "") +
       (listing ? `\n\nThe project's files (to tell where a named function or feature lives):\n${listing}` : "");
-    if (!profile) {
-      const { leanArgs, runClaudeAsync } = await import("./claude_call.mjs");
-      const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, null, Math.max(60000, Number(env.STEALTHLAB_BRIEF_TIMEOUT_MS || 0)))))(leanArgs(name, BRIEF_SYSTEM), user);
-      let j = null;
-      try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
-      if (typeof j?.total_cost_usd === "number") ledger(env, { what: "brief", model: name, cost_usd: j.total_cost_usd });
-      const brief = j && !j.is_error ? parseBrief(j.result) : null;
-      if (!brief) log(`brief: ${name} gave no usable brief (exit ${r?.status ?? "?"})`);
-      return brief;
-    }
     const messages = profile.no_system_role
       ? [{ role: "user", content: `${BRIEF_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: BRIEF_SYSTEM }, { role: "user", content: user }];

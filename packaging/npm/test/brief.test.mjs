@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { BRIEF_SYSTEM, briefGate, conversationPrompt, makeBrief, parseBrief, parseOverride, recentTurns } from "../lib/brief.mjs";
+import { BRIEF_SYSTEM, conversationPrompt, makeBrief, parseBrief, parseOverride, recentTurns, turnsText } from "../lib/brief.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
 import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
@@ -37,41 +37,23 @@ test("parseBrief: a model reply becomes a checked brief; a fence, extra text or 
 
 // ---- the gate ----------------------------------------------------------------------------------------------------------
 
-test("gate: the model's judgment decides -- a clear code task goes, of any size; no brief is not a yes", () => {
-  const ok = (o) => briefGate(parseBrief(REPLY(o))).ok;
-  assert.equal(ok({}), true);
-  assert.equal(ok({ size: "large" }), true, "no size rule: a big task goes to the cheap models too");
-  assert.equal(ok({ clarity: "unclear" }), false);
-  assert.equal(ok({ kind: "question" }), false);
-  assert.equal(ok({ kind: "chat" }), false);
-  assert.equal(briefGate(null).ok, false, "nothing judged it a code task");
-});
-
-test("there are no word rules: a bug report that starts like a question is up to the model", async () => {
-  const { env, repo } = setup({ STEALTHLAB_BRIEF: "on" });
+test("there are no word rules: a bug report that starts like a question goes when the server's judge says change", async () => {
+  const { env, repo } = setup({ STEALTHLAB_DISPATCH_GATE: "on" });
   const rt = stubRuntime(repo);
   // sqlglot-4051's opener, ruled a question by the old word list ("When ..."), ct-series-v5
   const prompt = "When transpiling from Presto to Spark, regexp_extract comes out without a group argument, but Spark's default is 1 while Presto's is 0.";
-  const d = await dispatch({ payload: { cwd: repo, prompt }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief({}) });
+  const d = await dispatch({ payload: { cwd: repo, prompt }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief({}),
+                             triage: { work: "change" } });
   assert.equal(d.handled, true);
 });
 
-test("the brief prompt asks for exactly the fields the code reads, and says a confirmation of done work is not code", () => {
-  for (const f of ["task", "files_hinted", "acceptance", "parts", "clarity", "kind", "size"]) assert.ok(BRIEF_SYSTEM.includes(f), f);
-  assert.match(BRIEF_SYSTEM, /confirms, restates or asks about what the assistant already did/);
+test("turnsText: the earlier turns for the judge, oldest cut first", () => {
+  assert.equal(turnsText([{ role: "user", text: "a" }, { role: "assistant", text: "b" }]), "Developer: a\n\nAssistant: b");
+  assert.equal(turnsText([{ role: "user", text: "x".repeat(5000) }], 100).length, 100);
 });
 
-test("makeBrief: the default judge is a strong Claude model, one lean call; its cost goes to the ledger", async () => {
-  const home = tmp("brief-home-");
-  const seen = [];
-  const b = await makeBrief({ prompt: "fix calc.py", env: { STEALTHLAB_HOME: home }, readConfig: () => ({ profiles: {} }),
-    runClaude: async (args, input) => { seen.push({ args, input }); return { status: 0, stdout: JSON.stringify({ result: REPLY({}), total_cost_usd: 0.004 }) }; } });
-  assert.equal(b.kind, "code");
-  assert.ok(seen[0].args.includes("claude-sonnet-5-5"), JSON.stringify(seen[0].args));
-  assert.match(seen[0].input, /Latest message:\nfix calc\.py/);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(home, "dispatch_costs.jsonl"), "utf8").trim()).cost_usd, 0.004);
-  const bad = await makeBrief({ prompt: "x", env: { STEALTHLAB_HOME: home }, runClaude: async () => ({ status: 1, stdout: "" }) });
-  assert.equal(bad, null);
+test("the brief prompt asks for exactly the fields the code reads", () => {
+  for (const f of ["task", "files_hinted", "acceptance", "parts", "clarity", "kind", "size", "search_terms"]) assert.ok(BRIEF_SYSTEM.includes(f), f);
 });
 
 // ---- the earlier turns -------------------------------------------------------------------------------------------------
@@ -186,13 +168,13 @@ test("dispatch: a clear code task runs, and the cheap model is told the conversa
   assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /yes fix it/, "the library title stays the user's own words");
 });
 
-test("dispatch: a question, chat or an unclear request is not dispatched; nor is a prompt no model could judge", async () => {
-  for (const b of [brief({ kind: "question" }), brief({ kind: "chat" }), brief({ clarity: "unclear" }), async () => null]) {
-    const { env, repo } = setup();
+test("dispatch: the brief decides nothing -- a brief that says question, or no brief, still dispatches what the judge calls a change", async () => {
+  for (const b of [brief({ kind: "question" }), brief({ clarity: "unclear" }), async () => null]) {
+    const { env, repo } = setup({ STEALTHLAB_DISPATCH_GATE: "on" });
     const rt = stubRuntime(repo);
-    const d = await dispatch({ payload: { cwd: repo, prompt: "fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: b });
-    assert.equal(d, null);
-    assert.equal(rt.calls.length, 0);
+    const d = await dispatch({ payload: { cwd: repo, prompt: "fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
+                               briefImpl: b, triage: { work: "change" } });
+    assert.equal(d.handled, true);
   }
 });
 
@@ -317,6 +299,5 @@ test("the brief sees the start of files the message names, only inside the proje
 test("a chat or question brief with no task is still a brief (and is gated out); a code brief needs a task", () => {
   const chat = parseBrief('{"task":"","files_hinted":[],"acceptance":"","parts":[],"clarity":"clear","kind":"chat","size":"small"}');
   assert.equal(chat.kind, "chat");
-  assert.equal(briefGate(chat).ok, false);
   assert.equal(parseBrief('{"task":"","files_hinted":[],"acceptance":"","parts":[],"clarity":"clear","kind":"code","size":"small"}'), null);
 });

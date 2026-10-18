@@ -58,11 +58,15 @@ export function patchSignals(patch) {
 // Our tests run in the answer's worktree with the environment its check had (lib/exec/runtime.mjs: depsEnv) -- the
 // project's venv first on PATH, the worktree's own code first on PYTHONPATH. Without it the installed copy of the project
 // (an editable install points at the user's checkout) can be what the tests import, and they test the unchanged code:
-// ct-series-v5, jsonargparse: 4 answers the hidden tests grade correct, our tests failed on all 4. -> {code, out}
+// ct-series-v5, jsonargparse: 4 answers the hidden tests grade correct, our tests failed on all 4. No bytecode is
+// written (testEnv): a file changed and run again within the same second can otherwise load the stale .pyc of the
+// version before (crossTest takes a change out and puts it back). -> {code, out}
+const testEnv = (cwd, env) => ({ ...depsEnv(cwd, { ...process.env, ...env }), PYTHONDONTWRITEBYTECODE: "1" });
+
 function runSpecIn(python, runner, cwd, env, signal) {
   return new Promise((resolve) => {
     let out = "";
-    const c = spawn(python, [runner], { cwd, env: depsEnv(cwd, { ...process.env, ...env }), windowsHide: true });
+    const c = spawn(python, [runner], { cwd, env: testEnv(cwd, env), windowsHide: true });
     const t = setTimeout(() => c.kill(), 300000);
     signal?.addEventListener?.("abort", () => c.kill());
     c.stdout.on("data", (d) => { out = (out + d).slice(-20000); });
@@ -137,7 +141,7 @@ function gitApply(cwd, patch, reverse = false) {
 function pytestIds(python, cwd, files, env = process.env) {
   return new Promise((resolve) => {
     if (!files.length) { resolve({}); return; }
-    const c = spawn(python, ["-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", ...files], { cwd, env: depsEnv(cwd, { ...process.env, ...env }), windowsHide: true });
+    const c = spawn(python, ["-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", ...files], { cwd, env: testEnv(cwd, env), windowsHide: true });
     let out = "";
     const t = setTimeout(() => c.kill(), 300000);
     c.stdout.on("data", (d) => { out += d; });

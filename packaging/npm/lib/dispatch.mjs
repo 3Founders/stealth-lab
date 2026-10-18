@@ -136,6 +136,9 @@ export function dispatchPolicy(env = process.env) {
     // the task brief (lib/brief.mjs): a cheap call restates the prompt with the earlier turns, and only a clear, small or
     // medium code task is dispatched; the cheap models and the test writer get the brief, then the user's original request. "off": the raw prompt, as before
     brief: (env.STEALTHLAB_BRIEF || "on").toLowerCase() !== "off",
+    // only a request the server's judge (JEV first, POST /triage, asked by the hook) says asks for a change now goes
+    // to the cheap models; "off": no gate (a mechanism test, or a client with no server judge)
+    gate: (env.STEALTHLAB_DISPATCH_GATE || "on").toLowerCase() !== "off",
   };
 }
 
@@ -843,7 +846,7 @@ function taskText(prompt) {
 // force: the prompt began with `!cheap` -- try the cheap models even where routing would skip, and skip the brief's gate
 // briefImpl: for tests, a stand-in for brief.mjs makeBrief()
 export async function dispatch({ payload: rawPayload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude,
-                                 force = false, briefImpl }) {
+                                 force = false, briefImpl, triage = null }) {
   let payload = rawPayload;
   const dispatchStart = Date.now();
   const policy = dispatchPolicy(env);
@@ -904,25 +907,34 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       return null;
     }
   }
-  // the brief: whether this prompt is a code task for the cheap models at all (a strong model judges it, lib/brief.mjs),
-  // and the names to search the code for. The cheap models are told the conversation and the request as the user said it.
-  let briefed = null;
-  if (policy.brief) {
-    const { briefGate, conversationPrompt, makeBrief, recentTurns } = await import("./brief.mjs");
-    const brief = await (briefImpl || makeBrief)({ prompt: payload.prompt, transcriptPath: payload.transcript_path,
-                                                  cwd: payload.cwd || root, env, fetchImpl, log });
-    const gate = briefGate(brief);
-    if (brief) log(`dispatch: brief kind=${brief.kind} clarity=${brief.clarity} size=${brief.size}: ${String(brief.task || "").replace(/\s+/g, " ").slice(0, 240)}`);
-    if (!gate.ok && !force) { log(`dispatch: not dispatched (${gate.reason})`); return null; }
-    const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: payload.prompt }) : [];
-    payload = { ...payload, prompt: conversationPrompt(turns, payload.prompt, TASK_MAX) };
-    briefed = { brief, turns, conversationPrompt };
+  // does it ask for a change now? The server's judge decided (the hook's POST /triage, with the earlier turns): only
+  // "change" goes to the cheap models; a question, a confirmation, conversation, an unclear change -- or no verdict --
+  // stay with the session's model. No word rules here.
+  if (policy.gate && !force) {
+    const work = triage?.work;
+    if (work !== "change") {
+      log(`dispatch: not dispatched (${work ? `the judge says work=${work}` : `no verdict from the server's judge${triage?.reason ? `: ${triage.reason}` : ""}`})`);
+      return null;
+    }
+    log(`dispatch: the judge${triage.provider ? ` (${triage.provider})` : ""} says work=change`);
   }
+  // what the cheap models are told: the conversation and the request as the user said it (lib/brief.mjs)
+  const { conversationPrompt, makeBrief, recentTurns } = await import("./brief.mjs");
+  const turns = payload.transcript_path ? recentTurns(payload.transcript_path, { current: payload.prompt }) : [];
+  payload = { ...payload, prompt: conversationPrompt(turns, payload.prompt, TASK_MAX) };
+  // the brief: names to search the code for, and the parts of a request that asks for several things (no gate)
+  let brief = null;
+  if (policy.brief) {
+    brief = await (briefImpl || makeBrief)({ prompt: rawPayload.prompt, transcriptPath: payload.transcript_path,
+                                            cwd: payload.cwd || root, env, fetchImpl, log });
+    if (brief) log(`dispatch: brief: ${String(brief.task || "").replace(/\s+/g, " ").slice(0, 240)}`);
+  }
+  const briefed = { brief, turns, conversationPrompt };
   // where in this repository the task is (lib/locate.mjs): the test writer gets that code, the cheap models a
   // path:start-end line their agent preloads, and the session's model the same pointer if the cheap tries fail
   // the brief's search terms join the request's own words: a plain-language issue ("double pipe ... ms sql server")
   // names nothing the code spells, and the brief has seen the file names (tsql.py, ||)
-  const searchTerms = (briefed?.brief?.search_terms || []).map((t) => `\`${String(t).replace(/`/g, "")}\``).join(" ");
+  const searchTerms = (brief?.search_terms || []).map((t) => `\`${String(t).replace(/`/g, "")}\``).join(" ");
   const locPrompt = `${rawPayload.prompt || ""}\n${payload.prompt || ""}\n${searchTerms}`;
   const searched = locate({ prompt: locPrompt, root: payload.cwd || root, env });
   // a cheap model narrows the search to the files and functions the fix is in (lib/locate_model.mjs); the test file is
@@ -935,7 +947,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   const where = renderWhere(loc);
   if (loc.spots.length) log(`dispatch: located ${loc.spots.map((s) => `${s.file}:${s.start}-${s.end}`).join(", ")}${loc.testFile ? ` (tests: ${loc.testFile})` : ""}`);
-  if (where && briefed) {
+  if (where) {
     // the earlier turns are cut to leave the location line its room inside the executor's TASK_MAX
     payload = { ...payload, prompt: briefed.conversationPrompt(briefed.turns, rawPayload.prompt, TASK_MAX - where.length - 2) };
   }
