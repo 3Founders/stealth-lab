@@ -16,7 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { childEnv } from "./proc.mjs";
-import { linkProjectDeps, unlinkProjectDeps } from "./deps.mjs";
+import { copyGeneratedFiles, linkProjectDeps, unlinkProjectDeps } from "./deps.mjs";
 
 export function git(args, { cwd, input, env = process.env, maxBuffer = 64 * 1024 * 1024, timeoutMs = 120000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -89,6 +89,7 @@ export async function createWorktree({ repo, commit, dir, patch, extraPatches = 
     if (p && p.length) await git(["-C", dir, "apply", "--binary", "--whitespace=nowarn", "-"], { env, input: p });
   }
   linkProjectDeps({ repo, dir, env });             // node_modules / venv of the project, linked (lib/exec/deps.mjs)
+  copyGeneratedFiles({ repo, dir, env });          // files its install generated in the source tree (a _version.py)
   return { dir, baseTree: await snapshotTree(dir, env) };
 }
 
