@@ -145,6 +145,9 @@ export function dispatchPolicy(env = process.env) {
     // only a request the server's judge (JEV first, POST /triage, asked by the hook) says asks for a change now goes
     // to the cheap models; "off": no gate (a mechanism test, or a client with no server judge)
     gate: (env.STEALTHLAB_DISPATCH_GATE || "on").toLowerCase() !== "off",
+    // after the time is up, how long the handed-in changes may take to be checked and judged: a hang guard over the
+    // runtime's check limit (600 s) and the reviewer's (120 s), never reached by a check that ends
+    handInS: Math.max(1, Number(env.STEALTHLAB_DISPATCH_HANDIN_S || 780)),
   };
 }
 
@@ -1269,6 +1272,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     timer = setTimeout(() => fireDeadline({ timeout: true }), Math.max(0, baseLimitS * 1000 - (Date.now() - triesStart)));
   };
   let timedOut = false;
+  let handedIn = false;                    // the time was up and the runs still going were told to hand in their change
   const cands = [];                        // evidence mode: answers that passed the project's check
   const extraRuns = new Set();             // cross-check runs: cancelled with the rest when the time is up
   const seenFails = [];                    // the failing advance tests of each failed rung, as a sorted list
@@ -1323,6 +1327,21 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       pending.clear();
       for (const r of queue.filter((x) => tierOf(x.model) === 1)) tried.push({ unit: r.unit, state: "skipped (time limit)" });
       queue.splice(0, queue.length, ...queue.filter((x) => tierOf(x.model) > 1));
+      continue;
+    }
+    if (done.timeout && !handedIn && pending.size && typeof rt.finishRun === "function") {
+      // the time is up: the cheap models still working stop and hand in their change, which is checked and judged like
+      // any other -- the limit bounds the work, not the judging (ct-series-v7 sqlglot: a right answer was cut at 600 s
+      // unchecked). The judging is bounded by its own limits (the runtime's check limit, the reviewer's); this one is
+      // only the hang guard over both.
+      handedIn = true;
+      log(`dispatch: the ${limitS} s are up: ${[...pending.keys()].join(", ")} stop and hand in their change`);
+      for (const unit of pending.keys()) {
+        const id = running.get(unit);
+        if (id) try { await rt.finishRun(id); } catch { /* best effort */ }
+      }
+      clearTimeout(timer);
+      deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), policy.handInS * 1000); });
       continue;
     }
     if (done.timeout) { timedOut = true; break; }

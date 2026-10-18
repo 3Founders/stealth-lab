@@ -143,3 +143,20 @@ test("every configured model starts at once, with the budget as each run's own l
   assert.equal(started, 3);
   assert.ok(s.rt.calls.every((c) => c.timeout_s === 600 && c.hang_s === 600), JSON.stringify(s.rt.calls.map((c) => [c.timeout_s, c.hang_s])));
 });
+
+test("at the time limit the runs still going hand in their change; a handed-in answer that passes is delivered", { skip: !hasPytest }, async () => {
+  const s = setup({ "gemma-4-31b-it": "x = 2\n" });
+  s.env.STEALTHLAB_DISPATCH_TIMEOUT_S = "1";
+  const rr = s.rt.runResult.bind(s.rt);
+  let handIn;
+  const handedIn = new Promise((r) => { handIn = r; });
+  s.rt.runResult = async (id) => { await handedIn; return rr(id); };       // still working at the limit
+  const finished = [];
+  s.rt.finishRun = async (id) => { finished.push(id); handIn(); return { run_id: id }; };
+  const logs = [];
+  const d = await dispatch({ payload: { cwd: s.repo, prompt: "Make calc.x equal 2" }, reply: { model_plan: PLAN }, root: s.repo, mine: MINE,
+    env: s.env, runtime: s.rt, triage: CHANGE, fetchImpl: reviewer("fixes"), log: (m) => logs.push(m) });
+  assert.deepEqual(finished, ["r-1"]);
+  assert.ok(logs.some((l) => /the \d+ s are up: gemma-4-31b-it\|stealth stop and hand in their change/.test(l)), logs.join("\n"));
+  assert.equal(d.handled, true, logs.join("\n"));
+});
