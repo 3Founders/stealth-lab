@@ -22,7 +22,7 @@ test("the defaults: the evidence rule, all models at once, a 600 s budget, and n
   assert.equal(p.maxParallel, Infinity, "no per-provider limit");
   assert.equal(p.maxRungs, Infinity, "every configured model is tried");
   assert.equal(p.strongExtraS, 0);
-  assert.equal(p.modelCap, false);
+  assert.equal(p.modelCap, true, "the learned per-model cap: off for a model until it has 5 wins here");
   assert.equal(p.areaSkip, false);
   assert.equal(p.testFirst, true);
   assert.equal(p.specBaseline, true, "the reproduction test must fail on the unchanged code");

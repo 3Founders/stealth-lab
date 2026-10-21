@@ -167,6 +167,23 @@ test("dispatch: the capped run is cancelled at its model's cap, not before, and 
   assert.ok(!parseRouting(routing(s.root)).obs.some((o) => o.model === "minimax-m2-7"), "no OBS for the capped run: it is not a failure");
 });
 
+test("dispatch: with a runtime that can hand in, a capped run hands in its change and a passing one is delivered", async () => {
+  const s = setup({ STEALTHLAB_DISPATCH_MAX_PARALLEL: "1" });
+  seed(s.root, "minimax-m2-7", 0.1);                                        // cap = 0.3 s
+  const rt = runtime(s.root, { "minimax-m2-7": { delay: 5000 }, "gpt-oss-120b": { delay: 5000 }, "gemma-4-31b-it": { delay: 5000 } });
+  const finished = [];
+  // handing in ends the run with its change checked: here it passes (the stub's "verified")
+  rt.finishRun = async (id) => { finished.push(id); return {}; };
+  const rr = rt.runResult.bind(rt);
+  rt.runResult = async (id) => (id === "r-minimax-m2-7" ? (await new Promise((r) => { const t = setInterval(() => { if (finished.includes(id)) { clearInterval(t); r(); } }, 20); }),
+    { run_id: id, state: "verified", cost_usd: 0.001, diff: { files: ["calc.py"] }, checks: [{ tail: "ok" }] }) : rr(id));
+  const d = await run(s, rt);
+  assert.deepEqual(finished, ["r-minimax-m2-7"], "the cap hands in, it does not cancel");
+  assert.ok(!rt.cancelled.includes("r-minimax-m2-7"));
+  assert.equal(d.handled, true);
+  assert.equal(d.unit, "minimax-m2-7|stealth");
+});
+
 test("dispatch: a model with fewer than 5 wins has no cap and a slow run that wins still wins", async () => {
   const s = setup({ STEALTHLAB_DISPATCH_MAX_PARALLEL: "1" });
   seed(s.root, "minimax-m2-7", 0.1, 4);                                      // one win short

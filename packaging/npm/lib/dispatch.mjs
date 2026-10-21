@@ -91,7 +91,7 @@ export function dispatchPolicy(env = process.env) {
     // applies it (`stealthlab-mcp exec apply <run>`). Default off: it is applied, with an undo point (lib/undo.mjs)
     ask: (env.STEALTHLAB_DISPATCH_ASK || "off").toLowerCase() === "on",
     // per-MODEL timing learned from this repo's own cheap wins (lib/model_speed.mjs): a run is capped at 3 x its model's p90 win time (not
-    // below 60 s, not above the limit above; fewer than 5 wins: no cap), a capped run is cancelled and is not a failure; and the rungs start
+    // below 60 s, not above the limit above; fewer than 5 wins: no cap), a capped run hands in its change to be judged; and the rungs start
     // fastest model first. The two switches are independent.
     modelCap: modelCapEnabled(env),
     fastestFirst: fastestFirstEnabled(env),
@@ -1084,11 +1084,16 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       runId = started.run_id;
       running.set(rung.unit, runId);
       startedAt = Date.now();
-      // this MODEL's own cap (from its wins in this repo): past it the run is cancelled, which is not a verdict on the model
+      // this MODEL's own cap (from its wins in this repo): past it the run hands in its change, which is checked and judged
+      // like any other (the time limit's rule); a runtime without hand-in cancels it, which is no verdict on the model
       const cap = policy.modelCap ? modelCapS(modelWins(root, rung.model, rung.executor)?.wins, { baseS: baseLimitS, mult: policy.capMult, floorS: policy.capFloorS }) : null;
       if (cap !== null) {
         capS = cap;
-        capTimer = setTimeout(() => { capped = true; log(`dispatch: ${rung.model} capped at ${Math.round(cap * 10) / 10} s`); rt.cancelRun(runId).catch(() => {}); }, cap * 1000);
+        capTimer = setTimeout(() => {
+          capped = true;
+          log(`dispatch: ${rung.model} capped at ${Math.round(cap * 10) / 10} s: it hands in its change`);
+          (typeof rt.finishRun === "function" ? rt.finishRun(runId) : rt.cancelRun(runId)).catch(() => {});
+        }, cap * 1000);
         capTimer.unref?.();
       }
       let result;
