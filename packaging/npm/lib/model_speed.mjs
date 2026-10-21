@@ -6,8 +6,8 @@
 //   * every verified cheap answer records the seconds it took (from the start of ITS run) in a `WIN` line for its model, the last 20:
 //         WIN|<model>|<scaffold>|n=<wins ever>|last=<date>|p90s=<seconds>|wins=<s,s,...>
 //     The line type is this machine's own: it is not sent to the server (only ROUTE and OBS lines are) and the server's parser skips it.
-//   * a run is CAPPED at clamp(2 x p90 of its model's wins, 60 s, today's limit); with fewer than 5 wins for the model, today's limit stands.
-//     A capped run is cancelled and is NOT a failure: it is not reported against its model and not counted in routing.md's OBS.
+//   * a run is CAPPED at clamp(3 x p90 of its model's wins, 60 s, today's limit); with fewer than 5 wins for the model, today's limit stands.
+//     A capped run hands in its change (lib/exec/runtime.mjs finishRun), which is checked and judged like a finished one's.
 //   * the rungs START fastest model first (median win time), so the fast models get the parallel slots. A model without enough wins is placed
 //     as if it had the median of the known ones: it neither jumps the queue nor starves behind it.
 // Switches: STEALTHLAB_DISPATCH_MODEL_CAP=off (the cap), STEALTHLAB_DISPATCH_FASTEST_FIRST=off (the order), STEALTHLAB_DISPATCH_CAP_MULT (3; 2 cut a gemma win on the owner's run records),
@@ -21,9 +21,11 @@ export const MIN_WINS = 5;
 const SEP = "|";
 const COMMENT = "# WIN|<model>|<scaffold>|n=<wins>|last=<date>|p90s=<s>|wins=<s,s,...>  (seconds a verified cheap answer took; local only, the last 20)\n";
 
-// off unless set: one time budget for the cheap tries (dispatch timeoutS) is the limit; a per-model multiple of past win times
-// (3 x p90) had no measured basis
-export const modelCapEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_MODEL_CAP || "off").toLowerCase() === "on";
+// on unless "off". Its basis is this repo's own measurements: a model's wins here; it stays off for a model until it has
+// 5 of them. A model's failed tries on a task it cannot do ran the whole limit and cost more than the session's model
+// doing the task (ct-series-v7 sqlglot: minimax $0.71-0.90 for 600 s, against Opus $0.49-0.53 for the turn), while its
+// wins took 79-123 s; a run past 3 x its p90 win time hands in what it has instead of running on.
+export const modelCapEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_MODEL_CAP || "on").toLowerCase() !== "off";
 export const fastestFirstEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_FASTEST_FIRST || "on").toLowerCase() !== "off";
 export const capMult = (env = process.env) => Math.max(1, Number(env.STEALTHLAB_DISPATCH_CAP_MULT) || 3);
 // the cap's floor in seconds (60); STEALTHLAB_DISPATCH_CAP_FLOOR_S lowers or raises it (tests use a fraction of a second)

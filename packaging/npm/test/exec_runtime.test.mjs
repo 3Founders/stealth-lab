@@ -362,7 +362,7 @@ test("finishRun: the caller's time is up -- each agent still working hands in it
   const repo = makeRepo();
   const env = testEnv();
   const rt = runtime(env, { stub: stubAdapter({ scenario: { ...FIX, chatterMs: 60000 } }) });
-  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 600, hang_s: 600 });
+  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 600, hang_s: 600, goal_id: "g-1" });
   await waitFor(async () => (await rt.runStatus(run_id)).state === "running");
   await sleep(800);                                          // the stub has written its edit and keeps working
   const t0 = Date.now();
@@ -370,6 +370,7 @@ test("finishRun: the caller's time is up -- each agent still working hands in it
   const res = await rt.runResult(run_id, 30);
   assert.ok(Date.now() - t0 < 15000);
   assert.equal(res.state, "verified");
+  assert.equal(res.evidence.queued, true, "a handed-in run is an outcome the router learns from (a cancelled one is not)");
   // a change that does not pass the check fails, as any other
   const bad = runtime(testEnv(), { stub: stubAdapter({ scenario: { edits: [{ path: "calc.txt", content: "still broken\n" }], chatterMs: 60000 } }) });
   const b = await bad.achieve({ repo_path: makeRepo(), task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 2, hang_s: 30 });
