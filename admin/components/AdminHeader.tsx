@@ -20,6 +20,7 @@ const platformLinks = [
 // Per-organisation governance, shown on a second row for the organisation picked in the selector.
 const orgLinks = [
   { href: "/", label: "Executive", need: "admin" },
+  { href: "/start", label: "Get started", need: "admin" },
   { href: "/policy", label: "Policy", need: "admin" },
   { href: "/usage", label: "Usage", need: "admin" },
   { href: "/performance", label: "Performance", need: "admin" },

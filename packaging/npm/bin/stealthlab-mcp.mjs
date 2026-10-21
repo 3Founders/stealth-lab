@@ -30,6 +30,7 @@ const lazy = {
   instructions: () => import("../lib/instructions.mjs"),
   cursorHooks: () => import("../lib/cursor_hooks.mjs"),
   setup: () => import("../lib/setup.mjs"),
+  join: () => import("../lib/join.mjs"),
   store: () => import("../lib/exec/store.mjs"),
 };
 // kept in step with clients() by a test (test/setup.test.mjs); written out so --help does not load the installer
@@ -50,6 +51,10 @@ Usage:
   npx -y stealthlab-mcp setup [options]      the whole first-time install in one command: register your agents,
                                              write exec.json, remember the Cursor model, then check what is still
                                              missing and say how to fix it (exit 0 = ready, 3 = not ready yet)
+  npx -y stealthlab-mcp join <invite> --url <https://mcp-host/mcp> --api <https://api-host>
+                                             your company already connected its provider key: sign in, join the
+                                             organization, write the model list, test one call through the gateway
+                                             (no provider key on this machine; exit 0 = ready, 3 = not ready)
   npx -y stealthlab-mcp install [options]    register StealthLab with your agents
   stealthlab-mcp uninstall [--client <id>]   remove it again
   stealthlab-mcp doctor                      check the hosted server is reachable
@@ -109,6 +114,10 @@ Setup options (setup also takes the install options below):
   --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
   --no-exec          connect only: no cheap-model dispatch, nothing blocks a prompt
   --guided           go one step at a time: say what the next step changes and wait for Enter (q quits)
+
+Join options (join also takes --client, --no-hooks, --no-exec, --dry-run):
+  --api <url>        your company's StealthLab API address (the invite page shows the whole command)
+  --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
 
 Install options:
   --client <id>   only these clients (repeatable, or "all"): ${CLIENT_IDS}
@@ -263,7 +272,8 @@ async function cmdSetup(v) {
   const cfgNow = readConfig();
   const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: keyName,
                           key: keyName === keyNameFirst ? key : await keyIsSetAsync(keyName), dispatch, cursorModel: cfgNow.cursor_model || process.env.STEALTHLAB_CURSOR_MODEL,
-                          wantsCursor: chosenIds.includes("cursor") });
+                          wantsCursor: chosenIds.includes("cursor"),
+                          central: (() => { try { const ps = Object.values(readExecConfig().profiles); return ps.length > 0 && ps.every((p) => p.key_from); } catch { return false; } })() });
   out(created ? `\nWrote ${"~/.stealthlab/exec.json"} (open models on General Compute; your key stays in $${keyName}).` : "");
   out("\nReadiness:");
   for (const i of res.items) out(`  ${i.ok ? "ok     " : "MISSING"} ${i.name.padEnd(16)} ${i.detail}`);
@@ -271,6 +281,54 @@ async function cmdSetup(v) {
   out("\nStill to do:");
   for (const i of res.items.filter((x) => !x.ok && x.fix)) out(`  - ${i.name}: ${i.fix}`);
   out("\nRun `stealthlab-mcp setup` again to re-check; it changes nothing that is already in place.");
+  process.exitCode = 3;
+}
+
+// A developer's whole setup when the company's admin has already connected the provider key (docs/setup.md).
+async function cmdJoin(code, v) {
+  const J = await lazy.join();
+  let invite, api;
+  try {
+    invite = J.parseInvite(code);
+    api = J.normalizeApi(v.api || readConfig().api_url);
+  } catch (err) { die(err.message, 2); }
+  const settings = resolveSettings(v);
+  requireUrl(settings);
+  if (v["dry-run"]) {
+    out(`join (dry run): would sign in at ${settings.url}, redeem the invite at ${api}/v1/join, write ~/.stealthlab/exec.json (organization gateway, no provider key),`);
+    out("  register your agents with dispatch, then make one test call through the gateway");
+    return;
+  }
+  let token = settings.token;
+  if (!token) {
+    try {
+      const { login: oauthLogin } = await lazy.oauth();
+      await oauthLogin({ url: settings.url, noBrowser: Boolean(v["no-browser"]), print: out });
+    } catch (err) { die(`sign-in failed: ${err.message}`); }
+    token = resolveSettings(v).token;
+  } else {
+    token = await renewToken(settings);
+  }
+  let answer;
+  try { answer = await J.redeem({ api, token, code: invite }); } catch (err) { die(err.message); }
+  const exec = J.writeExec(answer);
+  writeConfig({ url: settings.url, api_url: api, organization_id: answer.organization_id, organization_name: answer.name, dispatch: !v["no-exec"],
+                ...(v["cursor-model"] ? { cursor_model: String(v["cursor-model"]).trim() } : {}) });
+  out(`Joined ${answer.name}. Models: ${exec.models.join(", ")}${exec.movedTo ? `\n  (your own exec.json was kept as ${exec.movedTo})` : ""}`);
+  process.exitCode = 0;
+  await cmdInstall({ ...v, token: undefined, "with-exec": !v["no-exec"] });
+  const hooksOk = !process.exitCode;
+  process.exitCode = 0;
+  const test = await J.selfTest({ gateway: answer.gateway, token, orgId: answer.organization_id, profile: J.cheapest(answer.profiles) });
+  const chosenIds = (await pickClients(v.client)).chosen.map((c) => c.id);
+  const res = J.joinChecklist({ org: answer.name, models: exec.models, selfTest: test, hooksOk, wantsCursor: chosenIds.includes("cursor"),
+                                cursorModel: readConfig().cursor_model || process.env.STEALTHLAB_CURSOR_MODEL });
+  out("\nReadiness:");
+  for (const i of res.items) out(`  ${i.ok ? "ok     " : "MISSING"} ${i.name.padEnd(16)} ${i.detail}`);
+  if (res.ready) { out("\nReady. Restart your agent (Cursor: close every window), then send a small task with a test."); return; }
+  out("\nStill to do:");
+  for (const i of res.items.filter((x) => !x.ok && x.fix)) out(`  - ${i.name}: ${i.fix}`);
+  out("\nRun the same command again to re-check; it changes nothing that is already in place.");
   process.exitCode = 3;
 }
 
@@ -395,7 +453,7 @@ async function main() {
     }
   }
   // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
-  const sub = (cmd === "hook" || cmd === "survey") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  const sub = (cmd === "hook" || cmd === "survey" || cmd === "join") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
   if (cmd === "survey") return cmdSurvey(sub, argv);
   let v;
   try {
@@ -413,6 +471,7 @@ async function main() {
         "with-exec": { type: "boolean" },
         "keep-mcp": { type: "boolean" },
         "token-file": { type: "string" },
+        api: { type: "string" },
         "key-env": { type: "string" },
         "cursor-model": { type: "string" },
         "no-exec": { type: "boolean" },
@@ -431,6 +490,8 @@ async function main() {
   if (v.help || cmd === "help") return out(HELP);
 
   switch (cmd) {
+    case "join":
+      return cmdJoin(sub, v);
     case "setup":
       return cmdSetup(v);
     case "install":

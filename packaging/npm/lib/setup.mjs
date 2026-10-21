@@ -85,7 +85,7 @@ export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 1
 }
 
 // -> { ready, items: [{ name, ok, detail, fix? }] }. Pure given its inputs, so tests can drive every branch.
-export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv, key, dispatch, cursorModel, wantsCursor, platform = process.platform }) {
+export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv, key, dispatch, cursorModel, wantsCursor, central = false, platform = process.platform }) {
   const items = [];
   items.push({ name: "server", ok: server.ok, detail: server.detail, fix: server.ok ? undefined : "start it, or pass --url <https://host/mcp>; check with `stealthlab-mcp doctor`" });
   items.push({ name: "token", ok: hasToken, detail: hasToken ? "saved" : "none (reads are anonymous; reporting outcomes needs one)",
@@ -94,7 +94,9 @@ export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv
     items.push({ name: "exec.json", ok: execOk, detail: execOk ? `${models.length} model(s): ${models.join(", ")}` : execDetail,
                  fix: execOk ? undefined : "fix or delete ~/.stealthlab/exec.json, then run setup again" });
     const setx = platform === "win32" ? `setx ${keyEnv} "<your key>"   then restart the agent` : `export ${keyEnv}=<your key>   (in your shell profile), then restart the agent`;
-    items.push({ name: `key ${keyEnv}`, ok: key.set, detail: key.set ? `set in ${key.where}` : "not set", fix: key.set ? undefined : setx });
+    // profiles written by `join` (key_from: "stealthlab") carry no provider key: the organization's gateway holds it
+    if (central) items.push({ name: "provider key", ok: true, detail: "held by your organization's gateway (nothing to set here)" });
+    else items.push({ name: `key ${keyEnv}`, ok: key.set, detail: key.set ? `set in ${key.where}` : "not set", fix: key.set ? undefined : setx });
     if (wantsCursor) {
       items.push({ name: "cursor model", ok: Boolean(cursorModel), detail: cursorModel ? cursorModel : "not set ('auto' is not a model: dispatch stays off)",
                    fix: cursorModel ? undefined : "stealthlab-mcp setup --cursor-model <the model you picked in Cursor>" });

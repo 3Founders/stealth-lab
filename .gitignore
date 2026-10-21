@@ -38,7 +38,9 @@ backend/data/raw_payloads/
 # continue_run call given a repo_path. Every file in it says so in its own
 # header ("GENERATED, not canonical. Do not hand-edit."); never source of
 # truth, never meant to be committed.
-.stealth/
+.stealth/*
+# the one tracked part: the hand-written shared plan (claims, procedures, run nodes); see .stealth/collab/README.md
+!.stealth/collab/
 
 # Python bytecode
 __pycache__/

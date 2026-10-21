@@ -66,6 +66,9 @@ async def lifespan(app: FastAPI):
         hosted_execution_enabled=settings.hosted_execution_enabled,
     )
     app.state.pool = await create_pool()
+    from app.services import org_keys as _org_keys
+    # companies' own provider keys -> the governed gateway (/v1/chat/completions)
+    _org_keys.install(lambda: getattr(app.state, "pool", None))
     # The seam this directive closes: without this, "user does normal
     # agent work" never becomes "a procedure candidate exists in storage"
     # unless a human remembers to curl /v1/admin/ingestion/process on a
@@ -145,6 +148,7 @@ app.include_router(tasks.router)
 app.include_router(me.router)
 app.include_router(org_admin.mine_router)
 app.include_router(org_admin.router)
+app.include_router(org_admin.join_router)
 app.include_router(search.router)
 
 # Final-V1 product layer (migration 35, folded into Goal by migration 110):

@@ -11,6 +11,11 @@
 //       "request_extras": { "provider": { "zdr": true } },
 //       "no_system_role": true } } }      // the endpoint rejects a system turn: its text opens the first user turn
 //
+// Organization-held keys: a profile may say  "key_from": "stealthlab"  instead of key_env. It then carries no provider key at all:
+// the request goes to the organization's StealthLab gateway (openai_base_url = <server>/v1) with the person's own StealthLab
+// sign-in as the bearer, and the gateway uses the key the company's admin stored (backend/app/services/org_keys.py), under the
+// company's policy and budget. `stealthlab-mcp join` writes these profiles; there is nothing to set in the environment.
+//
 // Boundary (same as common.mjs): the provider key is the USER'S OWN key for that provider, read from the user's own
 // environment and handed only to the process that talks to that provider. It is never written to disk by us, never
 // logged, and never mixed with another vendor's credentials: the claude adapter removes the user's Anthropic
@@ -18,8 +23,11 @@
 //
 // The compliance fields are declarations by whoever wrote the file, kept so a run can show what was claimed. Unknown
 // stays unknown (absent), never "true". Nothing here proves what a provider does with prompts.
+import { readConfig } from "../config.mjs";
+
 const REGION = /^[a-z]{2,8}(-[a-z0-9]{1,8})?$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const KEY_FROM_STEALTHLAB = "stealthlab";
 export const KEY_ENV_FOR_CHILD = "OPEN_MODEL_API_KEY";   // the one variable a child reads the provider key from
 
 // Body fields the step agent owns; a profile may not override them.
@@ -53,12 +61,15 @@ function flag(name, field, value) {
 // Validate one raw profile; throws with a message the user can act on. Returns a frozen normalised copy.
 export function normaliseProfile(name, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`profile ${name}: must be an object`);
-  const keyEnv = raw.key_env;
-  if (typeof keyEnv !== "string" || !NAME.test(keyEnv)) throw new Error(`profile ${name}: key_env must be the NAME of an environment variable`);
+  const keyFrom = raw.key_from;
+  if (keyFrom !== undefined && keyFrom !== KEY_FROM_STEALTHLAB) throw new Error(`profile ${name}: key_from can only be "${KEY_FROM_STEALTHLAB}"`);
+  const keyEnv = keyFrom ? undefined : raw.key_env;
+  if (!keyFrom && (typeof keyEnv !== "string" || !NAME.test(keyEnv))) throw new Error(`profile ${name}: key_env must be the NAME of an environment variable`);
   const modelId = String(raw.model_id || name).trim();
   if (!modelId || /[\s|]/.test(modelId)) throw new Error(`profile ${name}: model_id must be a single token`);
   const anthropic = httpsUrl(name, "anthropic_base_url", raw.anthropic_base_url);
   const openai = httpsUrl(name, "openai_base_url", raw.openai_base_url);
+  if (keyFrom && (!openai || anthropic)) throw new Error(`profile ${name}: key_from "${KEY_FROM_STEALTHLAB}" needs openai_base_url (the organization gateway) and no anthropic_base_url`);
   if (!anthropic && !openai) throw new Error(`profile ${name}: give anthropic_base_url (claude) and/or openai_base_url (opencode, stealth)`);
   let region;
   if (raw.region !== undefined && raw.region !== null) {
@@ -76,7 +87,7 @@ export function normaliseProfile(name, raw) {
   const outP = price(name, "output_per_mtok", raw.output_per_mtok);
   if ((inP === undefined) !== (outP === undefined)) throw new Error(`profile ${name}: give both input_per_mtok and output_per_mtok, or neither`);
   return Object.freeze({
-    name, model_id: modelId, key_env: keyEnv, anthropic_base_url: anthropic, openai_base_url: openai,
+    name, model_id: modelId, key_env: keyEnv, key_from: keyFrom, anthropic_base_url: anthropic, openai_base_url: openai,
     input_per_mtok: inP, output_per_mtok: outP,
     zdr: flag(name, "zdr", raw.zdr), no_training: flag(name, "no_training", raw.no_training),
     dpa_signed: flag(name, "dpa_signed", raw.dpa_signed) ?? false, region,
@@ -103,6 +114,13 @@ export function normaliseProfiles(rawProfiles) {
 
 // The key for a profile from the user's environment, or throws saying which variable is missing.
 export function profileKey(profile, env = process.env) {
+  if (profile.key_from === KEY_FROM_STEALTHLAB) {
+    // the person's own sign-in (kept fresh by the hooks, lib/oauth.mjs freshToken); never a provider key
+    let token = String(env.STEALTHLAB_TOKEN || "").trim();
+    if (!token) { try { token = String(readConfig(env).token || "").trim(); } catch { token = ""; } }
+    if (!token) throw new Error(`profile ${profile.name}: you are not signed in to StealthLab (run: stealthlab-mcp login)`);
+    return token;
+  }
   const v = env[profile.key_env];
   if (!v || !String(v).trim()) throw new Error(`profile ${profile.name}: environment variable ${profile.key_env} is not set`);
   return String(v);

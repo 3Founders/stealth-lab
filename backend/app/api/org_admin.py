@@ -23,10 +23,12 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_auth_context
 from app.services import org_governance as gov
+from app.services import org_keys, org_onboarding
 from app.services.auth_context import AuthContext
 
 router = APIRouter(prefix="/v1/orgs/{org_id}", tags=["org-admin"])
 mine_router = APIRouter(prefix="/v1/orgs", tags=["org-admin"])      # the one route that has no org id yet
+join_router = APIRouter(prefix="/v1/join", tags=["org-onboarding"])   # a person with an invite, not yet a member
 
 _ROLE_ORDER = ("owner", "admin", "member", "viewer")
 
@@ -318,5 +320,154 @@ async def execute_erasure(org_id: str, request_id: str, pool=Depends(get_pool), 
     try:
         return await gov.execute_erasure(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
                                          actor_roles=roles, org_id=org_id, request_id=request_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+# ------------------------------------------------------------------ the company's provider keys
+
+class ProviderKeyBody(BaseModel):
+    provider: str
+    base_url: str
+    units: list[dict[str, Any]]
+    api_key: Optional[str] = Field(default=None, repr=False, description="omit on update to keep the stored key")
+    allowed_data_classes: list[str] = Field(default_factory=lambda: list(org_keys.DEFAULT_DATA_CLASSES))
+    zdr: Optional[bool] = None
+    no_training: Optional[bool] = None
+    region: Optional[str] = None
+    dpa_signed: Optional[bool] = None
+
+
+@router.get("/provider-keys")
+async def list_provider_keys(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> list[dict]:
+    """The connected keys, never the keys themselves: a hint (last four characters) is all that is readable."""
+    _, roles = _caller(ctx, org_id)
+    try:
+        return await org_keys.list_provider_keys(pool, actor_roles=roles, org_id=org_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.put("/provider-keys/{connection_id}")
+async def put_provider_key(org_id: str, connection_id: str, body: ProviderKeyBody, pool=Depends(get_pool),
+                           ctx=Depends(get_auth_context)) -> dict:
+    caller, roles = _caller(ctx, org_id)
+    declared = {k: v for k, v in (("zdr", body.zdr), ("no_training", body.no_training), ("region", body.region),
+                                  ("dpa_signed", body.dpa_signed)) if v is not None}
+    try:
+        return await org_keys.put_provider_key(
+            pool, actor_subject=caller.subject, actor_user_id=caller.user_id, actor_roles=roles, org_id=org_id,
+            connection_id=connection_id, provider=body.provider, base_url=body.base_url, units=body.units,
+            api_key=body.api_key, data_classes=body.allowed_data_classes, declarations=declared)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    except org_keys.secret_box.SecretBoxError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.delete("/provider-keys/{connection_id}", status_code=204)
+async def delete_provider_key(org_id: str, connection_id: str, pool=Depends(get_pool),
+                              ctx=Depends(get_auth_context)) -> Response:
+    caller, roles = _caller(ctx, org_id)
+    try:
+        await org_keys.delete_provider_key(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                           actor_roles=roles, org_id=org_id, connection_id=connection_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    return Response(status_code=204)
+
+
+# ------------------------------------------------------------------ onboarding: policy, invites, checklist
+
+class RecommendedPolicyBody(BaseModel):
+    monthly_budget_usd: Any
+    per_user_daily_budget_usd: Any
+
+
+class InviteBody(BaseModel):
+    label: Optional[str] = None
+    days: int = 7
+    max_uses: int = 50
+
+
+@router.post("/policy/recommended")
+async def apply_recommended_policy(org_id: str, body: RecommendedPolicyBody, pool=Depends(get_pool),
+                                   ctx=Depends(get_auth_context)) -> dict:
+    """Build the policy from the connected keys and the budgets typed here, and apply it (creating or updating)."""
+    caller, roles = _caller(ctx, org_id)
+    try:
+        policy = await org_onboarding.apply_recommended_policy(
+            pool, actor_subject=caller.subject, actor_user_id=caller.user_id, actor_roles=roles, org_id=org_id,
+            monthly_budget_usd=body.monthly_budget_usd, per_user_daily_budget_usd=body.per_user_daily_budget_usd)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    return policy.as_dict()
+
+
+@router.get("/onboarding")
+async def onboarding(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    _, roles = _caller(ctx, org_id)
+    try:
+        return await org_onboarding.onboarding_status(pool, actor_roles=roles, org_id=org_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.post("/invites", status_code=201)
+async def create_invite(org_id: str, body: InviteBody, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    """The response carries the code once. It is not stored and cannot be shown again."""
+    caller, roles = _caller(ctx, org_id)
+    try:
+        return await org_onboarding.create_invite(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                                  actor_roles=roles, org_id=org_id, label=body.label, days=body.days,
+                                                  max_uses=body.max_uses)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.get("/invites")
+async def list_invites(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> list[dict]:
+    _, roles = _caller(ctx, org_id)
+    try:
+        return await org_onboarding.list_invites(pool, actor_roles=roles, org_id=org_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+@router.delete("/invites/{invite_id}", status_code=204)
+async def revoke_invite(org_id: str, invite_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> Response:
+    caller, roles = _caller(ctx, org_id)
+    try:
+        await org_onboarding.revoke_invite(pool, actor_subject=caller.subject, actor_user_id=caller.user_id,
+                                           actor_roles=roles, org_id=org_id, invite_id=invite_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    return Response(status_code=204)
+
+
+@router.get("/client-config")
+async def client_config(org_id: str, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    """What a member's machine needs (gateway address, models, prices). Any member may read it; it holds no credential."""
+    _caller(ctx, org_id)
+    try:
+        return await org_onboarding.client_config(pool, org_id)
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+
+
+# ------------------------------------------------------------------ a developer joins
+
+class JoinBody(BaseModel):
+    code: str = Field(repr=False)
+
+
+@join_router.post("")
+async def join(body: JoinBody, pool=Depends(get_pool), ctx=Depends(get_auth_context)) -> dict:
+    """Redeem an invite as the signed-in person and return the client configuration for their machine."""
+    if not isinstance(ctx, AuthContext):
+        raise HTTPException(401, "sign in as a person to join an organization")
+    try:
+        joined = await org_onboarding.redeem_invite(pool, ctx, body.code)
+        return {**joined, **await org_onboarding.client_config(pool, joined["organization_id"])}
     except gov.GovernanceError as exc:
         raise _http(exc) from exc

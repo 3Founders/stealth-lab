@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     personal_github_token: Optional[str] = None
     github_token: Optional[str] = None
 
+    # Base64 of 32 random bytes: encrypts the provider keys an organisation's admins enter in the dashboard
+    # (app/services/secret_box.py, db/151). Unset means those routes refuse; there is no built-in default key.
+    org_key_encryption_key: Optional[str] = None
+    # The public URL developers' agents use to reach this API (the governed /v1 gateway), returned by join so the
+    # client needs no flag. Unset means join refuses rather than guessing from the request's Host header.
+    public_api_url: Optional[str] = None
     voyage_api_key: Optional[str] = None
     # Comma-separated additional Voyage keys, rotated in order on a per-key
     # failure -- same pattern as gemini_api_keys below (embeddings.py::_embed_voyage).
