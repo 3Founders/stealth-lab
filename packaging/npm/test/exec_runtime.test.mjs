@@ -85,6 +85,21 @@ test("failing check (spec 8.2): verified=false, tail present and redacted; logs 
   assert.ok(fs.existsSync(res.diff.worktree), "failed WITH a diff: worktree kept for inspection");
 });
 
+test("an executor that fails before changing anything is reported with its own error, not as an empty diff", async () => {
+  const repo = makeRepo();
+  const env = testEnv();
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { edits: [], finalMessage: "error: the endpoint kept failing: HTTP 429: rate limited", exitCode: 1 } }) });
+  const started = await rt.achieve({ repo_path: repo, task: TASK, checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1" });
+  const res = await rt.runResult(started.run_id, 30);
+  assert.equal(res.state, "failed");
+  assert.match(res.error, /^the executor failed \(exit 1\): error: the endpoint kept failing: HTTP 429/);
+  assert.equal(res.checks.length, 0, "no check runs on a change that does not exist");
+  // an executor that exits 0 with no change is still an empty diff (the model was reached and did nothing)
+  const rt2 = runtime(env, { stub: stubAdapter({ scenario: { edits: [], finalMessage: "nothing to do" } }) });
+  const s2 = await rt2.achieve({ repo_path: repo, task: TASK, checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1" });
+  assert.match((await rt2.runResult(s2.run_id, 30)).error, /empty diff/);
+});
+
 test("scope violation (spec 8.3): verified=false and the out-of-scope file is listed", async () => {
   const repo = makeRepo();
   const env = testEnv();
@@ -186,7 +201,7 @@ test("refuses a repo with an unresolved merge, a missing scope, and an oversized
   const rt = runtime(env, { stub: stubAdapter({ scenario: FIX }) });
   const base = { repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub" };
   await assert.rejects(rt.achieve({ ...base, scope: [] }), /scope is required/);
-  await assert.rejects(rt.achieve({ ...base, task: "x".repeat(2001) }), /2,000/);
+  await assert.rejects(rt.achieve({ ...base, task: "x".repeat(12001) }), /12,000/);
   await assert.rejects(rt.achieve({ ...base, checks: [] }), /checks are required/);
   await assert.rejects(rt.achieve({ ...base, repo_path: tmpDir() }), /not inside a git work tree/);
   fs.writeFileSync(path.join(repo, ".git", "MERGE_HEAD"), git(repo, "rev-parse", "HEAD"));
@@ -328,4 +343,36 @@ test("lazy adapter registry: the real `fake` adapter runs end to end (STEALTHLAB
   await rt.cancelRun(run_id);
   const prod = new ExecRuntime({ env: { ...env, STEALTHLAB_EXEC_ALLOW_FAKE: "" } });
   assert.ok(!(await prod.listExecutors()).some((x) => x.id === "fake"), "fake is never selectable in production");
+});
+
+// ct-series-v7, sqlglot: a cheap answer that solves the issue was cut at the time limit and never checked
+test("an agent stopped at its time limit with a change made: the change is checked like a finished one's", async () => {
+  const repo = makeRepo();
+  const env = testEnv();
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { ...FIX, chatterMs: 60000 } }) });
+  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 2, hang_s: 30 });
+  const res = await rt.runResult(run_id, 30);
+  assert.equal(res.state, "verified", JSON.stringify(res.error));
+  assert.equal(res.checks[0].exit, 0);
+  assert.ok(readEvents(env, run_id).some((e) => e.event === "checked_at_limit" && e.reason === "timeout"));
+  await rt.cancelRun(run_id);
+});
+
+test("finishRun: the caller's time is up -- each agent still working hands in its change, which is checked", async () => {
+  const repo = makeRepo();
+  const env = testEnv();
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { ...FIX, chatterMs: 60000 } }) });
+  const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 600, hang_s: 600, goal_id: "g-1" });
+  await waitFor(async () => (await rt.runStatus(run_id)).state === "running");
+  await sleep(800);                                          // the stub has written its edit and keeps working
+  const t0 = Date.now();
+  await rt.finishRun(run_id);
+  const res = await rt.runResult(run_id, 30);
+  assert.ok(Date.now() - t0 < 15000);
+  assert.equal(res.state, "verified");
+  assert.equal(res.evidence.queued, true, "a handed-in run is an outcome the router learns from (a cancelled one is not)");
+  // a change that does not pass the check fails, as any other
+  const bad = runtime(testEnv(), { stub: stubAdapter({ scenario: { edits: [{ path: "calc.txt", content: "still broken\n" }], chatterMs: 60000 } }) });
+  const b = await bad.achieve({ repo_path: makeRepo(), task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", timeout_s: 2, hang_s: 30 });
+  assert.equal((await bad.runResult(b.run_id, 30)).state, "failed");
 });

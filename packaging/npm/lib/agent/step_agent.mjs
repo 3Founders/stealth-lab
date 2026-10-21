@@ -335,9 +335,20 @@ export function worktreeFingerprint(cwd) {
 // the task, or "". Never throws: a file that is missing, outside cwd or not text is simply left out.
 const PRELOAD_FILES = 3;
 const NAMED = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|json|ya?ml|toml|py|js|mjs|cjs|ts|tsx|jsx|sql|csv|html|css|go|rs|java|rb|sh))(?=$|[\s`'".,;:)!?])/g;
+// path:start-end in the task (StealthLab's "likely place" line, lib/locate.mjs): those lines, not the file's first 200
+const RANGED = /(?:^|[\s`'"(,])((?:[\w.-]+\/)*[\w.-]+\.(?:py|js|mjs|cjs|ts|tsx|jsx|go|rs|java|rb|sql|sh)):(\d+)-(\d+)(?=$|[\s`'".,;:)!?])/g;
 export function preloadNamedFiles(task, cwd) {
   const parts = [];
   const seen = new Set();
+  for (const m of String(task || "").matchAll(RANGED)) {
+    if (parts.length >= PRELOAD_FILES) break;
+    const [name, a, b] = [m[1], Number(m[2]), Number(m[3])];
+    seen.add(name);
+    try {
+      const text = toolReadFile(cwd, { path: name, start_line: a, num_lines: Math.max(1, b - a + 1) });
+      if (!text.includes("\u0000")) parts.push(`--- ${name} (lines ${a}-${b}) ---\n${text}`);
+    } catch { /* not there, outside cwd, or not a file */ }
+  }
   for (const m of String(task || "").matchAll(NAMED)) {
     const name = m[1];
     if (seen.has(name) || parts.length >= PRELOAD_FILES) continue;
@@ -374,7 +385,10 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   if (!cfg.base_url || !cfg.model_id) throw new Error("base_url and model_id are required");
   const extras = {};
   for (const [k, v] of Object.entries(cfg.request_extras || {})) { if (!PROTECTED.has(k)) extras[k] = v; }
-  const maxSteps = Math.min(100, Math.max(1, Number(cfg.max_steps) || 30));
+  // 30 tool calls was the default and nothing raised it: on real repositories our loop read the code for most of them and
+  // ended with no change at all (5 of 26 runs, survey stage 3, 2026-10-16) while Claude Code, driving the same model, had
+  // no cap. STEALTHLAB_AGENT_MAX_STEPS (default 80) or the task's own max_steps.
+  const maxSteps = Math.min(150, Math.max(1, Number(cfg.max_steps) || Number(process.env.STEALTHLAB_AGENT_MAX_STEPS) || 80));
   const maxCost = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
   const system = SYSTEM.replace("{max_steps}", String(maxSteps));
   // Some endpoints reject a system turn (General Compute's Gemma 4 answers 400 "invalid base64 image data",

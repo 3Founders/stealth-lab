@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execFileSync } from "node:child_process";
 
 import { childEnv, planSpawn, resolveCmdShim } from "../lib/exec/proc.mjs";
 import { refusalReason } from "../lib/exec/select.mjs";
@@ -99,4 +101,28 @@ test("POSIX: commands resolve without any .cmd handling", { skip: IS_WIN && "POS
   const plan = planSpawn("node", ["x"], process.env);
   assert.equal(plan.shell, false);
   assert.deepEqual(plan.args, ["x"]);
+});
+
+test("a worktree gets the files the project's install generated in its source tree, never secrets, caches or dependencies", async () => {
+  const { copyGeneratedFiles } = await import("../lib/exec/deps.mjs");
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "gen-repo-"));
+  const g = (cwd, ...a) => execFileSync("git", ["-C", cwd, ...a], { stdio: "pipe" });
+  g(repo, "init", "-q"); g(repo, "config", "user.email", "t@e"); g(repo, "config", "user.name", "t");
+  fs.mkdirSync(path.join(repo, "pkg", "__pycache__"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "node_modules", "x"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "build"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".gitignore"), "pkg/_version.py\n.env\n__pycache__/\nnode_modules/\nbuild/\n");
+  fs.writeFileSync(path.join(repo, "pkg", "__init__.py"), "from ._version import v\n");
+  g(repo, "add", "-A"); g(repo, "commit", "-q", "-m", "init");
+  fs.writeFileSync(path.join(repo, "pkg", "_version.py"), "v = '1.0'\n");          // what `pip install -e .` writes
+  fs.writeFileSync(path.join(repo, ".env"), "SECRET=1\n");
+  fs.writeFileSync(path.join(repo, "pkg", "__pycache__", "a.pyc"), "x");
+  fs.writeFileSync(path.join(repo, "node_modules", "x", "i.js"), "x");
+  fs.writeFileSync(path.join(repo, "build", "out.txt"), "x");
+  const wt = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gen-wt-")), "w");
+  g(repo, "worktree", "add", "-q", "--detach", wt, "HEAD");
+  assert.deepEqual(copyGeneratedFiles({ repo, dir: wt }), ["pkg/_version.py"]);
+  assert.equal(fs.readFileSync(path.join(wt, "pkg", "_version.py"), "utf8"), "v = '1.0'\n");
+  assert.ok(!fs.existsSync(path.join(wt, ".env")), "a dot-file never reaches the worktree");
+  assert.equal(g(wt, "status", "--porcelain").toString().trim(), "", "the copy is ignored: never part of an answer");
 });

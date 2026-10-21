@@ -228,7 +228,9 @@ export function removeClaudeHook(file) {
 // A CLAUDE.md block (lib/claude_md.mjs) tells the session what only it can do (record fixes, finish the survey worklist);
 // STEALTHLAB_CLAUDE_MD=off skips it. A second install replaces the block, never repeats it.
 export function installClaudeDispatch({ settingsFile, launch, env = process.env }) {
-  upsertClaudeHook(settingsFile, { command: launch.command, args: [...launch.args, "hook-prompt"] }, 1200, { guard: false });
+  // the prompt hook's kill timer must outlast dispatch's own limits (STEALTHLAB_PROMPT_HOOK_TIMEOUT_S; default 1200 s)
+  const hookS = Number(env.STEALTHLAB_PROMPT_HOOK_TIMEOUT_S) > 0 ? Number(env.STEALTHLAB_PROMPT_HOOK_TIMEOUT_S) : 1200;
+  upsertClaudeHook(settingsFile, { command: launch.command, args: [...launch.args, "hook-prompt"] }, hookS, { guard: false });
   uninstallExec({ env });                         // the delegation layer an older --with-exec install wrote
   writeConfig({ dispatch: true }, env);
   installClaudeMd(settingsFile, env);

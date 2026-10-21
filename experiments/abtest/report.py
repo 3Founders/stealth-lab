@@ -59,15 +59,27 @@ def summarise(rows: dict) -> str:
         cost = lambda rs: sum(float(r.get("total_cost_usd") or 0) for r in rs)  # noqa: E731
         solved = lambda rs: sum(bool(r.get("resolved")) for r in rs)  # noqa: E731
         secs = lambda rs: [float(r.get("seconds") or 0) for r in rs]  # noqa: E731
-        ca, cc = cost(a), cost(c)
-        cheap = sum(1 for r in c if any(x.get("state") == "verified" and x.get("role", "attempt") == "attempt"
-                                        and "claude" not in x.get("model", "") for x in r.get("attempts") or [])
-                    and r.get("turns", 0) == 0)
+        ca, cc = cost(a), cost(c)          # saving: what C costs less than A, as a share of A (negative: C costs more)
+        # a cheap answer delivered: a turn the cheap models handled (multi-turn: the session may still run later turns)
+        cheap = sum(1 for r in c if any(t.get("dispatched") for t in r.get("turn_log") or [])
+                    or (any(x.get("state") == "verified" and x.get("role", "attempt") == "attempt"
+                            and "claude" not in x.get("model", "") for x in r.get("attempts") or [])
+                        and r.get("turns", 0) == 0))
         skipped = sum(1 for r in c if not (r.get("attempts") or []))       # routing sent it straight to the session model
         lat = lambda xs: f"{pct(xs, 50):5.0f}/{pct(xs, 95):5.0f}/{pct(xs, 99):5.0f}"  # noqa: E731
         out.append(f"{suite:8} {len(ts):>4} | {solved(a):>8} {ca:>7.2f} | {solved(c):>8} {cc:>7.2f} "
-                   f"{(cc - ca) / ca * 100 if ca else 0:>6.0f}% | {lat(secs(a)):>17} | {lat(secs(c)):>17} | "
+                   f"{(ca - cc) / ca * 100 if ca else 0:>6.0f}% | {lat(secs(a)):>17} | {lat(secs(c)):>17} | "
                    f"{cheap:>7}/{len(ts):<7} | {skipped}/{len(ts)}")
+    # the turns the cheap models handled in C: changes ("Done by") and answers ("Answered by"), of all of C's turns
+    turns = [t for t in tasks for t in (rows[(t, "C")].get("turn_log") or [])]
+    if turns:
+        changes = sum(1 for t in turns if t.get("dispatched") and not t.get("answered"))
+        answers = sum(1 for t in turns if t.get("answered"))
+        out.append(f"\nC turns done by cheap models: {changes + answers} of {len(turns)} ({changes} changes, {answers} answers)")
+        grades = [(t.get("answer_grade") or {}).get("grade") for t in turns if t.get("answered")]
+        if grades:
+            out.append(f"C cheap answers, graded against the merged fix: {grades.count('correct')} correct, "
+                       f"{grades.count('incorrect')} incorrect, {grades.count('unclear')} unclear, {grades.count(None)} not graded")
     wrong = [(t, rows[(t, "C")].get("suite")) for t in tasks if not rows[(t, "C")].get("resolved")]
     both = [t for t, _ in wrong if not rows[(t, "A")].get("resolved")]
     out.append(f"\nC unsolved: {len(wrong)} (of which A also unsolved: {len(both)}): {[t for t, _ in wrong]}")

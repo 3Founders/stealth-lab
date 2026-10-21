@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -7,11 +7,18 @@ import path from "node:path";
 import { callFindWays, callTriage, formatKnowledge, hookPolicy, runPromptHook, shouldLookUp, triageUrl } from "../lib/hook.mjs";
 import { removeClaudeHook, upsertClaudeHook } from "../lib/clients.mjs";
 
+// fetch stubs open no socket, and a request's timeout (AbortSignal.timeout) does not keep the event loop alive by
+// design: without this, node ends the file at the first stub that waits for its timeout and cancels every test after
+// it (19 tests never ran). A real request's socket keeps the loop alive, so the product needs nothing of this.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
+
 const policy = hookPolicy({});
 
 test("policy: slash commands, short prompts and STEALTHLAB_HOOK=off are skipped", () => {
   assert.equal(shouldLookUp("/compact", policy), false);
-  assert.equal(shouldLookUp("fix it", policy), false);
+  assert.equal(shouldLookUp("fix it", policy), true, "no word count: the server's judge reads every prompt");
+  assert.equal(shouldLookUp("   ", policy), false);
   assert.equal(shouldLookUp("add a DOCX export to the report page with a download button", policy), true);
   assert.equal(shouldLookUp("add a DOCX export to the report page with a download button", hookPolicy({ STEALTHLAB_HOOK: "off" })), false);
 });
@@ -85,7 +92,7 @@ test("runPromptHook: writes additionalContext; fails open on errors", async () =
     settings: { url: "http://x/mcp" }, userAgent: "t", env: {},
     fetchImpl: async () => { throw new Error("down"); }, write: (s) => out2.push(s), log: (m) => logs.push(m) });
   assert.equal(out2.length, 0);
-  assert.match(logs[0], /no knowledge added/);
+  assert.ok(logs.some((l) => /no knowledge added/.test(l)), logs.join("\n"));
 });
 
 test("settings.json: hook upsert keeps other hooks; uninstall removes only ours", () => {
@@ -208,7 +215,7 @@ test("triage: STEALTHLAB_HOOK_TRIAGE=off never asks; the question has its own sh
   assert.equal(calls.filter((c) => c.triage).length, 0);
   assert.ok(calls.some((c) => c.rpc === "tools/call"));
   assert.equal(hookPolicy({ STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS: "1500" }).triageTimeoutMs, 1500);
-  assert.equal(hookPolicy({}).triageTimeoutMs, 4000);
+  assert.equal(hookPolicy({}).triageTimeoutMs, 30000, "a hang guard: no verdict means no dispatch");
   // a hung triage call is abandoned at its own timeout, not the lookup's 25 s
   const t0 = Date.now();
   const hung = (_u, init) => new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted"))));

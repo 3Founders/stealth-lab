@@ -6,6 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { dispatch, namedImages, specFailures, triedNote, writeSpecTests } from "../lib/dispatch.mjs";
 import { preloadNamedFiles } from "../lib/agent/step_agent.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "gpt-oss-120b|stealth"] };
 const MINE = "claude-opus-5-5|claude-code";
@@ -19,7 +20,7 @@ function setup() {
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n");
   fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                   STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off" }, repo };
 }
 const failTail = (t) => `FAILED ../specs/x/test_spec.py::${t}
@@ -145,24 +146,6 @@ test("an image task finds the model that can see even when it is not among the f
   assert.deepEqual(rt.calls.map((c) => c.model), ["glm-5.3-flash"]);
 });
 
-test("a large task goes only to the strong cheap model (profile strong: true), first in line; without one, to the session's model", async () => {
-  const { env, repo } = setup();
-  const exec = { executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3-flash"] } },
-    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true } } };
-  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify(exec));
-  const large = async () => ({ task: "build the whole API", files_hinted: [], acceptance: "", parts: [], clarity: "clear", kind: "code", size: "large" });
-  const rt = stub(repo, { "glm-5.3-flash": ["verified", ""], "gemma-4-31b-it": ["verified", ""] });
-  const e = { ...env, K: "k", STEALTHLAB_BRIEF: "on", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0" };
-  const d = await dispatch({ payload: { cwd: repo, prompt: "implement every endpoint of the contract" }, reply: { model_plan: { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-5.3-flash|stealth"] } },
-    root: repo, mine: MINE, env: e, runtime: rt, briefImpl: large });
-  assert.equal(d?.handled, true);
-  assert.deepEqual(rt.calls.map((c) => c.model), ["glm-5.3-flash"]);
-  delete exec.profiles["glm-5.3-flash"].strong;
-  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify(exec));
-  assert.equal(await dispatch({ payload: { cwd: repo, prompt: "implement every endpoint of the contract" }, reply: { model_plan: PLAN },
-    root: repo, mine: MINE, env: e, runtime: stub(repo, {}), briefImpl: large }), null);
-});
-
 test("the strong cheap model is the last cheap try by default (never cut by max rungs); STRONG_FIRST=on puts it first", async () => {
   const { env, repo } = setup();
   fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3"] } },
@@ -257,4 +240,91 @@ test("test-first: '# AMBIGUOUS: none' is not an ambiguity flag; a real one is", 
   }
   const real = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env, runClaude: reply("# AMBIGUOUS: double could mean x*2 or x+x as strings") });
   assert.match(real.ambiguous, /x\*2 or x\+x/);
+});
+
+test("the cheap model's task carries the likely place; an area where cheap models lost 3 times is not dispatched", async () => {
+  const { env, repo } = setup();
+  const { recordArea } = await import("../lib/areas.mjs");
+  const e = { ...env, STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_EXPLORE: "0" };
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", ""], "minimax-m2-7": ["verified", ""], "gpt-oss-120b": ["verified", ""] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env: e, runtime: rt });
+  assert.match(rt.calls[0].task, /Likely place in this repository[^\n]*calc\.py:\d+-\d+/);
+  const fresh = setup().repo;                          // the first dispatch won in calc.py there: a win keeps an area open
+  for (let i = 0; i < 3; i++) recordArea(fresh, "calc.py", false);
+  const rt2 = stub(fresh, { "gemma-4-31b-it": ["verified", ""] });
+  assert.equal(await dispatch({ payload: { cwd: fresh, prompt: "Fix calc.py so x is 3" }, reply: { model_plan: PLAN }, root: fresh, mine: MINE, env: e, runtime: rt2 }), null);
+  assert.equal(rt2.calls.length, 0);
+  const rt3 = stub(fresh, { "gemma-4-31b-it": ["verified", ""], "minimax-m2-7": ["verified", ""], "gpt-oss-120b": ["verified", ""] });
+  const d = await dispatch({ payload: { cwd: fresh, prompt: "Fix calc.py so x is 3" }, reply: { model_plan: PLAN }, root: fresh, mine: MINE,
+    env: { ...e, STEALTHLAB_DISPATCH_AREA_SKIP: "off" }, runtime: rt3 });
+  assert.equal(d.handled, true, "switch off: dispatched as before");
+});
+
+test("the strong model's extra time ends when it has finished: a hung small model is cut at the plain limit", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://example.test/v1", key_env: "K", strong: true, first: true } } }));
+  const calls = [];
+  const rt = { calls,
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) {
+      const m = calls[Number(id.slice(2)) - 1].model;
+      if (m === "glm-5.3-flash") return { run_id: id, state: "failed", cost_usd: 0.001, checks: [{ tail: "x" }] };
+      return new Promise(() => {});                         // the small model never finishes
+    },
+    async applyRun() { return { files: [] }; }, async cancelRun() {} };
+  const t0 = Date.now();
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-5.3-flash|stealth"] } },
+    root: repo, mine: MINE, env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_TIMEOUT_S: "10",
+      STEALTHLAB_DISPATCH_PARALLEL: "on", STEALTHLAB_DISPATCH_MODEL_CAP: "off" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.ok(Date.now() - t0 < 60000, `ended at the plain limit, not 240 s later (${Date.now() - t0} ms)`);
+});
+
+test("test-first hedged: a slow open writer gets the fallback beside it after the hedge time; the first usable tests win", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "glm-5.3" } } }));
+  fs.writeFileSync(path.join(repo, "solution.py"), "def f(x):\n    pass\n");
+  const good = (cost) => ({ stdout: JSON.stringify({ result: "```python\nfrom solution import f\n\ndef test_neg():\n    assert f(-1) == -2\n```", total_cost_usd: cost }) });
+  const asked = [];
+  const runClaude = (args) => {
+    const m = args[args.indexOf("--model") + 1];
+    asked.push(m);
+    return m === "glm-5.3" ? new Promise((res) => setTimeout(() => res(good(0.001)), 3000)) : good(0.03);   // the open one is slow
+  };
+  const e = { ...env, K: "k", STEALTHLAB_DISPATCH_TESTFIRST_MODEL: "glm-5.3", STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S: "1" };
+  const t0 = Date.now();
+  const spec = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env: e, runClaude });
+  assert.ok(spec?.file && Date.now() - t0 < 2900, "the fallback's tests, without waiting for the slow writer");
+  assert.deepEqual(asked, ["glm-5.3", "claude-sonnet-5-5"]);
+  await new Promise((r) => setTimeout(r, 2500));
+  const led = fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8");
+  assert.match(led, /"what":"test-first","model":"claude-sonnet-5-5"/);
+  assert.match(led, /"what":"test-first-unused","model":"glm-5.3","cost_usd":0.001/, "the slower call is on the ledger too");
+  asked.length = 0;
+  const fast = await writeSpecTests({ prompt: "double x", root: repo, mine: MINE, env: { ...e, STEALTHLAB_DISPATCH_TESTFIRST_HEDGE_S: "10" }, runClaude });
+  assert.ok(fast?.file);
+  assert.deepEqual(asked, ["glm-5.3"], "done within the hedge time: only the open writer is asked");
+});
+
+test("cheap models at once: the limit is per provider, so a model on another provider does not take a slot", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3-flash"] } },
+    profiles: { "glm-5.3-flash": { openai_base_url: "https://zai.example.test/v1", key_env: "K", strong: true, first: true } } }));
+  const started = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = [];
+  const rt = { calls,
+    async achieve(input) { calls.push(input); started.push(input.model); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) { await gate; return { run_id: id, state: "failed", cost_usd: 0.001, checks: [{ tail: "x" }] }; },
+    async applyRun() { return { files: [] }; }, async cancelRun() {} };
+  const p = dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_FASTEST_FIRST: "off", STEALTHLAB_DISPATCH_PARALLEL: "on",
+           STEALTHLAB_DISPATCH_MODEL_CAP: "off", STEALTHLAB_DISPATCH_TIMEOUT_S: "10" }, runtime: rt });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.deepEqual([...started].sort(), ["gemma-4-31b-it", "glm-5.3-flash", "minimax-m2-7"], "two on the shared provider plus flash on its own");
+  release();
+  await p;
 });

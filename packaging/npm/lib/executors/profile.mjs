@@ -52,6 +52,12 @@ function price(name, field, value) {
   return value;
 }
 
+function tierOf(name, value) {
+  if (value === undefined || value === null) return 1;
+  if (!Number.isInteger(value) || value < 1 || value > 3) throw new Error(`profile ${name}: tier must be 1, 2 or 3`);
+  return value;
+}
+
 function flag(name, field, value) {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "boolean") throw new Error(`profile ${name}: ${field} must be true or false (or absent when unknown)`);
@@ -101,10 +107,23 @@ export function normaliseProfile(name, raw) {
     // first wave (a fast strong model loses nothing there)
     strong: flag(name, "strong", raw.strong) ?? false,
     first: flag(name, "first", raw.first) ?? false,
+    // a middle model (tier 2+, GLM-5.3, say): dispatch tries it only after every cheaper model has finished without an
+    // accepted answer, before the session's own model, with time of its own (STEALTHLAB_DISPATCH_TIER_S)
+    tier: tierOf(name, raw.tier),
+    // the model's context window and output cap at its provider (tokens): the bridge keeps a request's max_tokens inside
+    // them -- Claude Code does not know an open model's limits (gemma: "max_tokens or model output limit was reached")
+    context_window: posInt(name, "context_window", raw.context_window),
+    max_output_tokens: posInt(name, "max_output_tokens", raw.max_output_tokens),
   });
 }
 
 // All profiles in a config object, validated. A bad entry throws: failing loudly beats half-applied routing.
+function posInt(name, field, v) {
+  if (v === undefined || v === null) return undefined;
+  if (!Number.isInteger(v) || v <= 0) throw new Error(`profile ${name}: ${field} must be a positive whole number of tokens`);
+  return v;
+}
+
 export function normaliseProfiles(rawProfiles) {
   const out = {};
   if (!rawProfiles || typeof rawProfiles !== "object" || Array.isArray(rawProfiles)) return out;

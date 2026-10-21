@@ -217,3 +217,28 @@ def test_find_ways_without_triage_is_unchanged(monkeypatch, triage_on):
     monkeypatch.setattr(srv, "_find_ways_impl", impl)
     body = json.loads(_run(srv.find_ways("add retry with exponential backoff to the http client", FakeContext())))
     assert "triage" not in body and judge.calls == []
+
+
+def test_jev_also_answers_whether_it_asks_for_a_change_now_with_the_earlier_turns_as_context():
+    remote = FakeRemote({"kind": {"choice": "repo_specific", "confidence": 0.8}, "work": {"choice": "conversation", "confidence": 0.9}})
+    jev = JEVProvider(remote, {"triage"})
+    # sqlglot-4051 turn 2 (ct-series-v5): a confirmation of the fix the assistant had just made
+    got = _run(jev.triage("So it needs the group index written out explicitly when converting.",
+                          "Assistant: I fixed it: Presto -> Spark now writes REGEXP_EXTRACT(a, p, 0)."))
+    assert got == {"kind": "repo_specific", "confidence": 0.8, "work": "conversation"}
+    state, questions = remote.calls[0]
+    assert state.startswith("Earlier turns (oldest first; context only):\nAssistant: I fixed it")
+    assert "Request:\nSo it needs the group index" in state
+    assert set(questions["work"]["criteria"]) == set(prompts.WORK_KINDS) == {"change", "unclear_change", "answer", "conversation"}
+
+
+def test_a_reply_without_a_work_answer_has_no_work_verdict():
+    assert prompts.parse_triage({"kind": "trivial_edit", "confidence": 0.9}) == {"kind": "trivial_edit", "confidence": 0.9}
+    assert prompts.parse_triage({"kind": "trivial_edit", "work": "maybe", "confidence": 0.9}) == {"kind": "trivial_edit", "confidence": 0.9}
+
+
+def test_openai_compatible_provider_answers_work_too():
+    client = FakeOpenAI('{"kind": "reusable_task", "work": "change", "confidence": 0.9}')
+    p = OpenAICompatProvider("gemini", [client], "gemini-x")
+    assert _run(p.triage("fix calc.py so x is 2", "Developer: calc is wrong")) == {"kind": "reusable_task", "confidence": 0.9, "work": "change"}
+    assert "Earlier turns" in client.seen[0]["messages"][1]["content"]

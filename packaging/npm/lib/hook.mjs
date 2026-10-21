@@ -26,7 +26,7 @@
 // 2026-09-28 (docs/findings.md): full is the only mode shown to help (open models, +8.5); on DS-1000 Sonnet
 // gained nothing from full (+1.2) and an estimate of lean from rounds 5 and 7 was no better for Sonnet and
 // lost half the open models' gain -- so the default stays full, and the switch exists for testing and cost.
-import { parseOverride } from "./brief.mjs";
+import { parseOverride, sessionTurns, turnsText } from "./brief.mjs";
 import { markShown, pendingLines, recordDispatch } from "./continuity.mjs";
 import { maybeStartSurvey } from "./auto_survey.mjs";
 import fs from "node:fs";
@@ -49,10 +49,13 @@ export function hookPolicy(env = process.env) {
   try { strong = new RegExp(env.STEALTHLAB_HOOK_STRONG_MODELS || "opus|sonnet|fable", "i"); } catch { strong = /opus|sonnet|fable/i; }
   return {
     enabled: (env.STEALTHLAB_HOOK || "on").toLowerCase() !== "off",
-    minWords: Number(env.STEALTHLAB_HOOK_MIN_WORDS || 6),
+    // no word count decides what is a task: the server's judge reads every prompt (STEALTHLAB_HOOK_MIN_WORDS raises it)
+    minWords: Number(env.STEALTHLAB_HOOK_MIN_WORDS || 1),
     timeoutMs: Number(env.STEALTHLAB_HOOK_TIMEOUT_MS || 25000),
     triage: (env.STEALTHLAB_HOOK_TRIAGE || "on").toLowerCase() !== "off",
-    triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 4000),
+    // a hang guard only: no verdict means no dispatch, so a slow judge must not be cut off (the server's own judge limit
+    // is find_ways_triage_timeout_ms)
+    triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 30000),
     routing: (env.STEALTHLAB_HOOK_ROUTING || "on").toLowerCase() !== "off",
     candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES, env),
     // how sure a plan must be before it trusts a cheaper model (server defaults: 0.90 / 0.90). Lower = cheaper
@@ -185,9 +188,15 @@ export async function ensureDispatchRoot(cwd) {
   }
 }
 
+// Messages Claude Code itself puts in the prompt stream are not the person asking for anything: a background task's
+// notification arrived as a "prompt" after a task was done, was dispatched as a new task (5 parts planned from the fix
+// just made) and became a library title (Modal, sqlglot-4051, 2026-10-15).
+const HARNESS_MESSAGE = /^<(task-notification|system-reminder|command-name|command-message|command-args|local-command-stdout|local-command-stderr|bash-input|bash-stdout|bash-stderr|user-prompt-submit-hook)\b/i;
+export const isHarnessMessage = (prompt) => HARNESS_MESSAGE.test(String(prompt || "").trim());
+
 export function shouldLookUp(prompt, policy) {
   const text = String(prompt || "").trim();
-  if (!policy.enabled || !text || text.startsWith("/")) return false;
+  if (!policy.enabled || !text || text.startsWith("/") || isHarnessMessage(text)) return false;
   return (text.match(/\w+/g) || []).length >= policy.minWords;
 }
 
@@ -294,12 +303,14 @@ export function triageUrl(mcpUrl) {
 
 // Does this prompt need a lookup? One POST, one judgment. Returns the server's verdict object, or null when there is
 // none (timeout, error, a server without the route): the caller then looks the prompt up, as it always did.
-export async function callTriage({ url, token, userAgent, query, timeoutMs, fetchImpl = globalThis.fetch }) {
+// context: the conversation's earlier turns (turnsText), so the judge can tell a confirmation from a new request.
+export async function callTriage({ url, token, userAgent, query, context = "", timeoutMs, fetchImpl = globalThis.fetch }) {
   const target = triageUrl(url);
   if (!target) return null;
   try {
     const res = await fetchImpl(target, {
-      method: "POST", signal: AbortSignal.timeout(timeoutMs), body: JSON.stringify({ query: String(query).slice(0, 1500) }),
+      method: "POST", signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({ query: String(query).slice(0, 1500), ...(context ? { context: String(context).slice(-4000) } : {}) }),
       headers: { accept: "application/json", "content-type": "application/json", "user-agent": userAgent,
                  ...(token ? { authorization: `Bearer ${token}` } : {}) },
     });
@@ -511,19 +522,45 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
   const mode = deliveryMode(policy, policy.strongMode ? model : null);
   if (mode === "off") return;
   let planOnly = false;                  // the triage said no knowledge is needed: the lookup is for dispatch's plan only
-  if (policy.triage) {
-    const verdict = await callTriage({
-      url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
+  // the server's judgment of this prompt (JEV first): whether a lookup is worth it, and -- for dispatch -- whether it asks
+  // for a change now. It reads the earlier turns too: "so it needs X?" after a fix is a confirmation, not a new task.
+  let verdict = null;
+  if (policy.triage || dispatchInstalled(env)) {
+    const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.session_id, current: payload.prompt, env });
+    verdict = await callTriage({
+      url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(), context: turnsText(turns),
       timeoutMs: policy.triageTimeoutMs, fetchImpl,
     });
+    log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
+  }
+  // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
+  // the session's model would run (lib/answer.mjs); a reply not called good is never shown
+  if (dispatchInstalled(env) && override.kind !== "cheap" && (verdict?.work === "answer" || verdict?.work === "conversation")) {
+    try {
+      const { answerTurn } = await import("./answer.mjs");
+      const a = await answerTurn({ prompt: payload.prompt, root: payload.cwd || process.cwd(), transcriptPath: payload.transcript_path,
+                                   sessionId: payload.session_id, env, fetchImpl, log });
+      if (a?.handled) {
+        try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
+        recordDispatch({ sessionId: payload.session_id, model: a.model, files: [], task: promptTitle(payload.prompt),
+                         prompt: payload.prompt, text: a.text, kind: "answer" }, { env });
+        write(JSON.stringify({ decision: "block", reason: a.text }));
+        return;
+      }
+    } catch (err) {
+      log(`stealthlab hook: answer skipped (${err.message})`);
+    }
+  }
+  if (policy.triage) {
     if (verdict && verdict.needs_retrieval === false) {
       // No lookup for this prompt. Clear the previous prompt's remembered Goal so the capture hooks
       // (lib/capture_hook.mjs) never report this prompt's outcome against it.
       try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
       // With dispatch installed a quick fix ("add is broken, fix it") still goes to find_ways -- for the model plan
       // only: dispatch needs it, and the triage judges knowledge, not whether cheap models can do the task. Nothing
-      // the lookup returns reaches the session's context unless a dispatch happened.
-      if (!dispatchInstalled(env)) return;
+      // the lookup returns reaches the session's context unless a dispatch happened. A prompt the judge says asks for
+      // no change now has nothing for dispatch either: no lookup at all.
+      if (!dispatchInstalled(env) || (verdict.work !== "change" && override.kind !== "cheap")) return;
       planOnly = true;
     }
   }
@@ -546,10 +583,11 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
     const mine = model ? `${model}|claude-code` : null;
     try {
       const { dispatch, triedNote } = await import("./dispatch.mjs");
-      const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap" });
+      const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict });
       if (d?.handled) {
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
-        recordDispatch({ sessionId: payload.session_id, model: d.model, files: d.files, task: promptTitle(payload.prompt) }, { env });
+        recordDispatch({ sessionId: payload.session_id, model: d.model, files: d.files, task: promptTitle(payload.prompt),
+                         prompt: payload.prompt, text: d.text, root: payload.cwd || root }, { env });
         write(JSON.stringify({ decision: "block", reason: d.text }));
         return;
       }

@@ -9,6 +9,7 @@ import { WINS_MAX, median, modelCapS, modelSpeeds, modelWins, orderFastestFirst,
 import { parseRouting, recordObs, requestPayload, upsertRoutes } from "../lib/library.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { loadAttempts, replay } from "../scripts/replay_model_cap.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -113,7 +114,7 @@ function setup(envExtra = {}) {
   fs.mkdirSync(path.join(root, ".stealth"));
   fs.writeFileSync(path.join(root, "calc.py"), "x = 1\n");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { root, env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
+  return { root, env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
                         STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_PARALLEL: "on", STEALTHLAB_DISPATCH_MAX_PARALLEL: "2", STEALTHLAB_DISPATCH_CAP_FLOOR_S: "0.3", ...envExtra } };
 }
 const seed = (root, model, secs, n = 5) => { for (let i = 0; i < n; i++) recordModelWin(root, model, "stealth", secs); };
@@ -164,6 +165,23 @@ test("dispatch: the capped run is cancelled at its model's cap, not before, and 
   assert.equal(capped.state, "capped at 0.3 s");
   assert.ok(rt.cancelled.includes("r-minimax-m2-7"));
   assert.ok(!parseRouting(routing(s.root)).obs.some((o) => o.model === "minimax-m2-7"), "no OBS for the capped run: it is not a failure");
+});
+
+test("dispatch: with a runtime that can hand in, a capped run hands in its change and a passing one is delivered", async () => {
+  const s = setup({ STEALTHLAB_DISPATCH_MAX_PARALLEL: "1" });
+  seed(s.root, "minimax-m2-7", 0.1);                                        // cap = 0.3 s
+  const rt = runtime(s.root, { "minimax-m2-7": { delay: 5000 }, "gpt-oss-120b": { delay: 5000 }, "gemma-4-31b-it": { delay: 5000 } });
+  const finished = [];
+  // handing in ends the run with its change checked: here it passes (the stub's "verified")
+  rt.finishRun = async (id) => { finished.push(id); return {}; };
+  const rr = rt.runResult.bind(rt);
+  rt.runResult = async (id) => (id === "r-minimax-m2-7" ? (await new Promise((r) => { const t = setInterval(() => { if (finished.includes(id)) { clearInterval(t); r(); } }, 20); }),
+    { run_id: id, state: "verified", cost_usd: 0.001, diff: { files: ["calc.py"] }, checks: [{ tail: "ok" }] }) : rr(id));
+  const d = await run(s, rt);
+  assert.deepEqual(finished, ["r-minimax-m2-7"], "the cap hands in, it does not cancel");
+  assert.ok(!rt.cancelled.includes("r-minimax-m2-7"));
+  assert.equal(d.handled, true);
+  assert.equal(d.unit, "minimax-m2-7|stealth");
 });
 
 test("dispatch: a model with fewer than 5 wins has no cap and a slow run that wins still wins", async () => {

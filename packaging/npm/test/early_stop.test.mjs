@@ -296,3 +296,34 @@ test("edit_file on a Windows (CRLF) file: a multi-line old_text copied with \n s
   assert.equal(await runTool("edit_file", { path: "a.js", old_text: "function f() {\n  return 1;", new_text: "function f() {\n  return 2;" }, { cwd: dir, env: {} }), "edited a.js");
   assert.equal(fs.readFileSync(path.join(dir, "a.js"), "utf8"), "function f() {\r\n  return 2;\r\n}\r\n");
 });
+
+test("rule d: reading new parts of the code after a first edit is not a stall; repeats are, and endless browsing stops at 3x", () => {
+  const d = new StallDetector({ noChangeSteps: 6 });
+  d.start("fp0");
+  d.observe({ name: "write_file", args: { path: "repro.py" }, result: "ok", hash: "h1", fingerprint: "fp1" });   // a scratch script first
+  for (let i = 0; i < 10; i++) assert.equal(d.observe({ name: "read_file", args: { path: "pkg/core.py", start_line: 1 + 200 * i } , result: "x" }), null, "new ranges");
+  for (let i = 0; i < 5; i++) assert.equal(d.observe({ name: "read_file", args: { path: "pkg/core.py", start_line: 1 }, result: "x" }), null, "5 repeats: under 6");
+  assert.equal(d.observe({ name: "search", args: { query: "a" }, result: "x" }), null, "16 calls");
+  assert.equal(d.observe({ name: "search", args: { query: "b" }, result: "x" }), null, "17 calls");
+  assert.equal(d.observe({ name: "search", args: { query: "c" }, result: "x" })?.rule, "d", "18 calls without a change: stopped");
+  const r = new StallDetector({ noChangeSteps: 6 });
+  r.start("fp0");
+  r.observe({ name: "write_file", args: { path: "a.py" }, result: "ok", hash: "h1", fingerprint: "fp1" });
+  for (let i = 0; i < 6; i++) r.observe({ name: "read_file", args: { path: "a.py" }, result: "x" });   // the first read is new
+  assert.equal(r.observe({ name: "read_file", args: { path: "a.py" }, result: "x" })?.rule, "d", "the same read over and over: stuck");
+});
+
+test("rule d: testing an edit with new commands or new results is not a stall; the same command and result again is", () => {
+  const d = new StallDetector({ noChangeSteps: 6 });
+  d.start("fp0");
+  d.observe({ name: "edit_file", args: { path: "a.py" }, result: "ok", hash: "h1", fingerprint: "fp1" });
+  for (let i = 0; i < 8; i++) {
+    assert.equal(d.observe({ name: "run_shell", args: { command: `python -c "probe ${i}"` }, result: `[exit 1]\nout ${i}`, fingerprint: "fp1" }), null);
+  }
+  const s = new StallDetector({ noChangeSteps: 6 });
+  s.start("fp0");
+  s.observe({ name: "edit_file", args: { path: "a.py" }, result: "ok", hash: "h1", fingerprint: "fp1" });
+  let r = null;
+  for (let i = 0; i < 7 && !r; i++) r = s.observe({ name: "run_shell", args: { command: "pytest -q" }, result: "[exit 1]\n1 failed", fingerprint: "fp1" });
+  assert.equal(r?.rule, "d", "the same command, the same result, over and over");
+});

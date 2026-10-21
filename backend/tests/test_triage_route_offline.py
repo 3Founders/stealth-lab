@@ -207,3 +207,23 @@ def test_the_window_forgets_old_calls():
     assert window.allow("other")                                        # per caller
     now[0] = 61
     assert window.allow("u")
+
+
+class ContextJudge(FakeJudge):
+    def __init__(self, work, **kw):
+        super().__init__(**kw)
+        self.work = work
+
+    async def judge_triage(self, query, context=""):
+        self.calls.append((query, context))
+        return ChainResult(True, {"kind": self.kind, "confidence": self.confidence, "work": self.work}, provider="jev", model="jev-latest")
+
+
+def test_the_route_takes_the_earlier_turns_and_says_whether_it_asks_for_a_change(monkeypatch):
+    judge = ContextJudge("change", kind="reusable_task")
+    _use_judge(monkeypatch, judge)
+    r = _post({"query": "yes, do it", "context": "Assistant: Shall I fix calc.py so x is 2?"})
+    assert r.status_code == 200 and r.json()["work"] == "change", r.json()
+    assert judge.calls == [("yes, do it", "Assistant: Shall I fix calc.py so x is 2?")]
+    # find_ways follows with the request alone: the verdict is reused, not judged again
+    assert _run(srv._find_ways_triage("yes, do it")).work == "change" and len(judge.calls) == 1

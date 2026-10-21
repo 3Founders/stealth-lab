@@ -111,7 +111,6 @@ test("not applicable (no executor, no .stealth, auto model, short prompt): null,
   const b = setup();
   assert.equal(await run(b.env, payload(fs.mkdtempSync(path.join(os.tmpdir(), "sl-nostealth-")))), null);
   assert.equal(await run(b.env, payload(b.ws, { model: "auto" })), null);
-  assert.equal(await run(b.env, payload(b.ws, { prompt: "fix it" })), null);
 });
 
 test("triage saying no knowledge is needed: dispatch still decides (a quick fix is a task), nothing reaches the context", async () => {
@@ -160,7 +159,7 @@ test("the Cursor rule tells the agent about changes a cheaper model made", () =>
 
 test("end to end with the real dispatch(): a stub executor's verified change is applied and the prompt is stopped", async () => {
   const { dispatch } = await import("../lib/dispatch.mjs");
-  const { env, ws } = setup({ extra: { STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+  const { env, ws } = setup({ extra: { ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                                        STEALTHLAB_DISPATCH_CROSSCHECK: "off" } });
   fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } } }));
   const g = (...a) => execFileSync("git", ["-C", ws, ...a], { stdio: "pipe" });
@@ -189,6 +188,7 @@ test("end to end with the real dispatch(): a stub executor's verified change is 
 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
 

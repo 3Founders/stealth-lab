@@ -341,9 +341,11 @@ export function linkKnowledge(lib) {
   for (const e of lib.entries) {
     if (e.outcome === "fail") continue;                 // a failed attempt is not knowledge to reuse
     if (!e.goal) {
-      const id = goalIdFor(e.title);
+      // goalTitle: the problem's KIND in general terms (reshapeEntry), so similar fixes share one Goal
+      const title = e.goalTitle || e.title;
+      const id = goalIdFor(title);
       if (!goals.has(id)) {
-        const g = { id, title: e.title, parent: null, g: e.g || null, unit: e.unit || ".", tags: [...(e.tags || [])], extra: [] };
+        const g = { id, title, parent: null, g: e.g || null, unit: e.unit || ".", tags: [...(e.tags || [])], extra: [] };
         goals.set(id, g);
         lib.goals.push(g);
       }
@@ -352,10 +354,12 @@ export function linkKnowledge(lib) {
     }
     for (const p of e.procs || []) {
       if (p.way) continue;
-      const steps = (p.steps || []).map((st) => ({ order: st.order, kind: st.kind, do: st.do, check: st.check || null, extra: [] }));
+      // the step's at= / gives= / needs= carry over to the Way (they shape the plan; the id ignores them)
+      const steps = (p.steps || []).map((st) => ({ order: st.order, kind: st.kind, do: st.do, check: st.check || null,
+                                                   extra: (st.extra || []).filter((f) => /^(at|gives|needs)=/.test(f)) }));
       const id = wayIdFor(p.name, steps);
       if (!ways.has(id)) {
-        const w = { id, name: p.name, goal: e.goal, p: p.p || null, v: 1, steps, extra: [] };
+        const w = { id, name: p.name, goal: e.goal, p: p.p || null, v: 1, steps, extra: [...(p.wayExtra || [])] };
         ways.set(id, w);
         lib.ways.push(w);
       }
@@ -393,6 +397,32 @@ export function linkLibrary(root) {
   }
   const built = buildIndex(root);
   return { linked: added, goals: lib.goals.length, ways: lib.ways.length, entries: lib.entries.length, changed: built.changed };
+}
+
+// An entry re-linked to its GENERAL Goal and Way (lib/way_describe.mjs): the Goal titled in general terms (so a similar
+// fix joins it), the Way named and its steps worded with {slot} parameters (so the same kind of fix is one Way), the slot
+// values of THIS fix on its PROC line (slots=name:value,...), the slot names and invariants on the Way (slots=, inv=).
+// The steps keep their at= / gives= / needs=. Goals and Ways nothing uses any more are dropped. -> true when changed.
+export function reshapeEntry(root, id, { goal, way, steps = [], slots = {}, invariants = [] } = {}) {
+  const lib = loadLibrary(root);
+  const e = lib.entries.find((x) => x.id === id);
+  const p = e?.procs?.[0];
+  if (!e || !p || !goal || steps.length !== (p.steps || []).filter((s) => (s.extra || []).some((f) => f.startsWith("at="))).length) return false;
+  let k = 0;
+  for (const s of p.steps) if ((s.extra || []).some((f) => f.startsWith("at="))) s.do = steps[k++];
+  p.name = way || goal;
+  const slotItems = Object.entries(slots).map(([n, v]) => `${escItem(n)}:${escItem(v)}`);
+  p.extra = [...(p.extra || []).filter((f) => !f.startsWith("slots=")), ...(slotItems.length ? [`slots=${slotItems.join(",")}`] : [])];
+  e.goal = null;
+  p.way = null;
+  e.goalTitle = goal;
+  p.wayExtra = [...(Object.keys(slots).length ? [`slots=${Object.keys(slots).map(escItem).join(",")}`] : []),
+                ...(invariants.length ? [`inv=${invariants.map(escItem).join(",")}`] : [])];
+  linkKnowledge(lib);
+  pruneKnowledge(lib);
+  writeIfChanged(P(root, "library.md"), renderLibrary(lib));
+  buildIndex(root);
+  return true;
 }
 
 // Goals and Ways that no entry in library.md links to any more (their entries were archived). A Goal another kept
@@ -646,7 +676,7 @@ function writeIfChanged(file, text) {
 // .stealth/.gitignore: the generated files, rebuilt from library.md / the server. library.md, library/solutions
 // and SUMMARY's sources stay committable -- whether .stealth/ is committed at all is the repo owner's choice.
 const GITATTRIBUTES = "library.md merge=union\n";
-const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json"];
+const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json", "areas.md", "dag_state.json"];
 
 export function ensureGitFiles(root) {
   const attr = P(root, ".gitattributes");
@@ -966,7 +996,9 @@ export function addEntry(root, opts, { gitImpl = git, now = new Date(), check = 
   const touched = diffPaths(diff);
   const shas = touched.length ? currentShas(root, touched, { gitImpl }) : new Map();
   const solution = diff ? `solutions/${id}.diff` : null;
-  const steps = (opts.steps || []).map((s, i) => ({ order: i + 1, kind: s.kind || "instruction", do: String(s.do || ""), check: s.check || null }));
+  // extra: the step's at= / gives= / needs= fields (lib/way_extract.mjs), already escaped k=v strings
+  const steps = (opts.steps || []).map((s, i) => ({ order: i + 1, kind: s.kind || "instruction", do: String(s.do || ""), check: s.check || null,
+                                                     ...(Array.isArray(s.extra) && s.extra.length ? { extra: s.extra.map(String) } : {}) }));
   if (opts.check && !steps.some((s) => s.check)) steps.push({ order: steps.length + 1, kind: "action", do: "Run the check", check: opts.check });
   const entry = {
     id, title, unit: opts.unit || ".", g: opts.g || null, outcome, status: "current", verified_at: verifiedAt,

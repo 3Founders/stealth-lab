@@ -31,7 +31,9 @@ export function repoRoot(cwd) {
 }
 
 function detached(root, env) {
-  const child = spawn(process.execPath, [BIN, "survey", root], { cwd: root, detached: true, stdio: "ignore", windowsHide: true, env });
+  // --fill: then a cheap model works the survey's worklist (lib/survey/fill.mjs), still detached
+  const fill = (env.STEALTHLAB_SURVEY_FILL || "on").toLowerCase() !== "off" ? ["--fill"] : [];
+  const child = spawn(process.execPath, [BIN, "survey", root, ...fill], { cwd: root, detached: true, stdio: "ignore", windowsHide: true, env });
   child.on("error", () => {});
   child.unref();
 }

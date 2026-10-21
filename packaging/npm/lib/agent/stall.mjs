@@ -10,7 +10,8 @@
 //   b  a file came back to a content it already had (an edit undone, then redone): it is oscillating
 //   c  three tool calls in a row failed (an edit that never matches, a path that does not exist): it is not reading its errors
 //   d  six tool calls in a row without any change to the worktree's diff, AFTER the first change was made: it has stopped
-//      making progress (exploring before the first edit is never counted: the first reads and searches are the work)
+//      making progress (exploring before the first edit is never counted: the first reads and searches are the work).
+//      A read, search or listing not made before is new information, not a stall: it counts only toward 3x the threshold
 //
 // A stalled run is reported as failed (with the rule that stopped it) and counted against its model: it did fail. Thresholds:
 // STEALTHLAB_EARLY_STOP_STEPS (d, default 6), STEALTHLAB_EARLY_STOP_ERRORS (c, default 3). STEALTHLAB_EARLY_STOP=off turns the
@@ -61,7 +62,9 @@ export class StallDetector {
     this.lastFail = null;            // {cmd, sig, paths}
     this.fp = null;                  // the worktree's fingerprint now
     this.started = false;            // a change has been made
-    this.still = 0;                  // tool calls since the fingerprint last changed (once started)
+    this.still = 0;                  // tool calls since the fingerprint last changed (once started) that brought nothing new
+    this.browse = 0;                 // reads/searches of something not read before, since the last change
+    this.seenCalls = new Set();      // read/search/list calls made so far (name + arguments)
   }
 
   // the worktree as the run starts
@@ -111,10 +114,31 @@ export class StallDetector {
 
     if (this.errors >= this.errorRun) return { rule: "c", why: `${this.errors} tool calls in a row failed` };
 
+    // a read, search or listing it has not made before brings new information: on a large repository the agent often
+    // writes a scratch script first and then has to read its way to the code (Modal, jsonargparse: 7 of 25 cheap runs
+    // were stopped by rule d while reading new parts of the code). Only a repeat counts toward d; new reads count toward
+    // a looser ceiling (3x), so endless browsing still stops.
+    let fresh = false;
+    if ((name === "read_file" || name === "search" || name === "list_files") && !failed) {
+      const key = `${name}|${JSON.stringify(args, Object.keys(args || {}).sort())}`;
+      fresh = !this.seenCalls.has(key);
+      this.seenCalls.add(key);
+    }
+    // a shell command whose result it has not seen before is new information too: after editing, agents run the tests
+    // and probes 5-6 times in a row while debugging, and rule d stopped every one of them mid-way (Modal, sqlglot-4051:
+    // 4 of 4 stalled runs). The same command with the same output again is the loop rule d is for.
+    if (name === "run_shell") {
+      const key = `run_shell|${String(args.command || "").trim()}|${String(result).slice(0, 4000)}`;
+      fresh = !this.seenCalls.has(key);
+      this.seenCalls.add(key);
+    }
     if (fingerprint !== undefined && fingerprint !== null) {
-      if (fingerprint !== this.fp) { this.fp = fingerprint; this.started = true; this.still = 0; }
-      else if (this.started) this.still++;
-    } else if (this.started) this.still++;
+      if (fingerprint !== this.fp) { this.fp = fingerprint; this.started = true; this.still = 0; this.browse = 0; }
+      else if (this.started) { if (fresh) this.browse++; else this.still++; }
+    } else if (this.started) { if (fresh) this.browse++; else this.still++; }
+    if (this.started && this.browse + this.still >= this.noChangeSteps * 3) {
+      return { rule: "d", why: `${this.browse + this.still} tool calls in a row without any change to the worktree` };
+    }
     if (!this.started && this.fp !== null && this.fp0 !== undefined && this.fp !== this.fp0) this.started = true;
     if (this.started && this.still >= this.noChangeSteps) {
       return { rule: "d", why: `${this.still} tool calls in a row without any change to the worktree` };

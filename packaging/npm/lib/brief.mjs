@@ -1,24 +1,19 @@
-// The task brief: what the cheap models and the test writer are told FIRST (then the user's own words, see briefedPrompt), and the rule that
-// decides whether a prompt is dispatched at all.
-//
-// A real prompt is often not a clean task: "now do the same for the other one", "that bug again", a question, "thanks".
-// Sent as it is, the cheap models guess at it, the test writer writes tests for a guess, and a question gets "answered"
-// with a diff. One cheap call (gpt-oss-120b on the user's own provider key, from exec.json -- never a Claude model) turns
-// the last few turns plus the prompt into
-//   { task, files_hinted, acceptance, parts[], clarity: clear|unclear, kind: code|question|chat, size: small|medium|large }
-// and dispatch goes ahead only for kind=code, clarity=clear, size != large (and a check, as before). Everything else is
-// left to the session's own model, as with no StealthLab. Nothing here ever asks the user a question.
-//
-// Fails open: no profile, a timeout (8 s hard), an error or an unparseable reply give `null`, and dispatch behaves as it
-// did before this module (the raw prompt). One deterministic guard only ever pushes DOWN: a prompt that is plainly a
-// question or pleasantry is never a code task, whatever the model said. STEALTHLAB_BRIEF=off turns the brief and the gate
-// off; STEALTHLAB_BRIEF_MODEL (default gpt-oss-120b) and STEALTHLAB_BRIEF_TIMEOUT_MS (default 8000) tune it.
+// The task brief: one cheap call (STEALTHLAB_BRIEF_MODEL, an exec.json profile; default gpt-oss-120b) that turns the
+// last few turns plus the prompt into
+//   { task, files_hinted, acceptance, parts[], clarity, kind, size, search_terms }
+// Dispatch uses only search_terms (names to search the code for: a plain-language issue names nothing the code
+// spells) and parts (a request that asks for several things). It decides nothing: whether a prompt goes to the cheap
+// models at all is the server's judge's call (JEV first, POST /triage, lib/dispatch.mjs policy.gate), and the cheap
+// models are told the conversation and the request as the user said it (conversationPrompt), never a rewording --
+// on sqlglot-4051 a confirmation was restated as an order and every cheap model built it (ct-series-v5).
+// No brief (no profile, a timeout, an error) only means no search terms. STEALTHLAB_BRIEF=off skips the call.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { dispatchedTurns } from "./continuity.mjs";
 
 export const KINDS = ["code", "question", "chat"];
 export const SIZES = ["small", "medium", "large"];
@@ -34,20 +29,24 @@ export const BRIEF_SYSTEM = [
   "You turn a developer's latest message in a coding session into a precise brief for a coding assistant.",
   "You get the last few turns (oldest first) and then the message. Reply with ONE JSON object and nothing else:",
   '{"task": string, "files_hinted": [string], "acceptance": string, "parts": [string], "clarity": "clear"|"unclear",',
-  '"kind": "code"|"question"|"chat", "size": "small"|"medium"|"large"}.',
+  '"kind": "code"|"question"|"chat", "size": "small"|"medium"|"large", "search_terms": [string]}.',
   "task: the request restated in full. Resolve 'that bug', 'it', 'the other one' from the earlier turns. Keep every name,",
   "number, value and example from the message; add no requirement it does not state.",
   "files_hinted: files or modules named or clearly implied (at most 8; may be empty).",
   "acceptance: how to tell it is done, in one sentence, only from what the message says (may be empty).",
   "parts: one string per separate thing the message asks for when there are several; otherwise [].",
   "kind: 'code' only if the message asks for a change to code, files, queries or tests in this project; 'question' if it asks",
-  "for an explanation or information; 'chat' for anything else (thanks, opinions, small talk).",
+  "for an explanation or information; 'chat' for anything else (thanks, opinions, small talk). A message that confirms,",
+  "restates or asks about what the assistant already did in the earlier turns asks for no new change: not 'code'.",
   "clarity: 'unclear' if an assistant could not start without asking the user something (no target, an ambiguous 'that',",
   "no stated goal). A message that points to a file for the details ('the task is in TASK.md', 'see notes.txt') is clear",
   "when that file exists: its start may be included after the message, and the assistant can read the rest.",
   "The project's file names may follow too: a message naming a function or feature that plausibly lives in one of them",
   "('add is broken, fix it' with a calc.py) is clear; put that file in files_hinted.",
   "size: small = one function, file or query; large = many files or an open-ended redesign.",
+  "search_terms: up to 8 names to search this project's code for, as the code would spell them: the identifiers, file",
+  "or module names, keywords and operators the request is about, guessed from the project's file names where the",
+  "message uses plain words ('ms sql server' with a tsql.py -> tsql; 'double pipe' -> ||). May be empty.",
 ].join(" ");
 
 // ---- files the message names: "the task is in TASK.md" puts the details in the file, not the message ------------------
@@ -123,7 +122,8 @@ export function recentTurns(transcriptPath, { n = TURNS, current = "" } = {}) {
         if ((role !== "user" && role !== "assistant") || o.isSidechain || o.isMeta) continue;
         const text = textOf(o.message.content).replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
         if (!text) continue;
-        out.push({ role, text: text.length > TURN_CHARS ? `${text.slice(0, TURN_CHARS - 3)}...` : text });
+        const at = Date.parse(o.timestamp || "");
+        out.push({ role, text: text.length > TURN_CHARS ? `${text.slice(0, TURN_CHARS - 3)}...` : text, ...(Number.isNaN(at) ? {} : { at }) });
       }
     } finally {
       fs.closeSync(fd);
@@ -132,31 +132,6 @@ export function recentTurns(transcriptPath, { n = TURNS, current = "" } = {}) {
   const cur = String(current || "").trim();
   if (out.length && out[out.length - 1].role === "user" && cur && out[out.length - 1].text.startsWith(cur.slice(0, TURN_CHARS - 3).slice(0, 80))) out.pop();
   return out.slice(-n);
-}
-
-// ---- the deterministic guard: a plain question or pleasantry is never a code task -------------------------------------
-
-// a pleasantry: only these words, at most 5 of them ("perfect, looks good", "got it, thank you", "great work")
-const PLEASANTRY = new Set(("hi hello hey thanks thank you thx ty ok okay cool great nice perfect awesome lgtm got it yes yep no nope sure " +
-  "good looks sounds work job well done that all so very much").split(" "));
-const isPleasantry = (p) => {
-  const words = p.toLowerCase().match(/[a-z']+/g) || [];
-  return words.length > 0 && words.length <= 5 && words.every((w) => PLEASANTRY.has(w));
-};
-const QUESTION = /^\s*(?:explain|describe|tell me|what(?:'s| is| are| does| do)|why\b|how (?:does|do|is|are)\b|where (?:is|are|does)\b|who\b|which\b|when\b|is there\b|does\b|do you\b)/i;
-// Anything that asks for a change ANYWHERE in the prompt, or names a file: such a prompt is never ruled out. This matters:
-// the benchmark's own task prompts open with a question ("What is the percentage of borderless cards? -- Write one SQLite
-// query ...") and a guard that looked only at the start would have blocked 18 of the 210 cheap wins on the saved runs.
-const ASKS_FOR_CHANGE = /\b(?:fix|add|write|create|refactor|rename|remove|delete|implement|modify|replace|convert|generate|install|extract|merge|save|edit|patch)\b|\b[\w./-]+\.(?:py|js|mjs|ts|tsx|jsx|sql|md|json|ya?ml|toml|txt|html|css|csv|sh)\b/i;
-
-// -> "chat" | "question" | null (no opinion: leave it to the model)
-export function guardKind(prompt) {
-  const p = String(prompt || "").trim();
-  if (!p) return "chat";
-  if (p.length <= 60 && isPleasantry(p)) return "chat";
-  if (ASKS_FOR_CHANGE.test(p)) return null;
-  if (QUESTION.test(p)) return "question";
-  return null;
 }
 
 // ---- the brief ---------------------------------------------------------------------------------------------------------
@@ -175,42 +150,41 @@ export function parseBrief(text) {
   if (!KINDS.includes(o.kind) || !SIZES.includes(o.size) || !CLARITIES.includes(o.clarity)) return null;
   if (!task && o.kind === "code") return null;
   return { task, files_hinted: asList(o.files_hinted, 8), acceptance: String(o.acceptance || "").trim(),
-           parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size };
+           parts: asList(o.parts, 6), clarity: o.clarity, kind: o.kind, size: o.size, search_terms: asList(o.search_terms, 8) };
 }
 
-// -> {ok: boolean, reason}. `brief` null = no brief could be made: today's behaviour, except what the guard rules out.
-export function briefGate(brief, prompt) {
-  const guard = guardKind(prompt);
-  if (guard) return { ok: false, reason: `the prompt is a ${guard}, not a code task` };
-  if (!brief) return { ok: true, reason: "no brief (raw prompt)" };
-  if (brief.kind !== "code") return { ok: false, reason: `kind=${brief.kind}` };
-  if (brief.clarity !== "clear") return { ok: false, reason: "the request is unclear" };
-  if (brief.size === "large") return { ok: false, reason: "size=large" };
-  return { ok: true, reason: "clear, small or medium code task" };
+// The session's earlier turns: the transcript's, and the turns a cheap model did (lib/continuity.mjs), which the
+// transcript may not hold (a dispatched prompt is blocked). In time order, the last `n`; a dispatched turn the
+// transcript does hold is not counted twice.
+export function sessionTurns({ transcriptPath, sessionId, current = "", env = process.env, n = TURNS }) {
+  const fromTranscript = transcriptPath ? recentTurns(transcriptPath, { current, n: 50 }) : [];
+  const seen = new Set(fromTranscript.map((t) => t.text.slice(0, 80)));
+  const dispatched = sessionId ? dispatchedTurns(sessionId, { env }).filter((t) => !seen.has(String(t.text).slice(0, 80)))
+    .map((t) => ({ ...t, text: t.text.length > TURN_CHARS ? `${t.text.slice(0, TURN_CHARS - 3)}...` : t.text })) : [];
+  if (!dispatched.length) return fromTranscript.slice(-n);
+  const all = [...fromTranscript.map((t, i) => ({ ...t, i })), ...dispatched.map((t, i) => ({ ...t, i: 1e6 + i }))];
+  all.sort((a, b) => (a.at != null && b.at != null ? a.at - b.at : a.i - b.i));
+  return all.slice(-n).map(({ i, ...t }) => t);
 }
 
-// The brief as text (briefedPrompt adds the original request after it).
-export function briefText(brief) {
-  const lines = [brief.task];
-  if (brief.parts.length > 1) lines.push("", "This is several things; do all of them:", ...brief.parts.map((p, i) => `${i + 1}. ${p}`));
-  if (brief.files_hinted.length) lines.push("", `Files likely involved: ${brief.files_hinted.join(", ")}`);
-  if (brief.acceptance) lines.push("", `Done when: ${brief.acceptance}`);
-  return lines.join("\n");
+// The earlier turns as one text (oldest first, at most `max` characters, the oldest cut first): what the server's
+// judge reads as context for the request (POST /triage).
+export function turnsText(turns, max = 4000) {
+  const t = (turns || []).map((x) => `${x.role === "user" ? "Developer" : "Assistant"}: ${x.text}`).join("\n\n");
+  return t.length > max ? t.slice(t.length - max) : t;
 }
 
-// What the cheap models and the test writer are given: the brief FIRST, then the user's own words after "Original request:", so a
-// detail the brief dropped is still there. Within `max` characters (dispatch's task limit): the original request is shortened first (never
-// below 200 characters), the brief only if it alone is too long.
-export const ORIGINAL_LABEL = "\n\nOriginal request:\n";
-export function briefedPrompt(brief, raw, max = 2000) {
-  const head = briefText(brief);
-  const original = String(raw || "").trim();
-  if (!original) return head.slice(0, max);
-  const room = max - head.length - ORIGINAL_LABEL.length;
-  if (room >= original.length) return head + ORIGINAL_LABEL + original;
-  if (room >= 200) return head + ORIGINAL_LABEL + original.slice(0, room - 3) + "...";
-  const cut = Math.max(0, max - 200 - ORIGINAL_LABEL.length);
-  return head.slice(0, cut) + ORIGINAL_LABEL + original.slice(0, 197) + "...";
+// What the cheap models are told: the conversation so far as it was said, then the user's request word for word --
+// what the session's own model sees, not anyone's rewording of it. Within `max` characters: the earlier turns are cut
+// (oldest first) before the request is; the request alone is cut only when it is longer than `max`.
+export const REQUEST_LABEL = "The request:\n";
+export function conversationPrompt(turns, raw, max = 2000) {
+  const request = String(raw || "").trim();
+  if (request.length + REQUEST_LABEL.length >= max) return `${REQUEST_LABEL}${request}`.slice(0, max);
+  let history = (turns || []).map((t) => `${t.role === "user" ? "Developer" : "Assistant"}: ${t.text}`).join("\n\n");
+  const room = max - request.length - REQUEST_LABEL.length - "Earlier in this conversation:\n".length - 2;
+  if (history.length > room) history = room > 200 ? `...${history.slice(history.length - room + 3)}` : "";
+  return history ? `Earlier in this conversation:\n${history}\n\n${REQUEST_LABEL}${request}` : request;
 }
 
 // ---- the call -----------------------------------------------------------------------------------------------------------

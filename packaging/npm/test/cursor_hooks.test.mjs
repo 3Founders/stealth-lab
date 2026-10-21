@@ -56,7 +56,6 @@ test("beforeSubmitPrompt never blocks: it answers continue and hands the lookup 
 
 test("short prompts, slash commands, no URL and STEALTHLAB_HOOK=off start no lookup", () => {
   for (const [prompt, env, settings] of [
-    ["fix it", tmpEnv(), SETTINGS],
     ["/review the whole thing please now", tmpEnv(), SETTINGS],
     [PROMPT, tmpEnv(), { url: "" }],
     [PROMPT, tmpEnv({ STEALTHLAB_HOOK: "off" }), SETTINGS],
@@ -88,7 +87,7 @@ test("an agent that calls find_ways itself gets nothing added", async () => {
 });
 
 test("only the first tool call waits for a pending lookup, and only up to the limit", async () => {
-  const env = tmpEnv({ STEALTHLAB_CURSOR_WAIT_MS: "1" });
+  const env = tmpEnv({ STEALTHLAB_CURSOR_WAIT_MS: "100" });
   onBeforeSubmitPrompt({ conversation_id: "c1", generation_id: "g-1", prompt: PROMPT }, { env, settings: SETTINGS, spawnWorker: () => {} });
   let waits = 0;
   const counting = async () => { waits++; await new Promise((r) => setTimeout(r, 5)); };

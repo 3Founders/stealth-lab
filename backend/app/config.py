@@ -176,7 +176,9 @@ class Settings(BaseSettings):
     # callable by name); "all" lists every tool as before.
     mcp_tool_discovery: str = "progressive"
     find_ways_triage: bool = True
-    find_ways_triage_timeout_ms: int = 4000
+    # a hang guard: the same judgment says whether a request asks for a change now (work), and a dispatching client
+    # sends nothing to its cheap models without that verdict -- a slow judge must not be cut off at a few seconds
+    find_ways_triage_timeout_ms: int = 20000
     find_ways_triage_min_confidence: float = 0.6
     # How find_ways fits a Goal's candidate Procedures to the caller's repo facts (.stealth/claims.md):
     # "pairwise" = the claim-conditioned judge scores each candidate on its own (repo_facts.py);

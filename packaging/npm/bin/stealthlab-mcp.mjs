@@ -394,7 +394,7 @@ async function cmdSurvey(dir, argv) {
         validate: { type: "boolean" }, touch: { type: "string", multiple: true }, "max-units": { type: "string" },
         "no-history": { type: "boolean" }, "history-max": { type: "string" }, since: { type: "string" },
         "verify-commands": { type: "boolean" }, "allow-public-name": { type: "boolean" }, full: { type: "boolean" },
-        json: { type: "boolean" }, "dry-run": { type: "boolean" },
+        json: { type: "boolean" }, "dry-run": { type: "boolean" }, fill: { type: "boolean" },
       },
       strict: true,
     }));
@@ -408,6 +408,15 @@ async function cmdSurvey(dir, argv) {
     history: !v["no-history"], historyMax: v["history-max"] ? Number(v["history-max"]) : undefined, since: v.since,
     verifyCommands: v["verify-commands"], allowPublicName: v["allow-public-name"] ? true : undefined, full: v.full, dryRun: v["dry-run"],
   });
+  // --fill: a cheap model works the worklist (lib/survey/fill.mjs); the validator then keeps only facts the code shows
+  if (v.fill && !v.validate && !v["dry-run"]) {
+    const { fillWorklist } = await import("../lib/survey/fill.mjs");
+    const f = await fillWorklist({ root: r.root });
+    if (f.added) {
+      const again = runSurvey(r.root, { validateOnly: true });
+      r.fill = { asked: f.asked, written: f.added, rejected: again.validation?.rejected || 0 };
+    } else r.fill = { asked: f.asked, written: 0, rejected: 0 };
+  }
   if (v.json) return process.stdout.write(JSON.stringify(r, null, 2) + "\n");
   const val = r.validation;
   out(`survey   : ${r.root} (${r.listing.files} files via ${r.listing.source}${r.listing.sparse ? `, ${r.listing.sparse} sparse` : ""})`);
@@ -417,6 +426,7 @@ async function cmdSurvey(dir, argv) {
   for (const x of r.rejected.slice(0, 10)) out(`  rejected ${x.page} ${x.id}: ${x.reason}`);
   if (r.history) out(`library  : +${r.history.added || 0} past fixes (${r.history.scanned || 0} commits scanned)`);
   out(`worklist : ${r.worklist.length} unit(s) for the agent, ~${r.estTokens} tokens -> .stealth/survey/worklist.md`);
+  if (r.fill) out(`fill     : ${r.fill.written} facts written by a cheap model from ${r.fill.asked} worklist unit(s); ${r.fill.rejected} rejected by the validator`);
   out(`time     : ${r.timing.total_ms} ms`);
 }
 
@@ -431,6 +441,12 @@ async function main() {
   if (cmd === "plan") {
     const { runPlanCli } = await import("../lib/plan_check.mjs");
     process.exitCode = runPlanCli(argv);
+    return;
+  }
+  if (cmd === "dag") {
+    // after doing your part of a task handed over in parts: check it, then the cheap models do the parts after it
+    const { runDagCli } = await import("../lib/dag_run.mjs");
+    process.exitCode = await runDagCli(argv);
     return;
   }
   if (cmd === "undo") {

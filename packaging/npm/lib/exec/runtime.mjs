@@ -79,7 +79,8 @@ export class ExecRuntime {
     const cfg = readExecConfig(this.env);
     if (typeof input.repo_path !== "string" || !input.repo_path) throw new Error("repo_path is required");
     if (typeof input.task !== "string" || !input.task.trim()) throw new Error("task is required");
-    if (input.task.length > 2000) throw new Error(`task is ${input.task.length} chars; the limit is 2,000 (objective + NODE lines + claims)`);
+    // 12,000: a real issue whole plus the pointers (at 2,000, 8 of 25 issues reached the agent cut; survey 2026-10-16)
+    if (input.task.length > 12000) throw new Error(`task is ${input.task.length} chars; the limit is 12,000 (objective + NODE lines + claims)`);
     const nodes = parseNodeLines(input.task);
     let checks = Array.isArray(input.checks) ? input.checks.map(String).filter((c) => c.trim()) : [];
     if (!checks.length) checks = nodes.map((n) => n.check).filter(Boolean);
@@ -107,11 +108,13 @@ export class ExecRuntime {
     await assertNoMergeState(repo, this.env);
     const commit = await headCommit(repo, this.env);
     const patch = base === "working-tree" ? await workingTreeDiff(repo, this.env) : null;
+    // the earlier nodes' accepted changes, applied after the base (a plan's later node starts from them)
+    const extraPatches = Array.isArray(input.extra_patches) ? input.extra_patches.map(String).filter((p) => p.trim()) : [];
 
     const id = newRunId();
     const stepOrder = input.step_order ?? (nodes.length === 1 ? nodes[0].step?.order ?? null : null);
     const run = {
-      id, repo, commit, base, patch, createdAt: Date.now(), finishedAt: null,
+      id, repo, commit, base, patch, extraPatches, createdAt: Date.now(), finishedAt: null,
       input: {
         task: input.task, checks, scope, goal_id: input.goal_id || null, procedure_id: input.procedure_id || null,
         step_order: stepOrder, executor: input.executor || null, model: input.model || null, timeoutS, hangS,
@@ -294,6 +297,15 @@ export class ExecRuntime {
     this.persist(run);
   }
 
+  // Time is up for this run (the caller's limit): each agent still working stops, and a change it has made is checked
+  // like a finished one's -- the limit bounds the work, not the judging of it. An agent that changed nothing ends timed
+  // out, as before. (ct-series-v7, sqlglot: a cheap answer that solves the issue was discarded at the limit, unchecked.)
+  async finishRun(runId) {
+    const run = this.load(runId);
+    for (const a of run.attempts) if (a.handle && !a.cancelRequested) { a.handIn = true; a.handle.kill("timeout"); }
+    return { run_id: run.id, state: this.stateOf(run) };
+  }
+
   cancelAttempt(a) {
     a.cancelRequested = true;
     a.handle?.kill("cancelled");
@@ -314,15 +326,18 @@ export class ExecRuntime {
         a.didNotRun = true;
         return this.setState(run, a, "failed", { error: a.error });
       }
-      const wt = await createWorktree({ repo: run.repo, commit: run.commit, dir: a.worktree, patch: run.patch, env });
+      const wt = await createWorktree({ repo: run.repo, commit: run.commit, dir: a.worktree, patch: run.patch, extraPatches: run.extraPatches || [], env });
       a.baseTree = wt.baseTree;
       this.event(run, { event: "worktree", attempt: a.index + 1, path: a.worktree });
       if (a.cancelRequested) return this.setState(run, a, "cancelled");
 
       // An open-model profile for this model (exec.json "profiles"), if any. Adapters that cannot use one ignore it.
       const profile = readExecConfig(env).profiles[a.model] || undefined;
-      const spec = adapter.buildCommand({ task: run.input.task, model: a.model, worktree: a.worktree, timeoutS: run.input.timeoutS,
-                                          env, bin: probe.bin || undefined, profile });
+      // awaited: the claude executor starts its local bridge for an open model on first use (lib/anthropic_bridge.mjs)
+      // runTag: the bridge counts this attempt's tokens under it (lib/anthropic_bridge.mjs bridgeUsage)
+      const runTag = `${run.id}.${tag}`;
+      const spec = await adapter.buildCommand({ task: run.input.task, model: a.model, worktree: a.worktree, timeoutS: run.input.timeoutS,
+                                                env, bin: probe.bin || undefined, profile, runTag });
       if (!spec || !spec.cmd) throw new Error(`adapter "${a.executor}" returned no command`);
       const outLog = redactingLog(path.join(dir, `${tag}.stdout.log`), (s) => this.red(s));
       const errLog = redactingLog(path.join(dir, `${tag}.stderr.log`), (s) => this.red(s));
@@ -357,6 +372,18 @@ export class ExecRuntime {
       a.learned = (Array.isArray(parsed.learned) ? parsed.learned : []).slice(0, 5).map((s) => cut(this.red(String(s)), 240));
       if (parsed.tokens) a.tokens = { in: parsed.tokens.in ?? null, out: parsed.tokens.out ?? null };
       a.costUsd = parsed.costUsd ?? parsed.cost ?? null;
+      // an open model with prices: its cost is its tokens at ITS price -- Claude Code driving it reports a cost at
+      // Claude's prices for a model it does not know (lib/anthropic_bridge.mjs)
+      // a bridged run: the bridge's count of what the provider billed is the truth, also for a run that was killed before
+      // Claude Code printed its summary (a timed-out or cancelled try cost money too)
+      if (a.executor === "claude" && profile) {
+        const { takeBridgeUsage } = await import("../anthropic_bridge.mjs");
+        const u = takeBridgeUsage(runTag);
+        if (u && u.calls) a.tokens = { in: u.in, out: u.out };
+      }
+      if (profile && (profile.input_per_mtok || profile.output_per_mtok) && a.tokens?.in !== null && a.tokens?.in !== undefined && a.executor === "claude") {
+        a.costUsd = ((a.tokens.in || 0) * (profile.input_per_mtok || 0) + (a.tokens.out || 0) * (profile.output_per_mtok || 0)) / 1e6;
+      }
       a.stalled = parsed.stalled || null;          // the agent stopped itself: it was going round in circles (lib/agent/stall.mjs)
 
       let terminal = null;
@@ -372,7 +399,21 @@ export class ExecRuntime {
         a.diff = { files: d.files, stat: d.stat, worktree: a.worktree, patch_path: patchPath };
         a.scopeViolations = scopeViolations(d.files, run.input.scope);
       }
+      // stopped at a time limit (its own, or the caller's hand-in) with a change made: the change is checked, not dropped
+      if (terminal === "timed_out" && a.diff?.files?.length) {
+        a.stoppedAt = r.reason;
+        this.event(run, { event: "checked_at_limit", attempt: a.index + 1, reason: r.reason, files: a.diff.files.length });
+        terminal = null;
+      }
       if (terminal) return this.setState(run, a, terminal, { reason: r.reason, ...(a.stalled ? { stalled: a.stalled.rule } : {}) });
+      // the executor itself failed and changed nothing (its endpoint kept answering 429, say): that is its error, not an
+      // "empty diff" -- a model that was never reached did not fail the task (survey stage 3, 2026-10-16: 12 of 32 issues
+      // per agent were rate-limited on every try and were reported as empty diffs, with 0 tokens spent)
+      if (r.exitCode !== 0 && a.diff && a.diff.files.length === 0 && !run.input.noChangeExpected) {
+        a.error = this.red(`the executor failed (exit ${r.exitCode}): ${cut(a.summary || stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" | "), 300)}`);
+        a.executorFailed = true;
+        return this.setState(run, a, "failed", { reason: "executor_error" });
+      }
 
       this.setState(run, a, "verifying");
       const checkOpts = {
@@ -453,6 +494,7 @@ ${a.error || ""}`)) {
     run.finishedAt = Date.now();
     run.settled = true;
     run.patch = null;
+    run.extraPatches = null;
     this.event(run, { event: "done", state: this.stateOf(run) });
     this.persist(run);
     for (const w of [...run.waiters]) w();

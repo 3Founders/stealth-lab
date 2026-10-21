@@ -1,0 +1,340 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { dispatch, triedNote, writeSpecRunner } from "../lib/dispatch.mjs";
+import { answerEvidence, decide, evalRule, parseRule, patchSignals } from "../lib/accept.mjs";
+
+const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "minimax-m2-7|stealth", "gpt-oss-120b|stealth"] };
+const MINE = "claude-opus-5-5|claude-code";
+const FIX = "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n";
+const OTHER = "diff --git a/other.py b/other.py\n--- a/other.py\n+++ b/other.py\n@@ -1 +1 @@\n-y = 1\n+y = 3\n";
+const SWALLOW = "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1 +1,4 @@\n-x = 1\n+try:\n+    x = 2\n+except Exception:\n+    pass\n";
+
+function setup() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "acc-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b"] } } }));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "acc-repo-"));
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
+  g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n"); fs.writeFileSync(path.join(repo, "other.py"), "y = 1\n");
+  fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  g("add", "-A"); g("commit", "-q", "-m", "init");
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "node -e 0", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_LOCATE_MODEL: "off",
+                  STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_AGREE_WAIT_S: "5" }, repo };
+}
+// each model: [state, patch]; a verified run's patch is on disk, as the runtime keeps it
+function stub(repo, outcomes) {
+  const calls = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acc-patches-"));
+  return { calls, cancelled: [],
+    async achieve(input) { calls.push(input); return { run_id: `r-${calls.length}` }; },
+    async runResult(id) {
+      const m = calls[Number(id.slice(2)) - 1].model;
+      const [state, patch] = outcomes[m];
+      const f = path.join(dir, `${id}.patch`);
+      fs.writeFileSync(f, patch || "");
+      return { run_id: id, state, cost_usd: 0.001, checks: [{ tail: "" }],
+               diff: { files: [...String(patch || "").matchAll(/^diff --git a\/\S+ b\/(\S+)/gm)].map((x) => x[1]), patch_path: f, worktree: repo } };
+    },
+    async applyRun() { fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n"); return { files: ["calc.py"] }; },
+    async cancelRun(id) { this.cancelled.push(id); } };
+}
+
+test("parseRule / evalRule: AND of groups, A|R is either, !X is not; an unknown signal or 'check' is no rule", () => {
+  assert.equal(parseRule("check"), null);
+  assert.equal(parseRule("E Q"), null);
+  const r = parseRule("E S T* A|R !Rs_no");
+  assert.equal(evalRule(r, { E: true, S: true, "T*": true, R: true }), true);
+  assert.equal(evalRule(r, { E: true, S: true, "T*": true }), false, "neither A nor R");
+  assert.equal(evalRule(r, { E: true, S: true, "T*": true, A: true, Rs_no: true }), false, "the strong reviewer's veto");
+});
+
+test("patchSignals and decide: S/F/X from the patch; A when two answers change the same source files; T* when no answer passes T", () => {
+  assert.deepEqual(patchSignals(SWALLOW).X, false);
+  assert.deepEqual(patchSignals(FIX), { S: true, F: true, X: true, src: ["calc.py"] });
+  assert.equal(patchSignals("diff --git a/tests/test_c.py b/tests/test_c.py\n+x\n").S, false);
+  const a = { evidence: { ...patchSignals(FIX), E: true } }, b = { evidence: { ...patchSignals(FIX), E: true } }, c = { evidence: { ...patchSignals(OTHER), E: true } };
+  assert.equal(decide([c, a, b], parseRule("E S F X A")), a, "the agreeing answer, not the first one");
+  assert.equal(c.evidence.A, false);
+  assert.equal(a.evidence["T*"], true, "no answer passed our tests: they are no evidence");
+});
+
+test("evidence mode: two cheap answers that agree are accepted; the check alone no longer decides", async () => {
+  const { env, repo } = setup();
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["verified", FIX], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A" }, runtime: rt });
+  assert.equal(d?.handled, true);
+  assert.equal(d.model, "gemma-4-31b-it");
+  assert.match(d.tried.find((t) => t.state === "verified").evidence, /\bA\b/);
+  assert.ok(d.tried.some((t) => t.state === "passed the check, another answer was taken"));
+  assert.ok(!rt.calls.some((c) => (c.checks || []).some((k) => /run_spec/.test(k))), "no written tests in the agents' check");
+});
+
+test("a passing answer the rule does not accept is handed to the session with its patch, not reported as 'none passed'", async () => {
+  const { env, repo } = setup();
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A" }, runtime: rt });
+  assert.equal(d.handled, false);
+  const note = triedNote(d);
+  assert.match(note, /gemma-4-31b-it's answer passed the project's check but was not applied/);
+  assert.match(note, /acc-patches-[^ ]*r-1\.patch/, "the patch's path is given");
+  assert.doesNotMatch(note, /none passed the check/);
+});
+
+test("a follow-up about code this session already changed is not dispatched; a new session's prompt is", async () => {
+  const { env, repo } = setup();
+  const transcript = path.join(repo, "..", `t-${path.basename(repo)}.jsonl`);
+  fs.writeFileSync(transcript, [
+    JSON.stringify({ type: "user", message: { content: "calc is wrong" } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: path.join(repo, "calc.py") } }] } }),
+  ].join("\n") + "\n");
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: rt, log: (m) => logs.push(m) });
+  assert.equal(d, null);
+  assert.equal(rt.calls.length, 0, "no cheap model ran");
+  assert.ok(logs.some((l) => /not dispatched \(a follow-up: this session already changed calc\.py\)/.test(l)), logs.join("\n"));
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_FOLLOWUPS: "on" }, runtime: stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] }) });
+  assert.equal(d2?.handled, true, "the switch dispatches it anyway");
+});
+
+test("a follow-up is caught however the session changed the files (a script, not an Edit); edits from before the session are not its own", async () => {
+  const { env, repo } = setup();
+  const transcript = path.join(repo, "..", `t2-${path.basename(repo)}.jsonl`);
+  const started = new Date(Date.now() - 60000);
+  // the session ran a script that rewrote calc.py: the transcript holds no Edit call (sqlglot-4051 turn 2, ct-series-v5)
+  fs.writeFileSync(transcript, [JSON.stringify({ type: "user", timestamp: started.toISOString(), message: { content: "calc is wrong" } }),
+    JSON.stringify({ type: "assistant", timestamp: started.toISOString(), message: { content: [{ type: "tool_use", name: "Bash", input: { command: "python fix.py" } }] } })].join("\n") + "\n");
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: rt, log: (m) => logs.push(m) });
+  assert.equal(d, null, logs.join("\n"));
+  assert.ok(logs.some((l) => /a follow-up: this session already changed calc\.py/.test(l)), logs.join("\n"));
+  // the same uncommitted change, made before this session started (the developer's own work in progress): dispatched
+  const old = new Date(started.getTime() - 3600000);
+  fs.utimesSync(path.join(repo, "calc.py"), old, old);
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2", transcript_path: transcript }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] }) });
+  assert.notEqual(d2, null);
+});
+
+test("a follow-up on a change a cheap model made goes to the cheap models again; once the session edits the file, it does not", async () => {
+  const { env, repo } = setup();
+  const { recordDispatch } = await import("../lib/continuity.mjs");
+  const transcript = path.join(repo, "..", `t3-${path.basename(repo)}.jsonl`);
+  fs.writeFileSync(transcript, JSON.stringify({ type: "user", timestamp: new Date(Date.now() - 60000).toISOString(), message: { content: "hi" } }) + "\n");
+  fs.writeFileSync(path.join(repo, "calc.py"), "x = 2\n");                       // turn 1: a cheap model's change, applied
+  recordDispatch({ sessionId: "s1", model: "gemma-4-31b-it", files: ["calc.py"], task: "Fix calc.py so x is 2", prompt: "Fix calc.py so x is 2",
+                   text: "Done by gemma-4-31b-it", root: repo }, { env });
+  const FIX3 = "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1 +1 @@\n-x = 2\n+x = 3\n";
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX3], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const logs = [];
+  const d = await dispatch({ payload: { cwd: repo, prompt: "now make calc.py x equal 3", transcript_path: transcript, session_id: "s1" }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: rt, log: (m) => logs.push(m) });
+  assert.notEqual(d, null, logs.join("\n"));
+  assert.ok(rt.calls.length > 0, "the cheap models got the follow-up");
+  assert.match(rt.calls[0].task, /Developer: Fix calc\.py so x is 2[\s\S]*Assistant: Done by gemma-4-31b-it[\s\S]*The request:\nnow make calc\.py x equal 3/);
+  // the session then edits calc.py itself: a follow-up on it is the session's
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(repo, "calc.py"), later, later);
+  const logs2 = [];
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "now make calc.py x equal 3", transcript_path: transcript, session_id: "s1" }, reply: { model_plan: PLAN },
+    root: repo, mine: MINE, env, runtime: stub(repo, {}), log: (m) => logs2.push(m) });
+  assert.equal(d2, null);
+  assert.ok(logs2.some((l) => /a follow-up: this session already changed calc\.py/.test(l)), logs2.join("\n"));
+});
+
+test("the time-limit line says when an answer did pass but was not accepted", async () => {
+  const { env, repo } = setup();
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const result = rt.runResult.bind(rt);
+  // minimax never finishes: the limit ends the tries while gemma's answer waits for a second one
+  rt.runResult = async (id) => (rt.calls[Number(id.slice(2)) - 1].model === "minimax-m2-7" ? new Promise(() => {}) : result(id));
+  const keep = setInterval(() => {}, 1000);           // dispatch's own timers are unref'd: keep the test's event loop alive
+  try {
+    await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+      env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A", STEALTHLAB_DISPATCH_TIMEOUT_S: "10", STEALTHLAB_DISPATCH_AGREE_WAIT_S: "0",
+             STEALTHLAB_DISPATCH_PARALLEL: "on" }, runtime: rt, log: (m) => logs.push(m) });
+  } finally { clearInterval(keep); }
+  assert.ok(logs.some((l) => /no cheap answer accepted within \d+ s \(1 passed the check, not accepted by the rule\)/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /minimax-m2-7\|stealth: no pass \(timed out/.test(l)), "the cut-off try has its own line");
+});
+
+test("the reviewers' cost goes to the spend ledger, so it counts in what StealthLab cost", async () => {
+  const { reviewPatch } = await import("../lib/review.mjs");
+  const { env } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": {
+    openai_base_url: "https://example.test/v1", key_env: "K", input_per_mtok: 1, output_per_mtok: 2 } } }));
+  const fetchImpl = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"verdict":"fixes","why":"ok"}' } }],
+    usage: { prompt_tokens: 1000000, completion_tokens: 0 } }) });
+  const v = await reviewPatch({ prompt: "p", diff: FIX, env: { ...env, K: "k" }, fetchImpl });
+  assert.equal(v.cost_usd, 1);
+  const rows = fs.readFileSync(path.join(env.STEALTHLAB_HOME, "dispatch_costs.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  assert.ok(rows.some((r) => r.what === "review" && r.cost_usd === 1), JSON.stringify(rows));
+});
+
+test("evidence mode: a lone passing answer the rule does not accept goes to the session; one that swallows exceptions too", async () => {
+  const { env, repo } = setup();
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A" }, runtime: rt });
+  assert.equal(d.handled, false);
+  assert.match(d.tried.find((t) => t.unit.startsWith("gemma")).state, /passed the check, not accepted by the rule/);
+  assert.match(triedNote(d), /StealthLab first tried this/);
+  const rt2 = stub(repo, { "gemma-4-31b-it": ["verified", SWALLOW], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  const d2 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S X" }, runtime: rt2 });
+  assert.equal(d2.handled, false);
+  const d3 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env, runtime: stub(repo, { "gemma-4-31b-it": ["verified", SWALLOW], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] }) });
+  assert.equal(d3.handled, true, "accept=check (the default): the check alone, as before");
+});
+
+test("a middle model (tier: 2) starts only after every cheap one has finished without a pass, and can then solve it", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3", "minimax-m2-7"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", tier: 2 } } }));
+  const order = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "glm-5.3": ["verified", FIX] });
+  const achieve = rt.achieve.bind(rt);
+  rt.achieve = async (i) => { order.push(`start ${i.model}`); return achieve(i); };
+  const result = rt.runResult.bind(rt);
+  rt.runResult = async (id) => { const r = await result(id); order.push(`end ${rt.calls[Number(id.slice(2)) - 1].model}`); return r; };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" },
+    reply: { model_plan: { ...PLAN, ladder: ["gemma-4-31b-it|stealth", "glm-5.3|stealth", "minimax-m2-7|stealth"] } }, root: repo, mine: MINE,
+    env: { ...env, K: "k" }, runtime: rt });
+  assert.equal(d?.handled, true);
+  assert.equal(d.model, "glm-5.3");
+  const glm = order.indexOf("start glm-5.3");
+  assert.ok(glm > order.indexOf("end gemma-4-31b-it") && glm > order.indexOf("end minimax-m2-7"), order.join(", "));
+});
+
+test("a middle model is not cut by the max-rungs limit: three cheap models before it, and it still gets its try", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b", "glm-5.3"] } },
+    profiles: { "glm-5.3": { openai_base_url: "https://example.test/v1", key_env: "K", tier: 2 } } }));
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""], "glm-5.3": ["failed", ""] });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" },
+    reply: { model_plan: { ...PLAN, ladder: [...PLAN.ladder, "glm-5.3|stealth"] } }, root: repo, mine: MINE,
+    env: { ...env, K: "k" }, runtime: rt, log: (m) => logs.push(m) });
+  assert.equal(d.handled, false);
+  assert.deepEqual(rt.calls.map((c) => c.model).sort(), ["gemma-4-31b-it", "glm-5.3", "gpt-oss-120b", "minimax-m2-7"]);
+  assert.ok(logs.some((l) => /glm-5\.3 \(tier 2\) tries/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /gemma-4-31b-it\|stealth: no pass \(failed\)/.test(l)), "a failed answer has its own line");
+  assert.ok(logs.some((l) => /no cheap answer accepted \(4 tried\); the session's model takes over/.test(l)), logs.join("\n"));
+});
+
+test("a usage-limited or cancelled try has its own line too (minimax had none, ct-smoke-final6)", async () => {
+  const { env, repo } = setup();
+  const logs = [];
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["cancelled", ""] });
+  const result = rt.runResult.bind(rt);
+  rt.runResult = async (id) => {
+    const r = await result(id);
+    return rt.calls[Number(id.slice(2)) - 1].model === "minimax-m2-7" ? { ...r, usage_limited: true } : r;
+  };
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
+    log: (m) => logs.push(m) });
+  assert.ok(logs.some((l) => /minimax-m2-7\|stealth: no pass \(the executor or provider hit a usage limit/.test(l)), logs.join("\n"));
+  assert.ok(logs.some((l) => /gpt-oss-120b\|stealth: no pass \(cancelled\)/.test(l)), logs.join("\n"));
+});
+
+test("the executor's max_concurrent_runs: a rung waits for a free slot instead of failing at start", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7", "gpt-oss-120b"] } }, max_concurrent_runs: 1 }));
+  const rt = stub(repo, { "gemma-4-31b-it": ["failed", ""], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["verified", FIX] });
+  let active = 0;
+  const achieve = rt.achieve.bind(rt);
+  rt.achieve = async (i) => { if (active >= 1) throw new Error(`${active} runs already active (max_concurrent_runs=1)`); active++; return achieve(i); };
+  const result = rt.runResult.bind(rt);
+  rt.runResult = async (id) => { const r = await result(id); active--; return r; };
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_PARALLEL: "on" }, runtime: rt });
+  assert.equal(d?.handled, true);
+  assert.equal(d.model, "gpt-oss-120b");
+  assert.ok(!d.tried.some((t) => t.state === "error"), JSON.stringify(d.tried));
+});
+
+test("STEALTHLAB_DISPATCH_RUN_TIMEOUT_S sets each cheap run's own time limit; unset, a run gets the tries' limit", async () => {
+  const { env, repo } = setup();
+  const rt = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
+    env: { ...env, STEALTHLAB_DISPATCH_RUN_TIMEOUT_S: "3600" }, runtime: rt });
+  assert.equal(rt.calls[0].timeout_s, 3600);
+  const rt2 = stub(repo, { "gemma-4-31b-it": ["verified", FIX], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
+  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt2 });
+  assert.equal(rt2.calls[0].timeout_s, 150, "the tries' limit (150 s here)");
+  assert.equal(rt2.calls[0].hang_s, 150, "and the same no-output limit");
+});
+
+import { crossTest, splitPatch } from "../lib/accept.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
+
+test("crossTest: an answer passes another's validated tests (fail without its fix, pass with it) -> C; a different fix does not", async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "acc-x-"));
+  const g = (cwd, ...a) => execFileSync("git", ["-C", cwd, ...a], { stdio: "pipe" });
+  g(base, "init", "-q"); g(base, "config", "user.email", "t@e"); g(base, "config", "user.name", "t");
+  fs.writeFileSync(path.join(base, "calc.py"), "def f():\n    return 1\n");
+  fs.mkdirSync(path.join(base, "tests")); fs.writeFileSync(path.join(base, "tests", "__init__.py"), "");
+  g(base, "add", "-A"); g(base, "commit", "-q", "-m", "base");
+  const SRC2 = "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def f():\n-    return 1\n+    return 2\n";
+  const SRC3 = SRC2.replace("+    return 2", "+    return 3");
+  const TST = "diff --git a/tests/test_calc.py b/tests/test_calc.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_calc.py\n@@ -0,0 +1,4 @@\n+from calc import f\n+\n+def test_f():\n+    assert f() == 2\n";
+  const wt = (patch) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "acc-wt-"));
+    fs.cpSync(base, d, { recursive: true });
+    execFileSync("git", ["-C", d, "apply", "-"], { input: patch });
+    return d;
+  };
+  const mk = (unit, patch) => ({ rung: { unit }, result: { diff: { worktree: wt(patch) } }, evidence: { patch } });
+  const y = mk("y", SRC2 + TST), x = mk("x", SRC2), z = mk("z", SRC3);
+  assert.deepEqual(splitPatch(SRC2 + TST), { src: SRC2, tst: TST });
+  await crossTest([y, x, z], { python: "python" });
+  assert.equal(x.evidence.C, true, "the same fix passes y's validated test");
+  assert.equal(z.evidence.C, false, "a different fix does not");
+  assert.equal(y.evidence.C, false, "no other answer has validated tests for y");
+  assert.match(fs.readFileSync(path.join(y.result.diff.worktree, "calc.py"), "utf8"), /return 2/, "y's own change is back in place");
+  assert.equal(fs.existsSync(path.join(x.result.diff.worktree, "tests", "test_calc.py")), false, "y's test is taken out of x again");
+});
+
+// ct-series-v5, jsonargparse: our tests failed on 4 answers the hidden tests grade correct -- they ran without the
+// environment the check had, so the installed (unchanged) copy of the project could be what they imported
+test("the reproduction test imports the answer's code, not the installed copy of the project", async () => {
+  const py = (() => { for (const b of ["python3", "python"]) { try { execFileSync(b, ["-m", "pytest", "--version"], { stdio: "ignore" }); return b; } catch { /* */ } } return null; })();
+  if (!py) return;                                                    // no pytest on this machine
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "acc-spec-"));
+  const installed = path.join(tmp, "site"), wt = path.join(tmp, "wt"), specs = path.join(tmp, "specs");
+  for (const d of [path.join(installed, "pkg"), path.join(wt, "src", "pkg"), path.join(wt, "tests"), specs]) fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(installed, "pkg", "__init__.py"), "X = 1\n");          // the user's checkout, as installed
+  fs.writeFileSync(path.join(wt, "pyproject.toml"), "[project]\nname = 'pkg'\n");
+  fs.writeFileSync(path.join(wt, "src", "pkg", "__init__.py"), "X = 2\n");          // the answer's fix, in its worktree
+  fs.writeFileSync(path.join(specs, "test_spec.py"), "from pkg import X\n\ndef test_fixed():\n    assert X == 2\n");
+  const runner = writeSpecRunner(specs);
+  const lines = [];
+  const ev = await answerEvidence({ rule: parseRule("E T"), result: { diff: { worktree: wt } }, spec: { file: path.join(specs, "test_spec.py") },
+    specRunner: runner, python: py, env: { ...process.env, PYTHONPATH: installed }, log: (l) => lines.push(l), unit: "m|stealth" });
+  assert.equal(ev.T, true, lines.join("\n"));
+  assert.ok(lines.some((l) => l === "dispatch m|stealth: reproduction test passes"), lines.join("\n"));
+  // the same test on an answer that does not fix it: it fails, and the log says how
+  fs.writeFileSync(path.join(wt, "src", "pkg", "__init__.py"), "X = 1  # not fixed\n");             // another size than X = 2: no stale .pyc
+  lines.length = 0;
+  const bad = await answerEvidence({ rule: parseRule("E T"), result: { diff: { worktree: wt } }, spec: { file: path.join(specs, "test_spec.py") },
+    specRunner: runner, python: py, env: { ...process.env, PYTHONPATH: installed }, log: (l) => lines.push(l), unit: "m|stealth" });
+  assert.equal(bad.T, false);
+  assert.ok(lines.some((l) => /reproduction test fails \(exit 1\): .*assert/.test(l)), lines.join("\n"));
+});

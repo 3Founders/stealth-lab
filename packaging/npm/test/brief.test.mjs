@@ -1,14 +1,20 @@
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { BRIEF_SYSTEM, briefGate, briefText, briefedPrompt, guardKind, makeBrief, parseBrief, parseOverride, recentTurns } from "../lib/brief.mjs";
+import { BRIEF_SYSTEM, conversationPrompt, makeBrief, parseBrief, parseOverride, recentTurns, turnsText } from "../lib/brief.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
-const FIXTURE = JSON.parse(fs.readFileSync(new URL("./fixtures/brief_prompts.json", import.meta.url), "utf8")).prompts;
+// fetch stubs open no socket, and a request's timeout (AbortSignal.timeout) does not keep the event loop alive by
+// design: without this, node ends the file at the first stub that waits for its timeout and cancels every test after
+// it (19 tests never ran). A real request's socket keeps the loop alive, so the product needs nothing of this.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
+
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 const REPLY = (o) => JSON.stringify({ task: "Fix calc.py so x is 2", files_hinted: ["calc.py"], acceptance: "pytest passes", parts: [],
@@ -19,7 +25,7 @@ const REPLY = (o) => JSON.stringify({ task: "Fix calc.py so x is 2", files_hinte
 test("parseBrief: a model reply becomes a checked brief; a fence, extra text or a bad value is handled", () => {
   const b = parseBrief("Here you go:\n```json\n" + REPLY({}) + "\n```");
   assert.deepEqual(b, { task: "Fix calc.py so x is 2", files_hinted: ["calc.py"], acceptance: "pytest passes", parts: [],
-                        clarity: "clear", kind: "code", size: "small" });
+                        clarity: "clear", kind: "code", size: "small", search_terms: [] });
   assert.equal(parseBrief(REPLY({ kind: "banana" })), null);
   assert.equal(parseBrief(REPLY({ size: "huge" })), null);
   assert.equal(parseBrief(REPLY({ task: "  " })), null);
@@ -29,46 +35,25 @@ test("parseBrief: a model reply becomes a checked brief; a fence, extra text or 
   assert.equal(parseBrief(REPLY({ files_hinted: Array.from({ length: 20 }, (_, i) => `f${i}`) })).files_hinted.length, 8);
 });
 
-test("briefText: the task, the parts when there are several, the files and the acceptance", () => {
-  assert.equal(briefText(parseBrief(REPLY({}))), "Fix calc.py so x is 2\n\nFiles likely involved: calc.py\n\nDone when: pytest passes");
-  const t = briefText(parseBrief(REPLY({ parts: ["rename f", "add a test"], files_hinted: [], acceptance: "" })));
-  assert.match(t, /This is several things; do all of them:\n1\. rename f\n2\. add a test/);
-  assert.doesNotMatch(t, /Files likely|Done when/);
-});
-
 // ---- the gate ----------------------------------------------------------------------------------------------------------
 
-test("gate: only a clear, small or medium code task goes; no brief means today's behaviour", () => {
-  const ok = (o) => briefGate(parseBrief(REPLY(o)), "fix calc.py so x is 2").ok;
-  assert.equal(ok({}), true);
-  assert.equal(ok({ size: "medium" }), true);
-  assert.equal(ok({ size: "large" }), false);
-  assert.equal(ok({ clarity: "unclear" }), false);
-  assert.equal(ok({ kind: "question" }), false);
-  assert.equal(ok({ kind: "chat" }), false);
-  assert.equal(briefGate(null, "fix calc.py so x is 2").ok, true);
+test("there are no word rules: a bug report that starts like a question goes when the server's judge says change", async () => {
+  const { env, repo } = setup({ STEALTHLAB_DISPATCH_GATE: "on" });
+  const rt = stubRuntime(repo);
+  // sqlglot-4051's opener, ruled a question by the old word list ("When ..."), ct-series-v5
+  const prompt = "When transpiling from Presto to Spark, regexp_extract comes out without a group argument, but Spark's default is 1 while Presto's is 0.";
+  const d = await dispatch({ payload: { cwd: repo, prompt }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief({}),
+                             triage: { work: "change" } });
+  assert.equal(d.handled, true);
 });
 
-test("guard: it never says non-code for a code prompt in the fixture, and catches the plain questions and pleasantries", () => {
-  const code = FIXTURE.filter((p) => p.kind === "code");
-  for (const p of code) assert.equal(guardKind(p.prompt), null, `a code prompt was ruled out: ${p.prompt}`);
-  const others = FIXTURE.filter((p) => p.kind !== "code");
-  const caught = others.filter((p) => guardKind(p.prompt) === p.kind);
-  assert.ok(others.every((p) => guardKind(p.prompt) === null || guardKind(p.prompt) !== "code"));
-  assert.ok(caught.length >= 18, `the guard catches ${caught.length} of ${others.length} questions and chat`);
-});
-
-test("pipeline on the fixture with a model that is wrong in the worst way (everything is a clear small code task)", () => {
-  const worst = parseBrief(REPLY({}));
-  const dispatched = FIXTURE.filter((p) => briefGate(worst, p.prompt).ok);
-  const wronglyDispatched = dispatched.filter((p) => p.kind !== "code");
-  // what the guard cannot catch is what the live model must: listed here so the number is visible, not asserted away
-  assert.deepEqual(wronglyDispatched.map((p) => p.prompt).sort(), FIXTURE.filter((p) => p.kind !== "code" && guardKind(p.prompt) === null).map((p) => p.prompt).sort());
-  assert.ok(wronglyDispatched.length <= 6, `${wronglyDispatched.length} of ${FIXTURE.length - 12} non-code prompts rely on the model alone`);
+test("turnsText: the earlier turns for the judge, oldest cut first", () => {
+  assert.equal(turnsText([{ role: "user", text: "a" }, { role: "assistant", text: "b" }]), "Developer: a\n\nAssistant: b");
+  assert.equal(turnsText([{ role: "user", text: "x".repeat(5000) }], 100).length, 100);
 });
 
 test("the brief prompt asks for exactly the fields the code reads", () => {
-  for (const f of ["task", "files_hinted", "acceptance", "parts", "clarity", "kind", "size"]) assert.ok(BRIEF_SYSTEM.includes(f), f);
+  for (const f of ["task", "files_hinted", "acceptance", "parts", "clarity", "kind", "size", "search_terms"]) assert.ok(BRIEF_SYSTEM.includes(f), f);
 });
 
 // ---- the earlier turns -------------------------------------------------------------------------------------------------
@@ -105,7 +90,7 @@ const okFetch = (content, calls = []) => async (url, init) => {
 
 test("makeBrief: asks the profile's endpoint with the earlier turns, parses the reply, and writes its cost to the ledger", async () => {
   const home = tmp("brief-home-");
-  const env = { STEALTHLAB_HOME: home, GC_KEY: "k-test" };
+  const env = { STEALTHLAB_HOME: home, GC_KEY: "k-test", STEALTHLAB_BRIEF_MODEL: "gpt-oss-120b" };
   const calls = [];
   const tr = transcript([U("calc.py has a bug in add"), A("I see it, it adds 1 too many")]);
   const b = await makeBrief({ prompt: "yes fix it", transcriptPath: tr, env, fetchImpl: okFetch(REPLY({}), calls), readConfig: cfg });
@@ -124,7 +109,7 @@ test("makeBrief: asks the profile's endpoint with the earlier turns, parses the 
 });
 
 test("makeBrief: no profile, HTTP error, a reply that is not a brief, a timeout and the off switch all give null", async () => {
-  const env = { STEALTHLAB_HOME: tmp("brief-home-"), GC_KEY: "k" };
+  const env = { STEALTHLAB_HOME: tmp("brief-home-"), GC_KEY: "k", STEALTHLAB_BRIEF_MODEL: "gpt-oss-120b" };
   const logs = [];
   const call = (o) => makeBrief({ prompt: "fix calc.py", env, fetchImpl: okFetch(REPLY({})), readConfig: cfg, log: (m) => logs.push(m), ...o });
   assert.equal(await call({ readConfig: () => ({ profiles: {} }) }), null);
@@ -139,7 +124,7 @@ test("makeBrief: no profile, HTTP error, a reply that is not a brief, a timeout 
 test("makeBrief: an endpoint that rejects a system turn gets it inside the user turn", async () => {
   const calls = [];
   const noSys = { profiles: { "gpt-oss-120b": { ...PROFILES.profiles["gpt-oss-120b"], no_system_role: true } } };
-  await makeBrief({ prompt: "fix calc.py", env: { STEALTHLAB_HOME: tmp("h-"), GC_KEY: "k" }, fetchImpl: okFetch(REPLY({}), calls), readConfig: () => noSys });
+  await makeBrief({ prompt: "fix calc.py", env: { STEALTHLAB_HOME: tmp("h-"), GC_KEY: "k", STEALTHLAB_BRIEF_MODEL: "gpt-oss-120b" }, fetchImpl: okFetch(REPLY({}), calls), readConfig: () => noSys });
   assert.deepEqual(calls[0].body.messages.map((m) => m.role), ["user"]);
   assert.ok(calls[0].body.messages[0].content.startsWith(BRIEF_SYSTEM));
 });
@@ -159,8 +144,8 @@ function setup(extra = {}) {
   fs.mkdirSync(path.join(repo, ".stealth"));
   fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
-  return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
-                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", ...extra }, repo };
+  return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_DISPATCH_LOCATE: "off", STEALTHLAB_BRIEF: "on", ...extra }, repo };
 }
 function stubRuntime(repo) {
   const calls = [];
@@ -171,42 +156,33 @@ function stubRuntime(repo) {
 }
 const brief = (o) => async () => parseBrief(REPLY(o));
 
-test("dispatch: a clear code task runs, and the cheap model gets the BRIEF first, then the user's original request", async () => {
+test("dispatch: a clear code task runs, and the cheap model is told the conversation and the request as said, not the brief", async () => {
   const { env, repo } = setup();
   const rt = stubRuntime(repo);
-  const d = await dispatch({ payload: { cwd: repo, prompt: "yes fix it" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
-                             briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
+  const tr = transcript([U("calc.py has a bug: x should be 2"), A("I see it."), U("yes fix it")]);
+  const d = await dispatch({ payload: { cwd: repo, prompt: "yes fix it", transcript_path: tr }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
+                             briefImpl: brief({ task: "ALWAYS do something the user never said" }) });
   assert.equal(d.handled, true);
-  assert.match(rt.calls[0].task, /^Fix calc\.py so x is 2 \(the bug discussed above\)/);
-  assert.match(rt.calls[0].task, /\n\nOriginal request:\nyes fix it$/);
+  assert.equal(rt.calls[0].task, "Earlier in this conversation:\nDeveloper: calc.py has a bug: x should be 2\n\nAssistant: I see it.\n\nThe request:\nyes fix it");
+  assert.doesNotMatch(rt.calls[0].task, /ALWAYS/);
   assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /yes fix it/, "the library title stays the user's own words");
 });
 
-test("dispatch: a question, an unclear request or a large change is not dispatched; nothing runs", async () => {
-  for (const o of [{ kind: "question" }, { kind: "chat" }, { clarity: "unclear" }, { size: "large" }]) {
-    const { env, repo } = setup();
+test("dispatch: the brief decides nothing -- a brief that says question, or no brief, still dispatches what the judge calls a change", async () => {
+  for (const b of [brief({ kind: "question" }), brief({ clarity: "unclear" }), async () => null]) {
+    const { env, repo } = setup({ STEALTHLAB_DISPATCH_GATE: "on" });
     const rt = stubRuntime(repo);
-    const d = await dispatch({ payload: { cwd: repo, prompt: "fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief(o) });
-    assert.equal(d, null, JSON.stringify(o));
-    assert.equal(rt.calls.length, 0);
+    const d = await dispatch({ payload: { cwd: repo, prompt: "fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
+                               briefImpl: b, triage: { work: "change" } });
+    assert.equal(d.handled, true);
   }
 });
 
-test("dispatch: a plain question is never dispatched even when no brief could be made (the guard)", async () => {
+test("dispatch: a large task goes to the cheap models like any other", async () => {
   const { env, repo } = setup();
   const rt = stubRuntime(repo);
-  const d = await dispatch({ payload: { cwd: repo, prompt: "why is the build failing on windows only" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
-                             briefImpl: async () => null });
-  assert.equal(d, null);
-  assert.equal(rt.calls.length, 0);
-});
-
-test("dispatch: no brief (timeout, no profile) falls back to the raw prompt, as before", async () => {
-  const { env, repo } = setup();
-  const rt = stubRuntime(repo);
-  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: async () => null });
+  const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief({ size: "large" }) });
   assert.equal(d.handled, true);
-  assert.equal(rt.calls[0].task, "Fix calc.py so x is 2");
 });
 
 test("dispatch: !cheap (force) skips the gate; STEALTHLAB_BRIEF=off is the old behaviour", async () => {
@@ -228,7 +204,7 @@ test("dispatch: !cheap tries the cheap models even when the plan puts the sessio
   const a = setup({ STEALTHLAB_DISPATCH_EXPLORE: "0" });
   const rtA = stubRuntime(a.repo);
   assert.equal(await dispatch({ payload: { cwd: a.repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: first }, root: a.repo, mine: MINE, env: a.env, runtime: rtA,
-                               briefImpl: async () => null }), null);
+                               briefImpl: brief({}) }), null);
   const b = setup({ STEALTHLAB_DISPATCH_EXPLORE: "0" });
   const rtB = stubRuntime(b.repo);
   const d = await dispatch({ payload: { cwd: b.repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: first }, root: b.repo, mine: MINE, env: b.env, runtime: rtB,
@@ -236,15 +212,15 @@ test("dispatch: !cheap tries the cheap models even when the plan puts the sessio
   assert.equal(d.handled, true);
 });
 
-test("test-first writer is told the brief and the original request too", async () => {
+test("test-first writer is told what the user said too", async () => {
   const { env, repo } = setup({ STEALTHLAB_DISPATCH_TESTFIRST: "on" });
   const rt = stubRuntime(repo);
   const seen = [];
   await dispatch({ payload: { cwd: repo, prompt: "yes fix it" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
                    runClaude: async (args, input) => { seen.push(String(input)); return { status: 0, stdout: "SKIP" }; },
-                   briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
+                   briefImpl: brief({ task: "a rewording" }) });
   assert.ok(seen.length, "the test writer ran");
-  assert.ok(seen.every((s) => /Fix calc\.py so x is 2 \(the bug discussed above\)[\s\S]*\n\nOriginal request:\nyes fix it/.test(s)), "brief first, then the original");
+  assert.ok(seen.every((s) => /yes fix it/.test(s) && !/a rewording/.test(s)));
 });
 
 // ---- overrides ---------------------------------------------------------------------------------------------------------
@@ -286,42 +262,27 @@ test("hook: !cheap forces the dispatch and gives it the prompt without the prefi
   assert.equal(out[0].decision, "block");
 });
 
-// ---- the brief and the original request together ---------------------------------------------------------------------------------------
+// ---- the request as said, within the task limit -----------------------------------------------------------------------
 
-test("briefedPrompt: the brief, then 'Original request:' and the user's words; within the limit the original is shortened first", () => {
-  const b = parseBrief(REPLY({}));
-  assert.equal(briefedPrompt(b, "fix it please"), `${briefText(b)}\n\nOriginal request:\nfix it please`);
-  assert.equal(briefedPrompt(b, "   "), briefText(b), "no original, no label");
+test("conversationPrompt: earlier turns, then the request word for word; the turns give way first, the request is whole", () => {
+  assert.equal(conversationPrompt([], "fix it"), "fix it");
+  const turns = [{ role: "user", text: "u".repeat(3000) }, { role: "assistant", text: "a".repeat(3000) }];
+  const p = conversationPrompt(turns, "fix it please", 1000);
+  assert.ok(p.length <= 1000, String(p.length));
+  assert.ok(p.endsWith("The request:\nfix it please"));
+  assert.match(p, /^Earlier in this conversation:\n\.\.\.a+/, "the oldest is cut first");
   const long = "x".repeat(5000);
-  const cut = briefedPrompt(b, long, 600);
-  assert.ok(cut.length <= 600, String(cut.length));
-  assert.ok(cut.startsWith(briefText(b)), "the brief is whole");
-  assert.match(cut, /\n\nOriginal request:\nx+\.\.\.$/);
-  const bigBrief = parseBrief(REPLY({ task: "t".repeat(900) }));
-  const squeezed = briefedPrompt(bigBrief, long, 700);
-  assert.ok(squeezed.length <= 700, String(squeezed.length));
-  assert.match(squeezed, /\n\nOriginal request:\nx{150,}\.\.\.$/, "a too-long brief gives way before the original drops below ~200 characters");
+  assert.equal(conversationPrompt(turns, long, 1000).length, 1000);
 });
 
-test("dispatch: a long original request still fits the task limit, brief whole, original cut with an ellipsis", async () => {
+test("dispatch: a long request still fits the task limit", async () => {
   const { env, repo } = setup();
   const rt = stubRuntime(repo);
-  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(120)}`;
-  await dispatch({ payload: { cwd: repo, prompt: raw }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
-                   briefImpl: brief({ task: "Fix calc.py so x is 2 (the bug discussed above)" }) });
+  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(500)}`;
+  await dispatch({ payload: { cwd: repo, prompt: raw }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief({}) });
   const task = rt.calls[0].task;
-  assert.ok(task.length <= 2000, String(task.length));
-  assert.match(task, /^Fix calc\.py so x is 2 \(the bug discussed above\)/);
-  assert.match(task, /\n\nOriginal request:\nyes fix it and also keep/);
-  assert.ok(task.endsWith("..."));
-  assert.doesNotMatch(task, /prompt truncated for the executor/);
-});
-
-test("dispatch: no brief still sends the raw prompt alone, with no label", async () => {
-  const { env, repo } = setup();
-  const rt = stubRuntime(repo);
-  await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: async () => null });
-  assert.equal(rt.calls[0].task, "Fix calc.py so x is 2");
+  assert.ok(task.length <= 12000, String(task.length));
+  assert.match(task, /yes fix it and also keep/);
 });
 
 test("the brief sees the start of files the message names, only inside the project", async () => {
@@ -338,6 +299,5 @@ test("the brief sees the start of files the message names, only inside the proje
 test("a chat or question brief with no task is still a brief (and is gated out); a code brief needs a task", () => {
   const chat = parseBrief('{"task":"","files_hinted":[],"acceptance":"","parts":[],"clarity":"clear","kind":"chat","size":"small"}');
   assert.equal(chat.kind, "chat");
-  assert.equal(briefGate(chat, "hmm interesting").ok, false);
   assert.equal(parseBrief('{"task":"","files_hinted":[],"acceptance":"","parts":[],"clarity":"clear","kind":"code","size":"small"}'), null);
 });

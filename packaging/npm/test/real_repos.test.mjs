@@ -13,6 +13,7 @@ import { CONTEXT_MAX, repoContext } from "../lib/task_context.mjs";
 import { addEntry } from "../lib/library.mjs";
 import { dispatch } from "../lib/dispatch.mjs";
 import { git, makeRepo, stubAdapter, testEnv, tmpDir } from "./fixtures/exec/helpers.mjs";
+import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const g = (repo, ...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 const write = (root, rel, text = "x") => { fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true }); fs.writeFileSync(path.join(root, rel), text); };
@@ -199,19 +200,19 @@ test("B1 through dispatch: the executor's task is the prompt then the context; w
     const rt = { async achieve(i) { seen.push(i.task); return { run_id: "r-1" }; },
       async runResult() { return { state: "failed", cost_usd: 0.001, checks: [{ tail: "no" }] }; }, async cancelRun() { return {}; } };
     await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
-      env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
-             STEALTHLAB_BRIEF: "off", ...(off ? { STEALTHLAB_DISPATCH_CONTEXT: "off" } : {}) }, runtime: rt });
+      env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
+             STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...(off ? { STEALTHLAB_DISPATCH_CONTEXT: "off" } : {}) }, runtime: rt });
     assert.ok(seen[0].startsWith("Fix calc.py so x is 2"));
     if (off) assert.equal(seen[0], "Fix calc.py so x is 2");
     else assert.match(seen[0], /\n\nContext from this repository[\s\S]*calc\.py owns every constant/);
   }
 });
 
-test("the task text never exceeds the executor's 2000 characters: the request first, the context in what is left", async () => {
+test("the task text never exceeds the executor's 12,000 characters: the request first, the context in what is left", async () => {
   const { fitTask } = await import("../lib/dispatch.mjs");
-  const ctx = "Context from this repository:\n" + "fact. ".repeat(800);
+  const ctx = "Context from this repository:\n" + "fact. ".repeat(3000);
   assert.equal(fitTask("short task", "").length, "short task".length);
-  const a = fitTask("t".repeat(1200), ctx);
-  assert.ok(a.length <= 2000 && a.startsWith("t".repeat(1200)) && a.includes("Context from this repository"));
-  assert.equal(fitTask("t".repeat(1800), ctx), "t".repeat(1800), "under 300 characters of room: no context");
+  const a = fitTask("t".repeat(7000), ctx);
+  assert.ok(a.length <= 12000 && a.startsWith("t".repeat(7000)) && a.includes("Context from this repository"));
+  assert.equal(fitTask("t".repeat(11800), ctx), "t".repeat(11800), "under 300 characters of room: no context");
 });

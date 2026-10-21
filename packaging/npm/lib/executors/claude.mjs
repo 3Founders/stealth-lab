@@ -41,6 +41,20 @@ import { FOREIGN_CREDENTIAL_VARS, profileKey } from "./profile.mjs";
 const BIN = "claude";
 export const CLAUDE_ALLOWED_TOOLS = "Read,Edit,Write,Bash,Glob,Grep";
 
+// the system prompt for an open model driven by Claude Code (lean mode): how to work on a task in a repository, short
+export const LEAN_SYSTEM = [
+  "You are a software engineer working alone in a git repository, in the current directory. Do the task you are given,",
+  "completely, by changing the repository's files; nobody will answer questions. Work this way: find the relevant code",
+  "first (Grep, Glob, Read only what you need -- use offset and limit for long files); understand the cause before",
+  "editing; make the smallest change that does what the task asks, in the style of the surrounding code; then run the",
+  "relevant tests or a quick check with Bash and fix what fails (run them from this directory, as the project does: `python",
+  "-I` ignores this directory and runs the installed copy, not your change). Do not add new files unless the task needs them, do not",
+  "reformat unrelated code, and never edit a test to hide a failure your change causes. When the task changes a behaviour",
+  "that an existing test asserts, the test is out of date: update it to the new behaviour. Use the tools",
+  "directly; several independent reads or searches may go in one turn. When done, reply with two or three sentences on",
+  "what you changed and how you checked it.",
+].join(" ");
+
 // Open-model mode (a profile with anthropic_base_url): the same `claude -p`, but pointed at a third party's
 // Anthropic-compatible endpoint with THAT provider's key (the pattern Z.ai documents:
 // https://docs.z.ai/scenario-example/develop-tools/claude -- ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN,
@@ -54,7 +68,9 @@ export const CLAUDE_ALLOWED_TOOLS = "Read,Edit,Write,Bash,Glob,Grep";
 //  * all three model aliases are mapped to the open model, because Claude Code makes background calls on its
 //    small-model alias and a provider that does not know that name would fail them.
 // Claude Code itself is still the user's own installed binary. We do not bundle, wrap or redistribute it.
-export function openModelEnv(profile, env = process.env, { configDir } = {}) {
+// token: what the child sends as its key -- the provider's key (direct), or the bridge's per-process secret (bridged:
+// the provider key never enters the child's environment)
+export function openModelEnv(profile, env = process.env, { configDir, token } = {}) {
   const out = {};
   for (const k of Object.keys(env)) {
     if (FOREIGN_CREDENTIAL_VARS.includes(k.toUpperCase()) || /^ANTHROPIC_/i.test(k) || /^CLAUDE_CODE_OAUTH/i.test(k)) out[k] = undefined;
@@ -63,7 +79,7 @@ export function openModelEnv(profile, env = process.env, { configDir } = {}) {
   return {
     ...out,
     ANTHROPIC_BASE_URL: profile.anthropic_base_url,
-    ANTHROPIC_AUTH_TOKEN: profileKey(profile, env),
+    ANTHROPIC_AUTH_TOKEN: token || profileKey(profile, env),
     ANTHROPIC_DEFAULT_HAIKU_MODEL: profile.model_id,
     ANTHROPIC_DEFAULT_SONNET_MODEL: profile.model_id,
     ANTHROPIC_DEFAULT_OPUS_MODEL: profile.model_id,
@@ -88,7 +104,38 @@ const adapter = {
     return detectBin(BIN, { env });
   },
 
-  buildCommand({ task, model, worktree, timeoutS, env = process.env, bin, profile, configDir } = {}) {
+  buildCommand(opts = {}) {
+    const { profile, env = process.env } = opts;
+    // an open model Claude Code cannot reach as it is -- no Anthropic endpoint (General Compute), or request_extras it
+    // cannot send (GLM's reasoning_effort) -- goes through the local bridge (lib/anthropic_bridge.mjs) to its OpenAI
+    // endpoint: async, only in this case. STEALTHLAB_CLAUDE_BRIDGE=off: the direct behaviour below.
+    const extras = profile && Object.keys(profile.request_extras || {}).length;
+    if (profile?.openai_base_url && (!profile.anthropic_base_url || extras) && (env.STEALTHLAB_CLAUDE_BRIDGE || "on").toLowerCase() !== "off") {
+      return this.buildBridged(opts);
+    }
+    return this.buildDirect(opts);
+  },
+
+  async buildBridged({ task, worktree, timeoutS, env = process.env, bin, profile, configDir, runTag = null } = {}) {
+    const launch = launchOrThrow(BIN, { env, bin });
+    profileKey(profile, env);                       // the provider key must be set (it stays in this process)
+    const { bridgeFor } = await import("../anthropic_bridge.mjs");
+    const b = await bridgeFor(profile, { env, runTag });
+    const overlay = openModelEnv({ ...profile, anthropic_base_url: b.baseUrl }, env, { configDir, token: b.secret });
+    overlay[profile.key_env] = undefined;           // the provider key's own variable stays out of the child too
+    // lean (default): a short system prompt of our own and only the tools it may use defined -- Claude Code's own
+    // prompt and its full tool list cost ~15k input tokens on EVERY call, paid at the open model's price
+    // (STEALTHLAB_CLAUDE_LEAN=off: Claude Code's own prompt and tools)
+    const lean = (env.STEALTHLAB_CLAUDE_LEAN || "on").toLowerCase() !== "off";
+    const args = [...launch.prefix, "-p", safeTaskArg(task), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+      "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--setting-sources", "user", "--strict-mcp-config",
+      ...(lean ? ["--system-prompt", LEAN_SYSTEM, "--tools", CLAUDE_ALLOWED_TOOLS] : []),
+      "--model", profile.model_id, "--allowedTools", CLAUDE_ALLOWED_TOOLS];
+    void worktree; void timeoutS;
+    return { cmd: launch.cmd, args, env: { ...scrubEnv(env), ...overlay }, stdinText: undefined };
+  },
+
+  buildDirect({ task, model, worktree, timeoutS, env = process.env, bin, profile, configDir } = {}) {
     const launch = launchOrThrow(BIN, { env, bin });
     if (profile && !profile.anthropic_base_url) {
       throw new Error(`profile ${profile.name} has no anthropic_base_url, so the claude executor cannot reach it (use opencode or stealth for its openai_base_url)`);
@@ -99,7 +146,7 @@ const adapter = {
     const args = [
       ...launch.prefix,
       "-p", safeTaskArg(task),
-      "--output-format", "json",
+      "--output-format", "stream-json", "--verbose",
       "--no-session-persistence",
       "--permission-mode", "acceptEdits",
       "--permission-prompts", "none",

@@ -65,13 +65,119 @@ test("claude in open-model mode points at the vendor and carries none of the use
   assert.ok(!spec.args.join(" ").includes(KEY), "the key must never appear in argv");
 });
 
-test("claude without a profile is unchanged, and refuses a profile it cannot use", () => {
+test("claude without a profile is unchanged; a model it cannot reach directly goes through the local bridge", async () => {
   const spec = claude.buildCommand({ task: "fix it", model: "sonnet", env: ENV, bin: process.execPath });
   assert.equal(spec.env.ANTHROPIC_API_KEY, "sk-ant-user-own");
   assert.equal(spec.env.ANTHROPIC_BASE_URL, undefined);
-  assert.throws(() => claude.buildCommand({ task: "t", env: ENV, bin: process.execPath, profile: normaliseProfile("m", { key_env: "ZAI_API_KEY", openai_base_url: "https://a.example/v1" }) }), /anthropic_base_url/);
-  assert.throws(() => claude.buildCommand({ task: "t", env: ENV, bin: process.execPath, profile: profile({ request_extras: { provider: { zdr: true } } }) }), /request_extras/);
+  // only an OpenAI endpoint (General Compute), or request_extras Claude Code cannot send: bridged
+  for (const p of [normaliseProfile("m", { key_env: "ZAI_API_KEY", openai_base_url: "https://a.example/v1" }), profile({ request_extras: { provider: { zdr: true } } })]) {
+    const b = await claude.buildCommand({ task: "t", env: ENV, bin: process.execPath, profile: p });
+    assert.match(b.env.ANTHROPIC_BASE_URL, /^http:\/\/127\.0\.0\.1:\d+\/p\//);
+    assert.notEqual(b.env.ANTHROPIC_AUTH_TOKEN, KEY, "the provider key stays in the bridge, never in the child");
+    assert.ok(!JSON.stringify(b).includes(KEY));
+    assert.equal(b.env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(b.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+    assert.ok(b.args.join(" ").includes(`--model ${p.model_id}`));
+  }
+  const { closeBridge } = await import("../lib/anthropic_bridge.mjs");
+  closeBridge();
+  assert.equal(claude.buildCommand({ task: "t", env: { ...ENV, STEALTHLAB_CLAUDE_BRIDGE: "off" }, bin: process.execPath,
+    profile: normaliseProfile("m", { key_env: "ZAI_API_KEY", anthropic_base_url: "https://api.z.ai/api/anthropic" }) }).env.ANTHROPIC_BASE_URL, "https://api.z.ai/api/anthropic");
   assert.throws(() => claude.buildCommand({ task: "t", env: { PATH: ENV.PATH }, bin: process.execPath, profile: profile() }), /ZAI_API_KEY is not set/);
+  await assert.rejects(claude.buildCommand({ task: "t", env: { PATH: ENV.PATH }, bin: process.execPath, profile: normaliseProfile("m", { key_env: "ZAI_API_KEY", openai_base_url: "https://a.example/v1" }) }), /ZAI_API_KEY is not set/);
+});
+
+// ------------------------------------------------------------------ the bridge (Anthropic Messages <-> OpenAI chat)
+
+test("bridge: Claude Code's request becomes an OpenAI one and the reply comes back as Anthropic, tools and all", async () => {
+  const { bridgeFor, toOpenAI, toAnthropic, closeBridge } = await import("../lib/anthropic_bridge.mjs");
+  const p = normaliseProfile("gpt-oss-120b", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1", request_extras: { reasoning_effort: "high" } });
+  const o = toOpenAI({ system: [{ type: "text", text: "You are Claude Code." }], max_tokens: 32000, tools: [{ name: "Read", description: "read", input_schema: { type: "object" } }],
+    messages: [{ role: "user", content: "fix calc.py" },
+               { role: "assistant", content: [{ type: "text", text: "Reading." }, { type: "tool_use", id: "t1", name: "Read", input: { file_path: "calc.py" } }] },
+               { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "x = 1" }] }] }] }, p);
+  assert.equal(o.model, "gpt-oss-120b");
+  assert.equal(o.reasoning_effort, "high", "the profile's settings are applied");
+  assert.equal(o.max_tokens, 16000);
+  assert.deepEqual(o.messages.map((m) => m.role), ["system", "user", "assistant", "tool"]);
+  assert.equal(o.messages[2].tool_calls[0].function.arguments, JSON.stringify({ file_path: "calc.py" }));
+  assert.equal(o.messages[3].tool_call_id, "t1");
+  assert.equal(o.tools[0].function.name, "Read");
+  const a = toAnthropic({ choices: [{ finish_reason: "tool_calls", message: { content: "", tool_calls: [{ id: "c1", function: { name: "Edit", arguments: "{\"a\":1}" } }] } }],
+    usage: { prompt_tokens: 10, completion_tokens: 3 } }, "gpt-oss-120b");
+  assert.equal(a.stop_reason, "tool_use");
+  assert.deepEqual(a.content.find((b) => b.type === "tool_use").input, { a: 1 });
+  // end to end over HTTP: the secret is required, the upstream gets the provider key, Claude Code gets an SSE stream
+  const seen = [];
+  const fetchImpl = async (url, init) => { seen.push({ url, auth: init.headers.authorization, body: JSON.parse(init.body) });
+    return { ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "done" } }], usage: { prompt_tokens: 5, completion_tokens: 1 } }) }; };
+  const b = await bridgeFor(p, { env: ENV, fetchImpl });
+  const call = (secret) => fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": secret },
+    body: JSON.stringify({ model: "x", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] }) });
+  assert.equal((await call("wrong")).status, 401);
+  const r = await call(b.secret);
+  const sse = await r.text();
+  assert.match(sse, /event: message_start[\s\S]*"text_delta","text":"done"[\s\S]*event: message_stop/);
+  assert.equal(seen[0].url, "https://gc.example/v1/chat/completions");
+  assert.equal(seen[0].auth, `Bearer ${KEY}`);
+  closeBridge();
+});
+
+test("bridge: a malformed tool call from the provider is retried a bounded number of times; a real 400 is not retried", async () => {
+  const { bridgeFor, closeBridge } = await import("../lib/anthropic_bridge.mjs");
+  const p = normaliseProfile("gpt-oss-120b", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1" });
+  const GC400 = '{"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error"}}';
+  const OK = JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "done" } }], usage: { prompt_tokens: 7, completion_tokens: 2 } });
+  let replies = [];
+  let calls = 0;
+  const fetchImpl = async () => { calls++; const [status, text] = replies.shift(); return { ok: status === 200, status, text: async () => text }; };
+  const b = await bridgeFor(p, { env: ENV, fetchImpl, retryMs: 0, runTag: "r-1.a1" });
+  const call = () => fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": b.secret },
+    body: JSON.stringify({ model: "x", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }) });
+  replies = [[400, GC400], [200, OK]];
+  let r = await call();
+  assert.equal(r.status, 200, "the second sample is used");
+  assert.equal(calls, 2);
+  replies = [[400, GC400], [400, GC400], [400, GC400], [400, GC400]];
+  calls = 0;
+  r = await call();
+  assert.equal(r.status, 400, "after the retries the provider's own error goes back unchanged");
+  assert.equal(calls, 4, "one call and three retries, no more");
+  replies = [[400, '{"error":{"message":"unknown field foo","type":"invalid_request_error"}}']];
+  calls = 0;
+  r = await call();
+  assert.equal(r.status, 400, "a request that is wrong is not retried");
+  assert.equal(calls, 1);
+  closeBridge();
+});
+
+test("bridge: tokens are counted per run, so a run killed before Claude Code's summary still has its spend", async () => {
+  const { bridgeFor, bridgeUsage, closeBridge } = await import("../lib/anthropic_bridge.mjs");
+  const p = normaliseProfile("minimax-m2-7", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1" });
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "x" } }],
+    usage: { prompt_tokens: 1000, completion_tokens: 50 } }) });
+  const b = await bridgeFor(p, { env: ENV, fetchImpl, runTag: "r-2.a1" });
+  for (let i = 0; i < 3; i++) {
+    await fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": b.secret },
+      body: JSON.stringify({ model: "x", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }) });
+  }
+  assert.deepEqual(bridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
+  assert.equal(bridgeUsage("r-other"), null);
+  const { takeBridgeUsage } = await import("../lib/anthropic_bridge.mjs");
+  assert.deepEqual(takeBridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
+  assert.equal(bridgeUsage("r-2.a1"), null, "read once, then removed");
+  closeBridge();
+});
+
+test("bridge: max_tokens stays inside a profile's context window and output cap", async () => {
+  const { toOpenAI } = await import("../lib/anthropic_bridge.mjs");
+  const big = "x".repeat(300000);                       // ~100k tokens by the bridge's estimate
+  const p = normaliseProfile("gemma", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1", context_window: 131072, max_output_tokens: 8192 });
+  assert.equal(toOpenAI({ max_tokens: 32000, messages: [{ role: "user", content: "hi" }] }, p).max_tokens, 8192, "the output cap");
+  const o = toOpenAI({ max_tokens: 32000, messages: [{ role: "user", content: big }] }, normaliseProfile("g2", { key_env: "ZAI_API_KEY",
+    openai_base_url: "https://gc.example/v1", context_window: 110000 }));
+  assert.ok(o.max_tokens < 16000 && o.max_tokens >= 1024, `input + max_tokens fits the window (${o.max_tokens})`);
+  assert.throws(() => normaliseProfile("bad", { key_env: "ZAI_API_KEY", openai_base_url: "https://gc.example/v1", context_window: -5 }), /positive whole number/);
 });
 
 // ------------------------------------------------------------------ opencode
