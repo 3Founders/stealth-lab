@@ -189,7 +189,10 @@ def test_a_fresh_run_starts_the_services_in_order_then_runs_the_runner_task_by_t
     cmds = [x["cmd"] for x in c.rec.calls]
     order = [next(i for i, t in enumerate(cmds) if key in t) for key in ("initdb", "pg_ctl", "createuser", "createdb", "migrate.py", "run_backend.py", "fake_series.py", "runner.py")]
     assert order == sorted(order), cmds
-    assert [x["background"] for x in c.rec.calls if "run_backend.py" in x["cmd"]] == [True], "the backend is started in the background"
+    backends = [x for x in c.rec.calls if "run_backend.py" in x["cmd"]]
+    assert [x["background"] for x in backends] == [True, True], "the backend and the router's worker run in the background"
+    assert "--worker" not in backends[0]["cmd"] and backends[1]["cmd"].endswith("run_backend.py --worker"), "the worker starts once the server is up"
+    assert "the router's worker is running" in (c.out / "providers.txt").read_text(encoding="utf-8")
     runs = [x for x in c.rec.calls if "runner.py" in x["cmd"]]
     assert [r["cmd"].split("--only ")[1].split()[0] for r in runs] == ["x__mini-1", "x__mini-2"], "max_issues cuts the series"
     first = runs[0]["cmd"]

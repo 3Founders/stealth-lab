@@ -11,6 +11,10 @@ It refuses to start against anything but a loopback host. Model, judge and embed
 backend/.env (JEV, OpenRouter embeddings, General Compute).
 
     python experiments/abtest/run_backend.py            # serves http://127.0.0.1:8765
+    python experiments/abtest/run_backend.py --worker   # the router's worker on the same database (refits between tasks)
+
+The worker runs only the router's jobs (a Goal's local refit after each observation, the hourly model update, the joint
+refit): what a deployment's worker does for routing, so the model plan learns during a series as it would in use.
 """
 from __future__ import annotations
 
@@ -46,6 +50,14 @@ os.environ.update(local_identity.server_env())
 
 sys.path.insert(0, os.path.abspath(BACKEND))
 os.chdir(os.path.abspath(BACKEND))
+
+ROUTING_JOBS = "routing_local_refit,routing_model_update,routing_refit"
+
+if __name__ == "__main__" and "--worker" in sys.argv[1:]:
+    from app.ingestion.worker import main as worker_main  # noqa: E402
+
+    worker_main(["--loop", "--job-types", ROUTING_JOBS])
+    sys.exit(0)
 
 import uvicorn  # noqa: E402
 

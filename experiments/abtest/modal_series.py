@@ -237,7 +237,10 @@ def build_image():
                       "npm install -g @anthropic-ai/claude-code", "pip install uv",
                       "uv python install " + " ".join(PYTHONS))
         .add_local_file(REPO / "backend" / "requirements.txt", "/tmp/backend-requirements.txt", copy=True)
-        .run_commands("pip install -r /tmp/backend-requirements.txt", "pip install uvicorn pytest pyarrow pandas huggingface_hub")
+        .add_local_file(REPO / "backend" / "requirements-routing.txt", "/tmp/backend-requirements-routing.txt", copy=True)
+        .run_commands("pip install -r /tmp/backend-requirements.txt", "pip install uvicorn pytest pyarrow pandas huggingface_hub",
+                      # the router's worker (run_backend.py --worker): its refits need JAX/NumPyro
+                      "pip install -r /tmp/backend-requirements-routing.txt")
         .env({"PYTHONPATH": f"{APP_DIR}/experiments/abtest", "PYTHONUNBUFFERED": "1", "ABTEST_CONTAINER": "1"})   # NOT the cache variables: see Container.__init__
         .add_local_dir(REPO / "backend" / "app", f"{APP_DIR}/backend/app", ignore=ignored)
         .add_local_dir(REPO / "backend" / "db", f"{APP_DIR}/backend/db", ignore=ignored)
@@ -368,12 +371,28 @@ class Container:
                                cwd=self.ab, background=True, log=self.backend_log)
         for _ in range(150):
             if self.health():
+                self.start_worker(DSN)
                 return
             if getattr(self.backend, "poll", lambda: None)() is not None:          # the process already ended: no point waiting
                 break
             self.sleep(2)
         tail = self.backend_log.read_text(encoding="utf-8", errors="replace")[-2500:] if self.backend_log.exists() else "(no output)"
         raise RuntimeError(f"the test backend did not come up at {HEALTH}; its output ends: {tail}")
+
+    def start_worker(self, dsn: str) -> None:
+        """The router's worker next to the server (run_backend.py --worker): every recorded observation queues a refit of
+        its Goal, and without a worker none runs -- the model plan of issue 10 would be issue 1's. A deployment runs one."""
+        self.worker_log = self.out / "worker.log"
+        self.worker = self.sh([sys.executable, str(self.ab / "run_backend.py"), "--worker"], env={**self.environ, "ABTEST_DATABASE_URL": dsn},
+                              cwd=self.ab, background=True, log=self.worker_log)
+        self.sleep(5)
+        if getattr(self.worker, "poll", lambda: None)() is not None:
+            tail = self.worker_log.read_text(encoding="utf-8", errors="replace")[-1500:] if self.worker_log.exists() else "(no output)"
+            raise RuntimeError(f"the router's worker did not stay up; its output ends: {tail}")
+        line = "test server: the router's worker is running (refits between issues)"
+        print(line, flush=True)
+        with (self.out / "providers.txt").open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
     def restore_db(self) -> None:
         dump = self.out / "db.sql.gz"
