@@ -1,0 +1,161 @@
+"use client";
+import Link from "next/link";
+import Image from "next/image";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { track } from "@/lib/analytics";
+import { getMyProfile } from "@/lib/kel-api";
+import { getSession } from "@/lib/session";
+import AccountMenu from "@/components/AccountMenu";
+import { PROJECT_SYNC_ENABLED } from "@/lib/features";
+
+const links = [
+  { href: "/", label: "Home" },
+  { href: "/docs", label: "Docs" },
+  { href: "/#about", label: "About" },
+];
+
+const Arrow = () => (
+  <span className="sq" aria-hidden="true">
+    <svg width="11" height="11" viewBox="0 0 11 11" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 9 9 2M3.5 2H9v5.5" /></svg>
+  </span>
+);
+
+export default function Header() {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const [aboutInView, setAboutInView] = useState(false);
+  // Read only after mount (Supabase's session read is async) -- starts
+  // signed-out, then reflects the real session once known. Never more
+  // than a display convenience: every gated page still gates on the
+  // real server response, not on this alone.
+  const [username, setUsername] = useState<string | null | undefined>(undefined); // undefined = not resolved yet
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const session = await getSession();
+      if (!session) {
+        if (!cancelled) setUsername(null);
+        return;
+      }
+      const profile = await getMyProfile();
+      if (cancelled) return;
+      setUsername(profile.kind === "ok" ? profile.data.profile.username : null);
+    })();
+    return () => { cancelled = true; };
+  }, [pathname]);
+
+  // About is the last nav-highlightable section on the page, so "in view" here means
+  // "scrolled past the About threshold", not "About is currently on screen" -- an
+  // IntersectionObserver watching only #about would flip back to false once the user
+  // scrolls past it into whatever comes after, wrongly handing the highlight back to
+  // Home. usePathname alone can't see this either, since #about is a same-page anchor.
+  useEffect(() => {
+    const el = document.getElementById("about");
+    if (!el) {
+      setAboutInView(false);
+      return;
+    }
+    let raf = 0;
+    const compute = () => {
+      raf = 0;
+      setAboutInView(el.getBoundingClientRect().top <= window.innerHeight * 0.4);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(compute);
+    };
+    compute();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [pathname]);
+
+  // On the homepage, About glides in place; elsewhere the default navigation to /#about runs and SmoothScroll resolves it.
+  const onAbout = (e: React.MouseEvent) => {
+    setOpen(false);
+    if (pathname === "/" && window.__kelScrollTo) {
+      e.preventDefault();
+      window.history.pushState(null, "", "/#about");
+      window.__kelScrollTo("#about");
+    }
+  };
+
+  // Same idea as the logo: on the homepage, glide back to the top instead of a full
+  // reload; elsewhere, the default Link navigation to "/" just lands there normally.
+  const onHome = (e: React.MouseEvent) => {
+    setOpen(false);
+    if (pathname === "/" && window.__kelScrollTo) {
+      e.preventDefault();
+      window.history.pushState(null, "", "/");
+      window.__kelScrollTo("#top");
+    }
+  };
+
+  const item = (l: (typeof links)[number]) => {
+    const isHome = l.href === "/";
+    const isAbout = l.href === "/#about";
+    const active = isAbout
+      ? pathname === "/" && aboutInView
+      : isHome
+        ? pathname === "/" && !aboutInView
+        : pathname === l.href;
+    return (
+      <Link
+        key={l.href}
+        href={l.href}
+        aria-current={active ? "page" : undefined}
+        onClick={l.label === "About" ? onAbout : l.label === "Home" ? onHome : () => setOpen(false)}
+      >
+        {l.label}
+      </Link>
+    );
+  };
+
+  return (
+    <div className="nav-wrap">
+      <div className="frame">
+        <header className="nav">
+          <Link href="/" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
+            <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
+          </Link>
+          <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
+          {username === undefined ? (
+            // Session resolution is async (Supabase's own session read, then a
+            // real network round trip to fetch the profile that decides
+            // between this and AccountMenu) -- rendering "Sign in" here while
+            // that's pending would falsely flash a signed-out state for every
+            // visitor who's actually signed in, right before flipping to
+            // AccountMenu. An invisible placeholder holds the layout instead.
+            <span className="btn-ink desk" aria-hidden="true" style={{ visibility: "hidden" }}>Sign in <Arrow /></span>
+          ) : username ? (
+            <AccountMenu username={username} />
+          ) : (
+            <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
+          )}
+          <button className="btn-ink menu-btn" aria-expanded={open} aria-controls="nav-panel" onClick={() => setOpen(!open)}>
+            {open ? "Close" : "Menu"}
+          </button>
+          {open && (
+            <nav id="nav-panel" aria-label="Mobile" className="nav-panel">
+              {links.map(item)}
+              {username ? (
+                <>
+                  {PROJECT_SYNC_ENABLED && <Link href="/account" onClick={() => setOpen(false)}>Projects</Link>}
+                  <Link href="/account/connections" onClick={() => setOpen(false)}>Connected apps</Link>
+                  <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>
+                </>
+              ) : (
+                <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
+              )}
+            </nav>
+          )}
+        </header>
+      </div>
+    </div>
+  );
+}
