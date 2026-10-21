@@ -1,0 +1,8 @@
+2026-10-17T03:07:01.909Z prompt locate: narrowed to jsonargparse/_formatters.py, jsonargparse/_core.py, jsonargparse/_cli.py (_format_usage)
+2026-10-17T03:07:01.921Z prompt dispatch: located jsonargparse/_formatters.py:88-98, jsonargparse/_core.py:1245-1247, jsonargparse/_core.py:17-79, jsonargparse/_formatters.py:6-56 (tests: jsonargparse_tests/test_formatters.py)
+2026-10-17T03:07:08.003Z prompt gpt-oss-120b|stealth: the executor failed (exit 1): API Error: 400 upstream 400: {"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error","param":null}}
+2026-10-17T03:07:08.005Z prompt dispatch minimax-m2-7|claude: 2 runs already active (max_concurrent_runs=2)
+2026-10-17T03:07:12.263Z prompt dispatch: 5 test(s) already fail on the unchanged code: answers are judged on new failures only
+2026-10-17T03:17:27.257Z capture-stop reported=true queued=false accepted=false
+2026-10-17T03:17:31.811Z prompt dispatch: not dispatched (kind=chat)
+2026-10-17T03:17:46.142Z prompt dispatch: not dispatched (kind=chat)

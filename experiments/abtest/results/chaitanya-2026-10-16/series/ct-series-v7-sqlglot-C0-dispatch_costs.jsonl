@@ -1,0 +1,9 @@
+{"at":"2026-10-18T13:01:19.961Z","what":"brief","model":"gpt-oss-120b","cost_usd":0.000151185}
+{"at":"2026-10-18T13:01:20.649Z","what":"survey-fill","model":"gpt-oss-120b","cost_usd":0.00039956100000000005}
+{"at":"2026-10-18T13:01:21.568Z","what":"locate","model":"gpt-oss-120b","cost_usd":0.00017872}
+{"at":"2026-10-18T13:18:03.891Z","what":"brief","model":"gpt-oss-120b","cost_usd":0.000170173}
+{"at":"2026-10-18T13:18:07.311Z","what":"locate","model":"gpt-oss-120b","cost_usd":0.000372201}
+{"at":"2026-10-18T13:18:32.618Z","what":"answer","model":"glm-5.3-flash","cost_usd":0.0005633999999999999}
+{"at":"2026-10-18T13:18:35.900Z","what":"answer-review","model":"claude-sonnet-5-5","cost_usd":0.02682}
+{"at":"2026-10-18T13:18:52.172Z","what":"answer","model":"glm-5.3-flash","cost_usd":0.001301}
+{"at":"2026-10-18T13:18:55.666Z","what":"answer-review","model":"claude-sonnet-5-5","cost_usd":0.047866}

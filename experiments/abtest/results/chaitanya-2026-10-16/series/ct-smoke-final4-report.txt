@@ -1,0 +1,12 @@
+suite       n | A solved     A $ | C solved     C $  saving |   A p50/p95/p99 s |   C p50/p95/p99 s | cheap delivered | not dispatched
+--------------------------------------------------------------------------------------------------------------------------------------
+ALL         0 |        0    0.00 |        0    0.00      0% |   nan/  nan/  nan |   nan/  nan/  nan |       0/0       | 0/0
+
+C unsolved: 0 (of which A also unsolved: 0): []
+
+
+position task                       |  C solved     C $
+-------------------------------------------------------
+       1 omni-us__jsonargparse-502  |       yes   0.779
+-------------------------------------------------------
+     all                            |   1/1       0.779

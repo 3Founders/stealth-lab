@@ -1,0 +1,12 @@
+{"ts":"2026-10-18T13:01:08.388Z","event":"queued"}
+{"ts":"2026-10-18T13:01:08.390Z","event":"selected","source":"explicit","race":1,"units":[{"executor":"claude","model":"glm-5.3-flash"}],"note":""}
+{"ts":"2026-10-18T13:01:09.277Z","event":"worktree","attempt":1,"path":"/app/experiments/abtest/.local/worktrees/r-20261018130108-75485b-a1"}
+{"ts":"2026-10-18T13:01:09.278Z","event":"running","attempt":1,"executor":"claude","model":"glm-5.3-flash"}
+{"ts":"2026-10-18T13:09:49.291Z","event":"executor_exit","attempt":1,"exit":0,"reason":"exit"}
+{"ts":"2026-10-18T13:09:49.398Z","event":"verifying","attempt":1,"executor":"claude","model":"glm-5.3-flash"}
+{"ts":"2026-10-18T13:09:49.399Z","event":"check_start","cmd":"python \"/app/experiments/abtest/.local/C_home/specs/1792328467999-fe462f/run_check.py\"","attempt":1}
+{"ts":"2026-10-18T13:11:08.015Z","event":"check_done","cmd":"python \"/app/experiments/abtest/.local/C_home/specs/1792328467999-fe462f/run_check.py\"","exit":128,"seconds":78.6,"attempt":1}
+{"ts":"2026-10-18T13:11:08.015Z","event":"cancelled","attempt":1,"executor":"claude","model":"glm-5.3-flash"}
+{"ts":"2026-10-18T13:11:08.019Z","event":"evidence","attempt":1,"reported":false,"queued":false}
+{"ts":"2026-10-18T13:11:08.103Z","event":"done","state":"cancelled"}
+{"ts":"2026-10-18T13:11:08.137Z","event":"cancelled"}

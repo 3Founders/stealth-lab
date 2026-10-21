@@ -1,0 +1,36 @@
+R1 (pack off), paired with R2: 23 answers that reached the model (0 more left out: hidden-test verdict differs between two runs), 14 right (hidden tests); E known for 23, R known for 23
+rule                         accepted  wrong  wrong% right kept right lost  est. cost vs Opus-only
+1 T (today)                         0      0      0%          0         14  -9% saved, 0 wrong delivered
+2 E and S                          23      9     39%         14          0  91% saved, 9 wrong delivered
+3 E and S and (T or R)             22      9     41%         13          1  87% saved, 9 wrong delivered
+4 E and S and R                    22      9     41%         13          1  87% saved, 9 wrong delivered
+5 E and S and A                    18      7     39%         11          3  70% saved, 7 wrong delivered
+6 E and S and (A or R)             22      9     41%         13          1  87% saved, 9 wrong delivered
+7 E S F X, no R-veto               13      4     31%          9          5  48% saved, 4 wrong delivered
+8 E S F X T*, no R-veto            13      4     31%          9          5  48% saved, 4 wrong delivered
+9 E S T* and (A or R)              22      9     41%         13          1  87% saved, 9 wrong delivered
+10 E S F X, no Rs-veto             12      3     25%          9          5  43% saved, 3 wrong delivered
+11 E S and Rs                      21      8     38%         13          1  83% saved, 8 wrong delivered
+12 E S and Ro                      19      6     32%         13          1  74% saved, 6 wrong delivered
+13 E S A and Ro                    15      5     33%         10          4  56% saved, 5 wrong delivered
+14 E S and C                       16      7     44%          9          5  61% saved, 7 wrong delivered
+15 E S C and Ro                    13      4     31%          9          5  48% saved, 4 wrong delivered
+(Opus assumed $1.13/task and always right: a wrong accept is a task Opus would have solved; the test writer's and reviewer's own cost are not in the estimate)
+tasks: 25; at most 2 wrong deliveries qualify
+  rule 1: not scorable (no written tests in these runs)
+  rule 2: 9 wrong of 25 tasks (36%), 84% saved -> does not qualify
+  rule 3: not scorable (no written tests in these runs)
+  rule 4: 9 wrong of 25 tasks (36%), 80% saved -> does not qualify
+  rule 5: 7 wrong of 25 tasks (28%), 64% saved -> does not qualify
+  rule 6: 9 wrong of 25 tasks (36%), 80% saved -> does not qualify
+  rule 7: 4 wrong of 25 tasks (16%), 44% saved -> does not qualify
+  rule 8: not scorable (no written tests in these runs)
+  rule 9: not scorable (no written tests in these runs)
+  rule 10: 3 wrong of 25 tasks (12%), 40% saved -> does not qualify
+  rule 11: 8 wrong of 25 tasks (32%), 76% saved -> does not qualify
+  rule 12: 6 wrong of 25 tasks (24%), 68% saved -> does not qualify
+  rule 13: 5 wrong of 25 tasks (20%), 52% saved -> does not qualify
+  rule 14: 7 wrong of 25 tasks (28%), 56% saved -> does not qualify
+  rule 15: 4 wrong of 25 tasks (16%), 44% saved -> does not qualify
+chosen: rule 15 (none qualifies: the pre-registered fallback)
+final run: --accept-rule "E S C Rs" --review-model claude-opus-5-5

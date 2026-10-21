@@ -1,0 +1,9 @@
+{"ts":"2026-10-18T13:01:22.950Z","event":"queued"}
+{"ts":"2026-10-18T13:01:22.954Z","event":"selected","source":"explicit","race":1,"units":[{"executor":"claude","model":"minimax-m2-7"}],"note":""}
+{"ts":"2026-10-18T13:01:24.177Z","event":"worktree","attempt":1,"path":"/app/experiments/abtest/.local/worktrees/r-20261018130122-6c14d8-a1"}
+{"ts":"2026-10-18T13:01:24.179Z","event":"running","attempt":1,"executor":"claude","model":"minimax-m2-7"}
+{"ts":"2026-10-18T13:11:22.752Z","event":"executor_exit","attempt":1,"exit":143,"reason":"cancelled"}
+{"ts":"2026-10-18T13:11:22.763Z","event":"cancelled","attempt":1,"executor":"claude","model":"minimax-m2-7","reason":"cancelled"}
+{"ts":"2026-10-18T13:11:22.764Z","event":"evidence","attempt":1,"reported":false,"queued":false}
+{"ts":"2026-10-18T13:11:22.793Z","event":"done","state":"cancelled"}
+{"ts":"2026-10-18T13:11:22.794Z","event":"cancelled"}

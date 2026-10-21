@@ -1,0 +1,20 @@
+2026-10-18T10:23:12.053Z prompt stealthlab hook: triage kind=reusable_task work=change (jev)
+2026-10-18T10:23:13.023Z prompt dispatch: the judge (jev) says work=change
+2026-10-18T10:23:14.609Z prompt dispatch: brief: Fix the transpilation of the regexp_extract function from Presto to Spark so that it correctly accounts for the different default group indexes used by the two engines.
+2026-10-18T10:23:20.254Z prompt locate: narrowed to sqlglot/dialects/presto.py, sqlglot/dialects/spark.py, sqlglot/dialects/dialect.py
+2026-10-18T10:23:20.268Z prompt dispatch: located sqlglot/dialects/dialect.py:1366-1373, sqlglot/dialects/dialect.py:929-933, sqlglot/dialects/presto.py:233-344, sqlglot/dialects/presto.py:1-54 (tests: tests/dialects/test_presto.py)
+2026-10-18T10:23:55.055Z prompt gpt-oss-120b|claude: the executor failed (exit 1): API Error: 400 upstream 400: {"error":{"message":"Model started a function call but did not complete it.","type":"provider_error","code":"provider_error","param":null}}
+2026-10-18T10:33:21.103Z prompt dispatch: no cheap pass within 600 s; the session's model takes over
+2026-10-18T10:33:21.304Z prompt dispatch glm-5.3-flash|claude: no pass (timed out at the limit)
+2026-10-18T10:33:21.304Z prompt dispatch minimax-m2-7|stealth: no pass (timed out at the limit)
+2026-10-18T10:33:21.304Z prompt dispatch gemma-4-31b-it|claude: no pass (timed out at the limit)
+2026-10-18T10:39:45.195Z capture-stop library entry L-1cadcd added
+2026-10-18T10:39:45.424Z capture-stop reported=true queued=false accepted=true
+2026-10-18T10:39:48.686Z prompt stealthlab hook: triage kind=reusable_task work=change (jev)
+2026-10-18T10:39:48.690Z capture-stop way: L-1cadcd -> "Normalize REGEXP_EXTRACT default group handling" / "Add default constant and shared builder" (function)
+2026-10-18T10:39:49.212Z capture-stop ways coded=1
+2026-10-18T10:39:49.802Z prompt dispatch: the judge (jev) says work=change
+2026-10-18T10:39:51.003Z prompt dispatch: brief: Modify the Spark dialect generation so that when translating a REGEXP_EXTRACT expression that defaults to group 0 (as in Presto), the generated Spark SQL includes an explicit group argument of 0, ensuring correct behavior given Spark's defa
+2026-10-18T10:39:53.619Z prompt locate: narrowed to sqlglot/dialects/spark.py, sqlglot/dialects/presto.py, sqlglot/dialects/dialect.py
+2026-10-18T10:39:53.631Z prompt dispatch: located sqlglot/dialects/dialect.py:335-454, sqlglot/dialects/dialect.py:1369-1380, sqlglot/dialects/presto.py:234-343, sqlglot/dialects/presto.py:2-52 (tests: tests/dialects/test_spark.py)
+2026-10-18T10:39:53.654Z prompt dispatch: not dispatched (a follow-up: this session already changed sqlglot/dialects/presto.py, sqlglot/dialects/dialect.py)

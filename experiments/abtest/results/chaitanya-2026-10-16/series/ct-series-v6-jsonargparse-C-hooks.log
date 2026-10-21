@@ -1,0 +1,16 @@
+2026-10-18T10:10:24.224Z prompt stealthlab hook: triage kind=reusable_task work=change (jev)
+2026-10-18T10:10:26.239Z prompt dispatch: the judge (jev) says work=change
+2026-10-18T10:10:27.246Z prompt dispatch: brief: Fix the LookupError raised by format_usage() when called on a parser created via capture_parser (the error mentions the parent_parser context variable), ensuring format_usage() works correctly just like print_usage() for such parsers.
+2026-10-18T10:10:28.596Z prompt locate: narrowed to jsonargparse/_core.py, jsonargparse/_util.py, jsonargparse/_deprecated.py
+2026-10-18T10:10:28.617Z prompt dispatch: located jsonargparse/_core.py:1245-1247, jsonargparse/_core.py:996-1008, jsonargparse/_util.py:93-112, jsonargparse/_util.py:87-90 (tests: jsonargparse_tests/test_core.py)
+2026-10-18T10:10:38.250Z prompt dispatch: 5 test(s) already fail on the unchanged code: answers are judged on new failures only
+2026-10-18T10:16:18.792Z prompt dispatch gpt-oss-120b|stealth: no pass (failed)
+2026-10-18T10:17:45.284Z prompt dispatch gemma-4-31b-it|claude: no pass (failed)
+2026-10-18T10:18:19.046Z prompt dispatch glm-5.3-flash|stealth: no pass (failed)
+2026-10-18T10:20:29.888Z prompt dispatch: no cheap pass within 600 s; the session's model takes over
+2026-10-18T10:20:30.041Z prompt dispatch minimax-m2-7|claude: no pass (timed out at the limit)
+2026-10-18T10:21:21.223Z capture-stop reported=true queued=false accepted=false
+2026-10-18T10:21:23.530Z prompt stealthlab hook: triage kind=repo_specific work=conversation (jev): repo_specific below confidence 0.6
+2026-10-18T10:21:35.183Z prompt answer-review: claude-sonnet-5-5 says bad (The reply says the new assertion exercises the `re.sub` un-bracketing at `_formatters.py:96-97`, but `--int` has default)
+2026-10-18T10:21:35.184Z prompt answer: glm-5.3-flash's reply not shown (review: bad -- The reply says the new assertion exercises the `re.sub` un-bracketing at `_formatters.py:96-97`, but `--int` has default 1 and is not a required arg. The assertion checks that `[--int INT]` stays bracketed, so that branch never runs; only `parent_parser.get()` is covered.); the session's model answers
+2026-10-18T10:21:36.819Z prompt dispatch: not dispatched (the judge says work=conversation)

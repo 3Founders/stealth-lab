@@ -1,0 +1,84 @@
+{
+  "run_id": "r-20261018130122-6c14d8",
+  "repo": "/app/experiments/abtest/.local/ws/C0/swe-sqlglot",
+  "commit": "6679daa091255d7f0599345145e588d411e4dfb9",
+  "base": "working-tree",
+  "created_at": "2026-10-18T13:01:22.949Z",
+  "finished_at": "2026-10-18T13:11:22.793Z",
+  "settled": true,
+  "state": "cancelled",
+  "winner": null,
+  "applied": null,
+  "discarded": true,
+  "error": null,
+  "selection": {
+    "source": "explicit",
+    "race": 1,
+    "note": "",
+    "recommendation": null
+  },
+  "instance_key": "74d3ad3f-e57d-5a85-abfc-09434c17716d.144d26f0a002491d",
+  "input": {
+    "task": "Converting a regexp_extract from Presto to Spark drops the group index, but the two functions have different defaults, so the output is wrong. Work only inside this directory: do not open, list or search files outside it.\n\nLikely place in this repository (found by searching it for the task's names; confirm before relying on it): sqlglot/dialects/presto.py:233-344 (Presto), sqlglot/dialects/presto.py:1-54, sqlglot/dialects/dialect.py:1366-1373 (regexp_extract_sql). Existing tests for it: tests/dialects/test_presto.py.\n\nContext from this repository (use what applies to the task above; it is not part of the request):\n\nFacts about this repository (from its survey; each cites a file):\n# claims.md -- facts about this repository. Written by stealthlab-mcp survey (by=scanner lines) and the agent (survey_repo).\nCLAIM|R-001|current|stack|repository|Source files in the repository are Python (~81%), SQL (~18%) by file count (vendored and generated files excluded)|source=search:file extensions in . (git ls-files)|version=1|by=scanner|key=languages\nCLAIM|R-002|current|runtime|repository|The repository root requires Python `>=3.7` (setup.py python_requires)|source=setup.py:29#sha=c435b8e|version=1|by=scanner|key=python_requires\nCLAIM|R-003|current|build|repository|At the repository root, `make install` runs `pip install -e .` (Makefile)|source=Makefile:3#sha=bcf5777|version=1|by=scanner|key=make:install\nCLAIM|R-004|current|build|repository|At the repository root, `make docs` runs `python pdoc/cli.py -o docs` (Makefile)|source=Makefile:38#sha=7bf7092|version=1|by=scanner|key=make:docs\nCLAIM|R-005|current|test|repository|At the repository root, `make test` runs `SQLGLOTRS_TOKENIZER=0 python -m unittest` (Makefile)|source=Makefile:21#sha=13f2e45|version=1|by=scanner|key=make:test\nCLAIM|R-006|current|test|repository|At the repository root, `make unit` runs `SKIP_INTEGRATION=1 SQLGLOTRS_TOKENIZER=0 python -m unittest` (Makefile)|source=Makefile:27#sha=6ffa94d|version=1|by=scanner|key=make:unit\nCLAIM|R-007|current|test|repository|At the repository root, `make check` is a target (Makefile)|source=Makefile:36#sha=2919f20|version=1|by=scanner|key=make:check\nCLAIM|R-008|current|lint|repository|pre-commit hooks run: ruff, ruff-format, mypy (.pre-commit-config.yaml)|source=.pre-commit-config.yaml:4#sha=a319760|version=1|by=scanner|key=pre-commit\nCLAIM|R-009|current|lint|repository|At the repository root, `make style` runs `pre-commit run --all-files` (Makefile)|source=Makefile:33#sha=f579cb3|version=1|by=scanner|key=make:style\nCLAIM|R-010|current|ci|repository|CI workflow .github/workflows/python-package.yml (job `build`) runs `make install-dev`|so\n[...cut to fit]",
+    "checks": [
+      "python \"/app/experiments/abtest/.local/C_home/specs/1792328482592-b39e2f/run_check.py\""
+    ],
+    "scope": [
+      "*",
+      "**/*"
+    ],
+    "goal_id": null,
+    "procedure_id": null,
+    "step_order": null,
+    "executor": "claude",
+    "model": "minimax-m2-7",
+    "timeoutS": 600,
+    "hangS": 600,
+    "checkTimeoutS": 600,
+    "escalate": 0,
+    "base": "working-tree",
+    "noChangeExpected": false,
+    "instance_key": "74d3ad3f-e57d-5a85-abfc-09434c17716d.144d26f0a002491d"
+  },
+  "attempts": [
+    {
+      "run_id": "r-20261018130122-6c14d8",
+      "state": "cancelled",
+      "verified": false,
+      "checks": [],
+      "scope_violations": [],
+      "summary": "nfig\",\"reason_type\":\"rule\"}}]}\n{\"type\":\"assistant\",\"message\":{\"id\":\"msg_ec1ba5bd8f9d36b58427\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"minimax-m2.7\",\"content\":[{\"type\":\"tool_use\",\"id\":\"call_38df856def6548a29b\",\"name\":\"Grep\",\"input\":{\"-n\":true,\"output_mode\":\"content\",\"path\":\"/app/experiments/abtest/.local/worktrees/r-20261018130122-6c14d8-a1/sqlglot/dialects/presto.py\",\"pattern\":\"RegexpExtract\"}}],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":48001,\"output_tokens\":0},\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"67610936-e58e-4d64-bf36-dc72657989e1\",\"uuid\":\"2f1515b0-4282-4738-a42d-cd34c4056652\",\"timestamp\":\"2026-10-18T13:10:59.232Z\"}\n{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"tool_use_id\":\"call_38df856def6548a29b\",\"type\":\"tool_result\",\"content\":\"103:def _regexp_extract_sql(self: Presto.Generator, expression: exp.RegexpExtract) -> str:\\n323:            \\\"REGEXP_EXTRACT\\\": lambda args: exp.RegexpExtract(\\n455:            exp.RegexpExtract: _regexp_extract_sql,\"}]},\"parent_tool_use_id\":null,\"session_id\":\"67610936-e58e-4d64-bf36-dc72657989e1\",\"uuid\":\"81540c1c-cb07-42b5-887f-46ca232cf93f\",\"timestamp\":\"2026-10-18T13:10:59. [...trimmed]",
+      "learned": [],
+      "diff": {
+        "files": [],
+        "stat": "",
+        "worktree": null,
+        "patch_path": null
+      },
+      "executor": "claude",
+      "model": "minimax-m2-7",
+      "attempt": 1,
+      "duration_s": 599.8,
+      "tokens": {
+        "in": 3124750,
+        "out": 66110
+      },
+      "cost_usd": 0.7117299,
+      "evidence": {
+        "reported": false,
+        "queued": false,
+        "skipped": "cancelled: not a model outcome",
+        "instance_key": "74d3ad3f-e57d-5a85-abfc-09434c17716d.144d26f0a002491d"
+      },
+      "executor_exit": 143,
+      "stop_reason": "cancelled",
+      "base_tree": "e899acb470a8c921bde7d94920e37823582d7487",
+      "worktree": "/app/experiments/abtest/.local/worktrees/r-20261018130122-6c14d8-a1",
+      "worktree_removed": true,
+      "did_not_run": false,
+      "escalated": false,
+      "started_at": "2026-10-18T13:01:22.955Z",
+      "finished_at": "2026-10-18T13:11:22.764Z"
+    }
+  ]
+}
