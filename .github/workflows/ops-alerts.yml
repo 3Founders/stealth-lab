@@ -31,7 +31,7 @@ jobs:
       OPS_SHARD_WARN_BYTES: ${{ vars.OPS_SHARD_WARN_BYTES }}
       OPS_SHARD_ROLLOVER_BYTES: ${{ vars.OPS_SHARD_ROLLOVER_BYTES }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip, cache-dependency-path: backend/requirements.txt }
       - run: pip install -r backend/requirements.txt
