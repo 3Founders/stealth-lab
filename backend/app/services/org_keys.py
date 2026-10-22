@@ -15,6 +15,8 @@ Credential ownership is `customer`: the key is the organisation's own, so the co
 organisation's own risk decision and the platform egress policy (for platform-owned keys) does not apply. The key is never
 returned by any route and never logged; the dashboard sees a hint (last four characters).
 
+Needs DEPLOYMENT_MODE=shared (see OrgKeyStore): the key is never served ungoverned.
+
 Limits: no key rotation job and no test call on save (the join self-test is the first real call); see secret_box.py.
 """
 from __future__ import annotations
@@ -23,6 +25,7 @@ import json
 import re
 from typing import Any, Collection, Mapping, Optional, Sequence
 
+from app.config import settings
 from app.providers import registry
 from app.providers.secrets import register_secret_resolver
 from app.providers.types import Connection, ProviderCallDenied
@@ -121,7 +124,7 @@ async def put_provider_key(pool: Any, *, actor_subject: str, actor_user_id: Opti
                 "INSERT INTO org_provider_keys (organization_id, connection_id, provider, base_url, units, "
                 "allowed_data_classes, secret_ciphertext, key_hint, created_by, updated_by) "
                 "VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $9)",
-                str(org_id), connection_id, provider.strip(), base_url, json.dumps(cleaned), list(data_classes),
+                str(org_id), connection_id, provider.strip(), base_url, cleaned, list(data_classes),
                 secret_box.seal(secret, org_id=org_id, connection_id=connection_id), secret_box.hint(secret),
                 actor_subject)
             action = "org_provider_key.create"
@@ -131,14 +134,14 @@ async def put_provider_key(pool: Any, *, actor_subject: str, actor_user_id: Opti
                     "UPDATE org_provider_keys SET provider=$3, base_url=$4, units=$5::jsonb, allowed_data_classes=$6, "
                     "secret_ciphertext=$7, key_hint=$8, enabled=TRUE, updated_by=$9, updated_at=now() "
                     "WHERE organization_id=$1::uuid AND connection_id=$2",
-                    str(org_id), connection_id, provider.strip(), base_url, json.dumps(cleaned), list(data_classes),
+                    str(org_id), connection_id, provider.strip(), base_url, cleaned, list(data_classes),
                     secret_box.seal(secret, org_id=org_id, connection_id=connection_id), secret_box.hint(secret),
                     actor_subject)
             else:
                 await conn.execute(
                     "UPDATE org_provider_keys SET provider=$3, base_url=$4, units=$5::jsonb, allowed_data_classes=$6, "
                     "enabled=TRUE, updated_by=$7, updated_at=now() WHERE organization_id=$1::uuid AND connection_id=$2",
-                    str(org_id), connection_id, provider.strip(), base_url, json.dumps(cleaned), list(data_classes),
+                    str(org_id), connection_id, provider.strip(), base_url, cleaned, list(data_classes),
                     actor_subject)
             action = "org_provider_key.update"
         # the audit row names the connection and whether the key changed, never the key
@@ -187,7 +190,10 @@ class OrgKeyStore:
 
     async def list_connections(self, scope: AccessScope) -> Sequence[Connection]:
         pool = self._pool()
-        if pool is None or scope.is_unrestricted or not scope.org_ids:
+        # An organization's key is only ever served through the governed path (policy, budget, ledger). The gateway governs
+        # calls only in shared mode (chat_completions.py), so in any other mode the key is not served at all rather than
+        # spent ungoverned. Found against a real database: in single_user mode the call succeeded with no ledger row.
+        if settings.deployment_mode != "shared" or pool is None or scope.is_unrestricted or not scope.org_ids:
             return []
         out: list[Connection] = []
         for org in scope.org_ids:
@@ -213,7 +219,7 @@ class OrgKeyResolver:
         _, _, rest = ref.partition(":")
         org_id, _, connection_id = rest.partition(":")
         pool = self._pool()
-        if pool is None or not org_id or not connection_id:
+        if settings.deployment_mode != "shared" or pool is None or not org_id or not connection_id:
             raise ProviderCallDenied(f"credential {ref!r} cannot be resolved")
         async with tenant_transaction(pool, gov._scope(org_id)) as conn:
             row = await conn.fetchrow("SELECT secret_ciphertext FROM org_provider_keys WHERE organization_id = $1::uuid "

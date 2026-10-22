@@ -41,6 +41,7 @@ def run(coro):
 def encryption_key(monkeypatch):
     monkeypatch.setattr(settings, "org_key_encryption_key", KEY, raising=False)
     monkeypatch.setattr(settings, "public_api_url", "https://api.example.com", raising=False)
+    monkeypatch.setattr(settings, "deployment_mode", "shared", raising=False)
     monkeypatch.setattr(registry, "_STORES", {})
     yield
     unregister_secret_resolver(org_keys.SCHEME)
@@ -167,6 +168,9 @@ def test_a_new_connection_needs_a_key_and_stores_only_ciphertext_and_a_hint():
     insert = pool.statements("INSERT INTO org_provider_keys")[0][1]
     assert any(isinstance(a, str) and a.startswith("v1.") for a in insert)
     assert "sk-live-abcdef123456" not in json.dumps(insert, default=str)
+    # a real list, not a JSON string: the pool's jsonb codec encodes it, and a pre-encoded string is stored as a JSON string
+    # (found against a real Postgres: it violated the units CHECK)
+    assert any(isinstance(a, list) and a and isinstance(a[0], dict) for a in insert)
     audit = pool.statements("INSERT INTO audit_events")[0][1]
     assert "sk-live-abcdef123456" not in json.dumps(audit, default=str)
 
@@ -210,6 +214,16 @@ def test_the_resolver_decrypts_the_stored_key_for_that_row_only():
         run(org_keys.OrgKeyResolver(lambda: FakePool({})).resolve(f"orgkey:{ORG}:gc"))
     with pytest.raises(ProviderCallDenied):
         run(org_keys.OrgKeyResolver(lambda: None).resolve(f"orgkey:{ORG}:gc"))
+
+
+def test_an_organization_key_is_never_served_outside_shared_mode(monkeypatch):
+    """The gateway governs (policy, budget, ledger) only in shared mode; elsewhere the key must not be spendable at all."""
+    monkeypatch.setattr(settings, "deployment_mode", "single_user", raising=False)
+    sealed = secret_box.seal("sk-live-abcdef123456", org_id=ORG, connection_id="gc")
+    pool = FakePool({"FROM org_provider_keys": [_row()], "secret_ciphertext": {"secret_ciphertext": sealed}})
+    assert run(org_keys.OrgKeyStore(lambda: pool).list_connections(AccessScope.for_org_member("u", [ORG]))) == []
+    with pytest.raises(ProviderCallDenied):
+        run(org_keys.OrgKeyResolver(lambda: pool).resolve(f"orgkey:{ORG}:gc"))
 
 
 def test_install_registers_the_store_and_the_orgkey_scheme():

@@ -6,7 +6,7 @@ what is **not** done. Where something is unproven it says so.
 
 **Status in one paragraph.** The flow below is built end to end and tested offline: the company's admin connects the
 company's provider key once, applies a policy and a budget, and creates an invite; a developer runs one command. It has
-**not** been run against a real database, a real model provider, or inside a real Cursor, and nothing is deployed. Section 8
+has been run end to end **locally** (section 11) against a scratch Postgres and one real provider call, but **not** on staging, with a real identity provider, or inside a real Cursor, and nothing is deployed. Section 8
 lists the exact gaps.
 
 ---
@@ -153,7 +153,7 @@ Any member: `GET /v1/orgs/{org}/client-config`. A signed-in person with an invit
 
 | Gap | Today |
 |---|---|
-| Not run for real | No real Postgres, provider, or Cursor run. RLS, the single-use invite update and the encrypted round trip against a real database are untested; only the SQL text, the Python and the Node logic are. The migration was not applied anywhere. |
+| Not run for real | Run locally (section 11): migration 151 on a scratch Postgres 17, the API, a local test identity, the real `join` command and one real provider call. Not run: staging or production, a real identity provider (Supabase sign-in), a real Cursor, the admin console in a browser, or concurrent invite redemption. |
 | Deployment | Nothing is hosted. `PUBLIC_API_URL`, the package's default address and the install links are unset or placeholders; the npm package is unpublished and `UNLICENSED`. |
 | Two addresses | The MCP server and the API are separate services, so `join` needs both (`--url`, `--api`); the console prints them. A single address would need the two behind one host. |
 | Key handling | One encryption key, no rotation job, no customer KMS, no test call when a key is saved (the first real check is the join self-test). The server process can read every key. |
@@ -201,3 +201,38 @@ procedure) and `run.md` (14 nodes). It is the only part of `.stealth/` tracked i
 | N-14 | ready | key rotation and a test call when a key is saved |
 
 This folder is pushed, so it holds no secret, customer name or price.
+
+## 11. Run the whole thing locally
+
+Everything below runs on one machine, with no hosted database and no hosted identity provider. It was run on 2026-10-22 and
+passed (`ALL OK`); that run found and fixed two real bugs the offline tests could not (below).
+
+```powershell
+# 1. a scratch Postgres with pgvector (PostgreSQL 17 here), on loopback only
+pg_ctl -D C:\Users\<you>\pg-scratch\data -o "-p 55432 -c listen_addresses=127.0.0.1" -l pg.log start
+psql -h 127.0.0.1 -p 55432 -U kel_owner -d postgres -c "CREATE DATABASE kel_orgtest"
+cd backend ; $env:DATABASE_URL="" ; python scripts\migrate.py --dsn postgresql://kel_owner@127.0.0.1:55432/kel_orgtest
+
+# 2. the REST API with a local test identity and DEPLOYMENT_MODE=shared (refuses any non-loopback database)
+python experiments\abtest\run_org_stack.py --mint cto ; python experiments\abtest\run_org_stack.py --mint dev
+python experiments\abtest\run_org_stack.py                       # http://127.0.0.1:8000, leave it running
+
+# 3. the whole flow, with the real CLI in a throwaway home (needs GENERAL_COMPUTE_API_KEY in the environment or backend\.env)
+python experiments\abtest\org_flow_check.py
+```
+
+`org_flow_check.py` signs in two test users, provisions the organization, connects the provider key as the CTO, applies the
+policy, creates an invite, runs `stealthlab-mcp join` as the developer (one real 8-token call through the gateway, a fraction of a
+cent), then checks: the key is not on the developer machine or in plain text in the database, one settled call is in the ledger,
+the dashboard counts show 2 joined / 1 ready / running, a member cannot read the keys, a wrong or revoked invite gets 404, and the
+kill switch stops the gateway and resumes it.
+
+Not covered locally: the admin console in a browser (it signs in through Supabase; its code is covered by vitest), a real Cursor,
+concurrent invite use, and the MCP server (`join` does not call it).
+
+Two bugs this run found, both fixed:
+1. Saving a key failed with a database CHECK error: the units were JSON-encoded before the pool's jsonb codec encoded them again,
+   so they were stored as a JSON string. The offline fake could not see this.
+2. In any mode other than `shared`, the gateway does not govern calls, so an organization's key was spent with **no policy, budget
+   or ledger row** (the call worked and nothing recorded it). The key store now serves organization keys only in `shared` mode; a
+   hosted deployment must set `DEPLOYMENT_MODE=shared`.

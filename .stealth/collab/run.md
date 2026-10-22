@@ -7,8 +7,8 @@ NODE|N-2|done|Backend: secret_box, org_keys, org_onboarding, routes, provision_o
 NODE|N-3|done|Client: join command, key_from profiles, setup recognises them (13 tests)|step=P-1:3|claims=O-001,O-008,O-013|deps=-|check=cd packaging/npm && node --test test/join.test.mjs
 NODE|N-4|done|Admin console: Get started page (keys, policy, invites, ready count)|step=P-1:2|claims=O-002|deps=-|check=cd admin && npx vitest run tests/onboarding-api.test.ts
 NODE|N-5|done|docs/setup.md: the whole flow, files, operator steps, gaps|step=-|claims=O-017|deps=N-2,N-3,N-4|check=test -s docs/setup.md
-NODE|N-6|ready|Apply migration 151 to staging and confirm it is the highest applied|step=P-1:0|claims=O-017|deps=N-1|check=cd backend && python scripts/migrate.py --status
-NODE|N-7|ready|Real-database e2e test: RLS isolates two organizations, an invite is single-use under concurrency, a key round-trips encrypted|step=-|claims=O-005,O-012|deps=N-6|check=test -f backend/tests/test_org_onboarding_e2e.py
+NODE|N-6|ready|Apply migration 151 to staging (it already applied cleanly on a local scratch Postgres 17) and confirm it is the highest applied|step=P-1:0|claims=O-017|deps=N-1|check=cd backend && python scripts/migrate.py --status
+NODE|N-7|ready|Real-database e2e test as pytest in CI (experiments/abtest/org_flow_check.py already proves it locally by hand): RLS isolates two organizations, an invite is single-use under concurrency, a key round-trips encrypted|step=-|claims=O-005,O-012,O-020|deps=N-6|check=test -f backend/tests/test_org_onboarding_e2e.py
 NODE|N-8|ready|Settle one statement of what leaves a developer's machine and make the hook and README agree; add a per-organization switch|step=-|claims=O-014|deps=-|check=grep -q "what leaves" packaging/npm/README.md
 NODE|N-9|blocked|Host the API and MCP server, set PUBLIC_API_URL, publish the npm package and fill defaultMcpUrl|step=P-1:0|claims=O-011,O-015|deps=N-6|check=grep -q '"defaultMcpUrl": "https' packaging/npm/package.json
 NODE|N-10|blocked|Run join on a real machine with Cursor and record the readiness output and hooks.log|step=P-1:3|claims=O-017|deps=N-9|check=test -f docs/join_first_real_run.md
