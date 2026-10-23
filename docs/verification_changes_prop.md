@@ -145,3 +145,6 @@ How it maps onto section 4:
 | the ladder's method names (4.3) | `deterministic_check` and `independent_agent` in the evidence line, so a line maps onto `verification_results` |
 
 Steps 1 to 2 of the order below are unchanged for the server; the local step comes first and its evidence feeds them.
+
+The server step for this local evidence (table choice, what is uploaded and what never leaves the machine, the reviewer, the proving
+tests) is `docs/evidence_upload_design.md`; it answers open question 2 of section 7 in favour of a sibling table.

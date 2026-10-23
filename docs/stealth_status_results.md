@@ -9,7 +9,8 @@ client, where the checks already run, before any server work.
 - `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--run] [--only <ids>] [--in-place]`
   (`packaging/npm/lib/status.mjs`, wired in `bin/stealthlab-mcp.mjs`).
 - A new append-only `.stealth/evidence.md`, one line per check run:
-  `EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<sha or ->|hashes=<path#sha=<hex>,...>|check=<cmd>`.
+  `EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<cmd>`
+  (`tree=` and `where=` were added in the follow-up below; older lines without them still parse).
   Method names follow the server ladder (`backend/app/services/verification.py`), so a line maps one to one onto a
   `verification_results` row later. A line holds the command and its exit verdict: never output, prompt text or secrets
   (a check that looks like it holds a secret is not recorded; the validator's `hasSecret` is the test).
@@ -132,3 +133,83 @@ produced by editing a file, found by the status and not by hand.
    `independent_agent`), with `commit` and `hashes`, so `expired` works on the server too.
 2. The proposal's `goal_claims` link and the server-side computed status, once evidence is flowing.
 3. Human review as typed evidence, and composition across the Goal tree.
+
+## Follow-up after f64dd66 (2026-10-23)
+
+### Part 0: the "known failure" was this machine's setup, now fixed in the test
+
+`hook.test.mjs` "triage: STEALTHLAB_HOOK_TRIAGE=off never asks" failed here and passes elsewhere. **Cause:** `lib/hook.mjs`
+asks the triage question when `STEALTHLAB_HOOK_TRIAGE` is on **or when dispatch is installed**
+(`dispatchInstalled(env)` reads `~/.stealthlab/config.json` for `dispatch: true`, which is true on this machine). The test
+did not isolate that. Findings: no `ANTHROPIC_*` or `STEALTHLAB_*` variable changed it (the only `STEALTHLAB_*` variable in the
+shell is the MCP token); a clean `env -i` run failed the same way; no server was involved (the test uses a fake fetch).
+**Fix:** the test points `STEALTHLAB_HOME` at an empty folder, so it never reads the developer's own install. 21 of 21 pass.
+
+### A1: code changed outside what a check cites is flagged, never an expiry
+
+Each evidence line now carries `tree=<id of HEAD's tree plus the uncommitted tracked diff>`, computed in memory the way
+`git write-tree` computes it (`workTreeId`), so reading the status writes no git object. A unit test compares it with git's
+own `write-tree` for a modified, a new tracked and a deleted file. When the latest passing evidence's hashes all still match
+but its `tree=` differs from now, the target stays `verified` with `changed_since: true`; the table says "verified (code
+changed since the check ran)". Old lines without `tree=` parse and give `changed_since: null`, never true. No sixth state.
+
+```
+$ stealthlab-mcp status --run --yes
+N-1  node  verified  its check passed on the current code
+$ echo more >> notes.txt        # a tracked file that neither the claim nor the check cites
+$ stealthlab-mcp status
+N-1  node  verified  verified (code changed since the check ran): its check passed on the current code
+```
+
+### A2: `--run` shows the commands and asks first
+
+`--run` prints the distinct commands it will run (they come from the repository's own files), then: in a terminal it asks
+once, `Run these? [y/N]`, and a no runs nothing; with no terminal it runs only with `--yes`, otherwise it prints "pass --yes to
+run these checks" and exits 3.
+
+```
+$ stealthlab-mcp status --run          # stdin piped, no terminal, no --yes
+--run will run 1 command(s) from the repository's own files, each in a throwaway worktree:
+  $ node check.mjs
+pass --yes to run these checks
+exit code: 3
+```
+
+Honest note: this sample is the real non-terminal output. I could not capture an interactive terminal session in this
+environment, so the `[y/N]` question itself is covered by a test with an injected prompt (`tty: true`, answers `n` and `y`),
+not by a recorded session.
+
+### A3: `--in-place` is said and recorded
+
+The human output starts with "checks ran in your checkout, not a throwaway copy" and each evidence line carries
+`where=worktree` or `where=in-place` (also when a non-git folder forces the fallback). Both count as `deterministic_check`.
+
+```
+EVIDENCE|N-1|deterministic_check|pass|at=...|commit=<sha>|tree=<tree>|hashes=src/math.js#sha=ad6187c7a7b5|where=worktree|check=node check.mjs
+EVIDENCE|N-1|deterministic_check|pass|at=...|commit=<sha>|tree=<tree>|hashes=src/math.js#sha=ad6187c7a7b5|where=in-place|check=node check.mjs
+```
+
+### A4: `status --compact`
+
+Rewrites `evidence.md`, keeping for each target and check only the latest pass, the latest fail and every line recorded on the
+tree as it is now. (Per check, not per target: a library entry with two checks would otherwise lose one check's pass and
+change status.) It refuses when `evidence.md` has uncommitted changes in git, and keeps the old file as `evidence.md.prev`.
+Note: `.stealth/` is usually git-ignored, in which case git reports nothing and the refusal cannot trigger; the `.prev`
+copy is the safety net there.
+
+### Tests and counts
+
+- `test/status.test.mjs`: 20 tests, 20 pass (13 from before; 7 new: tree id equals git's, A1 twice, A2 twice, A3, A4).
+- Full packaging suite (`node --test test/*.test.mjs` from `packaging/npm/`): **641 tests, 638 pass, 0 fail, 3 skipped** with
+  `--test-concurrency=2`. With the default concurrency on this machine two timing tests failed in two separate runs, a
+  different one each time ("dispatch: the capped run is cancelled at its model's cap" asserts it took under 3 s, and "hang
+  (spec 8.4)" asserts a 5 s window); each passes alone, three runs out of three. They are load-sensitive, not related to this
+  change; I did not change them.
+- The earlier line in this note about a "known failure" is superseded by Part 0.
+
+### What is still not covered
+
+- The check-depends-on-an-uncited-file limit is now visible (the `changed_since` flag) but not closed: the status does not
+  expire on it, by design.
+- Untracked files are not in the throwaway worktree, nor in `tree=`.
+- Nothing is uploaded: see `docs/evidence_upload_design.md`.

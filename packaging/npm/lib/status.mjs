@@ -8,7 +8,10 @@
 // `verification_results` row later.
 //
 // Evidence line (append-only, same pipe grammar as the other .stealth files; `check=` is last and takes the rest):
-//   EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<HEAD sha or ->|hashes=<path#sha=<hex>,...>|check=<cmd>
+//   EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<HEAD sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<cmd>
+// `tree` is the id of HEAD's tree plus the uncommitted tracked diff (what `git write-tree` would give for it), computed in
+// memory (workTreeId), so a read never writes git objects. It only FLAGS that code changed since the check ran
+// (`changed_since`); it never expires anything, because every commit would expire everything.
 // `hashes` are the files the target relies on (a node's claim sources, a library entry's touches), recorded as git blob
 // shas, the kind library.md `touches=` already uses. A line holds only the command and its exit verdict: never output,
 // prompt text or secrets.
@@ -37,7 +40,7 @@ const CHECK_MAX = 500;
 const SHA_LEN = 12;
 export const EVIDENCE_HEADER =
   "# evidence.md -- one line per check run by `stealthlab-mcp status --run`. Append-only. No output, no prompt text, no secrets.\n" +
-  "# EVIDENCE|<target id>|<deterministic_check|independent_agent>|<pass|fail>|at=<iso>|commit=<sha or ->|hashes=<path#sha=<hex>,...>|check=<command>\n";
+  "# EVIDENCE|<target id>|<deterministic_check|independent_agent>|<pass|fail>|at=<iso>|commit=<sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<command>\n";
 
 // ---------------------------------------------------------------------------------------------- evidence lines
 
@@ -60,6 +63,7 @@ export function parseEvidence(text) {
     const [, target, method, result] = pos;
     if (!target || !EVIDENCE_METHODS.has(method) || !RESULTS.has(result)) return;
     out.push({ n: out.length, line: i + 1, target, method, result, at: kv.at || "", commit: kv.commit || "-",
+      tree: kv.tree && kv.tree !== "-" ? kv.tree : null, where: kv.where === "in-place" || kv.where === "worktree" ? kv.where : null,
       hashes: parseHashes(kv.hashes), check: (kv.check || "").trim() });
   });
   return out;
@@ -71,8 +75,10 @@ export function renderEvidence(e) {
   const check = String(e.check || "").replace(/[\r\n]+/g, " ").trim().slice(0, CHECK_MAX);
   if (hasSecret(check) || hasSecret(String(e.target))) return null;
   const hashes = (e.hashes || []).filter((h) => okPath(h.path) && h.sha).map((h) => `${h.path}#sha=${String(h.sha).slice(0, SHA_LEN)}`).join(",") || "-";
+  const where = e.where === "in-place" || e.where === "worktree" ? e.where : null;
   return ["EVIDENCE", e.target, e.method || "deterministic_check", e.result, `at=${e.at || new Date().toISOString()}`,
-    `commit=${e.commit || "-"}`, `hashes=${hashes}`, `check=${check}`].join("|");
+    `commit=${e.commit || "-"}`, `tree=${/^[0-9a-f]{40}$/.test(e.tree || "") ? e.tree : "-"}`, `hashes=${hashes}`,
+    ...(where ? [`where=${where}`] : []), `check=${check}`].join("|");
 }
 
 export function appendEvidence(root, lines, dir = path.join(root, ".stealth")) {
@@ -95,6 +101,60 @@ function gitText(root, args) {
 }
 
 export const headSha = (root) => gitText(root, ["rev-parse", "HEAD"]) || "-";
+
+// The id of HEAD's tree with the uncommitted tracked diff applied (new tracked files, edits, deletions; untracked files
+// are not in it), the tree the --run worktree is made from. Built in memory the way `git write-tree` builds it, so reading
+// the status writes nothing into .git. null when this is not a git work tree or anything goes wrong (the flag is then unknown).
+export function workTreeId(root) {
+  try {
+    const run = (args, input) => execFileSync("git", ["-C", root, ...args], { input, stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true, timeout: 60000, maxBuffer: 512 << 20 });
+    const entries = new Map();                                   // path -> {mode, sha}
+    for (const rec of run(["ls-tree", "-r", "-z", "HEAD"]).toString("utf8").split("\0")) {
+      const m = /^(\d+) (\w+) ([0-9a-f]{40})\t(.+)$/s.exec(rec);
+      if (m) entries.set(m[4], { mode: m[1], sha: m[3] });
+    }
+    const changed = run(["diff", "--name-only", "-z", "--no-renames", "HEAD"]).toString("utf8").split("\0").filter(Boolean);
+    const regular = [];
+    for (const rel of changed) {
+      let st;
+      try { st = fs.lstatSync(path.join(root, rel)); } catch { entries.delete(rel); continue; }
+      if (st.isSymbolicLink()) entries.set(rel, { mode: "120000", sha: rawBlobSha(Buffer.from(fs.readlinkSync(path.join(root, rel)))) });
+      else if (st.isFile()) regular.push(rel);
+      else entries.delete(rel);
+    }
+    if (regular.length) {
+      const shas = run(["hash-object", "--stdin-paths"], regular.join("\n") + "\n").toString("utf8").trim().split(/\r?\n/);
+      regular.forEach((rel, i) => {
+        const was = entries.get(rel);
+        entries.set(rel, { mode: was?.mode === "100755" || (process.platform !== "win32" && fs.statSync(path.join(root, rel)).mode & 0o111) ? "100755" : "100644", sha: shas[i] });
+      });
+    }
+    const top = { files: new Map(), dirs: new Map() };
+    for (const [rel, e] of entries) {
+      const parts = rel.split("/");
+      let node = top;
+      for (const d of parts.slice(0, -1)) {
+        if (!node.dirs.has(d)) node.dirs.set(d, { files: new Map(), dirs: new Map() });
+        node = node.dirs.get(d);
+      }
+      node.files.set(parts[parts.length - 1], e);
+    }
+    const hashTree = (node) => {
+      const list = [];
+      for (const [name, e] of node.files) list.push({ key: Buffer.from(name), name, mode: e.mode, sha: e.sha });
+      for (const [name, child] of node.dirs) list.push({ key: Buffer.from(name + "/"), name, mode: "40000", sha: hashTree(child) });
+      list.sort((a, b) => Buffer.compare(a.key, b.key));
+      const body = Buffer.concat(list.flatMap((x) => [Buffer.from(`${x.mode} ${x.name}\0`), Buffer.from(x.sha, "hex")]));
+      return crypto.createHash("sha1").update(`tree ${body.length}\0`).update(body).digest("hex");
+    };
+    return hashTree(top);
+  } catch (e) {
+    if (process.env.STEALTH_STATUS_DEBUG) process.stderr.write(`workTreeId: ${e.message}
+`);
+    return null;
+  }
+}
 
 function rawBlobSha(buf) {
   return crypto.createHash("sha1").update(`blob ${buf.length}\0`).update(buf).digest("hex");
@@ -239,6 +299,8 @@ export function computeStatus(root, opts = {}) {
   const { targets, claimsById } = collectTargets(root, dir);
   const evidence = parseEvidence(readOr(path.join(dir, "evidence.md")));
   const head = opts.head ?? headSha(root);
+  let nowTree;                                                   // computed once, and only if some evidence line carries a tree
+  const treeNow = () => (nowTree === undefined ? (nowTree = opts.tree !== undefined ? opts.tree : workTreeId(root)) : nowTree);
 
   const claimIdsNeeded = new Set(targets.flatMap((t) => t.claims));
   const verdicts = claimVerdicts(root, claimsById, claimIdsNeeded);
@@ -326,12 +388,21 @@ export function computeStatus(root, opts = {}) {
       if (ds !== "verified") notReady.push(`${d} is ${ds}`);
     }
     if (notReady.length) return { status: "open", why: `dependency not verified: ${notReady.join(", ")}` };
-    return { status: "verified", why: hasSynthetic && !groups.size ? "passed when the entry was added, files unchanged since" : "its check passed on the current code" };
+    // verified. Did code change since the passing runs, even though every file the check cites still matches? (a flag only)
+    const flags = [];
+    for (const list of groups.values()) {
+      const lastPass = [...list].reverse().find((ev) => ev.result === "pass" && isCurrent(ev));
+      if (lastPass) flags.push(lastPass.tree ? (treeNow() ? lastPass.tree !== treeNow() : null) : null);
+    }
+    const changedSince = flags.some((f) => f === true) ? true : flags.length && flags.every((f) => f === false) ? false : null;
+    const base = hasSynthetic && !groups.size ? "passed when the entry was added, files unchanged since" : "its check passed on the current code";
+    return { status: "verified", changed_since: changedSince,
+      why: changedSince ? `verified (code changed since the check ran): ${base}` : base };
   };
 
   const rows = targets.map((t) => {
     const r = evaluate(t);
-    return { id: t.id, kind: t.kind, status: r.status, why: r.why, title: t.title, hand: t.handStatus, checks: t.checks, deps: t.deps,
+    return { id: t.id, kind: t.kind, status: r.status, ...(r.status === "verified" ? { changed_since: r.changed_since ?? null } : {}), why: r.why, title: t.title, hand: t.handStatus, checks: t.checks, deps: t.deps,
       evidence: (byTarget.get(t.id) || []).length };
   });
   const counts = Object.fromEntries(STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length]));
@@ -352,8 +423,9 @@ export function runShell(cmd, { cwd, timeoutMs = 300000 } = {}) {
 }
 
 // Run one check in a throwaway worktree (HEAD + the uncommitted tracked diff); in place when that is not possible.
+// -> {code, where}: where says which one it was, and it goes into the evidence line.
 async function defaultExec(root, cmd, { inPlace = false, timeoutMs } = {}) {
-  if (inPlace) return runShell(cmd, { cwd: root, timeoutMs });
+  if (inPlace) return { ...(await runShell(cmd, { cwd: root, timeoutMs })), where: "in-place" };
   let wt = null;
   try {
     const { createWorktree, defaultWorktreeRoot, headCommit, removeWorktree, repoTopLevel, workingTreeDiff } = await import("./exec/worktree.mjs");
@@ -364,35 +436,70 @@ async function defaultExec(root, cmd, { inPlace = false, timeoutMs } = {}) {
     await createWorktree({ repo, commit, dir, patch });
     wt = { repo, dir, removeWorktree };
     const rel = path.relative(repo, root);
-    return await runShell(cmd, { cwd: path.join(dir, rel), timeoutMs });
+    return { ...(await runShell(cmd, { cwd: path.join(dir, rel), timeoutMs })), where: "worktree" };
   } catch {
-    return runShell(cmd, { cwd: root, timeoutMs });            // not a git work tree (or no commits yet): in place
+    return { ...(await runShell(cmd, { cwd: root, timeoutMs })), where: "in-place" };   // not a git work tree (or no commits yet)
   } finally {
     if (wt) { try { await wt.removeWorktree({ repo: wt.repo, dir: wt.dir }); } catch { /* best effort */ } }
   }
 }
 
-// Runs the check of each target (or of the --only ids) and appends exactly one evidence line per check.
-export async function runChecks(root, { dir = path.join(root, ".stealth"), only = null, exec = defaultExec, inPlace = false, timeoutMs = 300000, now = () => new Date() } = {}) {
+// The targets whose checks `--run` would run, and the distinct commands among them.
+export function pickTargets(root, { dir = path.join(root, ".stealth"), only = null } = {}) {
   const { targets } = collectTargets(root, dir);
-  const picked = targets.filter((t) => (!only || only.includes(t.id)) && t.checks.length && t.handStatus !== "skipped");
+  return targets.filter((t) => (!only || only.includes(t.id)) && t.checks.length && t.handStatus !== "skipped");
+}
+export const plannedCommands = (root, opts = {}) => [...new Set(pickTargets(root, opts).flatMap((t) => t.checks))];
+
+// Runs the check of each target (or of the --only ids) and appends exactly one evidence line per check.
+export async function runChecks(root, { dir = path.join(root, ".stealth"), only = null, exec = defaultExec, inPlace = false, timeoutMs = 300000, now = () => new Date(), tree } = {}) {
+  const picked = pickTargets(root, { dir, only });
   const paths = new Set(picked.flatMap((t) => t.files));
   const shas = fileShas(root, [...paths]);
   const head = headSha(root);
+  const treeId = tree !== undefined ? tree : workTreeId(root);   // before the checks run: the tree they ran on
   const lines = [], ran = [], skipped = [];
   for (const t of picked) {
     for (const check of t.checks) {
       const r = await exec(root, check, { inPlace, timeoutMs });
       if (r.code === null || r.code === undefined) { skipped.push({ id: t.id, check, why: "could not run or timed out" }); continue; }
+      const where = r.where || (inPlace ? "in-place" : "worktree");
       const line = renderEvidence({ target: t.id, method: "deterministic_check", result: r.code === 0 ? "pass" : "fail", at: now().toISOString(), commit: head,
-        hashes: t.files.filter((f) => shas.has(f)).map((f) => ({ path: f, sha: shas.get(f).slice(0, SHA_LEN) })), check });
+        tree: treeId, where, hashes: t.files.filter((f) => shas.has(f)).map((f) => ({ path: f, sha: shas.get(f).slice(0, SHA_LEN) })), check });
       if (!line) { skipped.push({ id: t.id, check, why: "not recorded (the check text looks like it holds a secret)" }); continue; }
       lines.push(line);
-      ran.push({ id: t.id, check, result: r.code === 0 ? "pass" : "fail" });
+      ran.push({ id: t.id, check, result: r.code === 0 ? "pass" : "fail", where });
     }
   }
   appendEvidence(root, lines, dir);
-  return { ran, skipped, appended: lines.length };
+  return { ran, skipped, appended: lines.length, in_place: ran.some((x) => x.where === "in-place") };
+}
+
+// ---------------------------------------------------------------------------------------------- compacting evidence.md
+
+// Keeps, for each target and check, only the latest pass, the latest fail, and every line recorded on the tree as it is now.
+// (Per check, not per target: a library entry with two checks would otherwise lose one check's pass and change status.)
+// Refuses when evidence.md has uncommitted changes in git. The old file is kept as evidence.md.prev.
+export function compactEvidence(root, { dir = path.join(root, ".stealth"), tree } = {}) {
+  const file = path.join(dir, "evidence.md");
+  const text = readOr(file, null);
+  if (text === null) return { ok: false, reason: "there is no evidence.md" };
+  const dirty = gitText(dir, ["status", "--porcelain", "--", path.basename(file)]);
+  if (dirty) return { ok: false, reason: "evidence.md has uncommitted changes; commit or discard them first" };
+  const nowTree = tree !== undefined ? tree : workTreeId(root);
+  const rawLines = text.split(/\r?\n/);
+  if (rawLines.length && rawLines[rawLines.length - 1] === "") rawLines.pop();
+  const parsed = rawLines.map((raw, i) => ({ i, ev: raw.trim().startsWith("EVIDENCE|") ? parseEvidence(raw.trim())[0] || null : null }));
+  const latest = new Map();                                      // "target\0check\0result" -> index of the latest such line
+  for (const { i, ev } of parsed) if (ev) latest.set(`${ev.target}\0${ev.check}\0${ev.result}`, i);
+  const keep = new Set(latest.values());
+  for (const { i, ev } of parsed) if (ev && nowTree && ev.tree === nowTree) keep.add(i);
+  const out = parsed.filter(({ i, ev }) => !ev || keep.has(i)).map(({ i }) => rawLines[i]);
+  const before = parsed.filter((p) => p.ev).length, after = out.length - parsed.filter((p) => !p.ev).length;
+  if (after === before) return { ok: true, before, after, changed: false };
+  fs.writeFileSync(`${file}.prev`, text);
+  fs.writeFileSync(file, out.join("\n") + "\n");
+  return { ok: true, before, after, changed: true };
 }
 
 // ---------------------------------------------------------------------------------------------- CLI
@@ -407,10 +514,12 @@ export function renderTable(result) {
   return lines.join("\n");
 }
 
-export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--run] [--only <ids>] [--in-place]
+export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--run [--yes] [--in-place] [--only <ids>]] [--compact]
 
   A computed status for every .stealth/run.md node and .stealth/library.md entry:
     verified   a check exists, its latest run on the current code passed, and every deps= node is verified
+               (flagged "code changed since the check ran" when the tree differs from the one the check ran on,
+               though every file it cites still matches: a flag, never an expiry)
     failed     the latest run of its check on the current code failed
     contested  a pass and a fail on the same code
     expired    something it relies on changed after its evidence was recorded (a claim the survey would no longer
@@ -418,13 +527,24 @@ export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir
     open       everything else: no check, no evidence, or a dependency that is not verified
   A node marked done by hand with no recorded run is open: the hand-written status is a claim, not evidence.
 
-  Read-only. --run runs each check (in a throwaway worktree: HEAD plus the uncommitted tracked diff; --in-place runs it
-  in the checkout) and appends one line per check to .stealth/evidence.md. --only limits --run to those ids (comma list).
+  Read-only. --run lists the commands it will run first. In a terminal it asks once (y/N); with no terminal it runs only
+  with --yes, otherwise it exits 3 ("pass --yes to run these checks"). Each check runs in a throwaway worktree (HEAD plus
+  the uncommitted tracked diff); --in-place runs it in your checkout and says so. One line per check is appended to
+  .stealth/evidence.md. --only limits --run to those ids (comma list).
+  --compact rewrites evidence.md keeping, per target and check, the latest pass, the latest fail and every line recorded on
+  the tree as it is now (the old file is kept as evidence.md.prev). It refuses when evidence.md has uncommitted changes.
   --stealth-dir reads the plan, claims and evidence from another folder (for example .stealth/collab) while --root stays
   the repository whose files are checked.
 `;
 
-export async function runStatusCli(argv, { out = (s) => process.stdout.write(s + "\n"), err = (s) => process.stderr.write(s + "\n"), exec } = {}) {
+async function askLine(question) {
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a); }));
+}
+
+export async function runStatusCli(argv, { out = (s) => process.stdout.write(s + "\n"), err = (s) => process.stderr.write(s + "\n"), exec,
+  tty = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask = askLine } = {}) {
   const args = [...argv];
   if (args.includes("--help") || args.includes("-h") || args[0] === "help") { err(STATUS_HELP); return 0; }
   const take = (flag) => { const i = args.indexOf(flag); if (i < 0) return undefined; const v = args[i + 1]; args.splice(i, v === undefined || v.startsWith("--") ? 1 : 2); return v === undefined || v.startsWith("--") ? "" : v; };
@@ -432,16 +552,38 @@ export async function runStatusCli(argv, { out = (s) => process.stdout.write(s +
   const rootArg = take("--root");
   const onlyArg = take("--only");
   const dirArg = take("--stealth-dir");
-  const json = has("--json"), run = has("--run"), inPlace = has("--in-place");
+  const json = has("--json"), run = has("--run"), inPlace = has("--in-place"), yes = has("--yes"), compact = has("--compact");
   if (args.length) { err(`unknown argument ${args[0]}\n\n${STATUS_HELP}`); return 2; }
   const root = rootArg ? path.resolve(rootArg) : nearestStealthRoot(process.cwd());
   let ranInfo = null;
   try {
     const dir = dirArg ? path.resolve(dirArg) : undefined;
-    if (run) ranInfo = await runChecks(root, { ...(dir ? { dir } : {}), only: onlyArg ? onlyArg.split(",").map((s) => s.trim()).filter(Boolean) : null, inPlace, ...(exec ? { exec } : {}) });
+    const only = onlyArg ? onlyArg.split(",").map((s) => s.trim()).filter(Boolean) : null;
+    if (compact) {
+      const c = compactEvidence(root, dir ? { dir } : {});
+      if (!c.ok) { err(`compact refused: ${c.reason}`); return 1; }
+      err(c.changed ? `compacted evidence.md: ${c.before} lines -> ${c.after} (the old file is evidence.md.prev)` : "evidence.md is already compact");
+    }
+    if (run) {
+      // These commands come from files in the repository. Show them, and run them only on a yes.
+      const cmds = plannedCommands(root, { ...(dir ? { dir } : {}), only });
+      let go = true;
+      if (cmds.length) {
+        err(`--run will run ${cmds.length} command(s) from the repository's own files, ${inPlace ? "in your checkout" : "each in a throwaway worktree"}:`);
+        for (const c of cmds) err(`  $ ${c}`);
+        if (!yes) {
+          if (!tty) { err("pass --yes to run these checks"); return 3; }
+          const answer = String((await ask("Run these? [y/N] ")) ?? "").trim();
+          go = /^y(es)?$/i.test(answer);
+          if (!go) err("nothing was run");
+        }
+      }
+      if (go) ranInfo = await runChecks(root, { ...(dir ? { dir } : {}), only, inPlace, ...(exec ? { exec } : {}) });
+    }
     const result = computeStatus(root, dir ? { dir } : {});
     if (ranInfo) result.run = ranInfo;
-    out(json ? JSON.stringify(result, null, 2) : renderTable(result) + (ranInfo ? `\n\nran ${ranInfo.appended} check(s); ${ranInfo.skipped.length} not recorded` : ""));
+    const note = ranInfo?.in_place ? "checks ran in your checkout, not a throwaway copy\n\n" : "";
+    out(json ? JSON.stringify(result, null, 2) : note + renderTable(result) + (ranInfo ? `\n\nran ${ranInfo.appended} check(s); ${ranInfo.skipped.length} not recorded` : ""));
     return 0;
   } catch (e) {
     err(`status failed (nothing was changed except any evidence lines already appended): ${e.message}`);

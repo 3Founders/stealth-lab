@@ -209,8 +209,12 @@ for (const [name, verdict] of [
 
 test("triage: STEALTHLAB_HOOK_TRIAGE=off never asks; the question has its own short timeout", async () => {
   const calls = [];
+  // A machine where dispatch is installed (~/.stealthlab/config.json has dispatch: true) asks the triage question
+  // anyway, for dispatch's plan (lib/hook.mjs dispatchInstalled). The test needs a machine with no dispatch, so it
+  // points STEALTHLAB_HOME at an empty folder instead of reading the developer's own.
+  const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), "no-stealthlab-home-"));
   await runPromptHook({ stdinText: JSON.stringify({ prompt: TASK, cwd: os.tmpdir() }),
-    settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOOK_TRIAGE: "off" },
+    settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOOK_TRIAGE: "off", STEALTHLAB_HOME: emptyHome },
     fetchImpl: triageServer(() => json({ needs_retrieval: false }), RESOLVED, calls), write: () => {}, log: () => {} });
   assert.equal(calls.filter((c) => c.triage).length, 0);
   assert.ok(calls.some((c) => c.rpc === "tools/call"));

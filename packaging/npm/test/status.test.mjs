@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import {
-  appendEvidence, computeStatus, fileShas, parseEvidence, renderEvidence, runChecks, runShell, runStatusCli,
+  appendEvidence, compactEvidence, computeStatus, fileShas, parseEvidence, renderEvidence, runChecks, runShell, runStatusCli, workTreeId,
 } from "../lib/status.mjs";
 import { lineHash } from "../lib/survey/validate.mjs";
 
@@ -135,7 +136,7 @@ test("without --run nothing is executed; --run appends exactly one evidence line
   assert.equal(fs.existsSync(path.join(root, ".stealth", "evidence.md")), false);
   assert.equal(JSON.parse(out[0]).targets.length, 3);
 
-  assert.equal(await runStatusCli(["--root", root, "--run", "--json"], { out: (s) => out.push(s), err: () => {}, exec }), 0);
+  assert.equal(await runStatusCli(["--root", root, "--run", "--yes", "--json"], { out: (s) => out.push(s), err: () => {}, exec, tty: false }), 0);
   assert.equal(calls, 2, "one run per check, none for check=-");
   assert.equal(parseEvidence(evidenceText(root)).length, 2);
   assert.equal(evidenceText(root).split("\n").filter((l) => l.startsWith("EVIDENCE|")).length, 2);
@@ -175,4 +176,141 @@ test("a missing .stealth folder or a missing file fails open to open/empty, neve
   fs.rmSync(path.join(root, "src", "app.js"));
   assert.notEqual(statusOf(root, "N-1").status, "verified");
   assert.equal(appendEvidence(root, []), 0);
+});
+
+
+// ------------------------------------------------------------------------------------------------ follow-up: tree, confirmation, where, compact
+
+const git = (root, args, env = {}) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "ignore"] }).trim();
+
+// a real git repository holding the toy sources, so a tree id can be compared with git's own
+function gitToy({ run } = {}) {
+  const root = toy({ run });
+  fs.writeFileSync(path.join(root, ".gitignore"), ".stealth/\n");
+  fs.writeFileSync(path.join(root, "other.txt"), "other\n");
+  git(root, ["init", "-q", "."]);
+  git(root, ["config", "user.email", "t@example.invalid"]);
+  git(root, ["config", "user.name", "toy"]);
+  git(root, ["add", "-A"]);
+  git(root, ["commit", "-q", "-m", "init"]);
+  return root;
+}
+
+test("workTreeId equals what git write-tree gives for HEAD plus the tracked diff, and writes nothing", () => {
+  const root = gitToy();
+  assert.equal(workTreeId(root), git(root, ["rev-parse", "HEAD^{tree}"]), "clean tree = HEAD's tree");
+  edit(root, "src/app.js", (t) => t.replace("// tail", "// tail changed"));
+  fs.mkdirSync(path.join(root, "docs"));
+  fs.writeFileSync(path.join(root, "docs", "new.md"), "new\n");
+  git(root, ["add", "docs/new.md"]);                                           // a new TRACKED file
+  fs.rmSync(path.join(root, "other.txt"));                                     // a deletion
+  const objectsBefore = git(root, ["count-objects", "-v"]);
+  const mine = workTreeId(root);
+  assert.equal(git(root, ["count-objects", "-v"]), objectsBefore, "reading the tree writes no git objects");
+  const idx = path.join(os.tmpdir(), `idx-${process.pid}-${Date.now()}`);
+  try {
+    git(root, ["read-tree", "HEAD"], { GIT_INDEX_FILE: idx });
+    git(root, ["add", "-A"], { GIT_INDEX_FILE: idx });
+    assert.equal(mine, git(root, ["write-tree"], { GIT_INDEX_FILE: idx }));
+  } finally { fs.rmSync(idx, { force: true }); }
+  assert.equal(workTreeId(os.tmpdir()), null, "not a git work tree: unknown, not an error");
+});
+
+test("A1: an edit to an uncited file keeps verified and sets changed_since; an edit to a cited file still expires", async () => {
+  const root = gitToy({ run: ["NODE|N-1|ready|Check the entry|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  await runChecks(root, { exec: passAll });
+  assert.match(evidenceText(root), /\|tree=[0-9a-f]{40}\|/);
+  let row = statusOf(root, "N-1");
+  assert.equal(row.status, "verified");
+  assert.equal(row.changed_since, false);
+  edit(root, "other.txt", (t) => t + "more\n");                                // not cited by the claim
+  row = statusOf(root, "N-1");
+  assert.equal(row.status, "verified", "an uncited edit does not expire");
+  assert.equal(row.changed_since, true);
+  assert.match(row.why, /code changed since the check ran/);
+  edit(root, "src/app.js", (t) => t.replace("// tail", "// tail changed"));    // the cited file
+  assert.equal(statusOf(root, "N-1").status, "expired");
+});
+
+test("A1: old evidence lines without tree= still parse; the flag is unknown, never true", async () => {
+  const root = gitToy({ run: ["NODE|N-1|ready|Check the entry|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  await runChecks(root, { exec: passAll });
+  const text = evidenceText(root).replace(/\|tree=[0-9a-f]{40}/g, "");          // what an older version wrote
+  fs.writeFileSync(path.join(root, ".stealth", "evidence.md"), text);
+  assert.equal(parseEvidence(text)[0].tree, null);
+  edit(root, "other.txt", (t) => t + "more\n");
+  const row = statusOf(root, "N-1");
+  assert.equal(row.status, "verified");
+  assert.equal(row.changed_since, null);
+});
+
+test("A2: with no terminal and no --yes nothing runs and the exit code is 3; --yes runs", async () => {
+  const root = toy({ run: ["NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  let calls = 0;
+  const exec = async () => { calls += 1; return { code: 0 }; };
+  const errs = [];
+  assert.equal(await runStatusCli(["--root", root, "--run"], { out: () => {}, err: (s) => errs.push(s), exec, tty: false }), 3);
+  assert.equal(calls, 0, "no child process");
+  assert.ok(errs.some((l) => /\$ node -e 0/.test(l)), "the commands are listed before anything runs");
+  assert.ok(errs.some((l) => /pass --yes to run these checks/.test(l)));
+  assert.equal(fs.existsSync(path.join(root, ".stealth", "evidence.md")), false);
+  assert.equal(await runStatusCli(["--root", root, "--run", "--yes"], { out: () => {}, err: () => {}, exec, tty: false }), 0);
+  assert.equal(calls, 1);
+});
+
+test("A2: in a terminal it asks once; a no runs nothing, a yes runs", async () => {
+  const root = toy({ run: ["NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0", "NODE|N-2|ready|Two|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  let calls = 0;
+  const exec = async () => { calls += 1; return { code: 0 }; };
+  const asked = [];
+  const errs = [];
+  const no = await runStatusCli(["--root", root, "--run"], { out: () => {}, err: (s) => errs.push(s), exec, tty: true, ask: async (q) => { asked.push(q); return "n"; } });
+  assert.equal(no, 0);
+  assert.equal(calls, 0);
+  assert.equal(asked.length, 1);
+  assert.equal(errs.filter((l) => /\$ node -e 0/.test(l)).length, 1, "distinct commands: the same command is listed once");
+  const yes = await runStatusCli(["--root", root, "--run"], { out: () => {}, err: () => {}, exec, tty: true, ask: async () => "y" });
+  assert.equal(yes, 0);
+  assert.equal(calls, 2);
+});
+
+test("A3: an --in-place run records where=in-place and says so; the default records where=worktree", async () => {
+  const root = toy({ run: ["NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  const out = [];
+  await runStatusCli(["--root", root, "--run", "--yes", "--in-place"], { out: (s) => out.push(s), err: () => {}, exec: async () => ({ code: 0 }), tty: false });
+  assert.match(out[0].split("\n")[0], /^checks ran in your checkout, not a throwaway copy$/);
+  assert.equal(parseEvidence(evidenceText(root))[0].where, "in-place");
+  assert.match(evidenceText(root), /\|where=in-place\|check=/);
+  const root2 = toy({ run: ["NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  const out2 = [];
+  await runStatusCli(["--root", root2, "--run", "--yes"], { out: (s) => out2.push(s), err: () => {}, exec: async () => ({ code: 0, where: "worktree" }), tty: false });
+  assert.ok(!out2[0].includes("your checkout"));
+  assert.equal(parseEvidence(evidenceText(root2))[0].where, "worktree");
+  assert.equal(computeStatus(root).targets[0].status, "verified", "both places count as a deterministic_check");
+});
+
+test("A4: --compact keeps the latest pass, the latest fail and the lines on the current tree, and refuses uncommitted changes", () => {
+  const root = gitToy({ run: ["NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0"] });
+  const tree = workTreeId(root);
+  const L = (result, at, t) => `EVIDENCE|N-1|deterministic_check|${result}|at=${at}|commit=-|tree=${t}|hashes=-|check=node -e 0`;
+  const OLD = "a".repeat(40), OLDER = "b".repeat(40);
+  const lines = [L("pass", "2026-10-01", OLDER), L("pass", "2026-10-02", OLDER), L("fail", "2026-10-03", OLDER), L("pass", "2026-10-04", OLD),
+    L("pass", "2026-10-05", tree), L("fail", "2026-10-06", OLD), L("pass", "2026-10-07", OLD)];
+  const file = path.join(root, ".stealth", "evidence.md");
+  fs.writeFileSync(file, "# header\n" + lines.join("\n") + "\n");
+  const done = compactEvidence(root, { tree });
+  assert.equal(done.ok, true);
+  const kept = parseEvidence(fs.readFileSync(file, "utf8")).map((e) => e.at);
+  assert.deepEqual(kept, ["2026-10-05", "2026-10-06", "2026-10-07"], "latest pass, latest fail, and the line on the current tree");
+  assert.match(fs.readFileSync(file, "utf8"), /^# header/);
+  assert.equal(parseEvidence(fs.readFileSync(`${file}.prev`, "utf8")).length, 7, "the old file is kept");
+  // a tracked evidence.md with uncommitted changes is refused
+  fs.writeFileSync(path.join(root, ".gitignore"), "");
+  git(root, ["add", "-A"]);
+  git(root, ["commit", "-q", "-m", "evidence"]);
+  fs.appendFileSync(file, L("pass", "2026-10-08", OLD) + "\n");
+  const refused = compactEvidence(root, { tree });
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /uncommitted/);
+  assert.equal(parseEvidence(fs.readFileSync(file, "utf8")).length, 4, "nothing was rewritten");
 });
