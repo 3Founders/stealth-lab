@@ -491,9 +491,9 @@ _V1_INSTRUCTIONS = (
     "report_model_run are older manual tools kept only for existing callers. "
     "On a local server reads need no "
     "token (a hosted one asks you to sign in); report_discovery, submit_way, "
-    "report_model_run and report_result need a signed-in user or write token. "
+    "report_model_run, report_result and report_check_evidence need a signed-in user or write token. "
     "Tools: find_ways is listed; discover_tools(need) finds the others (report_result, "
-    "call_model, submit_way, report_discovery, recommend_models, report_model_run) with "
+    "call_model, submit_way, report_discovery, recommend_models, report_model_run, report_check_evidence) with "
     "their arguments, and use_tool(name, arguments) runs one. find_ways' full guide: "
     "stealth://guides/find_ways or discover_tools(names=[\"find_ways\"])."
 )
@@ -552,7 +552,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery", "submit_way", "report_model_run", "report_result")},
+        "report_discovery", "submit_way", "report_model_run", "report_result", "report_audit", "report_check_evidence")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "call_model", "find_best_way", "reproduce_procedure", "continue_run",
@@ -576,7 +576,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run", "report_result",
-    "call_model", "discover_tools", "use_tool"})
+    "report_check_evidence", "call_model", "discover_tools", "use_tool"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -591,6 +591,9 @@ _V1_ANNOTATIONS: dict[str, dict] = {
                          "idempotent_hint": False, "open_world_hint": False},
     "report_result": {"title": "Report a model attempt", "read_only_hint": False, "destructive_hint": False,
                       "idempotent_hint": False, "open_world_hint": False},
+    # the same client_event_id twice changes nothing: idempotent
+    "report_check_evidence": {"title": "Report a check run", "read_only_hint": False, "destructive_hint": False,
+                              "idempotent_hint": True, "open_world_hint": False},
     # sends the prompt to an external model/agent endpoint and may spend the connection owner's money
     "call_model": {"title": "Call a connected model or agent", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
@@ -1576,6 +1579,73 @@ async def report_result(ctx: Context, instance_key: str, accepted: bool, model: 
     except _plan.RoutingError as exc:
         return f"REFUSED: {exc}"
     return _plan.dumps(result)
+
+
+_CHECK_EVIDENCE_PATH = "mcp/report_check_evidence"
+
+
+@server.tool()
+async def report_check_evidence(ctx: Context, evidence: dict) -> str:
+    """
+    Report one check run recorded on the developer's machine (one EVIDENCE line of .stealth/evidence.md), so a Goal's status
+    can use it. The server did not run the check: a reported pass is stored as `checked` at most, and `verified` appears only
+    when two independent accounts pass the same check on the same files. You never choose a state.
+
+    `evidence` is ONE object with only these fields (anything else is refused, not ignored): repo_ref, target_kind
+    (library_entry | plan_node), target_id (N-<n> or L-<id>), goal_id and procedure_id (uuids, optional), method
+    (deterministic_check | independent_agent), result (pass | fail), observed_at (ISO-8601), commit_sha and tree_id (40 hex,
+    optional), hashes ([{path_hmac, sha}]), where_ran (worktree | in-place, optional), check_hash (a 64-hex HMAC),
+    client_event_id (a uuid: sending the same one again changes nothing), client_version (optional), and for independent_agent
+    also reviewer_model and executor_model (they must differ).
+
+    What never goes here: the check command, a path, the output, the reviewer's text, a repository name. The command and the
+    paths arrive only as keyed HMACs; the key stays on the machine.
+
+    Requires a signed-in user. Limits: 600 reports per hour and 5000 per day per user, and a cap across all users.
+
+    Example: report_check_evidence(evidence={"repo_ref": "r:0123456789abcdef", "target_kind": "plan_node", "target_id": "N-3",
+      "method": "deterministic_check", "result": "pass", "observed_at": "2026-10-23T10:00:00Z", "check_hash": "<64 hex>",
+      "client_event_id": "<uuid>", "hashes": []}) -> {"recorded": true, "state": "checked", ...}
+    """
+    from datetime import timedelta
+
+    from app.services import verification as _ver
+    from app.services.authn import Actor, AmbiguousTenant, tenant_scope_for_actor
+    from app.services.governance import RateLimit, RateLimiter, RateLimitExceeded
+    from app.services.v0_gate import V0Violation
+
+    scope = _caller_access_scope()
+    if not scope.viewer_id:
+        return "REFUSED: sign in to report check evidence -- it needs a real user identity"
+    try:
+        _ver.validate_local_check(evidence)           # a refused report costs no rate-limit slot and no query
+    except _ver.VerificationError as exc:
+        return f"REFUSED: {exc}"
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    limiter = RateLimiter(pool, limits={
+        _CHECK_EVIDENCE_PATH: RateLimit(max_requests=_ver.LOCAL_CHECK_RATE_HOURLY, window=timedelta(hours=1)),
+        _CHECK_EVIDENCE_PATH + "/day": RateLimit(max_requests=_ver.LOCAL_CHECK_RATE_DAILY, window=timedelta(days=1)),
+        _CHECK_EVIDENCE_PATH + "/all": RateLimit(max_requests=_ver.LOCAL_CHECK_RATE_GLOBAL_HOURLY, window=timedelta(hours=1)),
+    })
+    try:
+        await limiter.check_and_record(f"user:{scope.viewer_id}", _CHECK_EVIDENCE_PATH)
+        await limiter.check_and_record(f"user:{scope.viewer_id}", _CHECK_EVIDENCE_PATH + "/day")
+        await limiter.check_and_record("global:report_check_evidence", _CHECK_EVIDENCE_PATH + "/all")
+    except RateLimitExceeded as exc:
+        # a tool ERROR, not a REFUSED reply: the client treats REFUSED as permanent (outbox/rejected/) and an error as "queue
+        # it and send it later", which is the right answer to a limit that will pass
+        raise RuntimeError(f"rate limit -- retry in {exc.retry_after_seconds}s ({exc})") from exc
+
+    try:
+        _, tenant_scope = await tenant_scope_for_actor(pool, Actor(subject=scope.viewer_id))
+    except AmbiguousTenant as exc:
+        return f"REFUSED: {exc} -- report from a session bound to one organization"
+    try:
+        result = await _ver.record_local_check(pool, payload=evidence, viewer_id=scope.viewer_id, tenant_scope=tenant_scope)
+    except (_ver.VerificationError, V0Violation) as exc:
+        return f"REFUSED: {exc}"
+    return json.dumps(result)
 
 
 @server.tool()

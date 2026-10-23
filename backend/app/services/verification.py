@@ -537,3 +537,209 @@ async def generate_human_review_packet(
             },
         ],
     }
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Client-reported check evidence (migration 152, docs/evidence_upload_design.md).
+#
+# The client records one EVIDENCE line per check run and, with upload switched on, reports it through the MCP tool
+# `report_check_evidence`. These rows have no execution run, so they do not use `verification_results`; they keep that
+# table's core invariant: a caller NEVER passes a state. `local_check_state` computes it from (method, result), and the
+# table's CHECK refuses any pairing this function could not produce.
+#
+# The server did not run these checks, so a reported pass is `checked` at most (compare execution/durable_run.py: a
+# provider-reported result stays `unverified`). `verified` is not stored: the view `local_check_effective` derives it
+# when two independent groups (distinct accounts) pass on the same check and the same files.
+# ---------------------------------------------------------------------------------------------------------------------
+
+import re as _re
+import uuid as _uuid
+from datetime import datetime, timedelta, timezone
+
+# The only fields a report may carry. The client's whitelist (packaging/npm/lib/evidence_upload.mjs CHECK_EVIDENCE_FIELDS)
+# must equal this tuple: a test compares the two, so neither can drift without the other.
+LOCAL_CHECK_FIELDS: tuple[str, ...] = (
+    "repo_ref", "target_kind", "target_id", "goal_id", "procedure_id", "method", "result", "observed_at", "commit_sha",
+    "tree_id", "hashes", "where_ran", "check_hash", "client_event_id", "client_version", "reviewer_model", "executor_model",
+)
+LOCAL_CHECK_REQUIRED: tuple[str, ...] = (
+    "repo_ref", "target_kind", "target_id", "method", "result", "observed_at", "check_hash", "client_event_id",
+)
+LOCAL_CHECK_METHODS: tuple[str, ...] = ("deterministic_check", "independent_agent")
+LOCAL_CHECK_STATES: tuple[str, ...] = ("checked", "failed_verification")
+# per signed-in account, and one bucket across all accounts (the abuse limits the other report tools use)
+LOCAL_CHECK_RATE_HOURLY = 600
+LOCAL_CHECK_RATE_DAILY = 5000
+LOCAL_CHECK_RATE_GLOBAL_HOURLY = 20000
+
+_RE_REPO_REF = _re.compile(r"^[a-z]:[0-9a-f]{16}$")
+_RE_TARGET = _re.compile(r"^[NL]-[A-Za-z0-9_.-]{1,40}$")
+_RE_HEX64 = _re.compile(r"^[0-9a-f]{64}$")
+_RE_GIT = _re.compile(r"^[0-9a-f]{40}$")
+_RE_SHA = _re.compile(r"^[0-9a-f]{4,64}$")
+_RE_MODEL = _re.compile(r"^[A-Za-z0-9._:/-]{1,80}$")
+_RE_VERSION = _re.compile(r"^[0-9A-Za-z.+-]{1,40}$")
+
+
+def local_check_state(method: str, result: str) -> str:
+    """The state of a client-reported check. A pass is `checked` at most, whatever the method: the server did not run it
+    (`verified` needs corroboration, see the view). A fail is `failed_verification`. There is no way to ask for more."""
+    if method not in LOCAL_CHECK_METHODS:
+        raise VerificationError(f"method must be one of {LOCAL_CHECK_METHODS}")
+    if result == "pass":
+        return "checked"
+    if result == "fail":
+        return "failed_verification"
+    raise VerificationError("result must be 'pass' or 'fail'")
+
+
+def _uuid_str(value, label: str) -> str:
+    try:
+        return str(_uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise VerificationError(f"{label} must be a uuid") from exc
+
+
+def validate_local_check(payload) -> dict:
+    """Refuse (never ignore) anything outside the whitelist, and every malformed value. Returns the cleaned fields."""
+    if not isinstance(payload, dict):
+        raise VerificationError("evidence must be a JSON object")
+    extra = sorted(set(payload) - set(LOCAL_CHECK_FIELDS))
+    if extra:
+        raise VerificationError(f"fields not allowed: {extra} (allowed: {list(LOCAL_CHECK_FIELDS)})")
+    missing = [k for k in LOCAL_CHECK_REQUIRED if payload.get(k) in (None, "")]
+    if missing:
+        raise VerificationError(f"missing required fields: {missing}")
+
+    def text(key: str, rx, what: str) -> str:
+        v = payload.get(key)
+        if not isinstance(v, str) or not rx.match(v):
+            raise VerificationError(f"{key} is not {what}")
+        return v
+
+    out: dict = {
+        "repo_ref": text("repo_ref", _RE_REPO_REF, "a hashed repository identity"),
+        "target_kind": payload["target_kind"],
+        "target_id": text("target_id", _RE_TARGET, "a plan node or library entry id"),
+        "method": payload["method"],
+        "result": payload["result"],
+        "check_hash": text("check_hash", _RE_HEX64, "a 64-hex HMAC"),
+        "client_event_id": _uuid_str(payload["client_event_id"], "client_event_id"),
+    }
+    if out["target_kind"] not in ("library_entry", "plan_node"):
+        raise VerificationError("target_kind must be library_entry or plan_node")
+    if out["method"] not in LOCAL_CHECK_METHODS:
+        raise VerificationError(f"method must be one of {LOCAL_CHECK_METHODS}")
+    if out["result"] not in ("pass", "fail"):
+        raise VerificationError("result must be 'pass' or 'fail'")
+    try:
+        observed = datetime.fromisoformat(str(payload["observed_at"]).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise VerificationError("observed_at must be an ISO-8601 timestamp") from exc
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    if observed > datetime.now(timezone.utc) + timedelta(days=1):
+        raise VerificationError("observed_at is in the future")
+    out["observed_at"] = observed
+    for key in ("commit_sha", "tree_id"):
+        if payload.get(key) is not None:
+            out[key] = text(key, _RE_GIT, "a 40-hex git object id")
+    if payload.get("where_ran") is not None:
+        if payload["where_ran"] not in ("worktree", "in-place"):
+            raise VerificationError("where_ran must be worktree or in-place")
+        out["where_ran"] = payload["where_ran"]
+    for key in ("goal_id", "procedure_id"):
+        if payload.get(key) is not None:
+            out[key] = _uuid_str(payload[key], key)
+    if payload.get("client_version") is not None:
+        out["client_version"] = text("client_version", _RE_VERSION, "a version string")
+    hashes = payload.get("hashes", [])
+    if not isinstance(hashes, list) or len(hashes) > 500:
+        raise VerificationError("hashes must be a list of at most 500 {path_hmac, sha} pairs")
+    cleaned = []
+    for h in hashes:
+        if not isinstance(h, dict) or set(h) != {"path_hmac", "sha"}:
+            raise VerificationError("each hashes item must be exactly {path_hmac, sha}")
+        if not isinstance(h["path_hmac"], str) or not _RE_HEX64.match(h["path_hmac"]) or not isinstance(h["sha"], str) or not _RE_SHA.match(h["sha"]):
+            raise VerificationError("hashes items need a 64-hex path_hmac and a 4-64 hex sha")
+        cleaned.append({"path_hmac": h["path_hmac"], "sha": h["sha"]})
+    out["hashes"] = cleaned
+    reviewer, executor = payload.get("reviewer_model"), payload.get("executor_model")
+    reviewer = reviewer.strip() if isinstance(reviewer, str) else reviewer
+    executor = executor.strip() if isinstance(executor, str) else executor
+    if out["method"] == "independent_agent":
+        if not isinstance(reviewer, str) or not isinstance(executor, str) or not _RE_MODEL.match(reviewer) or not _RE_MODEL.match(executor):
+            raise VerificationError("independent_agent evidence needs reviewer_model and executor_model")
+        if reviewer.strip().lower() == executor.strip().lower():
+            raise VerificationError(
+                "the reviewer is the same model as the executor: independent_agent evidence needs a different model")
+        out["reviewer_model"], out["executor_model"] = reviewer, executor
+    elif reviewer is not None or executor is not None:
+        raise VerificationError("reviewer_model and executor_model belong to independent_agent evidence only")
+    return out
+
+
+async def record_local_check(pool, *, payload, viewer_id: str, tenant_scope) -> dict:
+    """Record one client-reported check line for `viewer_id`. The caller never supplies a state. Idempotent: the same
+    (account, client_event_id) twice leaves one row. -> {recorded, duplicate, id, state, effective?}"""
+    from app.services.access import bind_scope, tenant_transaction
+    from app.services.v0_gate import validate_provenance, validate_scope
+    from app.utils.ids import uuid7_str
+
+    if not viewer_id:
+        raise VerificationError("a signed-in account is required to report check evidence")
+    clean = validate_local_check(payload)
+    state = local_check_state(clean["method"], clean["result"])
+    # V0 gate: the scope is the repository, the provenance says it came from the company's own machine and that the server
+    # did not observe it. The client's version stands in for the extractor version.
+    scope_type, scope_entity = validate_scope("repository", clean["repo_ref"])
+    provenance = validate_provenance("company_ingested", derived=False)
+    async with tenant_transaction(pool, tenant_scope) as conn:
+        await bind_scope(conn, owner=viewer_id)
+        if clean.get("goal_id") and not await conn.fetchval("SELECT 1 FROM goals WHERE id = $1::uuid", clean["goal_id"]):
+            raise VerificationError(f"goal {clean['goal_id']} was not found")
+        row = await conn.fetchrow(
+            """
+            INSERT INTO local_check_evidence (
+                id, client_event_id, tenant_id, repo_ref, target_kind, target_id, goal_id, procedure_id, method, result, state,
+                independence_group, observed_at, commit_sha, tree_id, hashes, where_ran, check_hash, reviewer_model,
+                executor_model, client_version, provenance, extractor_version, created_by, visibility, owner_id, scope_type,
+                scope_entity_id
+            ) VALUES (
+                $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7::uuid, $8::uuid, $9, $10, $11,
+                $12, $13, $14, $15, $16::jsonb, $17, $18, $19,
+                $20, $21, $22, $23, $24, 'private', $24, $25,
+                $26
+            )
+            ON CONFLICT (owner_id, client_event_id) DO NOTHING
+            RETURNING id, state
+            """,
+            uuid7_str(), clean["client_event_id"], str(tenant_scope.tenant_id), clean["repo_ref"], clean["target_kind"],
+            clean["target_id"], clean.get("goal_id"), clean.get("procedure_id"), clean["method"], clean["result"], state,
+            f"account:{viewer_id}", clean["observed_at"], clean.get("commit_sha"), clean.get("tree_id"),
+            clean["hashes"], clean.get("where_ran"), clean["check_hash"], clean.get("reviewer_model"),
+            clean.get("executor_model"), clean.get("client_version"), provenance, clean.get("client_version"), viewer_id,
+            scope_type, scope_entity,
+        )
+        if row is None:                                            # a retry of a line already recorded
+            existing = await conn.fetchrow(
+                "SELECT id, state FROM local_check_evidence WHERE owner_id = $1 AND client_event_id = $2::uuid",
+                viewer_id, clean["client_event_id"])
+            return {"recorded": False, "duplicate": True, "id": str(existing["id"]) if existing else None,
+                    "state": existing["state"] if existing else state}
+    return {"recorded": True, "duplicate": False, "id": str(row["id"]), "state": row["state"]}
+
+
+async def local_check_effective(pool, *, tenant_scope, repo_ref: str, target_id: str) -> list[dict]:
+    """The effective state of each check on one target (view `local_check_effective`): counts of independent groups that
+    pass and fail on the newest files reported, never another account's rows. Reads under the system scope because it
+    counts across accounts; the tenant stays an explicit filter."""
+    from app.services.access import scoped_transaction
+
+    async with scoped_transaction(pool, system=True) as conn:
+        rows = await conn.fetch(
+            "SELECT check_hash, passing_groups, failing_groups, effective_state, last_observed_at "
+            "FROM local_check_effective WHERE tenant_id = $1::uuid AND repo_ref = $2 AND target_id = $3 "
+            "ORDER BY last_observed_at DESC",
+            str(tenant_scope.tenant_id), repo_ref, target_id)
+    return [dict(r) for r in rows]

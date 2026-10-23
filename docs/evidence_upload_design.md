@@ -173,3 +173,34 @@ Proving tests the migration change ships with (offline fakes, plus the DB-backed
    for the same target and check hash with different hashes), or by a snapshot the client reports.
 4. Whether the tool name is `report_check_evidence` and its scope (`EXECUTION_RUN` in `backend/app/api/economy.py` is the
    scope `/usage-events` uses; this may want its own).
+
+## 7. Implemented: the server half (migration 152, 2026-10-23)
+
+What landed (CORE-A, with the scoped grant recorded on the board), and where it differs from sections 1 to 6:
+
+- **Table and views:** `backend/db/152_local_check_evidence.sql`: the sibling table `local_check_evidence` (section 1, option b),
+  `local_check_current` (the latest live row per account, repository, target, method and check) and `local_check_effective` (the
+  derived state per check, with counts of independent groups). Applied to a fresh scratch Postgres 17 (127.0.0.1:55432, database
+  `kel_evidence_test`) together with the whole chain 01 to 151: the chain applies cleanly. Never to a hosted database.
+- **Service:** `record_local_check`, `validate_local_check`, `local_check_state` and `local_check_effective` in
+  `backend/app/services/verification.py`. No function takes a state. A reported pass is `checked`; a fail is
+  `failed_verification`; `verified` is derived by the view when at least two distinct accounts pass the same check on the same
+  files (the newest file signature reported). A pass and a fail on those files is `contested`.
+- **Tool:** `report_check_evidence(evidence)` in `backend/app/mcp_server/server.py`. Differences from the sketch: it takes ONE
+  object argument (`evidence`) and the service refuses any key outside the whitelist, because an MCP tool with typed arguments
+  silently drops unknown ones. It needs a signed-in user, goes through three abuse buckets (600 per hour and 5000 per day per
+  user, 20000 per hour across all users) and is on the discoverable (`V1_TOOLS`) surface, not the listed core.
+- **Isolation:** strict RLS on BOTH the reporting account (`app.owner_subject`, migration 150's `sl_owner_scope_allows`) and the
+  tenant (`sl_tenant_scope_allows`); the system scope sees all. The cross-account count in the view runs under the system scope
+  and returns counts only.
+- **V0 gate:** provenance `company_ingested` (the client's own machine) with scope `repository` = the hashed repo identity. The V0
+  vocabulary has no "client reported" value and `v0_gate.py` is not changed; the row's own `state` and `method` carry the trust
+  level.
+- **The reviewer rule** is enforced twice: the service refuses a reviewer that is the executor (case-insensitive), and a CHECK
+  constraint refuses it in the engine.
+- **Known limit:** because every machine's evidence key is random (Part 1), two accounts only corroborate each other when they
+  share the key, which is the team's explicit choice. Otherwise their check hashes differ and the state stays `checked`.
+
+Tests: `backend/tests/test_local_check_evidence_offline.py` (44) and `..._e2e.py` (8, loopback database only, refuses any other
+host). The surface tests that pin the MCP tool list were updated for the new tool and for the already-registered `report_audit`,
+whose absence from them was a pre-existing failure.

@@ -81,6 +81,8 @@ REQUIRED_OPERATIONS: dict[str, str] = {
 EXPECTED_V1_SURFACE: frozenset[str] = frozenset({
     "find_ways", "submit_way", "report_discovery", "recommend_models",
     "report_model_run", "report_result", "call_model", "discover_tools", "use_tool",
+    # added since the nine: report_audit (hidden, not in V1_TOOLS) and report_check_evidence (migration 152, discoverable)
+    "report_audit", "report_check_evidence",
 })
 
 # The B32 operations whose only implementation lived on the removed v2 surface.
