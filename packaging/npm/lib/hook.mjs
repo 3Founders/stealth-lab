@@ -37,6 +37,7 @@ import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
 import { execConfigPath } from "./exec/store.mjs";
 import { modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
+import { routingTimer } from "./routing_timing.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
 
@@ -495,8 +496,21 @@ export async function runPromptHook(args) {
   if (delivered) markShown(sessionId, { env });
 }
 
+// How long routing takes (lib/routing_timing.mjs; off unless STEALTHLAB_ROUTING_TIMING=1): one line per prompt, written
+// whichever way the hook ends. A timing failure never reaches the prompt.
+async function runPromptHookCore(args) {
+  let prompt = "";
+  try { prompt = String(JSON.parse(args.stdinText || "{}").prompt || ""); } catch { /* the body ignores a bad payload */ }
+  const timer = routingTimer({ env: args.env || process.env, prompt, surface: "claude-code" });
+  try {
+    return await promptHookBody({ ...args, timer });
+  } finally {
+    timer.finish();
+  }
+}
+
 // dispatchImpl: for tests, a stand-in for lib/dispatch.mjs dispatch()
-async function runPromptHookCore({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl }) {
+async function promptHookBody({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl, timer }) {
   const policy = hookPolicy(env);
   let payload;
   try {
@@ -517,7 +531,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
   if (override.kind === "cheap") payload.prompt = override.prompt;
   // the first prompt in a repo starts its survey, detached (lib/auto_survey.mjs): never waits, never fails the hook
   try { maybeStartSurvey({ cwd: payload.cwd || process.cwd(), env }); } catch { /* best effort */ }
-  if (!settings.url || !shouldLookUp(payload.prompt, policy)) return;
+  if (!settings.url || !shouldLookUp(payload.prompt, policy)) { timer.set("outcome", "no lookup"); return; }
   const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
   const mode = deliveryMode(policy, policy.strongMode ? model : null);
   if (mode === "off") return;
@@ -527,10 +541,13 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
   let verdict = null;
   if (policy.triage || dispatchInstalled(env)) {
     const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.session_id, current: payload.prompt, env });
+    timer.mark("triage_start");
     verdict = await callTriage({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(), context: turnsText(turns),
       timeoutMs: policy.triageTimeoutMs, fetchImpl,
     });
+    timer.mark("triage_end");
+    timer.set("triage", verdict ? { work: verdict.work || null, needs_retrieval: verdict.needs_retrieval ?? null } : null);
     log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
   }
   // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
@@ -541,6 +558,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
       const a = await answerTurn({ prompt: payload.prompt, root: payload.cwd || process.cwd(), transcriptPath: payload.transcript_path,
                                    sessionId: payload.session_id, env, fetchImpl, log });
       if (a?.handled) {
+        timer.set("outcome", "answered");
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
         recordDispatch({ sessionId: payload.session_id, model: a.model, files: [], task: promptTitle(payload.prompt),
                          prompt: payload.prompt, text: a.text, kind: "answer" }, { env });
@@ -570,10 +588,15 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
     extra = { ...extra, ...routingArgs(policy, model) };
+    timer.set("stealth_root", !!root);
+    timer.mark("find_ways_start");
     let reply = await callFindWays({
       url: settings.url, token: settings.token, userAgent, query: String(payload.prompt).trim(),
       repoClaims: readClaims(payload.cwd, payload.prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl,
     });
+    timer.mark("find_ways_end");
+    timer.set("plan_ms", Number.isFinite(reply?.model_plan?.plan_ms) ? reply.model_plan.plan_ms : null);
+    timer.set("plan_status", reply?.model_plan?.status || null);
     // The route the server chose for this Goal, kept locally so outcomes can be counted against it.
     try {
       if (root && Array.isArray(reply?.routing_rows) && reply.routing_rows.length) upsertRoutes(root, reply.routing_rows);
@@ -583,7 +606,10 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
     const mine = model ? `${model}|claude-code` : null;
     try {
       const { dispatch, triedNote } = await import("./dispatch.mjs");
-      const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict });
+      timer.mark("dispatch_start");
+      const d = await (dispatchImpl || dispatch)({ payload, reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict, timing: timer });
+      timer.mark("dispatch_end");
+      timer.set("outcome", d?.handled ? "dispatched: a cheap model passed" : d ? "dispatched: none passed" : "not dispatched");
       if (d?.handled) {
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
         recordDispatch({ sessionId: payload.session_id, model: d.model, files: d.files, task: promptTitle(payload.prompt),
@@ -621,6 +647,7 @@ async function runPromptHookCore({ stdinText, settings, userAgent, env = process
       write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } }));
     }
   } catch (err) {
+    timer.set("outcome", `lookup failed (${err?.name || "error"})`);
     log(`stealthlab hook: no knowledge added (${err.message})`);   // fail open
   }
 }

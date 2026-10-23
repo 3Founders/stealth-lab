@@ -854,7 +854,9 @@ function taskText(prompt) {
 // force: the prompt began with `!cheap` -- try the cheap models even where routing would skip, and skip the brief's gate
 // briefImpl: for tests, a stand-in for brief.mjs makeBrief()
 export async function dispatch({ payload: rawPayload, reply, root, mine, env = process.env, fetchImpl, log = () => {}, runtime, runClaude,
-                                 force = false, briefImpl, triage = null }) {
+                                 force = false, briefImpl, triage = null, timing = null }) {
+  // lib/routing_timing.mjs: marks the steps before the first cheap model starts (a stand-in that does nothing when off)
+  const mark = (name) => { try { timing?.mark(name); } catch { /* timing never affects dispatch */ } };
   let payload = rawPayload;
   const dispatchStart = Date.now();
   const policy = dispatchPolicy(env);
@@ -926,6 +928,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     }
     log(`dispatch: the judge${triage.provider ? ` (${triage.provider})` : ""} says work=change`);
   }
+  mark("gate_end");
   // what the cheap models are told: the conversation and the request as the user said it (lib/brief.mjs)
   const { conversationPrompt, makeBrief, sessionTurns } = await import("./brief.mjs");
   const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.session_id, current: payload.prompt, env });
@@ -937,6 +940,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
                                             cwd: payload.cwd || root, env, fetchImpl, log });
     if (brief) log(`dispatch: brief: ${String(brief.task || "").replace(/\s+/g, " ").slice(0, 240)}`);
   }
+  mark("brief_end");
   const briefed = { brief, turns, conversationPrompt };
   // where in this repository the task is (lib/locate.mjs): the test writer gets that code, the cheap models a
   // path:start-end line their agent preloads, and the session's model the same pointer if the cheap tries fail
@@ -953,6 +957,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     loc = await narrowLocation({ prompt: rawPayload.prompt || payload.prompt, root: payload.cwd || root, loc: searched, env, fetchImpl, log });
     if (loc !== searched && loc.files[0]) loc = { ...loc, testFile: testFileFor(payload.cwd || root, loc.files[0]) || searched.testFile };
   }
+  mark("locate_end");
   const where = renderWhere(loc);
   if (loc.spots.length) log(`dispatch: located ${loc.spots.map((s) => `${s.file}:${s.start}-${s.end}`).join(", ")}${loc.testFile ? ` (tests: ${loc.testFile})` : ""}`);
   if (where) {
@@ -1310,6 +1315,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
           deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), policy.tierS * 1000); });
           log(`dispatch: the cheap models did not do it; ${rung.model} (tier ${t}) tries, ${policy.tierS} s`);
         }
+        mark("first_rung");
         pending.set(rung.unit, runRung(rung));
       } else i++;
     }

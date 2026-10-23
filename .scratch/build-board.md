@@ -1716,6 +1716,14 @@ single synthesized reports into `.scratch/research/`.
    plus Claude Code executor/delegator agent definitions and SubagentStart/Stop hooks. Spec:
    `.scratch/prompts/executor_layer_build_prompt.md`. Deliverable: `packaging/npm/EXECUTOR_SUMMARY.md`.
 
+9. `[x]` done @2026-10-23 -- main (claude session 1ec5ace3) **Routing latency check** (docs/latencycheck.md): time triage,
+   find_ways (and the server's plan_ms) and dispatch's steps before the first cheap model, behind STEALTHLAB_ROUTING_TIMING=1
+   (off by default); measure >= 30 prompts warm and cold against the local server; results in docs/latency_routing_results.md.
+   *(Shipped: lib/routing_timing.mjs + marks in hook.mjs, cursor_dispatch.mjs, dispatch.mjs; scripts/measure_routing.mjs
+   and summarize_routing_timing.mjs; test/routing_timing.test.mjs 7/7. Warm routing on dispatched prompts p50 6.3 s,
+   p95 18.7 s (n=21, localhost); brief + locate are 85% of it; cold triage 5-30 s and can time out. Proposal, not made:
+   run the brief and locate's narrowing at the same time, est. -2.5 s p50.)*
+
 ### Lane INFRA - Docker boot test (opened 2026-08-27, scoped grant for this task)
 
 Scoped ownership for this task only: `docker-compose.yml`, `backend/Dockerfile`,

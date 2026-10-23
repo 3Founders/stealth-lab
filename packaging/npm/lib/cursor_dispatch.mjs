@@ -25,6 +25,7 @@ import { parseOverride, sessionTurns, turnsText } from "./brief.mjs";
 import { rememberLookup } from "./capture_hook.mjs";
 import { findStealthRoot, requestPayload, upsertRoutes } from "./library.mjs";
 import { logHook } from "./subagent_hook.mjs";
+import { routingTimer } from "./routing_timing.mjs";
 
 const idOk = (id) => /^[A-Za-z0-9_-]{1,128}$/.test(String(id || ""));
 const workspaceOf = (payload) => (Array.isArray(payload?.workspace_roots) && payload.workspace_roots[0]) || payload?.cwd || "";
@@ -60,8 +61,18 @@ function writeState(env, conversationId, state) {
 }
 
 // -> the hook's stdout object, or null when dispatch does not apply here (the caller then runs the plain hook).
-export async function onBeforeSubmitPromptDispatch(payload, { env = process.env, settings, userAgent, fetchImpl,
-                                                              now = Date.now(), dispatchImpl, log = () => {} } = {}) {
+// How long routing takes (lib/routing_timing.mjs; off unless STEALTHLAB_ROUTING_TIMING=1): one line per prompt.
+export async function onBeforeSubmitPromptDispatch(payload, opts = {}) {
+  const timer = routingTimer({ env: opts.env || process.env, prompt: String(payload?.prompt || ""), surface: "cursor" });
+  try {
+    return await cursorDispatchBody(payload, { ...opts, timer });
+  } finally {
+    timer.finish();
+  }
+}
+
+async function cursorDispatchBody(payload, { env = process.env, settings, userAgent, fetchImpl,
+                                             now = Date.now(), dispatchImpl, log = () => {}, timer }) {
   if (!cursorDispatchEnabled(env) || !settings?.url || !idOk(payload?.conversation_id)) return null;
   const policy = hookPolicy(env);
   if (!shouldLookUp(payload.prompt, policy)) return null;
@@ -85,8 +96,11 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   // the server's judgment (JEV first): a lookup worth it? and, for dispatch, a change asked for now? (the earlier turns
   // are its context when Cursor names a transcript)
   const turns = sessionTurns({ transcriptPath: payload.transcript_path, sessionId: payload.conversation_id, current: prompt, env });
+  timer.mark("triage_start");
   const verdict = await callTriage({ url: settings.url, token: settings.token, userAgent, query: prompt, context: turnsText(turns),
     timeoutMs: policy.triageTimeoutMs, fetchImpl });
+  timer.mark("triage_end");
+  timer.set("triage", verdict ? { work: verdict.work || null, needs_retrieval: verdict.needs_retrieval ?? null } : null);
   if (policy.triage) {
     if (verdict && verdict.needs_retrieval === false) {
       // no knowledge needed -- but a quick fix may still be a task for the cheap models: the lookup goes on, for the
@@ -99,8 +113,13 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   try { extra = requestPayload(root, { env }); } catch { /* no library rows: a plain lookup */ }
   // the plan is over this machine's open models; Cursor's own model is the baseline and the last rung
   extra = { ...extra, ...routingArgs({ ...policy, candidates: execCandidates(env) }, model, "cursor") };
+  timer.set("stealth_root", true);
+  timer.mark("find_ways_start");
   let reply = await callFindWays({ url: settings.url, token: settings.token, userAgent, query: prompt.slice(0, 1500),
     repoClaims: readClaims(workspace, prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl });
+  timer.mark("find_ways_end");
+  timer.set("plan_ms", Number.isFinite(reply?.model_plan?.plan_ms) ? reply.model_plan.plan_ms : null);
+  timer.set("plan_status", reply?.model_plan?.status || null);
   try {
     if (Array.isArray(reply?.routing_rows) && reply.routing_rows.length) upsertRoutes(root, reply.routing_rows);
   } catch { /* routing.md is best-effort */ }
@@ -108,8 +127,11 @@ export async function onBeforeSubmitPromptDispatch(payload, { env = process.env,
   const mine = `${model}|cursor`;
   const run = dispatchImpl || (await import("./dispatch.mjs")).dispatch;
   const { triedNote } = await import("./dispatch.mjs");
+  timer.mark("dispatch_start");
   const d = await run({ payload: { prompt, cwd: workspace, ...(payload.transcript_path ? { transcript_path: payload.transcript_path } : {}) },
-    reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict });
+    reply, root, mine, env, fetchImpl, log, force: override.kind === "cheap", triage: verdict, timing: timer });
+  timer.mark("dispatch_end");
+  timer.set("outcome", d?.handled ? "dispatched: a cheap model passed" : d ? "dispatched: none passed" : "not dispatched");
   if (d?.handled) {
     try { rememberLookup(ids, null, { env }); } catch { /* capture is best-effort */ }
     log(`dispatch: handled by ${d.unit}`);
