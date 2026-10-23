@@ -402,7 +402,8 @@ export function computeStatus(root, opts = {}) {
 
   const rows = targets.map((t) => {
     const r = evaluate(t);
-    return { id: t.id, kind: t.kind, status: r.status, ...(r.status === "verified" ? { changed_since: r.changed_since ?? null } : {}), why: r.why, title: t.title, hand: t.handStatus, checks: t.checks, deps: t.deps,
+    return { id: t.id, kind: t.kind, status: r.status, ...(r.status === "verified" ? { changed_since: r.changed_since ?? null } : {}), why: r.why, title: t.title,
+      ...(t.goalId ? { goal_id: t.goalId } : {}), hand: t.handStatus, checks: t.checks, deps: t.deps,
       evidence: (byTarget.get(t.id) || []).length };
   });
   const counts = Object.fromEntries(STATUSES.map((s) => [s, rows.filter((r) => r.status === s).length]));
@@ -513,6 +514,43 @@ export function compactEvidence(root, { dir = path.join(root, ".stealth"), tree 
   return { ok: true, before, after, changed: true };
 }
 
+// ---------------------------------------------------------------------------------------------- the server's view of a Goal (read only)
+
+// The GOAL_STATUS line of stealth://goals/<id>/claims (backend/app/mcp_server/resources.py) -> {status, guarantees, ..., why} | null
+export function parseGoalStatusLine(text) {
+  const line = String(text || "").split(/\r?\n/).find((l) => l.startsWith("GOAL_STATUS|"));
+  if (!line) return null;
+  const parts = line.split("|");
+  const kv = {};
+  for (const p of parts.slice(3)) {
+    const eq = p.indexOf("=");
+    if (eq > 0) kv[p.slice(0, eq)] = p.slice(eq + 1);
+  }
+  const n = (k) => (kv[k] !== undefined && /^[0-9]+$/.test(kv[k]) ? Number(kv[k]) : null);
+  return { status: parts[2], guarantees: n("guarantees"), verified: n("verified"), failed: n("failed"), contested: n("contested"), open: n("open"),
+    assumptions: n("assumptions"), closed: n("closed"), client_checks: kv.client_checks && kv.client_checks !== "-" ? kv.client_checks : null, why: kv.why || null };
+}
+
+// `status --server`: for each library entry that already names a server Goal (library.md g=), read that Goal's COMPUTED status from the
+// server. Read only; it never changes a local status, and any failure leaves the row without a `server` field. -> {read, failed}
+export async function attachServerStatus(result, { env = process.env, fetchImpl, timeoutMs = 8000, log = () => {} } = {}) {
+  const out = { read: 0, failed: 0 };
+  let readHostedResource;
+  try { ({ readHostedResource } = await import("./exec/hosted.mjs")); } catch { return out; }
+  for (const row of result.targets) {
+    if (!row.goal_id) continue;
+    try {
+      const text = await readHostedResource(`stealth://goals/${row.goal_id}/claims`, { env, fetchImpl, timeoutMs });
+      const server = parseGoalStatusLine(text);
+      if (server) { row.server = server; out.read++; } else out.failed++;
+    } catch (err) {
+      out.failed++;
+      log(`status --server: ${row.id}: ${String(err?.message || err).slice(0, 120)}`);
+    }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------- CLI
 
 export function renderTable(result) {
@@ -520,12 +558,12 @@ export function renderTable(result) {
   if (!rows.length) return "no run.md nodes or library.md entries found";
   const w = Math.max(...rows.map((r) => r.id.length), 2);
   const lines = [`${"ID".padEnd(w)}  ${"KIND".padEnd(7)}  ${"STATUS".padEnd(9)}  WHY`];
-  for (const r of rows) lines.push(`${r.id.padEnd(w)}  ${r.kind.padEnd(7)}  ${r.status.padEnd(9)}  ${r.why}`);
+  for (const r of rows) lines.push(`${r.id.padEnd(w)}  ${r.kind.padEnd(7)}  ${r.status.padEnd(9)}  ${r.why}${r.server ? `  [server: ${r.server.status}]` : ""}`);
   lines.push("", STATUSES.map((s) => `${s} ${result.counts[s]}`).join("  ·  "));
   return lines.join("\n");
 }
 
-export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--run [--yes] [--in-place] [--only <ids>]] [--compact]
+export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--server] [--run [--yes] [--in-place] [--only <ids>]] [--compact]
 
   A computed status for every .stealth/run.md node and .stealth/library.md entry:
     verified   a check exists, its latest run on the current code passed, and every deps= node is verified
@@ -544,6 +582,9 @@ export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir
   .stealth/evidence.md. --only limits --run to those ids (comma list).
   --compact rewrites evidence.md keeping, per target and check, the latest pass, the latest fail and every line recorded on
   the tree as it is now (the old file is kept as evidence.md.prev). It refuses when evidence.md has uncommitted changes.
+  --server also reads, for each library entry that names a server Goal, that Goal's status COMPUTED by the server from the evidence on
+  its guarantee claims (shown as "server" in --json, and "[server: ...]" in the table). Read only, one request per Goal, and any failure
+  leaves the local status as it is. It needs a saved token; without --server nothing is sent.
   --stealth-dir reads the plan, claims and evidence from another folder (for example .stealth/collab) while --root stays
   the repository whose files are checked.
 `;
@@ -555,7 +596,7 @@ async function askLine(question) {
 }
 
 export async function runStatusCli(argv, { out = (s) => process.stdout.write(s + "\n"), err = (s) => process.stderr.write(s + "\n"), exec,
-  tty = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask = askLine } = {}) {
+  tty = Boolean(process.stdin.isTTY && process.stdout.isTTY), ask = askLine, env = process.env, fetchImpl } = {}) {
   const args = [...argv];
   if (args.includes("--help") || args.includes("-h") || args[0] === "help") { err(STATUS_HELP); return 0; }
   const take = (flag) => { const i = args.indexOf(flag); if (i < 0) return undefined; const v = args[i + 1]; args.splice(i, v === undefined || v.startsWith("--") ? 1 : 2); return v === undefined || v.startsWith("--") ? "" : v; };
@@ -563,7 +604,7 @@ export async function runStatusCli(argv, { out = (s) => process.stdout.write(s +
   const rootArg = take("--root");
   const onlyArg = take("--only");
   const dirArg = take("--stealth-dir");
-  const json = has("--json"), run = has("--run"), inPlace = has("--in-place"), yes = has("--yes"), compact = has("--compact");
+  const json = has("--json"), run = has("--run"), inPlace = has("--in-place"), yes = has("--yes"), compact = has("--compact"), server = has("--server");
   if (args.length) { err(`unknown argument ${args[0]}\n\n${STATUS_HELP}`); return 2; }
   const root = rootArg ? path.resolve(rootArg) : nearestStealthRoot(process.cwd());
   let ranInfo = null;
@@ -589,10 +630,11 @@ export async function runStatusCli(argv, { out = (s) => process.stdout.write(s +
           if (!go) err("nothing was run");
         }
       }
-      if (go) ranInfo = await runChecks(root, { ...(dir ? { dir } : {}), only, inPlace, ...(exec ? { exec } : {}) });
+      if (go) ranInfo = await runChecks(root, { ...(dir ? { dir } : {}), only, inPlace, env, fetchImpl, ...(exec ? { exec } : {}) });
     }
     const result = computeStatus(root, dir ? { dir } : {});
     if (ranInfo) result.run = ranInfo;
+    if (server) result.server = await attachServerStatus(result, { env, fetchImpl, log: err });
     const note = ranInfo?.in_place ? "checks ran in your checkout, not a throwaway copy\n\n" : "";
     out(json ? JSON.stringify(result, null, 2) : note + renderTable(result) + (ranInfo ? `\n\nran ${ranInfo.appended} check(s); ${ranInfo.skipped.length} not recorded` : ""));
     return 0;

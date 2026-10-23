@@ -141,11 +141,10 @@ test("dispatch: the rungs start fastest model first, the winner releases its slo
   const s = setup();
   seed(s.root, "minimax-m2-7", 0.3);                                        // minimax usually wins in 0.3 s (times are kept to a tenth of a second)
   seed(s.root, "gemma-4-31b-it", 0.1);                                       // gemma is the faster model, so it is started first (cap 0.3 s: it wins in 0.15 s)
-  const rt = runtime(s.root, { "minimax-m2-7": { delay: 5000 }, "gpt-oss-120b": { delay: 5000 }, "gemma-4-31b-it": { delay: 150 } });
-  const t0 = Date.now();
+  const rt = runtime(s.root, { "minimax-m2-7": { delay: Infinity }, "gpt-oss-120b": { delay: Infinity }, "gemma-4-31b-it": { delay: 150 } });
   const d = await run(s, rt);
   assert.equal(d.handled, true);
-  assert.ok(Date.now() - t0 < 4000, "nothing waited for the slow runs");
+  // the slow runs never end on their own, so dispatch returning at all means it did not wait on them (no wall-clock margin)
   assert.deepEqual(rt.starts.slice(0, 2), ["gemma-4-31b-it", "gpt-oss-120b"], "fastest first, then the unknown model at the median");
   assert.ok(rt.cancelled.includes("r-gpt-oss-120b"), "the sibling that was still going is cancelled when gemma passes");
   assert.ok(!rt.starts.includes("minimax-m2-7"), "the third rung was never needed");

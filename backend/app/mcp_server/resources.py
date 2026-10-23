@@ -359,19 +359,65 @@ async def procedure_claims_resource(procedure_id: str, ctx: Context) -> str:
     return "\n".join(blocks) + "\n"
 
 
+async def _tenant_scope_for(pool, scope):
+    """The tenant the caller's evidence is read under: their organisation, else the shared commons. Any failure -> the commons
+    (a narrower view, never a wider one)."""
+    from app.services.access import TenantScope
+
+    if not getattr(scope, "viewer_id", None):
+        return TenantScope.commons()
+    try:
+        from app.services.authn import Actor, tenant_scope_for_actor
+
+        return (await tenant_scope_for_actor(pool, Actor(subject=scope.viewer_id)))[1]
+    except Exception:  # noqa: BLE001 -- ambiguous membership, no user row: read as the commons
+        return TenantScope.commons()
+
+
 async def goal_claims_resource(goal_id: str, ctx: Context) -> str:
-    """stealth://goals/{goal_id}/claims -- claims related to one Goal."""
+    """stealth://goals/{goal_id}/claims -- one Goal's contract and status, then claims related to it.
+
+    First line after the header: GOAL_STATUS, the Goal's status COMPUTED from the evidence on its guarantee claims
+    (verified | open | failed | contested | expired; read only, never stored, `goals.status` is something else). Then the
+    claims linked to the Goal (topic = their role: guarantee or assumption), then claims found by searching on its name."""
+    from app.services import goal_claims as _gc
     from app.services import goals as _goals
+    from app.services.access import visibility_predicate
     from app.services.relevant_claims import get_relevant_claims
+    from app.stealth.pipe_format import _SEP, _kv_field, _row
 
     scope = _scope()
     pool = _pool(ctx)
     goal = await _goals.get_goal(pool, goal_id, scope=scope)
     if goal is None:
         return _NOT_FOUND
+    out = [f"# claims for goal {goal_id} ({goal.get('canonical_name')})"]
+    status = await _gc.goal_status(pool, goal_id, scope=scope, tenant_scope=await _tenant_scope_for(pool, scope))
+    linked_ids = [c["claim_id"] for c in (status or {}).get("claims", [])]
+    if status:
+        k = status["counts"]
+        checks = ",".join(f"{r}:{n}" for r, n in sorted(status["client_checks"].items())) or "-"
+        out.append(_row("GOAL_STATUS", goal_id, status["status"]) + _SEP + _SEP.join([
+            _kv_field("guarantees", k["guarantees"]), _kv_field("verified", k["verified_claims"]), _kv_field("failed", k["failed_claims"]),
+            _kv_field("contested", k["contested_claims"]), _kv_field("open", k["open_claims"]),
+            _kv_field("assumptions", k["assumptions"]), _kv_field("closed", k["closed_links"]),
+            _kv_field("client_checks", checks), _kv_field("why", status["why"])]))
+    if linked_ids:
+        vis_sql, vis_params = visibility_predicate(scope, param_index=2)
+        rows = await pool.fetch(
+            f"SELECT id, properties, name, visibility, scope_type, claim_status, t_created FROM knowledge_nodes "
+            f"WHERE node_type = 'claim' AND id = ANY($1::uuid[]) AND {vis_sql}", linked_ids, *vis_params)
+        by_id = {str(r["id"]): dict(r) for r in rows}
+        for role in ("guarantee", "assumption"):
+            block_rows = [by_id[c["claim_id"]] for c in status["claims"] if c["role"] == role and c["claim_id"] in by_id]
+            if block_rows:
+                out.append(_claim_block(role, block_rows))
     related = await get_relevant_claims(pool, goal=goal.get("canonical_name") or "", access_scope=scope, top_k=10)
-    body = _claim_block("related", related)
-    return f"# claims for goal {goal_id} ({goal.get('canonical_name')})\n" + (body + "\n" if body else "")
+    seen = set(linked_ids)
+    body = _claim_block("related", [r for r in related if str(r.get("claim_id") or r.get("id")) not in seen])
+    if body:
+        out.append(body)
+    return "\n".join(out) + "\n"
 
 
 async def survey_repo_prompt_resource() -> str:
@@ -510,7 +556,7 @@ _V1_RESOURCES = [
      "contiguous blocks: discoveries recorded against it, claims its "
      "preconditions cite, and claims related to its goal.", procedure_claims_resource),
     ("stealth://goals/{goal_id}/claims", "goal-claims", "Claims for a goal",
-     "Claims related to one Goal, as grep-friendly CLAIM lines.", goal_claims_resource),
+     "One Goal's computed status (GOAL_STATUS), the claims linked to it as its contract (guarantee, assumption) and claims related to it, as grep-friendly lines.", goal_claims_resource),
     # The two v1 prompts as plain resources: the same text, for MCP clients that can read
     # resources but don't surface MCP prompts to the model (a model can't call prompts/get).
     ("stealth://prompts/survey_repo", "prompt-survey-repo", "survey_repo prompt",

@@ -236,8 +236,8 @@ def test_the_effective_state_reads_under_the_system_scope_with_the_tenant_as_a_f
     first = pool.conn.calls[0]
     assert first[0] == "execute" and first[2][0] == "app.rls_system"
     query = next(c for c in pool.conn.calls if c[0] == "fetch")
-    assert "FROM local_check_effective WHERE tenant_id = $1::uuid" in query[1]
-    assert query[2][0] == str(TENANT.tenant_id)
+    assert "FROM local_check_effective WHERE tenant_id = $1::uuid AND repo_ref = $2 AND target_id = $3" in query[1]
+    assert str(query[2][0]) == str(TENANT.tenant_id) and query[2][1:] == ("r:0123456789abcdef", "N-3")
     assert "SELECT check_hash, passing_groups, failing_groups, effective_state, last_observed_at" in query[1], "counts only"
 
 

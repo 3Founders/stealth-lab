@@ -734,12 +734,14 @@ async def local_check_effective(pool, *, tenant_scope, repo_ref: str, target_id:
     """The effective state of each check on one target (view `local_check_effective`): counts of independent groups that
     pass and fail on the newest files reported, never another account's rows. Reads under the system scope because it
     counts across accounts; the tenant stays an explicit filter."""
-    from app.services.access import scoped_transaction
+    from app.services.access import scoped_transaction, tenant_predicate
 
+    tenant_sql, tenant_params = tenant_predicate(tenant_scope, param_index=1)
+    n = len(tenant_params)
     async with scoped_transaction(pool, system=True) as conn:
         rows = await conn.fetch(
             "SELECT check_hash, passing_groups, failing_groups, effective_state, last_observed_at "
-            "FROM local_check_effective WHERE tenant_id = $1::uuid AND repo_ref = $2 AND target_id = $3 "
+            f"FROM local_check_effective WHERE {tenant_sql} AND repo_ref = ${n + 1} AND target_id = ${n + 2} "
             "ORDER BY last_observed_at DESC",
-            str(tenant_scope.tenant_id), repo_ref, target_id)
+            *tenant_params, repo_ref, target_id)
     return [dict(r) for r in rows]

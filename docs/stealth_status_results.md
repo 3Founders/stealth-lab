@@ -217,7 +217,7 @@ copy is the safety net there.
 ## Parts 3 to 5: evidence on the server, the upload, and a Goal's computed status (2026-10-23)
 
 **What ran against what.** Everything below ran against a **fresh local scratch Postgres 17** (a new cluster on 127.0.0.1:55432, database
-`kel_evidence_test`, the whole migration chain 01 to 152 applied cleanly) and, for the client demo, the real MCP server (`run_backend.py`,
+`kel_evidence_test`, the whole migration chain 01 to 153 applied cleanly) and, for the client demo, the real MCP server (`run_backend.py`,
 which pins every database variable to a loopback host) on 127.0.0.1:8777. **No hosted database was touched**; the migration was never
 applied anywhere else. The backend `.env` database is over its plan quota, which is why the scratch cluster was used.
 
@@ -271,3 +271,54 @@ rows on the server: 2
 Honest limits: the client demo used a local test identity (the issuer `run_backend.py` trusts), not a hosted sign-in. `status --run` sends
 with a short bound and queues what it cannot send; dispatch only queues. Two accounts only corroborate each other when they share the
 evidence key, which is the team's choice (Part 1).
+
+### Part 5: a Goal's contract as linked claims, and its computed status (migration 153)
+
+`goal_claims(goal_id, claim_id, role)` links a Goal to claims in `knowledge_nodes` (`node_type = 'claim'`, enforced by a trigger that ships
+with the writer `link_goal_claim`). `role` is `assumption` (must hold before) or `guarantee` (must hold after). A link is ended, never edited
+or deleted. Nothing stores a status: the view `goal_status` computes **verified | open | failed | contested | expired** from the evidence
+already recorded on the guarantee claims, and `goals.status` keeps its own meaning (the record's lifecycle). The rules, in the order they win:
+
+- **expired**: a claim in the contract (either role) was closed (superseded, stale, retracted or `t_invalid`) at or after the Goal's first evidence.
+  A link to a claim closed before any evidence is a dead link, not an expiry.
+- **failed / contested**: a guarantee has failing evidence (contested when it also has passing evidence).
+- **verified**: every live guarantee has passing evidence and none fails. Only `execution_result` and `reproduction` evidence counts; testimony
+  (observation, document, human review, a self-report) never does. Independent groups are counted once each, as for procedures.
+- **open**: anything else, including an empty contract.
+
+It is read-only on the goal read path: the MCP resource `stealth://goals/<id>/claims` now starts with one `GOAL_STATUS|...` line, then the
+contract's claims (topic = role), then related claims. `stealthlab-mcp status --server` asks for that resource once per Goal and adds it
+to each row (`server` in `--json`, `[server: ...]` in the table); the local status is never changed by it, and an unreachable server is
+not an error.
+
+Real output (scratch database only; the resource function called against it, as the account `user-a`):
+
+```
+link guarantee: {'linked': True, 'duplicate': False, 'id': '01a16964-3dbe-78e8-876c-56d9f4a2e9e5', 'goal_id': '3a4af628-c703-4aab-8bd8-7331995c18e4', 'claim_id': 'd16d9f72-9841-48d8-be64-9879e0c195b0', 'role': 'guarantee'}
+link assumption: {'linked': True, 'duplicate': False, 'id': '01a16964-3dcc-7f9e-8da1-2e3a9bb94df5', 'goal_id': '3a4af628-c703-4aab-8bd8-7331995c18e4', 'claim_id': '9acdf9f1-9e02-47c5-891b-c58c4427a6d2', 'role': 'assumption'}
+
+--- no evidence yet ---
+GOAL_STATUS|3a4af628-c703-4aab-8bd8-7331995c18e4|open|guarantees=1|verified=0|failed=0|contested=0|open=1|assumptions=1|closed=0|client_checks=-|why=0 of 1 guarantee claim(s) verified; the rest have no machine-checked evidence yet
+CLAIM|d16d9f72-9841-48d8-be64-9879e0c195b0|supported|guarantee|global|signing keys rotate every 90 days|version=1
+CLAIM|9acdf9f1-9e02-47c5-891b-c58c4427a6d2|supported|assumption|global|the vault is reachable|version=1
+
+--- after one passing execution_result on the guarantee claim ---
+GOAL_STATUS|3a4af628-c703-4aab-8bd8-7331995c18e4|verified|guarantees=1|verified=1|failed=0|contested=0|open=0|assumptions=1|closed=0|client_checks=-|why=all 1 guarantee claim(s) have passing evidence and none fails
+CLAIM|d16d9f72-9841-48d8-be64-9879e0c195b0|candidate|guarantee|global|signing keys rotate every 90 days|version=1
+CLAIM|9acdf9f1-9e02-47c5-891b-c58c4427a6d2|supported|assumption|global|the vault is reachable|version=1
+
+--- after the guarantee claim is superseded ---
+GOAL_STATUS|3a4af628-c703-4aab-8bd8-7331995c18e4|expired|guarantees=0|verified=0|failed=0|contested=0|open=0|assumptions=1|closed=1|client_checks=-|why=a claim in this Goal's contract was superseded after the evidence was recorded
+CLAIM|d16d9f72-9841-48d8-be64-9879e0c195b0|superseded|guarantee|global|signing keys rotate every 90 days|version=1
+CLAIM|9acdf9f1-9e02-47c5-891b-c58c4427a6d2|supported|assumption|global|the vault is reachable|version=1
+```
+
+The same Goal, the same evidence row, a different answer once the claim it was about no longer holds as written.
+
+Tests: backend `test_goal_claims_offline.py` (11), `test_goal_claims_e2e.py` (10, scratch Postgres, a plain role under RLS: gate and writer,
+no stored status, open with no evidence, a self-report never verifies, failed and contested, groups counted once, verified then expired for a
+guarantee and for an assumption, a dead link, retracted evidence stops counting, owner isolation); packaging `status_server.test.mjs` (6).
+
+**Not built (the proposal's section 6 minus this):** composition across the Goal tree (a parent verified from its children) and human review as
+typed evidence. The corroboration rule of Part 3 still needs a shared evidence key between accounts. Part 3 and 5 migrations were applied to
+the scratch database only.

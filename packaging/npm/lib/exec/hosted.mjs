@@ -46,8 +46,9 @@ export function hostedSettings(env = process.env) {
   }
 }
 
-// Returns the tool's text result. Throws HostedError (transient or permanent).
-export async function callHostedTool(name, args, { env = process.env, fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
+// One JSON-RPC request in its own short MCP session (initialize, initialized, the request, end the session) -> the parsed reply body.
+// Throws HostedError (transient or permanent). `label` names the call in error messages.
+async function hostedRequest(method, params, label, { env = process.env, fetchImpl = globalThis.fetch, timeoutMs = 10000 } = {}) {
   const settings = hostedSettings(env);
   if (settings.error) throw new HostedError(`hosted URL rejected: ${settings.error}`, { transient: true });
   if (!settings.url) throw new HostedError("no hosted MCP URL configured", { transient: true });
@@ -82,20 +83,31 @@ export async function callHostedTool(name, args, { env = process.env, fetchImpl 
   try { proto = parseBody(await init.text()).result?.protocolVersion; } catch { /* optional */ }
   const note = await post({ jsonrpc: "2.0", method: "notifications/initialized" }, sid, proto);
   await note.text().catch(() => "");
-  const res = await post({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } }, sid, proto);
-  await check(res, name);
-  let body;
+  const res = await post({ jsonrpc: "2.0", id: 2, method, params }, sid, proto);
+  await check(res, label);
   try {
-    body = parseBody(await res.text());
+    return parseBody(await res.text());
   } catch (err) {
-    throw new HostedError(`${name}: unparseable response (${err.message})`, { transient: true });
+    throw new HostedError(`${label}: unparseable response (${err.message})`, { transient: true });
   } finally {
     if (sid) fetchImpl(settings.url, { method: "DELETE", headers: { ...headers, "mcp-session-id": sid } }).catch(() => {});
   }
+}
+
+// Returns the tool's text result. Throws HostedError (transient or permanent).
+export async function callHostedTool(name, args, opts = {}) {
+  const body = await hostedRequest("tools/call", { name, arguments: args }, name, opts);
   if (body.error) throw new HostedError(`${name}: ${body.error.message || "JSON-RPC error"}`, { transient: true });
   const text = (body.result?.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
   if (UNDEFINED_TABLE_RE.test(text)) throw new HostedError(`${name}: server tables not ready (${text.slice(0, 200)})`, { transient: true });
   if (body.result?.isError) throw new HostedError(`${name}: ${text.slice(0, 300) || "tool error"}`, { transient: true });
   if (/^REFUSED\b/.test(text.trim())) throw new HostedError(`${name}: ${text.trim().slice(0, 300)}`, { transient: false });
   return text;
+}
+
+// Reads one MCP resource (resources/read) -> its text. Read only; used by `stealthlab-mcp status --server`.
+export async function readHostedResource(uri, opts = {}) {
+  const body = await hostedRequest("resources/read", { uri }, uri, opts);
+  if (body.error) throw new HostedError(`${uri}: ${body.error.message || "JSON-RPC error"}`, { transient: true });
+  return (body.result?.contents || []).map((c) => c.text || "").join("\n");
 }
