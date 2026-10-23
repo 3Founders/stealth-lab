@@ -103,9 +103,20 @@ replays `report_check_evidence` without new plumbing.
 
 **Never sent:** the check command text, its output, file paths in the clear, prompt text, diffs, claim statements, the
 reviewer's review text, repository names or URLs. The command can hold paths, names and URLs, which is why only its hash
-leaves. The HMAC key is derived from the hashed repo identity the survey already computes (`lib/survey/identity.mjs`), so
-a hash cannot be confirmed by guessing "npm test" across tenants. Path HMACs serve one purpose: the server can tell that
-two runs on the same repo saw the same file, without learning its name. This is the point a security reviewer will check
+leaves. The HMAC key is a random 32-byte secret that never leaves the machine (`packaging/npm/lib/evidence_key.mjs`): it is created on
+first use in `.stealth/evidence.key`, mode 0600 where the operating system has mode bits, listed in `.stealth/.gitignore`,
+and never uploaded, printed or written into `evidence.md`. It is NOT derived from the repository identity: that hash is
+already sent to the server, and for a public repository anyone can compute it, so a key built from it would let the server,
+or anyone who learns it, test guesses such as `npm test` against the hashes.
+
+**What the server can and cannot learn.** Without the key it cannot recover a command or a path from its HMAC, and it cannot
+test a guess. It can match the same check, and the same file, only within the scope of one key, so two machines with their own
+keys look unrelated to it. Blob SHAs are sent as they are: for a file that is public, the SHA identifies exactly which version
+of that file it was, and anyone holding the public file can compute it. A team that wants the server to match the same check
+across its machines can choose to share the key (copy one `evidence.key` to each machine's `.stealth/`, or point
+`STEALTHLAB_EVIDENCE_KEY_FILE` at one shared file); sharing it is a choice, off by default, and whoever holds the key can test
+guesses against the hashes, so it should stay inside the group that may already see the commands and paths. Path HMACs serve
+one purpose: the server can tell that two runs saw the same file, without learning its name. This is the point a security reviewer will check
 ("what leaves your machine"), and it should be stated beside the hook's existing data-path statement in the README
 (see the open node N-8 on the collab plan).
 
