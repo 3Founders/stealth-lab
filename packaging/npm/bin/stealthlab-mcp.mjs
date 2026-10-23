@@ -105,6 +105,9 @@ Usage:
                                              ("stealthlab-mcp library help" for the commands)
   stealthlab-mcp plan validate [--root <repo>] check .stealth/procedures.md and .stealth/run.md (the plan_and_run
                                              format): ids, step/claim/dep references, no cycles, concrete checks
+  stealthlab-mcp status [--root <repo>] [--json] [--run]  a COMPUTED status (verified|open|failed|contested|expired) for every
+                                             .stealth/run.md node and library.md entry, from recorded check runs
+                                             (.stealth/evidence.md); --run runs the checks and appends the evidence
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
@@ -437,6 +440,11 @@ async function main() {
     // its own flags and positionals (lib/library_cli.mjs); imported lazily like exec
     const { runLibraryCli } = await import("../lib/library_cli.mjs");
     return runLibraryCli(argv);
+  }
+  if (cmd === "status") {
+    const { runStatusCli } = await import("../lib/status.mjs");
+    process.exitCode = await runStatusCli(argv);
+    return;
   }
   if (cmd === "plan") {
     const { runPlanCli } = await import("../lib/plan_check.mjs");

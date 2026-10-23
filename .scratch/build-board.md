@@ -4873,3 +4873,5 @@ proposed defaults so everything lands either way; ratification flips a name, not
   `# zizmor: ignore` comments by default, so audited code can silence its own finding — we pass
   `--no-ignores`; confirm the board wants that as the default rather than a per-procedure opt-in.
   **Proposed default: `--no-ignores` always, recorded in the stored check config.**
+
+- **SHIP claim 2026-10-23 (pilot session): local computed status.** Item: `stealthlab-mcp status [--root] [--json] [--run]`, a computed status (verified/open/failed/contested/expired) for every .stealth/run.md node and library.md GOAL entry, with a new append-only .stealth/evidence.md. Stays inside `packaging/npm/` plus docs/stealth_status_results.md and a short appended section in docs/verification_changes_prop.md. Read-only except `--run`, which only appends to evidence.md. Server, migrations and human review are out of scope (listed under Next in the results note).
