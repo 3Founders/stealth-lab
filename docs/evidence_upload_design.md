@@ -204,3 +204,22 @@ What landed (CORE-A, with the scoped grant recorded on the board), and where it 
 Tests: `backend/tests/test_local_check_evidence_offline.py` (44) and `..._e2e.py` (8, loopback database only, refuses any other
 host). The surface tests that pin the MCP tool list were updated for the new tool and for the already-registered `report_audit`,
 whose absence from them was a pre-existing failure.
+
+## 8. Implemented: the client half (2026-10-23)
+
+- **Off by default.** `STEALTHLAB_EVIDENCE_UPLOAD=on` turns it on, and a saved token is needed. With it off nothing is built, queued or
+  sent, and not even the key file is created. The packaging README says it stays off until the whole package's "what leaves your
+  machine" statement (board node N-8) is settled.
+- **Where it runs.** `status --run` sends each new line with a short bound (the first send that fails queues the rest without waiting
+  again). Dispatch, after an accepted answer is recorded as a library entry, writes the check as `deterministic_check` and, when the
+  strong reviewer said "fixes" and is not the model that wrote the answer, that verdict as `independent_agent`, both at the entry's
+  touched-file hashes, and only QUEUES them (no network, no wait).
+- **The outbox.** `report_check_evidence` is a third tool in `lib/exec/evidence.mjs` next to `report_model_run` and `report_result`,
+  with the same rules: offline or signed out it waits in `~/.stealthlab/outbox/`; a final refusal (`REFUSED`) goes to
+  `outbox/rejected/`; a payload that fails the whitelist is held in `outbox/held/` without keeping the offending value; a server
+  rate limit is a tool error, so it stays queued. The strict whitelist (`validateUploadPayload`) is applied again at the outbox,
+  and nothing in the argument goes through `redact()` (it could rewrite a 64-hex HMAC).
+- **What goes over the wire** is asserted exactly by tests: one argument, `evidence`, with only the whitelisted keys; no command, path,
+  output, reviewer text or key anywhere in the request or in the queued file.
+- **Fails open.** A missing or unreadable key, a malformed record, a network error or a refused report never changes a status, a run
+  result or an answer.

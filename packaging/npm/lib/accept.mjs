@@ -99,7 +99,7 @@ export async function answerEvidence({ rule, result, spec, specRunner, python = 
     }));
   }
   const ask = (model, yes, no) => review({ prompt, diff: patch, env, log, model, fetchImpl, signal })
-    .then((v) => { ev[yes] = v?.verdict === "fixes"; ev[no] = v?.verdict === "does_not_fix"; ev[`${yes}_why`] = v?.why || null; ev.review_cost = (ev.review_cost || 0) + (v?.cost_usd || 0); });
+    .then((v) => { ev[yes] = v?.verdict === "fixes"; ev[no] = v?.verdict === "does_not_fix"; ev[`${yes}_why`] = v?.why || null; ev[`${yes}_model`] = v?.model || null; ev.review_cost = (ev.review_cost || 0) + (v?.cost_usd || 0); });
   if (ruleUses(rule, "R", "Rno") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_MODEL || "gpt-oss-120b", "R", "Rno"));
   if (ruleUses(rule, "Rs", "Rs_no") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5", "Rs", "Rs_no"));
   await Promise.all(jobs);

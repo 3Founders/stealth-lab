@@ -284,7 +284,7 @@ export function collectTargets(root, dir = path.join(root, ".stealth")) {
     const touches = e.procs.flatMap((p) => p.touches || []).filter((t) => t && t.path);
     const checks = [...new Set(e.procs.flatMap((p) => (p.steps || []).map((s) => s.check)).filter((c) => c && c !== "-"))];
     targets.push({ id: e.id, kind: "library", title: e.title || "", handStatus: e.status, checks, claims: [], files: [...new Set(touches.map((t) => t.path))],
-      deps: [], touches, libStale: e.status === "stale",
+      deps: [], touches, libStale: e.status === "stale", goalId: e.g || null, procedureId: e.procs.map((p) => p.p).find(Boolean) || null,
       // an entry written by dispatch or the Stop hook was verified when it was added: one pass, at the recorded hashes
       synthetic: e.verified_at && (e.outcome === "pass" || e.outcome === "fail") && touches.length
         ? { result: e.outcome, at: e.verified_at, hashes: touches.map((t) => ({ path: t.path, sha: t.sha })) } : null });
@@ -452,13 +452,14 @@ export function pickTargets(root, { dir = path.join(root, ".stealth"), only = nu
 export const plannedCommands = (root, opts = {}) => [...new Set(pickTargets(root, opts).flatMap((t) => t.checks))];
 
 // Runs the check of each target (or of the --only ids) and appends exactly one evidence line per check.
-export async function runChecks(root, { dir = path.join(root, ".stealth"), only = null, exec = defaultExec, inPlace = false, timeoutMs = 300000, now = () => new Date(), tree } = {}) {
+export async function runChecks(root, { dir = path.join(root, ".stealth"), only = null, exec = defaultExec, inPlace = false, timeoutMs = 300000, now = () => new Date(), tree,
+  env = process.env, fetchImpl } = {}) {
   const picked = pickTargets(root, { dir, only });
   const paths = new Set(picked.flatMap((t) => t.files));
   const shas = fileShas(root, [...paths]);
   const head = headSha(root);
   const treeId = tree !== undefined ? tree : workTreeId(root);   // before the checks run: the tree they ran on
-  const lines = [], ran = [], skipped = [];
+  const lines = [], ran = [], skipped = [], records = [];
   for (const t of picked) {
     for (const check of t.checks) {
       const r = await exec(root, check, { inPlace, timeoutMs });
@@ -468,11 +469,21 @@ export async function runChecks(root, { dir = path.join(root, ".stealth"), only 
         tree: treeId, where, hashes: t.files.filter((f) => shas.has(f)).map((f) => ({ path: f, sha: shas.get(f).slice(0, SHA_LEN) })), check });
       if (!line) { skipped.push({ id: t.id, check, why: "not recorded (the check text looks like it holds a secret)" }); continue; }
       lines.push(line);
+      records.push({ target: t.id, method: "deterministic_check", result: r.code === 0 ? "pass" : "fail", at: now().toISOString(), commit: head, tree: treeId,
+        where, check, hashes: t.files.filter((f) => shas.has(f)).map((f) => ({ path: f, sha: shas.get(f).slice(0, SHA_LEN) })),
+        targetKind: t.kind === "library" ? "library_entry" : "plan_node", goalId: t.goalId || undefined, procedureId: t.procedureId || undefined });
       ran.push({ id: t.id, check, result: r.code === 0 ? "pass" : "fail", where });
     }
   }
   appendEvidence(root, lines, dir);
-  return { ran, skipped, appended: lines.length, in_place: ran.some((x) => x.where === "in-place") };
+  // Upload is off unless STEALTHLAB_EVIDENCE_UPLOAD=on. When it is on, a failure changes nothing here: the lines are already written,
+  // the status is computed from them, and the report waits in the outbox (lib/evidence_record.mjs).
+  let upload = null;
+  try {
+    const { uploadRecords } = await import("./evidence_record.mjs");
+    upload = await uploadRecords(root, records, { env, fetchImpl });
+  } catch { upload = null; }
+  return { ran, skipped, appended: lines.length, in_place: ran.some((x) => x.where === "in-place"), ...(upload && (upload.built || upload.skipped) ? { upload } : {}) };
 }
 
 // ---------------------------------------------------------------------------------------------- compacting evidence.md

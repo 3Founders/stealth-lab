@@ -33,6 +33,17 @@ import { reproAgentEnabled, reproduceTests } from "./repro_agent.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
+
+// The check that accepted an answer, and the strong reviewer's "fixes" when it gave one, become evidence on the library entry the
+// answer created (.stealth/evidence.md; queued for upload only when STEALTHLAB_EVIDENCE_UPLOAD=on). Bookkeeping: it never throws and
+// never waits on the network (lib/evidence_record.mjs).
+async function recordEvidenceFor({ root, entry, check, winner, env, log }) {
+  try {
+    const { recordAcceptedEvidence } = await import("./evidence_record.mjs");
+    await recordAcceptedEvidence({ root, entryId: entry, check, reviewerFixes: Boolean(winner?.evidence?.Rs),
+      reviewerModel: winner?.evidence?.Rs_model || null, executorModel: winner?.rung?.model || null, env, log });
+  } catch { /* evidence is bookkeeping: never a reason to fail an answer */ }
+}
 import { profileKey } from "./executors/profile.mjs";
 import { capFloorS, capMult, fastestFirstEnabled, modelCapEnabled, modelCapS, modelSpeeds, modelWins, orderFastestFirst, recordModelWin } from "./model_speed.mjs";
 import { detectCheck, pythonBin } from "./detect_check.mjs";
@@ -1233,6 +1244,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff,
                                                   steps: wayStepsForEntry(diff) }).id;
       } catch (err) { log(`dispatch: library entry not added (${err.message})`); }
+      if (entry) await recordEvidenceFor({ root, entry, check: check || "test-first tests", winner: null, env, log });
       const { explainChange } = await import("./explain.mjs");
       const [explanation] = await Promise.all([
         explainChange({ request: rawPayload.prompt, diff, check: check || "tests written for this task", summary: "", env, fetchImpl, log }),
@@ -1522,6 +1534,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       diff = diffFromGit(root);
       if (diff.trim()) {
         entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff, steps: wayStepsForEntry(diff) }).id;
+        await recordEvidenceFor({ root, entry, check: check || "test-first tests", winner, env, log });
         autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
       }
     } catch (err) {

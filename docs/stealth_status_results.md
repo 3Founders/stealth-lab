@@ -213,3 +213,61 @@ copy is the safety net there.
   expire on it, by design.
 - Untracked files are not in the throwaway worktree, nor in `tree=`.
 - Nothing is uploaded: see `docs/evidence_upload_design.md`.
+
+## Parts 3 to 5: evidence on the server, the upload, and a Goal's computed status (2026-10-23)
+
+**What ran against what.** Everything below ran against a **fresh local scratch Postgres 17** (a new cluster on 127.0.0.1:55432, database
+`kel_evidence_test`, the whole migration chain 01 to 152 applied cleanly) and, for the client demo, the real MCP server (`run_backend.py`,
+which pins every database variable to a loopback host) on 127.0.0.1:8777. **No hosted database was touched**; the migration was never
+applied anywhere else. The backend `.env` database is over its plan quota, which is why the scratch cluster was used.
+
+### Part 3: the server table, the service and the tool (migration 152)
+
+Real output of the tool function called against the scratch database (the payload is what the client builds from an EVIDENCE line):
+
+```
+1) one evidence line uploaded (the payload the client builds from a real EVIDENCE line):
+   in : {"repo_ref": "r:0123456789abcdef", "target_kind": "plan_node", "target_id": "N-3", "method": "deterministic_check", "result": "pass", "observed_at": "2026-10-23T10:00:00.000Z", "check_hash": "6b9d3d4a ...
+   out: {"recorded": true, "duplicate": false, "id": "01a16938-144c-76e8-8245-9d318cec216c", "state": "checked"}
+   again (the same client_event_id): {"recorded": false, "duplicate": true, "id": "01a16938-144c-76e8-8245-9d318cec216c", "state": "checked"}
+   row: [{'target_id': 'N-3', 'method': 'deterministic_check', 'result': 'pass', 'state': 'checked', 'provenance': 'company_ingested', 'scope_type': 'repository', 'scope_entity_id': 'r:0123456789abcdef', 'owner_id': 'demo-user', 'check_hash': '6b9d3d4ad364', ' ...
+2) a reviewer that is the same model as the executor:
+   out: REFUSED: the reviewer is the same model as the executor: independent_agent evidence needs a different model
+3) a field outside the whitelist:
+   out: REFUSED: fields not allowed: ['command'] (allowed: ['repo_ref', 'target_kind', 'target_id', 'goal_id', 'procedure_id', 'method', 'result', 'observed_at', 'commit_sha', 'tree_id', 'hashes', 'where_ran', 'check_hash', 'client_event_id', 'client_version', ...
+   rows now: 1
+```
+
+The demo connection is the scratch cluster's owner (a superuser, which bypasses row-level security). The isolation proofs use a plain role:
+`backend/tests/test_local_check_evidence_e2e.py` (8 tests: states, idempotence, append-only, the engine's CHECKs, RLS across accounts and
+tenants, two-account corroboration, goal link).
+
+### Part 4: the client upload (off by default)
+
+Real output, `STEALTHLAB_EVIDENCE_UPLOAD=on`, the packaged CLI against the local server (a throwaway git repository, one plan node):
+
+```
+$ STEALTHLAB_EVIDENCE_UPLOAD=on stealthlab-mcp status --run --yes --json     # client -> local MCP server -> scratch Postgres
+{"targets": [{"id": "N-1", "status": "verified", "why": "its check passed on the current code"}], "run": {"appended": 1, "upload": {"built": 1, "queued": 0, "sent": 1, "skipped": 0}}}
+outbox files after the send: 0
+row on the server:
+plan_node N-1 | deterministic_check | pass | state=checked | company_ingested | repository=r:fedcba9876543210 | owner=abtest-user | where=worktree | hashes=1
+--- the local file keeps the command; the server never sees it:
+1
+0
+--- the key file exists, is ignored, and is not in the local evidence or the server row:
+present
+0
+0
+--- the same line offline (server stopped is not needed: unreachable URL):
+upload: {'built': 1, 'queued': 1, 'sent': 0, 'skipped': 0} | status: verified
+outbox files: 1
+--- later, back online, the next flush sends it:
+{"sent":1,"remaining":0,"rejected":0}
+outbox files: 0
+rows on the server: 2
+```
+
+Honest limits: the client demo used a local test identity (the issuer `run_backend.py` trusts), not a hosted sign-in. `status --run` sends
+with a short bound and queues what it cannot send; dispatch only queues. Two accounts only corroborate each other when they share the
+evidence key, which is the team's choice (Part 1).

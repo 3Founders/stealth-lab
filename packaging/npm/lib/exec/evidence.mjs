@@ -14,6 +14,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { callHostedTool, hostedSettings } from "./hosted.mjs";
 import { redact } from "./redact.mjs";
+import { validateUploadPayload } from "../evidence_upload.mjs";
 import { ensureDir, outboxDir, readJson, writePrivate } from "./store.mjs";
 
 export const REPORT_FIELDS = [
@@ -28,9 +29,17 @@ export const PLAN_REPORT_FIELDS = [
   "instance_key", "accepted", "model", "scaffold", "check_kind", "tokens_in", "tokens_out", "tokens_cached",
   "cost_usd", "latency_ms", "pass_fraction",
 ];
-const FIELDS = { report_model_run: REPORT_FIELDS, report_result: PLAN_REPORT_FIELDS };
+// report_check_evidence: ONE object argument, `evidence`, built by lib/evidence_upload.mjs (ids, verdicts, HMACs, blob shas,
+// timestamps). It is not passed through redact(): redact() could rewrite a 64-hex HMAC that happens to look like a token, and every
+// string in it was already checked against a strict shape. validateUploadPayload is the whitelist, applied here again.
+export const CHECK_EVIDENCE_TOOL = "report_check_evidence";
+const FIELDS = { report_model_run: REPORT_FIELDS, report_result: PLAN_REPORT_FIELDS, [CHECK_EVIDENCE_TOOL]: ["evidence"] };
 
 export function sanitizeReport(payload, { secrets = [], tool = "report_model_run" } = {}) {
+  if (tool === CHECK_EVIDENCE_TOOL) {
+    const evidence = validateUploadPayload(payload?.evidence);
+    return evidence ? { evidence } : {};
+  }
   const out = {};
   for (const k of FIELDS[tool]) {
     const v = payload?.[k];
@@ -41,6 +50,7 @@ export function sanitizeReport(payload, { secrets = [], tool = "report_model_run
 }
 
 function holdReason(args, tool = "report_model_run") {
+  if (tool === CHECK_EVIDENCE_TOOL) return args.evidence ? null : "not a valid check-evidence payload";
   if (!args.model) return "no model is known for this run (configure models in exec.json)";
   if (tool === "report_result") return args.instance_key ? null : "no instance_key";
   if (!args.goal_id && !args.procedure_id) return "report_model_run needs goal_id or procedure_id";
@@ -95,6 +105,13 @@ export function reportModelRun(payload, opts = {}) {
 
 // One attempt of a model plan -> {reported, queued, ..., next_model?, status?}. Queued like report_model_run when
 // the server is unreachable; a queued report gives no next_model, so the run does not escalate on a guess.
+// One check run (lib/evidence_upload.mjs payload) -> {reported, queued, ...}. Queued like the others when the server is unreachable
+// or the user is not signed in; a permanent refusal goes to outbox/rejected/. {queueOnly: true} only writes the outbox entry (no
+// network): for callers that must not wait, the next flush sends it.
+export function reportCheckEvidence(evidence, opts = {}) {
+  return serialized(opts.env || process.env, () => reportUnlocked({ evidence }, { ...opts, tool: CHECK_EVIDENCE_TOOL }));
+}
+
 export function reportPlanResult(payload, opts = {}) {
   return serialized(opts.env || process.env, () => reportUnlocked(payload, { ...opts, tool: "report_result" }));
 }
@@ -131,7 +148,7 @@ async function flushUnlocked({ env = process.env, fetchImpl, timeoutMs = 10000 }
 }
 
 // reportModelRun -> {reported, queued, held?, rejected?, error?, outbox_file?}
-async function reportUnlocked(payload, { env = process.env, fetchImpl, timeoutMs = 10000, tool = "report_model_run" } = {}) {
+async function reportUnlocked(payload, { env = process.env, fetchImpl, timeoutMs = 10000, tool = "report_model_run", queueOnly = false } = {}) {
   const args = sanitizeReport(payload, { secrets: secretsFor(env), tool });
   const dir = outboxDir(env);
   const held = holdReason(args, tool);
@@ -139,11 +156,18 @@ async function reportUnlocked(payload, { env = process.env, fetchImpl, timeoutMs
     const file = writeEntry(path.join(dir, "held"), { tool, args, held: held, queued_at: new Date().toISOString() });
     return { reported: false, queued: false, held, outbox_file: file };
   }
+  if (queueOnly) {
+    const file = writeEntry(dir, { tool, args, queued_at: new Date().toISOString(), attempts: 0, last_error: "queued; sent by the next flush" });
+    return { reported: false, queued: true, outbox_file: file };
+  }
   // Earlier failures go first, so the server sees attempts in order.
   const flushed = await flushUnlocked({ env, fetchImpl, timeoutMs }).catch(() => ({ remaining: 1 }));
   if (flushed.remaining === 0) {
     try {
       const reply = await send(args, { env, fetchImpl, timeoutMs, tool });
+      if (tool === CHECK_EVIDENCE_TOOL) {
+        return { reported: true, queued: false, recorded: reply?.recorded ?? null, duplicate: reply?.duplicate ?? null, state: reply?.state ?? null };
+      }
       if (tool === "report_result") {
         return { reported: true, queued: false, status: reply?.status ?? null,
                  ...(typeof reply?.next_model === "string" ? { next_model: reply.next_model } : {}) };

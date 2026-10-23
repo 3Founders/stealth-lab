@@ -28,6 +28,47 @@ export function clientEventId(key, ev) {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
+// Upload is OFF unless the user turns it on: what leaves the machine is a decision, not a default (packaging/npm/README.md,
+// "What leaves your machine").
+export const uploadEnabled = (env = process.env) => String(env.STEALTHLAB_EVIDENCE_UPLOAD || "").trim().toLowerCase() === "on";
+
+const HEX64 = /^[0-9a-f]{64}$/;
+const SHA = /^[0-9a-f]{4,64}$/;
+
+/** The strict check applied to anything about to be queued or sent: exactly the whitelisted keys, each a validated shape.
+ * -> a clean copy, or null. toUploadPayload builds through it, and the outbox applies it again before it writes or sends. */
+export function validateUploadPayload(obj) {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  for (const k of Object.keys(obj)) if (!CHECK_EVIDENCE_FIELDS.includes(k)) return null;
+  const o = obj;
+  if (!REPO_REF.test(o.repo_ref || "") || !TARGET_KINDS.has(o.target_kind) || !TARGET_ID.test(o.target_id || "")) return null;
+  if (!METHODS.has(o.method) || !(o.result === "pass" || o.result === "fail")) return null;
+  if (!HEX64.test(o.check_hash || "") || !UUID.test(o.client_event_id || "")) return null;
+  if (typeof o.observed_at !== "string" || Number.isNaN(Date.parse(o.observed_at))) return null;
+  if (!Array.isArray(o.hashes) || o.hashes.length > 500) return null;
+  const hashes = [];
+  for (const h of o.hashes) {
+    if (!h || typeof h !== "object" || Object.keys(h).sort().join() !== "path_hmac,sha") return null;
+    if (!HEX64.test(h.path_hmac || "") || !SHA.test(h.sha || "")) return null;
+    hashes.push({ path_hmac: h.path_hmac, sha: h.sha });
+  }
+  const out = { repo_ref: o.repo_ref, target_kind: o.target_kind, target_id: o.target_id, method: o.method, result: o.result,
+    observed_at: o.observed_at, check_hash: o.check_hash, hashes, client_event_id: o.client_event_id };
+  for (const k of ["commit_sha", "tree_id"]) if (o[k] !== undefined) { if (!GIT_ID.test(o[k] || "")) return null; out[k] = o[k]; }
+  if (o.where_ran !== undefined) { if (!WHERE.has(o.where_ran)) return null; out.where_ran = o.where_ran; }
+  for (const k of ["goal_id", "procedure_id"]) if (o[k] !== undefined) { if (!UUID.test(o[k] || "")) return null; out[k] = o[k]; }
+  if (o.client_version !== undefined) { if (!/^[0-9A-Za-z.+-]{1,40}$/.test(o.client_version || "")) return null; out.client_version = o.client_version; }
+  if (o.method === "independent_agent") {
+    if (!MODEL.test(o.reviewer_model || "") || !MODEL.test(o.executor_model || "")) return null;
+    if (o.reviewer_model.trim().toLowerCase() === o.executor_model.trim().toLowerCase()) return null;   // the reviewer is not the executor
+    out.reviewer_model = o.reviewer_model;
+    out.executor_model = o.executor_model;
+  } else if (o.reviewer_model !== undefined || o.executor_model !== undefined) {
+    return null;
+  }
+  return out;
+}
+
 /**
  * @param {object} ev a parsed evidence line (lib/status.mjs parseEvidence)
  * @param {{key: Buffer, repoRef: string, targetKind: string, goalId?: string, procedureId?: string, clientVersion?: string,
@@ -62,6 +103,5 @@ export function toUploadPayload(ev, ctx) {
     out.reviewer_model = ctx.reviewerModel;
     out.executor_model = ctx.executorModel;
   }
-  for (const k of Object.keys(out)) if (!CHECK_EVIDENCE_FIELDS.includes(k)) delete out[k];
-  return out;
+  return validateUploadPayload(out);
 }

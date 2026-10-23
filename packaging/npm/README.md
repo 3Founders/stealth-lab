@@ -253,9 +253,40 @@ of service; using it any other way is not supported.
 - **What leaves the machine.** Only `report_model_run` / `recommend_models`
   fields (model, scaffold, accepted, ids, step order, timings), redacted, to the
   same endpoint as everything else (no hardcoded host; plain `http://` only for
-  loopback). Never task text, transcripts, diffs, check output or keys. The
+  loopback). Never task text, transcripts, diffs, check output or keys. With
+  `STEALTHLAB_EVIDENCE_UPLOAD=on` (off by default) also `report_check_evidence`: see "Check evidence" above. The
   hooks keep only the node id and the session/agent ids on disk
   (`~/.stealthlab/hooks/`, mode 0600) -- never the prompt or the reply.
+
+### Check evidence: recorded here always, uploaded only if you switch it on
+
+`stealthlab-mcp status` computes a status (verified, open, failed, contested, expired) for every `.stealth/run.md` node and
+`.stealth/library.md` entry from check runs recorded in `.stealth/evidence.md`. `status --run` lists the commands it will run (they
+come from the repository's own files) and asks before running them; dispatch records the check and the strong reviewer's verdict for
+each answer it accepts. **That file stays on your machine.**
+
+**Upload is OFF by default.** It stays off until you set `STEALTHLAB_EVIDENCE_UPLOAD=on`, and it needs a saved token. It is kept
+off in the product until the "what leaves your machine" statement for the whole package is settled (board node N-8). When it is on,
+one report per check run goes to the same endpoint as everything else, through the same outbox (`~/.stealthlab/outbox/`; offline or
+signed out, it waits there), with the tool `report_check_evidence`:
+
+| Sent | Form |
+|---|---|
+| which target | the plan node id (`N-3`) or library entry id (`L-…`), the hashed repository identity the survey already sends, and a Goal or Procedure uuid only if `library.md` already holds one |
+| the verdict | the method (`deterministic_check` or `independent_agent`) and `pass` or `fail` |
+| when and on what code | the time, the commit id, the tree id, `worktree` or `in-place`, and each file as `{HMAC of its path, blob sha}` |
+| which check | an HMAC of the check command |
+| the reviewer | for `independent_agent` only, the two model names (they must differ) |
+| bookkeeping | a per-line id (a repeat changes nothing), the package version |
+
+**Never sent:** the check command, a path, the output, the prompt, a diff, a claim, the reviewer's text, a repository name or URL,
+and the key. The HMAC key is 32 random bytes in `.stealth/evidence.key` (mode 0600 where the OS has mode bits; listed in
+`.stealth/.gitignore`; never uploaded, printed or written into `evidence.md`). Without the key the server cannot recover a command
+or a path from an HMAC; it can match the same check within one key's scope. Blob shas are sent as they are: for a public file, the
+sha shows which exact version it was. To let the server match checks across your team's machines, copy the SAME `evidence.key` to
+each machine (or point `STEALTHLAB_EVIDENCE_KEY_FILE` at one shared file); that is a choice, and whoever holds the key can test
+guesses against the hashes. A failed upload never changes a status and never delays a prompt: dispatch only queues, `status --run`
+sends with a short bound and queues what it cannot send.
 
 ## Releasing
 
