@@ -1,12 +1,15 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-// The homepage demo: a replay of what the developer sees in their terminal for three example tasks, with what each
+// The homepage demo: a replay of what the developer sees in their terminal for four example tasks, with what each
 // costs beside it and what the repository's .stealth folder remembers afterwards. It shows outcomes only (who did the
 // task, whether it passed the project's checks, what it cost), never how keळ decides. Everything here is made up.
 
 type Kind = "prompt" | "kel" | "diff-del" | "diff-add" | "file" | "run" | "ok" | "fail" | "model" | "done";
-type Line = { at: number; kind: Kind; text: string };
+// The headline's words plus the check: the strip above the terminal lights each one as the replay reaches it.
+type Word = "recall" | "reuse" | "route" | "tests";
+type Line = { at: number; kind: Kind; text: string; r?: Word[] };
+type Entry = { file: string; entry: string };
 type Scenario = {
   label: string;
   agent: string;
@@ -15,12 +18,15 @@ type Scenario = {
   cost: [number, number][];
   outcome: string;
   // What .stealth already holds from earlier tasks, beyond stealthBase, and what it gains at the end of the run.
-  earlier?: { file: string; entry: string };
-  remembered: { file: string; entry: string };
+  earlier?: Entry[];
+  remembered?: Entry;
 };
 
 const PROMPT_MS = 1600; // the prompt types out over this long; every other line appears at its `at`
 const DONE_PAD = 900;
+
+const CSV_FIX = "CSV export dropped its last row → splitlines(); checked by pytest";
+const AUTH_ROUTE = "auth changes in this repo → leave to your model";
 
 const scenarios: Scenario[] = [
   {
@@ -28,56 +34,78 @@ const scenarios: Scenario[] = [
     agent: "Claude Code",
     lines: [
       { at: 0, kind: "prompt", text: "CSV export drops the last row when the file has no trailing newline. Fix it." },
-      { at: 2100, kind: "kel", text: "keळ is on it, starting from 4 notes in .stealth" },
-      { at: 3300, kind: "file", text: "src/export/csv.py" },
-      { at: 3500, kind: "diff-del", text: '-    rows = data.split("\\n")[:-1]' },
-      { at: 3700, kind: "diff-add", text: "+    rows = data.splitlines()" },
-      { at: 4600, kind: "run", text: "running your tests: pytest" },
-      { at: 6000, kind: "ok", text: "212 passed in 8.4s" },
-      { at: 6800, kind: "done", text: "✓ applied by keळ · undo any time: stealthlab-mcp undo" },
+      { at: 2000, kind: "kel", text: "from .stealth: exports live in src/export/; tests run with pytest from the repo root", r: ["recall"] },
+      { at: 2900, kind: "kel", text: "→ handed to a cheaper model", r: ["route"] },
+      { at: 3700, kind: "file", text: "src/export/csv.py" },
+      { at: 3900, kind: "diff-del", text: '-    rows = data.split("\\n")[:-1]' },
+      { at: 4100, kind: "diff-add", text: "+    rows = data.splitlines()" },
+      { at: 4800, kind: "run", text: "running your tests: pytest, from the repo root" },
+      { at: 6200, kind: "ok", text: "212 passed in 8.4s", r: ["tests"] },
+      { at: 7000, kind: "done", text: "✓ applied by keळ · undo any time: stealthlab-mcp undo" },
     ],
-    cost: [[0, 0], [2100, 2], [6800, 18]],
-    outcome: "Done for a fraction of the cost.",
-    remembered: { file: "library.md", entry: "CSV export dropped its last row → splitlines(); checked by pytest" },
+    cost: [[0, 0], [2900, 2], [7000, 18]],
+    outcome: "Done by a cheaper model, checked by your tests.",
+    remembered: { file: "library.md", entry: CSV_FIX },
   },
   {
     label: "A harder task",
     agent: "Claude Code",
     lines: [
       { at: 0, kind: "prompt", text: "Add rate limiting to the login endpoint: 5 attempts per minute per IP." },
-      { at: 2100, kind: "kel", text: "keळ is on it, starting from 2 notes in .stealth" },
-      { at: 3600, kind: "run", text: "running your tests: pytest" },
-      { at: 5000, kind: "fail", text: "2 failed, 38 passed" },
-      { at: 5800, kind: "kel", text: "keळ: not good enough, so nothing is applied. Over to your model." },
-      { at: 6900, kind: "model", text: "I'll add a per-IP limiter to the login route and a test for it." },
-      { at: 8100, kind: "file", text: "src/auth/routes.py  src/auth/limits.py  tests/test_login_limit.py" },
-      { at: 9000, kind: "run", text: "running your tests: pytest" },
-      { at: 10300, kind: "ok", text: "41 passed in 9.1s" },
-      { at: 11000, kind: "done", text: "✓ done by your model, exactly as without keळ" },
+      { at: 2000, kind: "kel", text: "from .stealth: auth lives in src/auth/; tests run with pytest", r: ["recall"] },
+      { at: 2900, kind: "kel", text: "→ handed to a cheaper model", r: ["route"] },
+      { at: 4200, kind: "run", text: "running your tests: pytest" },
+      { at: 5600, kind: "fail", text: "2 failed, 38 passed", r: ["tests"] },
+      { at: 6300, kind: "kel", text: "keळ: the checks failed, so nothing is applied → over to your model", r: ["route"] },
+      { at: 7300, kind: "model", text: "I'll add a per-IP limiter to the login route and a test for it." },
+      { at: 8500, kind: "file", text: "src/auth/routes.py  src/auth/limits.py  tests/test_login_limit.py" },
+      { at: 9300, kind: "run", text: "running your tests: pytest" },
+      { at: 10600, kind: "ok", text: "41 passed in 9.1s" },
+      { at: 11300, kind: "done", text: "✓ done by your model, exactly as without keळ" },
     ],
-    cost: [[0, 0], [2100, 2], [5800, 9], [11000, 108]],
-    outcome: "Same result as without keळ, for slightly more.",
-    remembered: { file: "routing.md", entry: "auth changes in this repo → leave to your model" },
+    cost: [[0, 0], [2900, 2], [6300, 9], [11300, 108]],
+    outcome: "Same result as without keळ, for slightly more. keळ remembers to skip this kind of task.",
+    remembered: { file: "routing.md", entry: AUTH_ROUTE },
   },
   {
     label: "Next week",
     agent: "Cursor",
     lines: [
       { at: 0, kind: "prompt", text: "The JSON export has the same problem with the last record." },
-      { at: 2000, kind: "kel", text: "keळ is on it, starting from last week's CSV fix in .stealth" },
-      { at: 2900, kind: "file", text: "src/export/json.py" },
-      { at: 3100, kind: "diff-del", text: '-    records = body.split("\\n")[:-1]' },
-      { at: 3300, kind: "diff-add", text: "+    records = body.splitlines()" },
-      { at: 4000, kind: "run", text: "running your tests: pytest" },
-      { at: 5300, kind: "ok", text: "214 passed in 8.9s" },
-      { at: 6000, kind: "done", text: "✓ applied by keळ · added to .stealth for next time" },
+      { at: 2000, kind: "kel", text: "from .stealth: last week's CSV fix, and the test that proved it", r: ["recall", "reuse"] },
+      { at: 2800, kind: "kel", text: "→ handed to a cheaper model", r: ["route"] },
+      { at: 3500, kind: "file", text: "src/export/json.py" },
+      { at: 3700, kind: "diff-del", text: '-    records = body.split("\\n")[:-1]' },
+      { at: 3900, kind: "diff-add", text: "+    records = body.splitlines()" },
+      { at: 4600, kind: "run", text: "running your tests: pytest" },
+      { at: 5900, kind: "ok", text: "214 passed in 8.9s", r: ["tests"] },
+      { at: 6600, kind: "done", text: "✓ applied by keळ · added to .stealth for next time" },
     ],
-    cost: [[0, 0], [2000, 1], [6000, 9]],
+    cost: [[0, 0], [2800, 1], [6600, 9]],
     outcome: "Cheaper each time a task repeats.",
-    earlier: { file: "library.md", entry: "CSV export dropped its last row → splitlines(); checked by pytest" },
+    earlier: [{ file: "library.md", entry: CSV_FIX }],
     remembered: { file: "library.md", entry: "JSON export dropped its last record → splitlines(); checked by pytest" },
   },
+  {
+    label: "Auth again",
+    agent: "Claude Code",
+    lines: [
+      { at: 0, kind: "prompt", text: "Lock an account for 15 minutes after 10 failed logins." },
+      { at: 2000, kind: "kel", text: "from .stealth: auth changes in this repo are better left to your model", r: ["recall"] },
+      { at: 2700, kind: "kel", text: "→ straight to your model: no cheaper attempt, nothing wasted", r: ["route"] },
+      { at: 3700, kind: "model", text: "I'll add a lockout counter next to the rate limiter, with a test." },
+      { at: 5000, kind: "file", text: "src/auth/limits.py  tests/test_lockout.py" },
+      { at: 5900, kind: "run", text: "running your tests: pytest" },
+      { at: 7200, kind: "ok", text: "43 passed in 9.3s", r: ["tests"] },
+      { at: 7900, kind: "done", text: "✓ done by your model, with no detour" },
+    ],
+    cost: [[0, 0], [2700, 1], [7900, 101]],
+    outcome: "Sent straight to your model: no failed attempt to pay for.",
+    earlier: [{ file: "routing.md", entry: AUTH_ROUTE }],
+  },
 ];
+
+const WORDS: [Word | "reduce", string][] = [["recall", "Recall"], ["reuse", "Reuse"], ["route", "Route"], ["reduce", "Reduce"], ["tests", "Tests decide"]];
 
 // What .stealth already holds before the demo's task (the same made-up repository throughout).
 const stealthBase: { file: string; lines: string[] }[] = [
@@ -149,6 +177,7 @@ export default function ActionWalkthrough() {
   const alone = Math.min(t / end, 1) * 100;
   const withKel = costAt(sc, Math.min(t, end));
   const busy = !finished && t > PROMPT_MS;
+  const lit = new Set(shown.flatMap((l) => l.r || []));
 
   return (
     <div className="demo" ref={root}>
@@ -158,6 +187,13 @@ export default function ActionWalkthrough() {
             <span>{String(k + 1).padStart(2, "0")}</span>{s.label}
           </button>
         ))}
+      </div>
+
+      <div className="rstrip" aria-label="What this task used">
+        {WORDS.map(([w, label]) => {
+          const on = w === "reduce" ? finished && withKel < 100 : lit.has(w);
+          return <span key={w} data-on={on} data-word={w}>{w === "tests" ? "✓ " : ""}{label}</span>;
+        })}
       </div>
 
       <div className="demo-body">
@@ -198,14 +234,15 @@ export default function ActionWalkthrough() {
           <div className="stealth-peek" aria-label="Your repository's .stealth folder">
             <small className="caption dim">your-repo/.stealth</small>
             {stealthBase.map((f) => {
-              const added = finished && sc.remembered.file === f.file;
+              const added = finished && sc.remembered?.file === f.file;
+              const before = (sc.earlier || []).filter((e) => e.file === f.file);
               return (
                 <div key={f.file} className="stealth-file">
                   <b>{f.file}</b>
                   {f.lines.map((l) => <span key={l}>{l}</span>)}
-                  {sc.earlier?.file === f.file && <span>{sc.earlier.entry}</span>}
-                  {added && <span className="stealth-new">+ {sc.remembered.entry}</span>}
-                  {!f.lines.length && !added && sc.earlier?.file !== f.file && <span className="dim">nothing yet</span>}
+                  {before.map((e) => <span key={e.entry}>{e.entry}</span>)}
+                  {added && <span className="stealth-new">+ {sc.remembered!.entry}</span>}
+                  {!f.lines.length && !added && !before.length && <span className="dim">nothing yet</span>}
                 </div>
               );
             })}

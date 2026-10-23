@@ -18,13 +18,14 @@ const Marker = ({ n, label }: { n: string; label: string }) => (
   <div className="marker caption"><b>{n}</b><span>/ {label}</span></div>
 );
 
-// What a developer gets, not how it is done.
+// What a developer gets: the four words of the headline, then the rule behind them and the controls. Outcomes, not how
+// keळ decides.
 const gets = [
-  ["A smaller bill", "Everyday coding tasks cost a fraction of what your main model charges for them."],
-  ["The same bar for your code", "Nothing reaches your code unless it passes your project's own checks. When a cheaper result doesn't pass, your usual model does the task, as it always has."],
-  ["No new workflow", "Keep working in Claude Code or Cursor and type the way you do today. There's nothing new to learn."],
-  ["A repo that remembers", "What keळ learns about your project lives in a .stealth folder in your repo: plain text you can read, edit and commit. The next task starts from it."],
-  ["Better the more you use it", "keळ learns which kinds of tasks it can take in your project and which it should leave to your model, so the savings grow and the misses shrink."],
+  ["Recall", "Your agent starts every task knowing your repo: facts about your code, each pointing to where it comes from, and kept true as the code changes."],
+  ["Reuse", "Problems already solved in this repo come back with the fix and the test that proved it, so nothing is solved twice."],
+  ["Route", "Each task goes to the cheapest model that can do it well in your repo. Your usual model takes the rest, as it always has."],
+  ["Reduce", "A smaller bill for the same work, and it keeps shrinking as keळ learns which tasks your repo can hand off."],
+  ["Your tests decide", "Nothing reaches your code until it passes your project's own checks. An agent saying it's done never counts."],
   ["You stay in control", "Start a prompt with !opus to skip keळ for it, undo any change it made with one command, and turn it off any time."],
 ];
 
@@ -36,12 +37,12 @@ export default function Home() {
       {/* HERO */}
       <section id="top" className="hero frame grid" aria-labelledby="h-hero">
         <h1 id="h-hero" className="display">
-          <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Same work.</span></span>
-          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>A <span className="hl">smaller</span> bill.</span></span>
+          <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Recall, reuse,</span></span>
+          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>route, <span className="hl">reduce</span>.</span></span>
         </h1>
         <Reveal className="hero-sub stack" delay={250}>
-          <p className="lead">keळ works inside the coding agent you already use and cuts what each task costs, without lowering the bar for what reaches your code.</p>
-          <p className="dim small">What it learns about your repository stays in your repository.</p>
+          <p className="lead">keळ gives your coding agent a memory of your repo, reuses what&rsquo;s already been solved, and hands each task to the cheapest model that can do it. Nothing reaches your code until your own tests pass.</p>
+          <p className="dim small">Works inside Claude Code and Cursor. What it learns stays in your repository.</p>
         </Reveal>
         <Reveal className="hero-install" delay={350}><InstallCommand /></Reveal>
         <InteractiveLogo />
@@ -53,7 +54,7 @@ export default function Home() {
       <section id="about" className="section frame grid" aria-labelledby="h-about">
         <Marker n="01" label="WHAT YOU GET" />
         <Reveal className="statement">
-          <h2 id="h-about" className="h1">Pay less for the work. <span className="dim">Keep the quality.</span></h2>
+          <h2 id="h-about" className="h1">Pay less for the work. <span className="dim">Keep the bar where it is.</span></h2>
         </Reveal>
         <div className="cells">
           {gets.map(([t, d], i) => (
@@ -69,7 +70,7 @@ export default function Home() {
       <section id="action" className="section frame grid" aria-labelledby="h-action">
         <Marker n="02" label="SEE IT WORK" />
         <Reveal className="statement">
-          <h2 id="h-action" className="h1">Three tasks, <span className="dim">three outcomes.</span></h2>
+          <h2 id="h-action" className="h1">Recall, reuse, route, reduce. <span className="dim">Watch it happen.</span></h2>
         </Reveal>
         <ActionWalkthrough />
         <MonthInRepo />

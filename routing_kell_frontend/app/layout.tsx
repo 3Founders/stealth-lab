@@ -11,9 +11,9 @@ import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
 
 export const metadata: Metadata = {
-  title: { default: "keळ: Same work. A smaller bill.", template: "%s · keळ" },
+  title: { default: "keळ: Recall, reuse, route, reduce.", template: "%s · keळ" },
   description:
-    "keळ works inside the coding agent you already use and cuts what each task costs, without lowering the bar for what reaches your code.",
+    "keळ gives your coding agent a memory of your repo, reuses what's already been solved, and hands each task to the cheapest model that can do it. Nothing reaches your code until your own tests pass.",
   icons: { icon: "/kel-mark.png" },
 };
 
