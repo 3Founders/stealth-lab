@@ -120,18 +120,20 @@ function setup(envExtra = {}) {
 const seed = (root, model, secs, n = 5) => { for (let i = 0; i < n; i++) recordModelWin(root, model, "stealth", secs); };
 
 // models: { name: { state, delay } }; a run ends after its delay or when cancelled
+// delay: Infinity means the run ends only when it is cancelled (or handed in): a test that must not wait on it cannot, so it
+// needs no wall-clock margin to prove it did not. events: the order of starts and cancels, with the time each happened.
 function runtime(root, models) {
-  const runs = new Map(), starts = [], cancelled = [], wake = new Map();
-  return { starts, cancelled,
-    async achieve(i) { const id = `r-${i.model}`; runs.set(id, i.model); starts.push(i.model); return { run_id: id }; },
+  const runs = new Map(), starts = [], cancelled = [], wake = new Map(), events = [];
+  return { starts, cancelled, events,
+    async achieve(i) { const id = `r-${i.model}`; runs.set(id, i.model); starts.push(i.model); events.push({ type: "start", model: i.model, at: Date.now() }); return { run_id: id }; },
     async runResult(id) {
       const m = models[runs.get(id)];
       let wasCancelled = false;
-      await Promise.race([sleep(m.delay || 0), new Promise((r) => wake.set(id, () => { wasCancelled = true; r(); }))]);
+      await Promise.race([m.delay === Infinity ? new Promise(() => {}) : sleep(m.delay || 0), new Promise((r) => wake.set(id, () => { wasCancelled = true; r(); }))]);
       return { run_id: id, state: wasCancelled ? "cancelled" : (m.state || "verified"), cost_usd: 0.001, diff: { files: ["calc.py"] }, checks: [{ tail: "no" }] };
     },
     async applyRun() { fs.writeFileSync(path.join(root, "calc.py"), "x = 2\n"); return { files: ["calc.py"] }; },
-    async cancelRun(id) { cancelled.push(id); wake.get(id)?.(); return {}; } };
+    async cancelRun(id) { cancelled.push(id); events.push({ type: "cancel", id, at: Date.now() }); wake.get(id)?.(); return {}; } };
 }
 const run = (s, rt) => dispatch({ payload: { cwd: s.root, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: s.root, mine: MINE, env: s.env, runtime: rt });
 
@@ -155,12 +157,16 @@ test("dispatch: the rungs start fastest model first, the winner releases its slo
 test("dispatch: the capped run is cancelled at its model's cap, not before, and not counted against the model", async () => {
   const s = setup({ STEALTHLAB_DISPATCH_MAX_PARALLEL: "1" });
   seed(s.root, "minimax-m2-7", 0.1);                                        // cap = 0.3 s
-  const rt = runtime(s.root, { "minimax-m2-7": { delay: 5000 }, "gpt-oss-120b": { delay: 50 }, "gemma-4-31b-it": { delay: 50 } });
-  const t0 = Date.now();
-  const d = await run(s, rt);
-  const took = Date.now() - t0;
+  const rt = runtime(s.root, { "minimax-m2-7": { delay: Infinity }, "gpt-oss-120b": { delay: 50 }, "gemma-4-31b-it": { delay: 50 } });
+  const d = await run(s, rt);                                               // returns only because the cap cancelled the first run
   assert.equal(d.handled, true);
-  assert.ok(took >= 280 && took < 3000, `${took} ms: capped near 0.3 s, then the next model`);
+  // "at its cap, not before": the cancel came at least 0.3 s after the run started (load can only make it later). "Then the next
+  // model": it started after the cancel (one run at a time here). No upper wall-clock bound: the first run never ends by itself.
+  const started = rt.events.find((e) => e.type === "start" && e.model === "minimax-m2-7");
+  const cancelEvent = rt.events.find((e) => e.type === "cancel" && e.id === "r-minimax-m2-7");
+  assert.ok(cancelEvent.at - started.at >= 280, `cancelled ${cancelEvent.at - started.at} ms after it started: at its 0.3 s cap, not before`);
+  const next = rt.events.find((e) => e.type === "start" && e.model !== "minimax-m2-7");
+  assert.ok(next && rt.events.indexOf(cancelEvent) < rt.events.indexOf(next), "the next model started only after the cap cancelled the first");
   const capped = d.tried.find((t) => /minimax/.test(t.unit));
   assert.equal(capped.state, "capped at 0.3 s");
   assert.ok(rt.cancelled.includes("r-minimax-m2-7"));

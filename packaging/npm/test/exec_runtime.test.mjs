@@ -116,13 +116,20 @@ test("hang (spec 8.4): no output for hang_s -> timed_out within hang_s + 5 s, ag
   const repo = makeRepo();
   const env = testEnv();
   const pidFile = path.join(tmpDir(), "pids");
-  const rt = runtime(env, { stub: stubAdapter({ scenario: { silentMs: 60000, pidFile } }) });
-  const t0 = Date.now();
+  const silentFile = path.join(tmpDir(), "silent");
+  const rt = runtime(env, { stub: stubAdapter({ scenario: { silentMs: 60000, pidFile, silentFile } }) });
   const { run_id } = await rt.achieve({ repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub", model: "m1", hang_s: 1, goal_id: "g-1" });
-  const res = await rt.runResult(run_id, 30);
+  const res = await rt.runResult(run_id, 30);           // the stub would stay silent for 60 s: a terminal state inside 30 s is the watchdog's doing
   assert.equal(res.state, "timed_out");
   assert.equal(res.stop_reason, "hang");
-  assert.ok(Date.now() - t0 < 1000 + 5000 + 3000, `took ${Date.now() - t0} ms`);
+  // Spec 8.4 is about the watchdog, so it is measured on the watchdog: from the agent's last output (stamped by the stub itself) to the
+  // runtime's own "executor_exit ... hang" event. The whole run's wall clock also holds the worktree's creation and removal, the agent's
+  // start-up and the polling, all of which grow with machine load and say nothing about the watchdog.
+  const stop = readEvents(env, run_id).find((e) => e.event === "executor_exit" && e.reason === "hang");
+  assert.ok(stop, "the runtime recorded the stop for a hang");
+  const silence = Date.parse(stop.ts) - Number(fs.readFileSync(silentFile, "utf8"));
+  assert.ok(silence >= 900, `${silence} ms of silence before the stop: not before hang_s (1 s)`);
+  assert.ok(silence < 1000 + 5000, `${silence} ms of silence before the stop: within hang_s + 5 s`);
   assert.equal(res.checks.length, 0, "a timed-out run is not verified at all");
   const agent = pidsFrom(pidFile).find((p) => p.role === "agent");
   await waitFor(() => !alive(agent.pid), { timeoutMs: 5000 });

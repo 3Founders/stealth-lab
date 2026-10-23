@@ -32,6 +32,7 @@ if (sc.chatterMs) {
   const end = Date.now() + sc.chatterMs;
   while (Date.now() < end) { console.log(`working ${Date.now()}`); await wait(100); }
 }
+if (sc.silentMs && sc.silentFile) fs.writeFileSync(sc.silentFile, String(Date.now()));   // the last moment it produced output
 if (sc.silentMs) await wait(sc.silentMs);
 if (sc.sleepMs) await wait(sc.sleepMs);
 console.log(JSON.stringify({ final: sc.finalMessage || "done", learned: sc.learned || [] }));
