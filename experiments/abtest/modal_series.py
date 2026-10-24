@@ -39,6 +39,8 @@ container are unverified until the dry run (1 issue per arm) has been done.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import importlib
 import json
 import os
@@ -73,6 +75,9 @@ COMBO = "subscription+bedrock"
 BEDROCK_CAP_USD = 70.0                    # the Claude overflow's ceiling (AWS credits: $70 of $100; $20 is Part 4's, $10 is kept back)
 BEDROCK_TYPICAL_SESSION_USD = 4.0         # what one session is assumed to cost until the ledger has real ones (the larger wins)
 BEDROCK_HELPER_MARGIN = 1.15              # Claude Code's reported cost leaves out dispatch's small reviewer calls: the ledger rounds up
+CLAUDE_TOKEN_RE = re.compile(r"^CLAUDE_CODE_OAUTH_TOKEN(?:_(\d+))?$")
+WINDOW_S = 5 * 3600                       # a Claude usage window: five hours from the first message
+ROTATE_AFTER_S = int(4.5 * 3600)          # a token this far into its window is not given a new session while another token has room
 PROBE_EVERY_S = 3600                      # on Bedrock, the subscription is tried again about once an hour
 KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
              "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
@@ -258,6 +263,25 @@ def auth_env(mode: str, environ: dict[str, str]) -> dict[str, str]:
     return env
 
 
+class Token:
+    """One Claude login: its position, a fingerprint (the only thing ever logged or recorded) and the value (never)."""
+
+    def __init__(self, name: str, value: str, rank: int):
+        self.name, self.value, self.rank = name, value, rank
+        self.id = f"t{rank}-{hashlib.sha256(value.encode()).hexdigest()[:8]}"
+
+
+def claude_tokens(environ: dict[str, str]) -> list[Token]:
+    """Every Claude login in the environment, in order: CLAUDE_CODE_OAUTH_TOKEN first, then _2, _3, ... (each from `claude setup-token` on
+    another account). A second token is used when the first has hit its usage limit or is near the end of its five-hour window."""
+    found = []
+    for name, value in environ.items():
+        m = CLAUDE_TOKEN_RE.match(name)
+        if m and value:
+            found.append((int(m.group(1) or 1), name, value))
+    return [Token(name, value, rank) for rank, name, value in sorted(found)]
+
+
 def bedrock_session_env(subscription_env: dict[str, str], bedrock: dict[str, str]) -> dict[str, str]:
     """The environment of a session that runs on Bedrock: the subscription's and the API's login variables are gone (never both in
     one session), the AWS credentials and the Bedrock model ids are in, and the runner is told to use them (ABTEST_AUTH=bedrock)."""
@@ -360,6 +384,10 @@ class Container:
                         **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {}),
                         **({"ABTEST_BLIND": "1"} if spec.blind else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         # the Bedrock credentials are kept OUT of the environment every subscription session and every setup command gets
+        self.tokens = claude_tokens(self.environ) if spec.auth in ("subscription", COMBO) else []
+        for t in self.tokens:                            # the extra logins are not in the environment any session or setup command gets
+            if t.rank > 1:
+                self.environ.pop(t.name, None)
         self.bedrock = {k: self.environ.pop(k) for k in BEDROCK_NAMES if k in self.environ} if spec.auth == COMBO else {}
         for k in BEDROCK_NAMES:
             self.environ.pop(k, None)
@@ -474,6 +502,93 @@ class Container:
             self.sh(f"gunzip -c {dump} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest")
             self.log.append("database restored from the snapshot")
 
+    # -- several Claude logins: a second one takes over when the first is limited or near the end of its window
+    def _token_dir(self) -> Path:
+        return self.vol / "tokens"
+
+    def token_state(self) -> dict[str, dict]:
+        """What every unit has seen of each login, merged: when it last hit its limit and when its current window began. Account-wide (the
+        arms of all repositories share the same logins), so it lives on the volume outside any run."""
+        self.reload()
+        merged: dict[str, dict] = {}
+        d = self._token_dir()
+        for f in sorted(d.glob("*.json")) if d.exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for tid, st in data.items():
+                m = merged.setdefault(tid, {"limited_at": None, "window_start": None})
+                for k in ("limited_at", "window_start"):
+                    if st.get(k) is not None:
+                        m[k] = st[k] if m[k] is None else max(m[k], st[k])
+        return merged
+
+    def _save_token(self, tid: str, **kw) -> None:
+        d = self._token_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        mine = d / f"{self.repo}-{self.spec.unit_arm or 'all'}.json"
+        try:
+            data = json.loads(mine.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        data.setdefault(tid, {}).update(kw)
+        mine.write_text(json.dumps(data), encoding="utf-8")
+        self.commit()
+
+    def token_room(self, tok: Token, st: dict, now: float) -> str:
+        """"fresh" (no open window, or the window has run out), "ok", "near_end" (past ROTATE_AFTER_S of its window) or "limited" (it hit its
+        limit less than a window ago)."""
+        lim, start = st.get("limited_at"), st.get("window_start")
+        if lim is not None and now - lim < WINDOW_S:
+            return "limited"
+        if start is None or now - start >= WINDOW_S:
+            return "fresh"
+        return "near_end" if now - start >= ROTATE_AFTER_S else "ok"
+
+    def pick_token(self, avoid: tuple[str, ...] = ()) -> Token | None:
+        """The login for the next session: the first one with room (fresh or ok), else one near the end of its window (it resets soon, and
+        stopping would cost more), else None. `avoid` skips logins that just failed."""
+        now = self.clock()
+        state = self.token_state()
+        rooms = [(t, self.token_room(t, state.get(t.id, {}), now)) for t in self.tokens if t.id not in avoid]
+        for want in (("fresh", "ok"), ("near_end",)):
+            for t, room in rooms:
+                if room in want:
+                    return t
+        return None
+
+    def subscription_session(self, cmd: list[str], *, checkpointed: bool = False):
+        """One session on the subscription, rotating logins: when a session hits a usage limit (the runner's exit 3) and another login has room,
+        the issue starts again from its beginning, with its state restored, on that login. A session never changes login half way.
+        -> (process, return code, the login's id)"""
+        if len(self.tokens) <= 1:                      # one login: nothing to rotate to, nothing to remember
+            proc = self.sh(cmd, env=self.environ, cwd=self.ab)
+            return proc, getattr(proc, "returncode", 0), (self.tokens[0].id if self.tokens else None)
+        if not checkpointed:
+            self.checkpoint()
+        tried: list[str] = []
+        while True:
+            tok = self.pick_token(tuple(tried))
+            if tok is None:
+                self._event("every Claude login is at its limit: stopping until one resets")
+                return Proc(RC_RATE_LIMITED), RC_RATE_LIMITED, None
+            state = self.token_state().get(tok.id, {})
+            if state.get("window_start") is None or self.clock() - state["window_start"] >= WINDOW_S:
+                self._save_token(tok.id, window_start=self.clock(), limited_at=None)
+            if tried:
+                self._event(f"login {tok.id} takes over after a usage limit: the issue starts again", logins_tried=len(tried))
+            env = {**self.environ, "CLAUDE_CODE_OAUTH_TOKEN": tok.value, "ABTEST_TOKEN_ID": tok.id}
+            proc = self.sh(cmd, env=env, cwd=self.ab)
+            rc = getattr(proc, "returncode", 0)
+            if rc != RC_RATE_LIMITED:
+                return proc, rc, tok.id
+            self._save_token(tok.id, limited_at=self.clock())
+            tried.append(tok.id)
+            if self.pick_token(tuple(tried)) is None:
+                return proc, rc, tok.id
+            self.restore_checkpoint()
+
     # -- Claude through the subscription, with Bedrock as the overflow
     def _auth_state(self) -> dict:
         try:
@@ -579,6 +694,9 @@ class Container:
         subscription. -> (process, return code, the auth that served the session)"""
         cmd = self.runner_cmd(task_id)
         if self.spec.auth != COMBO:
+            if len(self.tokens) > 1:
+                proc, rc, _ = self.subscription_session(cmd)
+                return proc, rc, "subscription"
             proc = self.sh(cmd, env=self.environ, cwd=self.ab)
             return proc, getattr(proc, "returncode", 0), self.environ.get("ABTEST_AUTH", "subscription")
         st = self._auth_state()
@@ -596,8 +714,7 @@ class Container:
                 self._event("forced usage limit (the test switch): this session does not run on the subscription")
                 proc, rc = Proc(RC_RATE_LIMITED), RC_RATE_LIMITED
             else:
-                proc = self.sh(cmd, env=self.environ, cwd=self.ab)
-                rc = getattr(proc, "returncode", 0)
+                proc, rc, _ = self.subscription_session(cmd, checkpointed=True)
             if rc != RC_RATE_LIMITED:
                 return proc, rc, "subscription"
             st.update(mode="bedrock", since=self.clock(), last_probe=self.clock())
@@ -665,7 +782,7 @@ class Container:
         """`text` with every credential value in this container's environments replaced by ***: nothing that reaches a log, a result or
         an error message may carry a key."""
         text = str(text)
-        for v in [*self.bedrock.values(), *self.environ.values()]:
+        for v in [*self.bedrock.values(), *self.environ.values(), *[t.value for t in self.tokens]]:
             if len(v) >= 12 and v in text and v.replace("/", "").replace("-", "").replace("_", "").isalnum() and not v.startswith(("/", "http")):
                 text = text.replace(v, "***")
         return text
@@ -1012,12 +1129,13 @@ def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None,
     environ = dict(os.environ) if environ is None else environ
     made = False
     if args.claude:
-        tok = environ.get("CLAUDE_CODE_OAUTH_TOKEN")
-        if not tok:
-            out("set CLAUDE_CODE_OAUTH_TOKEN in this shell first (the output of `claude setup-token`); it is read from the environment, never from an argument")
+        toks = claude_tokens(environ)
+        if not toks:
+            out("set CLAUDE_CODE_OAUTH_TOKEN in this shell first (the output of `claude setup-token`); it is read from the environment, never from an argument. "
+                "Further accounts: CLAUDE_CODE_OAUTH_TOKEN_2, _3, ... (used when the first is at its limit or near the end of its five-hour window)")
             return 2
-        create_secret(CLAUDE_SECRET, {"CLAUDE_CODE_OAUTH_TOKEN": tok})
-        out(f"secret {CLAUDE_SECRET}: CLAUDE_CODE_OAUTH_TOKEN")
+        create_secret(CLAUDE_SECRET, {t.name: t.value for t in toks})
+        out(f"secret {CLAUDE_SECRET}: " + ", ".join(t.name for t in toks) + "  (names only)")
         made = True
     if args.api:
         key = environ.get("ANTHROPIC_API_KEY")

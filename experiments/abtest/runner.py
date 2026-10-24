@@ -704,7 +704,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
         out.pop("session_id", None)
         out["peeked"] = peeked(log_path)
     rec = {"run": run, "task_id": task["task_id"], "suite": task["suite"], "workspace": task["workspace"], "arm": arm,
-           "model": MODEL, "auth": os.environ.get("ABTEST_AUTH") or "subscription", "started_at": started, "seconds": round(time.time() - t0, 1), **out,
+           "model": MODEL, "auth": os.environ.get("ABTEST_AUTH") or "subscription", "login": os.environ.get("ABTEST_TOKEN_ID"), "started_at": started, "seconds": round(time.time() - t0, 1), **out,
            **({"series": task["series"], "position": task["position"]} if "series" in task else {})}
     if is_c(arm):
         rec["hook_jobs_drained"] = wait_hook_jobs(LOCAL / "C_home")
