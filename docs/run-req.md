@@ -136,8 +136,36 @@ Compute). "No more than ~2x" therefore means about <= $0.42 in and <= $1.68 out 
 gpt-oss costs about 4x General Compute's price, so Bedrock is unlikely to be cheaper for the same model; it can win
 on stronger models and on quota.
 
-**Shortlist for Part 4 (4 models):** Qwen3 Coder Next, Qwen3-Coder-30B-A3B, gpt-oss-120b (control), MiniMax M2.5.
+**Rule for Bedrock (decided by Anuj, 2026-10-24): the cheap pool is General Compute + z.ai + Bedrock models that
+neither of them serves.** Checked against the providers' own model lists on 2026-10-24:
+- General Compute serves `deepseek-v3.1`, `deepseek-v3.2`, `gemma-4-31B-it`, `gpt-oss-120b`, `minimax-m2.7`;
+- z.ai serves `glm-4.5`, `glm-4.5-air`, `glm-4.6`, `glm-4.7`, `glm-5`, `glm-5-turbo`, `glm-5.1`, `glm-5.2`, `glm-5.3`,
+  `glm-5.3-flash`, `glm-5.3-flashx`.
+
+So on Bedrock these are **out**: gpt-oss-120b, Gemma, DeepSeek (V3.2 is on General Compute), MiniMax (General Compute
+has the newer M2.7), and every GLM.
+
+**Shortlist for Part 4 (4 Bedrock-only models):**
+
+| Model | Bedrock id (endpoint) | In Ohio | $/1M in / out | Why |
+|---|---|---|---|---|
+| Qwen3 Coder Next | `qwen.qwen3-coder-next` (bedrock-mantle) | yes, mantle only | 0.50 / 1.20 | strongest current Qwen coder |
+| Qwen3-Coder-30B-A3B | `qwen.qwen3-coder-30b-a3b-instruct` (mantle) / `qwen.qwen3-coder-30b-a3b-v1:0` (runtime) | yes | **check** (Sydney 0.1545 / 0.618) | small, fast coder |
+| Devstral 2 123B | `mistral.devstral-2-123b` | yes | 0.40 / 2.00 | Mistral's coding model; output above the ~2x rule, kept because it is the only Mistral coder |
+| gpt-oss-20b | `openai.gpt-oss-20b-1:0` (runtime) / `openai.gpt-oss-20b` (mantle) | yes | **check** (Sydney 0.0721 / 0.309) | cheapest; General Compute has only the 120b |
+
+Optional if budget allows: Qwen3 Coder 480B A35B (strong; price **check**), Kimi K2.5 (0.60 / 3.00; region **check**).
 Smoke-test each on 1 issue first; drop any that fails the tool loop.
+
+## H. How Bedrock models enter the series (decided by Anuj, 2026-10-24)
+
+1. Part 4 runs first, on repositories the series does not use, judged by the Part 4 rule in docs/series10_prereg.md.
+2. **The Bedrock models that pass join the series' cheap pool** alongside General Compute's and z.ai's (gemma-4-31b-it,
+   gpt-oss-120b, minimax-m2.7, glm-5.3-flash). This replaces C.5's default ("does not join this series").
+3. Before the series' first paid issue, amend docs/series10_prereg.md with the final pool (a dated note, committed
+   before any series result exists), so the run is still preregistered. If none passes, the pool is unchanged.
+4. Bedrock spend in the series comes from the $70 that was set aside for Claude overflow (unused: the credits do not
+   cover Claude). The ledger's cap for the series' Bedrock cheap models is $60; the $10 reserve stays untouched.
 
 Sources: <https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html> and each model's card linked there;
 <https://aws.amazon.com/bedrock/pricing/>.
