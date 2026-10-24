@@ -60,6 +60,7 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 LOCAL = HERE / ".local"
 MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
+
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
 # arm C runs the PRODUCT's dispatch defaults (packaging/npm lib/dispatch.mjs dispatchPolicy: every model at once, one
 # 600 s budget, the reproduction-test rule): the series measures what a user gets. ABTEST_CHEAP_TIMEOUT_S overrides
@@ -159,25 +160,73 @@ def env_file(path: Path) -> dict[str, str]:
 
 # ---------------------------------------------------------------- tasks
 
-ARMS = ("A", "C", "C0")
+ARMS = ("A", "C0", "C-R", "C-L", "C")
+
+# What persists from one issue to the next, per StealthLab arm (every one of them has the SAME install and settings; only this differs):
+#   facts   .stealth/claims.md and survey/ (one `stealthlab-mcp survey` at series start; none for C0)
+#   library .stealth/library.md, library/, index/, SUMMARY.md, evidence (what was fixed before)
+#   routing .stealth/routing.md, areas.md, dag_state.json (the local per-model counts)
+#   server  the router's state in the test database: reset to its post-setup snapshot before each issue unless kept
+ARM_STATE = {
+    "C0":  {"facts": False, "library": False, "routing": False, "server": "reset"},
+    "C-R": {"facts": True,  "library": False, "routing": False, "server": "reset"},
+    "C-L": {"facts": True,  "library": True,  "routing": False, "server": "reset"},
+    "C":   {"facts": True,  "library": True,  "routing": True,  "server": "kept"},
+}
+STATE_FILES = {
+    "facts": ("claims.md", "survey"),
+    "library": ("library.md", "library", "index", "SUMMARY.md", "evidence.md", "evidence.md.prev", "evidence.key"),
+    "routing": ("routing.md", "areas.md", "dag_state.json"),
+}
+# kept in every arm: bookkeeping that identifies the repository, and the marker that stops the background survey
+STATE_KEEP = (".keep", "meta.json", "workspace.md", ".auto-survey", ".gitignore", ".series_survey.json")
 
 
 def is_c(arm: str) -> bool:
-    """C and C0 are the same install; C0 only differs in that .stealth/ is wiped before each task."""
-    return arm in ("C", "C0")
+    """Every StealthLab arm (C0, C-R, C-L, C) is the same install; arm A is plain Claude Code."""
+    return arm in ARM_STATE
 
 
-def wipe_stealth(ws: Path) -> None:
-    """C0: empty .stealth/ (library, survey facts, routing counts, indexes), keeping the directory and its .keep, so the
-    workspace still counts as a StealthLab repo but starts every task with nothing learned."""
+def server_resets(arm: str) -> bool:
+    """True when the router's server-side state is put back to its post-setup snapshot before each issue (C0, C-R, C-L)."""
+    return ARM_STATE.get(arm, {}).get("server") == "reset"
+
+
+def wipe_stealth(ws: Path, arm: str = "C0") -> None:
+    """Empty what `arm` does NOT keep between issues (ARM_STATE), leaving the directory, its .keep and the repository's bookkeeping,
+    so the workspace still counts as a StealthLab repo. C0 keeps nothing; C keeps everything (this is then a no-op)."""
+    keep = ARM_STATE[arm]
     d = ws / ".stealth"
     if d.exists():
+        wipe_all = not all(keep[g] for g in STATE_FILES)      # C keeps everything, whatever else the hooks wrote
+        kept = set(STATE_KEEP) | {n for group, names in STATE_FILES.items() if keep[group] for n in names}
         for child in d.iterdir():
-            if child.name == ".keep":
-                continue
-            shutil.rmtree(child) if child.is_dir() else child.unlink()
+            # anything this arm does not keep goes, including files the hooks add that no table names: what is not listed as kept
+            # must not leak into the next issue
+            if wipe_all and child.name not in kept:
+                shutil.rmtree(child) if child.is_dir() else child.unlink()
     d.mkdir(parents=True, exist_ok=True)
     (d / ".keep").write_text("", encoding="utf-8")
+
+
+def setup_survey(arm: str, ws: Path, env: dict[str, str]) -> dict | None:
+    """The ONE survey of a series, run before issue 1 in the arms that keep repo facts (C-R, C-L, C): `stealthlab-mcp survey`
+    on the workspace at the first issue's base commit, local only. Returns {seconds, facts, ...} (also written to
+    .stealth/.series_survey.json so a resume does not run it twice), or None when this arm has none or it already ran."""
+    if not ARM_STATE.get(arm, {}).get("facts"):
+        return None
+    marker = ws / ".stealth" / ".series_survey.json"
+    if marker.exists():
+        return None
+    t0 = time.time()
+    proc = subprocess.run(["node", str(REPO / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"), "survey", str(ws)], cwd=ws, env=env,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
+    claims = ws / ".stealth" / "claims.md"
+    facts = sum(1 for ln in claims.read_text(encoding="utf-8").splitlines() if ln.startswith("CLAIM|")) if claims.exists() else 0
+    rec = {"seconds": round(time.time() - t0, 1), "facts": facts, "rc": proc.returncode, "model_tokens": 0, "cost_usd": 0.0,
+           "uses_a_model": False}                  # `survey` without --fill is local only: no model call, so no tokens or dollars
+    marker.write_text(json.dumps(rec), encoding="utf-8")
+    return rec
 
 
 def load_series(spec: str) -> list[dict]:
@@ -287,6 +336,9 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
     if is_c(arm):
         home = c_home()
         env.update({
+            # facts come from the ONE survey at series start (setup_survey), never from a background survey that would rebuild
+            # them (or history-mined fixes) in the middle of an issue and blur the arms
+            "STEALTHLAB_AUTO_SURVEY": "off",
             "STEALTHLAB_HOME": str(home), "STEALTHLAB_MCP_URL": f"{SERVER}/mcp", "STEALTHLAB_TOKEN": secrets["token"],
             "STEALTHLAB_HOOK_CANDIDATES": ",".join(open_units() + CLAUDE_CANDIDATES),
             "STEALTHLAB_HOOK_TIMEOUT_MS": "60000",
@@ -593,8 +645,8 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
     """One task in one arm. turns > 1: a conversation of up to that many user turns (multiturn.py) instead of one prompt."""
     mod = task_module(task)
     ws = workspace(arm, task["workspace"])
-    if arm == "C0":
-        wipe_stealth(ws)                        # what C0 is: C with nothing carried over in .stealth/
+    if is_c(arm):
+        wipe_stealth(ws, arm)                   # what each arm is: C with only its own state carried over in .stealth/ (ARM_STATE)
     if hasattr(mod, "setup_project") and not (ws / ".series_ready").exists():
         mod.setup_project(task, ws)             # a series: the shared project, built once per workspace and arm
         (ws / ".series_ready").write_text("", encoding="utf-8")
@@ -608,6 +660,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "--allow-empty", "-m", f"task {task['task_id']}")
     env = arm_env(arm, secrets, getattr(mod, "CHECK", ""))
+    survey = setup_survey(arm, ws, env) if is_c(arm) else None     # once, before issue 1, after the files are at its base commit
     # the project's own Python (both arms): `python` in the workspace has the libraries the task uses, as in a real
     # project -- so the agent, dispatch and the test-first tests all run where the code would
     python_dir = mod.python_dir(task, ws) if hasattr(mod, "python_dir") else getattr(mod, "PYTHON_DIR", None)
@@ -640,6 +693,8 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
         rec["testfirst_cost_usd"] = testfirst_cost(LOCAL / "C_home", started, now())
         rec["open_cost_usd"] = round(float(rec.get("open_cost_usd") or 0) + rec["testfirst_cost_usd"], 6)
         lib = ws / ".stealth" / "library.md"
+        if survey:
+            rec["setup_survey"] = survey            # the one-time cost, put against the issue it was paid in front of
         rec["library_entries"] = sum(1 for ln in lib.read_text(encoding="utf-8").splitlines()
                                      if ln.startswith("GOAL|")) if lib.exists() else 0
     if out["status"] == "done":
@@ -667,8 +722,10 @@ def dry_run(args, arms: list[str]) -> int:
         print(f"  conversations: up to {args.turns} user turns per task -- a vague opener (the same for every arm, cached), then a "
               "simulated user answers questions or says thanks; turns are `claude --resume`")
     start = {"A": "plain Claude Code; its workspace has no .claude/ and no .stealth/, and persists across the series",
-             "C": "StealthLab hooks-only install; its .stealth/ (library, facts, routing counts) PERSISTS across the series",
-             "C0": "the same install as C, but .stealth/ is wiped before every task (nothing carried over)"}
+             "C": "StealthLab hooks-only install; its .stealth/ (facts, library, routing counts) and the server's router state PERSIST",
+             "C0": "the same install as C, but .stealth/ is wiped before every task and the server's router state is reset (no survey)",
+             "C-R": "the same install; the facts (one survey at series start) stay, the library and routing counts are wiped, the router state is reset",
+             "C-L": "the same install; facts and library stay, the local routing counts are wiped, the router state is reset"}
     for a in arms:
         print(f"  arm {a}: {start[a]}")
     for t in tasks:
@@ -703,8 +760,8 @@ def main() -> int:
         raise SystemExit("give exactly one of --tasks and --series")
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
     bad = [a for a in arms if a not in ARMS]
-    if bad or (("C0" in arms) and not args.series):
-        raise SystemExit(f"arms are {', '.join(ARMS)} (C0 only with --series); got {args.arms}")
+    if bad or (any(a in ARM_STATE and a != "C" for a in arms) and not args.series):
+        raise SystemExit(f"arms are {', '.join(ARMS)} (C0, C-R and C-L only with --series); got {args.arms}")
     if args.dry_run:
         return dry_run(args, arms)
 
@@ -761,8 +818,11 @@ def main() -> int:
                 return 5
             with results.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(rec) + "\n")
-            print(f"    {rec['status']} resolved={rec.get('resolved')} cost={rec.get('total_cost_usd')} "
-                  f"{rec.get('seconds')}s", flush=True)
+            if os.environ.get("ABTEST_BLIND"):            # series10 is blind: the container log shows progress, not how an arm did
+                print(f"    {rec['status']}", flush=True)
+            else:
+                print(f"    {rec['status']} resolved={rec.get('resolved')} cost={rec.get('total_cost_usd')} "
+                      f"{rec.get('seconds')}s", flush=True)
             if rec["status"] == "rate_limited":
                 print("usage limit reached: stopping. Rerun the same command after the reset to continue.")
                 return 3

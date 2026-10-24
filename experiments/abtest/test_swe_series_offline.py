@@ -238,6 +238,7 @@ SECRETS = {"token": "t", "gc": "k", "zai": "z"}
 def sandbox(upstream, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "LOCAL", tmp_path / ".local")
     monkeypatch.setattr(runner, "install_c", lambda ws: (ws / ".claude").mkdir(exist_ok=True) or (ws / ".claude" / "settings.json").write_text("{}", encoding="utf-8"))
+    monkeypatch.setattr(runner, "setup_survey", lambda arm, ws, env: None)      # the real survey is tested in test_series10_arms_offline.py
     seen = []
 
     def fake_claude(ws, prompt, env, extra, log_path, **kw):
@@ -297,10 +298,11 @@ def test_a_dry_run_lists_the_real_series_and_peeking_at_the_hidden_tests_is_flag
 
 def test_candidates_cli_prints_the_window_ids_on_request(capsys, monkeypatch):
     c = {"repo": "a/b", "python": "3.9", "n_with_py": 12, "span_days": 7, "first": "2024-01-01", "last": "2024-01-08", "p2p_median": 5,
-         "license": "MIT License", "ids": ["a__b-1", "a__b-2"]}
+         "license": "MIT License", "ids": ["a__b-1", "a__b-2"], "reuse": 0.4, "tightest_reuse": 0.2}
     monkeypatch.setattr(swe, "candidates", lambda *a, **k: [c])
     assert swe.main(["candidates"]) == 0
-    assert "a/b" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "a/b" in out and "reuse 0.40 (tightest window: 0.20)" in out, "each candidate prints its overlap"
     assert swe.main(["candidates", "--ids"]) == 0
     assert '["a__b-1", "a__b-2"]' in capsys.readouterr().out
     assert swe.main([]) == 2 and "candidates [--ids]" in capsys.readouterr().out
@@ -354,3 +356,22 @@ def test_a_pass_to_pass_test_broken_by_the_environment_is_excluded_for_that_issu
     assert swe.grade_workspace(task, ws)["resolved"] is False, "a P2P test that passes at the base is still enforced"
     t2, ws2 = prepared(upstream, tmp_path, i=1, arm="C")
     assert swe.excluded_p2p(t2) == [], "the exclusion belongs to the issue it was found for"
+
+
+# ---------------------------------------------------------------- the reuse opportunity (series-10 window choice)
+
+def _patch(*files):
+    return chr(10).join(f"diff --git a/{f} b/{f}" for f in files) + chr(10)
+
+
+def test_the_reuse_opportunity_counts_later_issues_that_touch_an_earlier_issues_file():
+    r = swe.reuse_opportunity([_patch("a.py"), _patch("b.py"), _patch("a.py", "c.py"), _patch("c.py"), _patch("z.py")])
+    assert r["touching"] == 2 and r["share"] == 0.5 and r["issues"] == 5 and r["files_per_issue"] == [1, 1, 2, 1, 1]
+    assert swe.reuse_opportunity([_patch("a.py")])["share"] == 0.0 and swe.reuse_opportunity([])["share"] == 0.0
+
+
+def test_the_window_with_the_most_reuse_wins_among_the_tight_ones_and_slack_zero_is_the_old_rule():
+    spans, overlaps = [10, 25, 90, 12], [0.1, 0.5, 0.9, 0.5]
+    assert swe.pick_window(spans, overlaps, slack=30) == 3, "window 2 is too loose; 1 and 3 tie on reuse and 3 is tighter"
+    assert swe.pick_window([10, 12], [0.4, 0.4], slack=30) == 0, "ties go to the tighter span"
+    assert swe.pick_window(spans, overlaps, slack=0) == 0, "slack 0: the tightest window only"

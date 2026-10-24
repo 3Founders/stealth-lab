@@ -54,6 +54,7 @@ def sandbox(tmp_path, monkeypatch):
         (ws / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(runner, "install_c", fake_install)
+    monkeypatch.setattr(runner, "setup_survey", lambda arm, ws, env: None)      # the survey is tested in test_series10_arms_offline.py
     solutions = dict(GOOD)
     seen = []
 
@@ -167,7 +168,7 @@ def test_dry_run_prints_the_plan_and_runs_nothing(sandbox, capsys, monkeypatch):
 def test_arg_checks(monkeypatch):
     for argv, msg in ([["--run", "x"], "exactly one of --tasks and --series"],
                       [["--run", "x", "--tasks", "mbpp:1", "--series", "series_toy_task"], "exactly one"],
-                      [["--run", "x", "--tasks", "mbpp:1", "--arms", "A,C0"], "C0 only with --series"],
+                      [["--run", "x", "--tasks", "mbpp:1", "--arms", "A,C0"], "only with --series"],
                       [["--run", "x", "--series", "series_toy_task", "--arms", "A,Z"], "arms are"]):
         monkeypatch.setattr(sys, "argv", ["runner.py", *argv])
         with pytest.raises(SystemExit, match=msg):

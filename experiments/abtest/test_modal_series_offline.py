@@ -35,7 +35,7 @@ def fake_series(monkeypatch):
 
 
 def spec(**kw):
-    return ms.RunSpec(**{"repos": ["mini"], "series_module": "fake_series", **kw})
+    return ms.RunSpec(**{"repos": ["mini"], "series_module": "fake_series", "arms": ["A", "C", "C0"], **kw})
 
 
 # ---------------------------------------------------------------- the spec and the plan
@@ -165,8 +165,10 @@ class Recorder:
             vp.parent.mkdir(parents=True, exist_ok=True)
             vp.write_text(json.dumps(rows), encoding="utf-8")
             return Proc(0)
+        if "pg_tables" in text and "-At" in text:
+            return Proc(0, out=chr(10).join([*ms.ROUTER_TABLES, "goals", "knowledge_nodes"]))
         if "pg_dump" in text:
-            (c.out / "db.sql.gz").write_bytes(b"dump")
+            (c.out / ("db_baseline.sql.gz" if "--data-only" in text else "db.sql.gz")).write_bytes(b"dump")
         if "report.py" in text:
             return Proc(0, out="curve" if "--curve" in text else "summary")
         return Proc(0)
@@ -358,7 +360,7 @@ def test_secrets_refuse_to_guess(monkeypatch, tmp_path):
 
 def test_the_plan_command_prints_and_calls_nothing(fake_series, capsys, monkeypatch):
     monkeypatch.setattr(ms, "create_secret", lambda *a: pytest.fail("no Modal call in a plan"))
-    assert ms.cli(["plan", "--repos", "mini", "--series-module", "fake_series", "--max-issues", "2", "--auth", "api"]) == 0
+    assert ms.cli(["plan", "--repos", "mini", "--series-module", "fake_series", "--max-issues", "2", "--auth", "api", "--arms", "A,C,C0"]) == 0
     out = capsys.readouterr().out
     assert "mini: 2 issue(s) -> 6 session(s)" in out and "in parallel" in out
     assert ms.cli(["plan", "--repos", "mini", "--series-module", "fake_series", "--arms", "A,Z"]) == 2
@@ -484,14 +486,14 @@ def orch(spec_, **fns):
 
 
 def test_a_split_run_with_a_subscription_goes_repository_by_repository_with_the_arms_at_once():
-    out, calls = orch(ms.RunSpec(repos=["a", "b"]))
+    out, calls = orch(ms.RunSpec(repos=["a", "b"], arms=["A", "C", "C0"]))
     assert calls == [("prepare", "a"), ("prepare", "b"), ("run_arms", [("A", "a"), ("C", "a"), ("C0", "a")]), ("finish", "a"),
                      ("run_arms", [("A", "b"), ("C", "b"), ("C0", "b")]), ("finish", "b")]
     assert [o["repo"] for o in out] == ["a", "b"] and out[0]["gold_check"] == {"usable": 2} and [x["arm"] for x in out[0]["arms"]] == ["A", "C", "C0"]
 
 
 def test_a_split_run_with_an_api_key_starts_every_repositorys_arms_together():
-    _, calls = orch(ms.RunSpec(repos=["a", "b"], auth="api"))
+    _, calls = orch(ms.RunSpec(repos=["a", "b"], auth="api", arms=["A", "C", "C0"]))
     assert calls[0:2] == [("prepare", "a"), ("prepare", "b")]
     assert calls[2] == ("run_arms", [("A", "a"), ("C", "a"), ("C0", "a"), ("A", "b"), ("C", "b"), ("C0", "b")]) and calls[3:] == [("finish", "a"), ("finish", "b")]
 
@@ -620,7 +622,7 @@ def test_a_later_run_with_other_arms_joins_the_earlier_arms_results_in_the_repor
         e.mkdir(parents=True)
         (e / "long-mini-1t.jsonl").write_text(json.dumps({"task_id": "t0", "arm": arm, "status": "done"}) + chr(10), encoding="utf-8")
     out = later.finish()
-    assert out["arms"] == ["A", "C", "C0"] and out["rows"] == 3 and out["arms_without_results"] == []
+    assert out["arms"] == ["A", "C0", "C"] and out["rows"] == 3 and out["arms_without_results"] == []
 
 
 @pytest.mark.skipif(ms.modal is None, reason="modal is not installed")

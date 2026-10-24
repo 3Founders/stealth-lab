@@ -68,7 +68,19 @@ CLAUDE_SECRET = "claude-code-auth"        # CLAUDE_CODE_OAUTH_TOKEN
 API_SECRET = "anthropic-api"              # ANTHROPIC_API_KEY
 KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
              "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
-ARMS = ("A", "C", "C0")
+ARMS = ("A", "C0", "C-R", "C-L", "C")
+STEALTH_ARMS = tuple(a for a in ARMS if a != "A")      # the arms with StealthLab installed (they need the test backend)
+ARM_PERSISTENCE = {
+    "A": "plain Claude Code, no StealthLab",
+    "C0": "no facts, library wiped, local routing wiped, router state RESET before each issue",
+    "C-R": "facts kept (one survey at series start), library wiped, local routing wiped, router state RESET",
+    "C-L": "facts and library kept, local routing wiped, router state RESET",
+    "C": "facts, library, local routing and router state all KEPT (it learns)",
+}
+# what each arm keeps between issues; the single source is runner.ARM_STATE (kept in step by a test)
+SERVER_RESET_ARMS = ("C0", "C-R", "C-L")               # their router state is put back to the post-setup snapshot before each issue
+ROUTER_TABLES = ("routing_observations", "routing_posteriors", "routing_decisions")     # must be inside what the reset covers
+RESET_KEEP_TABLE = "schema_migrations"                 # the one table the reset leaves alone
 AUTHS = ("subscription", "api")
 SERIES_MODULE = "swe_series_task"
 PYTHONS = ("3.9", "3.10", "3.11", "3.12")
@@ -104,7 +116,8 @@ class RunSpec:
     review_model: str = ""                       # the strong reviewer (STEALTHLAB_REVIEW_STRONG_MODEL); "" keeps Sonnet
     allow_cold_resume: bool = False
     validate: bool = True                  # the gold check on the issues about to run (swe_series_task only); False skips it
-    split_arms: bool = True                # one container per arm, so A, C and C0 run at the same time; False: all arms in one container
+    split_arms: bool = True                # one container per arm, so the arms run at the same time; False: all arms in one container
+    blind: bool = False                    # series10: nothing that compares arms is computed, printed or logged (docs/series10_prereg.md)
     task_ids: list[str] | None = None      # the issues to run, already gold-checked (prepare); None: this container picks them itself
     unit_arm: str = ""                     # set for the one-arm container of a split run: its results live in <run>/<repository>/<arm>/
 
@@ -127,6 +140,8 @@ def validate_spec(spec: RunSpec) -> list[str]:
         problems.append("--turns is 1-4")
     if spec.unit_arm and spec.arms != [spec.unit_arm]:
         problems.append("a one-arm unit runs exactly its own arm")
+    if not spec.split_arms and any(a in SERVER_RESET_ARMS for a in spec.arms) and "C" in spec.arms:
+        problems.append("C keeps the router's server state and C0/C-R/C-L reset it: they cannot share one backend (drop --sequential-arms)")
     return problems
 
 
@@ -183,6 +198,10 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
              + ("the arms run at the same time, one container per arm (each with its own backend: C and C0 do not share server state), "
                 "after ONE gold check of the series" if spec.split_arms
                 else "the arms run one after another inside a repository")]
+    for a in spec.arms:
+        lines.append(f"  arm {a}: {ARM_PERSISTENCE[a]}")
+    if spec.blind:
+        lines.append("  BLIND: no arm-vs-arm figure is computed, printed or committed (docs/series10_prereg.md); raw results stay on the volume")
     for repo, tasks in tasks_by_repo.items():
         lines.append(f"  {repo}: {len(tasks)} issue(s) -> {len(tasks) * len(spec.arms)} session(s) (x up to {spec.turns} turn(s)): "
                      + ", ".join(t["task_id"] for t in tasks[:3]) + (" ..." if len(tasks) > 3 else ""))
@@ -293,14 +312,16 @@ class Container:
                         **({"ABTEST_ACCEPT_RULE": spec.accept_rule} if spec.accept_rule else {}),
                         **({"ABTEST_CHEAP_TIMEOUT_S": str(spec.cheap_timeout_s)} if spec.cheap_timeout_s else {}),
                         **({"ABTEST_CONTEXT_PACK": "on"} if spec.context_pack else {}),
-                        **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+                        **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {}),
+                        **({"ABTEST_BLIND": "1"} if spec.blind else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         self.environ.update(codebook_embedding_env(self.environ))
         self.provider_lines = provider_report(self.environ)
         self.ab = self.app / "experiments" / "abtest"
         self.local = self.ab / ".local"
         self.run_dir = self.vol / spec.run_name() / repo                  # the repository's directory on the volume
         self.out = self.run_dir / spec.unit_arm if spec.unit_arm else self.run_dir
-        self.uses_backend = any(a in ("C", "C0") for a in spec.arms)      # arm A is plain Claude Code: no server, no Postgres
+        self.uses_backend = any(a in STEALTH_ARMS for a in spec.arms)    # arm A is plain Claude Code: no server, no Postgres
+        self.resets_server = any(a in SERVER_RESET_ARMS for a in spec.arms)
         self.health = health or self._healthy
         self.log: list[str] = []
 
@@ -362,7 +383,7 @@ class Container:
         # arm C without a judge or the codebook's embeddings cannot use its library: C would equal C0 by construction, so
         # the run would measure nothing about .stealth -- refused, not run with a warning
         bad = [l for l in self.provider_lines if l.startswith("WARNING:")]
-        if bad and any(a in ("C", "C0") for a in self.spec.arms):
+        if bad and any(a in STEALTH_ARMS for a in self.spec.arms):
             raise RuntimeError("the test server is not set up for arm C: " + " | ".join(bad) +
                                " -- add the keys to the Modal secret stealthlab-keys (modal_series.py secrets --keys)")
         self.backend = self.sh([sys.executable, str(self.ab / "run_backend.py")], env={**self.environ, "ABTEST_DATABASE_URL": DSN,
@@ -399,6 +420,39 @@ class Container:
         if self.uses_backend and dump.exists():
             self.sh(f"gunzip -c {dump} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest")
             self.log.append("database restored from the snapshot")
+
+    # -- the router's state: a snapshot taken right after setup, put back before each issue of C0, C-R and C-L
+    def take_baseline(self) -> list[str]:
+        """Dump the data of every table (schema_migrations aside) once, right after the services are up, and write what the reset
+        covers to reset_scope.txt. A resumed run keeps the first snapshot, so every issue of the run starts from the same state.
+        Refuses to go on when the router's tables are not among the tables covered."""
+        baseline = self.out / "db_baseline.sql.gz"
+        self.out.mkdir(parents=True, exist_ok=True)
+        listing = self.sh(f"psql -At -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest -c "
+                          f"\"SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename<>'{RESET_KEEP_TABLE}' ORDER BY 1\"")
+        tables = [t.strip() for t in str(getattr(listing, "stdout", "") or "").splitlines() if t.strip()]
+        missing = [t for t in ROUTER_TABLES if t not in tables]
+        if missing:
+            raise RuntimeError(f"the reset would not cover the router's tables: {', '.join(missing)} are not in the database")
+        head = f"{len(tables)} tables reset before each issue (all but {RESET_KEEP_TABLE}); router tables included: {', '.join(ROUTER_TABLES)}"
+        (self.out / "reset_scope.txt").write_text(chr(10).join([head, *tables]) + chr(10), encoding="utf-8")
+        if not baseline.exists():
+            self._must(self.sh(f"{PG_BIN}/pg_dump -h 127.0.0.1 -p {PG_PORT} -U kel_owner --data-only --disable-triggers "
+                               f"--exclude-table={RESET_KEEP_TABLE} kel_abtest | gzip > {baseline}"), "the baseline snapshot")
+            self.log.append("baseline snapshot taken")
+        return tables
+
+    def reset_server(self) -> None:
+        """Empty every table but schema_migrations and load the baseline: the router starts the issue knowing what it knew after setup."""
+        baseline = self.out / "db_baseline.sql.gz"
+        truncate = (f"DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' "
+                    f"AND tablename<>'{RESET_KEEP_TABLE}' LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE'; END LOOP; END $$;")
+        script = self.out / "reset.sql"                  # a file, not a command line: the shell would expand the $$ quotes
+        script.write_text(truncate + chr(10), encoding="utf-8")
+        self._must(self.sh(f"psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest -f {script} && "
+                           f"gunzip -c {baseline} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest"),
+                   "resetting the router's state")
+        self.log.append("router state reset to the baseline")
 
     @staticmethod
     def _healthy() -> bool:
@@ -442,7 +496,7 @@ class Container:
             shutil.copytree(shared_openers, self.local / "openers", dirs_exist_ok=True)
         results = self.local / "results" / f"{s.run_name()}.jsonl"
         done = done_tasks(results, s.arms)
-        if state == "cold" and done and any(a in ("C", "C0") for a in s.arms) and not s.allow_cold_resume:
+        if state == "cold" and done and any(a in STEALTH_ARMS for a in s.arms) and not s.allow_cold_resume:
             return {"repo": self.repo, "status": "refused", "why": "results exist on the volume without the arms' workspaces and .stealth/: "
                     "resuming C/C0 would break the learning curve. Rerun with --run <new name>, or --allow-cold-resume to accept that."}
         pending = [t for t in tasks if t["task_id"] not in done]
@@ -458,7 +512,9 @@ class Container:
             shutil.copyfile(shared, self.local / "swe" / f"validate_{self.repo}.json")
         if self.uses_backend:
             self.start_services()
-            if state == "restored":
+            if self.resets_server:
+                self.take_baseline()                  # right after setup: what every issue of a resetting arm starts from
+            elif state == "restored":
                 self.restore_db()
         self._must(self.sh([sys.executable, str(self.ab / f"{s.series_module}.py"), "fetch", self.repo], env=self.environ, cwd=self.ab),
                    "fetching the series' data")
@@ -470,6 +526,8 @@ class Container:
                 summary["report"] = self.report()
                 return summary
         for t in pending:
+            if self.resets_server:
+                self.reset_server()
             proc = self.sh(self.runner_cmd(t["task_id"]), env=self.environ, cwd=self.ab)
             rc = getattr(proc, "returncode", 0)
             summary["ran"].append({"task": t["task_id"], "rc": rc})
@@ -485,7 +543,7 @@ class Container:
                 break
         if not s.unit_arm:                              # a split run's report is made once, from every arm's results (finish)
             summary["report"] = self.report()
-        return summary
+        return self.progress_only(summary)
 
     def gold_check(self, pending: list[dict]) -> tuple[list[dict], dict]:
         """The gold-patch check (swe_series_task.py validate) on the next issues: in THIS environment the hidden tests fail at the base
@@ -564,6 +622,9 @@ class Container:
                 missing.append(arm)
         merged = merged_dir / f"{s.run_name()}.jsonl"
         merged.write_text("".join(ln + chr(10) for ln in lines), encoding="utf-8")
+        if s.blind:                                       # the merged raw results stay on the volume; no report.py, so no comparison
+            self.commit()
+            return {"repo": self.repo, "run": s.run_name(), "rows": len(lines), "arms": merged_arms, "arms_without_results": missing, "blind": True}
         env = {**self.environ, "ABTEST_RESULTS_DIR": str(merged_dir)}
         parts = []
         for extra in ([], ["--curve"]):
@@ -574,8 +635,16 @@ class Container:
         self.commit()
         return {"repo": self.repo, "run": s.run_name(), "rows": len(lines), "arms": merged_arms, "arms_without_results": missing, "report": text}
 
+    def progress_only(self, summary: dict) -> dict:
+        """A blind run reports progress, spend and errors, never anything that compares arms (report.py prints per-arm totals)."""
+        if self.spec.blind:
+            summary.pop("report", None)
+        return summary
+
     def report(self) -> str:
-        """report.py's summary and learning curve for the run, saved next to the results."""
+        """report.py's summary and learning curve for the run, saved next to the results. Blind: nothing is computed."""
+        if self.spec.blind:
+            return ""
         env = {**self.environ, "ABTEST_RESULTS_DIR": str(self.local / "results")}
         parts = []
         for extra in ([], ["--curve"]):
@@ -654,14 +723,14 @@ if modal is not None:
         return finish_main(spec, repo, commit=volume.commit, reload=volume.reload)
 
     @app.local_entrypoint()
-    def main(repos: str, arms: str = "A,C,C0", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
+    def main(repos: str, arms: str = "A,C0,C-R,C-L,C", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
              series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
              testfirst_model: str = "glm-5.3", gc_key_name: str = "GENERAL_COMPUTE_API_KEY", cheap_agent: str = "stealth", accept_rule: str = "",
-             cheap_timeout_s: int = 0, context_pack: bool = False, review_model: str = ""):
+             cheap_timeout_s: int = 0, context_pack: bool = False, review_model: str = "", blind: bool = False):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
                        allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model, gc_key_name=gc_key_name, cheap_agent=cheap_agent, accept_rule=accept_rule,
-                       cheap_timeout_s=cheap_timeout_s, context_pack=context_pack, review_model=review_model)
+                       cheap_timeout_s=cheap_timeout_s, context_pack=context_pack, review_model=review_model, blind=blind)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))
@@ -772,7 +841,8 @@ def cli(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("plan", help="print what a run would do; no Modal call")
     p.add_argument("--repos", required=True)
-    p.add_argument("--arms", default="A,C,C0")
+    p.add_argument("--arms", default="A,C0,C-R,C-L,C")
+    p.add_argument("--blind", action="store_true", help="series10: nothing that compares arms is computed or printed")
     p.add_argument("--max-issues", type=int, default=0)
     p.add_argument("--auth", default="subscription")
     p.add_argument("--turns", type=int, default=1)
@@ -789,7 +859,7 @@ def cli(argv: list[str] | None = None) -> int:
         return secrets_cli(args)
     spec = RunSpec(repos=[r.strip() for r in args.repos.split(",") if r.strip()], arms=[a.strip() for a in args.arms.split(",") if a.strip()],
                    max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module,
-                   split_arms=not args.sequential_arms)
+                   split_arms=not args.sequential_arms, blind=args.blind)
     problems = validate_spec(spec)
     if problems:
         print("; ".join(problems))

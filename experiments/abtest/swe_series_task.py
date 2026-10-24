@@ -181,6 +181,23 @@ def patch_files(patch: str) -> list[str]:
     return re.findall(r"^diff --git a/(\S+) b/\1$", patch, flags=re.M)
 
 
+def reuse_opportunity(patches: list[str]) -> dict:
+    """How much an earlier issue's fix could help a later one: the share of the issues after the first whose gold patch touches a
+    file an EARLIER issue of the window touched. Only the files are compared (not the lines), so it is a ceiling on what a library
+    of earlier fixes could be matched to. Returns {share, issues, touching, files_per_issue}."""
+    seen: set[str] = set()
+    touching = 0
+    per_issue = []
+    for i, patch in enumerate(patches):
+        files = set(patch_files(patch))
+        per_issue.append(len(files))
+        if i and files & seen:
+            touching += 1
+        seen |= files
+    later = max(len(patches) - 1, 0)
+    return {"share": round(touching / later, 3) if later else 0.0, "issues": len(patches), "touching": touching, "files_per_issue": per_issue}
+
+
 def apply_patch(directory: Path, patch: str) -> tuple[bool, str]:
     """`git apply` in a plain directory (it works outside a repository too)."""
     r = run(["git", "apply", "--whitespace=nowarn", "-"], cwd=directory, input_bytes=patch.encode("utf-8"), check=False)
@@ -430,8 +447,21 @@ def load_split():
     return pq.read_table(hf_hub_download(DATASET, SPLIT_FILE, repo_type="dataset")).to_pandas()
 
 
-def candidates(window: int = 10, top: int = 25) -> list[dict]:
-    """Repositories passing criteria 1-2 with their tightest window of `window` consecutive issues (criterion 4)."""
+SPAN_SLACK_DAYS = 30        # a window competes on reuse opportunity when its span is within this many days of the repository's tightest
+
+
+def pick_window(spans: list[int], overlaps: list[float], slack: int = SPAN_SLACK_DAYS) -> int:
+    """The index of the window to use: among the windows whose span (days) is within `slack` of the tightest, the one with the highest
+    reuse opportunity; ties go to the tighter span, then the earlier window. slack=0 is the old rule (the tightest only)."""
+    tightest = min(spans)
+    pool = [i for i, d in enumerate(spans) if d <= tightest + slack]
+    return min(pool, key=lambda i: (-overlaps[i], spans[i], i))
+
+
+def candidates(window: int = 10, top: int = 25, slack: int = SPAN_SLACK_DAYS) -> list[dict]:
+    """Repositories passing criteria 1-2 with a window of `window` consecutive issues (criterion 4): the tightest, or, among the windows
+    within `slack` days of the tightest, the one with the highest reuse opportunity (the share of issues whose gold patch touches a file
+    an earlier issue in the window touched). Every candidate's overlap is printed by `candidates`."""
     df = load_split()
     df["py"] = df.install_config.map(lambda c: (c or {}).get("python"))
     df["tc"] = df.install_config.map(lambda c: str((c or {}).get("test_cmd") or ""))
@@ -447,12 +477,15 @@ def candidates(window: int = 10, top: int = 25) -> list[dict]:
             if len(y) < window:
                 continue
             dates = list(y.created_at.astype("datetime64[ns]"))
-            best = min(range(len(y) - window + 1), key=lambda i: dates[i + window - 1] - dates[i])
+            starts = range(len(y) - window + 1)
+            spans = [(dates[i + window - 1] - dates[i]).days for i in starts]
+            overlaps = [reuse_opportunity(list(y.patch.iloc[i:i + window]))["share"] for i in starts]
+            best = pick_window(spans, overlaps, slack)
             w = y.iloc[best:best + window]
-            out.append({"repo": repo, "python": py, "n_with_py": len(y), "span_days": (dates[best + window - 1] - dates[best]).days,
+            out.append({"repo": repo, "reuse": overlaps[best], "tightest_reuse": overlaps[spans.index(min(spans))], "python": py, "n_with_py": len(y), "span_days": (dates[best + window - 1] - dates[best]).days,
                         "first": str(w.created_at.iloc[0])[:10], "last": str(w.created_at.iloc[-1])[:10],
                         "p2p_median": int(w.np2p.median()), "license": str(w.license_name.iloc[0]), "ids": list(w.instance_id)})
-    out.sort(key=lambda c: (c["span_days"], c["p2p_median"]))
+    out.sort(key=lambda c: (-c["reuse"], c["span_days"], c["p2p_median"]))
     return out[:top]
 
 
@@ -531,9 +564,14 @@ def main(argv: list[str]) -> int:
     if cmd == "candidates":
         for c in candidates():
             print(f"{c['repo']:<40} py {c['python']:<5} n={c['n_with_py']:<4} window {c['first']}..{c['last']} ({c['span_days']} d) "
-                  f"p2p~{c['p2p_median']:<4} {c['license'][:22]}")
+                  f"p2p~{c['p2p_median']:<4} reuse {c['reuse']:.2f} (tightest window: {c['tightest_reuse']:.2f}) {c['license'][:22]}")
             if "--ids" in argv:                   # the window's instance ids, in order: what goes into SERIES[...]["issues"]
                 print("    " + json.dumps(c["ids"]))
+        return 0
+    if cmd == "overlap" and len(argv) == 2:          # the reuse opportunity of a chosen series (after `fetch`)
+        recs = records(argv[1])
+        r = reuse_opportunity([recs[i]["patch"] for i in SERIES[argv[1]]["issues"] if i in recs])
+        print(json.dumps(r))
         return 0
     if cmd == "fetch" and len(argv) == 2:
         print(fetch(argv[1]))
@@ -544,7 +582,7 @@ def main(argv: list[str]) -> int:
         out.write_text(json.dumps(res, indent=1), encoding="utf-8")
         print(f"{sum(r['usable'] for r in res)}/{len(res)} usable; details: {out}")
         return 0
-    print("usage: swe_series_task.py candidates [--ids] | fetch <series> | validate <series> [instance ids]")
+    print("usage: swe_series_task.py candidates [--ids] | overlap <series> | fetch <series> | validate <series> [instance ids]")
     return 2
 
 
