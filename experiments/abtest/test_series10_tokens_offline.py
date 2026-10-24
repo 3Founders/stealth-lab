@@ -176,12 +176,12 @@ def test_one_login_is_the_old_behaviour_with_nothing_remembered(tmp_path, fake_s
     assert not (tmp_path / "vol" / "tokens").exists(), "no state files for a single login"
 
 
-def test_the_secrets_command_stores_every_login_by_name_and_prints_no_value(monkeypatch):
+def test_the_secrets_command_stores_every_login_by_name_and_prints_no_value(monkeypatch, tmp_path):
     made, said = {}, []
     monkeypatch.setattr(ms, "modal", object())
     monkeypatch.setattr(ms, "create_secret", lambda name, vals: made.update({name: vals}))
     env = {**ENV, "CLAUDE_CODE_OAUTH_TOKEN_3": T3}
-    assert ms.secrets_cli(argparse.Namespace(claude=True, api=False, keys=False, bedrock=False), environ=env, out=said.append) == 0
+    assert ms.secrets_cli(argparse.Namespace(claude=True, api=False, keys=False, bedrock=False), environ=env, env_file=tmp_path / "none.env", out=said.append) == 0
     assert made[ms.CLAUDE_SECRET] == {"CLAUDE_CODE_OAUTH_TOKEN": T1, "CLAUDE_CODE_OAUTH_TOKEN_2": T2, "CLAUDE_CODE_OAUTH_TOKEN_3": T3}
     assert not any(t in " ".join(said) for t in (T1, T2, T3)) and "CLAUDE_CODE_OAUTH_TOKEN_2" in " ".join(said)
 
@@ -189,3 +189,17 @@ def test_the_secrets_command_stores_every_login_by_name_and_prints_no_value(monk
 def test_the_runner_row_carries_the_login_id(monkeypatch):
     src = Path(runner.__file__).read_text(encoding="utf-8")
     assert '"login": os.environ.get("ABTEST_TOKEN_ID")' in src
+
+
+def test_the_logins_come_from_backend_env_first_and_the_secret_is_not_replaced_without_the_first_one(monkeypatch, tmp_path):
+    made, said = {}, []
+    monkeypatch.setattr(ms, "modal", object())
+    monkeypatch.setattr(ms, "create_secret", lambda name, vals: made.update({name: vals}))
+    f = tmp_path / ".env"
+    f.write_text(f"CLAUDE_CODE_OAUTH_TOKEN_2={T2}" + chr(10) + "OTHER=1" + chr(10), encoding="utf-8")
+    ns = argparse.Namespace(claude=True, api=False, keys=False, bedrock=False)
+    assert ms.secrets_cli(ns, environ={}, env_file=f, out=said.append) == 2 and not made, "the first login is missing: nothing is replaced"
+    assert "first login" in said[0] and T2 not in " ".join(said)
+    f.write_text(f"CLAUDE_CODE_OAUTH_TOKEN={T1}" + chr(10) + f"CLAUDE_CODE_OAUTH_TOKEN_2={T2}" + chr(10), encoding="utf-8")
+    assert ms.secrets_cli(ns, environ={"CLAUDE_CODE_OAUTH_TOKEN": "shell-token-IGNORED-1234567890"}, env_file=f, out=said.append) == 0
+    assert made[ms.CLAUDE_SECRET] == {"CLAUDE_CODE_OAUTH_TOKEN": T1, "CLAUDE_CODE_OAUTH_TOKEN_2": T2}, "the file wins over the shell"

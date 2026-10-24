@@ -1115,6 +1115,21 @@ def read_names(names: tuple[str, ...] | list[str], environ: dict[str, str] | Non
     return out
 
 
+def env_file_logins(env_file: Path | None = None) -> dict[str, str]:
+    """The Claude logins (CLAUDE_CODE_OAUTH_TOKEN, _2, ...) written in backend/.env (env_file, or every file default_env_files() finds). The file
+    is where they live: values are returned for the Modal secret, never printed."""
+    out: dict[str, str] = {}
+    for path in ([env_file] if env_file is not None else default_env_files()):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            k, _, v = line.partition("=")
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if CLAUDE_TOKEN_RE.match(k) and v and k not in out:
+                out[k] = v
+    return out
+
+
 def create_secret(name: str, values: dict[str, str]) -> None:
     """Create the secret, REPLACING one of the same name. (Modal's allow_existing=True keeps the OLD values and does nothing, so an
     updated key or token silently never arrived: the Z_AI_KEY, the backend keys and the rotated Claude token all stayed old.)"""
@@ -1129,7 +1144,12 @@ def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None,
     environ = dict(os.environ) if environ is None else environ
     made = False
     if args.claude:
-        toks = claude_tokens(environ)
+        # backend/.env is where the logins live and wins over the shell; the shell only fills in what the file lacks
+        toks = claude_tokens({**{k: v for k, v in environ.items() if CLAUDE_TOKEN_RE.match(k)}, **env_file_logins(env_file or (Path(args.env_file) if getattr(args, "env_file", None) else None))})
+        if toks and toks[0].rank != 1:
+            out("CLAUDE_CODE_OAUTH_TOKEN (the first login) is missing from backend/.env: the secret would lose it, because it replaces the old one "
+                "and Modal never shows its values back. Add it to backend/.env as CLAUDE_CODE_OAUTH_TOKEN=... and run this again")
+            return 2
         if not toks:
             out("set CLAUDE_CODE_OAUTH_TOKEN in this shell first (the output of `claude setup-token`); it is read from the environment, never from an argument. "
                 "Further accounts: CLAUDE_CODE_OAUTH_TOKEN_2, _3, ... (used when the first is at its limit or near the end of its five-hour window)")
