@@ -3,6 +3,8 @@
 Committed BEFORE the series, the dry run's results or Part 4's models were looked at. It says what is measured, how an area counts as
 "shown", what makes a result invalid, and what Part 4 must show for an open Bedrock model to join the cheap-model pool.
 
+**Status, 2026-10-24:** Anuj committed the thresholds (`docs/series10_thresholds.md`, 905e2f0) before any run or result existed. That meets the condition that ends the blindness below, so comparisons may be shown from now on and the decision rule is applied with those thresholds exactly as written. The blind mode (`--blind`) stays in the code for a rerun; this section is kept as the record of the rule.
+
 **The series is BLIND for Anuj.** Nobody is shown any comparison between the series' arms until `docs/series10_thresholds.md` has a
 value on every line and is on origin/main. Until then only progress, total spend and errors are reported (see "Blindness" below). The
 thresholds are written by Anuj, in a separate commit, before any comparison is seen; this file does not suggest values.
