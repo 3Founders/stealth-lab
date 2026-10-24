@@ -100,3 +100,44 @@ aside for Claude overflow is unused (Claude is not covered by the credits; the s
 - Keys live in `backend/.env` and the Modal secret only; never in an argument, a log, a commit or a result row.
 - The long-lived memory (`.stealth/library`) saved a pasted OAuth token once (scrubbed locally, never committed); do not
   paste keys into the chat if a file or shell variable can carry them.
+
+## G. Model table, filled from AWS's public pages (added 2026-10-24, Anuj's session)
+
+Read from the Bedrock model cards and the Bedrock pricing page on 2026-10-24. Cells marked **check** were not readable
+from the public pages and must be read in the console; account-specific facts (access granted, quotas, what the
+credits cover) are not in this table.
+
+**Endpoint: use Bedrock's OpenAI-compatible Chat Completions with a Bedrock API key (this replaces decision C.1's
+default).** It matches the existing profile shape in `packaging/npm/lib/executors/profile.mjs` (an https
+`openai_base_url` plus a bearer key), so no LiteLLM proxy is needed:
+- `https://bedrock-runtime.us-east-2.amazonaws.com/openai/v1` for most models;
+- `https://bedrock-mantle.us-east-2.api.aws/v1` for Qwen3 Coder Next (in Ohio it is in-region only on bedrock-mantle).
+
+The key is a long-term **Bedrock API key** created in the Bedrock console for the `series10-bedrock` IAM user, stored
+in the Modal secret `aws-bedrock` as `BEDROCK_API_KEY` (with `AWS_REGION=us-east-2`).
+
+| Model | Model id for that endpoint | In Ohio, in-region? | $/1M in | $/1M out | Context / max out | Tool calling | Verdict |
+|---|---|---|---|---|---|---|---|
+| **Qwen3 Coder Next** | `qwen.qwen3-coder-next` (bedrock-mantle) | Yes, bedrock-mantle only | 0.50 | 1.20 | 256K / 16K | Yes (client-side) | **Shortlist: strongest current Qwen coder** |
+| **Qwen3-Coder-30B-A3B** | `qwen.qwen3-coder-30b-a3b-instruct` (mantle) / `qwen.qwen3-coder-30b-a3b-v1:0` (runtime) | Yes | **check** (Sydney 0.1545) | **check** (Sydney 0.618) | 256K / 16K | Yes | **Shortlist: small, fast coder** |
+| **gpt-oss-120b** | `openai.gpt-oss-120b-1:0` (runtime) / `openai.gpt-oss-120b` (mantle) | Yes | **check** (Sydney 0.1545) | **check** (Sydney 0.618) | 128K / 16K | Yes | **Shortlist: control** (same model as on General Compute; isolates the provider) |
+| **MiniMax M2.5** | **check** | **check** | 0.30 | 1.20 | **check** | **check** | **Shortlist: 4th, within the price rule** |
+| DeepSeek V3.2 | `deepseek.v3.2` | Yes | 0.62 | 1.85 | 164K / 8K | Yes | Over the ~2x price rule; optional if budget allows |
+| Devstral 2 123B | `mistral.devstral-2-123b` | Yes | 0.40 | 2.00 | 256K / 32K | Yes | Output over the price rule |
+| Qwen3 Coder 480B A35B | `qwen.qwen3-coder-480b-a35b-instruct` (mantle) / `qwen.qwen3-coder-480b-a35b-v1:0` (runtime) | Yes | **check** | **check** | 256K / 16K | Yes | Strong-model pricing likely; lifecycle "Legacy" |
+| Gemma 4 31B | **check** | Ohio on the pricing page | 0.14 | 0.40 | **check** | **check** | Already used via General Compute (0.09 / 0.34) |
+| GLM 4.7 Flash | **check** | Ohio on the pricing page | 0.07 | 0.40 | **check** | **check** | Older than the glm-5.3-flash in use |
+| GLM 5.3 | `us.zai.glm-5.3` | No (cross-region only; "eligible customers" only) | 1.848 | 5.808 | 1M / 128K | Yes | **Excluded:** cross-region, restricted, expensive, 10x output quota burndown |
+| Kimi K3 | `us.moonshotai.kimi-k3` | No (cross-region only) | 3.30 | 16.50 | 1M | Yes | **Excluded:** cross-region, expensive |
+
+Current cheap models, for the price rule (`experiments/abtest/exec.json`): gpt-oss-120b 0.037 / 0.17 and
+gemma-4-31b-it 0.09 / 0.34 (General Compute), glm-5.3-flash 0.15 / 0.50 (z.ai), minimax-m2.7 0.21 / 0.84 (General
+Compute). "No more than ~2x" therefore means about <= $0.42 in and <= $1.68 out per 1M tokens. Even on Bedrock,
+gpt-oss costs about 4x General Compute's price, so Bedrock is unlikely to be cheaper for the same model; it can win
+on stronger models and on quota.
+
+**Shortlist for Part 4 (4 models):** Qwen3 Coder Next, Qwen3-Coder-30B-A3B, gpt-oss-120b (control), MiniMax M2.5.
+Smoke-test each on 1 issue first; drop any that fails the tool loop.
+
+Sources: <https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html> and each model's card linked there;
+<https://aws.amazon.com/bedrock/pricing/>.
