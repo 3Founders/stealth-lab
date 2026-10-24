@@ -61,6 +61,19 @@ REPO = HERE.parents[1]
 LOCAL = HERE / ".local"
 MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
 
+
+def on_bedrock() -> bool:
+    """True when this process's Claude sessions go through AWS Bedrock (modal_series.py --auth subscription+bedrock, after a usage limit)."""
+    return os.environ.get("ABTEST_AUTH") == "bedrock"
+
+
+def session_model() -> str:
+    """The id `claude --model` gets: the same model, by the id Bedrock knows it under when the session runs there."""
+    return os.environ.get("ABTEST_BEDROCK_OPUS", MODEL) if on_bedrock() else MODEL
+
+
+def judge_model() -> str:
+    return os.environ.get("ABTEST_BEDROCK_SONNET", ANSWER_JUDGE_MODEL) if on_bedrock() else ANSWER_JUDGE_MODEL
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
 # arm C runs the PRODUCT's dispatch defaults (packaging/npm lib/dispatch.mjs dispatchPolicy: every model at once, one
 # 600 s budget, the reproduction-test rule): the series measures what a user gets. ABTEST_CHEAP_TIMEOUT_S overrides
@@ -332,7 +345,14 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
     if os.environ.get("ABTEST_AUTH") == "api":
         drop = (drop - {"ANTHROPIC_API_KEY"}) | {"CLAUDE_CODE_OAUTH_TOKEN"}
     env = {k: v for k, v in os.environ.items() if not k.startswith("STEALTHLAB_") and k not in drop}
-    env["ANTHROPIC_MODEL"] = MODEL
+    env["ANTHROPIC_MODEL"] = session_model()
+    if on_bedrock():
+        # the same Claude, served by Bedrock: its login variables are dropped (never both in one session), the model aliases
+        # the reviewer and the judge use map to Bedrock's ids, and the AWS credentials stay in this environment only
+        for k in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
+            env.pop(k, None)
+        env.update({"CLAUDE_CODE_USE_BEDROCK": "1", "ANTHROPIC_DEFAULT_OPUS_MODEL": session_model(),
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": judge_model()})
     if is_c(arm):
         home = c_home()
         env.update({
@@ -408,7 +428,7 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
     # user-level MCP servers never load in either arm
     if "\n" in prompt or "\r" in prompt:
         raise ValueError("the prompt must be one line (Windows .cmd shims cut arguments at a newline)")
-    cmd = [exe, "-p", prompt, "--model", MODEL, "--setting-sources", "project", "--strict-mcp-config",
+    cmd = [exe, "-p", prompt, "--model", session_model(), "--setting-sources", "project", "--strict-mcp-config",
            "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--allowedTools", *TOOLS,
            *(["--resume", resume] if resume else []), *extra]
     proc = subprocess.Popen(cmd, cwd=ws, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -626,7 +646,7 @@ def grade_answers(task: dict, mod, rec: dict, env: dict[str, str]) -> None:
         user = (f"The issue:\n{issue[:6000]}\n\nThe merged fix:\n{gold[:12000] or '(not available)'}\n\n"
                 f"What the session had changed when the reply was written:\n{before[:12000] or '(nothing)'}\n\n"
                 f"The developer's message:\n{str(t.get('user_text') or '')[:3000]}\n\nThe reply:\n{str(t['shown'])[:8000]}")
-        cmd = [exe, "-p", "--model", ANSWER_JUDGE_MODEL, "--system-prompt", ANSWER_JUDGE_SYSTEM, "--tools", "", "--setting-sources", "user",
+        cmd = [exe, "-p", "--model", judge_model(), "--system-prompt", ANSWER_JUDGE_SYSTEM, "--tools", "", "--setting-sources", "user",
                "--strict-mcp-config", "--output-format", "json"]
         try:
             with tempfile.TemporaryDirectory() as cwd:
@@ -684,7 +704,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
         out.pop("session_id", None)
         out["peeked"] = peeked(log_path)
     rec = {"run": run, "task_id": task["task_id"], "suite": task["suite"], "workspace": task["workspace"], "arm": arm,
-           "model": MODEL, "started_at": started, "seconds": round(time.time() - t0, 1), **out,
+           "model": MODEL, "auth": os.environ.get("ABTEST_AUTH") or "subscription", "started_at": started, "seconds": round(time.time() - t0, 1), **out,
            **({"series": task["series"], "position": task["position"]} if "series" in task else {})}
     if is_c(arm):
         rec["hook_jobs_drained"] = wait_hook_jobs(LOCAL / "C_home")

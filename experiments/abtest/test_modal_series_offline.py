@@ -201,7 +201,7 @@ def test_a_fresh_run_starts_the_services_in_order_then_runs_the_runner_task_by_t
     for part in ("--run long-mini-3t", "--series fake_series:mini", "--arms A,C,C0", "--parallel", "--testfirst-model glm-5.3",
                  "--turns 3", "--gc-key-name GENERAL_COMPUTE_API_KEY"):
         assert part in first, part
-    assert out["status"] == "done" and out["ran"] == [{"task": "x__mini-1", "rc": 0}, {"task": "x__mini-2", "rc": 0}] and out["report"] == "summary\n\ncurve"
+    assert out["status"] == "done" and out["ran"] == [{"task": "x__mini-1", "rc": 0, "auth": "subscription"}, {"task": "x__mini-2", "rc": 0, "auth": "subscription"}] and out["report"] == "summary\n\ncurve"
     assert (c.out / "report.txt").read_text(encoding="utf-8") == "summary\n\ncurve"
     assert len(c.commits) >= 3, "the volume is committed after every task and the report"
 

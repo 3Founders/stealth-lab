@@ -66,6 +66,14 @@ VOLUME_NAME = "stealthlab-series"
 KEYS_SECRET = "stealthlab-keys"           # GENERAL_COMPUTE_API_KEY, Z_AI_KEY, the backend's judge/embedding keys
 CLAUDE_SECRET = "claude-code-auth"        # CLAUDE_CODE_OAUTH_TOKEN
 API_SECRET = "anthropic-api"              # ANTHROPIC_API_KEY
+BEDROCK_SECRET = "aws-bedrock"            # AWS credentials + region + the Bedrock model ids (names only; values never printed)
+BEDROCK_NAMES = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_REGION", "BEDROCK_OPUS_MODEL", "BEDROCK_SONNET_MODEL")
+BEDROCK_REQUIRED = tuple(n for n in BEDROCK_NAMES if n != "AWS_SESSION_TOKEN")
+COMBO = "subscription+bedrock"
+BEDROCK_CAP_USD = 70.0                    # the Claude overflow's ceiling (AWS credits: $70 of $100; $20 is Part 4's, $10 is kept back)
+BEDROCK_TYPICAL_SESSION_USD = 4.0         # what one session is assumed to cost until the ledger has real ones (the larger wins)
+BEDROCK_HELPER_MARGIN = 1.15              # Claude Code's reported cost leaves out dispatch's small reviewer calls: the ledger rounds up
+PROBE_EVERY_S = 3600                      # on Bedrock, the subscription is tried again about once an hour
 KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
              "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
 ARMS = ("A", "C0", "C-R", "C-L", "C")
@@ -81,7 +89,7 @@ ARM_PERSISTENCE = {
 SERVER_RESET_ARMS = ("C0", "C-R", "C-L")               # their router state is put back to the post-setup snapshot before each issue
 ROUTER_TABLES = ("routing_observations", "routing_posteriors", "routing_decisions")     # must be inside what the reset covers
 RESET_KEEP_TABLE = "schema_migrations"                 # the one table the reset leaves alone
-AUTHS = ("subscription", "api")
+AUTHS = ("subscription", "api", COMBO)
 SERIES_MODULE = "swe_series_task"
 PYTHONS = ("3.9", "3.10", "3.11", "3.12")
 VOL = "/mnt/series"                              # POSIX strings: they are paths inside the Linux container (Modal needs them absolute)
@@ -91,6 +99,7 @@ PG_DATA = "/var/lib/postgresql/data"
 PG_PORT = 55432
 DSN = f"postgresql://kel_owner@127.0.0.1:{PG_PORT}/kel_abtest"
 HEALTH = "http://127.0.0.1:8765/healthz"
+RC_WAIT_SUBSCRIPTION = 90                 # not a runner code: the unit's own "the Bedrock cap is reached, wait for the subscription"
 RC_RATE_LIMITED, RC_QUOTA = 3, 4          # runner.py's exit codes: a usage limit; the cheap models' daily quota
 PLAN_ESTIMATE = "plan's estimate: 24 sessions (1 repo x 8 issues x 3 arms) ~ $15-30 of Opus-equivalent; 90 sessions (3 x 10 x 3) ~ $50-150 on the API"
 
@@ -117,6 +126,10 @@ class RunSpec:
     allow_cold_resume: bool = False
     validate: bool = True                  # the gold check on the issues about to run (swe_series_task only); False skips it
     split_arms: bool = True                # one container per arm, so the arms run at the same time; False: all arms in one container
+    bedrock_cap_usd: float = BEDROCK_CAP_USD
+    bedrock_price_factor: float = 1.0      # Bedrock's list price over the reported (Anthropic list) price in the chosen region; 1.0 until Part 0 says otherwise
+    units_in_flight: int = 1               # how many one-arm containers may start a Bedrock session at once (the cap keeps room for each)
+    force_overflow: bool = False           # a test switch: the first session of this unit reports a usage limit, so it moves to Bedrock
     blind: bool = False                    # series10: nothing that compares arms is computed, printed or logged (docs/series10_prereg.md)
     task_ids: list[str] | None = None      # the issues to run, already gold-checked (prepare); None: this container picks them itself
     unit_arm: str = ""                     # set for the one-arm container of a split run: its results live in <run>/<repository>/<arm>/
@@ -193,8 +206,9 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
     sessions = sum(len(t) for t in tasks_by_repo.values()) * len(spec.arms)
     lines = [f"run {spec.run_name()}: {len(spec.repos)} repo(s), arms {','.join(spec.arms)}, auth {spec.auth}, "
              f"{spec.turns} user turn(s) per task",
-             "  repositories run " + ("one after another (a subscription has limits)" if spec.auth == "subscription"
+             "  repositories run " + ("one after another (a subscription has limits)" if spec.auth in ("subscription", COMBO)
                                       else "in parallel (an API key is billed per token)") + "; "
+             + (f"; Claude on the subscription, overflowing to Bedrock after a usage limit (ledger cap ${spec.bedrock_cap_usd:g}); " if spec.auth == COMBO else "")
              + ("the arms run at the same time, one container per arm (each with its own backend: C and C0 do not share server state), "
                 "after ONE gold check of the series" if spec.split_arms
                 else "the arms run one after another inside a repository")]
@@ -206,7 +220,7 @@ def plan_text(spec: RunSpec, tasks_by_repo: dict[str, list[dict]]) -> str:
         lines.append(f"  {repo}: {len(tasks)} issue(s) -> {len(tasks) * len(spec.arms)} session(s) (x up to {spec.turns} turn(s)): "
                      + ", ".join(t["task_id"] for t in tasks[:3]) + (" ..." if len(tasks) > 3 else ""))
     lines.append(f"  {sessions} session(s) in all; {PLAN_ESTIMATE}")
-    lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else API_SECRET)
+    lines.append(f"  needs Modal secrets: {KEYS_SECRET} + " + (CLAUDE_SECRET if spec.auth == "subscription" else f"{CLAUDE_SECRET} + {BEDROCK_SECRET}" if spec.auth == COMBO else API_SECRET)
                  + f"; volume {VOLUME_NAME}")
     lines.append(f"  results: /mnt/series/{spec.run_name()}/<repository>/ on the volume (gold_check.json, report.txt"
                  + (", and per arm <arm>/results, <arm>/logs, <arm>/state.tgz, <arm>/db.sql.gz)" if spec.split_arms
@@ -228,9 +242,32 @@ def auth_env(mode: str, environ: dict[str, str]) -> dict[str, str]:
         if not env.get("ANTHROPIC_API_KEY"):
             raise SystemExit(f"--auth api needs ANTHROPIC_API_KEY (Modal secret {API_SECRET})")
         env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    elif mode == COMBO:
+        # every session starts on the subscription; Bedrock is the overflow after a usage limit (never both in one session)
+        if not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            raise SystemExit(f"--auth {COMBO} needs CLAUDE_CODE_OAUTH_TOKEN (Modal secret {CLAUDE_SECRET}; `claude setup-token`)")
+        missing = [n for n in BEDROCK_REQUIRED if not env.get(n)]
+        if missing:
+            raise SystemExit(f"--auth {COMBO} needs {', '.join(missing)} (Modal secret {BEDROCK_SECRET}); "
+                             "without Bedrock for Anthropic models use --auth subscription")
+        env.pop("ANTHROPIC_API_KEY", None)
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
     else:
         raise SystemExit(f"--auth is one of {', '.join(AUTHS)}")
-    env["ABTEST_AUTH"] = mode
+    env["ABTEST_AUTH"] = "subscription" if mode == COMBO else mode
+    return env
+
+
+def bedrock_session_env(subscription_env: dict[str, str], bedrock: dict[str, str]) -> dict[str, str]:
+    """The environment of a session that runs on Bedrock: the subscription's and the API's login variables are gone (never both in
+    one session), the AWS credentials and the Bedrock model ids are in, and the runner is told to use them (ABTEST_AUTH=bedrock)."""
+    env = {k: v for k, v in subscription_env.items() if k not in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")}
+    for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        if bedrock.get(k):
+            env[k] = bedrock[k]
+    env.update({"CLAUDE_CODE_USE_BEDROCK": "1", "AWS_REGION": bedrock["AWS_REGION"], "AWS_DEFAULT_REGION": bedrock["AWS_REGION"],
+                "ABTEST_BEDROCK_OPUS": bedrock["BEDROCK_OPUS_MODEL"], "ABTEST_BEDROCK_SONNET": bedrock["BEDROCK_SONNET_MODEL"],
+                "ABTEST_AUTH": "bedrock"})
     return env
 
 
@@ -274,6 +311,13 @@ def build_image():
 Shell = Callable[..., "subprocess.CompletedProcess"]
 
 
+class Proc:
+    """A finished command that never ran (a forced usage limit, a refused Bedrock session)."""
+
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = ""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
 def shell(argv: list[str] | str, *, env: dict | None = None, cwd: str | Path | None = None, timeout: int | None = None,
           background: bool = False, log: Path | None = None):
     """Run a command (a list, or a string for bash -lc). background=True starts it and returns the Popen (its output to `log`)."""
@@ -302,7 +346,8 @@ class Container:
 
     def __init__(self, spec: RunSpec, repo: str, *, sh: Shell = shell, vol: Path | str = VOL, app: Path | str = APP_DIR,
                  environ: dict[str, str] | None = None, commit: Callable[[], None] = lambda: None,
-                 sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None):
+                 sleep: Callable[[float], None] = time.sleep, health: Callable[[], bool] | None = None,
+                 reload: Callable[[], None] = lambda: None, clock: Callable[[], float] = time.time):
         self.spec, self.repo, self.sh, self.commit, self.sleep = spec, repo, sh, commit, sleep
         self.vol, self.app = Path(vol), Path(app)
         # the dataset cache lives on the Volume; its variable is set HERE, not in the image: a cache directory that exists in the image under
@@ -314,6 +359,10 @@ class Container:
                         **({"ABTEST_CONTEXT_PACK": "on"} if spec.context_pack else {}),
                         **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {}),
                         **({"ABTEST_BLIND": "1"} if spec.blind else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+        # the Bedrock credentials are kept OUT of the environment every subscription session and every setup command gets
+        self.bedrock = {k: self.environ.pop(k) for k in BEDROCK_NAMES if k in self.environ} if spec.auth == COMBO else {}
+        for k in BEDROCK_NAMES:
+            self.environ.pop(k, None)
         self.environ.update(codebook_embedding_env(self.environ))
         self.provider_lines = provider_report(self.environ)
         self.ab = self.app / "experiments" / "abtest"
@@ -324,6 +373,10 @@ class Container:
         self.resets_server = any(a in SERVER_RESET_ARMS for a in spec.arms)
         self.health = health or self._healthy
         self.log: list[str] = []
+        self.reload = reload
+        self.clock = clock
+        self.ledger_dir = self.vol / spec.run_name() / "bedrock_ledger"
+        self.auth_file = self.run_dir / (f"auth_{spec.unit_arm or 'all'}.json")
 
     # -- state on the Volume
     def snapshot(self) -> None:
@@ -421,6 +474,149 @@ class Container:
             self.sh(f"gunzip -c {dump} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest")
             self.log.append("database restored from the snapshot")
 
+    # -- Claude through the subscription, with Bedrock as the overflow
+    def _auth_state(self) -> dict:
+        try:
+            return json.loads(self.auth_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"mode": "subscription", "since": None, "last_probe": None, "forced_done": False}
+
+    def _save_auth_state(self, st: dict) -> None:
+        self.auth_file.parent.mkdir(parents=True, exist_ok=True)
+        self.auth_file.write_text(json.dumps(st), encoding="utf-8")
+
+    def _event(self, what: str, **kw) -> None:
+        self.auth_file.parent.mkdir(parents=True, exist_ok=True)
+        with (self.auth_file.parent / "auth_events.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": round(self.clock()), "arm": self.spec.unit_arm or "all", "event": what, **kw}) + chr(10))
+        self.log.append(f"auth: {what}")
+        print(f"auth: {what} {' '.join(f'{k}={v}' for k, v in kw.items())}".rstrip(), flush=True)
+
+    def ledger_entries(self) -> list[dict]:
+        self.reload()
+        rows = []
+        if self.ledger_dir.exists():
+            for f in sorted(self.ledger_dir.glob("*.jsonl")):
+                rows += [json.loads(ln) for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return rows
+
+    def ledger_total(self) -> float:
+        return round(sum(float(r.get("usd") or 0) for r in self.ledger_entries()), 4)
+
+    def bedrock_allowed(self) -> tuple[bool, float, float]:
+        """May a new Bedrock session start? Not when the ledger's total plus one typical session for every unit that could be starting one
+        right now would pass the cap. -> (allowed, total so far, the room kept for the sessions in flight)"""
+        rows = self.ledger_entries()
+        total = sum(float(r.get("usd") or 0) for r in rows)
+        typical = max([BEDROCK_TYPICAL_SESSION_USD] + [float(r.get("usd") or 0) for r in rows])
+        room = typical * max(1, self.spec.units_in_flight)
+        return total + room <= self.spec.bedrock_cap_usd, round(total, 4), round(room, 4)
+
+    def ledger_add(self, task_id: str) -> float:
+        """Put the Bedrock sessions of `task_id` (this unit's results rows with auth bedrock, not yet in the ledger) into the ledger, at
+        Claude Code's reported cost x the region's price factor x a margin for the calls it does not report. -> dollars added"""
+        results = self.local / "results" / f"{self.spec.run_name()}.jsonl"
+        if not results.exists():
+            return 0.0
+        mine = self.ledger_dir / f"{self.repo}-{self.spec.unit_arm or 'all'}.jsonl"
+        known = set()
+        if mine.exists():
+            known = {(r["task_id"], r["arm"]) for r in (json.loads(ln) for ln in mine.read_text(encoding="utf-8").splitlines() if ln.strip())}
+        added = 0.0
+        self.ledger_dir.mkdir(parents=True, exist_ok=True)
+        for ln in results.read_text(encoding="utf-8").splitlines():
+            if not ln.strip():
+                continue
+            r = json.loads(ln)
+            if r.get("task_id") != task_id or r.get("auth") != "bedrock" or (task_id, r["arm"]) in known:
+                continue
+            usd = round(float(r.get("claude_cost_usd") or 0) * self.spec.bedrock_price_factor * BEDROCK_HELPER_MARGIN, 4)
+            with mine.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"kind": "session", "repo": self.repo, "task_id": task_id, "arm": r["arm"], "status": r.get("status"),
+                                    "reported_usd": r.get("claude_cost_usd"), "factor": self.spec.bedrock_price_factor,
+                                    "margin": BEDROCK_HELPER_MARGIN, "usd": usd, "at": round(self.clock())}) + chr(10))
+            added += usd
+        if added or results.exists():
+            self.commit()
+        return added
+
+    def checkpoint(self) -> None:
+        """The issue's starting state (workspaces, home, results, logs, and the database for an arm whose server state is kept), so a
+        session that hits the usage limit can be run again from the beginning of the issue."""
+        self.out.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(self.out / "pre_issue.tgz", "w:gz") as tf:
+            for name in UNIT_STATE:
+                if (self.local / name).exists():
+                    tf.add(self.local / name, arcname=name)
+        if self.uses_backend and not self.resets_server:
+            self._must(self.sh(f"{PG_BIN}/pg_dump -h 127.0.0.1 -p {PG_PORT} -U kel_owner --data-only --disable-triggers "
+                               f"--exclude-table={RESET_KEEP_TABLE} kel_abtest | gzip > {self.out / 'pre_issue_db.sql.gz'}"), "the issue's checkpoint")
+
+    def restore_checkpoint(self) -> None:
+        for name in UNIT_STATE:
+            shutil.rmtree(self.local / name, ignore_errors=True)
+        with tarfile.open(self.out / "pre_issue.tgz") as tf:
+            try:
+                tf.extractall(self.local, filter="data")
+            except TypeError:
+                tf.extractall(self.local)
+        if self.resets_server:
+            self.reset_server()
+        elif self.uses_backend:
+            self.load_db(self.out / "pre_issue_db.sql.gz")
+
+    def probe_subscription(self) -> bool:
+        """One tiny call on the subscription: does it work again? (about once an hour while on Bedrock)"""
+        proc = self.sh(["claude", "-p", "reply with ok", "--max-turns", "1", "--output-format", "json"], env=self.environ, cwd=self.ab, timeout=180)
+        text = (str(getattr(proc, "stdout", "")) + str(getattr(proc, "stderr", ""))).lower()
+        words = ("usage limit", "limit reached", "rate limit", "weekly limit", "5-hour limit", "out of extra usage", "session limit", "hit your")
+        return getattr(proc, "returncode", 1) == 0 and not any(w in text for w in words)
+
+    def run_issue(self, task_id: str, summary: dict):
+        """One issue in this unit. Starts on the subscription; after a usage limit (the runner's exit 3) the SAME issue starts again from the
+        beginning, with its state restored, on Bedrock (--auth subscription+bedrock). Once on Bedrock it stays there until a tiny call on the
+        subscription works. A new Bedrock session never starts when the ledger says the cap would be passed: the unit then waits for the
+        subscription. -> (process, return code, the auth that served the session)"""
+        cmd = self.runner_cmd(task_id)
+        if self.spec.auth != COMBO:
+            proc = self.sh(cmd, env=self.environ, cwd=self.ab)
+            return proc, getattr(proc, "returncode", 0), self.environ.get("ABTEST_AUTH", "subscription")
+        st = self._auth_state()
+        if st["mode"] == "bedrock" and self.clock() - (st.get("last_probe") or st.get("since") or 0) >= PROBE_EVERY_S:
+            st["last_probe"] = self.clock()
+            if self.probe_subscription():
+                st.update(mode="subscription", since=None)
+                self._event("the subscription works again: back to it")
+            self._save_auth_state(st)
+        self.checkpoint()
+        if st["mode"] == "subscription":
+            if self.spec.force_overflow and not st.get("forced_done"):
+                st["forced_done"] = True
+                self._save_auth_state(st)
+                self._event("forced usage limit (the test switch): this session does not run on the subscription")
+                proc, rc = Proc(RC_RATE_LIMITED), RC_RATE_LIMITED
+            else:
+                proc = self.sh(cmd, env=self.environ, cwd=self.ab)
+                rc = getattr(proc, "returncode", 0)
+            if rc != RC_RATE_LIMITED:
+                return proc, rc, "subscription"
+            st.update(mode="bedrock", since=self.clock(), last_probe=self.clock())
+            self._save_auth_state(st)
+            self._event("usage limit on the subscription: the issue starts again on Bedrock", task=task_id)
+        ok, total, room = self.bedrock_allowed()
+        if not ok:
+            self._event(f"Bedrock cap: ledger ${total} + room ${room} would pass ${self.spec.bedrock_cap_usd}: waiting for the subscription", task=task_id)
+            if (self.out / "pre_issue.tgz").exists():
+                self.restore_checkpoint()
+            return Proc(RC_WAIT_SUBSCRIPTION), RC_WAIT_SUBSCRIPTION, "subscription"
+        self.restore_checkpoint()
+        env = bedrock_session_env(self.environ, self.bedrock)
+        proc = self.sh(cmd, env=env, cwd=self.ab)
+        rc = getattr(proc, "returncode", 0)
+        added = self.ledger_add(task_id)
+        self._event("Bedrock session finished", task=task_id, usd=round(added, 4), ledger=self.ledger_total())
+        return proc, rc, "bedrock"
+
     # -- the router's state: a snapshot taken right after setup, put back before each issue of C0, C-R and C-L
     def take_baseline(self) -> list[str]:
         """Dump the data of every table (schema_migrations aside) once, right after the services are up, and write what the reset
@@ -444,7 +640,11 @@ class Container:
 
     def reset_server(self) -> None:
         """Empty every table but schema_migrations and load the baseline: the router starts the issue knowing what it knew after setup."""
-        baseline = self.out / "db_baseline.sql.gz"
+        self.load_db(self.out / "db_baseline.sql.gz")
+        self.log.append("router state reset to the baseline")
+
+    def load_db(self, dump: Path) -> None:
+        baseline = dump
         truncate = (f"DO $$ DECLARE r record; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' "
                     f"AND tablename<>'{RESET_KEEP_TABLE}' LOOP EXECUTE 'TRUNCATE TABLE ' || quote_ident(r.tablename) || ' RESTART IDENTITY CASCADE'; END LOOP; END $$;")
         script = self.out / "reset.sql"                  # a file, not a command line: the shell would expand the $$ quotes
@@ -452,7 +652,6 @@ class Container:
         self._must(self.sh(f"psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest -f {script} && "
                            f"gunzip -c {baseline} | psql -q -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest"),
                    "resetting the router's state")
-        self.log.append("router state reset to the baseline")
 
     @staticmethod
     def _healthy() -> bool:
@@ -462,11 +661,19 @@ class Container:
         except Exception:  # noqa: BLE001
             return False
 
-    @staticmethod
-    def _must(proc, what: str) -> None:
+    def scrub(self, text: str) -> str:
+        """`text` with every credential value in this container's environments replaced by ***: nothing that reaches a log, a result or
+        an error message may carry a key."""
+        text = str(text)
+        for v in [*self.bedrock.values(), *self.environ.values()]:
+            if len(v) >= 12 and v in text and v.replace("/", "").replace("-", "").replace("_", "").isalnum() and not v.startswith(("/", "http")):
+                text = text.replace(v, "***")
+        return text
+
+    def _must(self, proc, what: str) -> None:
         rc = getattr(proc, "returncode", 0)
         if rc not in (0, None):
-            raise RuntimeError(f"{what} failed (exit {rc}): {str(getattr(proc, 'stderr', ''))[-300:]}")
+            raise RuntimeError(self.scrub(f"{what} failed (exit {rc}): {str(getattr(proc, 'stderr', ''))[-300:]}"))
 
     # -- the run
     def runner_cmd(self, task_id: str) -> list[str]:
@@ -528,10 +735,13 @@ class Container:
         for t in pending:
             if self.resets_server:
                 self.reset_server()
-            proc = self.sh(self.runner_cmd(t["task_id"]), env=self.environ, cwd=self.ab)
-            rc = getattr(proc, "returncode", 0)
-            summary["ran"].append({"task": t["task_id"], "rc": rc})
+            proc, rc, auth = self.run_issue(t["task_id"], summary)
+            summary["ran"].append({"task": t["task_id"], "rc": rc, "auth": auth})
             self.snapshot()
+            if rc == RC_WAIT_SUBSCRIPTION:
+                summary.update(status="waiting_for_subscription",
+                               resume="the Bedrock cap is reached: repeat the same command after the Claude usage limit resets")
+                break
             if rc == RC_RATE_LIMITED:
                 summary.update(status="rate_limited", resume="repeat the same command after the usage limit resets")
                 break
@@ -539,7 +749,7 @@ class Container:
                 summary.update(status="quota", resume="repeat the same command after the cheap models' daily quota resets (or --gc-key-name another key)")
                 break
             if rc != 0:
-                summary.update(status="error", why=str(getattr(proc, "stderr", ""))[-300:])
+                summary.update(status="error", why=self.scrub(str(getattr(proc, "stderr", ""))[-300:]))
                 break
         if not s.unit_arm:                              # a split run's report is made once, from every arm's results (finish)
             summary["report"] = self.report()
@@ -657,8 +867,8 @@ class Container:
         return text
 
 
-def container_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda: None) -> dict:
-    return Container(RunSpec(**spec_dict), repo, commit=commit).run()
+def container_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda: None, reload: Callable[[], None] = lambda: None) -> dict:
+    return Container(RunSpec(**spec_dict), repo, commit=commit, reload=reload).run()
 
 
 def prepare_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda: None) -> dict:
@@ -672,7 +882,7 @@ def finish_main(spec_dict: dict, repo: str, commit: Callable[[], None] = lambda:
 
 def arm_specs(spec: RunSpec, task_ids: list[str]) -> list[RunSpec]:
     """One spec per arm for a split run: the same issues, that arm only."""
-    return [RunSpec(**{**asdict(spec), "arms": [a], "unit_arm": a, "task_ids": list(task_ids)}) for a in spec.arms]
+    return [RunSpec(**{**asdict(spec), "arms": [a], "unit_arm": a, "task_ids": list(task_ids), "units_in_flight": len(spec.arms)}) for a in spec.arms]
 
 
 def orchestrate(spec: RunSpec, *, prepare: Callable[[dict, str], dict], run_arms: Callable[[list[tuple[dict, str]]], list[dict]],
@@ -708,17 +918,17 @@ if modal is not None:
     # Modal resolves EVERY secret of EVERY function when the app starts, so only the secret of the chosen auth is attached: the
     # default is the subscription; ABTEST_MODAL_AUTH=api (set when you run `modal run`) attaches the API-key secret instead
     MODAL_AUTH = os.environ.get("ABTEST_MODAL_AUTH", "subscription")
-    _auth_secret = API_SECRET if MODAL_AUTH == "api" else CLAUDE_SECRET
+    _auth_secrets = [API_SECRET] if MODAL_AUTH == "api" else [CLAUDE_SECRET, BEDROCK_SECRET] if MODAL_AUTH == COMBO else [CLAUDE_SECRET]
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), *[modal.Secret.from_name(n) for n in _auth_secrets]], **_common)
     def run_unit(spec: dict, repo: str) -> dict:
-        return container_main(spec, repo, commit=volume.commit)
+        return container_main(spec, repo, commit=volume.commit, reload=volume.reload)
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), *[modal.Secret.from_name(n) for n in _auth_secrets]], **_common)
     def prepare_unit(spec: dict, repo: str) -> dict:
         return prepare_main(spec, repo, commit=volume.commit)
 
-    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), modal.Secret.from_name(_auth_secret)], **_common)
+    @app.function(secrets=[modal.Secret.from_name(KEYS_SECRET), *[modal.Secret.from_name(n) for n in _auth_secrets]], **_common)
     def finish_unit(spec: dict, repo: str) -> dict:
         return finish_main(spec, repo, commit=volume.commit, reload=volume.reload)
 
@@ -726,11 +936,13 @@ if modal is not None:
     def main(repos: str, arms: str = "A,C0,C-R,C-L,C", max_issues: int = 0, auth: str = "subscription", turns: int = 1, run: str = "",
              series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
              testfirst_model: str = "glm-5.3", gc_key_name: str = "GENERAL_COMPUTE_API_KEY", cheap_agent: str = "stealth", accept_rule: str = "",
-             cheap_timeout_s: int = 0, context_pack: bool = False, review_model: str = "", blind: bool = False):
+             cheap_timeout_s: int = 0, context_pack: bool = False, review_model: str = "", blind: bool = False,
+             bedrock_cap_usd: float = BEDROCK_CAP_USD, bedrock_price_factor: float = 1.0, force_overflow: bool = False):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
                        allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model, gc_key_name=gc_key_name, cheap_agent=cheap_agent, accept_rule=accept_rule,
-                       cheap_timeout_s=cheap_timeout_s, context_pack=context_pack, review_model=review_model, blind=blind)
+                       cheap_timeout_s=cheap_timeout_s, context_pack=context_pack, review_model=review_model, blind=blind,
+                       bedrock_cap_usd=bedrock_cap_usd, bedrock_price_factor=bedrock_price_factor, force_overflow=force_overflow)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))
@@ -815,6 +1027,15 @@ def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None,
         create_secret(API_SECRET, {"ANTHROPIC_API_KEY": key})
         out(f"secret {API_SECRET}: ANTHROPIC_API_KEY")
         made = True
+    if getattr(args, "bedrock", False):
+        vals = {n: environ[n] for n in BEDROCK_NAMES if environ.get(n)}
+        missing = [n for n in BEDROCK_REQUIRED if n not in vals]
+        if missing:
+            out("set these in this shell first (from the IAM user that can only call Bedrock): " + ", ".join(missing))
+            return 2
+        create_secret(BEDROCK_SECRET, vals)
+        out(f"secret {BEDROCK_SECRET}: " + ", ".join(sorted(vals)) + "  (names only)")
+        made = True
     if args.keys:
         env_file = env_file or (Path(args.env_file) if getattr(args, "env_file", None) else None)
         vals = read_names(KEY_NAMES, environ, env_file)
@@ -831,7 +1052,7 @@ def secrets_cli(args: argparse.Namespace, environ: dict[str, str] | None = None,
             out("  not found, so not set: " + ", ".join(missing))
         made = True
     if not made:
-        out("nothing to do: pass --claude, --api and/or --keys")
+        out("nothing to do: pass --claude, --api, --bedrock and/or --keys")
         return 2
     return 0
 
@@ -842,6 +1063,7 @@ def cli(argv: list[str] | None = None) -> int:
     p = sub.add_parser("plan", help="print what a run would do; no Modal call")
     p.add_argument("--repos", required=True)
     p.add_argument("--arms", default="A,C0,C-R,C-L,C")
+    p.add_argument("--bedrock-cap-usd", type=float, default=BEDROCK_CAP_USD)
     p.add_argument("--blind", action="store_true", help="series10: nothing that compares arms is computed or printed")
     p.add_argument("--max-issues", type=int, default=0)
     p.add_argument("--auth", default="subscription")
@@ -852,6 +1074,7 @@ def cli(argv: list[str] | None = None) -> int:
     s = sub.add_parser("secrets", help="create the Modal secrets from your environment / backend/.env by NAME (values are never printed)")
     s.add_argument("--claude", action="store_true", help=f"{CLAUDE_SECRET} from $CLAUDE_CODE_OAUTH_TOKEN")
     s.add_argument("--api", action="store_true", help=f"{API_SECRET} from $ANTHROPIC_API_KEY")
+    s.add_argument("--bedrock", action="store_true", help=f"{BEDROCK_SECRET} from " + ", ".join(BEDROCK_NAMES) + " in this shell")
     s.add_argument("--keys", action="store_true", help=f"{KEYS_SECRET} from the cheap-model and backend keys: " + ", ".join(KEY_NAMES))
     s.add_argument("--env-file", default="", help="the backend/.env to read the keys from (default: this checkout's, then the main checkout's)")
     args = ap.parse_args(argv)
@@ -859,7 +1082,7 @@ def cli(argv: list[str] | None = None) -> int:
         return secrets_cli(args)
     spec = RunSpec(repos=[r.strip() for r in args.repos.split(",") if r.strip()], arms=[a.strip() for a in args.arms.split(",") if a.strip()],
                    max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module,
-                   split_arms=not args.sequential_arms, blind=args.blind)
+                   split_arms=not args.sequential_arms, blind=args.blind, bedrock_cap_usd=args.bedrock_cap_usd)
     problems = validate_spec(spec)
     if problems:
         print("; ".join(problems))
