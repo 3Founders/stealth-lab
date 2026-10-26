@@ -45,7 +45,7 @@
   },
   "arms": {
     "A0": "nothing (the agent alone, real checkout at base_commit)",
-    "L1": "local .stealth only: claims (repo facts) + library (this repo's past fixes from git history before base_commit, with diffs)",
+    "L1": "local .kell only: claims (repo facts) + library (this repo's past fixes from git history before base_commit, with diffs)",
     "L2": "L1 + enterprise-global: Kel Goals from the same GitHub org, created before the task",
     "L3": "L2 + full global: Kel Goals from the whole corpus, created before the task"
   },

@@ -7,7 +7,7 @@ import InstallCommand from "@/components/InstallCommand";
 const SECTIONS = [
   { id: "getting-started", label: "Getting started" },
   { id: "how-to-use", label: "How to use" },
-  { id: "stealth-folder", label: "The .stealth folder" },
+  { id: "stealth-folder", label: "The .kell folder" },
   { id: "teams", label: "For teams" },
   { id: "legal", label: "Legal" },
 ] as const;
@@ -59,7 +59,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
 
             <h3>4. Once per repository</h3>
             <pre><code>npx -y stealthlab-mcp survey</code></pre>
-            <p>This writes your repository&rsquo;s <a href="#stealth-folder" style={{ textDecoration: "underline" }} onClick={(e) => { e.preventDefault(); go("stealth-folder"); }}>.stealth folder</a>. It runs on your machine and uploads nothing.</p>
+            <p>This writes your repository&rsquo;s <a href="#stealth-folder" style={{ textDecoration: "underline" }} onClick={(e) => { e.preventDefault(); go("stealth-folder"); }}>.kell folder</a>. It runs on your machine and uploads nothing.</p>
 
             <h3>Other commands</h3>
             <table><tbody>
@@ -94,8 +94,8 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
 
         {active === "stealth-folder" && (
           <section id="stealth-folder" className="doc-sec">
-            <h2>The .stealth folder</h2>
-            <p>What keळ learns about a repository lives in that repository, in a folder named <code>.stealth</code>. It is plain text: you can read it, edit it, and commit it like any other file.</p>
+            <h2>The .kell folder</h2>
+            <p>What keळ learns about a repository lives in that repository, in a folder named <code>.kell</code>. It is plain text: you can read it, edit it, and commit it like any other file.</p>
 
             <h3>What is in it</h3>
             <table><tbody>
@@ -108,7 +108,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <p>Each new task starts from what the repository already knows, instead of from zero. A problem like one solved last week gets done faster and for less.</p>
 
             <h3>Share it, or keep it</h3>
-            <p>Commit <code>.stealth</code> and everyone on your team starts from the same knowledge. Leave it out of git and it stays on your machine. Either way, you can correct or delete anything in it.</p>
+            <p>Commit <code>.kell</code> and everyone on your team starts from the same knowledge. Leave it out of git and it stays on your machine. Either way, you can correct or delete anything in it.</p>
           </section>
         )}
 

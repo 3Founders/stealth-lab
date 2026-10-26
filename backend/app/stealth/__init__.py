@@ -1,17 +1,17 @@
 """
-`app.stealth` -- the `.stealth/` local working-set projection.
+`app.stealth` -- the `.kell/` local working-set projection.
 
 G13 / spec A11-A12 / B35, extended per the ratified local-architecture
 decision (recorded as a deliberate frozen-spec deviation -- see the board
 note): the local side is a **filesystem-native working set**, not a
 second database. Global Postgres stays authoritative for semantic
 retrieval, the Claim graph, ranking, permissions, and publication; by the
-time knowledge reaches `.stealth/` the candidate set is already small
+time knowledge reaches `.kell/` the candidate set is already small
 enough that `grep` + exact line-range reads replace a query engine.
 
 Layout produced by `app.stealth.generator.generate_projection`:
 
-    .stealth/
+    .kell/
       context.md              -- compact B35 router (kept for compatibility)
       run.json                -- machine-readable current run (kept)
       meta.json               -- revisions + cursors + staleness signal
@@ -30,7 +30,7 @@ Navigation model (a "knowledge page fault" when local misses -- P3):
     -> sed -n 'start,end p' <file>.md -> continue
 
 Everything here is a pure, idempotent regeneration from canonical state.
-Nothing in this codebase reads `.stealth/` back and trusts it as truth;
+Nothing in this codebase reads `.kell/` back and trusts it as truth;
 a missing or stale projection is always rehydrated from Postgres.
 """
 from app.stealth.errors import StealthProjectionError

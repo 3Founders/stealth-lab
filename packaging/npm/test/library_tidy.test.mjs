@@ -12,7 +12,7 @@ import { runLibraryCli } from "../lib/library_cli.mjs";
 
 function repo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stealth-tidy-"));
-  fs.mkdirSync(path.join(dir, ".stealth", "library", "solutions"), { recursive: true });
+  fs.mkdirSync(path.join(dir, ".kell", "library", "solutions"), { recursive: true });
   return dir;
 }
 
@@ -32,7 +32,7 @@ function seed(root, entries, goals = []) {
     const mine = lib.goals.find((x) => x.id === g.id);
     if (mine) Object.assign(mine, g);
   }
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary(lib));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary(lib));
   L.buildIndex(root);
   return L.loadLibrary(root);
 }
@@ -52,7 +52,7 @@ test("lint: dangling goal, way and parent links are errors with the command that
   const root = repo();
   const bad = entry("L-000001", "Fix a thing", { goal: "G-deadbeef" });
   bad.procs[0].way = "W-cafef00d";
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary({
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary({
     entries: [bad], goals: [{ id: "G-aaaaaaaa", title: "Child goal", parent: "G-bbbbbbbb", g: null, unit: ".", tags: [], extra: [] }], ways: [] }));
   const r = T.lintLibrary(root);
   const codes = r.issues.map((i) => i.code);
@@ -64,7 +64,7 @@ test("lint: dangling goal, way and parent links are errors with the command that
 test("lint: a parent cycle (two machines setting parents that are fine alone) is reported once", () => {
   const root = repo();
   const g = (id, parent) => ({ id, title: `Goal ${id}`, parent, g: null, unit: ".", tags: [], extra: [] });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"),
+  fs.writeFileSync(path.join(root, ".kell", "library.md"),
     L.renderLibrary({ entries: [], goals: [g("G-aaaaaaaa", "G-bbbbbbbb"), g("G-bbbbbbbb", "G-aaaaaaaa")], ways: [] }));
   const cycles = T.lintLibrary(root).issues.filter((i) => i.code === "parent_cycle");
   assert.equal(cycles.length, 1);
@@ -78,19 +78,19 @@ test("lint: a missing diff file is a warning, and unused goals and ways are only
   let r = T.lintLibrary(root);
   assert.ok(r.issues.some((i) => i.code === "missing_diff" && i.severity === "warn"));
   assert.equal(r.ok, true);
-  fs.writeFileSync(path.join(root, ".stealth", "library", "solutions", "L-000001.diff"), "diff");
+  fs.writeFileSync(path.join(root, ".kell", "library", "solutions", "L-000001.diff"), "diff");
   r = T.lintLibrary(root);
   assert.ok(!r.issues.some((i) => i.code === "missing_diff"));
   const l = lib(root);
   l.goals.push({ id: "G-11111111", title: "Nobody uses me", parent: null, g: null, unit: ".", tags: [], extra: [] });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary(l));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary(l));
   assert.ok(T.lintLibrary(root).issues.some((i) => i.code === "unused_goal" && i.severity === "info"));
 });
 
 test("lint: parse problems (a conflict, an orphan line) are surfaced, never swallowed", () => {
   const root = repo();
   seed(root, [entry("L-000001", "Fix a thing")]);
-  fs.appendFileSync(path.join(root, ".stealth", "library.md"), "STEP|L-ffffff.p1:1|action|orphan|check=-\n");
+  fs.appendFileSync(path.join(root, ".kell", "library.md"), "STEP|L-ffffff.p1:1|action|orphan|check=-\n");
   const r = T.lintLibrary(root);
   assert.ok(r.issues.some((i) => i.code === "parse" && /orphan/.test(i.message)));
   assert.equal(r.ok, false);
@@ -102,12 +102,12 @@ test("lint: warns from 90% of the size cap, and not before", () => {
   for (let i = 0; i < 400; i++) big.push(entry(`L-${String(i).padStart(6, "0")}`, `Problem number ${i} ${"word ".repeat(30)}`));
   const small = lib(root);
   void small;
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary({ entries: big.slice(0, 5), goals: [], ways: [] }));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary({ entries: big.slice(0, 5), goals: [], ways: [] }));
   assert.ok(!T.lintLibrary(root).issues.some((i) => i.code === "near_budget"));
   let n = 5;
   let text = "";
   while (Buffer.byteLength(text = L.renderLibrary({ entries: big.slice(0, n), goals: [], ways: [] })) < L.LIBRARY_MAX_BYTES * 0.91 && n < big.length) n++;
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), text);
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), text);
   assert.ok(T.lintLibrary(root).issues.some((i) => i.code === "near_budget"));
 });
 
@@ -191,8 +191,8 @@ test("tidy: each section is capped and says how many were left out", () => {
 test("tidy never edits library.md, the index or any diff", () => {
   const root = repo();
   seed(root, [entry("L-000001", "Fix null deref in csv parser"), entry("L-000002", "Fix null deref in csv parser")]);
-  const snap = () => fs.readdirSync(path.join(root, ".stealth"), { recursive: true }).sort().map((f) => {
-    const p = path.join(root, ".stealth", String(f));
+  const snap = () => fs.readdirSync(path.join(root, ".kell"), { recursive: true }).sort().map((f) => {
+    const p = path.join(root, ".kell", String(f));
     return fs.statSync(p).isFile() ? `${f}:${fs.readFileSync(p, "utf8")}` : String(f);
   }).join("\n---\n");
   const before = snap();
@@ -221,16 +221,16 @@ test("drop: the entry leaves library.md and the index, lands in the superseded a
   const a = entry("L-000001", "Fix null deref in csv parser", { verified_at: "2026-09-01" });
   a.procs[0].solution = "solutions/L-000001.diff";
   seed(root, [a, entry("L-000002", "Fix null deref in csv parser", { verified_at: "2026-10-01" })]);
-  fs.writeFileSync(path.join(root, ".stealth", "library", "solutions", "L-000001.diff"), "the diff");
+  fs.writeFileSync(path.join(root, ".kell", "library", "solutions", "L-000001.diff"), "the diff");
   const r = L.dropEntry(root, "L-000001", { supersededBy: "L-000002", now: new Date("2026-10-09T00:00:00Z") });
   assert.equal(r.entries, 1);
   assert.deepEqual(lib(root).entries.map((e) => e.id), ["L-000002"]);
-  assert.ok(!fs.readFileSync(path.join(root, ".stealth", "index", "library.idx"), "utf8").includes("L-000001"));
-  const archived = fs.readFileSync(path.join(root, ".stealth", "library", L.SUPERSEDED_ARCHIVE), "utf8");
+  assert.ok(!fs.readFileSync(path.join(root, ".kell", "index", "library.idx"), "utf8").includes("L-000001"));
+  const archived = fs.readFileSync(path.join(root, ".kell", "library", L.SUPERSEDED_ARCHIVE), "utf8");
   assert.match(archived, /GOAL\|L-000001\|/);
   assert.match(archived, /superseded_by=L-000002/);
   assert.match(archived, /dropped_at=2026-10-09/);
-  assert.equal(fs.readFileSync(path.join(root, ".stealth", "library", "solutions", "L-000001.diff"), "utf8"), "the diff");
+  assert.equal(fs.readFileSync(path.join(root, ".kell", "library", "solutions", "L-000001.diff"), "utf8"), "the diff");
   assert.equal(T.lintLibrary(root).ok, true);
 });
 
@@ -249,15 +249,15 @@ test("drop: refuses an unknown entry, an entry superseding itself, and an unknow
 test("drop is repeatable: a union merge that brings the entry back is cleaned by the same command", () => {
   const root = repo();
   seed(root, [entry("L-000001", "Fix null deref in csv parser"), entry("L-000002", "Fix null deref in csv parser")]);
-  const before = fs.readFileSync(path.join(root, ".stealth", "library.md"), "utf8");
+  const before = fs.readFileSync(path.join(root, ".kell", "library.md"), "utf8");
   L.dropEntry(root, "L-000001", { supersededBy: "L-000002" });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), before);           // the other branch's copy wins the merge
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), before);           // the other branch's copy wins the merge
   L.buildIndex(root);
   assert.equal(lib(root).entries.length, 2);
   assert.equal(T.tidyReport(root).duplicate_entries.total, 1);                    // it is a candidate again...
   L.dropEntry(root, "L-000001", { supersededBy: "L-000002" });                    // ...and the same command removes it
   assert.deepEqual(lib(root).entries.map((e) => e.id), ["L-000002"]);
-  const archived = L.parseLibrary(fs.readFileSync(path.join(root, ".stealth", "library", L.SUPERSEDED_ARCHIVE), "utf8"));
+  const archived = L.parseLibrary(fs.readFileSync(path.join(root, ".kell", "library", L.SUPERSEDED_ARCHIVE), "utf8"));
   assert.equal(archived.entries.filter((e) => e.id === "L-000001").length, 1);    // archived once, not twice
 });
 
@@ -269,12 +269,12 @@ test("merge-goals: entries, ways and child goals move to the kept goal; the glob
   const child = { id: "G-12121212", title: "Handle null in csv header", parent: drop.id, g: null, unit: ".", tags: [], extra: [] };
   const withChild = lib(root);
   withChild.goals.push(child);
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary(withChild));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary(withChild));
   drop.g = "2c1d4a9e-0f3b-4c55-9e1a-7b2f0c6d8e11";
   const withG = lib(root);
   withG.goals.find((g) => g.id === drop.id).g = drop.g;
   withG.goals.find((g) => g.id === drop.id).tags = ["nulls"];
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary(withG));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary(withG));
 
   const r = L.mergeGoals(root, keep.id, drop.id);
   assert.equal(r.entries_moved, 1);
@@ -292,7 +292,7 @@ test("merge-goals: entries, ways and child goals move to the kept goal; the glob
 test("merge-goals refuses itself, an unknown goal, and a merge that would make a goal its own ancestor", () => {
   const root = repo();
   const g = (id, parent) => ({ id, title: `Goal ${id}`, parent, g: null, unit: ".", tags: [], extra: [] });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"),
+  fs.writeFileSync(path.join(root, ".kell", "library.md"),
     L.renderLibrary({ entries: [], goals: [g("G-aaaaaaaa", null), g("G-bbbbbbbb", "G-aaaaaaaa")], ways: [] }));
   assert.throws(() => L.mergeGoals(root, "G-aaaaaaaa", "G-aaaaaaaa"), /itself/);
   assert.throws(() => L.mergeGoals(root, "G-aaaaaaaa", "G-ffffffff"), /no knowledge goal G-ffffffff/);
@@ -309,8 +309,8 @@ test("cli: lint exits 1 on an error, tidy --write saves the worklist, drop and m
   const run = (argv) => runLibraryCli([...argv, "--root", root], { print: (o) => out.push(o) });
 
   await run(["tidy", "--write"]);
-  assert.equal(out.at(-1).written, ".stealth/library/TIDY.md");
-  assert.match(fs.readFileSync(path.join(root, ".stealth", "library", "TIDY.md"), "utf8"), /library drop L-000001/);
+  assert.equal(out.at(-1).written, ".kell/library/TIDY.md");
+  assert.match(fs.readFileSync(path.join(root, ".kell", "library", "TIDY.md"), "utf8"), /library drop L-000001/);
 
   await run(["drop", "L-000001", "--superseded-by", "L-000002"]);
   assert.equal(out.at(-1).dropped, "L-000001");
@@ -320,7 +320,7 @@ test("cli: lint exits 1 on an error, tidy --write saves the worklist, drop and m
   await assert.rejects(run(["merge-goals", "G-aaaaaaaa"]), /merge-goals <keep/);
 
   process.exitCode = 0;
-  fs.appendFileSync(path.join(root, ".stealth", "library.md"), "STEP|L-ffffff.p1:1|action|orphan|check=-\n");
+  fs.appendFileSync(path.join(root, ".kell", "library.md"), "STEP|L-ffffff.p1:1|action|orphan|check=-\n");
   await run(["lint"]);
   assert.equal(out.at(-1).ok, false);
   assert.equal(process.exitCode, 1);

@@ -68,7 +68,7 @@ def test_survey_repo_runs_the_scanner_then_the_worklist_then_the_validator():
     body = prm.survey_repo("/repo")
     # The deterministic scanner first, the agent per unit from the worklist, the validator last.
     scan = body.index("npx -y stealthlab-mcp survey /repo")
-    work = body.index(".stealth/survey/worklist.md")
+    work = body.index(".kell/survey/worklist.md")
     check = body.index("npx -y stealthlab-mcp survey /repo --validate")
     assert scan < work < check
     assert "scope: `repository` in claims.md; `unit:<path>` on a unit's page" in body
@@ -93,7 +93,7 @@ def test_survey_scope_and_extra_fields_parse_with_the_server_parser():
 
 def test_plan_and_run_has_the_tiny_packet_and_node_format():
     body = prm.plan_and_run("x")
-    assert 'Do node N-3. Read: rg "N-3" .stealth/run.md' in body
+    assert 'Do node N-3. Read: rg "N-3" .kell/run.md' in body
     assert prm.RUN_MD_FORMAT in body
     assert "survey_repo" in body  # facts first
 

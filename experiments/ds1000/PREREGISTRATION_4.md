@@ -7,8 +7,8 @@ Written, and hashed with the design (`runs4/design.sha256`), **before any scored
 Rounds 1–3 tested Kel's knowledge as a note that a script pasted into a single-shot prompt: the script called `find_ways` once and chose what to show. Production agents instead:
 - get the MCP server's instructions in their system prompt;
 - run the `plan_and_run` workflow themselves;
-- call `find_ways` as a tool (as often as they like, with the repo facts from `.stealth/claims.md`);
-- write their own `.stealth/procedures.md` and `.stealth/run.md`.
+- call `find_ways` as a tool (as often as they like, with the repo facts from `.kell/claims.md`);
+- write their own `.kell/procedures.md` and `.kell/run.md`.
 
 Round 4 tests that. It is also a dry run of SWE-bench arm KP, using the same shared code (`experiments/kel_product_arm.py`).
 
@@ -44,9 +44,9 @@ With Kel used the product's way (KP), models solve held-out transfer tasks more 
 
 **KP in detail:**
 - the v1 MCP server instructions are appended to the system prompt;
-- the user's message is the `plan_and_run` prompt, with the problem as its task, followed by fixed unattended-run adaptations: no user, no subagents, no code execution, read-only knowledge, `repo_claims` may be `@.stealth/claims.md`;
+- the user's message is the `plan_and_run` prompt, with the problem as its task, followed by fixed unattended-run adaptations: no user, no subagents, no code execution, read-only knowledge, `repo_claims` may be `@.kell/claims.md`;
 - tools: `find_ways` (real, in-process, judged with the repo facts) and `read_procedure_claims`;
-- `.stealth/claims.md` is written once per model by the `survey_repo` workflow on the same workspace; survey tokens are charged to KP;
+- `.kell/claims.md` is written once per model by the `survey_repo` workflow on the same workspace; survey tokens are charged to KP;
 - `find_ways` replies are cut at 24,000 characters, claims reads at 8,000;
 - KP never reuses AG, because the agent decides whether to use Kel.
 

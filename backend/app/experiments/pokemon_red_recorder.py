@@ -14,7 +14,7 @@ infrastructure, not a product feature -- intentionally small:
     faking a fake execution_run_id and a fake asyncpg connection just to
     reuse a type signature, which is not reuse, it's a shim. Nothing
     reusable there for a DB-less harness.
-  - This module does NOT write to .stealth/ and does not import
+  - This module does NOT write to .kell/ and does not import
     anything from app.stealth, app.db, or app.mcp_server.
 
 INSTRUMENTATION HOOK, and why it lives here instead of in the six tools:

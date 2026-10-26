@@ -1,4 +1,4 @@
-// .stealth/areas.md: how the cheap models did in each area (file) of THIS repository, so dispatch stops paying the wait
+// .kell/areas.md: how the cheap models did in each area (file) of THIS repository, so dispatch stops paying the wait
 // and the cheap models' spend where they keep losing. On a real repository a miss is not free: each turn waited the
 // whole cheap-try limit (408 s) and the cheap models spent $0.24-0.36 per issue without delivering (Modal dry run on
 // jsonargparse, 2026-10-15), and a series of issues often lands in the same module (5 of 10 jsonargparse issues).
@@ -25,17 +25,17 @@ function parse(text) {
 }
 
 export function readArea(root, file) {
-  try { return parse(fs.readFileSync(path.join(root, ".stealth", FILE), "utf8")).get(file) || null; } catch { return null; }
+  try { return parse(fs.readFileSync(path.join(root, ".kell", FILE), "utf8")).get(file) || null; } catch { return null; }
 }
 
 export function recordArea(root, file, won, { now = new Date() } = {}) {
   if (!root || !file || /[|\r\n]/.test(file)) return;
-  const p = path.join(root, ".stealth", FILE);
+  const p = path.join(root, ".kell", FILE);
   let map = new Map();
   try { map = parse(fs.readFileSync(p, "utf8")); } catch { /* first record */ }
   const r = map.get(file) || { wins: 0, losses: 0 };
   map.delete(file);
   map.set(file, { wins: r.wins + (won ? 1 : 0), losses: r.losses + (won ? 0 : 1), at: now.toISOString() });
   const rows = [...map.entries()].slice(-MAX_LINES).map(([f, v]) => `AREA|${f}|wins=${v.wins}|losses=${v.losses}|at=${v.at}`);
-  try { fs.writeFileSync(p, `${HEAD}\n${rows.join("\n")}\n`); } catch { /* best effort: no .stealth here */ }
+  try { fs.writeFileSync(p, `${HEAD}\n${rows.join("\n")}\n`); } catch { /* best effort: no .kell here */ }
 }

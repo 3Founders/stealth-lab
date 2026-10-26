@@ -36,7 +36,7 @@ import { claudeDir } from "./claude_exec.mjs";
 import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
 import { execConfigPath } from "./exec/store.mjs";
 import { modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
-import { findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
+import { adoptLegacyDir, findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
 import { routingTimer } from "./routing_timing.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
@@ -172,7 +172,7 @@ export function deliveryMode(policy, model) {
   return policy.mode;
 }
 
-// A git repo StealthLab has not seen yet: dispatch needs .stealth/ (routing record, library), which the first survey
+// A git repo StealthLab has not seen yet: dispatch needs .kell/ (routing record, library), which the first survey
 // would only create minutes later -- so the first prompt makes it, and the cheap models can help from that prompt on.
 // -> the repo's root, or null (not a git repo, or not writable). Used by the Claude Code and Cursor prompt hooks.
 export async function ensureDispatchRoot(cwd) {
@@ -180,8 +180,9 @@ export async function ensureDispatchRoot(cwd) {
     const { repoRoot } = await import("./auto_survey.mjs");
     const top = repoRoot(cwd);
     if (!top) return null;
-    fs.mkdirSync(path.join(top, ".stealth"), { recursive: true });
-    const keep = path.join(top, ".stealth", ".keep");
+    adoptLegacyDir(top);
+    fs.mkdirSync(path.join(top, ".kell"), { recursive: true });
+    const keep = path.join(top, ".kell", ".keep");
     if (!fs.existsSync(keep)) fs.writeFileSync(keep, "");
     return top;
   } catch {
@@ -205,12 +206,13 @@ const CLAIMS_BUDGET = 64000; // the server's MAX_REPO_CLAIMS_BYTES
 
 // Repository facts for find_ways: claims.md, then the claims/<unit>.md pages of the units this prompt is
 // about (named in the prompt by path, name or slug, or the unit the agent's cwd is in), within the
-// server's byte budget. A small repository sends every page. Finds .stealth/ from a sub-directory too.
+// server's byte budget. A small repository sends every page. Finds .kell/ from a sub-directory too.
 export function readClaims(cwd, prompt = "") {
   let dir = path.resolve(cwd || process.cwd());
   let sdir = null;
   for (;;) {
-    if (fs.existsSync(path.join(dir, ".stealth", "claims.md"))) { sdir = path.join(dir, ".stealth"); break; }
+    adoptLegacyDir(dir);
+    if (fs.existsSync(path.join(dir, ".kell", "claims.md"))) { sdir = path.join(dir, ".kell"); break; }
     const up = path.dirname(dir);
     if (up === dir) return "";
     dir = up;
@@ -329,7 +331,7 @@ const cut = (s, n) => {
 };
 
 // A step's check (how to tell it worked) rides on the same line, so the agent can verify each step without another
-// lookup; it is what .stealth/run.md's `check=` wants.
+// lookup; it is what .kell/run.md's `check=` wants.
 function steps(proc) {
   return (proc.steps || []).map((s, i) => {
     const text = `${s.do || s.action || s.goal || s.instruction || s.description || ""}`.trim();
@@ -369,20 +371,20 @@ export function libraryParts(reply, root, mode, budget) {
     const sol = entry.lines.map((l) => /\|solution=([^|]+)\|/.exec(l)?.[1]).find((x) => x && x !== "-");
     let diff = "";
     if (sol) {
-      try { diff = fs.readFileSync(path.join(root, ".stealth", "library", sol), "utf8"); } catch { /* no diff kept */ }
+      try { diff = fs.readFileSync(path.join(root, ".kell", "library", sol), "utf8"); } catch { /* no diff kept */ }
     }
     const how = m.judged ? `${m.relation}, confidence ${m.confidence}` : "not judged: matched by words only";
     const stale = m.status === "stale" ? " -- STALE: files it touched changed since; re-check before reusing" : "";
     out.push(`Solved before in THIS repo (${how}) -- ${m.title}${m.unit && m.unit !== "." ? ` [${m.unit}]` : ""}` +
       ` (${m.outcome}, ${m.verified_at || "unverified"})${stale}:\n${steps.join("\n")}` +
-      (diff ? `\n  the diff that solved it (.stealth/library/${sol}):\n` + "```diff\n" + cut(diff, budget) + "\n```" : ""));
+      (diff ? `\n  the diff that solved it (.kell/library/${sol}):\n` + "```diff\n" + cut(diff, budget) + "\n```" : ""));
   }
   return out;
 }
 
 // The knowledge block added to the agent's context, or "" when find_ways had nothing usable.
 // mode "lean": only a resolved way (the exact Goal); near misses and related examples are left out.
-// `root`: the repo whose .stealth/library.md holds the library matches (none -> they are not shown).
+// `root`: the repo whose .kell/library.md holds the library matches (none -> they are not shown).
 // One short paragraph for an ok model plan: who does the work first, the fallback, and how to report.
 // The plan as instructions. A hook cannot switch the session's own model, so a plan whose first rung is another
 // model only saves anything if the agent hands the work over: say so plainly, per rung, with the exact call.
@@ -583,7 +585,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     }
   }
   try {
-    let root = findStealthRoot(payload.cwd || process.cwd());     // null: no .stealth here, a plain lookup
+    let root = findStealthRoot(payload.cwd || process.cwd());     // null: no .kell here, a plain lookup
     if (!root && dispatchInstalled(env)) root = await ensureDispatchRoot(payload.cwd || process.cwd());
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }

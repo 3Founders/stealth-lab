@@ -2,11 +2,11 @@
 fixing change's own tests (SWE-rebench: github.com/nebius, dataset `nebius/SWE-rebench`, filtered split, CC-BY-4.0).
 
 What a series is here (see runner.py --series, series_toy_task.py for the contract):
-  * ONE workspace per arm for the whole series; for arm C its `.stealth/` (library, survey facts, routing record) carries
+  * ONE workspace per arm for the whole series; for arm C its `.kell/` (library, survey facts, routing record) carries
     over from issue to issue, for C0 it is wiped before each, for A there is none -- so C minus C0 is what a persistent
-    `.stealth/` is worth, on work a developer would really do in one repository over weeks.
+    `.kell/` is worth, on work a developer would really do in one repository over weeks.
   * Each issue is graded at ITS OWN base commit: before every task `prepare_task` puts the workspace's files at that issue's
-    base commit (the previous tasks' accepted fixes are NOT applied; only `.git`, `.stealth/`, `.claude/` are kept). The
+    base commit (the previous tasks' accepted fixes are NOT applied; only `.git`, `.kell/`, `.claude/` are kept). The
     knowledge carries over, the code does not -- so each issue's hidden tests are exact.
   * Grading (`grade_workspace`): a COPY of the workspace; the test files the fixing PR touched are put back to the base
     commit's versions (an agent that edits a test to make it pass gains nothing), the PR's `test_patch` is applied, and the
@@ -55,7 +55,7 @@ CLONES = LOCAL / "repos"          # bare clones, one per repository
 VENVS = LOCAL / "venvs"
 DATASET, SPLIT_FILE = "nebius/SWE-rebench", "data/filtered-00000-of-00001.parquet"
 TIMEOUT_S = 900                   # one grading run (the F2P and P2P test files)
-KEEP = {".git", ".stealth", ".claude", ".series_ready"}      # what a task switch leaves in the workspace
+KEEP = {".git", ".kell", ".claude", ".series_ready"}      # what a task switch leaves in the workspace
 SKIP_COPY = KEEP | {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".venv", "venv"}
 CHECK = ""                        # no project check configured: arm C relies on its test-first tests, as in the fresh-repo flow
 WORKSPACE_PREFIX = "swe-"
@@ -165,7 +165,7 @@ def export_tree(repo: str, sha: str, dest: Path) -> None:
 
 
 def sync_tree(src: Path, ws: Path) -> None:
-    """Make `ws` hold exactly `src`'s files, keeping what belongs to the arm (.git, .stealth, .claude, .series_ready)."""
+    """Make `ws` hold exactly `src`'s files, keeping what belongs to the arm (.git, .kell, .claude, .series_ready)."""
     for child in ws.iterdir():
         if child.name in KEEP:
             continue

@@ -27,10 +27,10 @@ test("the key is created once, with 32 random bytes, and reused", () => {
   assert.ok(!evidenceKey(tmp()).equals(k1), "another repository gets another random key");
 });
 
-test("the key is listed in .stealth/.gitignore before it exists, and a corrupt key file is not trusted", () => {
+test("the key is listed in .kell/.gitignore before it exists, and a corrupt key file is not trusted", () => {
   const root = tmp();
   evidenceKey(root);
-  const lines = fs.readFileSync(path.join(root, ".stealth", ".gitignore"), "utf8").split(/\r?\n/);
+  const lines = fs.readFileSync(path.join(root, ".kell", ".gitignore"), "utf8").split(/\r?\n/);
   assert.ok(lines.includes("evidence.key"));
   assert.ok(lines.includes("evidence.md.prev"));
   fs.writeFileSync(keyPath(root), "not a key\n");
@@ -61,17 +61,17 @@ test("two different keys give different HMACs for the same command and path; one
 
 test("the key is never in an upload payload, in evidence.md, or in the status output", async () => {
   const root = tmp();
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "app.js"), "export function main() { return 1; }\n");
-  fs.writeFileSync(path.join(root, ".stealth", "claims.md"),
+  fs.writeFileSync(path.join(root, ".kell", "claims.md"),
     "CLAIM|R-001|current|layout|repository|The entry point is `main` in src/app.js|source=src/app.js:1#sha=" +
     "0000000|version=1\n");
-  fs.writeFileSync(path.join(root, ".stealth", "run.md"), "NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0\n");
+  fs.writeFileSync(path.join(root, ".kell", "run.md"), "NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=node -e 0\n");
   const key = evidenceKey(root);
   const hex = key.toString("hex");
   await runChecks(root, { exec: async () => ({ code: 0 }) });
-  const evidence = fs.readFileSync(path.join(root, ".stealth", "evidence.md"), "utf8");
+  const evidence = fs.readFileSync(path.join(root, ".kell", "evidence.md"), "utf8");
   assert.ok(!evidence.includes(hex), "not in evidence.md");
   const out = [];
   await runStatusCli(["--root", root, "--json"], { out: (s) => out.push(s), err: (s) => out.push(s) });

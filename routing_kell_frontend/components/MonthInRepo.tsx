@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 
-// "A month in your repo": drag through eight weeks and watch the .stealth folder fill, the share of tasks keळ takes
+// "A month in your repo": drag through eight weeks and watch the .kell folder fill, the share of tasks keळ takes
 // grow, and the bill fall. One made-up team; the numbers are illustrative, not measured.
 const weeks = [
   { handled: 15, entries: 4, bill: 92 },
@@ -35,7 +35,7 @@ export default function MonthInRepo() {
       </div>
 
       <div className="month-stats">
-        <div><b>{now.entries}</b><span>entries in .stealth</span></div>
+        <div><b>{now.entries}</b><span>entries in .kell</span></div>
         <div><b>{now.handled}%</b><span>of tasks done by keळ</span></div>
         <div><b>{now.bill}%</b><span>of the bill without keळ</span></div>
       </div>

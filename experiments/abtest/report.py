@@ -87,8 +87,8 @@ def summarise(rows: dict) -> str:
 
 
 def curve(rows: dict) -> str:
-    """The learning curve of a long-horizon series (runner.py --series): per arm (A, C, and C0 = C with .stealth wiped each
-    task) and per position in the series, solved and cost. What C has over C0 is what a persistent .stealth is worth; the
+    """The learning curve of a long-horizon series (runner.py --series): per arm (A, C, and C0 = C with .kell wiped each
+    task) and per position in the series, solved and cost. What C has over C0 is what a persistent .kell is worth; the
     late positions are where it should show. Only tasks done in every arm present are counted, so the arms compare."""
     arms = sorted({a for _, a in rows})
     by = {(r["position"], a): r for (_, a), r in rows.items() if "position" in r}

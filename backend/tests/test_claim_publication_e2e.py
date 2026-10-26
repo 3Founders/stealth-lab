@@ -2,7 +2,7 @@
 The private -> global publish gate for Claims (`app.services.claim_publication`).
 
 The end-to-end story this proves is the one the founder is validating:
-a private candidate captured locally (here, via a resolved `.stealth/`
+a private candidate captured locally (here, via a resolved `.kell/`
 exploration -- G12) sits private until an explicit, audited,
 dependency-checked publish promotes it to global -- never automatically.
 

@@ -1,4 +1,4 @@
-// Claims pages: `.stealth/claims.md` (repository-level facts) and `.stealth/claims/<slug>.md` (one page per
+// Claims pages: `.kell/claims.md` (repository-level facts) and `.kell/claims/<slug>.md` (one page per
 // unit in a multi-unit repository). Same CLAIM grammar the server parses (backend/app/stealth/local_sync.py
 // _parse_claims_md): `CLAIM|<id>|<status>|<topic>|<scope>|<statement>|source=...|version=n[|k=v...]`.
 // Extra `k=v` fields are ignored by the server's parser, so `by=scanner|key=...|inherits=...` are safe.

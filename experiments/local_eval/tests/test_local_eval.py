@@ -95,11 +95,11 @@ def test_survey_provider_reads_only_ancestors_of_base(repo):
     subjects = " ".join(e.subject for e in ctx.library)
     assert "the task's own fix" not in subjects, "a commit after base_commit leaked into the local tier"
     assert ctx.library and "parser" in ctx.library[0].subject and "parse v1" in ctx.library[0].diff
-    assert not (repo["path"] / ".stealth").exists(), "the survey must run in a throwaway worktree"
+    assert not (repo["path"] / ".kell").exists(), "the survey must run in a throwaway worktree"
 
 
 def test_parse_survey_files(tmp_path):
-    s = tmp_path / ".stealth"
+    s = tmp_path / ".kell"
     (s / "library" / "solutions").mkdir(parents=True)
     (s / "claims.md").write_text("CLAIM|R-001|current|test|repository|run tests with jest|source=package.json:3#sha=1\n"
                                  "CLAIM|R-002|stale|build|repository|old|source=x:1\n")
@@ -216,8 +216,8 @@ def test_blind_order_is_a_stable_permutation():
 
 
 def test_proposal_scrubs_arm_identifying_words():
-    p = blind.proposal({"patch": "+x", "final_message": "Per Kel's library.md and .stealth notes, the cause is X."})
-    assert "Kel" not in p and "library.md" not in p and ".stealth" not in p and "the cause is X" in p
+    p = blind.proposal({"patch": "+x", "final_message": "Per Kel's library.md and .kell notes, the cause is X."})
+    assert "Kel" not in p and "library.md" not in p and ".kell" not in p and "the cause is X" in p
 
 
 def test_make_and_collect_roundtrip(tmp_path, monkeypatch):

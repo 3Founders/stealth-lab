@@ -146,7 +146,7 @@ Goal G42
   → Procedures P7,P11
   → Implementations I4,I9
  
-The local `.stealth` files remain grep-friendly.
+The local `.kell` files remain grep-friendly.
  
 Example:
  
@@ -156,8 +156,8 @@ PROCEDURES|P7,P11
  
 Then retrieve exact records:
  
-rg "C12|C19|C31" .stealth/claims.md
-rg "P7|P11" .stealth/procedures.md
+rg "C12|C19|C31" .kell/claims.md
+rg "P7|P11" .kell/procedures.md
  
 IMPORTANT:
  
@@ -173,7 +173,7 @@ The local filesystem is the durable, inspectable ABI.
  
 Maintain:
  
-.stealth/
+.kell/
 ├── index.md
 ├── goals.md
 ├── claims.md
@@ -384,7 +384,7 @@ A resumed run MUST continue from persisted execution state rather than reconstru
 13. RUN.MD
 ==================================================
  
-`.stealth/run.md` is the human/agent-readable execution trace.
+`.kell/run.md` is the human/agent-readable execution trace.
  
 Every concrete node should have a grep-able section containing:
  
@@ -500,7 +500,7 @@ Global:
  
 Local:
  
-- `.stealth/`
+- `.kell/`
 - file-first
 - exact/grep retrieval after Goal resolution
 - repository-specific Claims
@@ -596,7 +596,7 @@ The implementation is complete only when:
 - verification is explicit;
 - cost/success/latency are measured;
 - execution survives restart;
-- `.stealth` remains grep-friendly;
+- `.kell` remains grep-friendly;
 - MCP exposes the workflow;
 - existing production behavior remains compatible;
 - tests cover fuzzy, ambiguous, missing-Goal, fallback, and crash/resume cases.
@@ -613,7 +613,7 @@ Deliver:
 2. migrations
 3. tests
 4. MCP/API changes
-5. `.stealth` local ABI implementation
+5. `.kell` local ABI implementation
 6. end-to-end rehearsal results
 7. list of files changed
 8. remaining technical debt

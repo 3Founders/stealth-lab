@@ -89,7 +89,7 @@ Any of these voids the affected issue (and is reported, not worked around):
 - an arm stopped mid-issue (a hang, a crash, a container restart that lost the issue's state);
 - a key ran out of quota (General Compute, z.ai, Claude) during the issue;
 - the issue failed its gold check (the gold patch does not fix it in this environment);
-- state leaked between arms (a workspace, `.stealth/`, the database, or a results file read by another arm; or a wipe or reset that did not
+- state leaked between arms (a workspace, `.kell/`, the database, or a results file read by another arm; or a wipe or reset that did not
   do what the table says);
 - one arm's sessions ran on a different model than the other arms' (the same model id family is required; Bedrock's id for it counts as the
   same model).

@@ -3,7 +3,7 @@
 What a developer does in a repository that has never seen StealthLab and has no check configured, as one session:
 
   1 fix     a messy first prompt ("add is broken, fix it pls") -> dispatched from the FIRST prompt (a new repo gets its
-            .stealth/), the prompt is stopped with "Done by <cheap model> in N s ... stealthlab-mcp undo", the fix is in the tree
+            .kell/), the prompt is stopped with "Done by <cheap model> in N s ... stealthlab-mcp undo", the fix is in the tree
             and the project's tests pass
   2 it      a follow-up that only makes sense with the first ("now also make it reject strings - raise a TypeError") -> "it" is
             resolved, dispatched, add() raises TypeError for a str; WARNs if the change went wider than add() (the scope
@@ -108,7 +108,7 @@ class Step:
 # ---------------------------------------------------------------- the sandbox: a fresh repository, a transcript, the hook's environment
 
 def make_repo(root: Path) -> Path:
-    """A fresh git repository StealthLab has never seen: no .stealth/, no .claude/, no check configured anywhere."""
+    """A fresh git repository StealthLab has never seen: no .kell/, no .claude/, no check configured anywhere."""
     repo = root / "repo"
     (repo / "tests").mkdir(parents=True)
     (repo / "calc.py").write_text(CALC, encoding="utf-8")
@@ -267,7 +267,7 @@ def run_flow(hooks, repo: Path, *, transcript_mode: str = "earlier", log=print) 
     res = hooks.prompt(FIRST)
     dispatch_checks(st, res, name="the first prompt")
     st.check(tests_pass(repo), "the project's tests do not pass after the first dispatch")
-    st.check((repo / ".stealth").is_dir(), "a new repository did not get its .stealth/ from the first prompt")
+    st.check((repo / ".kell").is_dir(), "a new repository did not get its .kell/ from the first prompt")
     after_fix = (repo / "calc.py").read_text(encoding="utf-8")
 
     # 2 it: a follow-up that needs the first one

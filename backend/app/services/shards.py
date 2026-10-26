@@ -43,7 +43,7 @@ OBJECT_TYPES = ("goal", "claim", "procedure")
 # foreign keys with route-aware validation triggers and added the global goal_names index).
 # Placement rules (docs/sharding.md):
 #   * PUBLIC canonical knowledge is spread over every active shard (rendezvous hashing, goal-local).
-#   * PRIVATE / ORG rows (which include everything a user pushes from their local .stealth cache
+#   * PRIVATE / ORG rows (which include everything a user pushes from their local .kell cache
 #     through selective sync) always stay on the home shard K000: private data never fans out
 #     to shard databases that were provisioned for the public corpus.
 # Operators can stop remote placement without a deploy: STEALTH_REMOTE_SHARD_WRITES=0.

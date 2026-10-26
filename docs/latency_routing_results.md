@@ -36,13 +36,13 @@ triage and to `find_ways`, which these numbers do not include. Nothing here is e
 - **The one stand-in is the cheap model's run itself.** It fails at once, so each prompt ends right after routing and
   no cheap model worked on, or was billed for, the task. Routing stops at the first cheap model's start, so this
   doesn't change what is measured.
-- **The project:** a small Python repository (`calc.py`, `stats.py`, one test file) with a `.stealth/` folder.
-  - For the "no .stealth" prompts: the same files in a folder that is not a git repository, so no `.stealth/` can be
+- **The project:** a small Python repository (`calc.py`, `stats.py`, one test file) with a `.kell/` folder.
+  - For the "no .kell" prompts: the same files in a folder that is not a git repository, so no `.kell/` can be
     created.
 - **Prompts:** 54 in total, listed in `measure_routing.mjs`:
   - **code changes that should dispatch:** 12 prompts, run twice (24);
   - **questions and chit-chat:** 10;
-  - **code changes in a folder with no `.stealth`:** 8;
+  - **code changes in a folder with no `.kell`:** 8;
   - **cold:** 4 runs, each the first call after the server started (1 before the main runs, 3 after restarts).
 
 ## Results
@@ -70,12 +70,12 @@ Notes on this table:
   - retrieval;
   - the repo's claims and library payload.
 
-  In the folder without `.stealth`, the same call took only 59 ms at the median. So most of the gap comes with the
-  `.stealth` library payload and its retrieval, not with the network.
+  In the folder without `.kell`, the same call took only 59 ms at the median. So most of the gap comes with the
+  `.kell` library payload and its retrieval, not with the network.
 - **The gate is 2 ms except when its provider quota probe runs.** The probe's result is cached on disk for 5 minutes,
   so it runs about once per 5 minutes. When it runs, it probes 1–2 providers one after the other, each capped at 5 s.
   That accounts for the 1.4–7.9 s rows.
-- **Not dispatched (3 of 24):** the stand-in cheap runs always "fail", so `.stealth/areas.md` built up losses (13 in
+- **Not dispatched (3 of 24):** the stand-in cheap runs always "fail", so `.kell/areas.md` built up losses (13 in
   `calc.py`, 8 in `stats.py`). Dispatch's area rule (skip after 3 losses with no win, but still try now and then) then
   sent those prompts straight to the session's model. That's a real gate decision, but caused by the stand-in, so those
   rows are left out of the table above. Their routing took 151 ms to 3.2 s.
@@ -103,7 +103,7 @@ Notes on this table:
 - **The tenth was judged `answer` but needing a lookup.** It ran `find_ways` (2.9 s), started 13.8 s after triage
   ended, because the hook's cheap-answer attempt ran in between.
 
-### Warm: code changes with no `.stealth` (n=8)
+### Warm: code changes with no `.kell` (n=8)
 
 | Part | n | p50 | p95 | max |
 |---|---|---|---|---|
@@ -111,7 +111,7 @@ Notes on this table:
 | `find_ways` | 8 | 59 ms | 67 ms | 67 ms |
 | Routing total | 8 | 507 ms | 640 ms | 640 ms |
 
-All 8 were not dispatched: there is no `.stealth/`, so there's no dispatch path. No model plan was computed
+All 8 were not dispatched: there is no `.kell/`, so there's no dispatch path. No model plan was computed
 (`plan_ms` is absent).
 
 ### Cold: the first call after the server starts (n=4)
@@ -197,6 +197,6 @@ node scripts/summarize_routing_timing.mjs <dir>/*/home/routing_timing.jsonl
 
 Notes:
 - **The `warm1` run above predates setting `ANTHROPIC_MODEL` in the driver.** Its 12 code changes got no model plan
-  and are not in the dispatched table. Its questions and no-`.stealth` rows are used.
+  and are not in the dispatched table. Its questions and no-`.kell` rows are used.
 - **To time real sessions,** set `STEALTHLAB_ROUTING_TIMING=1` in the hook's environment. Each prompt appends one line
   to `~/.stealthlab/routing_timing.jsonl`, with no prompt text: only its length and a 12-character hash.

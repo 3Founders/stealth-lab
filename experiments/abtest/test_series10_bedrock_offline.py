@@ -43,8 +43,8 @@ class Stub:
             bedrock = (env or {}).get("ABTEST_AUTH") == "bedrock"
             limited = (task in self.limit_on and not bedrock) or (bedrock and self.bedrock_rc == 3)
             ws = c.local / "ws" / c.spec.arms[0] / "swe-mini"
-            (ws / ".stealth").mkdir(parents=True, exist_ok=True)
-            (ws / ".stealth" / "library.md").write_text(f"half-done {task}" if limited else f"finished {task}", encoding="utf-8")
+            (ws / ".kell").mkdir(parents=True, exist_ok=True)
+            (ws / ".kell" / "library.md").write_text(f"half-done {task}" if limited else f"finished {task}", encoding="utf-8")
             results = c.local / "results" / f"{c.spec.run_name()}.jsonl"
             results.parent.mkdir(parents=True, exist_ok=True)
             row = {"task_id": task, "arm": c.spec.arms[0], "auth": "bedrock" if bedrock else "subscription",
@@ -99,7 +99,7 @@ def test_every_session_starts_on_the_subscription_with_no_aws_credential_in_its_
 
 def test_a_usage_limit_restarts_the_issue_on_bedrock_with_its_state_restored(tmp_path, fake_series):
     c = make(tmp_path, max_issues=1, limit_on={"x__mini-1"})
-    ws_file = c.local / "ws" / "C" / "swe-mini" / ".stealth" / "library.md"
+    ws_file = c.local / "ws" / "C" / "swe-mini" / ".kell" / "library.md"
     c.stub.seed = ws_file                        # written when the series' data is fetched, i.e. before issue 1: part of its checkpoint
     seen_at_retry = []
     orig = c.stub.__call__

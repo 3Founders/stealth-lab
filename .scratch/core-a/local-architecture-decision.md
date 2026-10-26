@@ -1,4 +1,4 @@
-# Board note — local architecture: `.stealth/` is the local truth; SQLite local store removed
+# Board note — local architecture: `.kell/` is the local truth; SQLite local store removed
 
 **Lane:** CORE-A (ingestion + knowledge hardening, Plan A / G12–G13).
 **Status:** ratified by the founder in-session (2026-09-10). Recorded here because
@@ -19,22 +19,22 @@ Mental model:
 
 ```
 global Postgres        ≈ disk / long-term memory
-.stealth/ working set  ≈ page cache
+.kell/ working set  ≈ page cache
 model context window   ≈ CPU cache
 ```
 
 Navigation is a **knowledge page fault**: `grep index/*.idx` → object id + exact
 line range → `sed -n 'start,end p' <file>.md` → continue. On a local miss the
 agent calls the Stealth MCP, which projects the needed objects from global
-Postgres into `.stealth/`, regenerates the affected index, and the agent greps
+Postgres into `.kell/`, regenerates the affected index, and the agent greps
 again. A small model never reasons over 50k tokens of project memory — it greps,
 picks among a handful of index rows, reads ~25 lines, follows a Procedure,
 verifies output.
 
-### `.stealth/` layout
+### `.kell/` layout
 
 ```
-.stealth/
+.kell/
   context.md              compact B35 router (kept — B35 readers + back-compat)
   run.json                machine-readable current run (kept)
   meta.json               projection_revision (journal seq) + per-type revisions + change_cursor
@@ -50,7 +50,7 @@ verifies output.
 Index line ranges are disposable optimisation metadata — regenerated every run,
 never hand-edited. Stable ids/anchors are authoritative. The local daemon (the
 MCP server, already `--workers 1` on `127.0.0.1`) is the **only writer**; agents
-read `.stealth/` directly (`grep`/`sed`) and mutate only through the daemon,
+read `.kell/` directly (`grep`/`sed`) and mutate only through the daemon,
 which appends the journal, updates state, regenerates `*.idx` + `*.md`, and
 atomic-renames.
 
@@ -58,13 +58,13 @@ atomic-renames.
 
 | Frozen spec (v4 §A11/§A12/§B35, `schema.md`) | This decision |
 |---|---|
-| `.stealth/` is a **disposable projection**, "not another knowledge store"; prefers a single `context.md`; explicitly says *don't* maintain `claims.md`/`procedures.md`/… mirrors | `.stealth/` is the **authoritative local representation** an agent acts on (global stays long-term truth; `.stealth/` is a trusted page cache with `meta.json` staleness detection + page-fault refill). Per-type addressable `.md` pages + `.idx` routers are the primary shape; `context.md` is kept as the compact router. |
+| `.kell/` is a **disposable projection**, "not another knowledge store"; prefers a single `context.md`; explicitly says *don't* maintain `claims.md`/`procedures.md`/… mirrors | `.kell/` is the **authoritative local representation** an agent acts on (global stays long-term truth; `.kell/` is a trusted page cache with `meta.json` staleness detection + page-fault refill). Per-type addressable `.md` pages + `.idx` routers are the primary shape; `context.md` is kept as the compact router. |
 | "reuse existing local SQLite/structured store if present"; local SQLite is "a local registry/cache" | The SQLite local store (`app/local_agent/local_store.py`, `local_claims.py`, `.stealthlab/*.db`) is **removed entirely**, along with `local_learning_sweep.py`, the bootstrap importers, `unified_retrieval.py`, `publish_local_procedure`, and the reduced local schema. |
 | A13 private sync tier (local ↔ cloud USER_PRIVATE) | **Deferred (G12)** — no storage for it yet. Without the sync tier the local SQLite store was a dead-end island (learn locally → stays on one disk forever, or manually publish to *public*), which is the main reason it is removed rather than kept. |
 
 ## Rationale
 
-- One mechanism, not two. Today: `.stealth/*.md` projection **+** `.stealthlab/*.db`
+- One mechanism, not two. Today: `.kell/*.md` projection **+** `.stealthlab/*.db`
   SQLite **+** `unified_retrieval.py` fusing local-SQLite with global-cloud. That is
   real drift surface (the local schema is a reduced copy that must keep chasing the
   global column vocabulary).
@@ -183,7 +183,7 @@ genuinely has no local↔cloud boundary to sync across in the shipped
 product. `dbtarget.py`'s local/hosted switch stays exactly what it always
 was: a developer convenience for working against a real Postgres without
 touching the (egress-limited) hosted one, not a preview of a per-user sync
-tier. The `.stealth/` local working set (G13) is unaffected by this — it
+tier. The `.kell/` local working set (G13) is unaffected by this — it
 projects FROM whichever single database (Supabase, in production) the MCP
 server is actually configured against; it was never a second database.
 

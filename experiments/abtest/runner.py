@@ -1,13 +1,13 @@
 """A-vs-C runner: the same tasks through headless Claude Code, plain (A) and with StealthLab (C).
 
-  A  plain Claude Code on MODEL. Its workspace has no .claude/ and no .stealth/.
+  A  plain Claude Code on MODEL. Its workspace has no .claude/ and no .kell/.
   C  the same Claude Code on MODEL, with StealthLab installed in the workspace (setup_c.mjs: knowledge hook, capture
      hooks, model guard, executor agents), the local test server (run_backend.py) and the open models in exec.json.
-  C0 (long-horizon series only) exactly C, but its .stealth/ is wiped before EVERY task: what C gains from a library
-     and survey that persist across tasks of one repo, C0 does not. C minus C0 is the value of .stealth.
+  C0 (long-horizon series only) exactly C, but its .kell/ is wiped before EVERY task: what C gains from a library
+     and survey that persist across tasks of one repo, C0 does not. C minus C0 is the value of .kell.
 
 Both run `claude -p --setting-sources project` with the same prompt, tools and permission mode, from the same
-commit of a workspace that persists across tasks of the same group (so C's .stealth/ library can grow; A has none).
+commit of a workspace that persists across tasks of the same group (so C's .kell/ library can grow; A has none).
 After the session the hidden grader decides; the agent's own claim never counts. Cost = Claude Code's reported cost
 + the open-model attempts' list-priced cost (C only).
 
@@ -18,7 +18,7 @@ the reset and it continues with what is not done. A session silent for HANG_S is
 
     python experiments/abtest/runner.py --run smoke1 --tasks ds1000:5
 
-Long-horizon series (a SERIES of tasks in one repo, in real order; the workspace and, for C, its .stealth/ persist):
+Long-horizon series (a SERIES of tasks in one repo, in real order; the workspace and, for C, its .kell/ persist):
 
     python experiments/abtest/runner.py --run toy1 --series series_toy_task --arms A,C,C0 --dry-run     # the plan, nothing runs
     python experiments/abtest/runner.py --run toy1 --series series_toy_task:toy --arms A,C,C0
@@ -28,7 +28,7 @@ A series module (see series_toy_task.py for a working template) provides, beside
   setup_project(task, ws)   optional: build the shared project once per workspace and arm (before the first task).
   grade_workspace(task, ws) optional: grade from the whole workspace (a dbt project) instead of one solution file.
   prepare_task(task, ws)    optional: before EVERY task, put the workspace's files where this task starts (a real repository at
-                            the issue's base commit: swe_series_task.py); .git, .stealth/ and .claude/ stay.
+                            the issue's base commit: swe_series_task.py); .git, .kell/ and .claude/ stay.
   python_dir(task, ws)      optional: the directory whose `python` the agent, dispatch and the tests use (a per-arm venv).
 Results carry `series` and `position`; `report.py <run> --curve` prints the learning curve per arm.
 
@@ -176,9 +176,9 @@ def env_file(path: Path) -> dict[str, str]:
 ARMS = ("A", "C0", "C-R", "C-L", "C")
 
 # What persists from one issue to the next, per StealthLab arm (every one of them has the SAME install and settings; only this differs):
-#   facts   .stealth/claims.md and survey/ (one `stealthlab-mcp survey` at series start; none for C0)
-#   library .stealth/library.md, library/, index/, SUMMARY.md, evidence (what was fixed before)
-#   routing .stealth/routing.md, areas.md, dag_state.json (the local per-model counts)
+#   facts   .kell/claims.md and survey/ (one `stealthlab-mcp survey` at series start; none for C0)
+#   library .kell/library.md, library/, index/, SUMMARY.md, evidence (what was fixed before)
+#   routing .kell/routing.md, areas.md, dag_state.json (the local per-model counts)
 #   server  the router's state in the test database: reset to its post-setup snapshot before each issue unless kept
 ARM_STATE = {
     "C0":  {"facts": False, "library": False, "routing": False, "server": "reset"},
@@ -209,7 +209,7 @@ def wipe_stealth(ws: Path, arm: str = "C0") -> None:
     """Empty what `arm` does NOT keep between issues (ARM_STATE), leaving the directory, its .keep and the repository's bookkeeping,
     so the workspace still counts as a StealthLab repo. C0 keeps nothing; C keeps everything (this is then a no-op)."""
     keep = ARM_STATE[arm]
-    d = ws / ".stealth"
+    d = ws / ".kell"
     if d.exists():
         wipe_all = not all(keep[g] for g in STATE_FILES)      # C keeps everything, whatever else the hooks wrote
         kept = set(STATE_KEEP) | {n for group, names in STATE_FILES.items() if keep[group] for n in names}
@@ -225,16 +225,16 @@ def wipe_stealth(ws: Path, arm: str = "C0") -> None:
 def setup_survey(arm: str, ws: Path, env: dict[str, str]) -> dict | None:
     """The ONE survey of a series, run before issue 1 in the arms that keep repo facts (C-R, C-L, C): `stealthlab-mcp survey`
     on the workspace at the first issue's base commit, local only. Returns {seconds, facts, ...} (also written to
-    .stealth/.series_survey.json so a resume does not run it twice), or None when this arm has none or it already ran."""
+    .kell/.series_survey.json so a resume does not run it twice), or None when this arm has none or it already ran."""
     if not ARM_STATE.get(arm, {}).get("facts"):
         return None
-    marker = ws / ".stealth" / ".series_survey.json"
+    marker = ws / ".kell" / ".series_survey.json"
     if marker.exists():
         return None
     t0 = time.time()
     proc = subprocess.run(["node", str(REPO / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"), "survey", str(ws)], cwd=ws, env=env,
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
-    claims = ws / ".stealth" / "claims.md"
+    claims = ws / ".kell" / "claims.md"
     facts = sum(1 for ln in claims.read_text(encoding="utf-8").splitlines() if ln.startswith("CLAIM|")) if claims.exists() else 0
     rec = {"seconds": round(time.time() - t0, 1), "facts": facts, "rc": proc.returncode, "model_tokens": 0, "cost_usd": 0.0,
            "uses_a_model": False}                  # `survey` without --fill is local only: no model call, so no tokens or dollars
@@ -303,7 +303,7 @@ def c_home() -> Path:
     home.mkdir(parents=True, exist_ok=True)
     cfg = json.loads((HERE / "exec.json").read_text(encoding="utf-8"))
     # ABTEST_CHEAP_AGENT=claude: the same open models, driven by Claude Code (through StealthLab's local bridge) instead
-    # of StealthLab's own minimal agent loop -- only WHO drives the models changes; models, profiles, checks, .stealth
+    # of StealthLab's own minimal agent loop -- only WHO drives the models changes; models, profiles, checks, .kell
     # and dispatch stay as they are
     if os.environ.get("ABTEST_CHEAP_AGENT", "stealth").lower() == "claude":
         models = [m for spec in cfg.get("executors", {}).values() for m in (spec.get("models") or []) if m in cfg.get("profiles", {})]
@@ -322,8 +322,8 @@ def workspace(arm: str, name: str) -> Path:
     git(ws, "config", "user.name", "abtest")
     (ws / "README.md").write_text(f"Workspace {name} for the A-vs-C test (arm {arm}).\n", encoding="utf-8")
     if is_c(arm):
-        (ws / ".stealth").mkdir(exist_ok=True)
-        (ws / ".stealth" / ".keep").write_text("", encoding="utf-8")
+        (ws / ".kell").mkdir(exist_ok=True)
+        (ws / ".kell" / ".keep").write_text("", encoding="utf-8")
         install_c(ws)
     git(ws, "add", "-A")
     git(ws, "commit", "-q", "-m", "workspace")
@@ -666,7 +666,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
     mod = task_module(task)
     ws = workspace(arm, task["workspace"])
     if is_c(arm):
-        wipe_stealth(ws, arm)                   # what each arm is: C with only its own state carried over in .stealth/ (ARM_STATE)
+        wipe_stealth(ws, arm)                   # what each arm is: C with only its own state carried over in .kell/ (ARM_STATE)
     if hasattr(mod, "setup_project") and not (ws / ".series_ready").exists():
         mod.setup_project(task, ws)             # a series: the shared project, built once per workspace and arm
         (ws / ".series_ready").write_text("", encoding="utf-8")
@@ -712,7 +712,7 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
         # the session model's test-first calls (dispatch's ledger): part of C's cost
         rec["testfirst_cost_usd"] = testfirst_cost(LOCAL / "C_home", started, now())
         rec["open_cost_usd"] = round(float(rec.get("open_cost_usd") or 0) + rec["testfirst_cost_usd"], 6)
-        lib = ws / ".stealth" / "library.md"
+        lib = ws / ".kell" / "library.md"
         if survey:
             rec["setup_survey"] = survey            # the one-time cost, put against the issue it was paid in front of
         rec["library_entries"] = sum(1 for ln in lib.read_text(encoding="utf-8").splitlines()
@@ -741,9 +741,9 @@ def dry_run(args, arms: list[str]) -> int:
     if args.turns > 1:
         print(f"  conversations: up to {args.turns} user turns per task -- a vague opener (the same for every arm, cached), then a "
               "simulated user answers questions or says thanks; turns are `claude --resume`")
-    start = {"A": "plain Claude Code; its workspace has no .claude/ and no .stealth/, and persists across the series",
-             "C": "StealthLab hooks-only install; its .stealth/ (facts, library, routing counts) and the server's router state PERSIST",
-             "C0": "the same install as C, but .stealth/ is wiped before every task and the server's router state is reset (no survey)",
+    start = {"A": "plain Claude Code; its workspace has no .claude/ and no .kell/, and persists across the series",
+             "C": "StealthLab hooks-only install; its .kell/ (facts, library, routing counts) and the server's router state PERSIST",
+             "C0": "the same install as C, but .kell/ is wiped before every task and the server's router state is reset (no survey)",
              "C-R": "the same install; the facts (one survey at series start) stay, the library and routing counts are wiped, the router state is reset",
              "C-L": "the same install; facts and library stay, the local routing counts are wiped, the router state is reset"}
     for a in arms:

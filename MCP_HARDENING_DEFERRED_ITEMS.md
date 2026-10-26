@@ -303,12 +303,12 @@ local sandbox, implementation lifecycle all genuinely exist), B31
 
 ## Structural gaps confirmed during the original audit, not yet scheduled into any gate
 
-9. **[CLOSED]** `.stealth/` local working-set projection — done
+9. **[CLOSED]** `.kell/` local working-set projection — done
    (`app/execution/stealth_projection.py`, wired into `find_best_way`'s
    `plan_only` response and `continue_run`'s optional `repo_path` param).
    See items 28-29 below for what's still not covered.
 
-### B35 (`.stealth/` projection) — CLOSED, items named PARTIAL at the time:
+### B35 (`.kell/` projection) — CLOSED, items named PARTIAL at the time:
 28. **[GAP]** `[RELEVANT GLOBAL CLAIMS]` is honestly empty — it depends
     on B30 (`get_relevant_claims`) existing as a real retrieval surface
     separate from precondition-checking, which it still doesn't.

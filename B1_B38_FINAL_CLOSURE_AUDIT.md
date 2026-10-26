@@ -674,7 +674,7 @@ on the human_review evidence path (confirmed via `evidence.py`'s
 schema). Marking this item **PARTIAL** rather than CLOSED solely for
 the one unverified sub-piece named above.
 
-## B35 — Low-context `.stealth/` projection
+## B35 — Low-context `.kell/` projection
 
 **PARTIAL — real, notable divergence from the literal text, worth
 your explicit attention.** The compact trio (`context.md`/`run.json`/

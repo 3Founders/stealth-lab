@@ -7,7 +7,7 @@ this adds arms that also choose the model.
 
 ## 1. Question
 
-With this repository's own `.stealth` knowledge in every arm (L1), does choosing the model per task with the
+With this repository's own `.kell` knowledge in every arm (L1), does choosing the model per task with the
 product's router cost less than always using the strong model, without solving fewer tasks? And how often does a
 cheaper first try get accepted by the check while being wrong?
 

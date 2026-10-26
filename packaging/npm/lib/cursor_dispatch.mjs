@@ -79,7 +79,7 @@ async function cursorDispatchBody(payload, { env = process.env, settings, userAg
   const model = cursorPlanModel(payload, env);
   if (!model) return null;
   const workspace = workspaceOf(payload);
-  // dispatch needs .stealth/ (routing, library): a git repo seen for the first time gets it now (as in Claude Code)
+  // dispatch needs .kell/ (routing, library): a git repo seen for the first time gets it now (as in Claude Code)
   const root = workspace ? (findStealthRoot(workspace) || await ensureDispatchRoot(workspace)) : null;
   if (!root) return null;                       // not a git repo: the plain hook instead
   // overrides (lib/brief.mjs): `!opus` leaves this prompt to Cursor's own model; `!cheap` forces a dispatch attempt.

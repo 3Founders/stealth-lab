@@ -101,7 +101,7 @@ model stayed with that Goal. `model_update.py` closes this:
   | case | when | key | prior set by |
   |---|---|---|---|
   | global Goal | `resolved` with a Procedure | the Goal | its stored posterior, or its parents + embedding |
-  | `library` | a `.stealth` library entry the judge says *matches* (not a failed attempt) | uuid5(repo id + entry id) | that entry's own fix size |
+  | `library` | a `.kell` library entry the judge says *matches* (not a failed attempt) | uuid5(repo id + entry id) | that entry's own fix size |
   | `repo` | no match, but the repository has an identity | uuid5(repo id) | this repository's median fix size |
   | `generic` | nothing else | one shared key | the population mean |
 
@@ -133,7 +133,7 @@ to 8 sub-codes (`app/routing/semantic_codes.py`). Ways with the same code do sim
 - **Coding a repository's Ways:** `stealthlab-mcp library link` sends each uncoded Way's name and steps to
   `POST /routing/codes` once (signed in). The server embeds them with the codebook's model, answers with the code
   and the vector, and stores nothing. The code is written on the `W` line (`code=`); the vector stays in
-  `.stealth/index/way_vectors.json` (gitignored). A later codebook version re-codes from the kept vectors, so the
+  `.kell/index/way_vectors.json` (gitignored). A later codebook version re-codes from the kept vectors, so the
   text is not sent again.
 - **Updating:**
   - **a Way's embedding:** never; new text is a new Way;

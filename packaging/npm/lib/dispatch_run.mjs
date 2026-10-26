@@ -1,4 +1,4 @@
-// .stealth/run.md for a dispatched task: the plan StealthLab followed, in the plan_and_run NODE format (lib/plan_check.mjs),
+// .kell/run.md for a dispatched task: the plan StealthLab followed, in the plan_and_run NODE format (lib/plan_check.mjs),
 // so the session's model can pick up where the cheap tries stopped instead of starting from nothing:
 //   N-1 locate   where the task is (lib/locate.mjs)                     done
 //   N-2 tests    tests written in advance that fail on the unchanged code   done / skipped (none could be written)
@@ -47,7 +47,7 @@ export function writeDagRun(root, args) {
 
 function writeRunText(root, text) {
   try {
-    const p = path.join(root, ".stealth", "run.md");
+    const p = path.join(root, ".kell", "run.md");
     if (!fs.existsSync(path.dirname(p))) return false;
     if (fs.existsSync(p) && !fs.readFileSync(p, "utf8").startsWith(RUN_HEAD)) return false;
     fs.writeFileSync(p, text);
@@ -57,10 +57,10 @@ function writeRunText(root, text) {
   }
 }
 
-// -> true when written; false when run.md is the planner's own (not written by dispatch) or .stealth is missing
+// -> true when written; false when run.md is the planner's own (not written by dispatch) or .kell is missing
 export function writeDispatchRun(root, args) {
   try {
-    const p = path.join(root, ".stealth", "run.md");
+    const p = path.join(root, ".kell", "run.md");
     if (!fs.existsSync(path.dirname(p))) return false;
     if (fs.existsSync(p) && !fs.readFileSync(p, "utf8").startsWith(RUN_HEAD)) return false;
     fs.writeFileSync(p, renderDispatchRun(args));

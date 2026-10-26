@@ -22,15 +22,15 @@ touches your repo.
 - Saves what agents learn (`report_discovery`), private to the reporter in v1.
 
 **Planner (the main agent, e.g. a Claude Code session)**
-- Surveys the repo into `.stealth/claims.md`.
+- Surveys the repo into `.kell/claims.md`.
 - Calls `find_ways` and reads the knowledge.
-- **Compiles the plan itself** into `.stealth/procedures.md` and `.stealth/run.md`.
+- **Compiles the plan itself** into `.kell/procedures.md` and `.kell/run.md`.
 - Does each step, or hands it to an executor.
 - Checks every step's proof.
 - Rewrites the plan when something changes, and reports what it learned.
 
 **Executor (optional subagent)**
-- Gets one line, reads a few lines from `.stealth/`, does one step, and replies
+- Gets one line, reads a few lines from `.kell/`, does one step, and replies
   with the result, the proof, and anything it learned.
 - Only worth using for long plans, parallel steps, or an independent check.
   Short tasks: the planner does everything itself.
@@ -40,7 +40,7 @@ touches your repo.
 ## The flow
 
 **Once per repo**
-1. The agent runs the `survey_repo` prompt and writes `.stealth/claims.md`:
+1. The agent runs the `survey_repo` prompt and writes `.kell/claims.md`:
    short facts, each citing file:line.
 
 **Per task**
@@ -69,7 +69,7 @@ touches your repo.
 | resource | `stealth://procedures/{id}/claims` | Past discoveries for that Procedure, then the claims its preconditions cite, then related claims | caller-scoped |
 | resource | `stealth://goals/{id}/claims` | Claims related to a Goal | caller-scoped |
 | resource | `stealth://claims/{id}` | One claim and its evidence | caller-scoped |
-| prompt | `survey_repo(repo_path?)` | How to write `.stealth/claims.md` | runs on the client |
+| prompt | `survey_repo(repo_path?)` | How to write `.kell/claims.md` | runs on the client |
 | prompt | `plan_and_run(task)` | How to compile `run.md`, dispatch, check, and report | runs on the client |
 
 - `STEALTHLAB_MCP_SURFACE=v1` is the default.
@@ -107,7 +107,7 @@ When resolved (trimmed example):
   }],
   "unresolved": [],
   "repo_facts": {"count": 24, "goal_tiebreak": null, "procedure_check": {"status": "ok"}},
-  "next": "Compile this into .stealth/procedures.md and .stealth/run.md yourself ..."
+  "next": "Compile this into .kell/procedures.md and .kell/run.md yourself ..."
 }
 ```
 
@@ -146,7 +146,7 @@ When resolved (trimmed example):
 
 ## The local files (all written by the planner)
 
-**`.stealth/claims.md`**: repo facts, grouped by topic so a topic is one
+**`.kell/claims.md`**: repo facts, grouped by topic so a topic is one
 contiguous range:
 ```
 CLAIM|R-001|current|runtime|repository|Node 20.11|source=.nvmrc:1#sha=9f2c1ab|version=1
@@ -157,13 +157,13 @@ CLAIM|R-001|current|runtime|repository|Node 20.11|source=.nvmrc:1#sha=9f2c1ab|ve
   stale when its file changes.
 - Never a secret or an env value.
 
-**`.stealth/procedures.md`**: each chosen Procedure, with its steps under it:
+**`.kell/procedures.md`**: each chosen Procedure, with its steps under it:
 ```
 PROCEDURE|P-1|<procedure_id>|v3|docx-js|goal=Create a DOCX document
 STEP|P-1:2|action|Validate the file|locator=https://...|needs=runtime=python|check=-
 ```
 
-**`.stealth/run.md`**: the plan, one line per unit of work:
+**`.kell/run.md`**: the plan, one line per unit of work:
 ```
 NODE|N-3|ready|Configure page size|step=P-1:3|claims=R-001..R-004|deps=N-2|check=node build.js && test -s out.docx
 ```
@@ -171,7 +171,7 @@ Status is one of ready, blocked, running, done, failed, skipped.
 
 **The one-line packet to an executor:**
 ```
-Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names.
+Do node N-3. Read: rg "N-3" .kell/run.md, then the claims and step lines it names.
 ```
 
 A "node" is just a line in `run.md`: the planner's own to-do item. It has no

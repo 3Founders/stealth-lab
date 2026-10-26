@@ -8,7 +8,7 @@ import { splitLine, validatePlan, runPlanCli } from "../lib/plan_check.mjs";
 function repo(files) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "plan-check-"));
   for (const [rel, text] of Object.entries(files)) {
-    const f = path.join(root, ".stealth", rel);
+    const f = path.join(root, ".kell", rel);
     fs.mkdirSync(path.dirname(f), { recursive: true });
     fs.writeFileSync(f, text);
   }

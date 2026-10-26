@@ -1,5 +1,5 @@
 """
-`.stealth/library.md` and `.stealth/routing.md`: this repository's own solved problems and the
+`.kell/library.md` and `.kell/routing.md`: this repository's own solved problems and the
 model routes chosen for them (docs/plan_2026-10_priors_library_survey.md §3).
 
 library.md is the chapter of "problems solved HERE" -- each entry is a Goal, the Procedure that

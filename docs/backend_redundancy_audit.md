@@ -7,7 +7,7 @@ code disagree, the code column is what is written here.
 
 | Fact (verified in code) | Consequence |
 |---|---|
-| **Every** ingestion adapter (skill, trace, trajectory, repo, local `.stealth` sync, publication, synthesis) already ends in `procedures.capture_procedure()` and `goals.find_or_create_goal()`. | There is one real chokepoint for Goal + Procedure identity. Convergence = harden those two functions, not build a new pipeline. |
+| **Every** ingestion adapter (skill, trace, trajectory, repo, local `.kell` sync, publication, synthesis) already ends in `procedures.capture_procedure()` and `goals.find_or_create_goal()`. | There is one real chokepoint for Goal + Procedure identity. Convergence = harden those two functions, not build a new pipeline. |
 | No sharding exists anywhere in `backend/app` or `backend/db` (only an unrelated word match in `21_band1_contracts.sql`). No shard registry, no `home_shard_id`, no object routing, no projection tables. | Sharding, projections and routing are greenfield. |
 | `procedures.achieves_goal_id UUID NULL` (migration 83) is the Procedure→Goal link. It is **nullable** and the free-text `procedures.goal` column is still authoritative for retrieval. | Direct-link invariant is not enforced today. |
 | `find_or_create_goal` decides identity with exact name → alias → **SimHash Hamming ≤ N** → **cosine ≤ AUTO threshold auto-merge** → optional LLM. | Violates target rule "no `cosine > X` as final judge; JEV/NLI decides". |

@@ -206,7 +206,7 @@ function App() {
 
         {view === 'editor' && (
           <>
-            <h1>.stealth/ FILES</h1>
+            <h1>.kell/ FILES</h1>
             <div className="tabs">
               {FILES.map((f) => {
                 const info = files[f]
@@ -302,7 +302,7 @@ function App() {
           <div className="candidateList">
             {candidates.length === 0 ? (
               <div className="dim">
-                {previewing ? 'Checking…' : 'Click "Preview Sync" to compare local .stealth/ files against Postgres.'}
+                {previewing ? 'Checking…' : 'Click "Preview Sync" to compare local .kell/ files against Postgres.'}
               </div>
             ) : (
               candidates.map((c) => (

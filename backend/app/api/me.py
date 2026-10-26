@@ -100,7 +100,7 @@ async def request_my_deletion(
         raise HTTPException(409, str(exc))
 
 
-# --- Local `.stealth` projects (account-scoped, end-to-end encrypted) ------
+# --- Local `.kell` projects (account-scoped, end-to-end encrypted) ------
 #
 # Implements docs/local_project_sync_security.md. Surfaces `synced_projects`
 # (migration 107/108/109) -- the explicit, durable project_id ->
@@ -125,7 +125,7 @@ async def list_my_stealth_projects(
     pool=Depends(get_pool),
     principal: AuthenticatedPrincipal = Depends(require_authenticated_user),
 ) -> dict:
-    """Local `.stealth` projects this account has explicitly synced,
+    """Local `.kell` projects this account has explicitly synced,
     newest sync first. Never another account's projects -- scoped
     strictly to `principal.subject`."""
     from app.stealth.project_sync import list_synced_projects

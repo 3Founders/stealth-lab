@@ -255,12 +255,12 @@ class SimUser:
 # ---------------------------------------------------------------- what a turn changed (never touches the real index)
 
 def tree_snapshot(ws: Path) -> str | None:
-    """A git tree id of the workspace as it is now (tracked and new files, not .stealth/ or .claude/), made with a private
+    """A git tree id of the workspace as it is now (tracked and new files, not .kell/ or .claude/), made with a private
     index so the workspace's own index, HEAD and commits are untouched. None if git cannot do it: it is only a record."""
     index = ws / ".git" / f"abtest-snap-{os.getpid()}.index"
     env = {**os.environ, "GIT_INDEX_FILE": str(index)}
     try:
-        for args in (["read-tree", "HEAD"], ["add", "-A", "--", ".", ":(exclude).stealth", ":(exclude).claude"]):
+        for args in (["read-tree", "HEAD"], ["add", "-A", "--", ".", ":(exclude).kell", ":(exclude).claude"]):
             subprocess.run(["git", "-C", str(ws), *args], env=env, check=True, capture_output=True)
         return subprocess.run(["git", "-C", str(ws), "write-tree"], env=env, check=True, capture_output=True,
                               text=True).stdout.strip() or None

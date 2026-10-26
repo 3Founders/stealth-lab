@@ -81,8 +81,8 @@ function project(dir, { git }) {
   if (git) {
     const g = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "pipe" });
     g("init", "-q"); g("config", "user.email", "t@e.invalid"); g("config", "user.name", "t");
-    fs.mkdirSync(path.join(dir, ".stealth"), { recursive: true });
-    fs.writeFileSync(path.join(dir, ".stealth", ".keep"), "");
+    fs.mkdirSync(path.join(dir, ".kell"), { recursive: true });
+    fs.writeFileSync(path.join(dir, ".kell", ".keep"), "");
     g("add", "-A"); g("commit", "-q", "-m", "init");
   }
   return dir;
@@ -125,7 +125,7 @@ const env = {
   STEALTHLAB_EXEC_WORKTREE_ROOT: path.join(out, "worktrees"), STEALTHLAB_AUTO_SURVEY: "off",
 };
 const withStealth = project(path.join(out, "repo"), { git: true });
-const without = project(path.join(out, "plain"), { git: false });     // not a git repo: no .stealth/ can be made
+const without = project(path.join(out, "plain"), { git: false });     // not a git repo: no .kell/ can be made
 
 let n = 0;
 for (let r = 0; r < repeat; r++) {

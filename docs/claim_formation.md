@@ -1,4 +1,4 @@
-# Claim formation: ingestion, retrieval, and the planner's `.stealth/claims.md`
+# Claim formation: ingestion, retrieval, and the planner's `.kell/claims.md`
 
 Status: design proposal (2026-09-29). Derived from the leaderboard-extraction line of work researched in
 `reports/Goal dedup and benchmark normalization.md` and
@@ -127,7 +127,7 @@ shown as stale, never as holding.
 
 ---
 
-## C. Guidelines for the planner writing `.stealth/claims.md`
+## C. Guidelines for the planner writing `.kell/claims.md`
 
 The current line format is parsed by `find_ways` (`repo_facts.parse_repo_claims`):
 

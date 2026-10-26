@@ -116,8 +116,8 @@ function setup(extra = {}) {
   const home = tmp("disp-home-");
   fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } } }));
   const { repo } = repoWith({ "calc.py": "x = 1\n" });
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell"));
+  fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   return { repo, env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                         STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", ...extra } };
 }

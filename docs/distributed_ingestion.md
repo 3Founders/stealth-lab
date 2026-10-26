@@ -118,4 +118,4 @@ Strings above `RAW_PAYLOAD_INLINE_MAX_BYTES` (64 KiB) in a job payload are store
 
 Failures: store outage/throttle -> retryable with backoff; object missing or hash mismatch -> permanent (`failed`);
 no store configured and payload above the hard limit -> refused at enqueue. PRODUCTION start-up refuses `memory://`
-and requires `OBJECT_STORAGE_URL`. The local `.stealth` cache never uses it.
+and requires `OBJECT_STORAGE_URL`. The local `.kell` cache never uses it.

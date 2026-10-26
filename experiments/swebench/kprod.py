@@ -1,20 +1,20 @@
 """Arms KP ("K-prod") and KH ("K-hook"): Kel used the way the product is used, not as a note pasted into the prompt.
 
-    python kprod.py survey      # once per scored repo: the survey_repo workflow writes .stealth/claims.md
+    python kprod.py survey      # once per scored repo: the survey_repo workflow writes .kell/claims.md
 
 What the KP agent gets, on top of the identical coding tools, budget and decoding of every other arm:
 * the product's own words, verbatim and where production puts them: the v1 MCP server instructions in
   the system prompt, and the `plan_and_run` prompt AS the user's message with the issue as its task;
-  plus the `survey_repo` output (.stealth/claims.md, surveyed once per repo like a real user);
+  plus the `survey_repo` output (.kell/claims.md, surveyed once per repo like a real user);
 * the real `find_ways` as a TOOL it may call whenever and as often as it likes (in-process, frozen
   `kel_swebench`), and the `stealth://procedures/<id>/claims` resource as `read_procedure_claims`;
-* its own `.stealth/` directory: it writes `procedures.md` and `run.md` itself, as the workflow says.
-  Nothing under `.stealth/` is ever part of the submitted patch.
+* its own `.kell/` directory: it writes `procedures.md` and `run.md` itself, as the workflow says.
+  Nothing under `.kell/` is ever part of the submitted patch.
 
 Fixed adaptations, because this is an unattended benchmark (every one is stated to the agent in
 KP_ADAPTATIONS and in the protocol): no user to ask, no subagents, no code execution (same as every
 arm), knowledge frozen (report_discovery / submit_way / recommend_models / report_model_run are not
-offered), and `repo_claims` may be passed as "@.stealth/claims.md" so the file need not be retyped
+offered), and `repo_claims` may be passed as "@.kell/claims.md" so the file need not be retyped
 inside a 2,000-token completion (find_ways receives the same text either way).
 
 Arm KH is the installed product with the Claude Code knowledge hook (`stealthlab-mcp install` adds it; DS-1000
@@ -22,7 +22,7 @@ round 5's confirmed arm, experiments/ds1000/PREREGISTRATION_5.md). Same agent, t
 as KP, but the user's message is the issue itself (no plan_and_run workflow): before the agent starts, the hook
 looks the issue up with `find_ways` (its own MCP session) and appends its own formatted text
 (packaging/npm/lib/hook.mjs) after the issue, where Claude Code puts a hook's additionalContext. `find_ways` stays
-callable. KH_ADAPTATIONS states the same unattended-run facts as KP's, minus the workflow's .stealth/ files.
+callable. KH_ADAPTATIONS states the same unattended-run facts as KP's, minus the workflow's .kell/ files.
 """
 from __future__ import annotations
 
@@ -48,21 +48,21 @@ KP_ADAPTATIONS = """How this session differs from an interactive one (fixed for 
 - There are no subagents: do every node yourself.
 - You cannot run code or tests. A node's `check` is done by reading the changed code carefully.
 - The knowledge base is read-only here: report_discovery, submit_way, recommend_models and report_model_run are
-  not available. Still keep .stealth/run.md and .stealth/claims.md up to date as the workflow says.
-- .stealth/claims.md was already written by the survey_repo workflow for this repository. For repo_claims you may
-  pass the literal "@.stealth/claims.md" instead of retyping the file.
-- Write .stealth/ files with create_file / edit_file. They are your working files and are never part of the fix.
-- The fix itself is your edits outside .stealth/; call finish when it is done."""
+  not available. Still keep .kell/run.md and .kell/claims.md up to date as the workflow says.
+- .kell/claims.md was already written by the survey_repo workflow for this repository. For repo_claims you may
+  pass the literal "@.kell/claims.md" instead of retyping the file.
+- Write .kell/ files with create_file / edit_file. They are your working files and are never part of the fix.
+- The fix itself is your edits outside .kell/; call finish when it is done."""
 KH_ADAPTATIONS = """How this session differs from an interactive one (fixed for every task):
 - There is no user to ask: decide yourself and go on.
 - You cannot run code or tests. Check your fix by reading the changed code carefully.
 - The knowledge base is read-only here: report_discovery, submit_way, recommend_models and report_model_run are
   not available.
-- .stealth/claims.md was already written by the survey_repo workflow for this repository. For repo_claims you may
-  pass the literal "@.stealth/claims.md" instead of retyping the file. Nothing under .stealth/ is part of the fix.
-- The fix itself is your edits outside .stealth/; call finish when it is done."""
+- .kell/claims.md was already written by the survey_repo workflow for this repository. For repo_claims you may
+  pass the literal "@.kell/claims.md" instead of retyping the file. Nothing under .kell/ is part of the fix.
+- The fix itself is your edits outside .kell/; call finish when it is done."""
 SURVEY_ADAPTATIONS = ("Adaptations for this session: you cannot run git, so write `sha=-` in each source; write the "
-                      "file with create_file at .stealth/claims.md (edit_file to extend it); call finish when it is "
+                      "file with create_file at .kell/claims.md (edit_file to extend it); call finish when it is "
                       "written.")
 
 

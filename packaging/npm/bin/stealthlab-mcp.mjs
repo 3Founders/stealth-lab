@@ -96,18 +96,18 @@ Usage:
   stealthlab-mcp hook subagent-stop          "install --with-exec"): re-run a plan node's check= after a
                                              subagent and record the outcome with report_model_run
   stealthlab-mcp survey [path] [options]     survey this repository locally (uploads nothing): units, repo identity,
-                                             cited facts in .stealth/claims*.md, a worklist for the agent, and
+                                             cited facts in .kell/claims*.md, a worklist for the agent, and
                                              library.md from past fix commits. --validate re-checks facts only.
                                              Options: --validate --touch <path> --max-units <n> --no-history
                                              --history-max <n> --verify-commands --allow-public-name --full --json
-  stealthlab-mcp library <command>           keep .stealth/library.md (this repo's solved problems), its
+  stealthlab-mcp library <command>           keep .kell/library.md (this repo's solved problems), its
                                              indexes, SUMMARY.md and routing.md up to date; local only
                                              ("stealthlab-mcp library help" for the commands)
-  stealthlab-mcp plan validate [--root <repo>] check .stealth/procedures.md and .stealth/run.md (the plan_and_run
+  stealthlab-mcp plan validate [--root <repo>] check .kell/procedures.md and .kell/run.md (the plan_and_run
                                              format): ids, step/claim/dep references, no cycles, concrete checks
   stealthlab-mcp status [--root <repo>] [--json] [--run]  a COMPUTED status (verified|open|failed|contested|expired) for every
-                                             .stealth/run.md node and library.md entry, from recorded check runs
-                                             (.stealth/evidence.md); --run runs the checks and appends the evidence
+                                             .kell/run.md node and library.md entry, from recorded check runs
+                                             (.kell/evidence.md); --run runs the checks and appends the evidence
   stealthlab-mcp [serve] [--url <url>]       run the stdio relay (what Claude Desktop launches)
   stealthlab-mcp help | --help | --version
 
@@ -428,7 +428,7 @@ async function cmdSurvey(dir, argv) {
   out(`facts    : +${r.merge.added} ~${r.merge.updated} -${r.merge.removed}; checked ok ${val.ok || 0}, stamped ${val.stamped || 0}, relocated ${val.relocated || 0}, stale ${val.stale || 0}, unverifiable ${val.unverifiable || 0}, rejected ${val.rejected || 0}`);
   for (const x of r.rejected.slice(0, 10)) out(`  rejected ${x.page} ${x.id}: ${x.reason}`);
   if (r.history) out(`library  : +${r.history.added || 0} past fixes (${r.history.scanned || 0} commits scanned)`);
-  out(`worklist : ${r.worklist.length} unit(s) for the agent, ~${r.estTokens} tokens -> .stealth/survey/worklist.md`);
+  out(`worklist : ${r.worklist.length} unit(s) for the agent, ~${r.estTokens} tokens -> .kell/survey/worklist.md`);
   if (r.fill) out(`fill     : ${r.fill.written} facts written by a cheap model from ${r.fill.asked} worklist unit(s); ${r.fill.rejected} rejected by the validator`);
   out(`time     : ${r.timing.total_ms} ms`);
 }

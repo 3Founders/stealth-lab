@@ -24,7 +24,7 @@ RETRIEVAL (P5 decouple): `run()` retrieves from the GLOBAL corpus only,
 via the `search_procedures` MCP tool. The per-workspace private
 `LocalProcedureStore` and the unified local+global fusion
 (`orchestrate_unified_search`) were removed with the local-architecture
-rebuild -- the local side is now the filesystem `.stealth/` working set
+rebuild -- the local side is now the filesystem `.kell/` working set
 (app.stealth), and trace-derived private learning flows through
 app.services.ingestion_jobs (global, private-scoped). A no-match against
 a real checkout still runs the task ad-hoc as a single step and reports

@@ -1,4 +1,4 @@
-// How long each cheap MODEL takes to win in THIS repo, kept in .stealth/routing.md, and what dispatch does with it.
+// How long each cheap MODEL takes to win in THIS repo, kept in .kell/routing.md, and what dispatch does with it.
 //
 // In the owner's run logs one model (minimax-m2-7) accounted for 20 of the 27 runs still going at 100 s, while gemma and gpt-oss win in about
 // 32-36 s at the median. A time limit per kind of task (the L2 idea) cut wins of the slow model and the fast ones alike; what differs is the

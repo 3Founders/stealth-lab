@@ -79,7 +79,7 @@ Goals / Claims / Implementations / candidate Procedures.
 `SEMANTIC_PROVIDER_PRIMARY=jev`, `SEMANTIC_PROVIDER_FALLBACKS=gemini,gemma`, `JEV_BASE_URL`, `JEV_API_KEY`, `JEV_CAPABILITIES=applicability`,
 `GEMINI_API_KEY[S]` (existing), `SEMANTIC_GEMINI_MODEL=gemini-2.5-flash`, `LOCAL_MODEL_PROVIDER=ollama`, `LOCAL_MODEL_NAME` (falls back to `LOCAL_JUDGE_MODEL`, only when `USE_LOCAL_MODELS` or set), `SEMANTIC_PROVIDER_TIMEOUT_MS=15000`,
 `SEMANTIC_PROVIDER_RETRIES=2`, `SEMANTIC_JOB_MAX_RETRIES=3`, `SEMANTIC_BACKOFF_BASE_MS/MAX_MS`, `SEMANTIC_REQUEUE_DELAY_SECONDS`,
-`CONTEXT_COMPACTION_TOKEN_THRESHOLD`, `CONTEXT_COMPACTION_LARGE_RESULT_TOKENS`. Secrets are read from env only; nothing is written to `.stealth`.
+`CONTEXT_COMPACTION_TOKEN_THRESHOLD`, `CONTEXT_COMPACTION_LARGE_RESULT_TOKENS`. Secrets are read from env only; nothing is written to `.kell`.
 
 ## 4. Files
 New: `backend/app/services/semantic/{__init__,errors,policy,prompts,providers,chain,applicability,jobs}.py`,

@@ -50,7 +50,7 @@ problem, a connection drop, a real bug in the query — not just the narrow
 "this migration hasn't landed on this DB yet" case the docstring's "Empty
 when none" comment seems to be assuming. Every one of those gets silently
 converted into `{}` with **no logging, no distinction, no signal that
-anything went wrong**. A caller of this function (feeding the `.stealth/`
+anything went wrong**. A caller of this function (feeding the `.kell/`
 `run.md`/coordination projection) cannot tell "no agent has declared a file
 intent yet" apart from "the database call failed" — both render as an empty
 coordination section, which for a file meant to show multi-agent coordination
@@ -75,7 +75,7 @@ should surface as a real failure to whatever calls the projection generator,
 not silently render as "no coordination declared."
 
 **Severity: low-to-medium, narrow blast radius.** `stealth/generator.py`
-feeds the `.stealth/` `run.md`/projection machinery
+feeds the `.kell/` `run.md`/projection machinery
 (`app/execution/stealth_projection.py` is its only real caller found this
 pass) — this is NOT on the live MCP tool-call path exercised by
 `find_best_way`/`search_procedures`/etc. this session; it's part of the

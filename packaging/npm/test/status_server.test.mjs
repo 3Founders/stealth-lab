@@ -13,8 +13,8 @@ const RESOURCE = `# claims for goal ${GOAL} (Rotate the signing keys)\n${LINE}\n
 
 function repo({ withGoal = true } = {}) {
   const root = tmpDir("st-server-");
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), [
     `GOAL|L-aaaa1111|Rotate keys|unit=.|g=${withGoal ? GOAL : "-"}|outcome=pass|status=current|verified_at=2026-10-20|route=-|tags=-`,
     "PROC|L-aaaa1111.p1|fix|p=-|solution=-|touches=-",
   ].join("\n") + "\n");

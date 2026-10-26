@@ -20,16 +20,16 @@ const OK = JSON.stringify({ recorded: true, duplicate: false, id: "e-1", state: 
 
 function repo({ library = false } = {}) {
   const root = tmpDir("ev-send-");
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
   fs.mkdirSync(path.join(root, "src", "secret_module"), { recursive: true });
   const line1 = "export function main() { return 1; }";
   fs.writeFileSync(path.join(root, SECRET_PATH), line1 + "\n// LEAK-ME-IN-OUTPUT\n");
-  fs.writeFileSync(path.join(root, ".stealth", "meta.json"), JSON.stringify({ repo_identity: { repo_id: REPO_REF, strength: "strong" } }));
-  fs.writeFileSync(path.join(root, ".stealth", "claims.md"),
+  fs.writeFileSync(path.join(root, ".kell", "meta.json"), JSON.stringify({ repo_identity: { repo_id: REPO_REF, strength: "strong" } }));
+  fs.writeFileSync(path.join(root, ".kell", "claims.md"),
     `CLAIM|R-001|current|layout|repository|The entry point is \`main\` in ${SECRET_PATH}|source=${SECRET_PATH}:1#sha=${shaOfLine(line1)}|version=1\n`);
-  fs.writeFileSync(path.join(root, ".stealth", "run.md"), `NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=${SECRET_COMMAND}\n`);
+  fs.writeFileSync(path.join(root, ".kell", "run.md"), `NODE|N-1|ready|One|step=-|claims=R-001|deps=-|check=${SECRET_COMMAND}\n`);
   if (library) {
-    fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+    fs.writeFileSync(path.join(root, ".kell", "library.md"), [
       "GOAL|L-aaaa1111|Fix the entry point|unit=.|g=-|outcome=pass|status=current|verified_at=2026-10-20|route=-|tags=-",
       `PROC|L-aaaa1111.p1|fix|p=-|solution=-|touches=${SECRET_PATH}#sha=${"0".repeat(12)}`,
       "STEP|L-aaaa1111.p1:1|action|edit main|check=-",
@@ -56,7 +56,7 @@ test("upload is off unless STEALTHLAB_EVIDENCE_UPLOAD=on: nothing is built, queu
     assert.equal(res.upload, undefined);
     assert.equal(hosted.calls.length, 0, "no request");
     assert.equal(outboxFiles(env).length, 0, "nothing queued");
-    assert.equal(fs.existsSync(path.join(root, ".stealth", "evidence.key")), false, "not even a key is made while upload is off");
+    assert.equal(fs.existsSync(path.join(root, ".kell", "evidence.key")), false, "not even a key is made while upload is off");
   } finally { await hosted.close(); }
 });
 
@@ -85,9 +85,9 @@ test("with upload on, status --run reports exactly the whitelisted keys and none
     for (const forbidden of [SECRET_COMMAND, "private-flag", SECRET_PATH, "secret_module", "LEAK-ME-IN-OUTPUT", keyHex, root, "node check.mjs"]) {
       assert.ok(!wire.includes(forbidden), `not on the wire: ${forbidden}`);
     }
-    assert.ok(fs.readFileSync(path.join(root, ".stealth", "evidence.md"), "utf8").includes(SECRET_COMMAND), "the command stays in the LOCAL file only");
-    assert.ok(fs.existsSync(path.join(root, ".stealth", "evidence.key")));
-    assert.ok(fs.readFileSync(path.join(root, ".stealth", ".gitignore"), "utf8").includes("evidence.key"));
+    assert.ok(fs.readFileSync(path.join(root, ".kell", "evidence.md"), "utf8").includes(SECRET_COMMAND), "the command stays in the LOCAL file only");
+    assert.ok(fs.existsSync(path.join(root, ".kell", "evidence.key")));
+    assert.ok(fs.readFileSync(path.join(root, ".kell", ".gitignore"), "utf8").includes("evidence.key"));
   } finally { await hosted.close(); }
 });
 
@@ -152,7 +152,7 @@ async function captureOne(root, env) {
 test("an upload that fails for any reason never fails the run: a bad key file, a network error, a malformed record", async () => {
   const root = repo();
   const env = testEnv({ url: "http://127.0.0.1:9/mcp", extra: ON });
-  fs.writeFileSync(path.join(root, ".stealth", "evidence.key"), "not a key\n");
+  fs.writeFileSync(path.join(root, ".kell", "evidence.key"), "not a key\n");
   const res = await runChecks(root, { exec: passAll, env });
   assert.equal(res.appended, 1);
   assert.equal(res.upload.skipped, 1, "no usable key: nothing built, nothing sent");
@@ -161,7 +161,7 @@ test("an upload that fails for any reason never fails the run: a bad key file, a
     { env, log: () => {} });
   assert.equal(weird.built, 0);
   assert.equal(computeStatus(root).targets[0].status, "verified", "the status is computed from the local evidence alone");
-  assert.equal(parseEvidence(fs.readFileSync(path.join(root, ".stealth", "evidence.md"), "utf8")).length, 1);
+  assert.equal(parseEvidence(fs.readFileSync(path.join(root, ".kell", "evidence.md"), "utf8")).length, 1);
 });
 
 test("a malformed or extra-keyed payload is held, not queued or sent, and the outbox applies the whitelist itself", async () => {
@@ -188,7 +188,7 @@ test("dispatch evidence: the check and the strong reviewer's verdict become evid
     const out = await recordAcceptedEvidence({ root, entryId: "L-aaaa1111", check: "pytest tests/test_x.py -q", reviewerFixes: true,
       reviewerModel: "claude-sonnet-5-5", executorModel: "glm-5.3-flash", env });
     assert.equal(out.lines, 2);
-    const lines = parseEvidence(fs.readFileSync(path.join(root, ".stealth", "evidence.md"), "utf8"));
+    const lines = parseEvidence(fs.readFileSync(path.join(root, ".kell", "evidence.md"), "utf8"));
     assert.deepEqual(lines.map((l) => [l.target, l.method, l.result]), [["L-aaaa1111", "deterministic_check", "pass"], ["L-aaaa1111", "independent_agent", "pass"]]);
     assert.deepEqual(lines[0].hashes.map((h) => h.path), [SECRET_PATH], "recorded at the files the entry touched, read from the parsed library entry");
     assert.equal(hosted.calls.length, 0, "dispatch never waits on the network: it only queues");
@@ -224,7 +224,7 @@ test("dispatch evidence: no reviewer line when the reviewer did not say fixes, o
 test("the repository identity comes from the survey's meta.json and is never a name", () => {
   const root = repo();
   assert.equal(repoRefOf(root), REPO_REF);
-  fs.writeFileSync(path.join(root, ".stealth", "meta.json"), JSON.stringify({ repo_identity: { repo_id: "github.com/acme/private", public_name: "acme/private" } }));
+  fs.writeFileSync(path.join(root, ".kell", "meta.json"), JSON.stringify({ repo_identity: { repo_id: "github.com/acme/private", public_name: "acme/private" } }));
   assert.equal(repoRefOf(root), null);
 });
 

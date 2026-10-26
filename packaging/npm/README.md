@@ -7,7 +7,7 @@ see `final_architecture.md`).
 Nothing from StealthLab runs on your machine: no Postgres, no Python, no
 backend. The installer adds one `stealthlab` entry to each agent's MCP config,
 pointing at the hosted endpoint, and then exits. The only files your agent
-writes locally are its own `.stealth/*.md` plan files. (The one exception is
+writes locally are its own `.kell/*.md` plan files. (The one exception is
 opt-in: the local executor layer, `install --with-exec`, described below.)
 
 ## Install
@@ -81,7 +81,7 @@ The hooks make knowledge flow both ways without the model having to decide to ca
 
 | Hook | When it runs | What it does | What leaves your machine |
 |---|---|---|---|
-| `hook-prompt` (UserPromptSubmit) | you send a task-like prompt (at least 6 words, not a slash command) | runs `find_ways` on the prompt and adds what Kel knows to Claude's context (at most 8,000 characters); nothing when Kel has nothing | the prompt (up to 1,500 characters) and `.stealth/claims.md`, to your StealthLab endpoint |
+| `hook-prompt` (UserPromptSubmit) | you send a task-like prompt (at least 6 words, not a slash command) | runs `find_ways` on the prompt and adds what Kel knows to Claude's context (at most 8,000 characters); nothing when Kel has nothing | the prompt (up to 1,500 characters) and `.kell/claims.md`, to your StealthLab endpoint |
 | `hook capture-tool` (PostToolUse, Bash) | Claude runs a test command (pytest, npm test, go test, cargo test, jest, vitest, …) | reads pass or fail from the runner's own summary line | nothing; kept locally as a verdict only |
 | `hook capture-stop` (Stop) | Claude finishes a turn | if the prompt's lookup identified a Goal and a test verdict is known, reports one outcome per prompt with `report_model_run` (from a detached process, so you never wait) | model, `scaffold="claude-code"`, pass/fail, the Goal/Procedure ids, `check_kind="tests"`. Never the prompt, commands, test output, diffs or transcript |
 
@@ -95,7 +95,7 @@ The hooks make knowledge flow both ways without the model having to decide to ca
   - a diff in the repo;
   - no library entry already matched by the lookup.
 
-  When all three hold, Stop adds one entry to `.stealth/library.md`:
+  When all three hold, Stop adds one entry to `.kell/library.md`:
   - **title:** the prompt's first line;
   - **check:** that test command, recorded as verified;
   - **solution:** the diff, kept;
@@ -206,7 +206,7 @@ For Claude Code, `--with-exec` also writes (and `uninstall` removes):
 
 | File | What it is |
 |---|---|
-| `~/.claude/agents/stealth-executor.md` | a subagent that does ONE `.stealth/run.md` node in its own worktree (`isolation: worktree`, tools `Read, Edit, Write, Bash, Grep, Glob`, `maxTurns: 40`) and ends its reply with a `STEALTH_RESULT` line |
+| `~/.claude/agents/stealth-executor.md` | a subagent that does ONE `.kell/run.md` node in its own worktree (`isolation: worktree`, tools `Read, Edit, Write, Bash, Grep, Glob`, `maxTurns: 40`) and ends its reply with a `STEALTH_RESULT` line |
 | `~/.claude/agents/stealth-delegator.md` | a subagent that carries the executor MCP server **inline** (`mcpServers`), so your main conversation never loads those tools; it calls `achieve`, polls `run_result`, and returns `summary` + `verified` + `diff.stat`. `apply_run` is outside its tool list: it can never apply a change |
 | `~/.claude/settings.json` → `hooks.SubagentStart`, `hooks.SubagentStop` | `stealthlab-mcp hook subagent-start` / `subagent-stop`: when any subagent that handled a plan node stops, the node's `check=` is re-run and the outcome is reported as `scaffold="claude-code-subagent"` |
 
@@ -260,8 +260,8 @@ of service; using it any other way is not supported.
 
 ### Check evidence: recorded here always, uploaded only if you switch it on
 
-`stealthlab-mcp status` computes a status (verified, open, failed, contested, expired) for every `.stealth/run.md` node and
-`.stealth/library.md` entry from check runs recorded in `.stealth/evidence.md`. `status --run` lists the commands it will run (they
+`stealthlab-mcp status` computes a status (verified, open, failed, contested, expired) for every `.kell/run.md` node and
+`.kell/library.md` entry from check runs recorded in `.kell/evidence.md`. `status --run` lists the commands it will run (they
 come from the repository's own files) and asks before running them; dispatch records the check and the strong reviewer's verdict for
 each answer it accepts. **That file stays on your machine.**
 
@@ -280,8 +280,8 @@ signed out, it waits there), with the tool `report_check_evidence`:
 | bookkeeping | a per-line id (a repeat changes nothing), the package version |
 
 **Never sent:** the check command, a path, the output, the prompt, a diff, a claim, the reviewer's text, a repository name or URL,
-and the key. The HMAC key is 32 random bytes in `.stealth/evidence.key` (mode 0600 where the OS has mode bits; listed in
-`.stealth/.gitignore`; never uploaded, printed or written into `evidence.md`). Without the key the server cannot recover a command
+and the key. The HMAC key is 32 random bytes in `.kell/evidence.key` (mode 0600 where the OS has mode bits; listed in
+`.kell/.gitignore`; never uploaded, printed or written into `evidence.md`). Without the key the server cannot recover a command
 or a path from an HMAC; it can match the same check within one key's scope. Blob shas are sent as they are: for a public file, the
 sha shows which exact version it was. To let the server match checks across your team's machines, copy the SAME `evidence.key` to
 each machine (or point `STEALTHLAB_EVIDENCE_KEY_FILE` at one shared file); that is a choice, and whoever holds the key can test

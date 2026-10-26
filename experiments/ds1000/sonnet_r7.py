@@ -9,7 +9,7 @@ models' loop, as instructions (no code execution, 20 tool calls per task, answer
 batch's reported total split over its tasks.
 * AG7: round 4's AG prompt, unchanged.
 * KH7: what Claude Code shows the model when StealthLab is installed with the hook -- the MCP server instructions,
-  Kel's tools (find_ways, read_procedure_claims) as a command, .stealth/claims.md (Sonnet's round-4 survey), and
+  Kel's tools (find_ways, read_procedure_claims) as a command, .kell/claims.md (Sonnet's round-4 survey), and
   for each task the hook's own text: find_ways run on the task BEFORE the agent starts (round 5's settings:
   related examples, suggested candidate, governor), formatted by packaging/npm/lib/hook.mjs. No plan_and_run.
 AG7 and KH7 use the same batches and run side by side in waves (time-matched).
@@ -76,7 +76,7 @@ def kel_tools(ws: str) -> str:
     return (f"StealthLab's MCP tools are available as commands (run them with Bash; this is the ONLY allowed use "
             f"of Bash):\n"
             f"- find_ways: `KEL_CLI_ROUND=7 \"{PY}\" \"{CLI}\" find_ways --ws \"{ws}\" --query \"<what you want done>\" "
-            f"--claims @.stealth/claims.md`\n"
+            f"--claims @.kell/claims.md`\n"
             f"- read_procedure_claims (the resource stealth://procedures/<id>/claims): "
             f"`KEL_CLI_ROUND=7 \"{PY}\" \"{CLI}\" read_procedure_claims --ws \"{ws}\" --id <procedure_id>`\n"
             f"Each StealthLab call counts as one tool call.")

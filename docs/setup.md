@@ -111,7 +111,7 @@ may be zero, and the dashboard's spend then measures only the gateway's metered 
 | `~/.stealthlab/exec.json.before-join` | the person's own file, if there was one |
 | `~/.stealthlab/hooks.log`, `runs/`, `outbox/`, `hooks/` | hook failures, dispatched runs, queued reports, ids only |
 | `~/.cursor/hooks.json`, `~/.claude/settings.json` | where the hooks are registered |
-| `<repo>/.stealth/` | the plain-text knowledge files (`claims.md`, `procedures.md`, `run.md`, ...) |
+| `<repo>/.kell/` | the plain-text knowledge files (`claims.md`, `procedures.md`, `run.md`, ...) |
 
 ### In the repo
 
@@ -144,7 +144,7 @@ Any member: `GET /v1/orgs/{org}/client-config`. A signed-in person with an invit
 - **Invite code:** sent only to `<api>/v1/join`; stored as a SHA-256 hash; one generic error for unknown, expired, revoked or
   used-up codes.
 - **Prompts:** with central keys, the cheap-model prompts go through the company's own gateway to the company's provider. The
-  Cursor hook separately sends the prompt (up to 1,500 characters) and `.stealth/claims.md` to the StealthLab endpoint for the
+  Cursor hook separately sends the prompt (up to 1,500 characters) and `.kell/claims.md` to the StealthLab endpoint for the
   lookup, while `packaging/npm/README.md` says only run reports leave. That contradiction is **still unresolved** and a
   security reviewer will find it; there is no per-organization switch for it yet.
 - **Admins** see usage by person, calls, denials and the audit log (hash-chained, append-only), all existing pages.
@@ -179,11 +179,11 @@ node --test test\join.test.mjs                                    # 13 pass
 npx vitest run ; npx tsc --noEmit
 ```
 
-## 10. The shared plan (`.stealth/collab/`)
+## 10. The shared plan (`.kell/collab/`)
 
 The work above is also written as a plan that people and coding agents can pick up, in the `plan_and_run` format the rest of
-`.stealth/` uses: `claims.md` (18 facts, each with file, line and blob sha), `procedures.md` (the operator / owner / developer
-procedure) and `run.md` (14 nodes). It is the only part of `.stealth/` tracked in git (`.gitignore` ignores `.stealth/*` except
+`.kell/` uses: `claims.md` (18 facts, each with file, line and blob sha), `procedures.md` (the operator / owner / developer
+procedure) and `run.md` (14 nodes). It is the only part of `.kell/` tracked in git (`.gitignore` ignores `.kell/*` except
 `collab/`); everything else there is a generated, machine-local projection. `stealthlab-mcp plan validate` passes on it (14 nodes,
 5 steps, 0 errors). To take a node: set it `running`, do it, run its `check=`, set it `done`, add what you learned as a claim.
 

@@ -164,7 +164,7 @@ def test_sync_delta_queues_locally_on_upload_failure_and_drains_on_next_call(tmp
         str(tmp_path), stable_project_id="pid-1", file_path="goals.md", summary="first", actor="me",
     ))
     assert result1 == "queued_offline"
-    queue_path = os.path.join(str(tmp_path), ".stealth", ".sync-queue.jsonl")
+    queue_path = os.path.join(str(tmp_path), ".kell", ".sync-queue.jsonl")
     assert os.path.isfile(queue_path)
 
     # "reconnect": next local operation drains the queue AND uploads the new delta

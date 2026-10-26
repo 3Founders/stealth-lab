@@ -32,7 +32,7 @@ export const toPosix = (p) => p.split(path.sep).join("/");
 
 // Directories never worth listing in a walk even without a .gitignore (environments and caches).
 const WALK_SKIP = new Set([".git", "node_modules", ".venv", "venv", "__pycache__", ".tox", ".mypy_cache",
-  ".pytest_cache", ".gradle", ".idea", ".stealth", ".next", ".nuxt", ".turbo", ".cache", "target", "bazel-out"]);
+  ".pytest_cache", ".gradle", ".idea", ".kell", ".next", ".nuxt", ".turbo", ".cache", "target", "bazel-out"]);
 
 /**
  * List the repository's files.
@@ -96,7 +96,7 @@ function listGit(root, gitRoot) {
     if (strip && p.startsWith(strip)) p = p.slice(strip.length);
     if (p === last) continue;
     last = p;
-    if (p.startsWith(".stealth/")) continue; // our own output is not a repository fact
+    if (p.startsWith(".kell/")) continue; // our own output is not a repository fact
     if (raw2.compare(GITLINK, 0, 6, recStart + 2, recStart + 8) === 0) { submodules.push(p); continue; }
     files.push(p);
     if (raw2[recStart] === 83 /* "S": skip-worktree, i.e. sparse */) sparse.add(p);
@@ -105,7 +105,7 @@ function listGit(root, gitRoot) {
   let added = 0;
   if (others) {
     for (const p of others.toString("utf8").split("\0")) {
-      if (p && !p.startsWith(".stealth/")) { files.push(p); added++; }
+      if (p && !p.startsWith(".kell/")) { files.push(p); added++; }
     }
   }
   if (added) files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));

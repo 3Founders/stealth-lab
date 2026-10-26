@@ -1,4 +1,4 @@
-"""The local tier (arm L1): what a repo's own `.stealth/` would hold, built from the checkout alone.
+"""The local tier (arm L1): what a repo's own `.kell/` would hold, built from the checkout alone.
 
     claims  -- repo facts (stand-in for survey_repo's claims.md)
     library -- this repo's past fixes with their diffs (stand-in for library.md bootstrapped from git history)
@@ -52,7 +52,7 @@ class Entry:
     files: list[str]
     score: float = 0.0
     diff: str = ""
-    solution: str = ""      # survey provider: library/solutions/<id>.diff, relative to .stealth/library
+    solution: str = ""      # survey provider: library/solutions/<id>.diff, relative to .kell/library
 
 
 @dataclass
@@ -247,7 +247,7 @@ def survey_context(repo: Path, base_commit: str, issue: str, mem: dict) -> Local
         if r.returncode != 0:
             raise RuntimeError(f"survey failed: {r.stderr[-400:]}")
         summary = json.loads(r.stdout.strip().splitlines()[-1])
-        stealth = wt / ".stealth"
+        stealth = wt / ".kell"
         lib = parse_library(stealth)
         for e, s in zip(lib, bm25_rank(issue, [f"{e.subject}\n{' '.join(e.files)}" for e in lib])):
             e.score = s

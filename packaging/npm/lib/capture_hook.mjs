@@ -19,15 +19,15 @@
 // check kind. Never the prompt, commands, test output, diffs or the transcript. Locally only ids, verdicts and
 // timestamps are kept (~/.stealthlab/hooks/sessions/, deleted after 24 h).
 // Locally, too (no token needed, nothing sent): a RESOLVED lookup's final test verdict is counted as one OBS
-// attempt on that Goal's route in the repo's .stealth/routing.md (lib/library.mjs) -- the counts find_ways'
-// route_obs sends back so the next model plan reflects what worked in THIS repo. Only when .stealth/ exists.
+// attempt on that Goal's route in the repo's .kell/routing.md (lib/library.mjs) -- the counts find_ways'
+// route_obs sends back so the next model plan reflects what worked in THIS repo. Only when .kell/ exists.
 // Locally, also: the library grows by itself (STEALTHLAB_LIBRARY_AUTO, on by default; "off" for a side-by-side
 // test). When the turn ends with the session's last recognised test run PASSING, a diff in the repo, and no library
-// entry this lookup already matched, Stop adds one entry to .stealth/library.md: the prompt's first line as its
+// entry this lookup already matched, Stop adds one entry to .kell/library.md: the prompt's first line as its
 // title, that test command as its check (recorded as verified: the hook saw it pass), the diff kept as its solution,
 // linked to the library's Goals and Ways. The Ways' semantic codes are then asked for by the detached worker
 // (POST /routing/codes, signed in only). For this the session file also keeps the prompt's first line and the test
-// commands, locally, for the same 24 h -- only in that case (growth on and a repo with .stealth/); otherwise the
+// commands, locally, for the same 24 h -- only in that case (growth on and a repo with .kell/); otherwise the
 // session file stays ids, verdicts and times only.
 // Off unless a token is saved (a report needs one; without it nothing is queued). STEALTHLAB_CAPTURE=off
 // disables it. Every hook exits 0 and prints nothing: exit 2 on Stop would keep Claude from stopping.
@@ -158,8 +158,8 @@ export function rememberLookup(payload, reply, { env = process.env, now = Date.n
   }
   const route = /^ROUTE\|(R-[0-9a-f]{4,16})\|/.exec(reply?.routing_rows?.[0] || "")?.[1] || null;
   const cwd = typeof payload.cwd === "string" ? findStealthRoot(payload.cwd) : null;
-  // the prompt's first line is kept only where the library will use it: growth on and a repo with .stealth/
-  const grow = libraryAutoEnabled(env) && cwd && fs.existsSync(path.join(cwd, ".stealth"));
+  // the prompt's first line is kept only where the library will use it: growth on and a repo with .kell/
+  const grow = libraryAutoEnabled(env) && cwd && fs.existsSync(path.join(cwd, ".kell"));
   const matched = (reply?.library_matches || []).find((m) => m?.relation === "matches" && m.id)?.id || null;
   writeSession(file, {
     prompt_key: String(payload.prompt_id || now), at: now, lookup: identity, tests: [], reported: false,
@@ -279,24 +279,24 @@ function spawnDetachedWorker(file, env) {
 }
 
 // Stop: decide in milliseconds, hand the network call to a detached worker, never print anything.
-// The local half: one OBS count in .stealth/routing.md per resolved prompt with a known verdict and model.
+// The local half: one OBS count in .kell/routing.md per resolved prompt with a known verdict and model.
 export function recordLocalObs(s, model, { now = new Date() } = {}) {
   // with a model plan, the guard records each attempt with the unit that ran it (model_guard recordAttempts)
   if (!s || s.obs_recorded || s.plan_obs || !["resolved", "planned"].includes(s.lookup?.outcome) || !s.lookup.goal_id || !model ||
       !s.cwd) return false;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
-  if (!last || !fs.existsSync(path.join(s.cwd, ".stealth"))) return false;
+  if (!last || !fs.existsSync(path.join(s.cwd, ".kell"))) return false;
   const route = s.route || ensureRoute(s.cwd, s.lookup.goal_id, { now });
   recordObs(s.cwd, route, model, "claude-code", last.verdict === true, { now });
   s.obs_recorded = true;
   return true;
 }
 
-// The local library half: one new .stealth/library.md entry for a turn that ended with its tests passing and a diff.
+// The local library half: one new .kell/library.md entry for a turn that ended with its tests passing and a diff.
 // Returns the entry id, or null (nothing to add, or growth switched off). Never throws to the hook.
 export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl } = {}) {
   if (!libraryAutoEnabled(env) || !s || s.library_added || s.library_match || !s.cwd || !s.title) return null;
-  if (!fs.existsSync(path.join(s.cwd, ".stealth"))) return null;
+  if (!fs.existsSync(path.join(s.cwd, ".kell"))) return null;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last || last.verdict !== true || !last.command) return null;
   const diff = gitImpl ? diffFromGit(s.cwd, "HEAD", { gitImpl }) : diffFromGit(s.cwd);
@@ -372,7 +372,7 @@ export async function runCaptureWorker(file, { env = process.env, report } = {})
     // first the general Goal and Way, so the semantic codes below are made for the Way that stays
     try {
       const { describeEntry } = await import("./way_describe.mjs");
-      const sol = path.join(job.describe.cwd, ".stealth", "library", "solutions", `${job.describe.id}.diff`);
+      const sol = path.join(job.describe.cwd, ".kell", "library", "solutions", `${job.describe.id}.diff`);
       const diff = fs.existsSync(sol) ? fs.readFileSync(sol, "utf8") : "";
       const ok = await Promise.race([describeEntry({ root: job.describe.cwd, id: job.describe.id, task: job.describe.task, diff, env,
         log: (m) => logHook(env, "capture-stop", m) }), timer()]);

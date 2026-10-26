@@ -21,7 +21,7 @@ the next person gets the improved version.
 ### Setup (once per repo)
 1. You connect the agent to StealthLab. Reading needs no login; contributing does.
 2. The agent looks around your repo and writes down plain facts in
-   `.stealth/claims.md`: "Node 20", "uses docx@9", "tests run with `pnpm test`".
+   `.kell/claims.md`: "Node 20", "uses docx@9", "tests run with `pnpm test`".
    Each fact points at the file line it came from, and facts are grouped by
    topic so related ones sit next to each other.
 
@@ -36,7 +36,7 @@ the next person gets the improved version.
    blocked each choice.
 6. The **planner compiles the plan itself**. It reads that knowledge against
    the repo it can actually see, drops steps already done, orders the rest, and
-   writes `.stealth/procedures.md` and `.stealth/run.md` locally: one line per
+   writes `.kell/procedures.md` and `.kell/run.md` locally: one line per
    step saying what to do, which facts matter, and how to check it worked. It
    shows you the plan. The backend never writes into your repo and never
    decides node order.
@@ -67,7 +67,7 @@ it work and answer questions only where needed → you get the result plus
 The planner never writes executors a long prompt. It sends one line:
 
 ```
-Do node N-3. Read: rg "N-3" .stealth/run.md
+Do node N-3. Read: rg "N-3" .kell/run.md
 ```
 
 That line in `run.md` says everything else:
@@ -113,7 +113,7 @@ lines in contiguous blocks, scoped to the caller):
 | `stealth://goals/{goal_id}/claims` | Claims related to the Goal |
 | `stealth://claims/{claim_id}` | One claim with its evidence |
 
-**Two prompts:** `survey_repo` (write `.stealth/claims.md`) and
+**Two prompts:** `survey_repo` (write `.kell/claims.md`) and
 `plan_and_run` (compile `run.md`, dispatch, verify, report). Both are
 instructions the client runs locally, since only the client can see the repo.
 
@@ -128,7 +128,7 @@ functions; they just aren't registered on MCP in v1.
 - [x] v1 surface gating (2 tools + claim resources + 2 client-side prompts)
 - [x] `report_discovery` (private candidate claim, redacted, linked to step)
 - [x] related-claims resources (grouped, caller-scoped, never unrestricted)
-- [x] **Repo survey:** the `survey_repo` MCP prompt writes `.stealth/claims.md`
+- [x] **Repo survey:** the `survey_repo` MCP prompt writes `.kell/claims.md`
       from repo files, grouped by topic, with `source=file:line#sha`
 - [x] **`find_ways` takes repo claims** (`repo_claims` = the claims.md text,
       ≤200 facts / 64 KB, request-scoped, never stored). Goal step: when search
@@ -179,7 +179,7 @@ functions; they just aren't registered on MCP in v1.
   `inspect_run`, `resume_execution_run`, `retry_run_node`,
   `report_node_progress`, `record_run_update`, `declare_file_intent`,
   `verify_completion`, `generate_review_packet`, `get_route_decision`
-- **`.stealth/` mechanics:** `init_workspace`, `project_knowledge`,
+- **`.kell/` mechanics:** `init_workspace`, `project_knowledge`,
   `open_exploration`, `close_exploration`, `preview_local_sync`,
   `commit_local_sync`, `record_stealth_edit`, `list_stealth_edits`,
   `unsync_local_project`

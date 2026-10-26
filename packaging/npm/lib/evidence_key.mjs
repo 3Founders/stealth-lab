@@ -7,12 +7,12 @@
 // be guessed. The cost is that two machines with different keys do not produce matching hashes for the same check; sharing
 // the key file is the team's explicit choice (see SHARING below).
 //
-// Where: <repo>/.stealth/evidence.key, 32 random bytes written as 64 hex characters, file mode 0600 where the operating
+// Where: <repo>/.kell/evidence.key, 32 random bytes written as 64 hex characters, file mode 0600 where the operating
 // system supports it (Windows ignores the mode bits and relies on the folder's ACL: this is a limit, not a guarantee).
-// The key is never printed, never uploaded, never written into evidence.md, and `.stealth/.gitignore` lists it.
+// The key is never printed, never uploaded, never written into evidence.md, and `.kell/.gitignore` lists it.
 //
 // SHARING (a choice, off by default): to let the server match the same check across a team's machines, copy the SAME
-// evidence.key to each machine's .stealth/ (or point STEALTHLAB_EVIDENCE_KEY_FILE at one shared file). Whoever holds the key
+// evidence.key to each machine's .kell/ (or point STEALTHLAB_EVIDENCE_KEY_FILE at one shared file). Whoever holds the key
 // can test guesses against the hashes, so share it only inside the group that may already see the commands and paths.
 // Never commit it; never send it by a channel you would not use for a password.
 //
@@ -26,13 +26,13 @@ const KEY_BYTES = 32;
 const KEY_RE = /^[0-9a-f]{64}$/;
 
 export function keyPath(root, env = process.env) {
-  return env.STEALTHLAB_EVIDENCE_KEY_FILE ? path.resolve(env.STEALTHLAB_EVIDENCE_KEY_FILE) : path.join(root, ".stealth", KEY_FILE);
+  return env.STEALTHLAB_EVIDENCE_KEY_FILE ? path.resolve(env.STEALTHLAB_EVIDENCE_KEY_FILE) : path.join(root, ".kell", KEY_FILE);
 }
 
-// .stealth/.gitignore must list the key before the key exists, so a first `git add -A` cannot pick it up.
+// .kell/.gitignore must list the key before the key exists, so a first `git add -A` cannot pick it up.
 export function ensureKeyIgnored(root) {
   try {
-    const dir = path.join(root, ".stealth");
+    const dir = path.join(root, ".kell");
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, ".gitignore");
     let cur = "";

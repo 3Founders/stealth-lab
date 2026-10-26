@@ -1,5 +1,5 @@
 """
-`stealth` -- a thin READ-ONLY CLI over a workspace's `.stealth/`
+`stealth` -- a thin READ-ONLY CLI over a workspace's `.kell/`
 projection. It never writes; the local Stealth daemon / MCP server is the
 only writer (G13 single-writer discipline).
 
@@ -10,7 +10,7 @@ only writer (G13 single-writer discipline).
 
 `show` with no page prints `index/root.idx` (the router). `grep` searches
 every `index/*.idx` and prints matching rows (id + line range), so the
-caller can then `sed -n 'start,end p' .stealth/<file>`.
+caller can then `sed -n 'start,end p' .kell/<file>`.
 """
 from __future__ import annotations
 
@@ -20,12 +20,15 @@ import os
 import re
 import sys
 
-STEALTH_DIRNAME = ".stealth"
+STEALTH_DIRNAME = ".kell"
 _PAGES = ("claims", "procedures", "implementations", "run", "exploration", "context")
 
 
 def _sdir(workspace: str) -> str:
     d = os.path.join(workspace, STEALTH_DIRNAME)
+    old = os.path.join(workspace, "." + "stealth")  # the folder's name before the rename to .kell
+    if not os.path.isdir(d) and os.path.isdir(old):
+        os.rename(old, d)
     if not os.path.isdir(d):
         sys.exit(f"stealth: no {STEALTH_DIRNAME}/ under {workspace!r}")
     return d
@@ -87,7 +90,7 @@ def cmd_meta(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="stealth", description="read-only view of a .stealth/ projection")
+    p = argparse.ArgumentParser(prog="stealth", description="read-only view of a .kell/ projection")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("show"); s.add_argument("workspace"); s.add_argument("page", nargs="?")

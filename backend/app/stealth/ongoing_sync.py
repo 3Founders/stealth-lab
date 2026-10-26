@@ -13,7 +13,7 @@ string. A project with no cached P-DEK/sync device credential (i.e. never
 synced on this machine, or unsynced) is an instant, cheap no-op.
 
 OFFLINE QUEUE: a failed upload is appended, ALREADY ENCRYPTED, to
-`.stealth/.sync-queue.jsonl` (ciphertext only -- this file, if someone
+`.kell/.sync-queue.jsonl` (ciphertext only -- this file, if someone
 found it, reveals nothing plaintext) and drained opportunistically on the
 next call for the same workspace -- not a background timer. This is what
 satisfies "local keळ continues working normally offline; pending changes
@@ -31,13 +31,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.stealth.atomic import atomic_write
-from app.stealth.legacy_context import STEALTH_DIRNAME
+from app.stealth.legacy_context import STEALTH_DIRNAME, workspace_dir
 
 _QUEUE_FILENAME = ".sync-queue.jsonl"
 
 
 def _queue_path(repo_path: str) -> str:
-    return os.path.join(repo_path, STEALTH_DIRNAME, _QUEUE_FILENAME)
+    return os.path.join(workspace_dir(repo_path), _QUEUE_FILENAME)
 
 
 def _append_to_queue(repo_path: str, *, revision: int, ciphertext_base64: str) -> None:

@@ -28,9 +28,9 @@ const RUN_MD = [
 const PROCEDURES_MD = "PROCEDURE|P-1|0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b|v2|Export DOCX|goal=export a report\nSTEP|P-1:3|action|set page size|locator=-|needs=-|check=-\n";
 
 function planRepo(dir = tmp()) {
-  fs.mkdirSync(path.join(dir, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(dir, ".stealth", "run.md"), RUN_MD);
-  fs.writeFileSync(path.join(dir, ".stealth", "procedures.md"), PROCEDURES_MD);
+  fs.mkdirSync(path.join(dir, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".kell", "run.md"), RUN_MD);
+  fs.writeFileSync(path.join(dir, ".kell", "procedures.md"), PROCEDURES_MD);
   return dir;
 }
 
@@ -69,7 +69,7 @@ test("parse: NODE line with pipes in check=, '-' check, CRLF; PROCEDURE alias; S
   assert.equal(parseNodeLine("CLAIM|R-001|current"), null);
   assert.equal(procedureFor(PROCEDURES_MD, "P-1"), "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b");
   assert.equal(procedureFor(PROCEDURES_MD, "P-2"), null);
-  assert.deepEqual(nodeRefFromPrompt('Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names.'),
+  assert.deepEqual(nodeRefFromPrompt('Do node N-3. Read: rg "N-3" .kell/run.md, then the claims and step lines it names.'),
     { nodeId: "N-3", nodeLine: null });
   assert.equal(nodeRefFromPrompt("Explore the codebase structure"), null);
   const reply = "done.\nSTEALTH_RESULT node=N-1 cwd=/a\nmore\n`STEALTH_RESULT node=N-3 cwd=/tmp/wt one`\r\n";
@@ -82,7 +82,7 @@ test("docs sample payloads: SubagentStart stashes the node, SubagentStop runs it
   const env = { STEALTHLAB_HOME: tmp() };
   const s = stubs();
   const start = await runSubagentHook("subagent-start", {
-    env, stdinText: JSON.stringify(docStart(repo, 'Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.')),
+    env, stdinText: JSON.stringify(docStart(repo, 'Do node N-3. Read: rg "N-3" .kell/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.')),
   });
   assert.equal(start.status, "stashed");
   const stashed = fs.readdirSync(path.join(env.STEALTHLAB_HOME, "hooks", "subagents"));
@@ -142,7 +142,7 @@ test("claimed cwd is used only when it is a checkout of the same repository", as
 test("no check=, unknown node, no procedure: nothing reported, reason logged", async () => {
   const repo = planRepo();
   const env = { STEALTHLAB_HOME: tmp() };
-  for (const [node, re] of [["N-4", /has no check=/], ["N-9", /not found in \.stealth\/run\.md/]]) {
+  for (const [node, re] of [["N-4", /has no check=/], ["N-9", /not found in \.kell\/run\.md/]]) {
     const s = stubs();
     const r = await runSubagentHook("subagent-stop", { env, detach: false, ...s,
       stdinText: JSON.stringify(docStop(repo, `STEALTH_RESULT node=${node}`)) });
@@ -150,7 +150,7 @@ test("no check=, unknown node, no procedure: nothing reported, reason logged", a
     assert.match(r.reason, re);
     assert.equal(s.calls.checks.length + s.calls.reports.length, 0);
   }
-  fs.rmSync(path.join(repo, ".stealth", "procedures.md"));
+  fs.rmSync(path.join(repo, ".kell", "procedures.md"));
   const s = stubs();
   const r = await runSubagentHook("subagent-stop", { env, detach: false, ...s, stdinText: JSON.stringify(docStop(repo, "STEALTH_RESULT node=N-3")) });
   assert.equal(r.status, "checked");
@@ -285,10 +285,10 @@ test("integration with lib/exec (real runChecks + reportModelRun): the check rea
   skip: !HAVE_EXEC && "lib/exec/{verify,evidence}.mjs not present yet (Builder A)",
 }, async () => {
   const repo = tmp();
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  fs.writeFileSync(path.join(repo, ".stealth", "run.md"),
+  fs.mkdirSync(path.join(repo, ".kell"));
+  fs.writeFileSync(path.join(repo, ".kell", "run.md"),
     'NODE|N-1|ready|make it|step=P-1:1|claims=-|deps=-|check=node -e "process.exit(require(\'fs\').existsSync(\'made.txt\') ? 0 : 3)"\n');
-  fs.writeFileSync(path.join(repo, ".stealth", "procedures.md"), PROCEDURES_MD);
+  fs.writeFileSync(path.join(repo, ".kell", "procedures.md"), PROCEDURES_MD);
   // Not logged in and no URL: nothing can leave the machine, so the report must be queued.
   const env = { STEALTHLAB_HOME: tmp(), PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec };
   let r = await runSubagentHook("subagent-stop", { env, detach: false, stdinText: JSON.stringify(docStop(repo, "STEALTH_RESULT node=N-1")) });
@@ -316,9 +316,9 @@ test("CLI detached worker: the hook exits at once, the worker runs the check and
   skip: !HAVE_EXEC && "lib/exec/{verify,evidence}.mjs not present yet (Builder A)",
 }, async () => {
   const repo = tmp();
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  fs.writeFileSync(path.join(repo, ".stealth", "run.md"), 'NODE|N-1|ready|x|step=P-1:1|claims=-|deps=-|check=node -e "process.exit(0)"\n');
-  fs.writeFileSync(path.join(repo, ".stealth", "procedures.md"), PROCEDURES_MD);
+  fs.mkdirSync(path.join(repo, ".kell"));
+  fs.writeFileSync(path.join(repo, ".kell", "run.md"), 'NODE|N-1|ready|x|step=P-1:1|claims=-|deps=-|check=node -e "process.exit(0)"\n');
+  fs.writeFileSync(path.join(repo, ".kell", "procedures.md"), PROCEDURES_MD);
   const home = tmp();
   const env = { ...process.env, STEALTHLAB_HOME: home, STEALTHLAB_MCP_URL: "", STEALTHLAB_TOKEN: "", STEALTHLAB_HOOK_WORKER_FILE: "", STEALTHLAB_HOOK_SYNC: "" };
   const t0 = Date.now();

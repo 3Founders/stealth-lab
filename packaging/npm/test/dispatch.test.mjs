@@ -17,8 +17,8 @@ function setup(execModels = ["gemma-4-31b-it", "minimax-m2-7"]) {
   const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n");
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell"));
+  fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   // these tests are about the dispatch loop: test-first and the cross-check have tests of their own below
   return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q",
@@ -60,10 +60,10 @@ test("a cheap rung that passes the check is applied, recorded, and handles the p
     [["stealth", "gemma-4-31b-it", "g1.k1", "python -m pytest -q"], ["stealth", "minimax-m2-7", "g1.k1", "python -m pytest -q"]]);
   assert.match(d.text, /Done by minimax-m2-7/);
   assert.match(d.text, /calc\.py/);
-  const routing = fs.readFileSync(path.join(repo, ".stealth", "routing.md"), "utf8");
+  const routing = fs.readFileSync(path.join(repo, ".kell", "routing.md"), "utf8");
   assert.ok(routing.includes("|gemma-4-31b-it|stealth|n=1|ok=0|") && routing.includes("|minimax-m2-7|stealth|n=1|ok=1|"));
   assert.ok(d.library_entry, "the pass becomes a library entry");
-  assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /Fix calc\.py so x is 2/);
+  assert.match(fs.readFileSync(path.join(repo, ".kell", "library.md"), "utf8"), /Fix calc\.py so x is 2/);
 });
 
 test("when every cheap rung fails, the prompt goes on with what was tried and the rest of the plan", async () => {
@@ -175,7 +175,7 @@ test("strict cross-check: an answer nothing could confirm is not delivered and n
     mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_CROSSCHECK: "strict" }, runtime: rt });
   assert.equal(d.handled, false);
   assert.deepEqual(d.tried.map((t) => t.state), ["unconfirmed", "unconfirmed"]);
-  assert.equal(fs.existsSync(path.join(repo, ".stealth", "routing.md")), false, "no record either way");
+  assert.equal(fs.existsSync(path.join(repo, ".kell", "routing.md")), false, "no record either way");
   const lenient = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo,
     mine: MINE, env: { ...env, STEALTHLAB_DISPATCH_CROSSCHECK: "on" }, runtime: stubRuntime(repo, { "gemma-4-31b-it": "verified" }) });
   assert.equal(lenient.handled, true, "'on' accepts an inconclusive cross-check");
@@ -284,7 +284,7 @@ test("latency: no cheap pass within the time limit -- the runs are cancelled, no
     env: { ...env, STEALTHLAB_DISPATCH_TIMEOUT_S: "10", STEALTHLAB_DISPATCH_PARALLEL: "on" }, runtime: rt });
   assert.equal(d.handled, false);
   assert.deepEqual(d.tried.map((t) => t.state), ["timed out", "timed out"]);
-  assert.equal(fs.existsSync(path.join(repo, ".stealth", "routing.md")), false, "no record against the models");
+  assert.equal(fs.existsSync(path.join(repo, ".kell", "routing.md")), false, "no record against the models");
 });
 
 test("the cheap tries get more time for a task that comes with a big file (a 20 KB contract), ~none for a small one", async () => {

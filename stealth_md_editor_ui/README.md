@@ -1,6 +1,6 @@
-# `.stealth/` editor (React)
+# `.kell/` editor (React)
 
-A minimal React frontend for hand-editing `.stealth/*.md` projection files
+A minimal React frontend for hand-editing `.kell/*.md` projection files
 (claims.md / procedures.md / implementations.md / goals.md / run.md /
 exploration.md). Same functionality as `backend/scripts/stealth_md_editor.py`'s
 plain-HTML version -- this is a React client for the exact same backend API,
@@ -20,7 +20,7 @@ npm run dev
 
 Every save goes through the real backend, which writes the file
 (`atomic_write`), logs a real audit entry (`record_stealth_edit`), and
-regenerates `.stealth/ledger.md` -- no logic duplicated here, this is a
+regenerates `.kell/ledger.md` -- no logic duplicated here, this is a
 thin client.
 
 Plain-text editing, not structured: there is no real parser for these

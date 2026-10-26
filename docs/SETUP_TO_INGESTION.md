@@ -489,7 +489,7 @@ Not needed for ingestion, needed before users connect.
   ```
   claude mcp add stealthlab --transport http https://<your-host>/mcp --header "Authorization: Bearer <token>"
   ```
-  (or the equivalent config block in their client). The local `.stealth` markdown cache MCP is independent of all of this.
+  (or the equivalent config block in their client). The local `.kell` markdown cache MCP is independent of all of this.
 * The server drains the search-projection outbox in the background (`PROJECTION_DRAIN_ENABLED`, `PROJECTION_DRAIN_INTERVAL_SECONDS`).
 
 ---

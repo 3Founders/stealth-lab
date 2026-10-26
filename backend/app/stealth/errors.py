@@ -1,4 +1,4 @@
-"""Errors for the `.stealth/` projection.
+"""Errors for the `.kell/` projection.
 
 `StealthProjectionError` historically lived in
 `app.execution.stealth_projection`; it is defined here now and re-exported

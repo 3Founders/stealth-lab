@@ -27,7 +27,7 @@ what the product does now, what is queued, and verbatim steps to resume. Older c
   - latency is about 1.7× A at p50;
   - no dispatch for Cursor;
   - messy and multi-turn prompts are not handled;
-  - `.stealth` knowledge is not exercised on long series of tasks in one repo.
+  - `.kell` knowledge is not exercised on long series of tasks in one repo.
 
   See section 6; **the build queue for Chaitanya's Claude is section 6.6.**
 
@@ -132,14 +132,14 @@ Claude Code, `stealthlab-mcp install --with-exec`, without the global library.
      Bash|PowerShell (`capture-tool`), and Stop (`capture-stop`).
 2. `~/.stealthlab/exec.json` lists the cheap models (gemma-4-31b-it, gpt-oss-120b, minimax-m2-7 on General Compute)
    with their `key_env`. The key itself is never in the file.
-3. Per repo, `stealthlab-mcp survey` creates `.stealth/`. This is **manual today**; an automatic survey is queued.
+3. Per repo, `stealthlab-mcp survey` creates `.kell/`. This is **manual today**; an automatic survey is queued.
 
 ### Every prompt
 
 4. **Prompt hook:** refreshes the token, then runs triage (should this prompt be looked up?) and, if so,
    `find_ways` on the server with:
    - the prompt;
-   - `.stealth` facts and the library payload;
+   - `.kell` facts and the library payload;
    - `my_model` (the session model);
    - the candidates: the open models from exec.json. Other Claude models are dropped when open models exist.
 5. **Server:**
@@ -210,7 +210,7 @@ Claude Code, `stealthlab-mcp install --with-exec`, without the global library.
    - Hybrid lexical + vector search for Goals, each candidate judged against the request and repo facts (JEV);
      bounded hierarchy expansion; related examples; matches against the repo's own `library.md`.
    - Knowledge is returned only when the request resolves; nothing is stored except the request's kind.
-5. **Repo facts.** `.stealth/claims.md` and the units' claim pages break ties between Goals and procedures.
+5. **Repo facts.** `.kell/claims.md` and the units' claim pages break ties between Goals and procedures.
 6. **Routing (model plan).** Per Goal, or per virtual key (library entry / repo+kind / kind / generic):
    - the success model is a Bayesian prior: Thompson draws per request;
    - the target is **matched to the session model's own reliability**, with a tolerance;
@@ -247,9 +247,9 @@ Claude Code, `stealthlab-mcp install --with-exec`, without the global library.
 15. **Fallback note.** If nothing passed: one line, then Opus works as plain Claude Code.
 16. **Capture hooks.** Test verdicts from Bash/PowerShell; at Stop, a library entry and an outcome report through
     the **outbox** (retries offline).
-17. **Library** (`.stealth/library.md`). Solved problems with their check and diff, grouped into reusable
+17. **Library** (`.kell/library.md`). Solved problems with their check and diff, grouped into reusable
     Goals/Ways, plus semantic codes for Ways. Grows automatically from dispatch and capture.
-18. **Survey** (`stealthlab-mcp survey`). Scanner facts and a worklist for `.stealth`. **Manual today**; an
+18. **Survey** (`stealthlab-mcp survey`). Scanner facts and a worklist for `.kell`. **Manual today**; an
     automatic survey is queued.
 19. **Logs and ledgers:** `hooks.log`, `dispatch_costs.jsonl`, per-run `runs/<id>/` (events, patch, stdout),
     `provider_quota.json`.
@@ -333,8 +333,8 @@ Each item needs the owner's go-ahead.
    See 6.2.
 5. **Cursor dispatch:** either a blocking `beforeSubmitPrompt`, or a `solve_cheaply` MCP tool the Cursor rules
    call first. Prototype in `feat/cursor-dispatch`. Test with cursor-agent.
-6. **Long-horizon `.stealth` test:** a series of tasks in one repo, workspace and `.stealth` kept; arms A, C, and
-   C0 (`.stealth` wiped each task).
+6. **Long-horizon `.kell` test:** a series of tasks in one repo, workspace and `.kell` kept; arms A, C, and
+   C0 (`.kell` wiped each task).
    - Spider 2.0-DBT, locally: groups sharing a database (quickbooks 001-003, xero, f1 001-003, shopify, tickit, ...);
    - SWE-rebench / SWE-EVO / ADE-bench, on Modal with an API key.
 
@@ -353,7 +353,7 @@ Each item needs the owner's go-ahead.
 
 **B. Long, real repositories**
 
-1. Give the cheap models the relevant `.stealth` facts, library matches and file hints (today they get only the
+1. Give the cheap models the relevant `.kell` facts, library matches and file hints (today they get only the
    task text).
 2. Worktrees reuse the project's installed dependencies (`node_modules`, the venv), so checks can run.
 3. Run the tests related to the changed files first, and the full suite before accepting.
@@ -472,7 +472,7 @@ not run it). What "done" means for each:
   branch); `stealthlab-mcp undo` restores it. If any file the answer touches changed in the user's tree during the
   run, do not apply: report "not applied, you edited <file>". The block message states model, files, cost, and
   the undo command. `STEALTHLAB_DISPATCH_ASK=on` stops before applying and shows the diff summary instead.
-- 6.2 B1: the cheap models' task text gets the relevant `.stealth` facts and the judged library matches (the same
+- 6.2 B1: the cheap models' task text gets the relevant `.kell` facts and the judged library matches (the same
   ones find_ways returned), capped at 4 KB. B2: worktrees symlink/junction `node_modules` and reuse the project's
   venv instead of reinstalling. B3: run tests related to changed files first (fail fast), full check before
   accepting. B4 = L2 below. B5: size gating comes from A1's `size`.
@@ -499,7 +499,7 @@ earlier still added a median 99 s. Cheap wins add a median 22 s.
   runs that eventually PASSED that the rules would have stopped. (ii) must be 0 or the rule is too eager. Report
   both numbers in the commit message.
 - **L2. A time limit per kind of task**, learned from this repo's own cheap wins. Record each verified cheap
-  run's duration in `.stealth/routing.md` OBS lines (add `p90s=<seconds>`, the 90th percentile of that route's
+  run's duration in `.kell/routing.md` OBS lines (add `p90s=<seconds>`, the 90th percentile of that route's
   winning runs, last 20). Limit = clamp(2 x p90s, 60 s, today's limit (150 s + allowance)); with fewer than 5 wins
   on the route, keep today's limit. Proof, offline: from results, how many cheap wins would have been cut (must
   be 0 by construction on the data used) and the seconds saved on failures.
@@ -616,7 +616,7 @@ which in the results.
   - Do **not** add `--exclude-runs`, `--only`, or `--arms A`.
 - **State** (where arm C left off):
   - **the `kel_abtest` database:** arm C's routing memory from phase 1 and the first 7 phase 2 tasks;
-  - **the `.local/ws/C/{multiple-js,d2c,websight}` workspaces:** their `.stealth` libraries and routing.md;
+  - **the `.local/ws/C/{multiple-js,d2c,websight}` workspaces:** their `.kell` libraries and routing.md;
   - **`.local/C_home`:** exec.json copy, config `dispatch: true`, quota cache, specs, run logs;
   - **`.local/results/phase2.jsonl`:** A's 75 rows and C's first 7. The runner skips them.
 
@@ -784,7 +784,7 @@ results/verify1014e-p1.jsonl`, `verify1014e-p2.jsonl`, `verify1014f-p2.jsonl` (l
   test (`STEALTHLAB_DISPATCH_SHARED_FAIL_STOP`), explanation in parallel, 5 s quota probe timeout, 60 s per model call
   (`STEALTHLAB_AGENT_CALL_TIMEOUT_S`), cancelled runs waited for 5 s at most
 - image tasks go only to profiles with `vision: true` (none configured: Opus does them)
-- real user flow: a new git repo dispatches from its first prompt (creates `.stealth/`); a short request the knowledge
+- real user flow: a new git repo dispatches from its first prompt (creates `.kell/`); a short request the knowledge
   triage calls "not needed" still gets a model plan (hook + find_ways); a repeated request gets a plan from the cache
   path too; the brief sees the project's file names and files the prompt names; dispatch logs why it did not run
 - the brief parser accepts chat/question replies with an empty task (score_brief: 36/36, was 32/36)

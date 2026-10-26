@@ -1,5 +1,5 @@
 """
-G13 P4 -- `.stealth/exploration.md` (`app.stealth.exploration`): open
+G13 P4 -- `.kell/exploration.md` (`app.stealth.exploration`): open
 unknowns folded from the journal, pure filesystem, no database.
 """
 from __future__ import annotations

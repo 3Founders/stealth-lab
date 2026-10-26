@@ -2,7 +2,7 @@
 //
 //   1. list files (git ls-files, or a .gitignore-aware walk)          files.mjs
 //   2. resolve units: workspaces, nesting, zones, templates           units.mjs
-//   3. repository identity -> .stealth/meta.json                      identity.mjs
+//   3. repository identity -> .kell/meta.json                      identity.mjs
 //   4. deterministic facts -> claims.md / claims/<unit>.md            facts.mjs, claims.mjs
 //   5. validate every fact (scanner's and the agent's)                validate.mjs
 //   6. coverage per unit, the agent's worklist, units.idx, root.idx
@@ -55,7 +55,7 @@ export function runSurvey(rootArg, opts = {}) {
     process.stderr.write(`mem ${label}: rss ${mb(process.memoryUsage().rss)} MB heap ${mb(process.memoryUsage().heapUsed)} MB peak ${Math.round(process.resourceUsage().maxRSS / 1024)} MB\n`);
   };
   mem("start");
-  const sdir = path.join(root, ".stealth");
+  const sdir = path.join(root, ".kell");
   const read = (p) => readText(root, p);
 
   const listing = listFiles(root);

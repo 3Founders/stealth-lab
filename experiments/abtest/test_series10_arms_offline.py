@@ -16,7 +16,7 @@ from test_modal_series_offline import ENV_SUB, Proc, Recorder, fake_series, spec
 
 
 def populate(ws: Path) -> None:
-    d = ws / ".stealth"
+    d = ws / ".kell"
     (d / "survey").mkdir(parents=True)
     (d / "library" / "solutions").mkdir(parents=True)
     (d / "index").mkdir()
@@ -27,7 +27,7 @@ def populate(ws: Path) -> None:
 
 
 def left(ws: Path) -> set[str]:
-    d = ws / ".stealth"
+    d = ws / ".kell"
     return {str(p.relative_to(d)).replace(chr(92), "/") for p in d.rglob("*") if p.is_file()}
 
 
@@ -78,8 +78,8 @@ def test_the_survey_runs_once_in_the_arms_that_keep_facts_and_never_in_c0(tmp_pa
 
     def fake_run(cmd, **kw):
         calls.append(cmd)
-        (tmp_path / ".stealth").mkdir(exist_ok=True)
-        (tmp_path / ".stealth" / "claims.md").write_text("CLAIM|a|b|c|d|e|f" + chr(10) + "CLAIM|g|h|i|j|k|l" + chr(10), encoding="utf-8")
+        (tmp_path / ".kell").mkdir(exist_ok=True)
+        (tmp_path / ".kell" / "claims.md").write_text("CLAIM|a|b|c|d|e|f" + chr(10) + "CLAIM|g|h|i|j|k|l" + chr(10), encoding="utf-8")
         return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
@@ -90,7 +90,7 @@ def test_the_survey_runs_once_in_the_arms_that_keep_facts_and_never_in_c0(tmp_pa
     assert "survey" in calls[0] and "--fill" not in calls[0], "the survey is local and uses no model"
     assert runner.setup_survey("C-R", tmp_path, {}) is None and len(calls) == 1, "a resume does not run it twice"
     runner.wipe_stealth(tmp_path, "C-R")
-    assert (tmp_path / ".stealth" / ".series_survey.json").exists(), "the record of the survey survives the wipe"
+    assert (tmp_path / ".kell" / ".series_survey.json").exists(), "the record of the survey survives the wipe"
 
 
 def test_the_runner_refuses_series_only_arms_without_a_series(monkeypatch):

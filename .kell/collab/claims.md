@@ -1,5 +1,5 @@
 # claims.md -- facts about the organization-key and developer-join work in the StealthLab repository
-# Hand-written 2026-10-21 for collaboration; it is the only .stealth content tracked in git (see .gitignore, .stealth/collab/).
+# Hand-written 2026-10-21 for collaboration; it is the only .kell content tracked in git (see .gitignore, .kell/collab/).
 # Format: CLAIM|<id>|<status>|<topic>|repository|<statement>|source=<path>:<line>#sha=<sha7 of the file's blob>|version=1
 # Ids are O-<n>. If a fact turns false, set that line to status=stale and append the corrected fact; never edit in place.
 
@@ -16,7 +16,7 @@ CLAIM|O-010|current|decisions|repository|Everyone who redeems an invite joins as
 CLAIM|O-011|current|env|repository|Running the organization-key flow needs ORG_KEY_ENCRYPTION_KEY (base64 of 32 random bytes) and PUBLIC_API_URL in backend/.env; without the first the key routes answer 503 and without the second join refuses.|source=backend/app/config.py:81#sha=988451a|version=1
 CLAIM|O-012|current|test|repository|The offline backend tests for organization keys and onboarding are in backend/tests/test_org_onboarding_offline.py, using a hand-rolled FakePool that answers by SQL text; they do not prove row-level security or the single-use invite update, which need a real database.|source=backend/tests/test_org_onboarding_offline.py:86#sha=5b180c7|version=1
 CLAIM|O-013|current|test|repository|The client tests for join are in packaging/npm/test/join.test.mjs and include running the whole command against a stub HTTP server.|source=packaging/npm/test/join.test.mjs:156#sha=6b37488|version=1
-CLAIM|O-014|current|issues|repository|The Cursor hook code says the prompt (up to 1,500 characters) and .stealth/claims.md are sent to the StealthLab endpoint, while packaging/npm/README.md says only run-report fields leave the machine; the two statements have not been reconciled.|source=packaging/npm/lib/cursor_hooks.mjs:32#sha=11ba4ec|version=1
+CLAIM|O-014|current|issues|repository|The Cursor hook code says the prompt (up to 1,500 characters) and .kell/claims.md are sent to the StealthLab endpoint, while packaging/npm/README.md says only run-report fields leave the machine; the two statements have not been reconciled.|source=packaging/npm/lib/cursor_hooks.mjs:32#sha=11ba4ec|version=1
 CLAIM|O-015|current|issues|repository|The MCP server and the REST API are separate services, so join needs both --url (MCP, for sign-in and hooks) and --api (REST, for join and the gateway).|source=packaging/npm/bin/stealthlab-mcp.mjs:288#sha=dc56695|version=1
 CLAIM|O-016|current|absent|repository|There is no removal of a member, change of role or SSO/SCIM provisioning for an organization, so a person who left keeps access until a database edit.|source=backend/app/services/org_governance.py:514#sha=8a2ab73|version=1
 CLAIM|O-017|current|absent|repository|The organization key store is registered only in the REST API process, not in the separate MCP server process, so MCP call_model does not see organization keys.|source=backend/app/main.py:71#sha=9c57d54|version=1

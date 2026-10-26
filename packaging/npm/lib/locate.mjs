@@ -6,9 +6,9 @@
 // Sources, all local and model-free (fast, and nothing leaves the machine):
 //   1. the code itself: `git grep` for the identifiers, file names and quoted messages the task mentions; a term found
 //      in few files counts more than one found everywhere, and a definition (def/class/function) more than a use;
-//   2. .stealth/library.md through index/terms.idx: problems already solved here whose terms the task shares -- the
+//   2. .kell/library.md through index/terms.idx: problems already solved here whose terms the task shares -- the
 //      files their diffs touched (a repo's own past fixes are the strongest hint where the next one goes);
-//   3. .stealth/claims.md and claims/*.md: facts whose statement names a task term, at their cited source= file.
+//   3. .kell/claims.md and claims/*.md: facts whose statement names a task term, at their cited source= file.
 // -> {spots: [{file, start, end, symbol}], files, testFile, terms} (spots empty when nothing was found).
 // STEALTHLAB_DISPATCH_LOCATE=off turns it off.
 import fs from "node:fs";
@@ -70,9 +70,9 @@ function git(root, args, timeout = 15000) {
 }
 
 // term -> Map(file -> [{line, def}])
-// paths never searched: docs, generated and vendored trees, the .stealth notes (a minified docs/search.js matched on
+// paths never searched: docs, generated and vendored trees, the .kell notes (a minified docs/search.js matched on
 // one multi-megabyte line overflowed the output and the whole lookup came back empty -- sqlglot, 2026-10-16)
-const GREP_EXCLUDES = [":(exclude).stealth", ":(exclude)docs", ":(exclude)doc", ":(exclude)node_modules", ":(exclude)vendor",
+const GREP_EXCLUDES = [":(exclude).kell", ":(exclude)docs", ":(exclude)doc", ":(exclude)node_modules", ":(exclude)vendor",
   ":(exclude)dist", ":(exclude)build", ":(glob,exclude)**/*.min.js", ":(glob,exclude)**/*.map", ":(glob,exclude)**/*.html",
   ":(glob,exclude)**/*.lock", ":(glob,exclude)**/package-lock.json"];
 
@@ -102,7 +102,7 @@ function readLines(file) { try { return fs.readFileSync(file, "utf8").split(/\r?
 
 // Files the library's past fixes touched, for the task terms the back-of-book index lists (lower-case terms).
 function libraryFiles(root, terms) {
-  const sdir = path.join(root, ".stealth");
+  const sdir = path.join(root, ".kell");
   const idx = readLines(path.join(sdir, "index", "terms.idx"));
   if (!idx) return new Map();
   const want = new Set(terms.flatMap(({ term }) => [term.toLowerCase(), path.posix.basename(term.toLowerCase())]));
@@ -122,7 +122,7 @@ function libraryFiles(root, terms) {
 
 // Files that survey facts naming a task term cite (CLAIM lines: ...|<statement>|source=<path>:<line>...).
 function claimFiles(root, terms) {
-  const sdir = path.join(root, ".stealth");
+  const sdir = path.join(root, ".kell");
   const pages = [path.join(sdir, "claims.md")];
   try { for (const f of fs.readdirSync(path.join(sdir, "claims"))) if (f.endsWith(".md")) pages.push(path.join(sdir, "claims", f)); } catch { /* one page */ }
   const lower = terms.filter((t) => t.kind !== "message").map((t) => t.term.toLowerCase());

@@ -18,7 +18,7 @@ function setup() {
   const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   fs.writeFileSync(path.join(repo, "calc.py"), "def add(a, b):\n    return a - b\n");
-  fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell")); fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return { env: { STEALTHLAB_HOME: home, STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off",
                   STEALTHLAB_DISPATCH_TESTFIRST: "on", STEALTHLAB_DISPATCH_GATE: "off",

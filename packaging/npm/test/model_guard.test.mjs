@@ -208,7 +208,7 @@ import { recordLocalObs } from "../lib/capture_hook.mjs";
 
 function stealthWorkspace() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-ws-"));
-  fs.mkdirSync(path.join(dir, ".stealth"));
+  fs.mkdirSync(path.join(dir, ".kell"));
   return dir;
 }
 
@@ -226,7 +226,7 @@ test("report_result and finished executor runs write one OBS line per attempt, w
   onPlanReport({ session_id: "o1", tool_name: "mcp__stealthlab__report_result",
     tool_input: { instance_key: "g1.cd34", accepted: true },                // the rung now in force: Sonnet
     tool_response: [{ type: "text", text: JSON.stringify({ status: "accepted" }) }] }, { env });
-  const obs = fs.readFileSync(path.join(ws, ".stealth", "routing.md"), "utf8").split("\n").filter((l) => l.startsWith("OBS|"));
+  const obs = fs.readFileSync(path.join(ws, ".kell", "routing.md"), "utf8").split("\n").filter((l) => l.startsWith("OBS|"));
   assert.equal(obs.length, 2);
   assert.ok(obs.some((l) => l.includes("|glm-5.3|stealth|n=1|ok=0|")));
   assert.ok(obs.some((l) => l.includes("|claude-sonnet-4-5|claude-code|n=1|ok=1|")));

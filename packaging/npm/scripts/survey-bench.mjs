@@ -71,7 +71,7 @@ let dir;
 if (mode === "synth") dir = synth(Number(a), Number(b || 500));
 else if (mode === "repo") dir = path.resolve(a);
 else { console.error("usage: survey-bench.mjs synth <files> [packages] | repo <path>"); process.exit(2); }
-fs.rmSync(path.join(dir, ".stealth"), { recursive: true, force: true });
+fs.rmSync(path.join(dir, ".kell"), { recursive: true, force: true });
 const cold = timeSurvey(dir);
 const warm = timeSurvey(dir);
 const out = { mode, dir, cold, incremental: warm };

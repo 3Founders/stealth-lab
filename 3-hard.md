@@ -13,9 +13,9 @@ contracts are shared by all four, so read §0, §5 and §6 before changing any o
 | Fork | Branch, already merged here | Goal |
 |---|---|---|
 | A | `feat/routing-priors` | `find_ways` picks a model **by default** and knows something before any of our own data: model cards and public benchmark results enter the Bayesian router |
-| B | `feat/library` | `.stealth/library.md` (this repo's solved problems + diffs), `routing.md`, SUMMARY and indexes; `find_ways` takes the repo's own library and local results |
+| B | `feat/library` | `.kell/library.md` (this repo's solved problems + diffs), `routing.md`, SUMMARY and indexes; `find_ways` takes the repo's own library and local results |
 | C | `feat/survey` | A deterministic `stealthlab-mcp survey` scanner that handles every repo shape (monorepos etc.) and writes cited facts + repo identity |
-| D | `feat/local-eval` | An experiment that proves (or disproves) that local `.stealth` context alone pays off, with enterprise and global knowledge as extra arms |
+| D | `feat/local-eval` | An experiment that proves (or disproves) that local `.kell` context alone pays off, with enterprise and global knowledge as extra arms |
 
 How the merge was done:
 - Order: C, B, A, D.
@@ -187,7 +187,7 @@ How the merge was done:
 - dataset SWE-rebench-V2;
 - 322 scored tasks with a cap of 8 per repo;
 - agent model gpt-oss-120b;
-- four arms: none / local `.stealth` / + enterprise / + global.
+- four arms: none / local `.kell` / + enterprise / + global.
 
 It has:
 - task builder, notes per arm (`build_notes.py`, `history.py`; the `survey` provider runs fork C's
@@ -265,7 +265,7 @@ use; **(C)** = Chaitanya; **(Agent)** = an agent session. Details for each item 
       harness runs one fixed model.
 - [ ] 3. (Agent drafted 2026-10-09: experiments/local_eval/ROUTING_PREREGISTRATION.md + routing.json; Owner fills the
       [bracketed] choices and approves) Pre-registration for the routing test, frozen before any run:
-      - **arms:** none / .stealth knowledge / knowledge + routing at targets 0.7, 0.8, 0.9 / always-strong /
+      - **arms:** none / .kell knowledge / knowledge + routing at targets 0.7, 0.8, 0.9 / always-strong /
         always-cheap;
       - **models;**
       - **budget;**

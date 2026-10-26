@@ -13,9 +13,9 @@ import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const routing = (root) => fs.readFileSync(path.join(root, ".stealth", "routing.md"), "utf8");
+const routing = (root) => fs.readFileSync(path.join(root, ".kell", "routing.md"), "utf8");
 const winLines = (root) => routing(root).split("\n").filter((l) => l.startsWith("WIN|"));
-const stealthRoot = () => { const r = tmp("mc-root-"); fs.mkdirSync(path.join(r, ".stealth")); return r; };
+const stealthRoot = () => { const r = tmp("mc-root-"); fs.mkdirSync(path.join(r, ".kell")); return r; };
 
 // ---- recording ------------------------------------------------------------------------------------------------------------
 
@@ -111,7 +111,7 @@ function setup(envExtra = {}) {
   const root = tmp("mc-repo-");
   const g = (...a) => execFileSync("git", ["-C", root, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
-  fs.mkdirSync(path.join(root, ".stealth"));
+  fs.mkdirSync(path.join(root, ".kell"));
   fs.writeFileSync(path.join(root, "calc.py"), "x = 1\n");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return { root, env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",

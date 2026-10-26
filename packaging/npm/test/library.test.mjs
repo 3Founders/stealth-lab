@@ -23,7 +23,7 @@ function tmpRepo({ git = true } = {}) {
     g("config", "user.name", "t");
     g("config", "core.autocrlf", "false");
   }
-  fs.mkdirSync(path.join(dir, ".stealth"), { recursive: true });
+  fs.mkdirSync(path.join(dir, ".kell"), { recursive: true });
   return dir;
 }
 
@@ -91,10 +91,10 @@ test("a real git union merge of two branches keeps every entry", { skip: !hasGit
 
 test("buildIndex writes canonical library.md, idx, terms, SUMMARY and git files; ensureIndex heals a stale idx", () => {
   const root = tmpRepo({ git: false });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("union_merged.md"));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("union_merged.md"));
   const r = L.buildIndex(root);
   assert.equal(r.entries, 3);
-  const s = (f) => fs.readFileSync(path.join(root, ".stealth", f), "utf8");
+  const s = (f) => fs.readFileSync(path.join(root, ".kell", f), "utf8");
   assert.equal(s("library.md"), fx("canonical.md"));
   assert.equal(s("index/library.idx"), fx("canonical.idx"));
   assert.match(s("index/terms.idx"), /^csv\|L-b00c1e$/m);
@@ -103,7 +103,7 @@ test("buildIndex writes canonical library.md, idx, terms, SUMMARY and git files;
   assert.ok(Buffer.byteLength(s("SUMMARY.md")) <= L.SUMMARY_MAX_BYTES);
   assert.match(s("SUMMARY.md"), /Library: 3 solved here/);
   // someone appends an entry by hand: the idx no longer matches and is rebuilt on the next read
-  fs.appendFileSync(path.join(root, ".stealth", "library.md"), "\n" + L.renderGoalLine(entry("L-abcdef", { title: "New" })) + "\n");
+  fs.appendFileSync(path.join(root, ".kell", "library.md"), "\n" + L.renderGoalLine(entry("L-abcdef", { title: "New" })) + "\n");
   assert.equal(L.ensureIndex(root).rebuilt, true);
   assert.ok(L.readEntry(root, "L-abcdef").lines[0].startsWith("GOAL|L-abcdef|"));
   assert.equal(L.ensureIndex(root).rebuilt, false);
@@ -111,9 +111,9 @@ test("buildIndex writes canonical library.md, idx, terms, SUMMARY and git files;
 
 test("readEntry recovers when a range is wrong but source_sha was forged", () => {
   const root = tmpRepo({ git: false });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("canonical.md"));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("canonical.md"));
   L.buildIndex(root);
-  const idxFile = path.join(root, ".stealth", "index", "library.idx");
+  const idxFile = path.join(root, ".kell", "index", "library.idx");
   fs.writeFileSync(idxFile, fs.readFileSync(idxFile, "utf8").replace("|15|18|", "|2|3|"));
   const got = L.readEntry(root, "L-b00c1e");
   assert.equal(got.via, "rebuilt-idx");
@@ -124,11 +124,11 @@ test("SUMMARY stays under 3 KB for a large monorepo library", () => {
   const root = tmpRepo({ git: false });
   const many = Array.from({ length: 300 }, (_, i) => entry(`L-${(0x100000 + i).toString(16)}`,
     { title: `A long problem title number ${i} about something in packages that matters a lot`, unit: `packages/p${i}` }));
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), L.renderLibrary(many).slice(0, 60000));
-  fs.mkdirSync(path.join(root, ".stealth", "index"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "index", "units.idx"), many.map((e) => e.unit).join("\n") + "\n");
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), L.renderLibrary(many).slice(0, 60000));
+  fs.mkdirSync(path.join(root, ".kell", "index"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "index", "units.idx"), many.map((e) => e.unit).join("\n") + "\n");
   L.buildIndex(root);
-  const text = fs.readFileSync(path.join(root, ".stealth", "SUMMARY.md"), "utf8");
+  const text = fs.readFileSync(path.join(root, ".kell", "SUMMARY.md"), "utf8");
   assert.ok(Buffer.byteLength(text) <= L.SUMMARY_MAX_BYTES);
   assert.match(text, /Units: 300 in 1 groups: packages\/ 300/);
 });
@@ -151,7 +151,7 @@ test("write-back records touches, refuses a failing check, and staleness marks e
   assert.match(e.id, /^L-[0-9a-f]{6}$/);
   assert.equal(e.verified_at, new Date().toISOString().slice(0, 10));
   assert.deepEqual(e.procs[0].touches.map((t) => t.path).sort(), ["a.py", "b.py"]);
-  assert.ok(fs.existsSync(path.join(root, ".stealth", "library", `solutions/${e.id}.diff`)));
+  assert.ok(fs.existsSync(path.join(root, ".kell", "library", `solutions/${e.id}.diff`)));
   assert.deepEqual(L.checkStaleness(root), []);
 
   fs.writeFileSync(path.join(root, "a.py"), "x = 3\n");
@@ -181,14 +181,14 @@ test("routes are upserted per (route, step), OBS counted in place, payload carri
   L.recordObs(root, "R-b00c1e", "a", "s", true);
   L.recordObs(root, "R-b00c1e", "a", "s", false);
   L.upsertRoutes(root, [line(2)]);
-  const { routes, obs } = L.parseRouting(fs.readFileSync(path.join(root, ".stealth", "routing.md"), "utf8"));
+  const { routes, obs } = L.parseRouting(fs.readFileSync(path.join(root, ".kell", "routing.md"), "utf8"));
   assert.deepEqual(routes.map((r) => r.fit), ["2"]);
   assert.deepEqual(obs.map((o) => [o.n, o.ok]), [[2, 1]]);
   assert.equal(L.ensureRoute(root, GID), "R-b00c1e");
   assert.match(L.ensureRoute(root, "11111111-1111-4111-8111-111111111111"), /^R-[0-9a-f]{6}$/);
 
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("canonical.md"));
-  fs.writeFileSync(path.join(root, ".stealth", "meta.json"),
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("canonical.md"));
+  fs.writeFileSync(path.join(root, ".kell", "meta.json"),
     JSON.stringify({ repo_identity: { repo_id: "r:0123456789abcdef", public_name: "o/n" } }));
   const p = L.requestPayload(root, { env: {} });
   assert.equal(p.library_rows.split("\n").filter(Boolean).length, 3);
@@ -198,7 +198,7 @@ test("routes are upserted per (route, step), OBS counted in place, payload carri
     { repo_id: "r:0123456789abcdef", public_name: "o/n" });
 });
 
-test("no .stealth library: the payload is empty (find_ways unchanged)", () => {
+test("no .kell library: the payload is empty (find_ways unchanged)", () => {
   const root = tmpRepo({ git: false });
   assert.deepEqual(L.requestPayload(root, { env: {} }), {});
 });
@@ -208,9 +208,9 @@ test("no .stealth library: the payload is empty (find_ways unchanged)", () => {
 test("formatKnowledge puts this repo's library match (steps + local diff) before global knowledge", async () => {
   const { formatKnowledge } = await import("../lib/hook.mjs");
   const root = tmpRepo({ git: false });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("canonical.md"));
-  fs.mkdirSync(path.join(root, ".stealth", "library", "solutions"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "library", "solutions", "L-b00c1e.diff"), "+++ b/packages/api/export.py\n+import csv\n");
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("canonical.md"));
+  fs.mkdirSync(path.join(root, ".kell", "library", "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "library", "solutions", "L-b00c1e.diff"), "+++ b/packages/api/export.py\n+import csv\n");
   const reply = { outcome: "resolved", procedures: [{ name: "Global way", steps: [{ do: "do the global thing" }] }],
     library_matches: [{ id: "L-b00c1e", title: "Make the CSV export handle commas inside quoted fields", unit: "packages/api",
       outcome: "pass", status: "stale", verified_at: "2026-10-05", judged: true, relation: "matches", confidence: 0.9 }] };
@@ -248,14 +248,14 @@ test("capture Stop counts a resolved lookup's verdict as a local OBS, without a 
     tests: [{ verdict: false }, { verdict: true }, { verdict: null }] };
   assert.equal(recordLocalObs(s, "claude-sonnet-5-5"), true);
   assert.equal(recordLocalObs(s, "claude-sonnet-5-5"), false);             // once per prompt
-  const { routes, obs } = L.parseRouting(fs.readFileSync(path.join(root, ".stealth", "routing.md"), "utf8"));
+  const { routes, obs } = L.parseRouting(fs.readFileSync(path.join(root, ".kell", "routing.md"), "utf8"));
   assert.equal(routes[0].g, GID);
   assert.deepEqual(obs.map((o) => [o.route, o.model, o.scaffold, o.n, o.ok]), [[routes[0].id, "claude-sonnet-5-5", "claude-code", 1, 1]]);
-  // a near-miss Goal ("suggested") is not this Goal: never counted; no .stealth: nothing written
+  // a near-miss Goal ("suggested") is not this Goal: never counted; no .kell: nothing written
   assert.equal(recordLocalObs({ ...s, obs_recorded: false, lookup: { outcome: "suggested", goal_id: GID } }, "m"), false);
   const bare = fs.mkdtempSync(path.join(os.tmpdir(), "no-stealth-"));
   assert.equal(recordLocalObs({ ...s, obs_recorded: false, cwd: bare }, "m"), false);
-  assert.equal(fs.existsSync(path.join(bare, ".stealth")), false);
+  assert.equal(fs.existsSync(path.join(bare, ".kell")), false);
 });
 
 test("library CLI: add, show, obs, payload round trip", { skip: !hasGit }, async () => {
@@ -289,19 +289,19 @@ test("survey-mined entries keep their extra fields, unknown shas are unverifiabl
     "PROC|L-1a2b3c4.p1|fix: off by one in paginate|p=-|solution=solutions/L-1a2b3c4.diff|touches=a.py#sha=-|diff=truncated",
     "STEP|L-1a2b3c4.p1:1|action|fix: off by one in paginate|check=tests:pytest",
   ].join("\n");
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), mined + "\n");
-  fs.mkdirSync(path.join(root, ".stealth", "index"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "index", "units.idx"),
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), mined + "\n");
+  fs.mkdirSync(path.join(root, ".kell", "index"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "index", "units.idx"),
     "# units\nUNIT|root|.|kind=python\nUNIT|api|packages/api|kind=node|page=claims/api.md\n");
   L.buildIndex(root);
-  const text = fs.readFileSync(path.join(root, ".stealth", "library.md"), "utf8");
+  const text = fs.readFileSync(path.join(root, ".kell", "library.md"), "utf8");
   assert.match(text, /\|tags=-\|commit=1a2b3c4d5e$/m);
   assert.match(text, /\|touches=a\.py#sha=-\|diff=truncated$/m);
   assert.deepEqual(L.checkStaleness(root), [{ id: "L-1a2b3c4", status: "current", unverifiable: ["a.py (no recorded sha)"] }]);
-  assert.match(fs.readFileSync(path.join(root, ".stealth", "SUMMARY.md"), "utf8"), /^Units: 2: \., packages\/api$/m);
+  assert.match(fs.readFileSync(path.join(root, ".kell", "SUMMARY.md"), "utf8"), /^Units: 2: \., packages\/api$/m);
 });
 
-test("findStealthRoot finds .stealth from a sub-directory, and null outside one", () => {
+test("findStealthRoot finds .kell from a sub-directory, and null outside one", () => {
   const root = tmpRepo({ git: false });
   const sub = path.join(root, "packages", "api", "src");
   fs.mkdirSync(sub, { recursive: true });
@@ -311,8 +311,8 @@ test("findStealthRoot finds .stealth from a sub-directory, and null outside one"
 
 test("share drafts a submit_way call from an entry, never the diff or paths", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-share-"));
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), [
     "GOAL|L-0a91f2|Fix KeyError when the config has no db section|unit=services/api|g=-|outcome=pass|status=current|verified_at=2026-08-02|route=R-00aa11|tags=config",
     "PROC|L-0a91f2.p1|Default the section|p=-|solution=solutions/L-0a91f2.diff|touches=src/secret_loader.py#sha=77aa001",
     "STEP|L-0a91f2.p1:1|action|Use config.get(\"db\", {})|check=pytest -q tests/test_config.py",
@@ -331,11 +331,11 @@ test("share drafts a submit_way call from an entry, never the diff or paths", ()
 
 test("task_features: fix sizes per entry and the repo median, numbers only", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-tf-"));
-  fs.mkdirSync(path.join(root, ".stealth", "library", "solutions"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".kell", "library", "solutions"), { recursive: true });
   const diff = (n) => [`diff --git a/src/a${n}.py b/src/a${n}.py`, "@@ -1 +1 @@", "-x", "+y", "+z",
                        "diff --git a/pkg/b.ts b/pkg/b.ts", "@@ -1 +1 @@", "+w"].join("\n");
-  fs.writeFileSync(path.join(root, ".stealth", "library", "solutions", "L-0a91f2.diff"), diff(1));
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+  fs.writeFileSync(path.join(root, ".kell", "library", "solutions", "L-0a91f2.diff"), diff(1));
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), [
     "GOAL|L-0a91f2|Fix it|unit=.|g=-|outcome=pass|status=current|verified_at=2026-08-02|route=-|tags=-",
     "PROC|L-0a91f2.p1|Way|p=-|solution=solutions/L-0a91f2.diff|touches=-",
     "GOAL|L-77d3e0|Failed|unit=.|g=-|outcome=fail|status=current|verified_at=2026-08-02|route=-|tags=-", ""].join("\n"));
@@ -384,8 +384,8 @@ test("linking reuses one Goal per problem and one Way per procedure, with conten
 
 test("goal parents: set, clear, and a cycle is refused", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-know-"));
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("linked.md"));
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("linked.md"));
   const [a, b] = L.loadLibrary(root).goals.map((g) => g.id);
   assert.equal(L.setGoalParent(root, a, b).parent, b);
   assert.throws(() => L.setGoalParent(root, b, a), /cannot be its own ancestor/);
@@ -396,8 +396,8 @@ test("goal parents: set, clear, and a cycle is refused", () => {
 
 test("linkLibrary migrates an unlinked file; addEntry attaches to an existing Way; payload names it", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-link-"));
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("canonical.md"));
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("canonical.md"));
   const r = L.linkLibrary(root);
   assert.ok(r.linked > 0 && r.goals >= 2 && r.ways >= 2);
   assert.equal(L.linkLibrary(root).linked, 0);
@@ -408,7 +408,7 @@ test("linkLibrary migrates an unlinked file; addEntry attaches to an existing Wa
   assert.equal(e.procs[0].way, way.id);
   const after = L.loadLibrary(root);
   assert.ok(after.goals.some((g) => g.id === e.goal));
-  assert.match(fs.readFileSync(path.join(root, ".stealth", "SUMMARY.md"), "utf8"), /Knowledge: \d+ goals/);
+  assert.match(fs.readFileSync(path.join(root, ".kell", "SUMMARY.md"), "utf8"), /Knowledge: \d+ goals/);
 });
 
 test("survey history mining keeps the knowledge lines", async () => {
@@ -423,8 +423,8 @@ test("survey history mining keeps the knowledge lines", async () => {
 
 test("codeWays: uncoded Ways get the server's code on their W line; vectors stay local; failures leave them uncoded", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "lib-codes-"));
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), fx("linked.md"));
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), fx("linked.md"));
   const ways = L.loadLibrary(root).ways;
   let sent;
   const fetchImpl = async (url, init) => {
@@ -441,15 +441,15 @@ test("codeWays: uncoded Ways get the server's code on their W line; vectors stay
   assert.ok(sent.body.items.every((it) => it.text.length > 0 && it.text.length <= 4000));
   const after = L.loadLibrary(root);
   assert.ok(after.ways.every((w) => /^c0\d\.1$/.test(w.code)));
-  assert.match(fs.readFileSync(path.join(root, ".stealth", "library.md"), "utf8"), /^W\|W-[0-9a-f]{8}\|.*\|code=c0\d\.1/m);
-  const kept = JSON.parse(fs.readFileSync(path.join(root, ".stealth", "index", "way_vectors.json"), "utf8"));
+  assert.match(fs.readFileSync(path.join(root, ".kell", "library.md"), "utf8"), /^W\|W-[0-9a-f]{8}\|.*\|code=c0\d\.1/m);
+  const kept = JSON.parse(fs.readFileSync(path.join(root, ".kell", "index", "way_vectors.json"), "utf8"));
   assert.equal(kept.version, "cb1-test");
   assert.equal(Object.keys(kept.vectors).length, ways.length);
-  assert.match(fs.readFileSync(path.join(root, ".stealth", ".gitignore"), "utf8"), /index\/way_vectors\.json/);
+  assert.match(fs.readFileSync(path.join(root, ".kell", ".gitignore"), "utf8"), /index\/way_vectors\.json/);
   assert.equal((await L.codeWays(root, { url: "https://h/mcp", token: "t", fetchImpl })).coded, 0);   // all coded
   const root2 = fs.mkdtempSync(path.join(os.tmpdir(), "lib-codes2-"));
-  fs.mkdirSync(path.join(root2, ".stealth"), { recursive: true });
-  fs.writeFileSync(path.join(root2, ".stealth", "library.md"), fx("linked.md"));
+  fs.mkdirSync(path.join(root2, ".kell"), { recursive: true });
+  fs.writeFileSync(path.join(root2, ".kell", "library.md"), fx("linked.md"));
   const down = await L.codeWays(root2, { url: "https://h/mcp", token: "t",
     fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({ error: "no codebook" }) }) });
   assert.equal(down.coded, 0);

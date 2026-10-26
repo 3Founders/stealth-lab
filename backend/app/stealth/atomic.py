@@ -1,5 +1,5 @@
 """
-Atomic filesystem writes for the `.stealth/` projection.
+Atomic filesystem writes for the `.kell/` projection.
 
 `atomic_write` is the same write-temp -> fsync -> `os.replace` pattern
 that `app.execution.stealth_projection._atomic_write` has always used

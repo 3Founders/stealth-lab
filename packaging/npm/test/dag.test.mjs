@@ -77,7 +77,7 @@ test("library: an entry's steps keep at= / gives= / needs=, and so does the Way 
   assert.deepEqual(readStepExtras(entry.procs[0].steps[1].extra).at, ["pkg/parser.py"]);
   const way = lib.ways.find((w) => w.id === entry.procs[0].way);
   assert.deepEqual(readStepExtras(way.steps[1].extra).needs, ["ArrayFilter"]);
-  assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /^S\|W-[0-9a-f]+:2\|action\|In pkg\/parser\.py[^\n]*\|at=pkg\/parser\.py\|gives=[^\n]*\|needs=ArrayFilter$/m);
+  assert.match(fs.readFileSync(path.join(repo, ".kell", "library.md"), "utf8"), /^S\|W-[0-9a-f]+:2\|action\|In pkg\/parser\.py[^\n]*\|at=pkg\/parser\.py\|gives=[^\n]*\|needs=ArrayFilter$/m);
 });
 
 test("nodeTask: this part, what is done, and the past fix's piece for the same file, within 12,000 characters", () => {
@@ -100,7 +100,7 @@ function gitRepo(files) {
   const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   for (const [f, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), text); }
-  fs.mkdirSync(path.join(repo, ".stealth"), { recursive: true }); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell"), { recursive: true }); fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return repo;
 }
@@ -185,7 +185,7 @@ test("a task in parts: planned from the similar past fix, part 2 starts from par
   assert.match(fs.readFileSync(path.join(repo, "pkg", "parser.py"), "utf8"), /ArraySlice\(\) if name == "SLICE"/);
   assert.match(fs.readFileSync(path.join(repo, "pkg", "expressions.py"), "utf8"), /class ArraySlice/);
   assert.match(d.text, /^Done in 2 parts by gemma-4-31b-it/);
-  const run = fs.readFileSync(path.join(repo, ".stealth", "run.md"), "utf8");
+  const run = fs.readFileSync(path.join(repo, ".kell", "run.md"), "utf8");
   assert.match(run, /^NODE\|N-2\|done\|The change in pkg\/parser\.py[^\n]*\|deps=N-1\|model=gemma-4-31b-it\|check=/m);
   const v = spawnSync(process.execPath, [path.resolve("bin/stealthlab-mcp.mjs"), "plan", "validate"], { cwd: repo, encoding: "utf8" });
   assert.equal(JSON.parse(v.stdout).ok, true, v.stdout);
@@ -305,7 +305,7 @@ test("each part's outcome counts for its model on the task's route (routing.md O
   const d = await dispatch({ payload: { cwd: repo, prompt: PROMPT }, reply: { model_plan: PLAN, ...judged(repo) }, root: repo, mine: "claude-opus-5-5|claude-code",
                              env: env(fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"))), runtime: rt });
   assert.equal(d.handled, true);
-  const routing = fs.readFileSync(path.join(repo, ".stealth", "routing.md"), "utf8");
+  const routing = fs.readFileSync(path.join(repo, ".kell", "routing.md"), "utf8");
   assert.match(routing, /^OBS\|R-[0-9a-f]+\|gemma-4-31b-it\|stealth\|n=2\|ok=2\|/m, routing);
 });
 
@@ -331,7 +331,7 @@ test("no similar fix, but the request asks for two things: one part each, locate
   assert.doesNotMatch(rt.calls[0].task, /Worked example/, "no past fix: no example");
   assert.match(d.text, /split the request into the things it asks for/);
   assert.match(fs.readFileSync(path.join(repo, "pkg", "parser.py"), "utf8"), /SLICE/);
-  assert.match(fs.readFileSync(path.join(repo, ".stealth", "run.md"), "utf8"), /# plan: the request's own parts/);
+  assert.match(fs.readFileSync(path.join(repo, ".kell", "run.md"), "utf8"), /# plan: the request's own parts/);
 });
 
 test("Claude Code's own messages in the prompt stream are not tasks: no lookup, no dispatch, no library title", async () => {

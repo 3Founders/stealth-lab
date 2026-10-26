@@ -20,7 +20,7 @@ const REPLY = {
 };
 const noWait = async () => {};
 
-// STEALTHLAB_HOME with the executor installed (dispatch: true, one open model) and a workspace with .stealth/.
+// STEALTHLAB_HOME with the executor installed (dispatch: true, one open model) and a workspace with .kell/.
 function setup({ installed = true, extra = {} } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "sl-cdisp-"));
   if (installed) {
@@ -28,7 +28,7 @@ function setup({ installed = true, extra = {} } = {}) {
     fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { ollama: { models: ["gemma-4"] } } }));
   }
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "sl-cws-"));
-  fs.mkdirSync(path.join(ws, ".stealth"));
+  fs.mkdirSync(path.join(ws, ".kell"));
   return { env: { STEALTHLAB_HOME: home, CLAUDE_CONFIG_DIR: path.join(home, "claude"), STEALTHLAB_HOOK_TRIAGE: "off",
                   STEALTHLAB_CAPTURE: "off", ...extra }, ws };
 }
@@ -103,7 +103,7 @@ test("nothing passed: the prompt goes on and the agent gets what was tried plus 
   assert.deepEqual(await onPostToolUse({ conversation_id: "c1", tool_name: "Read" }, { env, wait: noWait }), {});
 });
 
-test("not applicable (no executor, no .stealth, auto model, short prompt): null, so the plain hook runs", async () => {
+test("not applicable (no executor, no .kell, auto model, short prompt): null, so the plain hook runs", async () => {
   const run = (env, p) => onBeforeSubmitPromptDispatch(p, { env, settings: SETTINGS, fetchImpl: fakeServer(REPLY),
     dispatchImpl: async () => { throw new Error("must not run"); } });
   const a = setup({ installed: false });
@@ -165,7 +165,7 @@ test("end to end with the real dispatch(): a stub executor's verified change is 
   const g = (...a) => execFileSync("git", ["-C", ws, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   fs.writeFileSync(path.join(ws, "calc.py"), "x = 1\n");
-  fs.writeFileSync(path.join(ws, ".stealth", ".keep"), "");
+  fs.writeFileSync(path.join(ws, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   const calls = [];
   const runtime = {

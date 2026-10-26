@@ -1,6 +1,6 @@
-# Phase 0 Audit — Simplifying the `.stealth/` local projection
+# Phase 0 Audit — Simplifying the `.kell/` local projection
 
-Scope: map the real current pipeline (source → ... → `.stealth/`) before touching any
+Scope: map the real current pipeline (source → ... → `.kell/`) before touching any
 code, per the "boring grep-able local projection" redesign request. Produced by reading
 `app/stealth/`, `app/execution/{durable_run,durable_resume,episode,recorder,stealth_projection}.py`,
 `app/services/{claim_extraction,skill_ingestion,relevant_claims,procedure_claim_refs,verification}.py`,
@@ -37,7 +37,7 @@ verification:
 evidence:
   evidence (migration 24) — append-only (DB trigger blocks DELETE, only t_invalid tombstone),
      target_type ∈ {claim, procedure, implementation}, direction ∈ {supports, contradicts}
-canonical DB → .stealth/ projection:
+canonical DB → .kell/ projection:
   app/stealth/generator.py::generate_projection(pool, workspace_root, procedure_run_id)
      reads execution_runs + get_run_context() + fetch_procedure_version() +
      evaluate_run_completion() + _fetch_file_intents()
@@ -80,7 +80,7 @@ canonical DB → .stealth/ projection:
    new REFINE/SUPPORT/INVALIDATE/NEW_SCOPE cases onto the *existing* `relate_claims`/evidence
    machinery, rather than inventing new storage.
 
-4. **`.stealth/events.jsonl` and the canonical `execution_run_events` table are unrelated
+4. **`.kell/events.jsonl` and the canonical `execution_run_events` table are unrelated
    today.** The projection generator never reads `execution_run_events`; `events.jsonl` only
    carries `projection_regenerated`/exploration bookkeeping. Per the task's §12 instruction
    to inspect before adding a second event system: the correct fix is a **bridge**, projecting
@@ -188,7 +188,7 @@ canonical DB → .stealth/ projection:
   `relate_claims`/mark dependent procedures stale via `procedure_claim_refs` STRONG_ROLES —
   this is new code, but it is an extension of existing tables, not a parallel system.
 - New bridge function: project a bounded tail of `execution_run_events` (for the active run)
-  into `.stealth/events.jsonl` at generation time — additive to `journal.py`, not a new event
+  into `.kell/events.jsonl` at generation time — additive to `journal.py`, not a new event
   store.
 
 **DELETE / DEPRECATE (only after callers migrate, per §22):**

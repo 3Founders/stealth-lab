@@ -1,7 +1,7 @@
 """
 Local project sync bridge -- the narrowly-scoped, capability-gated HTTP
 surface an authenticated keळ browser tab uses to discover and initially
-sync local `.stealth` projects. Design reference:
+sync local `.kell` projects. Design reference:
 docs/local_project_sync_security.md §C (protocol) and its "Implementation
 Closure" §1 (credentials) / §2 (discovery). Read both before changing this
 file -- this is the single most security-critical new surface this feature

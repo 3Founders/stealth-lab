@@ -9,7 +9,7 @@ each Procedure, so everything downstream (goal_knowledge, the hook) is unchanged
 The difference is how the judgment is made. The pairwise selector sends each
 candidate to the judge on its own, with the 5-20 facts closest to it. This one
 verbalizes the whole decision as numbered plain-language sentences -- the repo facts
-(`R-...` ids from `.stealth/claims.md`) and every candidate way (`W1..Wn`) with its
+(`R-...` ids from `.kell/claims.md`) and every candidate way (`W1..Wn`) with its
 purpose, requirements and steps -- and asks one general LLM to rank the ways
 *comparatively* and cite, per way, the facts that support or block it. Reasoning is
 done directly on sentences ("context engineering" instead of a hand-built schema).

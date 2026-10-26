@@ -1,6 +1,6 @@
 // What a cheap model is told about THIS repository besides the task.
 //
-// The cheap models used to get the task text and nothing else: not the facts the survey wrote to .stealth/claims.md (how the
+// The cheap models used to get the task text and nothing else: not the facts the survey wrote to .kell/claims.md (how the
 // tests are run, which module owns what), and not this repo's own earlier fix of the same problem that find_ways had just matched
 // (the library entry's steps and the diff that solved it). The session's own model already gets both in its context (lib/hook.mjs);
 // the models that actually do the task did not. This adds them to the task text: the survey's facts for the units the prompt is

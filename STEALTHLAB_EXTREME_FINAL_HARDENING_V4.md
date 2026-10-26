@@ -17,7 +17,7 @@ TaskGraph/PlanNode are runtime execution state only.
 Procedure↔Implementation is many-to-many and evidence/applicability scoped.
 MCP retrieval is not the endpoint: Stealth remains procedure-conditioned during execution.
 Verification is explicit and may include optional structured human review.
-`.stealth/` is a tiny generated working-set projection, not another knowledge store.
+`.kell/` is a tiny generated working-set projection, not another knowledge store.
 Hierarchical indexes are derived routing infrastructure, not canonical global Markdown.
 Multi-agent coordination is expressed in the execution graph + declared file intents.
 Production paths fail closed; missing knowledge/tool/evidence is never replaced by synthetic success.
@@ -348,7 +348,7 @@ Local learning preserves scope, owner/workspace, execution lineage, artifact ref
 The local agent-facing projection may contain:
 
 ```text
-.stealth/
+.kell/
   claims.md
   procedures.md
   implementations.md
@@ -405,10 +405,10 @@ sync cursors
 
 Raw repository files, raw traces, secrets, credentials, large tool outputs, and confidential artifacts remain in the workspace or approved local artifact store unless an explicit policy allows transfer.
 
-The agent-facing `.stealth/` directory is a GENERATED projection, not canonical storage. Keep it intentionally small:
+The agent-facing `.kell/` directory is a GENERATED projection, not canonical storage. Keep it intentionally small:
 
 ```text
-.stealth/
+.kell/
   context.md     # compact router + relevant local/global Claims + selected Procedure/run summary
   run.json       # machine-readable current run, node ownership, file intents, versions/cursors
   meta.json      # workspace/scope IDs, projection revision, hashes, sync cursor
@@ -2362,12 +2362,12 @@ outcome
 
 ## 36. Agent-facing working-set projection mechanism
 
-The `.stealth/` projection exists to reduce model context, not to mirror the database.
+The `.kell/` projection exists to reduce model context, not to mirror the database.
 
 Canonical form:
 
 ```text
-.stealth/
+.kell/
   context.md
   run.json
   meta.json
@@ -2376,12 +2376,12 @@ Canonical form:
 `context.md` is a small, regenerated, index-first projection containing only Claims, Procedures, Implementations, and coordination entries relevant to the current scope/run. It MUST support cheap navigation:
 
 ```text
-head .stealth/context.md
-grep -n 'claim:G-...' .stealth/context.md
-grep -n 'payments\|retry' .stealth/context.md
+head .kell/context.md
+grep -n 'claim:G-...' .kell/context.md
+grep -n 'payments\|retry' .kell/context.md
 ```
 
-The first router section MUST stay below a configured byte/token budget. When the working set exceeds that budget, partition by generated section files under `.stealth/index/` and keep the root router as pointers only. Do not make the agent load all partitions.
+The first router section MUST stay below a configured byte/token budget. When the working set exceeds that budget, partition by generated section files under `.kell/index/` and keep the root router as pointers only. Do not make the agent load all partitions.
 
 `run.json` is machine-readable and contains the exact ProcedureRun/Execution identifiers, current PlanNodes, node owners, dependencies, declared file read/write intents, status, verification state, and change cursor.
 
@@ -2503,7 +2503,7 @@ A25 canonical persistence
 A26 embedding/indexing
 A27 global SKILL refactor
 A28 local schema-aligned learning
-A29 `.stealth/` working-set projection
+A29 `.kell/` working-set projection
 A30 local/cloud sync + scope
 A31 publication hardening
 A32 golden ingestion E2E
@@ -3679,12 +3679,12 @@ The strongest satisfied state is derived from actual Evidence; it is not writabl
 
 ---
 
-## B35 — Low-context `.stealth/` projection
+## B35 — Low-context `.kell/` projection
 
 Use one compact human/agent-readable context file plus machine-readable runtime files:
 
 ```text
-.stealth/
+.kell/
   context.md
   run.json
   meta.json
@@ -3865,7 +3865,7 @@ G9  Procedure composition validation
 G10 Implementation Registry validation + Procedure↔Implementation many-to-many relation
 G11 Static/global ingestion refactor and corpus migration/backfill
 G12 Local schema-aligned learning + scope/private sync
-G13 `.stealth/` projection service
+G13 `.kell/` projection service
 G14 Global hierarchical retrieval/index freshness
 G15 `find_best_way` route + ProcedureRun contract
 G16 `continue_run` + bounded Claim working-set retrieval
@@ -4175,7 +4175,7 @@ A self-report MUST NOT satisfy an independently verifiable deterministic criteri
 
 Human review fixture MUST include reviewer, exact inspected targets, criterion answers, and Evidence ref.
 
-## T11 — `.stealth/` context-budget tests
+## T11 — `.kell/` context-budget tests
 
 Generate a workspace with thousands of Claims/Procedures.
 

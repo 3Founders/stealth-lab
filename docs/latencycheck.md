@@ -46,14 +46,14 @@ Report: triage ms, find_ways round trip ms, `plan_ms`, gate ms, total routing ms
 1. Claim the item on `.scratch/build-board.md` first, under the lane that owns `packaging/npm/` (the `ship:` lane unless the
    board says otherwise). Stay inside your lane's granted paths. If you need to edit outside them, file a board request.
 2. Add timing around the three steps. Keep it **off by default** and behind one environment variable
-   (for example `STEALTHLAB_ROUTING_TIMING=1`). When on, append one JSON line per prompt to a file under `.stealth/`, or
+   (for example `STEALTHLAB_ROUTING_TIMING=1`). When on, append one JSON line per prompt to a file under `.kell/`, or
    under the existing hooks log if there is one. Do not print to the user's prompt. Do not change any routing decision.
 3. Measure the real path. Start the MCP/API server locally. It failed to connect (ECONNREFUSED) in the last session, so
    `backend/scripts/start_mcp_local.ps1` is the place to start. Run at least **30 prompts** through the hook, and say which
    kinds you used:
    - code changes that should dispatch;
    - questions and chit-chat (triage returns a non-change verdict);
-   - a prompt in a repository with no `.stealth` root (no plan path).
+   - a prompt in a repository with no `.kell` root (no plan path).
 4. Run once with a warm server and once cold (first call after a restart). Report them separately. The Bayesian model load
    may dominate the cold number.
 5. Run the same prompts against a **remote** server if one is reachable. Otherwise state plainly that the numbers are

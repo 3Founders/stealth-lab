@@ -1,11 +1,11 @@
 // The first survey of a repo, started by the prompt hook itself.
 //
-// `stealthlab-mcp survey` writes .stealth/claims.md (cited facts about the repo) and a worklist; until it has run the
+// `stealthlab-mcp survey` writes .kell/claims.md (cited facts about the repo) and a worklist; until it has run the
 // lookups have no repo facts to break ties with, and a user who installed with `install --with-exec` never runs it by
 // hand. So the first prompt in a git repo starts it, once, DETACHED: the prompt never waits for it and a failure never
 // shows (the hook exits 0 whatever happens here).
 //
-// Once per repo = until .stealth/claims.md exists or the attempt marker .stealth/.auto-survey does (written before the
+// Once per repo = until .kell/claims.md exists or the attempt marker .kell/.auto-survey does (written before the
 // survey starts, so a survey that crashes is not retried on every prompt; delete the marker to try again). The survey
 // itself is local and uploads nothing. STEALTHLAB_AUTO_SURVEY=off turns this off.
 import fs from "node:fs";
@@ -44,7 +44,7 @@ export function maybeStartSurvey({ cwd, env = process.env, repoRootImpl = repoRo
     if (!autoSurveyEnabled(env)) return { started: false, reason: "off" };
     const root = repoRootImpl(cwd);
     if (!root) return { started: false, reason: "not a git repo" };
-    const dir = path.join(root, ".stealth");
+    const dir = path.join(root, ".kell");
     if (fs.existsSync(path.join(dir, "claims.md"))) return { started: false, reason: "already surveyed", root };
     const marker = path.join(dir, ".auto-survey");
     if (fs.existsSync(marker)) return { started: false, reason: "already attempted", root };

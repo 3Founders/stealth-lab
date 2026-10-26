@@ -175,7 +175,7 @@ function repoLayout(ctx, add, addSearch, text) {
     const kinds = {};
     for (const u of nonRoot) kinds[u.kind] = (kinds[u.kind] || 0) + 1;
     const desc = Object.entries(kinds).map(([k, n]) => `${n} ${k === "package" ? (n === 1 ? "package" : "packages") : k}`).join(", ");
-    addSearch(".", "layout", "units", `The repository has ${nonRoot.length} unit${nonRoot.length === 1 ? "" : "s"} besides the root (${desc}); .stealth/index/units.idx lists each with its path, kind and claims page`, "manifests and workspace declarations (stealthlab-mcp survey)");
+    addSearch(".", "layout", "units", `The repository has ${nonRoot.length} unit${nonRoot.length === 1 ? "" : "s"} besides the root (${desc}); .kell/index/units.idx lists each with its path, kind and claims page`, "manifests and workspace declarations (stealthlab-mcp survey)");
   }
   for (const z of zones) {
     const what = { vendored: "vendored third-party code", generated: "generated or build output", submodule: "a git submodule" }[z.kind];

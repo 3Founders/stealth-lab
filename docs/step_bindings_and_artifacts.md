@@ -78,7 +78,7 @@ The primary value sits under the kind's own key (`mcp_tool: "github.search"`); t
 `PlanNode.binding` is copied from the step at compile time (`procedure_graph._step_binding`); `step_binding.execute_node` dispatches on it
 (frontier when unbound). Goal trees (`goal_resolution`) have `chosen ∈ {step, procedure, unresolved}`: a step carrying a binding is an
 executable leaf; fallback is at Procedure level. Cost telemetry is per `(procedure_id, step_order)` in `step_execution_telemetry`.
-`execution_run_nodes.binding`, event `step_bound`, `plan_deviation` (`binding_diverged_from_plan`), `.stealth` run lines (`binding=`).
+`execution_run_nodes.binding`, event `step_bound`, `plan_deviation` (`binding_diverged_from_plan`), `.kell` run lines (`binding=`).
 
 ## Migration 98 and the fold
 

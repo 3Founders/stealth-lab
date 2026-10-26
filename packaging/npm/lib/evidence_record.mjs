@@ -1,10 +1,10 @@
-// Check evidence leaving a run: recorded locally (always, in .stealth/evidence.md) and, only when the user has switched upload on
+// Check evidence leaving a run: recorded locally (always, in .kell/evidence.md) and, only when the user has switched upload on
 // (STEALTHLAB_EVIDENCE_UPLOAD=on), reported to the server through the outbox (docs/evidence_upload_design.md).
 //
 // Rules this file keeps:
 //   * OFF BY DEFAULT. Nothing is built for the server, queued or sent unless STEALTHLAB_EVIDENCE_UPLOAD=on.
 //   * ONLY THE WHITELIST LEAVES. A report is lib/evidence_upload.mjs toUploadPayload(): ids, verdicts, keyed HMACs, blob shas,
-//     timestamps, where. Never the command text, a path, output or the reviewer's text. The key stays in .stealth/evidence.key.
+//     timestamps, where. Never the command text, a path, output or the reviewer's text. The key stays in .kell/evidence.key.
 //   * FAILS OPEN. An upload error, a missing key, an unsigned-in user: the run's result and every status are unchanged, and the
 //     report is queued in ~/.stealthlab/outbox/ and retried like the other reports.
 //   * NEVER A DELAY. The prompt-time caller (dispatch) only QUEUES (no network); `status --run` sends with a short bound.
@@ -31,11 +31,11 @@ export function clientVersion() {
   }
 }
 
-// The hashed repository identity the survey already writes (.stealth/meta.json repo_identity.repo_id) and already sends with
+// The hashed repository identity the survey already writes (.kell/meta.json repo_identity.repo_id) and already sends with
 // find_ways. Never a name or URL. null when the survey has not run.
 export function repoRefOf(root) {
   try {
-    const meta = JSON.parse(fs.readFileSync(path.join(root, ".stealth", "meta.json"), "utf8"));
+    const meta = JSON.parse(fs.readFileSync(path.join(root, ".kell", "meta.json"), "utf8"));
     const id = meta?.repo_identity?.repo_id;
     return REPO_REF.test(id || "") ? id : null;
   } catch {
@@ -83,7 +83,7 @@ export async function uploadRecords(root, records, { env = process.env, fetchImp
 
 // The evidence for an answer dispatch just accepted and recorded as library entry `entryId`: the check that passed
 // (deterministic_check), and, when the strong reviewer said the diff fixes the request AND it is not the model that wrote the
-// answer, that verdict (independent_agent). Both go to .stealth/evidence.md at the entry's touched-file hashes; with upload on they
+// answer, that verdict (independent_agent). Both go to .kell/evidence.md at the entry's touched-file hashes; with upload on they
 // are QUEUED for the outbox (no network, no wait). Never throws. -> {lines, upload}
 export async function recordAcceptedEvidence({ root, entryId, check, reviewerFixes = false, reviewerModel = null, executorModel = null,
   env = process.env, log = () => {}, now = () => new Date() }) {

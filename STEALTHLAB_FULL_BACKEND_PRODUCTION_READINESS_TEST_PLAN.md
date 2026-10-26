@@ -158,7 +158,7 @@ Procedure dependency.
 
 Unavailable real capability must fail honestly.
 
-### I13 --- `.stealth/` is projection, not canonical truth
+### I13 --- `.kell/` is projection, not canonical truth
 
 Canonical backend state remains authoritative.
 
@@ -552,14 +552,14 @@ Human review must require reviewer identity, target, criterion, answers,
 timestamp, evidence linkage, and bounded review packet. Bare approval
 must never bypass verification.
 
-## B35 --- `.stealth/` projection
+## B35 --- `.kell/` projection
 
 Verify bounded/atomic projection, revision metadata, canonical Postgres
 rehydration, no invented content, routing/navigation, Claims,
 Procedures, Implementations, run context, ownership, file intents, and
 symbols where required.
 
-`.stealth/` must remain a projection/cache, not a second canonical DB.
+`.kell/` must remain a projection/cache, not a second canonical DB.
 
 ## B36 --- Multi-agent coordination
 
@@ -684,7 +684,7 @@ Inject failures into:
 -   learning extraction
 -   publication
 -   index builds
--   `.stealth/` updates
+-   `.kell/` updates
 -   process termination
 -   lease expiry
 -   parent/child transitions
@@ -852,7 +852,7 @@ Verify trace IDs and parent/child IDs end-to-end.
 
 Verify logs/artifacts/transcripts do not unnecessarily become global,
 secrets are not leaked through errors, private data remains private,
-external responses are not accidentally published, and `.stealth/`
+external responses are not accidentally published, and `.kell/`
 cannot become an accidental exfiltration surface.
 
 ------------------------------------------------------------------------
@@ -1078,7 +1078,7 @@ Then explain.
   Security                                                           
   Durability                                                         
   Concurrency                                                        
-  `.stealth/`                                                        
+  `.kell/`                                                        
   Migrations                                                         
   Observability                                                      
   Performance                                                        

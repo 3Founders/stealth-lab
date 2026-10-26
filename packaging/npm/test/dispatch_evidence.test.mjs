@@ -20,9 +20,9 @@ function setup(extraEnv = {}) {
   const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n");
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
-  fs.writeFileSync(path.join(repo, ".stealth", "meta.json"), JSON.stringify({ repo_identity: { repo_id: "r:0123456789abcdef" } }));
+  fs.mkdirSync(path.join(repo, ".kell"));
+  fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
+  fs.writeFileSync(path.join(repo, ".kell", "meta.json"), JSON.stringify({ repo_identity: { repo_id: "r:0123456789abcdef" } }));
   g("add", "-A"); g("commit", "-q", "-m", "init");
   const env = { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "node -e 0", STEALTHLAB_DISPATCH_TESTFIRST: "off",
     STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_LOCATE_MODEL: "off",
@@ -55,13 +55,13 @@ test("an accepted answer leaves evidence for the library entry it created, local
   const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: stub(repo) });
   assert.equal(d.handled, true);
   assert.match(d.library_entry, /^L-[0-9a-f]+$/);
-  const lines = parseEvidence(fs.readFileSync(path.join(repo, ".stealth", "evidence.md"), "utf8"));
+  const lines = parseEvidence(fs.readFileSync(path.join(repo, ".kell", "evidence.md"), "utf8"));
   assert.equal(lines.length, 1, "the check; no reviewer ran under this rule, so no independent line");
   assert.deepEqual([lines[0].target, lines[0].method, lines[0].result, lines[0].where], [d.library_entry, "deterministic_check", "pass", "worktree"]);
   assert.equal(lines[0].check, "node -e 0");
   assert.ok(lines[0].hashes.some((h) => h.path === "calc.py"), "recorded at the file the answer changed");
   assert.equal(outbox(home).length, 0, "upload is off by default");
-  assert.equal(fs.existsSync(path.join(repo, ".stealth", "evidence.key")), false);
+  assert.equal(fs.existsSync(path.join(repo, ".kell", "evidence.key")), false);
 });
 
 test("with upload on, dispatch queues the report (no network, no wait) and the payload holds no command, path or diff", async () => {
@@ -82,7 +82,7 @@ test("with upload on, dispatch queues the report (no network, no wait) and the p
 
 test("an evidence failure never fails the answer: an unwritable evidence.md leaves the delivered result as it was", async () => {
   const { env, repo } = setup({ STEALTHLAB_EVIDENCE_UPLOAD: "on" });
-  fs.mkdirSync(path.join(repo, ".stealth", "evidence.md"));          // a directory where the file should be: appending fails
+  fs.mkdirSync(path.join(repo, ".kell", "evidence.md"));          // a directory where the file should be: appending fails
   const d = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: stub(repo) });
   assert.equal(d.handled, true, "the answer is delivered regardless");
   assert.match(d.library_entry, /^L-/);

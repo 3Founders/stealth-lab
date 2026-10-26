@@ -31,7 +31,7 @@ const localRoot = args.includes("--local-root") ? args[args.indexOf("--local-roo
 fs.mkdirSync(cache, { recursive: true });
 
 function allClaims(dir) {
-  const sdir = path.join(dir, ".stealth");
+  const sdir = path.join(dir, ".kell");
   const out = claimsOf(readPage(path.join(sdir, "claims.md")));
   try { for (const f of fs.readdirSync(path.join(sdir, "claims"))) out.push(...claimsOf(readPage(path.join(sdir, "claims", f)))); } catch { /* single page */ }
   return out;
@@ -94,7 +94,7 @@ for (const r of repos) {
   if (r.url !== "local" && r.url !== "cached" && !fs.existsSync(path.join(dir, ".git"))) {
     execFileSync("git", ["clone", "-q", "--depth", "1", r.url, dir], { stdio: "inherit" });
   }
-  fs.rmSync(path.join(dir, ".stealth"), { recursive: true, force: true });
+  fs.rmSync(path.join(dir, ".kell"), { recursive: true, force: true });
   const t0 = Date.now();
   const s = runSurvey(dir, { history: false });
   const ms = Date.now() - t0;

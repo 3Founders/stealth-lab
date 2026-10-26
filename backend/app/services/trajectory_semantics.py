@@ -108,7 +108,7 @@ class CandidateProcedureStep(BaseModel):
     tool_name: Optional[str] = None
     event_indices: list[int] = Field(default_factory=list)
     # What kind of step this is (plan = locate/understand/reproduce, edit = change code, verify = run a check), so
-    # per-step model routing and .stealth/run.md have something to key on; and how to tell the step worked.
+    # per-step model routing and .kell/run.md have something to key on; and how to tell the step worked.
     role: Optional[Literal["plan", "edit", "verify", "other"]] = None
     check: Optional[str] = None
 

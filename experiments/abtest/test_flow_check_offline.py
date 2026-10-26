@@ -40,7 +40,7 @@ class FakeHooks:
     def _dispatch(self, new_calc):
         self.stack.append((self.repo / "calc.py").read_text(encoding="utf-8"))
         (self.repo / "calc.py").write_text(new_calc, encoding="utf-8")
-        (self.repo / ".stealth").mkdir(exist_ok=True)
+        (self.repo / ".kell").mkdir(exist_ok=True)
         return fc.HookResult({"decision": "block", "reason": MSG}, self.flaws.get("secs", 41.0))
 
     def prompt(self, text):
@@ -134,14 +134,14 @@ def test_each_way_the_product_can_break_fails_its_own_step(tmp_path, flaw, step,
 def test_a_missing_first_dispatch_also_means_no_stealth_dir_and_failing_tests(tmp_path):
     by, _, _ = flow(tmp_path, no_dispatch_first=True)
     notes = " ".join(by["fix"].notes)
-    assert "do not pass" in notes and "did not get its .stealth/" in notes
+    assert "do not pass" in notes and "did not get its .kell/" in notes
 
 
 # ---------------------------------------------------------------- the sandbox
 
 def test_the_fresh_repo_is_a_real_git_repo_with_a_bug_no_stealth_dir_and_no_check(tmp_path):
     repo = fc.make_repo(tmp_path)
-    assert not (repo / ".stealth").exists() and not (repo / ".claude").exists()
+    assert not (repo / ".kell").exists() and not (repo / ".claude").exists()
     assert subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True).stdout == ""
     assert not fc.tests_pass(repo), "the bug is there: add() subtracts"
     assert fc.function_source(repo / "calc.py", "mul") == "def mul(a, b):\n    return a * b" and fc.function_source(repo / "calc.py", "nope") is None

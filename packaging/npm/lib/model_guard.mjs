@@ -238,10 +238,10 @@ export function reportedAttempts(payload, plan) {
   return m && s ? [{ model: m, scaffold: s, accepted: input.accepted }] : [];
 }
 
-// One OBS line per attempt in the workspace's .stealth/routing.md (what the next plan learns from), once each.
+// One OBS line per attempt in the workspace's .kell/routing.md (what the next plan learns from), once each.
 function recordAttempts(step, attempts) {
   const s = step.session;
-  if (!attempts.length || !s?.cwd || !s.lookup?.goal_id || !fs.existsSync(path.join(s.cwd, ".stealth"))) return 0;
+  if (!attempts.length || !s?.cwd || !s.lookup?.goal_id || !fs.existsSync(path.join(s.cwd, ".kell"))) return 0;
   s.obs_keys = s.obs_keys || [];
   let n = 0;
   for (const a of attempts) {

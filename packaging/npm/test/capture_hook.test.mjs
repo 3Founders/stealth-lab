@@ -204,8 +204,8 @@ function stealthRepo() {
   g("config", "user.email", "t@example.com");
   g("config", "user.name", "t");
   fs.writeFileSync(path.join(dir, "calc.py"), "def add(a, b):\n    return a - b\n");
-  fs.mkdirSync(path.join(dir, ".stealth"));
-  fs.writeFileSync(path.join(dir, ".stealth", "routing.md"), "");
+  fs.mkdirSync(path.join(dir, ".kell"));
+  fs.writeFileSync(path.join(dir, ".kell", "routing.md"), "");
   g("add", "-A");
   g("commit", "-q", "-m", "init");
   return dir;
@@ -224,13 +224,13 @@ test("library auto: a passing turn with a diff adds one verified entry (title, c
   const repo = stealthRepo();
   const out = solvedTurn(env, repo);
   assert.match(out.library_entry, /^L-[0-9a-f]+$/);
-  const lib = fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8");
+  const lib = fs.readFileSync(path.join(repo, ".kell", "library.md"), "utf8");
   assert.ok(lib.includes("Fix add() in calc.py"), "the prompt's first line is the title");
   assert.ok(!lib.includes("subtracts instead"), "only the first line");
   assert.ok(lib.includes("pytest -q tests/test_calc.py"), "the passing test command is the check");
-  const diff = fs.readFileSync(path.join(repo, ".stealth", "library", "solutions", `${out.library_entry}.diff`), "utf8");
+  const diff = fs.readFileSync(path.join(repo, ".kell", "library", "solutions", `${out.library_entry}.diff`), "utf8");
   assert.match(diff, /\+    return a \+ b/);
-  assert.ok(!diff.includes(".stealth/"), "the solution never includes .stealth's own files");
+  assert.ok(!diff.includes(".kell/"), "the solution never includes .kell's own files");
   const again = onStop({ session_id: "auto-1", transcript_path: transcript(env.STEALTHLAB_HOME) }, { env, hasToken: false });
   assert.equal(again.library_entry, undefined, "one entry per prompt");
 });
@@ -244,7 +244,7 @@ test("library auto: nothing is added for a failing or unknown verdict, no diff, 
   const env = { ...tmpEnv(), STEALTHLAB_LIBRARY_AUTO: "off" };
   const repo = stealthRepo();
   assert.equal(solvedTurn(env, repo, { sid: "off-1" }).library_entry, undefined);
-  assert.equal(fs.existsSync(path.join(repo, ".stealth", "library.md")), false);
+  assert.equal(fs.existsSync(path.join(repo, ".kell", "library.md")), false);
   const text = fs.readFileSync(sessionFile(env, "off-1"), "utf8");
   for (const s of ["Fix add", "pytest"]) assert.ok(!text.includes(s), `off: the session file keeps no ${s}`);
 });

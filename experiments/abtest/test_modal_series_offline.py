@@ -152,8 +152,8 @@ class Recorder:
             with results.open("a", encoding="utf-8") as f:
                 for arm in c.spec.arms[: (len(c.spec.arms) if rc == 0 else 1)]:
                     f.write(json.dumps({"task_id": task, "arm": arm, "status": "done" if rc == 0 else "rate_limited"}) + "\n")
-            (c.local / "ws" / "C" / "swe-mini" / ".stealth").mkdir(parents=True, exist_ok=True)
-            (c.local / "ws" / "C" / "swe-mini" / ".stealth" / "library.md").write_text(f"after {task}", encoding="utf-8")
+            (c.local / "ws" / "C" / "swe-mini" / ".kell").mkdir(parents=True, exist_ok=True)
+            (c.local / "ws" / "C" / "swe-mini" / ".kell" / "library.md").write_text(f"after {task}", encoding="utf-8")
             (c.local / "logs" / c.spec.run_name()).mkdir(parents=True, exist_ok=True)
             (c.local / "logs" / c.spec.run_name() / f"{task}.A.jsonl").write_text("{}", encoding="utf-8")
             return Proc(rc, err="usage limit" if rc else "")
@@ -262,8 +262,8 @@ def test_resuming_restores_the_snapshot_and_skips_what_is_done(tmp_path, fake_se
     second = ms.Container(spec(max_issues=3), "mini", sh=Recorder(lambda: second, None), vol=tmp_path / "vol", app=tmp_path / "app2",
                           environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True)
     assert second.restore() == "restored"
-    lib = second.local / "ws" / "C" / "swe-mini" / ".stealth" / "library.md"
-    assert lib.read_text(encoding="utf-8") == "after x__mini-2", "C's .stealth/ came back from the volume, as the last task left it"
+    lib = second.local / "ws" / "C" / "swe-mini" / ".kell" / "library.md"
+    assert lib.read_text(encoding="utf-8") == "after x__mini-2", "C's .kell/ came back from the volume, as the last task left it"
     out = second.run()
     assert out["state"] == "restored" and out["already_done"] == 1
     ran = [x["cmd"].split("--only ")[1].split()[0] for x in second.sh.calls if "runner.py" in x["cmd"]]
@@ -284,7 +284,7 @@ def test_resuming_c_without_its_state_is_refused_unless_allowed(tmp_path, fake_s
     assert ok.run()["status"] == "done" and any("runner.py" in x["cmd"] for x in ok.sh.calls)
     a_only = ms.Container(spec(arms=["A"], max_issues=3), "mini", sh=Recorder(lambda: a_only, None), vol=tmp_path / "vol",
                           app=tmp_path / "app5", environ=ENV_SUB, commit=lambda: None, sleep=lambda s: None, health=lambda: True)
-    assert a_only.run()["status"] == "done", "arm A has no .stealth/: a cold resume costs it nothing"
+    assert a_only.run()["status"] == "done", "arm A has no .kell/: a cold resume costs it nothing"
 
 
 def test_a_backend_that_never_comes_up_is_an_error_not_a_hang(tmp_path, fake_series):

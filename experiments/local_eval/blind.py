@@ -22,7 +22,7 @@ BLIND = RUNS / "blind"
 PATCH_CHARS = 7000
 MESSAGE_CHARS = 1500
 GOLD_CHARS = 9000
-ARM_WORDS = re.compile(r"\bKel\b|\.stealth\b|\blibrary\.md\b|\bclaims\.md\b|\benterprise tier\b|\bglobal tier\b|"
+ARM_WORDS = re.compile(r"\bKel\b|\.kell\b|\blibrary\.md\b|\bclaims\.md\b|\benterprise tier\b|\bglobal tier\b|"
                        r"\bNotes from previous work\b", re.I)
 
 PROMPT = """You are a strict senior reviewer. Read ONLY the file {path} (no other files, no network, no tools that \

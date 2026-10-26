@@ -61,7 +61,7 @@ def _node(*args: str, cwd: Path, env: dict | None = None) -> dict:
 def _survey_and_payload(repo: Path, env: dict | None = None) -> tuple[dict, dict]:
     subprocess.run(["node", str(BIN), "survey", str(repo), "--json", "--no-history"], cwd=repo, check=True,
                    capture_output=True, text=True)
-    meta = json.loads((repo / ".stealth" / "meta.json").read_text(encoding="utf-8"))
+    meta = json.loads((repo / ".kell" / "meta.json").read_text(encoding="utf-8"))
     payload = _node("library", "payload", "--root", str(repo), cwd=repo, env=env)
     return meta["repo_identity"], payload
 

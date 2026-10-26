@@ -1,5 +1,5 @@
 """
-Local project sync -- the bridge between an anonymous local `.stealth`
+Local project sync -- the bridge between an anonymous local `.kell`
 workspace and an authenticated keळ account, and the account-side half of
 the client-side end-to-end encryption design in
 docs/local_project_sync_security.md. Callers: `app.mcp_server.
@@ -19,7 +19,7 @@ from the filesystem path, and deliberately NOT reused here, because a
 sync must survive the workspace folder being renamed or moved (the path
 hash would silently change identity on either). `ensure_stable_project_id`
 instead mints (once) and persists a real UUID4 inside the EXISTING
-`.stealth/meta.json` file, under a new `stable_project_id` key -- no new
+`.kell/meta.json` file, under a new `stable_project_id` key -- no new
 hidden directory, no second identity file, no redesign of the existing
 metadata schema. It is read back (and preserved) on every later call for
 the same workspace. Deliberately does NOT solve a cloned/copied
@@ -36,7 +36,7 @@ second identity model. See migration 107/108's own docstrings for why a
 raw subject was chosen over a `users(id)` FK.
 
 CIPHERTEXT, NOT PLAINTEXT (implements docs/local_project_sync_security.md
-§D/§L): this module NEVER reads `.stealth/*.md` content for the purpose of
+§D/§L): this module NEVER reads `.kell/*.md` content for the purpose of
 storing it server-side -- `read_allowed_snapshot_files` exists only for
 `app.mcp_server.local_sync_bridge` to hand plaintext to the BROWSER over
 the authenticated loopback connection, never to this module's own
@@ -58,9 +58,9 @@ from typing import Any, Optional
 import asyncpg
 
 from app.stealth.atomic import atomic_write
-from app.stealth.legacy_context import STEALTH_DIRNAME
+from app.stealth.legacy_context import STEALTH_DIRNAME, workspace_dir
 
-# The single allow-list of `.stealth/*.md` files a bootstrap snapshot may
+# The single allow-list of `.kell/*.md` files a bootstrap snapshot may
 # ever contain -- see module docstring. Anything else in the workspace
 # (source code, .env, the rest of the repository) is never read by this
 # module. `library.md` (this repo's solved problems: titles, steps, checks, touched paths) is included; its
@@ -79,13 +79,13 @@ class AlreadySyncedToAnotherAccount(Exception):
 
 def ensure_stable_project_id(repo_path: str) -> str:
     """Read-or-mint this workspace's stable project identity, persisted at
-    `.stealth/meta.json`'s `stable_project_id` field. Merges into whatever
+    `.kell/meta.json`'s `stable_project_id` field. Merges into whatever
     `meta.json` already exists (run-scoped, from `generate_projection`, or
     the no-run marker from `workspace_init._write_bootstrap_marker`, or
     nothing yet) -- never overwrites its other keys. Idempotent: the
     second and every later call for the same workspace returns the exact
     same id."""
-    stealth_dir = os.path.join(repo_path, STEALTH_DIRNAME)
+    stealth_dir = workspace_dir(repo_path)
     meta_path = os.path.join(stealth_dir, "meta.json")
     existing: dict[str, Any] = {}
     try:
@@ -115,7 +115,7 @@ def _upsert_registry_best_effort(repo_path: str, *, stable_project_id: str) -> N
     docstring for why it exists. Best-effort: a failure here (no writable
     app-data directory on this machine, for example) must never make
     `ensure_stable_project_id` itself fail -- the stable id is already
-    durably written to .stealth/meta.json by this point regardless."""
+    durably written to .kell/meta.json by this point regardless."""
     try:
         from app.stealth.local_registry import upsert_local_project
 
@@ -182,7 +182,7 @@ def read_allowed_snapshot_files(repo_path: str) -> dict[str, str]:
     """Reads exactly the files named in ALLOWED_SNAPSHOT_FILES, and only
     those that actually exist -- never a directory listing, never a glob,
     never anything else under repo_path."""
-    stealth_dir = os.path.join(repo_path, STEALTH_DIRNAME)
+    stealth_dir = workspace_dir(repo_path)
     files: dict[str, str] = {}
     for name in ALLOWED_SNAPSHOT_FILES:
         path = os.path.join(stealth_dir, name)
@@ -324,7 +324,7 @@ async def unsync_project(pool: asyncpg.Pool, *, project_id: str, owner_subject: 
     credentials is the CALLER's job (app.services.sync_device_identity.
     revoke_all_sync_device_credentials_for_project) -- kept separate
     because that module has no reason to depend on this one or vice
-    versa. Never touches local `.stealth/` files -- this function has no
+    versa. Never touches local `.kell/` files -- this function has no
     filesystem access at all, by construction (it only takes a pool).
 
     Returns True if a row was actually deleted (i.e. this project was

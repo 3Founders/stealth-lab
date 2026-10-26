@@ -140,8 +140,8 @@ def test_helpers():
 def test_prepare_task_puts_the_files_at_the_base_commit_and_keeps_what_belongs_to_the_arm(upstream, tmp_path):
     ws = ws_dir(tmp_path)
     git(ws, "init", "-q")
-    (ws / ".stealth").mkdir()
-    (ws / ".stealth" / "library.md").write_text("GOAL|learned", encoding="utf-8")
+    (ws / ".kell").mkdir()
+    (ws / ".kell" / "library.md").write_text("GOAL|learned", encoding="utf-8")
     (ws / ".claude").mkdir()
     (ws / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
     (ws / "README.md").write_text("runner's own file", encoding="utf-8")
@@ -150,11 +150,11 @@ def test_prepare_task_puts_the_files_at_the_base_commit_and_keeps_what_belongs_t
     swe.prepare_task(t1, ws)
     assert (ws / "mini.py").read_text(encoding="utf-8") == BUG and (ws / "tests" / "test_mini.py").read_text(encoding="utf-8") == T1
     assert not (ws / "leftover.py").exists() and not (ws / "README.md").exists()
-    assert (ws / ".stealth" / "library.md").exists() and (ws / ".claude" / "settings.json").exists() and (ws / ".git").is_dir()
+    assert (ws / ".kell" / "library.md").exists() and (ws / ".claude" / "settings.json").exists() and (ws / ".git").is_dir()
     (ws / "mini.py").write_text("an earlier task's accepted fix", encoding="utf-8")
     swe.prepare_task(t2, ws)
     assert (ws / "mini.py").read_text(encoding="utf-8") == FIXED, "the previous task's work is NOT carried over: the next base commit"
-    assert (ws / ".stealth" / "library.md").read_text(encoding="utf-8") == "GOAL|learned"
+    assert (ws / ".kell" / "library.md").read_text(encoding="utf-8") == "GOAL|learned"
     assert ("editable", "swe-mini") in upstream["toolchain"].installs
     # the hidden tests and the gold patch are nowhere in the workspace
     text = "".join(p.read_text(encoding="utf-8", errors="ignore") for p in ws.rglob("*") if p.is_file() and ".git" not in p.parts)
@@ -199,8 +199,8 @@ def test_breaking_a_pass_to_pass_test_is_caught(upstream, tmp_path):
 
 def test_grading_ignores_the_arms_own_directories(upstream, tmp_path):
     task, ws = prepared(upstream, tmp_path)
-    (ws / ".stealth").mkdir()
-    (ws / ".stealth" / "conftest.py").write_text("raise SystemExit('must not be collected')", encoding="utf-8")
+    (ws / ".kell").mkdir()
+    (ws / ".kell" / "conftest.py").write_text("raise SystemExit('must not be collected')", encoding="utf-8")
     (ws / "mini.py").write_text(FIXED, encoding="utf-8")
     assert swe.grade_workspace(task, ws)["resolved"] is True
 
@@ -244,14 +244,14 @@ def sandbox(upstream, tmp_path, monkeypatch):
     def fake_claude(ws, prompt, env, extra, log_path, **kw):
         arm = ws.parent.name
         seen.append({"arm": arm, "prompt": prompt, "path": env["PATH"].split(";" if ";" in env["PATH"] else ":")[0],
-                     "stealth": sorted(p.name for p in (ws / ".stealth").iterdir()) if (ws / ".stealth").exists() else None,
+                     "stealth": sorted(p.name for p in (ws / ".kell").iterdir()) if (ws / ".kell").exists() else None,
                      "mini": (ws / "mini.py").read_text(encoding="utf-8")})
         if "subtracts" in prompt:
             (ws / "mini.py").write_text(FIXED, encoding="utf-8")
         else:
             (ws / "mini.py").write_text(WITH_MUL, encoding="utf-8")
         if arm in ("C", "C0"):
-            (ws / ".stealth" / f"learned-{len(seen)}.md").write_text("x", encoding="utf-8")
+            (ws / ".kell" / f"learned-{len(seen)}.md").write_text("x", encoding="utf-8")
         log_path.write_text("", encoding="utf-8")
         return {"status": "done", "is_error": False, "claude_cost_usd": 0.1, "turns": 2, "duration_ms": 10, "models": [],
                 "model_usage": {}, "final": "ok"}
@@ -272,7 +272,7 @@ def test_the_runner_runs_a_series_on_real_commits(sandbox, upstream):
     by_arm = {a: [s for s in seen if s["arm"] == a] for a in ("A", "C", "C0")}
     for arm, s in by_arm.items():
         assert s[0]["mini"] == BUG and s[1]["mini"] == FIXED, arm
-    # .stealth/ persists for C, is wiped for C0, does not exist for A
+    # .kell/ persists for C, is wiped for C0, does not exist for A
     assert by_arm["A"][1]["stealth"] is None
     assert by_arm["C"][1]["stealth"] == [".keep", "learned-" + str(seen.index(by_arm["C"][0]) + 1) + ".md"]
     assert by_arm["C0"][1]["stealth"] == [".keep"]

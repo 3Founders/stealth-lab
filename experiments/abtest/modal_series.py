@@ -24,13 +24,13 @@ Choices, so a surprise has somewhere to start (plan section 4 says "one image pe
   * ONE image, not one per repository: Postgres/pgvector, Node, Claude Code, the backend's requirements, `uv` with Pythons
     3.9-3.12. A repository's own state (bare clone, pinned dependencies, the dataset file) is built at run time into a Volume
     cache, so a new repository costs minutes, not an image build.
-  * Resume: after EVERY task the container copies the run's results, logs, the arms' workspaces (with their .stealth/) and a
+  * Resume: after EVERY task the container copies the run's results, logs, the arms' workspaces (with their .kell/) and a
     dump of the test database to the Volume; a repeated command restores them and the runner skips what is done. Resuming
-    arm C/C0 without that snapshot would restart their `.stealth/` from nothing and break the learning curve, so it is refused
+    arm C/C0 without that snapshot would restart their `.kell/` from nothing and break the learning curve, so it is refused
     unless --allow-cold-resume.
   * The Volume path is /mnt/series/<run>/<repository>/ (results/, logs/, state.tgz, db.sql.gz, report.txt).
   * A, C and C0 of one repository share ONE test backend (as in a local run): what the server learned from C's outcomes is also
-    visible to C0. Wiping .stealth/ does not wipe the server. Say so wherever C minus C0 is quoted.
+    visible to C0. Wiping .kell/ does not wipe the server. Say so wherever C minus C0 is quoted.
 
 Nothing here has run on Modal yet. The offline tests check the plan, the auth handling, what is (not) uploaded, the order of the
 container's commands and the snapshot/resume logic against stand-ins; the Postgres, backend and Claude Code commands inside the
@@ -462,7 +462,7 @@ class Container:
             print(line, flush=True)
         (self.out / "providers.txt").write_text("\n".join(self.provider_lines) + "\n", encoding="utf-8")
         # arm C without a judge or the codebook's embeddings cannot use its library: C would equal C0 by construction, so
-        # the run would measure nothing about .stealth -- refused, not run with a warning
+        # the run would measure nothing about .kell -- refused, not run with a warning
         bad = [l for l in self.provider_lines if l.startswith("WARNING:")]
         if bad and any(a in STEALTH_ARMS for a in self.spec.arms):
             raise RuntimeError("the test server is not set up for arm C: " + " | ".join(bad) +
@@ -821,7 +821,7 @@ class Container:
         results = self.local / "results" / f"{s.run_name()}.jsonl"
         done = done_tasks(results, s.arms)
         if state == "cold" and done and any(a in STEALTH_ARMS for a in s.arms) and not s.allow_cold_resume:
-            return {"repo": self.repo, "status": "refused", "why": "results exist on the volume without the arms' workspaces and .stealth/: "
+            return {"repo": self.repo, "status": "refused", "why": "results exist on the volume without the arms' workspaces and .kell/: "
                     "resuming C/C0 would break the learning curve. Rerun with --run <new name>, or --allow-cold-resume to accept that."}
         pending = [t for t in tasks if t["task_id"] not in done]
         summary = {"repo": self.repo, "run": s.run_name(), "issues": len(tasks), "already_done": len(tasks) - len(pending), "state": state,

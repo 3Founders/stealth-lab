@@ -50,6 +50,6 @@ Code: `packaging/npm/lib/cursor_dispatch.mjs` (the hook's dispatch step), `lib/c
 
 `cursor-agent` is not installed on the machine this was built on, so nothing was run against a real Cursor. The tests drive the
 hook with Cursor's documented payloads and a stand-in executor. Proof pending: run `cursor-agent` (or Cursor) with a
-repository that has `.stealth/`, one cheap model in exec.json and a `STEALTHLAB_DISPATCH_CHECK`, send a task, and confirm the
+repository that has `.kell/`, one cheap model in exec.json and a `STEALTHLAB_DISPATCH_CHECK`, send a task, and confirm the
 prompt is stopped with "Done by ..." and the change is in the working tree; then a prompt the cheap model fails and confirm it
 reaches Cursor's model with the "tried" note at its first tool call.

@@ -98,7 +98,7 @@ aside for Claude overflow is unused (Claude is not covered by the credits; the s
 
 - The key pair pasted in chat on 2026-10-24 is to be rotated after the series; use a new, narrowly scoped pair here.
 - Keys live in `backend/.env` and the Modal secret only; never in an argument, a log, a commit or a result row.
-- The long-lived memory (`.stealth/library`) saved a pasted OAuth token once (scrubbed locally, never committed); do not
+- The long-lived memory (`.kell/library`) saved a pasted OAuth token once (scrubbed locally, never committed); do not
   paste keys into the chat if a file or shell variable can carry them.
 
 ## G. Model table, filled from AWS's public pages (added 2026-10-24, Anuj's session)

@@ -105,7 +105,7 @@ def check_embedding_compat(corpus: Corpus) -> float:
 
 # ---------------------------------------------------------------- formatting
 def fmt_local(ctx: history.LocalContext, cap: int) -> str:
-    out = ["## This repository's own knowledge (.stealth, local)"]
+    out = ["## This repository's own knowledge (.kell, local)"]
     if ctx.claims:
         out.append("### Facts (claims.md)")
         out += [f"- {c}" for c in ctx.claims]

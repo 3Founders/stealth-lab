@@ -61,11 +61,11 @@ def sandbox(tmp_path, monkeypatch):
     def fake_claude(ws, prompt, env, extra, log_path):
         fn = next(t["fn"] for t in toy._TASKS if t["fn"] in prompt)
         arm = ws.parent.name
-        seen.append((arm, fn, sorted(p.name for p in (ws / ".stealth").iterdir()) if (ws / ".stealth").exists() else None))
+        seen.append((arm, fn, sorted(p.name for p in (ws / ".kell").iterdir()) if (ws / ".kell").exists() else None))
         with (ws / "textutils.py").open("a", encoding="utf-8") as f:
             f.write("\n" + solutions[fn])
         if arm in ("C", "C0"):                    # the hooks' library growth: one file per task
-            (ws / ".stealth" / f"learned-{fn}.md").write_text(fn, encoding="utf-8")
+            (ws / ".kell" / f"learned-{fn}.md").write_text(fn, encoding="utf-8")
         log_path.write_text("", encoding="utf-8")
         return {"status": "done", "is_error": False, "claude_cost_usd": 0.10, "turns": 3, "duration_ms": 1000,
                 "models": [], "model_usage": {}, "final": "ok"}
@@ -104,14 +104,14 @@ def test_load_series_refuses_a_series_that_spans_workspaces(monkeypatch):
 
 def test_wipe_stealth_empties_it_but_keeps_the_directory_and_its_keep(tmp_path):
     ws = tmp_path / "ws"
-    (ws / ".stealth" / "library").mkdir(parents=True)
-    (ws / ".stealth" / "library.md").write_text("x", encoding="utf-8")
-    (ws / ".stealth" / "library" / "L-1.diff").write_text("x", encoding="utf-8")
-    (ws / ".stealth" / ".keep").write_text("", encoding="utf-8")
+    (ws / ".kell" / "library").mkdir(parents=True)
+    (ws / ".kell" / "library.md").write_text("x", encoding="utf-8")
+    (ws / ".kell" / "library" / "L-1.diff").write_text("x", encoding="utf-8")
+    (ws / ".kell" / ".keep").write_text("", encoding="utf-8")
     runner.wipe_stealth(ws)
-    assert sorted(p.name for p in (ws / ".stealth").iterdir()) == [".keep"]
-    runner.wipe_stealth(tmp_path / "fresh")                 # a workspace with no .stealth yet
-    assert (tmp_path / "fresh" / ".stealth" / ".keep").exists()
+    assert sorted(p.name for p in (ws / ".kell").iterdir()) == [".keep"]
+    runner.wipe_stealth(tmp_path / "fresh")                 # a workspace with no .kell yet
+    assert (tmp_path / "fresh" / ".kell" / ".keep").exists()
 
 
 def test_the_three_arms_over_a_series(sandbox):
@@ -122,7 +122,7 @@ def test_the_three_arms_over_a_series(sandbox):
     assert {(r["series"], r["position"]) for r in recs} == {("series_toy_task", 1), ("series_toy_task", 2), ("series_toy_task", 3)}
     # what each arm's workspace holds when its task starts
     start = {(arm, fn): files for arm, fn, files in seen}
-    assert start[("A", "slugify")] is None and start[("A", "title_case")] is None, "A never has a .stealth/"
+    assert start[("A", "slugify")] is None and start[("A", "title_case")] is None, "A never has a .kell/"
     assert start[("C", "slugify")] == [".keep"]
     assert start[("C", "word_count")] == [".keep", "learned-slugify.md"], "C carries the first task's library to the second"
     assert start[("C", "title_case")] == [".keep", "learned-slugify.md", "learned-word_count.md"]
@@ -160,7 +160,7 @@ def test_dry_run_prints_the_plan_and_runs_nothing(sandbox, capsys, monkeypatch):
     assert runner.main() == 0
     out = capsys.readouterr().out
     assert "3 task(s), arms A,C,C0" in out
-    assert "arm C0: the same install as C, but .stealth/ is wiped before every task" in out
+    assert "arm C0: the same install as C, but .kell/ is wiped before every task" in out
     assert out.count("toy-series") == 3
     assert not (runner.LOCAL / "ws").exists(), "a dry run creates no workspace"
 

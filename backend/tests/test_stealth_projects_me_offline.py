@@ -86,7 +86,7 @@ SYNC_CFG = SyncDeviceTokenConfig(
 def test_ensure_stable_project_id_mints_a_real_uuid_on_first_call(tmp_path):
     project_id = ensure_stable_project_id(str(tmp_path))
     assert UUID(project_id)
-    meta_path = tmp_path / ".stealth" / "meta.json"
+    meta_path = tmp_path / ".kell" / "meta.json"
     assert meta_path.is_file()
     assert json.loads(meta_path.read_text())["stable_project_id"] == project_id
 

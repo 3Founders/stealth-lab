@@ -1,8 +1,8 @@
 """A toy long-horizon SERIES: three tasks in ONE small Python repo, in order. A working template for real series
 (Spider 2.0-DBT, SWE-rebench ...) and the module the offline tests drive; it needs no dataset and no network.
 
-What a series is: tasks that share one workspace and arrive in real order. Arm A's and C's workspaces (and C's .stealth/)
-persist from task to task; C0 is C with .stealth/ wiped before every task. So what each later task can reuse -- the
+What a series is: tasks that share one workspace and arrive in real order. Arm A's and C's workspaces (and C's .kell/)
+persist from task to task; C0 is C with .kell/ wiped before every task. So what each later task can reuse -- the
 conventions the first task established, the repo's facts, the earlier fixes -- is exactly what the three arms differ in.
 
 The repo is `textutils.py`. Every task adds one function and the repo has ONE convention (NOTES.md): every public function

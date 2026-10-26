@@ -462,13 +462,13 @@ _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 _V1_INSTRUCTIONS = (
     "StealthLab: proven procedures for coding tasks. You plan; StealthLab "
     "knows. 0) Once per repo, run the survey_repo prompt to write "
-    ".stealth/claims.md (facts about this repo, each citing file:line). If "
+    ".kell/claims.md (facts about this repo, each citing file:line). If "
     "your client doesn't show MCP prompts, read the same text from the "
     "resources stealth://prompts/survey_repo and stealth://prompts/plan_and_run. "
     "1) find_ways(query, repo_claims=<claims.md text>) returns knowledge: the "
     "Goal, the chosen Procedure(s) with every step in full, alternatives, and "
     "which repo facts supported or blocked each choice. 2) You compile the "
-    "plan into .stealth/procedures.md + .stealth/run.md yourself (the "
+    "plan into .kell/procedures.md + .kell/run.md yourself (the "
     "plan_and_run prompt has the format), then do each step or hand a "
     "one-line pointer to a subagent, and check each step's proof. 3) "
     "report_discovery(...) anything you had to fix or found a better way to "
@@ -1587,7 +1587,7 @@ _CHECK_EVIDENCE_PATH = "mcp/report_check_evidence"
 @server.tool()
 async def report_check_evidence(ctx: Context, evidence: dict) -> str:
     """
-    Report one check run recorded on the developer's machine (one EVIDENCE line of .stealth/evidence.md), so a Goal's status
+    Report one check run recorded on the developer's machine (one EVIDENCE line of .kell/evidence.md), so a Goal's status
     can use it. The server did not run the check: a reported pass is stored as `checked` at most, and `verified` appears only
     when two independent accounts pass the same check on the same files. You never choose a state.
 
@@ -1805,17 +1805,17 @@ async def find_ways(
 ) -> str:
     """
     Find proven ways to do a coding task. Returns KNOWLEDGE -- the Goal, the chosen Procedure with its steps, the
-    alternatives, and which repo facts supported or blocked each -- not a plan: you plan, and write `.stealth/`.
+    alternatives, and which repo facts supported or blocked each -- not a plan: you plan, and write `.kell/`.
 
     Call it ONCE, before writing code, for a task you would describe in a sentence or more. Not for a one-line
     edit, a question about this repo's own code, or the same request twice (repeats are cached, then refused).
 
-    query: the task in plain words ("add a DOCX export"). repo_claims: the text of `.stealth/claims.md`, if any.
+    query: the task in plain words ("add a DOCX export"). repo_claims: the text of `.kell/claims.md`, if any.
     detail: "full" (default) or "summary" (a line per step; ask again with "full" for the way you will follow).
     outcome: "resolved", "ambiguous" (you pick, or rephrase), "no_match", or "not_needed" (not a reusable task).
     Optional: candidates=["model|scaffold", ...] or my_model -> a `model_plan` (try A; if its check fails, B);
     report each attempt with report_result (through use_tool when it is not listed). repo_identity,
-    library_rows, route_obs: this repo's `.stealth` library. repo_claims and the library arguments are used for
+    library_rows, route_obs: this repo's `.kell` library. repo_claims and the library arguments are used for
     this request only, never stored.
 
     Every argument, step and reply field in detail: resource stealth://guides/find_ways, or
@@ -2041,7 +2041,7 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 
     With the library arguments (`local_args`): the OBS counts in `route_obs` for the resolved Goal
     condition the plan (plan.model_plan local_obs), and `routing_rows` -- the ROUTE line(s) for
-    `.stealth/routing.md` -- is added next to an ok plan."""
+    `.kell/routing.md` -- is added next to an ok plan."""
     from app.routing import plan as _plan
 
     if not _plan.wants_plan(candidates):
@@ -2578,7 +2578,7 @@ async def _find_ways_impl(
         "goal_judgment": goal_judgment,
         "repo_facts": repo_report,
         "next": (
-            "Compile this into .stealth/procedures.md and .stealth/run.md yourself "
+            "Compile this into .kell/procedures.md and .kell/run.md yourself "
             "(prompt: plan_and_run). Read stealth://procedures/{procedure_id}/claims "
             "for past discoveries. Report fixes/better ways with report_discovery."
         ),
@@ -3014,7 +3014,7 @@ _SYNC_NO_IDENTITY_MESSAGE = (
 
 # HISTORICAL NOTE: the local-project sync flow used to be MCP-tool-driven
 # (preview_sync_local_project / sync_local_project, removed here) -- those
-# tools read `.stealth/*.md` content and stored it SERVER-SIDE as
+# tools read `.kell/*.md` content and stored it SERVER-SIDE as
 # plaintext JSON, which conflicts with the end-to-end encryption design in
 # docs/local_project_sync_security.md (the server must never receive
 # plaintext project content). The flow is now browser-initiated: the

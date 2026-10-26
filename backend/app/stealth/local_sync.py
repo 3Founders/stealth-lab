@@ -1,10 +1,10 @@
 """
 Selective local -> global sync (workflow C): the missing "does the caller
-want THIS local `.stealth/*.md` edit pushed back to canonical Postgres"
+want THIS local `.kell/*.md` edit pushed back to canonical Postgres"
 mechanism.
 
 WHY THIS EXISTS (see `project_knowledge`/`close_exploration` for the two
-existing sync-ADJACENT tools, neither of which does this): `.stealth/` is
+existing sync-ADJACENT tools, neither of which does this): `.kell/` is
 a regenerated, disposable projection of Postgres -- nothing has ever read
 `claims.md`/`procedures.md`/`goals.md` back as trusted input. But an agent
 (or a human) legitimately hand-edits those files sometimes -- correcting a
@@ -18,7 +18,7 @@ object store: every synced item becomes a normal Claim/Procedure/Goal row
 via the exact same service-layer writers every other submission path uses
 (`capture_claim`, `capture_procedure`, `find_or_create_goal`), landing in
 the same candidate/private lifecycle state those writers already default
-to. `.stealth/` stays a projection; this only widens the one specific
+to. `.kell/` stays a projection; this only widens the one specific
 gate (an explicit, per-item, human-or-agent SELECTED sync) through which a
 local edit can become a real row -- never a bulk or implicit one.
 
@@ -37,7 +37,7 @@ field does NOT parse as a UUID is, by construction, NOT something
 so it can only be a hand-added local addition with no backend counterpart
 yet: NEW.
 
-LOCAL_ONLY: the current `.stealth/*.md` grammar has no real `visibility`
+LOCAL_ONLY: the current `.kell/*.md` grammar has no real `visibility`
 field (claims.md renders `scope`, i.e. `scope_type` -- 'global'/'entity'/
 ..., never `private`; see `pipe_format.ClaimLine`/`_build_claims_page`).
 There is therefore no EXISTING honest signal in the rendered projection
@@ -63,7 +63,7 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.stealth.legacy_context import STEALTH_DIRNAME
+from app.stealth.legacy_context import STEALTH_DIRNAME, workspace_dir
 
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -211,11 +211,11 @@ def _parse_goals_md(text: str) -> list[LocalObject]:
 
 def parse_local_projection(repo_path: str) -> LocalProjection:
     """Read-only. Parses whatever of `claims.md`/`procedures.md`/`goals.md`
-    /`meta.json` currently exists under `repo_path/.stealth/` -- a missing
-    file yields an empty list for that object type (no `.stealth/` at all,
+    /`meta.json` currently exists under `repo_path/.kell/` -- a missing
+    file yields an empty list for that object type (no `.kell/` at all,
     or a projection type this generator run never emitted, e.g. no
     `goals.md` written), never an error and never a fabricated row."""
-    stealth_dir = os.path.join(repo_path, STEALTH_DIRNAME)
+    stealth_dir = workspace_dir(repo_path)
     claims_text = _read_text(os.path.join(stealth_dir, "claims.md")) or ""
     procedures_text = _read_text(os.path.join(stealth_dir, "procedures.md")) or ""
     goals_text = _read_text(os.path.join(stealth_dir, "goals.md")) or ""
@@ -418,7 +418,7 @@ _CID_REPO_PATH = _RepoPathHolder()
 async def preview_local_sync(
     pool: asyncpg.Pool, repo_path: str, object_types: Optional[list[str]] = None,
 ) -> list[dict]:
-    """READ-ONLY. Parses the local `.stealth/*.md` projection and classifies
+    """READ-ONLY. Parses the local `.kell/*.md` projection and classifies
     every referenced object against canonical Postgres. Writes nothing --
     not even a cache; `candidate_id` is a deterministic hash, recomputed
     (not looked up) by `commit_local_sync_items`."""

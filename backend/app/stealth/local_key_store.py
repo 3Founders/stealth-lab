@@ -5,7 +5,7 @@ ever caches on disk-adjacent, OS-managed storage: a project's raw P-DEK
 credential (so ongoing sync can authenticate without a browser open). See
 docs/local_project_sync_security.md §F and Implementation Closure §1.
 
-NEVER a plaintext file, never `.stealth/meta.json`, never an environment
+NEVER a plaintext file, never `.kell/meta.json`, never an environment
 variable, never a log line. Uses the `keyring` package, which delegates to
 Windows Credential Manager / macOS Keychain / Linux Secret Service.
 

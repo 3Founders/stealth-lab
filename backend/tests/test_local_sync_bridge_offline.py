@@ -216,7 +216,7 @@ def test_prepare_payload_only_returns_allowed_files_for_explicitly_requested_pro
     from app.stealth import local_registry
 
     repo_dir = tmp_path / "repo-a"
-    stealth_dir = repo_dir / ".stealth"
+    stealth_dir = repo_dir / ".kell"
     stealth_dir.mkdir(parents=True)
     (stealth_dir / "goals.md").write_text("GOAL|g1|...")
     (repo_dir / "secrets.env").write_text("API_KEY=do-not-upload")

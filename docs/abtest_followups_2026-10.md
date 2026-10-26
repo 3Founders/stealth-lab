@@ -21,7 +21,7 @@ of C's 5 misses, 3 were missed by A as well, 1 was Opus's own fallback answer, 1
 The prompt hook asks the server for a plan, has a cheaper Claude model write a few acceptance tests from the task
 (one tool-less call, ~$0.01-0.02), then runs the cheap open models one after another in isolated worktrees against
 the project's check plus those tests. The first that passes is applied and the prompt is stopped; if none does, the
-session's model does the task with a one-line note. Capture hooks report outcomes and grow `.stealth/`.
+session's model does the task with a one-line note. Capture hooks report outcomes and grow `.kell/`.
 
 ## Improvements to come back to
 
@@ -35,7 +35,7 @@ session's model does the task with a one-line note. Capture hooks report outcome
    runs dispatch.
 3. **Library knowledge to the cheap models and to the fallback.** Dispatch sends the executors only the task text,
    and the fallback note drops the library matches. Pass the matching library entries (no plan text) to both. Not
-   measurable on these benchmarks (empty `.stealth`, unrelated tasks): needs the repo-level test below.
+   measurable on these benchmarks (empty `.kell`, unrelated tasks): needs the repo-level test below.
 4. **Residual misses.** Some come from details the task never states (a seeded random draw, a sign rule, a
    misleading benchmark text); no test written from the task catches those. The test writer's brief is general
    (lib/dispatch.mjs SPEC_SYSTEM); more prompt tuning gave noisy, sample-dependent results in a small trial.
@@ -44,7 +44,7 @@ session's model does the task with a one-line note. Capture hooks report outcome
 6. **Realism.** The current suites are function-level tasks with visible tests. Still to do:
    - repo-level tasks (SWE-rebench, time-ordered) on Modal, no Docker locally;
    - a "no visible tests" arm (test-first is the only check there);
-   - a knowledge-layer test (a sequence of related issues in one repo, surveyed `.stealth`);
+   - a knowledge-layer test (a sequence of related issues in one repo, surveyed `.kell`);
    - a customer pilot to measure the share of real work with a usable check.
    Report results as "on checkable tasks, X% saved at Y% quality", never "saves X% on your work".
 7. **Latency** (p50/p95/p99 per arm) is measured from the full run on (runner `seconds`, wall time of the session
@@ -61,7 +61,7 @@ In order of value. Each needs the user's go-ahead before building.
    - a short StealthLab block in CLAUDE.md (as AGENTS.md already gets): record fixes in the library, attach to an
      existing entry instead of duplicating, finish the survey worklist, look up sub-tasks;
    - the agent uses the CLI through Bash for that (`stealthlab-mcp library ...`, `survey`, a `find` command) -- no MCP;
-   - run the survey automatically when the hook sees a repo without `.stealth`;
+   - run the survey automatically when the hook sees a repo without `.kell`;
    - tidy the library (merge duplicates) automatically now and then;
    - upgrade note: `install --with-exec` removes the MCP registration; offer `--keep-mcp`.
 3. **Tell the session what a cheap model did.** A dispatched prompt is blocked, so the session never sees the change;
@@ -71,8 +71,8 @@ In order of value. Each needs the user's go-ahead before building.
    who answers questions, non-task prompts mixed in, and real prompts from a pilot.
 5. **Cursor.** No dispatch today. Either a blocking `beforeSubmitPrompt` (if Cursor allows the wait) or one MCP tool
    ("solve cheaply first") the Cursor rules tell the agent to call. Test with cursor-agent in the same A/C harness.
-6. **Long-horizon, repo-level test of `.stealth`.** A series of tasks in one repo in real order, workspace and
-   `.stealth` kept; arms A, C, and C with `.stealth` wiped each task. Spider 2.0-DBT locally first; SWE-rebench /
+6. **Long-horizon, repo-level test of `.kell`.** A series of tasks in one repo in real order, workspace and
+   `.kell` kept; arms A, C, and C with `.kell` wiped each task. Spider 2.0-DBT locally first; SWE-rebench /
    SWE-EVO (verify) and ADE-bench on Modal with an API key (not the subscription login).
 
 ## Product hardening (agreed 2026-10-11: BUILD it, not only test it) -- after fixes 1-3 merge
@@ -87,7 +87,7 @@ A. Messy prompts and multi-turn sessions
    4. Continuity: a short per-session log of what StealthLab did; follow-ups carry it (fix 3 is the first step).
    5. Overrides: `!opus` skips StealthLab for one prompt, `!cheap` forces a try.
 B. Long, real repositories
-   1. Cheap models get the repo knowledge: the relevant .stealth facts, library matches, file hints.
+   1. Cheap models get the repo knowledge: the relevant .kell facts, library matches, file hints.
    2. Worktrees reuse the project's installed dependencies (node_modules, the virtualenv) so checks can run.
    3. Faster checks: tests related to the changed files first, the full suite before accepting.
    4. Time limit from the project's own test duration.

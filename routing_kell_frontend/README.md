@@ -1,6 +1,6 @@
-# keळ — website for the routing + .stealth release
+# keळ — website for the routing + .kell release
 
-A copy of `prod_frontend/` cut down to the first release: cheaper coding tasks inside Claude Code and Cursor, and the repository's `.stealth` folder. Goals, search, contributions, credits and public profiles are removed; `prod_frontend/` keeps the full version, the bigger aim.
+A copy of `prod_frontend/` cut down to the first release: cheaper coding tasks inside Claude Code and Cursor, and the repository's `.kell` folder. Goals, search, contributions, credits and public profiles are removed; `prod_frontend/` keeps the full version, the bigger aim.
 
 ```bash
 cd routing_kell_frontend
@@ -12,7 +12,7 @@ npm run build && npm start
 Copy `.env.example` to `.env.local` to connect a backend (`NEXT_PUBLIC_KEL_API_URL`) and a sign-in entry point (`NEXT_PUBLIC_KEL_SIGNIN_URL`). Without them, `/sign-in` and the account pages show explicit “not connected” states — nothing is fabricated.
 
 ## Routes
-`/` (hero with install, then `#about` what you get, `#action` see it work, `#use` use it) · `/docs` (getting started, how to use, the .stealth folder, for teams, legal) · `/sign-in` · `/account`. "About" is a homepage section (`/#about`), not a page — the nav's "About" link scrolls to the homepage's first content section.
+`/` (hero with install, then `#about` what you get, `#action` see it work, `#use` use it) · `/docs` (getting started, how to use, the .kell folder, for teams, legal) · `/sign-in` · `/account`. "About" is a homepage section (`/#about`), not a page — the nav's "About" link scrolls to the homepage's first content section.
 
 ## Decisions
 - **Install command** is `npx -y stealthlab-mcp setup`, the first-time install. The npm package is not published yet, so it doesn't work for visitors until it is.

@@ -16,17 +16,17 @@ import { SHAPES, git, makeRepo, tmpDir, writeFiles } from "./fixtures/survey/rep
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
 const survey = (dir, o = {}) => runSurvey(dir, { history: false, ...o });
-const page = (dir, rel = "claims.md") => readPage(path.join(dir, ".stealth", rel));
+const page = (dir, rel = "claims.md") => readPage(path.join(dir, ".kell", rel));
 const allClaims = (dir) => {
   const out = [];
-  const sdir = path.join(dir, ".stealth");
+  const sdir = path.join(dir, ".kell");
   if (fs.existsSync(path.join(sdir, "claims.md"))) out.push(...claimsOf(readPage(path.join(sdir, "claims.md"))));
   if (fs.existsSync(path.join(sdir, "claims"))) for (const f of fs.readdirSync(path.join(sdir, "claims"))) out.push(...claimsOf(readPage(path.join(sdir, "claims", f))));
   return out;
 };
 const statements = (dir) => allClaims(dir).map((c) => c.statement).join("\n");
 /** Append an agent-written CLAIM line to a page. */
-const addAgentFact = (dir, line, rel = "claims.md") => fs.appendFileSync(path.join(dir, ".stealth", rel), line + "\n");
+const addAgentFact = (dir, line, rel = "claims.md") => fs.appendFileSync(path.join(dir, ".kell", rel), line + "\n");
 
 // ---------------------------------------------------------------------------------------------
 // Every repo shape resolves to exactly the expected units, and every scanner fact is verified.
@@ -115,10 +115,10 @@ test("pages: root facts in claims.md, one page per unit, ids contiguous by topic
   assert.ok(ui.every((c) => c.scope === "unit:packages/ui" && c.id.startsWith("R-ui-")));
   const ids = claimsOf(page(dir)).map((c) => Number(c.id.slice(2)));
   assert.deepEqual(ids, [...ids].sort((a, b) => a - b), "a new page numbers ids straight down the file");
-  const idx = fs.readFileSync(path.join(dir, ".stealth", "index", "units.idx"), "utf8");
+  const idx = fs.readFileSync(path.join(dir, ".kell", "index", "units.idx"), "utf8");
   assert.match(idx, /^UNIT\|ui\|packages\/ui\|kind=package\|eco=npm\|name=@acme\/ui\|parent=root\|template=t-[0-9a-f]{8}\|/m);
   assert.match(idx, /^AUX\|packages\/legacy\|reason=excluded-by-workspace$/m, "the workspace's own !negation is the reason");
-  const root = fs.readFileSync(path.join(dir, ".stealth", "index", "root.idx"), "utf8");
+  const root = fs.readFileSync(path.join(dir, ".kell", "index", "root.idx"), "utf8");
   assert.match(root, /^units\|index\/units\.idx\|/m);
   assert.ok(Buffer.byteLength(root) <= 4096);
 });
@@ -131,7 +131,7 @@ test("templates: identical sibling packages cluster; non-representatives inherit
   assert.equal(ui.template, core.template);
   assert.equal(core.inherits, null);
   assert.equal(ui.inherits, "packages/core");
-  assert.match(fs.readFileSync(path.join(dir, ".stealth", "claims", "ui.md"), "utf8"), /\|inherits=packages\/core/);
+  assert.match(fs.readFileSync(path.join(dir, ".kell", "claims", "ui.md"), "utf8"), /\|inherits=packages\/core/);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -181,7 +181,7 @@ test("identity chain: remote -> root commit -> stored (shallow) -> weak", () => 
   const stored = tmpDir();
   execFileSync("git", ["clone", "-q", "--depth", "1", `file://${local.replace(/\\/g, "/")}`, stored], { stdio: "ignore" });
   git(stored, "remote", "remove", "origin");
-  writeFiles(stored, { ".stealth/meta.json": JSON.stringify({ repo_identity: { repo_id: c.repo_id, strength: "strong", source: "root_commit" } }) });
+  writeFiles(stored, { ".kell/meta.json": JSON.stringify({ repo_identity: { repo_id: c.repo_id, strength: "strong", source: "root_commit" } }) });
   const st = survey(stored).identity;
   assert.equal(st.repo_id, c.repo_id);
   assert.equal(st.source, "stored");
@@ -267,9 +267,9 @@ test("validator: a supported agent fact is stamped with its line hash; unsupport
   const kept = Object.fromEntries(claimsOf(page(dir)).map((c) => [c.id, c]));
   for (const id of ["R-900", "R-901", "R-903", "R-907", "R-909"]) assert.match(kvGet(kept[id], "source"), /#sha=[0-9a-f]{7}$/, id);
   assert.match(kvGet(kept["R-907"], "source"), /^docs\/CRLF\.md:2#sha=/, "CRLF lines validate after normalisation");
-  const rejectedMd = fs.readFileSync(path.join(dir, ".stealth", "survey", "rejected.md"), "utf8");
+  const rejectedMd = fs.readFileSync(path.join(dir, ".kell", "survey", "rejected.md"), "utf8");
   assert.match(rejectedMd, /^REJECTED\|claims\.md\|R-904\|/m);
-  assert.doesNotMatch(fs.readFileSync(path.join(dir, ".stealth", "claims.md"), "utf8"), /ghp_/, "a secret never stays on a page");
+  assert.doesNotMatch(fs.readFileSync(path.join(dir, ".kell", "claims.md"), "utf8"), /ghp_/, "a secret never stays on a page");
 });
 
 test("validator: moved lines are re-anchored, changed lines go stale, legacy file sha is re-stamped, case is fixed", () => {
@@ -297,7 +297,7 @@ test("validator: moved lines are re-anchored, changed lines go stale, legacy fil
   c = Object.fromEntries(claimsOf(page(dir)).map((x) => [x.id, x]));
   assert.equal(c["R-950"].status, "stale");
   assert.ok(r.validation.stale >= 1);
-  assert.match(fs.readFileSync(path.join(dir, ".stealth", "survey", "worklist.md"), "utf8"), /^STALE\|\.\|R-950\|/m);
+  assert.match(fs.readFileSync(path.join(dir, ".kell", "survey", "worklist.md"), "utf8"), /^STALE\|\.\|R-950\|/m);
 });
 
 test("validator: a statement containing '|' is repaired, not mis-parsed", () => {
@@ -339,10 +339,10 @@ test("re-survey: scanner lines keep their ids; agent lines are byte-identical; r
   const agent = "CLAIM|R-800|current|decisions|repository|Uses Jest, not Vitest, because `jest` is the only test runner declared|source=package.json:7|version=1";
   addAgentFact(dir, agent);
   survey(dir);
-  const before = fs.readFileSync(path.join(dir, ".stealth", "claims.md"), "utf8");
+  const before = fs.readFileSync(path.join(dir, ".kell", "claims.md"), "utf8");
   const testId = claimsOf(page(dir)).find((c) => kvGet(c, "key") === "script:test").id;
   survey(dir);
-  assert.equal(fs.readFileSync(path.join(dir, ".stealth", "claims.md"), "utf8"), before, "a no-change re-run writes nothing new");
+  assert.equal(fs.readFileSync(path.join(dir, ".kell", "claims.md"), "utf8"), before, "a no-change re-run writes nothing new");
   const pjPath = path.join(dir, "package.json");
   fs.writeFileSync(pjPath, fs.readFileSync(pjPath, "utf8").replace('"build": "tsc -p ."', '"lint": "eslint ."'));
   survey(dir);
@@ -350,7 +350,7 @@ test("re-survey: scanner lines keep their ids; agent lines are byte-identical; r
   assert.equal(after.find((c) => kvGet(c, "key") === "script:test").id, testId);
   assert.ok(!after.some((c) => kvGet(c, "key") === "script:build"), "a deleted script's fact is removed");
   assert.ok(after.some((c) => kvGet(c, "key") === "script:lint"));
-  const agentLine = fs.readFileSync(path.join(dir, ".stealth", "claims.md"), "utf8").split("\n").find((l) => l.startsWith("CLAIM|R-800|"));
+  const agentLine = fs.readFileSync(path.join(dir, ".kell", "claims.md"), "utf8").split("\n").find((l) => l.startsWith("CLAIM|R-800|"));
   assert.ok(agentLine.startsWith(agent.split("|source=")[0]), "agent statement never rewritten");
 });
 
@@ -410,7 +410,7 @@ test("read budget: files over budget are dropped and the unit is marked partial"
   const r = survey(makeRepo(files, { git: false }));
   const w = r.worklist.find((x) => x.unit === ".");
   assert.ok(w.bytes <= 96 * 1024 && w.reads <= 16);
-  assert.match(fs.readFileSync(path.join(r.root, ".stealth", "survey", "worklist.md"), "utf8"), /over_budget=/);
+  assert.match(fs.readFileSync(path.join(r.root, ".kell", "survey", "worklist.md"), "utf8"), /over_budget=/);
   assert.equal(r.units[0].coverage, "partial");
 });
 
@@ -428,7 +428,7 @@ test("history: fix commits become library.md entries with diffs; non-fixes, bots
   });
   const r = runSurvey(dir, {});
   assert.equal(r.history.added, 2);
-  const lib = fs.readFileSync(path.join(dir, ".stealth", "library.md"), "utf8");
+  const lib = fs.readFileSync(path.join(dir, ".kell", "library.md"), "utf8");
   const goals = lib.split("\n").filter((l) => l.startsWith("GOAL|"));
   assert.equal(goals.length, 2);
   // canonical, and linked to the knowledge layer (one Goal per problem, one Way per procedure)
@@ -438,9 +438,9 @@ test("history: fix commits become library.md entries with diffs; non-fixes, bots
   assert.match(lib, /^PROC\|L-[0-9a-f]{7}\.p1\|.*\|p=-\|solution=solutions\/L-[0-9a-f]{7}\.diff\|touches=pkg\/calc\.py#sha=[0-9a-f]{7}/m);
   assert.match(lib, /^STEP\|L-[0-9a-f]{7}\.p1:1\|action\|.*\|check=pytest tests\/test_calc\.py$/m);
   assert.match(lib, /redacted=1/);
-  const sol = fs.readdirSync(path.join(dir, ".stealth", "library", "solutions"));
+  const sol = fs.readdirSync(path.join(dir, ".kell", "library", "solutions"));
   assert.equal(sol.length, 2);
-  for (const f of sol) assert.doesNotMatch(fs.readFileSync(path.join(dir, ".stealth", "library", "solutions", f), "utf8"), /AKIA/);
+  for (const f of sol) assert.doesNotMatch(fs.readFileSync(path.join(dir, ".kell", "library", "solutions", f), "utf8"), /AKIA/);
   // Incremental: a second run adds only new fixes.
   writeFiles(dir, { "pkg/calc.py": "def add(a, b):\n    return a + b  # fixed overflow\n" });
   git(dir, "add", "-A");
@@ -454,9 +454,9 @@ test("CLI: `stealthlab-mcp survey <dir> --json` runs end to end", () => {
   const out = execFileSync(process.execPath, [BIN, "survey", dir, "--json", "--no-history"], { encoding: "utf8" });
   const r = JSON.parse(out);
   assert.ok(r.units.some((u) => u.path === "svc/api"));
-  assert.ok(fs.existsSync(path.join(dir, ".stealth", "index", "units.idx")));
-  assert.ok(fs.existsSync(path.join(dir, ".stealth", "survey", "worklist.md")));
-  const meta = JSON.parse(fs.readFileSync(path.join(dir, ".stealth", "meta.json"), "utf8"));
+  assert.ok(fs.existsSync(path.join(dir, ".kell", "index", "units.idx")));
+  assert.ok(fs.existsSync(path.join(dir, ".kell", "survey", "worklist.md")));
+  const meta = JSON.parse(fs.readFileSync(path.join(dir, ".kell", "meta.json"), "utf8"));
   assert.match(meta.repo_identity.repo_id, /^c:/);
 });
 
@@ -470,17 +470,17 @@ test("hook readClaims: small repo sends every page; big repo sends the pages the
   const all = readClaims(small, "fix the login form");
   assert.match(all, /unit:packages\/ui/);
   assert.match(all, /unit:apps\/web/);
-  assert.match(readClaims(path.join(small, "packages", "ui"), "x"), /unit:packages\/ui/, ".stealth is found from a sub-directory");
+  assert.match(readClaims(path.join(small, "packages", "ui"), "x"), /unit:packages\/ui/, ".kell is found from a sub-directory");
 
   const big = tmpDir();
   const filler = (unit) => Array.from({ length: 120 }, (_, i) => `CLAIM|R-${unit}-${String(i).padStart(3, "0")}|current|features|unit:pk/${unit}|${"padding ".repeat(6)}|source=search:x|version=1`).join("\n") + "\n";
-  const files = { ".stealth/claims.md": "CLAIM|R-001|current|layout|repository|Big repo|source=search:x|version=1\n" };
+  const files = { ".kell/claims.md": "CLAIM|R-001|current|layout|repository|Big repo|source=search:x|version=1\n" };
   const rows = ["UNIT|root|.|kind=root|page=claims.md"];
   for (const u of ["alpha", "beta", "gamma", "delta"]) {
-    files[`.stealth/claims/${u}.md`] = filler(u);
+    files[`.kell/claims/${u}.md`] = filler(u);
     rows.push(`UNIT|${u}|pk/${u}|kind=package|eco=npm|name=@big/${u}|parent=root|template=-|inherits=-|page=claims/${u}.md|coverage=scanner|declared=-`);
   }
-  files[".stealth/index/units.idx"] = rows.join("\n") + "\n";
+  files[".kell/index/units.idx"] = rows.join("\n") + "\n";
   writeFiles(big, files);
   const out = readClaims(big, "Add retries to the @big/gamma client");
   assert.match(out, /unit:pk\/gamma/);
@@ -488,7 +488,7 @@ test("hook readClaims: small repo sends every page; big repo sends the pages the
   assert.ok(Buffer.byteLength(out) <= 64000);
   const fromCwd = readClaims(path.join(big, "pk", "delta"), "something unrelated");
   assert.match(fromCwd, /unit:pk\/delta/);
-  assert.equal(readClaims(tmpDir(), "x"), "", "no .stealth anywhere: nothing sent");
+  assert.equal(readClaims(tmpDir(), "x"), "", "no .kell anywhere: nothing sent");
 });
 
 test("CLI: unset flags keep their defaults (lazy mode still applies above 40 units)", () => {
@@ -615,9 +615,9 @@ test("history: conventional-commit types decide; bodies don't make a feature a f
   const dir = makeRepo({ "pyproject.toml": "[project]\nname='h'\n", "src/m0.py": "x = 0\n" }, { commits });
   const r = runSurvey(dir, { historyMax: 220 });
   assert.equal(r.history.added, 220);
-  const lib = fs.readFileSync(path.join(dir, ".stealth", "library.md"));
+  const lib = fs.readFileSync(path.join(dir, ".kell", "library.md"));
   assert.ok(lib.length <= LIBRARY_MAX_BYTES, `library.md is ${lib.length} bytes`);
-  const archive = fs.readFileSync(path.join(dir, ".stealth", "library", "archive-historical.md"), "utf8");
+  const archive = fs.readFileSync(path.join(dir, ".kell", "library", "archive-historical.md"), "utf8");
   const inLib = (lib.toString().match(/^GOAL\|/gm) || []).length;
   const inArchive = (archive.match(/^GOAL\|/gm) || []).length;
   assert.equal(inLib + inArchive, 220, "nothing is lost: what does not fit is archived");

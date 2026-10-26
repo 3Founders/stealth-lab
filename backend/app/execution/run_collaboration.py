@@ -1,7 +1,7 @@
 """
 Collaboration records on an execution run: NOTE / BLOCKER / HANDOFF /
 QUESTION / ANSWER, plus BLOCKER_RESOLVED / HANDOFF_ACCEPTED (migration 91)
--- the structured record type `.stealth/run.md` has never had (see
+-- the structured record type `.kell/run.md` has never had (see
 migration 90's own docstring for why this is a new table rather than an
 extension of the workspace-local `app.stealth.journal`).
 

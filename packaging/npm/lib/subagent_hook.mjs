@@ -192,7 +192,7 @@ function isDir(p) {
 
 function readPlanFile(dirs, name) {
   for (const d of dirs) {
-    try { return fs.readFileSync(path.join(d, ".stealth", name), "utf8"); } catch { /* next */ }
+    try { return fs.readFileSync(path.join(d, ".kell", name), "utf8"); } catch { /* next */ }
   }
   return "";
 }
@@ -221,11 +221,11 @@ export async function processStopJob(job, {
   }
   if (!cwd || !isDir(cwd)) return { status: "skipped", reason: `no usable cwd (${cwd || "none"})` };
 
-  // .stealth/ is usually untracked, so it lives in the session checkout, not the worktree.
+  // .kell/ is usually untracked, so it lives in the session checkout, not the worktree.
   const dirs = [...new Set([job.cwd, cwd].filter(Boolean))];
   const fromPrompt = job.node_line ? parseNodeLine(job.node_line) : null;
   const node = fromPrompt?.check ? fromPrompt : findNodeLine(readPlanFile(dirs, "run.md"), job.node_id);
-  if (!node) return { status: "skipped", reason: `NODE ${job.node_id} not found in .stealth/run.md` };
+  if (!node) return { status: "skipped", reason: `NODE ${job.node_id} not found in .kell/run.md` };
   if (!node.check) return { status: "skipped", reason: `NODE ${job.node_id} has no check=` };
 
   const started = now();

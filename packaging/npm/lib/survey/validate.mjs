@@ -10,7 +10,7 @@
 //     or be an existing path, or a command the manifests/CI confirm. Otherwise the fact is rejected.
 //   * Commands in build/test/lint/ci facts are cross-checked against manifests, Makefiles and CI; one that
 //     contradicts them (`npm run build` with no build script) is rejected.
-// Rejected facts leave the page (find_ways never sees them) and go to .stealth/survey/rejected.md.
+// Rejected facts leave the page (find_ways never sees them) and go to .kell/survey/rejected.md.
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";

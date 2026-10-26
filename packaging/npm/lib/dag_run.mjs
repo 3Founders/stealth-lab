@@ -32,7 +32,7 @@ const BIG_STEP = 15;                    // added lines in the past piece above w
 function readSolution(root, entry) {
   const sol = (entry.procs || [])[0]?.solution;
   if (!sol) return "";
-  try { return fs.readFileSync(path.join(root, ".stealth", "library", sol), "utf8"); } catch { return ""; }
+  try { return fs.readFileSync(path.join(root, ".kell", "library", sol), "utf8"); } catch { return ""; }
 }
 
 // -> {entry, diff, steps, dag} | null
@@ -317,11 +317,11 @@ export async function runDag(ctx) {
 
 const STATE = "dag_state.json";
 export function saveDagState(root, state) {
-  try { fs.writeFileSync(path.join(root, ".stealth", STATE), JSON.stringify({ ...state, saved_at: new Date().toISOString() }, null, 1)); return true; }
+  try { fs.writeFileSync(path.join(root, ".kell", STATE), JSON.stringify({ ...state, saved_at: new Date().toISOString() }, null, 1)); return true; }
   catch { return false; }
 }
 export function loadDagState(root) {
-  try { return JSON.parse(fs.readFileSync(path.join(root, ".stealth", STATE), "utf8")); } catch { return null; }
+  try { return JSON.parse(fs.readFileSync(path.join(root, ".kell", STATE), "utf8")); } catch { return null; }
 }
 
 // `stealthlab-mcp dag continue`: the session has done its part(s) of the plan in the working tree. Checks them ("no new
@@ -330,7 +330,7 @@ export function loadDagState(root) {
 export async function continueDag({ root, env = process.env, rt, log = () => {}, runShell, undo, fresh = false }) {
   const st = loadDagState(root);
   const out = [];
-  if (!st) return { ok: false, lines: ["No plan to continue here (.stealth/dag_state.json): nothing was handed over in parts."] };
+  if (!st) return { ok: false, lines: ["No plan to continue here (.kell/dag_state.json): nothing was handed over in parts."] };
   if (st.awaiting_plan) return { ok: false, lines: [`This task waits for your plan: \`${"stealthlab-mcp"} dag plan\` first (see its usage).`] };
   const repo = await repoTopLevel(root, env);
   // fresh: a plan just made -- the session's parts are not done yet, so only the cheap parts that need none of them run
@@ -381,7 +381,7 @@ export async function continueDag({ root, env = process.env, rt, log = () => {},
   if (!open.length) {
     const fin = await runShell(st.fullCheck, { cwd: repo, timeoutMs: 600000 });
     out.push(fin.code === 0 ? "All parts are in; the full check passes." : `All parts are in, but the full check fails:\n${String(fin.out || "").slice(-1200)}`);
-    try { fs.unlinkSync(path.join(root, ".stealth", STATE)); } catch { /* */ }
+    try { fs.unlinkSync(path.join(root, ".kell", STATE)); } catch { /* */ }
     return { ok: fin.code === 0, lines: out, state: st };
   }
   saveDagState(root, st);
@@ -448,7 +448,7 @@ export async function runDagCli(argv, { cwd = process.cwd(), env = process.env, 
   }
   const { findStealthRoot } = await import("./library.mjs");
   const root = findStealthRoot(cwd);
-  if (!root) { print("No .stealth/ here."); return 1; }
+  if (!root) { print("No .kell/ here."); return 1; }
   const { ExecRuntime } = await import("./exec/runtime.mjs");
   const { runShellCapture } = await import("./dispatch.mjs");
   const { createUndoPoint, finishUndoPoint, discardUndoPoint, undoEnabled } = await import("./undo.mjs");

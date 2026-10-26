@@ -141,8 +141,8 @@ function setup(extra = {}) {
   const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n");
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell"));
+  fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
                   STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_DISPATCH_LOCATE: "off", STEALTHLAB_BRIEF: "on", ...extra }, repo };
@@ -165,7 +165,7 @@ test("dispatch: a clear code task runs, and the cheap model is told the conversa
   assert.equal(d.handled, true);
   assert.equal(rt.calls[0].task, "Earlier in this conversation:\nDeveloper: calc.py has a bug: x should be 2\n\nAssistant: I see it.\n\nThe request:\nyes fix it");
   assert.doesNotMatch(rt.calls[0].task, /ALWAYS/);
-  assert.match(fs.readFileSync(path.join(repo, ".stealth", "library.md"), "utf8"), /yes fix it/, "the library title stays the user's own words");
+  assert.match(fs.readFileSync(path.join(repo, ".kell", "library.md"), "utf8"), /yes fix it/, "the library title stays the user's own words");
 });
 
 test("dispatch: the brief decides nothing -- a brief that says question, or no brief, still dispatches what the judge calls a change", async () => {

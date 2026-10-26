@@ -164,8 +164,8 @@ function surveyedRepo() {
   g(repo, "init", "-q"); g(repo, "config", "user.email", "t@e"); g(repo, "config", "user.name", "t");
   write(repo, "calc.py", "x = 1\n");
   g(repo, "add", "-A"); g(repo, "commit", "-q", "-m", "init");
-  fs.mkdirSync(path.join(repo, ".stealth"));
-  write(repo, ".stealth/claims.md", "# Claims\n- Tests run with `python -m pytest -q` from the repo root (pyproject.toml:12)\n- calc.py owns every constant (calc.py:1)\n");
+  fs.mkdirSync(path.join(repo, ".kell"));
+  write(repo, ".kell/claims.md", "# Claims\n- Tests run with `python -m pytest -q` from the repo root (pyproject.toml:12)\n- calc.py owns every constant (calc.py:1)\n");
   return repo;
 }
 
@@ -183,10 +183,10 @@ test("B1: the context holds the survey's facts and the judged library match with
   assert.equal(repoContext({ reply, root: repo, cwd: repo, prompt: "x", env: { STEALTHLAB_DISPATCH_CONTEXT: "off" } }), "");
   assert.equal(repoContext({ reply, root: null, env: {} }), "");
   const bare = tmpDir("ctx-bare-");
-  fs.mkdirSync(path.join(bare, ".stealth"));
+  fs.mkdirSync(path.join(bare, ".kell"));
   assert.equal(repoContext({ reply: {}, root: bare, cwd: bare, prompt: "x", env: {} }), "");
   const huge = surveyedRepo();
-  write(huge, ".stealth/claims.md", `# Claims\n${"- a fact that goes on and on (a.py:1)\n".repeat(900)}`);
+  write(huge, ".kell/claims.md", `# Claims\n${"- a fact that goes on and on (a.py:1)\n".repeat(900)}`);
   assert.ok(repoContext({ reply: {}, root: huge, cwd: huge, prompt: "x", env: {} }).length <= CONTEXT_MAX);
 });
 

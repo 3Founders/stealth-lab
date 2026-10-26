@@ -1,5 +1,5 @@
 """
-G13 P1 -- pure-logic tests for the `.stealth/` file formats
+G13 P1 -- pure-logic tests for the `.kell/` file formats
 (`app.stealth.format`) and the run-scoped page builders
 all from fixture dicts, no database.
 

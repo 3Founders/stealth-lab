@@ -3,7 +3,7 @@ Local project registry -- the smallest possible answer to "what local keळ
 projects exist on this machine", for the local sync bridge's `list-projects`
 step (docs/local_project_sync_security.md §C / Implementation Closure §2).
 
-WHY THIS EXISTS: every `.stealth`-touching MCP tool takes `repo_path` as a
+WHY THIS EXISTS: every `.kell`-touching MCP tool takes `repo_path` as a
 caller-supplied parameter on every call (confirmed by reading
 app/mcp_server/server.py) -- the MCP server process holds no persistent
 notion of "the current project" and there was, before this file, no
@@ -22,7 +22,7 @@ Exactly three fields per entry, nothing else, ever:
   - last_local_activity_at
 
 WHERE: a per-OS, per-user application-data directory (via `platformdirs`),
-never inside any single project's own `.stealth/` (it must span multiple
+never inside any single project's own `.kell/` (it must span multiple
 repos) and never a hardcoded path.
 
 WRITTEN BY: `ensure_stable_project_id` (app.stealth.project_sync) -- the one
@@ -67,7 +67,7 @@ def _read_registry(path: str) -> dict[str, dict[str, Any]]:
 def upsert_local_project(repo_path: str, *, stable_project_id: str) -> None:
     """Best-effort. A failure here (e.g. no writable app-data directory on
     this machine) must never block the caller's own operation -- callers
-    swallow OSError the same way every other best-effort `.stealth/` write
+    swallow OSError the same way every other best-effort `.kell/` write
     in this codebase already does (see generate_projection's own
     `projection = f"write_failed: {exc}"` convention)."""
     path = _registry_path()

@@ -11,7 +11,7 @@
 * A held-out arm whose memory block is empty for an instance REUSES that instance's A0 attempt
   (byte-identical prompt), never re-samples it.
 * KP ("K-prod", kprod.py) is the exception to "only the memory block differs": it is Kel used the
-  way the product is used -- find_ways as a tool, the product's own instructions, .stealth/ files
+  way the product is used -- find_ways as a tool, the product's own instructions, .kell/ files
   the agent writes itself (never part of the patch). Same model, budget, decoding and coding tools.
   It always runs fresh (never reuses A0), because the agent decides whether to use Kel.
 * KH ("K-hook", kprod.py) is the same product setup with the Claude Code knowledge hook: the user's
@@ -158,7 +158,7 @@ def main() -> None:
 
         missing_survey = sorted({inst[i]["repo"] for i in ids if kprod.claims_for(inst[i]["repo"]) is None})
         if missing_survey and not kprod.SURVEY_LOG.exists():
-            raise SystemExit("run `python kprod.py survey` first (the survey_repo step writes .stealth/claims.md)")
+            raise SystemExit("run `python kprod.py survey` first (the survey_repo step writes .kell/claims.md)")
         if a.arm == "KH" and shutil.which("node") is None:
             raise SystemExit("KH needs Node.js on PATH: the hook's own formatter (packaging/npm/lib/hook.mjs) runs in it")
         bridge = kprod.KelBridge()

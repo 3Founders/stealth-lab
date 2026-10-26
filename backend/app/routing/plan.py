@@ -172,7 +172,7 @@ async def _model_plan(pool: Any, *, scope: AccessScope, goal_id: str, procedure_
                       local_obs: Sequence[Mapping[str, Any]] = (),
                       virtual: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     """`local_obs`: the caller's own attempt counts on this Goal ([{unit, n, ok}], from the OBS lines of
-    `.stealth/routing.md`); they condition the plan on what happened in the caller's repository.
+    `.kell/routing.md`); they condition the plan on what happened in the caller's repository.
     `virtual`: the task has no global Goal; `goal_id` is its virtual key (service.virtual_goal_id) and this says
     which case it is ({kind, ref?, features?, parents?}), which sets its prior (service.prior_draws_for_case)."""
     constraints = {k: v for k, v in dict(constraints or {}).items() if k != CALLER_KEY}

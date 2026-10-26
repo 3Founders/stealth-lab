@@ -1,13 +1,13 @@
-// `stealthlab-mcp status`: a COMPUTED status for every `.stealth/run.md` node and every `.stealth/library.md` entry:
+// `stealthlab-mcp status`: a COMPUTED status for every `.kell/run.md` node and every `.kell/library.md` entry:
 // verified | open | failed | contested | expired. Nobody types it. A run.md node marked `done` by hand is a claim,
-// not evidence; the status comes from recorded check runs (`.stealth/evidence.md`) and from what the target relies on.
+// not evidence; the status comes from recorded check runs (`.kell/evidence.md`) and from what the target relies on.
 //
 // The same design as docs/verification_changes_prop.md section 4.2, local first: the server side has no evidence flowing
 // into it yet, while dispatch, library.md and run.md already carry the checks. The evidence methods use the names of the
 // server's verification ladder (backend/app/services/verification.py), so a line maps one to one onto a
 // `verification_results` row later.
 //
-// Evidence line (append-only, same pipe grammar as the other .stealth files; `check=` is last and takes the rest):
+// Evidence line (append-only, same pipe grammar as the other .kell files; `check=` is last and takes the rest):
 //   EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<HEAD sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<cmd>
 // `tree` is the id of HEAD's tree plus the uncommitted tracked diff (what `git write-tree` would give for it), computed in
 // memory (workTreeId), so a read never writes git objects. It only FLAGS that code changed since the check ran
@@ -81,7 +81,7 @@ export function renderEvidence(e) {
     ...(where ? [`where=${where}`] : []), `check=${check}`].join("|");
 }
 
-export function appendEvidence(root, lines, dir = path.join(root, ".stealth")) {
+export function appendEvidence(root, lines, dir = path.join(root, ".kell")) {
   if (!lines.length) return 0;
   const file = path.join(dir, "evidence.md");
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -263,7 +263,7 @@ function readOr(file, fallback = "") {
 }
 
 // The things to compute a status for, without any hashing yet.
-export function collectTargets(root, dir = path.join(root, ".stealth")) {
+export function collectTargets(root, dir = path.join(root, ".kell")) {
   const targets = [];
   const claimsById = loadClaims(dir);
   const ids = claimIds(dir);
@@ -295,7 +295,7 @@ export function collectTargets(root, dir = path.join(root, ".stealth")) {
 // ---------------------------------------------------------------------------------------------- the computation
 
 export function computeStatus(root, opts = {}) {
-  const dir = opts.dir ? path.resolve(opts.dir) : path.join(root, ".stealth");
+  const dir = opts.dir ? path.resolve(opts.dir) : path.join(root, ".kell");
   const { targets, claimsById } = collectTargets(root, dir);
   const evidence = parseEvidence(readOr(path.join(dir, "evidence.md")));
   const head = opts.head ?? headSha(root);
@@ -446,14 +446,14 @@ async function defaultExec(root, cmd, { inPlace = false, timeoutMs } = {}) {
 }
 
 // The targets whose checks `--run` would run, and the distinct commands among them.
-export function pickTargets(root, { dir = path.join(root, ".stealth"), only = null } = {}) {
+export function pickTargets(root, { dir = path.join(root, ".kell"), only = null } = {}) {
   const { targets } = collectTargets(root, dir);
   return targets.filter((t) => (!only || only.includes(t.id)) && t.checks.length && t.handStatus !== "skipped");
 }
 export const plannedCommands = (root, opts = {}) => [...new Set(pickTargets(root, opts).flatMap((t) => t.checks))];
 
 // Runs the check of each target (or of the --only ids) and appends exactly one evidence line per check.
-export async function runChecks(root, { dir = path.join(root, ".stealth"), only = null, exec = defaultExec, inPlace = false, timeoutMs = 300000, now = () => new Date(), tree,
+export async function runChecks(root, { dir = path.join(root, ".kell"), only = null, exec = defaultExec, inPlace = false, timeoutMs = 300000, now = () => new Date(), tree,
   env = process.env, fetchImpl } = {}) {
   const picked = pickTargets(root, { dir, only });
   const paths = new Set(picked.flatMap((t) => t.files));
@@ -492,7 +492,7 @@ export async function runChecks(root, { dir = path.join(root, ".stealth"), only 
 // Keeps, for each target and check, only the latest pass, the latest fail, and every line recorded on the tree as it is now.
 // (Per check, not per target: a library entry with two checks would otherwise lose one check's pass and change status.)
 // Refuses when evidence.md has uncommitted changes in git. The old file is kept as evidence.md.prev.
-export function compactEvidence(root, { dir = path.join(root, ".stealth"), tree } = {}) {
+export function compactEvidence(root, { dir = path.join(root, ".kell"), tree } = {}) {
   const file = path.join(dir, "evidence.md");
   const text = readOr(file, null);
   if (text === null) return { ok: false, reason: "there is no evidence.md" };
@@ -565,7 +565,7 @@ export function renderTable(result) {
 
 export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--server] [--run [--yes] [--in-place] [--only <ids>]] [--compact]
 
-  A computed status for every .stealth/run.md node and .stealth/library.md entry:
+  A computed status for every .kell/run.md node and .kell/library.md entry:
     verified   a check exists, its latest run on the current code passed, and every deps= node is verified
                (flagged "code changed since the check ran" when the tree differs from the one the check ran on,
                though every file it cites still matches: a flag, never an expiry)
@@ -579,13 +579,13 @@ export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir
   Read-only. --run lists the commands it will run first. In a terminal it asks once (y/N); with no terminal it runs only
   with --yes, otherwise it exits 3 ("pass --yes to run these checks"). Each check runs in a throwaway worktree (HEAD plus
   the uncommitted tracked diff); --in-place runs it in your checkout and says so. One line per check is appended to
-  .stealth/evidence.md. --only limits --run to those ids (comma list).
+  .kell/evidence.md. --only limits --run to those ids (comma list).
   --compact rewrites evidence.md keeping, per target and check, the latest pass, the latest fail and every line recorded on
   the tree as it is now (the old file is kept as evidence.md.prev). It refuses when evidence.md has uncommitted changes.
   --server also reads, for each library entry that names a server Goal, that Goal's status COMPUTED by the server from the evidence on
   its guarantee claims (shown as "server" in --json, and "[server: ...]" in the table). Read only, one request per Goal, and any failure
   leaves the local status as it is. It needs a saved token; without --server nothing is sent.
-  --stealth-dir reads the plan, claims and evidence from another folder (for example .stealth/collab) while --root stays
+  --stealth-dir reads the plan, claims and evidence from another folder (for example .kell/collab) while --root stays
   the repository whose files are checked.
 `;
 

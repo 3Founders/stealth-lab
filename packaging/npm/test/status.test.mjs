@@ -14,19 +14,19 @@ const APP_LINES = ["export function main() { return 1; }", "// helper", "// more
 function toy({ run, claims, library, app = APP_LINES } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "status-"));
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
-  fs.mkdirSync(path.join(root, ".stealth"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".kell"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "app.js"), app.join("\n"));
   const claim = (id) => `CLAIM|${id}|current|layout|repository|The entry point is \`main\` in src/app.js|source=src/app.js:1#sha=${lineHash(app[0])}|version=1`;
-  fs.writeFileSync(path.join(root, ".stealth", "claims.md"), (claims ?? [claim("R-001")]).map((c) => (c.startsWith("CLAIM") ? c : claim(c))).join("\n") + "\n");
-  if (run) fs.writeFileSync(path.join(root, ".stealth", "run.md"), run.join("\n") + "\n");
-  if (library) fs.writeFileSync(path.join(root, ".stealth", "library.md"), library.join("\n") + "\n");
+  fs.writeFileSync(path.join(root, ".kell", "claims.md"), (claims ?? [claim("R-001")]).map((c) => (c.startsWith("CLAIM") ? c : claim(c))).join("\n") + "\n");
+  if (run) fs.writeFileSync(path.join(root, ".kell", "run.md"), run.join("\n") + "\n");
+  if (library) fs.writeFileSync(path.join(root, ".kell", "library.md"), library.join("\n") + "\n");
   return root;
 }
 const statusOf = (root, id) => computeStatus(root).targets.find((t) => t.id === id);
 const edit = (root, rel, fn) => { const f = path.join(root, rel); fs.writeFileSync(f, fn(fs.readFileSync(f, "utf8"))); };
 const passAll = async () => ({ code: 0 });
 const failAll = async () => ({ code: 1 });
-const evidenceText = (root) => fs.readFileSync(path.join(root, ".stealth", "evidence.md"), "utf8");
+const evidenceText = (root) => fs.readFileSync(path.join(root, ".kell", "evidence.md"), "utf8");
 
 test("a node with check=- is open, and a done node with no evidence is open", () => {
   const root = toy({ run: [
@@ -99,7 +99,7 @@ test("a dependency cycle does not hang and is never verified", async () => {
 test("a library entry with touches hashes is verified until a touched file changes, then expired", () => {
   const root = toy();
   const sha = fileShas(root, ["src/app.js"]).get("src/app.js").slice(0, 12);
-  fs.writeFileSync(path.join(root, ".stealth", "library.md"), [
+  fs.writeFileSync(path.join(root, ".kell", "library.md"), [
     "GOAL|L-aaaa1111|Fix the entry point|unit=.|g=-|outcome=pass|status=current|verified_at=2026-10-20|route=-|tags=-",
     `PROC|L-aaaa1111.p1|fix|p=-|solution=-|touches=src/app.js#sha=${sha}`,
     "STEP|L-aaaa1111.p1:1|action|edit main|check=-",
@@ -133,7 +133,7 @@ test("without --run nothing is executed; --run appends exactly one evidence line
   const out = [];
   assert.equal(await runStatusCli(["--root", root, "--json"], { out: (s) => out.push(s), err: () => {}, exec }), 0);
   assert.equal(calls, 0, "no child process without --run");
-  assert.equal(fs.existsSync(path.join(root, ".stealth", "evidence.md")), false);
+  assert.equal(fs.existsSync(path.join(root, ".kell", "evidence.md")), false);
   assert.equal(JSON.parse(out[0]).targets.length, 3);
 
   assert.equal(await runStatusCli(["--root", root, "--run", "--yes", "--json"], { out: (s) => out.push(s), err: () => {}, exec, tty: false }), 0);
@@ -169,7 +169,7 @@ test("evidence lines round-trip, keep a pipe inside check=, and skip lines that 
   assert.equal(parseEvidence(line + "\nEVIDENCE|N-2|bogus|pass|at=x\n").length, 1);
 });
 
-test("a missing .stealth folder or a missing file fails open to open/empty, never verified", () => {
+test("a missing .kell folder or a missing file fails open to open/empty, never verified", () => {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), "status-empty-"));
   assert.equal(computeStatus(empty).targets.length, 0);
   const root = toy({ run: ["NODE|N-1|done|Gone file|step=-|claims=R-001|deps=-|check=node -e 0"] });
@@ -186,7 +186,7 @@ const git = (root, args, env = {}) => execFileSync("git", ["-C", root, ...args],
 // a real git repository holding the toy sources, so a tree id can be compared with git's own
 function gitToy({ run } = {}) {
   const root = toy({ run });
-  fs.writeFileSync(path.join(root, ".gitignore"), ".stealth/\n");
+  fs.writeFileSync(path.join(root, ".gitignore"), ".kell/\n");
   fs.writeFileSync(path.join(root, "other.txt"), "other\n");
   git(root, ["init", "-q", "."]);
   git(root, ["config", "user.email", "t@example.invalid"]);
@@ -236,7 +236,7 @@ test("A1: old evidence lines without tree= still parse; the flag is unknown, nev
   const root = gitToy({ run: ["NODE|N-1|ready|Check the entry|step=-|claims=R-001|deps=-|check=node -e 0"] });
   await runChecks(root, { exec: passAll });
   const text = evidenceText(root).replace(/\|tree=[0-9a-f]{40}/g, "");          // what an older version wrote
-  fs.writeFileSync(path.join(root, ".stealth", "evidence.md"), text);
+  fs.writeFileSync(path.join(root, ".kell", "evidence.md"), text);
   assert.equal(parseEvidence(text)[0].tree, null);
   edit(root, "other.txt", (t) => t + "more\n");
   const row = statusOf(root, "N-1");
@@ -253,7 +253,7 @@ test("A2: with no terminal and no --yes nothing runs and the exit code is 3; --y
   assert.equal(calls, 0, "no child process");
   assert.ok(errs.some((l) => /\$ node -e 0/.test(l)), "the commands are listed before anything runs");
   assert.ok(errs.some((l) => /pass --yes to run these checks/.test(l)));
-  assert.equal(fs.existsSync(path.join(root, ".stealth", "evidence.md")), false);
+  assert.equal(fs.existsSync(path.join(root, ".kell", "evidence.md")), false);
   assert.equal(await runStatusCli(["--root", root, "--run", "--yes"], { out: () => {}, err: () => {}, exec, tty: false }), 0);
   assert.equal(calls, 1);
 });
@@ -296,7 +296,7 @@ test("A4: --compact keeps the latest pass, the latest fail and the lines on the 
   const OLD = "a".repeat(40), OLDER = "b".repeat(40);
   const lines = [L("pass", "2026-10-01", OLDER), L("pass", "2026-10-02", OLDER), L("fail", "2026-10-03", OLDER), L("pass", "2026-10-04", OLD),
     L("pass", "2026-10-05", tree), L("fail", "2026-10-06", OLD), L("pass", "2026-10-07", OLD)];
-  const file = path.join(root, ".stealth", "evidence.md");
+  const file = path.join(root, ".kell", "evidence.md");
   fs.writeFileSync(file, "# header\n" + lines.join("\n") + "\n");
   const done = compactEvidence(root, { tree });
   assert.equal(done.ok, true);

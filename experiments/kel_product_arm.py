@@ -5,8 +5,8 @@ No environment setup here: the caller has already isolated the process to its ow
 
 * `KelBridge(dsn)`: the real `find_ways` tool and the `stealth://procedures/<id>/claims` resource,
   in-process, on one background event loop shared by the agent's worker threads.
-* `make_sandbox(root, claims_text)`: a RepoSandbox whose `.stealth/` working files never reach the
-  patch or the edited-files list; seeds `.stealth/claims.md` (the survey_repo output) when given.
+* `make_sandbox(root, claims_text)`: a RepoSandbox whose `.kell/` working files never reach the
+  patch or the edited-files list; seeds `.kell/claims.md` (the survey_repo output) when given.
 * `make_agent(...)`: app.execution.coding_agent.Agent with two extra tools (find_ways,
   read_procedure_claims); every Kel call is logged on the sandbox (`kel_log`).
 * Delivery as in production: the v1 MCP server instructions go into the SYSTEM prompt (`mcp_system`, as a
@@ -24,8 +24,8 @@ import os
 import threading
 import time
 
-STEALTH = ".stealth"
-CLAIMS_REF = "@.stealth/claims.md"
+STEALTH = ".kell"
+CLAIMS_REF = "@.kell/claims.md"
 
 KP_TOOLS_EXTRA = [
     {"type": "function", "function": {
@@ -36,7 +36,7 @@ KP_TOOLS_EXTRA = [
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "What you want done, in plain words."},
             "repo_claims": {"type": "string", "description": (
-                "The text of this repo's .stealth/claims.md, or the literal '" + CLAIMS_REF + "' to send that "
+                "The text of this repo's .kell/claims.md, or the literal '" + CLAIMS_REF + "' to send that "
                 "file as it is on disk.")}},
             "required": ["query"]}}},
     {"type": "function", "function": {
@@ -67,7 +67,7 @@ def task_prompt(task: str, adaptations: str) -> str:
 def survey_instructions(adaptations: str) -> str:
     from app.mcp_server import prompts
 
-    return f"This episode is NOT the task itself: make no change outside .stealth/.\n\n{prompts.survey_repo('.')}\n\n{adaptations}"
+    return f"This episode is NOT the task itself: make no change outside .kell/.\n\n{prompts.survey_repo('.')}\n\n{adaptations}"
 
 
 def sha(text: str) -> str:
@@ -144,7 +144,7 @@ def _sandbox_cls():
     from app.execution.coding_agent import RepoSandbox
 
     class KPSandbox(RepoSandbox):
-        """A RepoSandbox whose .stealth/ working files never reach the patch or the 'edited files' list."""
+        """A RepoSandbox whose .kell/ working files never reach the patch or the 'edited files' list."""
 
         def __init__(self, root: str):
             super().__init__(root)

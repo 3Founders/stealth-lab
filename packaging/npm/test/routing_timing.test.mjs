@@ -102,13 +102,13 @@ test("summarize: routing ends at the first cheap model, else at the decision, el
   assert.equal(summarize({ triage_start: 5, triage_end: 800 }).routing_ms, 800);
 });
 
-// a git repo with a .stealth/ and one file a cheap model "fixes"
+// a git repo with a .kell/ and one file a cheap model "fixes"
 function newRepo() {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "rt-repo-"));
   const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
   g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
   fs.writeFileSync(path.join(repo, "calc.py"), "x = 1\n");
-  fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell")); fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return repo;
 }

@@ -40,8 +40,8 @@ class Stub:
             tok = (env or {}).get("CLAUDE_CODE_OAUTH_TOKEN")
             hit = task in self.limited.get(tok, ())
             ws = c.local / "ws" / c.spec.arms[0] / "swe-mini"
-            (ws / ".stealth").mkdir(parents=True, exist_ok=True)
-            (ws / ".stealth" / "library.md").write_text("half-done" if hit else "finished", encoding="utf-8")
+            (ws / ".kell").mkdir(parents=True, exist_ok=True)
+            (ws / ".kell" / "library.md").write_text("half-done" if hit else "finished", encoding="utf-8")
             results = c.local / "results" / f"{c.spec.run_name()}.jsonl"
             results.parent.mkdir(parents=True, exist_ok=True)
             with results.open("a", encoding="utf-8") as f:
@@ -91,7 +91,7 @@ def test_only_the_chosen_login_is_in_a_sessions_environment(tmp_path, fake_serie
 def test_a_usage_limit_moves_the_issue_to_the_next_login_with_its_state_restored(tmp_path, fake_series):
     c = make(tmp_path, max_issues=2, limited={T1: {"x__mini-1"}})
     seen = []
-    c.stub.seed = c.local / "ws" / "A" / "swe-mini" / ".stealth" / "library.md"
+    c.stub.seed = c.local / "ws" / "A" / "swe-mini" / ".kell" / "library.md"
     orig = c.stub.__call__
 
     def watch(argv, **kw):

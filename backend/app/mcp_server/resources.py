@@ -439,7 +439,7 @@ FIND_WAYS_GUIDE = (
     '# find_ways: the full guide\n'
     '\n'
     'Find the known ways to do something. Returns KNOWLEDGE, not a plan: you\n'
-    '(the planner agent) compile the plan and write `.stealth/` yourself --\n'
+    '(the planner agent) compile the plan and write `.kell/` yourself --\n'
     'the `plan_and_run` prompt has the format.\n'
     '\n'
     'Call it ONCE, before writing code, for any task you would describe in a\n'
@@ -449,7 +449,7 @@ FIND_WAYS_GUIDE = (
     'then refused.\n'
     '\n'
     'query: what you want done, in plain words ("add a DOCX export").\n'
-    "repo_claims: the text of this repo's `.stealth/claims.md`\n"
+    "repo_claims: the text of this repo's `.kell/claims.md`\n"
     '  (`CLAIM|R-001|current|stack|repository|Node 20.11|source=.nvmrc:1#sha=9f2c|version=1`\n'
     '  lines; up to 200 facts / 64 KB; write it with the `survey_repo` prompt).\n'
     '  Used for this request only -- never stored or logged.\n'
@@ -496,13 +496,13 @@ FIND_WAYS_GUIDE = (
     'reply names the next model. Without candidates the reply is unchanged.\n'
     '\n'
     "This repository's own knowledge (all optional; with none of them the reply is exactly as before):\n"
-    'repo_identity: {repo_id, public_name?, strength?} from `.stealth/meta.json` (repo_id is a hash;\n'
+    'repo_identity: {repo_id, public_name?, strength?} from `.kell/meta.json` (repo_id is a hash;\n'
     "  send public_name -- owner/name -- only if the user allows). A strong identity lets this repo's own\n"
     '  global Goals be judged too; strength "weak" (or a p: id) is never used to match other repos.\n'
-    'library_rows: the text of `.stealth/index/library.idx` (up to 64 KB): problems already solved in\n'
+    'library_rows: the text of `.kell/index/library.idx` (up to 64 KB): problems already solved in\n'
     '  THIS repo. Matching entries come back as `library_matches` (read them, and their diffs under\n'
-    '  `.stealth/library/solutions/`, before anything global); a Goal they name wins a tie.\n'
-    "route_obs: the ROUTE and OBS lines of `.stealth/routing.md` (up to 16 KB): this machine's attempt\n"
+    '  `.kell/library/solutions/`, before anything global); a Goal they name wins a tie.\n'
+    "route_obs: the ROUTE and OBS lines of `.kell/routing.md` (up to 16 KB): this machine's attempt\n"
     '  counts per model. With a model plan they condition it on what worked HERE, and `routing_rows`\n'
     '  comes back: the ROUTE line(s) to write into routing.md.\n'
     'Like repo_claims, these are used for this request only -- never stored or logged.\n'
@@ -525,14 +525,14 @@ async def find_ways_guide_resource() -> str:
 
 
 async def library_format_resource() -> str:
-    """stealth://formats/library -- the grammar of .stealth/library.md and routing.md and how to keep them."""
+    """stealth://formats/library -- the grammar of .kell/library.md and routing.md and how to keep them."""
     from app.stealth.library import IDX_HEADER, LIBRARY_HEADER, ROUTING_HEADER
 
     return (
-        "# .stealth library: this repository's own solved problems and model routes\n\n"
+        "# .kell library: this repository's own solved problems and model routes\n\n"
         "Kept on the user's machine by `stealthlab-mcp library <command>` (npm package stealthlab-mcp); the\n"
         "server only ever sees what find_ways' `library_rows` / `route_obs` / `repo_identity` carry, for one request.\n\n"
-        "## library.md (committed; `.stealth/.gitattributes`: library.md merge=union)\n```\n" + LIBRARY_HEADER + "```\n"
+        "## library.md (committed; `.kell/.gitattributes`: library.md merge=union)\n```\n" + LIBRARY_HEADER + "```\n"
         "Free text is escaped: `|` -> %7C, newline -> %0A, a literal %XX -> %25XX.\n\n"
         "## index/library.idx (generated; what find_ways' library_rows sends)\n```\n" + IDX_HEADER + "```\n\n"
         "## routing.md (generated ROUTE lines from find_ways' routing_rows; OBS counts from this machine)\n```\n"
@@ -560,14 +560,14 @@ _V1_RESOURCES = [
     # The two v1 prompts as plain resources: the same text, for MCP clients that can read
     # resources but don't surface MCP prompts to the model (a model can't call prompts/get).
     ("stealth://prompts/survey_repo", "prompt-survey-repo", "survey_repo prompt",
-     "The survey_repo prompt: how to write .stealth/claims.md (what facts to capture and how "
+     "The survey_repo prompt: how to write .kell/claims.md (what facts to capture and how "
      "to write them). Same text as the MCP prompt.", survey_repo_prompt_resource),
     ("stealth://prompts/plan_and_run", "prompt-plan-and-run", "plan_and_run prompt",
      "The plan_and_run prompt with a <your task> placeholder: find_ways, compile "
-     ".stealth/run.md, do and check each step, keep claims.md true, report what was "
+     ".kell/run.md, do and check each step, keep claims.md true, report what was "
      "learned. Same text as the MCP prompt.", plan_and_run_prompt_resource),
-    ("stealth://formats/library", "format-library", ".stealth library format",
-     "The grammar of .stealth/library.md (this repo's solved problems), index/library.idx and routing.md, "
+    ("stealth://formats/library", "format-library", ".kell library format",
+     "The grammar of .kell/library.md (this repo's solved problems), index/library.idx and routing.md, "
      "and the stealthlab-mcp library commands that keep them.", library_format_resource),
     ("stealth://guides/find_ways", "guide-find-ways", "find_ways guide",
      "Every find_ways argument, what each step does, and the reply fields (the listed description is short).",

@@ -52,7 +52,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <p>Restart it (or reload its MCP servers). You should see the <code>find_ways</code> and <code>report_discovery</code> tools and the <code>survey_repo</code> and <code>plan_and_run</code> prompts.</p>
 
             <h3>3. Use it</h3>
-            <p>Once per repository, run the <code>survey_repo</code> prompt so your agent writes <code>.stealth/claims.md</code> (facts about the repo). After that, ask for what you want done; the agent calls <code>find_ways</code>, plans the work itself and shows you the plan before changing anything.</p>
+            <p>Once per repository, run the <code>survey_repo</code> prompt so your agent writes <code>.kell/claims.md</code> (facts about the repo). After that, ask for what you want done; the agent calls <code>find_ways</code>, plans the work itself and shows you the plan before changing anything.</p>
 
             <h3>Other options</h3>
             <table><tbody>

@@ -21,7 +21,7 @@ backend/app/mcp_server/
     vendor/force-graph.min.js
     __init__.py                 — empty
 
-backend/app/stealth/            — the ".stealth/" filesystem projection package (NOT a game mechanic)
+backend/app/stealth/            — the ".kell/" filesystem projection package (NOT a game mechanic)
     __init__.py, atomic.py, errors.py, exploration.py, faults.py,
     format.py, generator.py, journal.py, legacy_context.py
 
@@ -61,7 +61,7 @@ backend/db/*.sql                 — migrations; key ones cited throughout: 01, 
 .mcp.json                        — repo-root MCP client config (http transport, Bearer token)
 ```
 
-Full-repo greps for `event|trace|episode|artifact|observation|claim|evidence|procedure|local|.stealth|journal|consolidate|retrieve|search|ingest|MCP|tool|resource|prompt|postgres|repository|sqlite|filesystem` return matches concentrated almost entirely inside the directories above; no other directory tree materially participates in the local-execution-to-knowledge pipeline.
+Full-repo greps for `event|trace|episode|artifact|observation|claim|evidence|procedure|local|.kell|journal|consolidate|retrieve|search|ingest|MCP|tool|resource|prompt|postgres|repository|sqlite|filesystem` return matches concentrated almost entirely inside the directories above; no other directory tree materially participates in the local-execution-to-knowledge pipeline.
 
 ---
 
@@ -181,7 +181,7 @@ All return type `str` (JSON-serialized). `server.py` also exposes 5 unauthentica
 
 **Context object:** `mcp.server.mcpserver.Context`, passed as `ctx` to every tool. The ONLY field actually read anywhere in `mcp_server` code is `ctx.request_context.lifespan_context["pool"]` (the asyncpg pool — set by `lifespan()`'s yielded `{"pool": pool}`, `server.py:167`). There is **no** `workspace_id`/caller-identity/repo-scope field on `Context` itself — those are resolved separately via contextvars: `get_access_token()` and `current_actor_id()`, wrapped by `_resolve_caller_identity()` (`server.py:450-475`) and `_caller_access_scope()` (`server.py:584-608`).
 
-**Config values read by the MCP layer** (`app.config.settings`): `deployment_mode`, `oidc_issuer`/`oidc_audience`, `hosted_execution_enabled` (gates whether a `repo_path` param is trusted directly vs. must resolve through a registered workspace), `general_compute_api_key`/`general_compute_base_url` (for a tier-1 OpenAI-compatible LLM client). `DATABASE_URL` is read directly from `os.environ` in `lifespan()` (`server.py:162-164`), **not** via `settings.database_url` — whether these are guaranteed identical at runtime is NOT ESTABLISHED FROM CODE. There is **no** `.stealth` path setting on `Settings` — the `.stealth` directory location is derived per-call from the caller-supplied `repo_path`/`workspace_root` MCP parameter, never a global config value.
+**Config values read by the MCP layer** (`app.config.settings`): `deployment_mode`, `oidc_issuer`/`oidc_audience`, `hosted_execution_enabled` (gates whether a `repo_path` param is trusted directly vs. must resolve through a registered workspace), `general_compute_api_key`/`general_compute_base_url` (for a tier-1 OpenAI-compatible LLM client). `DATABASE_URL` is read directly from `os.environ` in `lifespan()` (`server.py:162-164`), **not** via `settings.database_url` — whether these are guaranteed identical at runtime is NOT ESTABLISHED FROM CODE. There is **no** `.kell` path setting on `Settings` — the `.kell` directory location is derived per-call from the caller-supplied `repo_path`/`workspace_root` MCP parameter, never a global config value.
 
 **Import graph (server.py, abridged, lines 41-124):** `app.db.session.create_pool`, `app.execution.{durable_resume, durable_run, implementation_registry}`, `app.api.{approval, decompose}`, `app.services.{access, applicability, authn, decomposition, embeddings, knowledge_conflict, local_retrieval, procedure_extraction, retrieval, reuse_detection}`, `app.observability`, `app.config.settings`, `app.debate.{panel, state_machine}`, `app.services.loop.LoopOrchestrator`, `app.mcp_server.{tasks_extension, claim_graph_page, procedure_graph_page}`, `app.services.{claim_graph_api, procedure_task_graph_api, product_model}`; plus numerous function-local imports inside individual tool bodies (`app.services.workspace_registry`, `app.execution.{plan_persistence, plans, procedure_graph, graph_executor, implementation_executor, recursion_guard, durable_graph, coordination}`, `app.services.{verification, route_decision, decompose}`, `app.stealth.{errors, faults, exploration}`, `app.utils.ids`).
 
@@ -410,15 +410,15 @@ Two executor modules exist; both are **strictly sequential — no parallelism an
 
 ---
 
-## PHASE 13 — `.stealth` forensic audit (exhaustive)
+## PHASE 13 — `.kell` forensic audit (exhaustive)
 
-**This is the single most consequential finding of this audit, and it directly contradicts an older internal doc in this same repo (`MCP_HARDENING_DEFERRED_ITEMS.md`, self-dated 2026-09-10), which claimed `.stealth/context.md`/`run.json`/`meta.json` were "Missing entirely... No writer for any of it. State: OPEN (greenfield)."** Verified against current code, that claim is **stale** — the module was built essentially concurrently with or immediately after that doc entry.
+**This is the single most consequential finding of this audit, and it directly contradicts an older internal doc in this same repo (`MCP_HARDENING_DEFERRED_ITEMS.md`, self-dated 2026-09-10), which claimed `.kell/context.md`/`run.json`/`meta.json` were "Missing entirely... No writer for any of it. State: OPEN (greenfield)."** Verified against current code, that claim is **stale** — the module was built essentially concurrently with or immediately after that doc entry.
 
-### What `.stealth/` actually is
+### What `.kell/` actually is
 
 `backend/app/stealth/__init__.py` docstring lays out the exact layout on disk (relative to a caller-supplied `workspace_root`):
 ```
-.stealth/
+.kell/
     context.md, run.json, meta.json, claims.md, procedures.md, implementations.md, run.md
     index/
         root.idx, claims.idx, procedures.idx, implementations.idx, run.idx
@@ -426,7 +426,7 @@ Two executor modules exist; both are **strictly sequential — no parallelism an
     .lock               (SingleWriterLock)
 ```
 
-Every generated file states in its own header: **"GENERATED, not canonical. Do not hand-edit."** (per `.gitignore`'s own comment at lines 35-40, corroborated by `generator.py`'s output construction). This settles the "source of truth vs. projection" question directly: `.stealth/` is a **regenerated local projection/cache of canonical Postgres state**, never itself authoritative, and it is **gitignored** — never committed.
+Every generated file states in its own header: **"GENERATED, not canonical. Do not hand-edit."** (per `.gitignore`'s own comment at lines 35-40, corroborated by `generator.py`'s output construction). This settles the "source of truth vs. projection" question directly: `.kell/` is a **regenerated local projection/cache of canonical Postgres state**, never itself authoritative, and it is **gitignored** — never committed.
 
 ### File-by-file (all 9 modules read in full)
 
@@ -436,50 +436,50 @@ Every generated file states in its own header: **"GENERATED, not canonical. Do n
 |`atomic.py`|`atomic_write(path, content)`, `atomic_write_batch(files)`|N/A (given path)|**yes** — `tempfile.mkstemp(dir=directory, prefix=".tmp-stealth-")` → write → `os.fsync` → `os.replace(tmp_path, path)` (lines 24-40, 43-76). True write-temp→fsync→rename.|
 |`errors.py`|`StealthProjectionError(Exception)`|—|no|
 |`exploration.py`|`exploration_id()`, `open_exploration()`, `close_exploration()` (optionally captures a private global Claim via `app.services.claims.capture_claim`), `list_explorations()`, `render_exploration_page()`|delegates to `journal.py`|indirectly (via journal)|
-|`faults.py`|page-fault mechanism: `read_faulted`/`_write_faulted` at `.stealth/index/faulted.json` (lines 42, 53-70); `project_knowledge()` merges global Postgres objects into `.stealth/claims.md`/`procedures.md`/`implementations.md` + `.idx` files|`os.path.join(_sdir(workspace_root), "index", "faulted.json")`|yes, via `atomic_write_batch` (lines 239-297)|
+|`faults.py`|page-fault mechanism: `read_faulted`/`_write_faulted` at `.kell/index/faulted.json` (lines 42, 53-70); `project_knowledge()` merges global Postgres objects into `.kell/claims.md`/`procedures.md`/`implementations.md` + `.idx` files|`os.path.join(_sdir(workspace_root), "index", "faulted.json")`|yes, via `atomic_write_batch` (lines 239-297)|
 |`format.py`|pure `.idx`/`.md` render/parse logic (`IdxRow`, `RunIdxRow`, `RootRow`, `MdBlock`, `render_idx`, `render_md_page`, `parse_idx`, `parse_md_page`)|N/A|no — string-only|
 |`generator.py`|`generate_projection()` — top-level regenerator|`stealth_dir = os.path.join(workspace_root, STEALTH_DIRNAME)`; `index_dir = os.path.join(stealth_dir, "index")` (lines 452-453)|yes — builds a `(path, content)` plan list, `atomic_write_batch(plan)` under a `SingleWriterLock`, `meta.json` written last (lines 467-484)|
-|`journal.py`|`.stealth/events.jsonl` append-only journal + `SingleWriterLock` (`.stealth/.lock`, `O_CREAT\|O_EXCL`, stale-steal after 60s, Windows `PermissionError` race handled)|`_stealth_dir()` → `os.path.join(workspace_root, STEALTH_DIRNAME)` (lines 41-50)|yes|
-|`legacy_context.py`|`STEALTH_DIRNAME = ".stealth"` (line 19), `CONTEXT_MD_MAX_BYTES = 8192`; original B35 renderers `_render_context_md`/`_render_run_json`/`_render_meta_json`|—|indirectly (rendering only; writing done via `atomic.py`/`generator.py`)|
+|`journal.py`|`.kell/events.jsonl` append-only journal + `SingleWriterLock` (`.kell/.lock`, `O_CREAT\|O_EXCL`, stale-steal after 60s, Windows `PermissionError` race handled)|`_stealth_dir()` → `os.path.join(workspace_root, STEALTH_DIRNAME)` (lines 41-50)|yes|
+|`legacy_context.py`|`STEALTH_DIRNAME = ".kell"` (line 19), `CONTEXT_MD_MAX_BYTES = 8192`; original B35 renderers `_render_context_md`/`_render_run_json`/`_render_meta_json`|—|indirectly (rendering only; writing done via `atomic.py`/`generator.py`)|
 
 **Byte budgets enforced:** `ROOT_IDX_MAX_BYTES=4096`, `TYPE_IDX_MAX_BYTES=65536` (`format.py:30,34`), `CONTEXT_MD_MAX_BYTES=8192` (`legacy_context.py:23`) — enforced/raised in `generator.py:400-411`.
 
 **Staleness/revision tracking:** `meta.json`'s `projection_revision`/`sync_cursor` fields (`legacy_context.py:159-168`), tied to the journal's monotonic `seq`.
 
-**Regeneration trigger:** per `.gitignore`'s comment (lines 35-40) and `server.py:3738-3743`'s docstring, `.stealth/{context.md,run.json,meta.json}` is refreshed "on every `find_best_way`/`continue_run` call given a `repo_path`" — i.e. call-triggered, not a background daemon.
+**Regeneration trigger:** per `.gitignore`'s comment (lines 35-40) and `server.py:3738-3743`'s docstring, `.kell/{context.md,run.json,meta.json}` is refreshed "on every `find_best_way`/`continue_run` call given a `repo_path`" — i.e. call-triggered, not a background daemon.
 
 
 
-### Does `.stealth`/`.stealthlab` exist on disk right now, in this checkout?
+### Does `.kell`/`.stealthlab` exist on disk right now, in this checkout?
 
 ```
-$ ls -la .stealth .stealthlab
-ls: cannot access '.stealth': No such file or directory
+$ ls -la .kell .stealthlab
+ls: cannot access '.kell': No such file or directory
 ls: cannot access '.stealthlab': No such file or directory
 ```
-**Neither exists.** Both are lazily generated only when a real MCP tool call supplies a real `repo_path`/`workspace_root` and reaches the projection code — which has not happened in this checkout. This is consistent with "generated, not canonical" — nothing in this repo's own working directory currently depends on `.stealth/` existing.
+**Neither exists.** Both are lazily generated only when a real MCP tool call supplies a real `repo_path`/`workspace_root` and reaches the projection code — which has not happened in this checkout. This is consistent with "generated, not canonical" — nothing in this repo's own working directory currently depends on `.kell/` existing.
 
-### Event → ... → Procedure, restated purely in terms of `.stealth`
+### Event → ... → Procedure, restated purely in terms of `.kell`
 
-| Layer | `.stealth/` representation |
+| Layer | `.kell/` representation |
 |---|---|
 | Event | **none** — Postgres only (`execution_run_events`) |
 | Trace | **none** — Postgres only (`execution_runs.trace_id`) |
 | Episode | **none** — Postgres only (`episodes`) |
 | Artifact | **none** (the layer itself doesn't exist for local execution — see Phase 4-12) |
-| Observation | **none directly** — but `project_knowledge()`/`faults.py` can pull *global* claims/procedures (which may ultimately be evidenced by observations) into `.stealth/claims.md` etc. as a read-side projection |
-| Claim | **yes, indirectly** — `.stealth/claims.md` + `claims.idx`, populated by `project_knowledge()`/`faults.py` from canonical Postgres `knowledge_nodes`, on demand |
+| Observation | **none directly** — but `project_knowledge()`/`faults.py` can pull *global* claims/procedures (which may ultimately be evidenced by observations) into `.kell/claims.md` etc. as a read-side projection |
+| Claim | **yes, indirectly** — `.kell/claims.md` + `claims.idx`, populated by `project_knowledge()`/`faults.py` from canonical Postgres `knowledge_nodes`, on demand |
 | Evidence | **none directly** |
-| Procedure | **yes, indirectly** — `.stealth/procedures.md` + `procedures.idx`, same mechanism |
-| Run/session working context | **yes, directly** — `.stealth/context.md`, `run.json`, `meta.json`, `run.md` — this is the one layer `.stealth/` represents as a first-class, purpose-built thing (an agent-facing router/context snapshot for the *current* run, not a copy of the durable Event/Trace/Episode/Claim/Procedure graph) |
+| Procedure | **yes, indirectly** — `.kell/procedures.md` + `procedures.idx`, same mechanism |
+| Run/session working context | **yes, directly** — `.kell/context.md`, `run.json`, `meta.json`, `run.md` — this is the one layer `.kell/` represents as a first-class, purpose-built thing (an agent-facing router/context snapshot for the *current* run, not a copy of the durable Event/Trace/Episode/Claim/Procedure graph) |
 
-So: **`.stealth` is NOT the knowledge graph.** It is (a) a generated, on-demand, per-repo-checkout **read-side cache/projection** of a *subset* of canonical Postgres Claims/Procedures (via `project_knowledge`), plus (b) a purpose-built **current-run working-context snapshot** (`context.md`/`run.json`/`meta.json`) that has no equivalent Postgres row of its own — it's a rendering, not a fact table. It is never a write-path for Events/Traces/Episodes/Observations/Evidence, and it is never durable across a fresh checkout (gitignored, not committed, regenerated from Postgres on the next call).
+So: **`.kell` is NOT the knowledge graph.** It is (a) a generated, on-demand, per-repo-checkout **read-side cache/projection** of a *subset* of canonical Postgres Claims/Procedures (via `project_knowledge`), plus (b) a purpose-built **current-run working-context snapshot** (`context.md`/`run.json`/`meta.json`) that has no equivalent Postgres row of its own — it's a rendering, not a fact table. It is never a write-path for Events/Traces/Episodes/Observations/Evidence, and it is never durable across a fresh checkout (gitignored, not committed, regenerated from Postgres on the next call).
 
 ---
 
 ## PHASE 14 — Filesystem vs Postgres matrix
 
-| Data | Local filesystem | `.stealth/` | Postgres | In-memory | Other |
+| Data | Local filesystem | `.kell/` | Postgres | In-memory | Other |
 |---|---|---|---|---|---|
 | Execution Event | — | — | `execution_run_events` (authoritative) | — | — |
 | Trace (causal chain id) | — | — | `execution_runs.trace_id` (authoritative) | — | — |
@@ -495,11 +495,11 @@ So: **`.stealth` is NOT the knowledge graph.** It is (a) a generated, on-demand,
 
 **Synchronization / rehydration:**
 - Postgres is written first and is authoritative for every durable layer (Event/Trace/Episode/Observation/Claim/Evidence/Procedure).
-- `.stealth/` is written **later, on demand**, purely as a derivative rendering — never the other way around. No code path reads `.stealth/` back into Postgres.
-- If `.stealth/` is deleted: no data loss — it's regenerated (in full) on the next `find_best_way`/`continue_run`/`project_knowledge` call with a `repo_path`. This is proven by its "GENERATED, not canonical" self-declaration and its exclusive write path being `generate_projection()`/`project_knowledge()`, both of which read from Postgres.
-- If Postgres is unavailable: **NOT ESTABLISHED FROM CODE** what `.stealth/`-dependent tools do (no fallback-to-stale-`.stealth/` logic was found or ruled out in this pass).
-- If Postgres has data but `.stealth/` doesn't (the actual current state of this checkout): this is the *normal*, expected state — `.stealth/` is lazily built, not eagerly kept in sync.
-- Postgres can fully reconstruct `.stealth/` (that's its only write trigger). `.stealth/` **cannot** reconstruct Postgres — it's not even attempted; nothing reads `.stealth/*.md`/`*.json` back into a write path except the exploration write-back (`exploration.py`'s `close_exploration` optionally calling `capture_claim` — a *new* private Claim describing the exploration's resolution, not a replay of `.stealth/`'s existing content into Postgres).
+- `.kell/` is written **later, on demand**, purely as a derivative rendering — never the other way around. No code path reads `.kell/` back into Postgres.
+- If `.kell/` is deleted: no data loss — it's regenerated (in full) on the next `find_best_way`/`continue_run`/`project_knowledge` call with a `repo_path`. This is proven by its "GENERATED, not canonical" self-declaration and its exclusive write path being `generate_projection()`/`project_knowledge()`, both of which read from Postgres.
+- If Postgres is unavailable: **NOT ESTABLISHED FROM CODE** what `.kell/`-dependent tools do (no fallback-to-stale-`.kell/` logic was found or ruled out in this pass).
+- If Postgres has data but `.kell/` doesn't (the actual current state of this checkout): this is the *normal*, expected state — `.kell/` is lazily built, not eagerly kept in sync.
+- Postgres can fully reconstruct `.kell/` (that's its only write trigger). `.kell/` **cannot** reconstruct Postgres — it's not even attempted; nothing reads `.kell/*.md`/`*.json` back into a write path except the exploration write-back (`exploration.py`'s `close_exploration` optionally calling `capture_claim` — a *new* private Claim describing the exploration's resolution, not a replay of `.kell/`'s existing content into Postgres).
 - The old `.stealthlab/*.db` SQLite store, when it existed, was a genuinely separate local substrate (per its own now-stale `.gitignore` comment: "this checkout's own local substrate, not global data") — but it no longer exists in code, so it's moot for current behavior.
 
 ---
@@ -550,7 +550,7 @@ MCP tool "get_relevant_claims"
 | Observation creation fails | If `extract_deterministic_observations_from_run_event` returns `None` for an event type it doesn't recognize, that event is silently skipped (no error) — by construction of the loop, not an explicit failure handler. |
 | Claim creation fails / no-ops | Explicit, deliberate: `capture_claim` logs and returns `None` when no anchor/provenance exists (Phase 12) — this is documented behavior, not a crash. |
 | Procedure creation fails | **NOT ESTABLISHED FROM CODE** what happens if `extract_procedure()` throws inside `handle_consolidate_local_episode` (line 1198-1232) — no try/except was confirmed around that specific call in this pass. |
-| `.stealth` write fails | `atomic_write`/`atomic_write_batch` use fsync+rename; **NOT ESTABLISHED FROM CODE** what the caller does if `SingleWriterLock` acquisition fails beyond the documented 60s stale-steal (i.e., whether a caller silently proceeds without a fresh projection, or surfaces an error to Claude) — not traced in this pass. |
+| `.kell` write fails | `atomic_write`/`atomic_write_batch` use fsync+rename; **NOT ESTABLISHED FROM CODE** what the caller does if `SingleWriterLock` acquisition fails beyond the documented 60s stale-steal (i.e., whether a caller silently proceeds without a fresh projection, or surfaces an error to Claude) — not traced in this pass. |
 | Postgres write fails | **NOT ESTABLISHED FROM CODE** in this pass (transaction/rollback semantics of `durable_run.py`'s connections weren't traced end-to-end here). |
 | Retrieval finds nothing | `find_applicable_procedures` returns `candidates == []` — proven by `test_retrieval_negative_control_e2e.py::test_genuinely_unrelated_query_abstains_rather_than_returning_the_least_bad_option` (Phase 23). |
 | Retrieval finds an old irrelevant procedure | **NOT ESTABLISHED FROM CODE** in this pass — the similarity/hard-constraint cascade in `find_applicable_procedures` was not read in enough depth to state its false-positive behavior precisely. |
@@ -570,7 +570,7 @@ MCP tool "get_relevant_claims"
 | execution_runs / execution_run_nodes | Yes — Postgres rows persist; a node's `lease_expires_at` will eventually be stale. | `resume_run()` exists (`durable_run.py:859-889`) but is **explicitly caller-driven** — nothing calls it automatically at startup. |
 | Observation/Claim/Evidence | Yes, if already committed before the crash. | N/A — no rehydration needed, they're just rows. |
 | Procedure | Same as above. | N/A |
-| `.stealth/*` | **No** — gitignored, never committed, and this audit found the directory doesn't even exist in the current checkout. | Regenerated fresh on the next `find_best_way`/`continue_run`/`project_knowledge` call — from Postgres, not from any prior `.stealth/` state. |
+| `.kell/*` | **No** — gitignored, never committed, and this audit found the directory doesn't even exist in the current checkout. | Regenerated fresh on the next `find_best_way`/`continue_run`/`project_knowledge` call — from Postgres, not from any prior `.kell/` state. |
 
 **Startup code performing rehydration:** none found beyond generic pool creation and the job scheduler starting (which processes whatever's already queued in `ingestion_jobs`, including any `consolidate_local_episode` jobs that were enqueued-but-not-yet-run before a crash — those would survive and eventually run, since the enqueue is a committed Postgres row). **No explicit scan-and-resume of orphaned `execution_runs`/open `episodes` exists — NOT ESTABLISHED FROM CODE otherwise.**
 
@@ -616,7 +616,7 @@ This does not change any of the code-level facts established in Phase 4-12 (the 
     [storage op]         READ only, Postgres `procedures` table
     [return value]       Either [] (if this checkout has never captured a
                           matching procedure -- true for a fresh checkout, per
-                          Phase 13's finding that .stealth/ doesn't even exist
+                          Phase 13's finding that .kell/ doesn't even exist
                           here yet) or a JSON list of
                           {"id","procedure_id","version","name","goal",
                            "verification_state","similarity"} dicts
@@ -794,12 +794,12 @@ This does not change any of the code-level facts established in Phase 4-12 (the 
     [what Claude sees]   Either the candidate procedure (if scope/visibility/
                           verification_state line up) or an empty list.
 
-[9] .stealth/ involvement in this whole transcript: NONE of the above (Event/
+[9] .kell/ involvement in this whole transcript: NONE of the above (Event/
     Trace/Episode/Observation/Claim/Evidence/Procedure) ever touches
-    .stealth/. The only point `.stealth/` would be touched is if Claude
+    .kell/. The only point `.kell/` would be touched is if Claude
     separately called project_knowledge(repo_path=..., query="webhook
     idempotency") or find_best_way with a repo_path (which refreshes
-    .stealth/{context.md,run.json,meta.json} as a side effect, per
+    .kell/{context.md,run.json,meta.json} as a side effect, per
     server.py:3738-3743) -- and even then, that's a rendering of the SAME
     Postgres facts above into a local file, not a new source of truth.
 ```
@@ -851,7 +851,7 @@ mcp_server/server.py:project_knowledge() / find_best_way(repo_path=...)
   -> app/stealth/generator.py:generate_projection()
        -> reads Postgres (procedures, knowledge_nodes, ...)
        -> app/stealth/atomic.py:atomic_write_batch()
-            -> local filesystem: <workspace_root>/.stealth/{context.md,run.json,
+            -> local filesystem: <workspace_root>/.kell/{context.md,run.json,
                meta.json,claims.md,procedures.md,implementations.md,index/*.idx}
 ```
 
@@ -866,7 +866,7 @@ mcp_server/server.py:project_knowledge() / find_best_way(repo_path=...)
 | Claim | Observation (via `observation_id` anchor) | LLM (`extract_claim_candidates_cached`) | `knowledge_nodes` (Postgres) | dedup-detection only (never merged) | `get_relevant_claims`, `get_claim_graph`, `search_procedures`'s ranking may implicitly use claims | JSON via those tools | **yes**, if Claude calls one of those tools |
 | Evidence | `execution_runs.final_outcome` | `record_claim_evidence()` | `evidence` (Postgres) | feeds `recompute_claim_belief` | no direct MCP tool found returning raw Evidence rows (belief score surfaces indirectly via claim fields) | — | indirectly, via a Claim's belief_score field if exposed |
 | Procedure | episode consolidation (`extract_procedure`, success-only) or ad-hoc `find_best_way` capture | `capture_procedure()` | `procedures` (Postgres) | `supersede_procedure()` on later versions | `search_procedures`, `get_procedure`, `check_applicability` | JSON | **yes**, if Claude calls one of those tools |
-| `.stealth/` context snapshot | live Postgres state at call time | `generate_projection()` | local filesystem only, gitignored | N/A (not consolidated, regenerated) | read only by whatever local agent process opens the file directly (not an MCP tool return — MCP tools return JSON strings, not file contents, per this audit's tool table) | N/A | **NOT ESTABLISHED FROM CODE** that any MCP tool response includes `.stealth/` file contents verbatim — it appears to be for a co-located local process/CLI to read off disk, not shipped back through MCP |
+| `.kell/` context snapshot | live Postgres state at call time | `generate_projection()` | local filesystem only, gitignored | N/A (not consolidated, regenerated) | read only by whatever local agent process opens the file directly (not an MCP tool return — MCP tools return JSON strings, not file contents, per this audit's tool table) | N/A | **NOT ESTABLISHED FROM CODE** that any MCP tool response includes `.kell/` file contents verbatim — it appears to be for a co-located local process/CLI to read off disk, not shipped back through MCP |
 
 ---
 
@@ -884,15 +884,15 @@ mcp_server/server.py:project_knowledge() / find_best_way(repo_path=...)
 | Claims are derived | Yes, but LLM-dependent and best-effort; explicitly can no-op if no LLM client or no provenance | `claim_extraction.py`, `claims.py:282-317` | Partial — "test_consolidation_without_llm_client..." proves zero Claims can result |
 | Evidence is linked | Yes, one row per persisted claim per episode (not per individual test) | `ingestion_jobs.py:1186-1192` | Partial — coarser granularity than "per test assertion" |
 | Procedures are derived | Yes, but ONLY on `outcome=='success'`, and via two DIFFERENT mechanisms (auto per-episode vs. admin-batch `extract_procedure_from_episode`) that are easy to conflate | `ingestion_jobs.py:1198-1232` vs `:781-880` | Yes — this is a real, non-obvious bifurcation worth knowing about |
-| `.stealth/` stores local knowledge | No — it stores a *rendering* of a subset of it, on demand, never durably | Phase 13 | Yes, if "stores" implies source-of-truth; No, if "stores" means "can display" |
+| `.kell/` stores local knowledge | No — it stores a *rendering* of a subset of it, on demand, never durably | Phase 13 | Yes, if "stores" implies source-of-truth; No, if "stores" means "can display" |
 | Postgres is authoritative | Yes, for every durable layer | Phase 14 | No |
-| Local knowledge survives restart | Yes for everything in Postgres; No for `.stealth/` (never meant to) | Phase 17 | No (by design) |
+| Local knowledge survives restart | Yes for everything in Postgres; No for `.kell/` (never meant to) | Phase 17 | No (by design) |
 | Fresh agents can retrieve prior knowledge | Yes, mechanically (Phase 15's call chain is real and tested) — but only IF the fresh agent chooses to call a retrieval tool | Phase 15, Phase 23 | **Yes — retrieval is opt-in, not automatic; this is the single biggest gap between "the knowledge exists" and "Claude actually receives it"** |
 | Repository/user scope works | Yes, exactly as coded (workspace_id ⇒ repository scope, else resolved auth identity ⇒ user scope) | Phase 12's ad-hoc scope section | No |
 | MCP exposes retrieval | Yes — multiple tools | Phase 2's tool table | No |
 | Claude automatically uses retrieval | **No** | Phase 15 | **Yes, gap** |
 | Claude automatically records execution | Only if Claude routes the coding work through `find_best_way`'s tier-2 execution — a coding task done by Claude directly (outside MCP tool calls) creates zero events/episodes/observations | Phase 2 tool list; nothing hooks a bare Claude Code edit/bash session into `durable_run.py` | **Yes, gap — using StealthLab MCP tools like `search_procedures` alone does NOT create any execution trail; only `find_best_way`'s own orchestrated execution does** |
-| Failures are captured | Partially — episode/evidence still record a failure outcome, but several failure sub-paths (consolidation exception, Procedure-extraction exception, `.stealth` lock contention beyond 60s) are NOT ESTABLISHED FROM CODE in this pass | Phase 16 | Partial/Unknown |
+| Failures are captured | Partially — episode/evidence still record a failure outcome, but several failure sub-paths (consolidation exception, Procedure-extraction exception, `.kell` lock contention beyond 60s) are NOT ESTABLISHED FROM CODE in this pass | Phase 16 | Partial/Unknown |
 | Failed runs can teach future agents | Plausible in principle (Evidence with `outcome_status != 'success'` still gets recorded and feeds belief), but Procedure candidates are only ever synthesized on success — a failed run cannot itself become a reusable Procedure | `ingestion_jobs.py:1198` gate | Partial |
 
 ---
@@ -1026,7 +1026,7 @@ No `visibility`, `owner_id`, `tenant_id`, or `scope_type` predicate anywhere. A 
 - LLM-based Claim derivation anchored to a real Observation, with explicit no-op semantics when unprovenanced.
 - Evidence recording (`evidence_type='execution_result'`) tied to episode outcome, feeding a real belief-score computation with documented weights/ceilings.
 - Procedure capture, both automatically (per successful episode) and via an admin-triggered batch sweep, and ad-hoc via `find_best_way` with explicit repo/user scope derivation.
-- `.stealth/` filesystem projection: real, atomic (fsync+rename), journaled, page-fault-capable, byte-budgeted, and explicitly non-canonical.
+- `.kell/` filesystem projection: real, atomic (fsync+rename), journaled, page-fault-capable, byte-budgeted, and explicitly non-canonical.
 - Retrieval tools (`search_procedures`, `get_relevant_claims`, `find_best_way`) hitting real Postgres queries, proven end-to-end by privacy-scoped tests.
 
 ### Partially implemented
@@ -1039,7 +1039,7 @@ No `visibility`, `owner_id`, `tenant_id`, or `scope_type` predicate anywhere. A 
 - **Retrieval tools exist and work, but nothing forces Claude to call them** — a coding task can proceed with zero StealthLab interaction at all.
 - **Execution recording only happens if Claude routes work through `find_best_way`'s own tier-2 execution machinery** — merely calling `search_procedures`/`get_relevant_claims` and then coding directly (outside MCP tool orchestration) produces no Event/Episode/Observation/Claim/Evidence trail at all.
 - **`promote_observation_to_claim` and `extract_model_observation` exist as functions but have no confirmed automatic caller from the local-execution path** — the local path uses a different, LLM-based route (`persist_claim_candidate`) instead, bypassing them.
-- **`.stealth/` is a real, working system, but it is a rendering, never a write path** — nothing routes new knowledge into Postgres via `.stealth/`; it is strictly downstream.
+- **`.kell/` is a real, working system, but it is a rendering, never a write path** — nothing routes new knowledge into Postgres via `.kell/`; it is strictly downstream.
 - **(Global) `consolidate_local_episode` gets enqueued unconditionally by episode closure, but nothing drains it unless a *second, separate process* (`main.py`'s FastAPI app, not the MCP server) is also running with `INGESTION_AUTO_MODE=global` explicitly set** — the shipped default (`"local"`) makes the scheduler's own tick a no-op even when that second process is running. See Phase 17B.
 - **(Global) Document ingestion (`compile_skill_artifact`) is never triggered automatically by anything** — only a human running `scripts/ingest_skills.py`, or a human/cron hitting `/v1/admin/ingestion/process` for an already-queued job.
 - **(Global) `verification_state` and publication/visibility are fully orthogonal axes that are easy to conflate** — a procedure can be `verified` (10 successes, 0 failures, 3 contexts, DB-trigger-enforced) while remaining `private` forever; publishing never inherits verification and always restarts the new global row at `'candidate'`.
@@ -1089,9 +1089,9 @@ No `visibility`, `owner_id`, `tenant_id`, or `scope_type` predicate anywhere. A 
 | Unrelated query abstains rather than false-positive matching | `backend/tests/test_retrieval_negative_control_e2e.py` | `test_genuinely_unrelated_query_abstains_rather_than_returning_the_least_bad_option` | `find_applicable_procedures` returns `[]` for a genuinely unrelated query |
 | `decide_procedure` is a real 6th minimal-surface tool | `backend/tests/test_mcp_six_tool_surface_offline.py` | `test_decide_procedure_approved_calls_the_real_approve_function` / `..._rejected_calls_the_real_reject_function` | tool wraps a real approve/reject function, not a stub |
 | `extract_procedure_from_episode` requires real `goal_text` + success outcome | NOT ESTABLISHED FROM CODE — a specific test for this exact guard was not located in this pass (only the guard's source code, `ingestion_jobs.py:791-802`, was confirmed) | — | — |
-| `.stealth/` atomic write leaves no temp file on success | `backend/tests/test_stealth_projection_offline.py` | (exact function name not captured in the sub-investigation's notes; file confirmed to assert this) | `_atomic_write` behavior |
-| `.stealth/` journal ordering + lock exclusivity | `backend/tests/test_stealth_journal_offline.py` | (multiple tests, names not individually captured) | monotonic `seq`, `since_seq` filtering, corrupt-line tolerance, `SingleWriterLock` exclusivity |
-| `.stealth/` exploration open/close/list round trip | `backend/tests/test_stealth_exploration_offline.py` | (multiple tests) | journal-backed round trip; `close_exploration` without `pool` never touches the DB |
+| `.kell/` atomic write leaves no temp file on success | `backend/tests/test_stealth_projection_offline.py` | (exact function name not captured in the sub-investigation's notes; file confirmed to assert this) | `_atomic_write` behavior |
+| `.kell/` journal ordering + lock exclusivity | `backend/tests/test_stealth_journal_offline.py` | (multiple tests, names not individually captured) | monotonic `seq`, `since_seq` filtering, corrupt-line tolerance, `SingleWriterLock` exclusivity |
+| `.kell/` exploration open/close/list round trip | `backend/tests/test_stealth_exploration_offline.py` | (multiple tests) | journal-backed round trip; `close_exploration` without `pool` never touches the DB |
 | No test found | — | — | Any test proving automatic (non-opt-in) retrieval before a coding task — **NO DIRECT TEST FOUND**, consistent with Phase 15's finding that no such automatic behavior exists to test |
 | No test found | — | — | Startup rehydration of orphaned episodes/execution_runs — **NO DIRECT TEST FOUND** |
 
@@ -1102,7 +1102,7 @@ No `visibility`, `owner_id`, `tenant_id`, or `scope_type` predicate anywhere. A 
 The suspicion that prompted this audit — that "Event → Trace → Episode → Artifact → Observation → Claim → Evidence → Procedure" might exist more on paper than in the runtime path from a Claude coding task to durable, retrievable learning — is **partially correct, in five specific and now precisely located ways**:
 
 1. **The write side is real and well-tested**, both locally and globally. Locally: Event → Episode → (skipping a dedicated Artifact layer) → Observation → Claim → Evidence → (conditionally) Procedure, via `find_best_way`'s own execution machinery, is a genuine, idempotent, transactionally-sound pipeline (Part I). Globally: the 12-step document-ingestion canonical chain (Source → IngestionContext → Artifact → artifact_blocks → Observation → Evidence → Claim → procedure_claim_ref → screening_decision → Procedure) is equally real, and the local→global publication gate (dependency traversal, 500-node cap, trust floor, "private evidence ≠ global verification") is genuinely enforced, not aspirational (Part II).
-2. **The `.stealth/` filesystem layer, which an internal audit doc in this very repo claimed didn't exist, actually does now** — built the same week as that doc, correctly a non-canonical, regenerable projection, never a second source of truth.
+2. **The `.kell/` filesystem layer, which an internal audit doc in this very repo claimed didn't exist, actually does now** — built the same week as that doc, correctly a non-canonical, regenerable projection, never a second source of truth.
 3. **The actual gap is upstream of all of that, at three separate points, not one:**
    - Nothing makes Claude call any StealthLab tool in the first place — `search_procedures`/`get_relevant_claims`/`find_best_way` are opt-in, exactly like every other tool. A session that codes directly, or that only reads (`search_procedures`) without routing execution through `find_best_way`, produces zero Events/Episodes/Observations/Claims/Evidence. (Part I.)
    - **Even when local execution DOES happen through `find_best_way`, and DOES enqueue a `consolidate_local_episode` job, that job is only ever drained by a *separate process* (`main.py`, not the MCP server `.mcp.json` actually launches) running with a non-default setting (`INGESTION_AUTO_MODE=global`).** Running exactly what `.mcp.json` configures — the MCP server alone — writes the enqueue row and then leaves it unclaimed forever. This is the single most consequential finding of the whole audit: the local learning pipeline's write side is real, but its own trigger to actually run may never fire in the deployment this audit was scoped to. (Phase 17B.)

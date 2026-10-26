@@ -25,7 +25,7 @@ function repoWithPackage() {
   fs.writeFileSync(path.join(repo, "tests", "test_typehints.py"), "import pytest\nfrom pkg._typehints import adapt_typehints\n\n\n" +
     "def test_adapt_int():\n    assert adapt_typehints(1, int) == 1\n\n\ndef test_other():\n    assert True\n");
   fs.writeFileSync(path.join(repo, "README.md"), "adapt_typehints is documented here\n");
-  fs.mkdirSync(path.join(repo, ".stealth")); fs.writeFileSync(path.join(repo, ".stealth", ".keep"), "");
+  fs.mkdirSync(path.join(repo, ".kell")); fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return repo;
 }
@@ -62,7 +62,7 @@ test("locate: the function the task names, in its module, with the module's own 
 
 test("locate: a task with no code names is placed by this repo's past fixes (library terms.idx -> solution diffs)", () => {
   const repo = repoWithPackage();
-  const sdir = path.join(repo, ".stealth");
+  const sdir = path.join(repo, ".kell");
   fs.mkdirSync(path.join(sdir, "index"), { recursive: true });
   fs.mkdirSync(path.join(sdir, "library", "solutions"), { recursive: true });
   fs.writeFileSync(path.join(sdir, "index", "terms.idx"), "# terms.idx\nunion|L-abc123\n");
@@ -109,7 +109,7 @@ test("areas.md: wins and losses per file, rewritten in place", () => {
   recordArea(repo, "pkg/_cli.py", true);
   assert.deepEqual({ ...readArea(repo, "pkg/_typehints.py"), at: undefined }, { wins: 0, losses: 2, at: undefined });
   assert.equal(readArea(repo, "pkg/_cli.py").wins, 1);
-  const text = fs.readFileSync(path.join(repo, ".stealth", "areas.md"), "utf8");
+  const text = fs.readFileSync(path.join(repo, ".kell", "areas.md"), "utf8");
   assert.equal(text.match(/AREA\|pkg\/_typehints\.py\|/g).length, 1, "one line per file");
 });
 
@@ -117,7 +117,7 @@ test("run.md: written for a dispatched task; the planner's own run.md is never t
   const repo = repoWithPackage();
   const loc = { spots: [{ file: "pkg/_typehints.py", start: 900, end: 905, symbol: "adapt_typehints" }], testFile: "tests/test_typehints.py" };
   assert.equal(writeDispatchRun(repo, { task: "fix Optional", loc, specFile: "/s/test_spec.py", regressFile: "tests/test_typehints.py", tried: [{ unit: "gemma|stealth", state: "failed" }] }), true);
-  const text = fs.readFileSync(path.join(repo, ".stealth", "run.md"), "utf8");
+  const text = fs.readFileSync(path.join(repo, ".kell", "run.md"), "utf8");
   assert.ok(text.startsWith(RUN_HEAD));
   assert.match(text, /^NODE\|N-1\|done\|Locate.*pkg\/_typehints\.py:900-905 \(adapt_typehints\)\|step=-\|claims=-\|deps=-\|check=test -f pkg\/_typehints\.py$/m);
   assert.match(text, /^NODE\|N-2\|done\|Tests written in advance.*\|deps=N-1\|check=python -m pytest -q -p no:cacheprovider "\/s\/test_spec\.py"$/m);
@@ -125,9 +125,9 @@ test("run.md: written for a dispatched task; the planner's own run.md is never t
   // the plan_and_run validator accepts it
   const v = spawnSync(process.execPath, [path.resolve("bin/stealthlab-mcp.mjs"), "plan", "validate"], { cwd: repo, encoding: "utf8" });
   assert.equal(JSON.parse(v.stdout).ok, true, v.stdout + v.stderr);
-  fs.writeFileSync(path.join(repo, ".stealth", "run.md"), "NODE|N-1|ready|the planner's own|step=-|claims=-|deps=-|check=make\n");
+  fs.writeFileSync(path.join(repo, ".kell", "run.md"), "NODE|N-1|ready|the planner's own|step=-|claims=-|deps=-|check=make\n");
   assert.equal(writeDispatchRun(repo, { task: "x", loc }), false);
-  assert.match(fs.readFileSync(path.join(repo, ".stealth", "run.md"), "utf8"), /the planner's own/);
+  assert.match(fs.readFileSync(path.join(repo, ".kell", "run.md"), "utf8"), /the planner's own/);
   assert.match(renderDispatchRun({ task: "t", loc: { spots: [] }, winner: "gemma" }), /N-3\|done\|Make the change \(done by gemma\)/);
 });
 
@@ -137,7 +137,7 @@ test("the note to the session's model: where to look and the tests that fail on 
   const note = triedNote(d);
   assert.match(note, /points at pkg\/_typehints\.py:900-905 \(adapt_typehints\)/);
   assert.match(note, /Tests written for this task, which fail on the unchanged code, are at \/s\/test_spec\.py/);
-  assert.match(note, /\.stealth\/run\.md \(node N-3 is yours\)/);
+  assert.match(note, /\.kell\/run\.md \(node N-3 is yours\)/);
   assert.doesNotMatch(triedNote({ ...d, sharedFail: "test_a" }), /are at \/s\/test_spec\.py/, "tests two answers failed alike may be wrong: not offered");
 });
 
@@ -211,7 +211,7 @@ test("survey fill: a cheap model's facts about the code are kept only where the 
   fs.writeFileSync(path.join(repo, "pyproject.toml"), "[project]\nname = \"pkg\"\nversion = \"1.0\"\n");
   execFileSync("git", ["-C", repo, "add", "-A"]); execFileSync("git", ["-C", repo, "commit", "-q", "-m", "toml"]);
   runSurvey(repo, { history: false });
-  const work = parseWorklist(fs.readFileSync(path.join(repo, ".stealth", "survey", "worklist.md"), "utf8"));
+  const work = parseWorklist(fs.readFileSync(path.join(repo, ".kell", "survey", "worklist.md"), "utf8"));
   assert.ok(work.length >= 1);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "fill-home-"));
   fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
@@ -226,10 +226,10 @@ test("survey fill: a cheap model's facts about the code are kept only where the 
   assert.equal(f.added, 2, "the unknown topic is dropped before validation");
   assert.match(asked[0].messages[1].content, /pkg\/_typehints\.py/, "the model sees the unit's source files");
   runSurvey(repo, { validateOnly: true });
-  const claims = fs.readFileSync(path.join(repo, ".stealth", "claims.md"), "utf8");
+  const claims = fs.readFileSync(path.join(repo, ".kell", "claims.md"), "utf8");
   assert.match(claims, /\|layout\|repository\|Type hints are adapted in `adapt_typehints`/, "a fact the cited line shows is kept");
   assert.doesNotMatch(claims, /load_settings_from_yaml/, "an invented one is rejected");
-  assert.match(fs.readFileSync(path.join(repo, ".stealth", "survey", "rejected.md"), "utf8"), /load_settings_from_yaml/);
+  assert.match(fs.readFileSync(path.join(repo, ".kell", "survey", "rejected.md"), "utf8"), /load_settings_from_yaml/);
 });
 
 test("test-first: tests that cannot even run on the unchanged code (an import of a name that does not exist) are asked for again", async () => {

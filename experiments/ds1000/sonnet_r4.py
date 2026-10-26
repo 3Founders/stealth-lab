@@ -4,7 +4,7 @@
     python sonnet_r4.py grade       # grade every workspace's solution.py -> runs4/attempts.jsonl (model claude-sonnet-5)
 
 Arms AG and KP only. Each held-out task gets its own workspace (README.md, requirements.txt, TASK.md; KP also
-.stealth/claims.md from a Sonnet survey_repo run). A batch prompt lists 6 workspaces of 6 DIFFERENT families,
+.kell/claims.md from a Sonnet survey_repo run). A batch prompt lists 6 workspaces of 6 DIFFERENT families,
 so no subagent sees two variants of one family; AG and KP use the same batches. The subagent is told the same
 rules the open models' loop enforces (no code execution, 20 tool calls per task, answer in solution.py);
 here they are instructions, not enforced. Tokens are not reported by subagents: recorded as estimated
@@ -57,7 +57,7 @@ def kel_tools(ws: str) -> str:
     return (f"StealthLab's MCP tools are available as commands (run them with Bash; this is the ONLY allowed use "
             f"of Bash):\n"
             f"- find_ways: `\"{PY}\" \"{CLI}\" find_ways --ws \"{ws}\" --query \"<what you want done>\" "
-            f"--claims @.stealth/claims.md`\n"
+            f"--claims @.kell/claims.md`\n"
             f"- read_procedure_claims (the resource stealth://procedures/<id>/claims): "
             f"`\"{PY}\" \"{CLI}\" read_procedure_claims --ws \"{ws}\" --id <procedure_id>`\n"
             f"Each StealthLab call counts as one tool call.")
@@ -117,7 +117,7 @@ def prepare() -> None:
             + "\n\nUse Read/Glob/Grep/Write/Edit only; do not run any code. Reply 'done' when the file is written.",
             encoding="utf-8")
         print(f"FIRST run the survey subagent on {ROOT / 'prompt_survey.md'}, then copy "
-              f"{survey_ws / '.stealth' / 'claims.md'} to {claims_file} and run prepare again.")
+              f"{survey_ws / '.kell' / 'claims.md'} to {claims_file} and run prepare again.")
         return
     claims = claims_file.read_text(encoding="utf-8")
     plan = {}

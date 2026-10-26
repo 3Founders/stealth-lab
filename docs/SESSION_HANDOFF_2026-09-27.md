@@ -72,7 +72,7 @@ This document lets a new session pick up where this one stopped. Read it top to 
 ### Experiment code
 
 - **Shared product-arm machinery:** `experiments/kel_product_arm.py`.
-  - Contents: KelBridge with per-episode MCP session headers for the governor; a sandbox that keeps `.stealth/` out of the answer; an agent with the `find_ways` and `read_procedure_claims` tools; production-style delivery (MCP instructions in the system prompt, `plan_and_run` as the user message).
+  - Contents: KelBridge with per-episode MCP session headers for the governor; a sandbox that keeps `.kell/` out of the answer; an agent with the `find_ways` and `read_procedure_claims` tools; production-style delivery (MCP instructions in the system prompt, `plan_and_run` as the user message).
 - **DS-1000:** `experiments/ds1000/`.
   - Round 4: `run_r4.py`, `analyze_r4.py`, `sonnet_r4.py` + `kel_cli.py` (Sonnet through Claude Code subagents), `backfill_r4.py`; output in `runs4/` (gitignored).
   - Round 5: `run_r5.py`, `hook_format.mjs` (the shipped hook formatter), `PREREGISTRATION_5.md`.

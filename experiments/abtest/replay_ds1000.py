@@ -5,7 +5,7 @@ recorded attempts it would have made, in order, and is scored on what those atte
 Policies: the session model alone; a fixed cheap-first cascade; the router with the old rule (a ladder must meet the
 target in >= 90% of the posterior) and the new rule (cheapest ladder meeting the target in one sampled draw). Both
 router rules use the matched target (the session model alone, minus 0.03), learn from earlier problems' outcomes
-(local_obs, as the product does with .stealth/routing.md), and pay no hand-off cost (models are called directly here).
+(local_obs, as the product does with .kell/routing.md), and pay no hand-off cost (models are called directly here).
 """
 from __future__ import annotations
 

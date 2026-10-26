@@ -77,8 +77,8 @@ Notes:
 
 ## D. Real repo issues: the long-horizon series v4–v7
 
-1 issue each from jsonargparse and sqlglot; arms A (plain Claude Code), C (StealthLab, `.stealth` carried over), C0
-(StealthLab, `.stealth` wiped). Source: `experiments/abtest/results/chaitanya-2026-10-16/series/`.
+1 issue each from jsonargparse and sqlglot; arms A (plain Claude Code), C (StealthLab, `.kell` carried over), C0
+(StealthLab, `.kell` wiped). Source: `experiments/abtest/results/chaitanya-2026-10-16/series/`.
 
 **Costs are corrected:** Claude isn't charged for a turn a cheap model answered (the harness fix in `4ace441`). The
 stored `*-report.txt` files for **v7 sqlglot** (C $2.40, C0 $3.55) and **v6 jsonargparse C0** ($0.46) still show the
@@ -103,7 +103,7 @@ also contain rows from the other repo; only rows for the named issue are used.
 | D5 | **C vs C0 (memory) shows no benefit yet:** C0 was cheaper on jsonargparse in v6 and v7. Only 1 issue per repo |
 | D6 | The fixes after v7 (hand-in at the limit, the worktree file, the test instruction) are **not yet re-measured** |
 
-## E. Repo memory (`.stealth`)
+## E. Repo memory (`.kell`)
 
 Sources: [survey_eval_2026-10.md](survey_eval_2026-10.md), [stealth_status_results.md](stealth_status_results.md).
 
@@ -157,5 +157,5 @@ rule. If wrong fixes come through at anything like the survey's rate, Reduce wil
 - real developers' prompts and multi-turn sessions;
 - facts going stale as code evolves (series issues each start at their own commit);
 - large repos, languages other than Python, months of use;
-- Cursor, teams sharing `.stealth`, and the company gateway in real use;
+- Cursor, teams sharing `.kell`, and the company gateway in real use;
 - whether developers keep it installed.

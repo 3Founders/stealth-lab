@@ -1,5 +1,5 @@
 """
-`.stealth/exploration.md` + `index/exploration.idx` -- what agents are
+`.kell/exploration.md` + `index/exploration.idx` -- what agents are
 currently trying to *discover*, deliberately separate from Claims (what
 is currently *known*). Two agents that can both see the open explorations
 do not independently re-investigate the same unknown.
@@ -10,7 +10,7 @@ on every projection regeneration -- it is never the source of truth, the
 journal is.
 
 G12 write-back: the journal alone is NOT durable knowledge -- it lives
-only in this one workspace's `.stealth/` directory. When an exploration
+only in this one workspace's `.kell/` directory. When an exploration
 resolves with a real answer, `close_exploration` (given a `pool`) also
 captures it as a private, owner-scoped Claim in global Postgres --
 otherwise a locally-resolved unknown is lost the moment the workspace is

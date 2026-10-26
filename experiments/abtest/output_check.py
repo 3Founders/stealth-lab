@@ -51,7 +51,7 @@ COST = re.compile(r"\$\d+(?:\.\d+)?")
 CHECKED = re.compile(r"It passed (.+?) in an isolated worktree", re.S)
 APPLIED = re.compile(r"change is applied:\s*([^\n]*?)\.(?:\s|$)")
 TRUNCATED_AT = 400                      # runner.run_claude keeps `final`[:400]
-IGNORED_PATHS = (".stealth/", ".claude/")
+IGNORED_PATHS = (".kell/", ".claude/")
 
 Judge = Callable[[str, str], dict]      # (message, diff) -> {"correct": bool, "honest": bool, "reason": str, "cost_usd"?: float}
 

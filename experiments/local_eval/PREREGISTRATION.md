@@ -9,7 +9,7 @@ Design: `docs/plan_2026-10_priors_library_survey.md`, workstream D. Settings: `e
 
 ## 1. Question
 
-Does a repository's **own local `.stealth` context** -- its facts (`claims.md`) and its own past fixes with their
+Does a repository's **own local `.kell` context** -- its facts (`claims.md`) and its own past fixes with their
 diffs (`library.md`, mined from git history) -- make a coding agent fix new issues in that repository more often
 and for the right reason? And, on top of that, do **enterprise** knowledge (Kel Goals from the same GitHub
 organisation) and **global** knowledge (Kel Goals from every other repository) add anything?

@@ -1,5 +1,5 @@
 """
-Repo facts (`.stealth/claims.md`) as input to `find_ways` -- final_thing.md,
+Repo facts (`.kell/claims.md`) as input to `find_ways` -- final_thing.md,
 option B + tie-break.
 
 Two uses, both request-scoped (never stored, never logged, never written to

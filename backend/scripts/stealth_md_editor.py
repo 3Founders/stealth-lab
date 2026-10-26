@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Minimal local frontend for hand-editing `.stealth/*.md` projection files --
+Minimal local frontend for hand-editing `.kell/*.md` projection files --
 the "separate, simpler MCP frontend" `app/stealth/edit_ledger.py`'s own
 module docstring already names and builds an audit trail for.
 
@@ -14,7 +14,7 @@ structured parser for claims.md/procedures.md/goals.md/implementations.md
 today, only for goal_run.md, so pretending to offer structured editing
 would be dishonest).
 
-`.stealth/` stays exactly as disposable/regenerated as it always was.
+`.kell/` stays exactly as disposable/regenerated as it always was.
 Editing here is a deliberate, logged, human override of that projection --
 never fed back into canonical Claim/Procedure/Goal creation (that remains
 `preview_local_sync`/`commit_local_sync`'s job, untouched by this file).
@@ -63,7 +63,7 @@ from app.stealth.legacy_context import STEALTH_DIRNAME
 # file the ledger would refuse to log.
 EDITABLE_FILES: tuple[str, ...] = CONTENT_PAGE_FILES + OPTIONAL_CONTENT_PAGE_FILES
 
-app = FastAPI(title="StealthLab .stealth/ editor")
+app = FastAPI(title="StealthLab .kell/ editor")
 
 # Local-only tool (loopback default, same posture as every other server
 # in this codebase) -- CORS is opened for the Vite dev server's own
@@ -91,7 +91,7 @@ def _stealth_path(repo_path: str, file_path: str) -> str:
 
 @app.get("/api/files")
 async def get_files(repo_path: str) -> JSONResponse:
-    """Real current content of every known `.stealth/*.md` page for this
+    """Real current content of every known `.kell/*.md` page for this
     workspace. A missing file (never yet generated/edited) comes back as
     an empty string -- never fabricated placeholder text -- with
     `exists: false` so the UI can say so honestly."""
@@ -102,7 +102,7 @@ async def get_files(repo_path: str) -> JSONResponse:
         if os.path.isfile(full_path):
             # utf-8-sig tolerates a leading BOM (e.g. from a text editor
             # that adds one) without leaking it into the content -- every
-            # real .stealth/ writer in this codebase (atomic_write) never
+            # real .kell/ writer in this codebase (atomic_write) never
             # writes one, but a hand-edited file might.
             with open(full_path, "r", encoding="utf-8-sig") as f:
                 pages[file_path] = {"content": f.read(), "exists": True}
@@ -122,9 +122,9 @@ class SaveBody(BaseModel):
 @app.post("/api/save")
 async def save_file(body: SaveBody, request: Request) -> JSONResponse:
     """Writes the file for real (atomic_write -- same safety as every
-    other `.stealth/` writer in this codebase), then logs the edit via
+    other `.kell/` writer in this codebase), then logs the edit via
     the real `record_stealth_edit` service function and refreshes
-    `.stealth/ledger.md`. The file write and the ledger write are two
+    `.kell/ledger.md`. The file write and the ledger write are two
     separate steps on purpose (same convention `record_stealth_edit`'s
     own MCP tool docstring states): a ledger-write failure is reported,
     never used to roll back the file write that already succeeded."""
@@ -173,7 +173,7 @@ async def get_ledger(repo_path: str, request: Request, file_path: str | None = N
 
 
 # ---------------------------------------------------------------------------
-# Versioning: real diff-before-promote, not something new. `.stealth/` stays
+# Versioning: real diff-before-promote, not something new. `.kell/` stays
 # a disposable projection; the "versioning system" is app.stealth.local_sync
 # -- it parses each CLAIM/PROCEDURE/GOAL pipe line's own `version=` field
 # (the object's real bi-temporal version) and classifies it against the
@@ -244,7 +244,7 @@ _PAGE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>.stealth/ editor</title>
+<title>.kell/ editor</title>
 <style>
   body { font-family: -apple-system, Segoe UI, sans-serif; margin: 0; display: flex; height: 100vh; background: #1e1e1e; color: #ddd; }
   #sidebar { width: 220px; border-right: 1px solid #333; padding: 12px; box-sizing: border-box; overflow-y: auto; }
@@ -273,7 +273,7 @@ _PAGE = """<!doctype html>
   <h1>WORKSPACE</h1>
   <input id="repoInput" placeholder="C:\\path\\to\\repo" />
   <button onclick="loadWorkspace()" style="width:100%;margin-bottom:14px">Load</button>
-  <h1>.stealth/ FILES</h1>
+  <h1>.kell/ FILES</h1>
   <div id="tabs"></div>
   <h1 style="margin-top:16px">RECENT EDITS</h1>
   <div id="ledger">(load a workspace)</div>

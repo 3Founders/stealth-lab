@@ -12,7 +12,7 @@ Shared contracts (§5) are fixed here so the sessions can work in parallel.
   - "Aggregate-only public results as a binomial likelihood" is in `docs/model_routing_plan.md` but **not implemented**. `routing-import` only takes per-instance rows.
   - Production has 0 routing observations, so it has never been fitted.
 - **Model plan:** `find_ways` attaches a model plan only when a `CandidateProvider` is configured or `candidates` are passed (`app/routing/plan.py: wants_plan`). Otherwise there is no model at all.
-- **`.stealth` today:** `claims.md` (facts), `procedures.md` (chosen ways), `run.md` (execution plan), `index/*.idx` plus `root.idx`, `meta.json`, journal, `faulted.json`. No file holds a model choice, a model distribution, or this repo's own past solutions.
+- **`.kell` today:** `claims.md` (facts), `procedures.md` (chosen ways), `run.md` (execution plan), `index/*.idx` plus `root.idx`, `meta.json`, journal, `faulted.json`. No file holds a model choice, a model distribution, or this repo's own past solutions.
 - **Evidence:**
   - Same-repo past fixes with real diffs lifted "right cause" from 27 to 42 of 96 (p=0.023).
   - Steps-only knowledge did nothing.
@@ -111,13 +111,13 @@ Rules:
   - **baselines:** best single model, cheapest model, kNN router, RouteLLM-MF re-implemented on the same data, and our model without covariates.
 - Report the numbers in `docs/`. Ship only if leave-one-model-out log-lik and APGR beat the baselines.
 
-## 3. Workstream B: `library.md`, routing rows, and how the `.stealth` files fit together
+## 3. Workstream B: `library.md`, routing rows, and how the `.kell` files fit together
 
 ### 3.1 Book analogy, mapped to files
 
 | book part | file | read when | size |
 |---|---|---|---|
-| back cover blurb, a **dynamic summary** | `.stealth/SUMMARY.md` (generated) | **always, whole**, at session start and on every MCP call | ≤ 3 KB |
+| back cover blurb, a **dynamic summary** | `.kell/SUMMARY.md` (generated) | **always, whole**, at session start and on every MCP call | ≤ 3 KB |
 | table of contents | `index/root.idx` (exists) | always | ≤ 4 KB |
 | chapter: facts | `claims.md`, or `claims/<unit>.md` in monorepos | by topic / unit range | ≤ 64 KB per page |
 | chapter: this repo's solved problems | **`library.md`** (new) | by index lookup | ≤ 64 KB + `library/archive-*.md` |

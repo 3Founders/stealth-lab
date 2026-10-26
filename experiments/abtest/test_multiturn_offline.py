@@ -347,14 +347,14 @@ def test_snapshots_diff_one_turn_and_leave_the_workspace_alone(tmp_path):
     s0 = multiturn.tree_snapshot(tmp_path)
     (tmp_path / "a.py").write_text("one\ntwo\n", encoding="utf-8")
     (tmp_path / "new.py").write_text("new\n", encoding="utf-8")
-    (tmp_path / ".stealth").mkdir()
-    (tmp_path / ".stealth" / "library.md").write_text("learned\n", encoding="utf-8")
+    (tmp_path / ".kell").mkdir()
+    (tmp_path / ".kell" / "library.md").write_text("learned\n", encoding="utf-8")
     s1 = multiturn.tree_snapshot(tmp_path)
     d = multiturn.tree_diff(tmp_path, s0, s1)
-    assert "+two" in d and "+++ b/new.py" in d and ".stealth" not in d
+    assert "+two" in d and "+++ b/new.py" in d and ".kell" not in d
     assert multiturn.tree_diff(tmp_path, s1, s1) == "" and multiturn.tree_diff(tmp_path, None, s1) == ""
     assert git(tmp_path, "diff", "--cached") == "" and git(tmp_path, "status", "--porcelain").count("\n") == 3, \
-        "the workspace's own index is untouched (a.py, new.py, .stealth/ still uncommitted)"
+        "the workspace's own index is untouched (a.py, new.py, .kell/ still uncommitted)"
     assert not list((tmp_path / ".git").glob("abtest-snap-*")), "the private index is removed"
     (tmp_path / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     assert "+three" in multiturn.tree_diff(tmp_path, s1, multiturn.tree_snapshot(tmp_path)) and "+two" not in multiturn.tree_diff(

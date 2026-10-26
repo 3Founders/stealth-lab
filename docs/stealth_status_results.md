@@ -1,4 +1,4 @@
-# Local computed status for .stealth: results (2026-10-23)
+# Local computed status for .kell: results (2026-10-23)
 
 Lane SHIP, `packaging/npm/` only. Implements the local-first order agreed after reading
 `docs/verification_changes_prop.md`: the same computed status (verified, open, failed, contested, expired), first on the
@@ -8,14 +8,14 @@ client, where the checks already run, before any server work.
 
 - `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--run] [--only <ids>] [--in-place]`
   (`packaging/npm/lib/status.mjs`, wired in `bin/stealthlab-mcp.mjs`).
-- A new append-only `.stealth/evidence.md`, one line per check run:
+- A new append-only `.kell/evidence.md`, one line per check run:
   `EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<cmd>`
   (`tree=` and `where=` were added in the follow-up below; older lines without them still parse).
   Method names follow the server ladder (`backend/app/services/verification.py`), so a line maps one to one onto a
   `verification_results` row later. A line holds the command and its exit verdict: never output, prompt text or secrets
   (a check that looks like it holds a secret is not recorded; the validator's `hasSecret` is the test).
 - `--stealth-dir` (an addition to the brief): reads plan, claims and evidence from another folder while `--root` stays the
-  repository whose files are checked. It is what makes the demo below possible, because `.stealth/collab` describes this
+  repository whose files are checked. It is what makes the demo below possible, because `.kell/collab` describes this
   repository and its claims cite files that are not in a bare temp copy.
 
 ## How the status is computed
@@ -75,9 +75,9 @@ N-1..N-3  expired    claim T-001 no longer holds (its cited line changed); the l
 N-4       expired    claim T-001 no longer holds (its cited line changed)
 ```
 
-## Demo 2: this repository's `.stealth/collab` plan (real output)
+## Demo 2: this repository's `.kell/collab` plan (real output)
 
-`.stealth/collab/*.md` copied to a temp folder (so evidence is not written into the tracked folder), `--root` the repository:
+`.kell/collab/*.md` copied to a temp folder (so evidence is not written into the tracked folder), `--root` the repository:
 
 ```
 $ stealthlab-mcp status --root . --stealth-dir <temp copy> --run --only N-1,N-5,N-8     # 3 checks, about 19 s
@@ -194,7 +194,7 @@ EVIDENCE|N-1|deterministic_check|pass|at=...|commit=<sha>|tree=<tree>|hashes=src
 Rewrites `evidence.md`, keeping for each target and check only the latest pass, the latest fail and every line recorded on the
 tree as it is now. (Per check, not per target: a library entry with two checks would otherwise lose one check's pass and
 change status.) It refuses when `evidence.md` has uncommitted changes in git, and keeps the old file as `evidence.md.prev`.
-Note: `.stealth/` is usually git-ignored, in which case git reports nothing and the refusal cannot trigger; the `.prev`
+Note: `.kell/` is usually git-ignored, in which case git reports nothing and the refusal cannot trigger; the `.prev`
 copy is the safety net there.
 
 ### Tests and counts

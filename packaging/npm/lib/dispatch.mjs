@@ -8,7 +8,7 @@
 //     the session's model (Opus, say) never runs;
 //   * all fail (or none can run here): the prompt goes on to the session with what was tried, and the plan resumes
 //     at its next rung (usually the session's own model).
-// Every attempt is reported to the plan (report_result, by the runtime), counted in .stealth/routing.md with the
+// Every attempt is reported to the plan (report_result, by the runtime), counted in .kell/routing.md with the
 // unit that ran it, and a pass becomes a library entry -- so the next plan learns from it.
 //
 // It needs a CHECK -- an unverified result never goes in: STEALTHLAB_DISPATCH_CHECK (the project's test command), the
@@ -35,7 +35,7 @@ import { executorFor } from "./model_guard.mjs";
 import { autoTidy } from "./library_tidy.mjs";
 
 // The check that accepted an answer, and the strong reviewer's "fixes" when it gave one, become evidence on the library entry the
-// answer created (.stealth/evidence.md; queued for upload only when STEALTHLAB_EVIDENCE_UPLOAD=on). Bookkeeping: it never throws and
+// answer created (.kell/evidence.md; queued for upload only when STEALTHLAB_EVIDENCE_UPLOAD=on). Bookkeeping: it never throws and
 // never waits on the network (lib/evidence_record.mjs).
 async function recordEvidenceFor({ root, entry, check, winner, env, log }) {
   try {
@@ -829,7 +829,7 @@ export function changedSince(root, since) {
       if (e.length < 4) continue;
       if (e[0] === "R" || e[0] === "C") i++;                     // a rename/copy: the next field is the old name
       const f = e.slice(3);
-      if (f.startsWith(".stealth/")) continue;
+      if (f.startsWith(".kell/")) continue;
       try { if (fs.statSync(path.join(root, f)).mtimeMs >= t - 1000) out.add(f); } catch { /* deleted: not a file to compare */ }
     }
   } catch { /* none */ }
@@ -874,7 +874,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const plan = reply?.model_plan;
   if (!policy.enabled) return null;
   if (!plan || plan.status !== "ok") { log(`dispatch: not dispatched (no model plan${plan?.status ? `: ${plan.status}` : ""})`); return null; }
-  if (!root) { log("dispatch: not dispatched (no .stealth/ in this project)"); return null; }
+  if (!root) { log("dispatch: not dispatched (no .kell/ in this project)"); return null; }
   const check = dispatchCheck(policy, reply, root);
   // no test command in the project: the tests written for this task (test-first) can be the whole check -- a weaker one,
   // so it needs the test writer, and an answer is accepted only if those tests exist and pass (STEALTHLAB_DISPATCH_SPEC_ONLY)
@@ -1701,7 +1701,7 @@ export function triedNote(d) {
         ? ` Do only your part; then run \`${selfCommand()} dag continue\`: it checks your part, has cheap models do ${list(waiting)}, ` +
           "and runs the full check. Finish whatever it reports as still yours."
         : " Finish the task from the code as it is now and check the whole of it.") +
-      (d.runMd ? " The plan is in .stealth/run.md." : "") + handoffNote({ ...d, runMd: false });
+      (d.runMd ? " The plan is in .kell/run.md." : "") + handoffNote({ ...d, runMd: false });
   }
   if (!d.tried?.length) return "";
   // an answer that passed the check but was not accepted is not "nothing": the session gets it to judge, instead of
@@ -1738,7 +1738,7 @@ function handoffNote(d) {
   if (spots.length) parts.push(`Searching this repository for the task's names points at ${spots.join(", ")}; confirm it before relying on it.`);
   if (d.spec?.file && !d.sharedFail && !d.ambiguous) parts.push(`Tests written for this task, which fail on the unchanged code, are at ${d.spec.file}: ` +
     "read them and run them to check your change, but judge the task from its own words where they disagree.");
-  if (parts.length && d.runMd) parts.push("The plan is in .stealth/run.md (node N-3 is yours).");
+  if (parts.length && d.runMd) parts.push("The plan is in .kell/run.md (node N-3 is yours).");
   return parts.length ? ` ${parts.join(" ")}` : "";
 }
 

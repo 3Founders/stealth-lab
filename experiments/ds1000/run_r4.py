@@ -1,9 +1,9 @@
 """DS-1000 round 4 (PREREGISTRATION_4.md): Kel used the way the product is used, on round 3's held-out tasks.
 
-    python run_r4.py survey           # once per model: the survey_repo workflow writes the workspace's .stealth/claims.md
+    python run_r4.py survey           # once per model: the survey_repo workflow writes the workspace's .kell/claims.md
     python run_r4.py AG               # agent loop, no Kel (run first: KN reuses it where it has no note)
     python run_r4.py KN               # agent loop + round 3's K note in the prompt (content, pasted)
-    python run_r4.py KP               # agent loop + Kel as the product is used (find_ways tool, .stealth/)
+    python run_r4.py KP               # agent loop + Kel as the product is used (find_ways tool, .kell/)
 
 Every arm: the SAME agent (app.execution.coding_agent.Agent, temperature 0, ROUND4_MAX_STEPS tool calls,
 the same system prompt and workspace), graded by the unchanged DS-1000 harness on `solution.py`
@@ -64,13 +64,13 @@ KP_ADAPTATIONS = """How this session differs from an interactive one (fixed for 
 - There are no subagents: do every node yourself.
 - You cannot run code or tests. A node's `check` is done by reading your code carefully.
 - The knowledge base is read-only here: report_discovery, submit_way, recommend_models and report_model_run are
-  not available. Still keep .stealth/run.md up to date as the workflow says.
-- .stealth/claims.md was already written by the survey_repo workflow for this workspace. For repo_claims you may
-  pass the literal "@.stealth/claims.md" instead of retyping the file.
-- Write .stealth/ files with create_file / edit_file. They are your working files, not the answer.
+  not available. Still keep .kell/run.md up to date as the workflow says.
+- .kell/claims.md was already written by the survey_repo workflow for this workspace. For repo_claims you may
+  pass the literal "@.kell/claims.md" instead of retyping the file.
+- Write .kell/ files with create_file / edit_file. They are your working files, not the answer.
 - The answer is solution.py; call finish when it is complete."""
 SURVEY_ADAPTATIONS = ("Adaptations for this session: you cannot run git, so write `sha=-` in each source; write the "
-                      "file with create_file at .stealth/claims.md (edit_file to extend it); call finish when it is "
+                      "file with create_file at .kell/claims.md (edit_file to extend it); call finish when it is "
                       "written.")
 
 

@@ -1,5 +1,5 @@
 """
-Pipe-delimited `.stealth/` projection format (meta-harness directive
+Pipe-delimited `.kell/` projection format (meta-harness directive
 Sec 23-31, 2026-09-15) -- the exact grammar for `index.md`, `claims.md`,
 `procedures.md`, `run.md`.
 
@@ -57,7 +57,7 @@ _GOALS_HEADER = (
 )
 _LEDGER_HEADER = (
     "# ledger.md -- GENERATED, not canonical. Do not hand-edit.\n"
-    "# A log-only audit trail of hand-edits made to other .stealth/*.md\n"
+    "# A log-only audit trail of hand-edits made to other .kell/*.md\n"
     "# files (via the record_stealth_edit MCP tool), newest first. This is\n"
     "# NOT source control -- no diffs/content are stored, and nothing here\n"
     "# feeds back into canonical Claim/Procedure/Goal state.\n"
@@ -295,7 +295,7 @@ def render_run_md(run: RunLine, nodes: list[NodeLine], collab: list[CollabLine] 
     QUESTION it answers. This NEVER reads `run.md` back -- it is a
     one-way render of already-fetched DB rows, same as every other
     section of this file (see `app.stealth.generator`'s own module
-    docstring: `.stealth/` is a projection, never a source of truth)."""
+    docstring: `.kell/` is a projection, never a source of truth)."""
     header = _RUN_HEADER + _row("RUN", run.run_id, run.status, run.objective) + _SEP + \
         _kv_field("procedure", f"{run.procedure_id}@{run.procedure_version}") + "\n\n"
     if collab:

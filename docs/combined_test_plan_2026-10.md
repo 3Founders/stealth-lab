@@ -1,11 +1,11 @@
-# Combined real-use test: long horizon, `.stealth`, multi-turn, messy/vague input, what the user sees (plan, 2026-10-14)
+# Combined real-use test: long horizon, `.kell`, multi-turn, messy/vague input, what the user sees (plan, 2026-10-14)
 
 The A-vs-C benchmark (docs/HANDOFF_abtest_2026-10-11.md, sections 11-12) measured StealthLab on one-prompt, clean,
 independent tasks: on 150 code tasks C saves 49% at 137 vs 140 solved. This test measures what that cannot:
 
-1. **Long horizon:** a series of real issues in ONE repository, in the order they happened, so `.stealth/` (library,
+1. **Long horizon:** a series of real issues in ONE repository, in the order they happened, so `.kell/` (library,
    survey facts, routing record) builds up the way it does for a developer working in a repo for weeks.
-2. **What `.stealth/` is worth:** arm C0 = C with `.stealth/` wiped before every task. C minus C0 is the value.
+2. **What `.kell/` is worth:** arm C0 = C with `.kell/` wiped before every task. C minus C0 is the value.
 3. **Messy, vague, multi-turn input:** each task starts with a vague message and continues over 2-4 turns in one
    session, with a simulated user who knows the real issue and answers questions.
 4. **What the user sees:** the message shown when a cheap model did the task (who, time, cost, undo, explanation) --
@@ -32,8 +32,8 @@ Read section 6 (rules) before building anything. Everything here is to be BUILT 
 
 | Piece | Where | What it does |
 |---|---|---|
-| Series mode | `experiments/abtest/runner.py --series module[:name]` | ordered tasks in one workspace per arm; `.stealth/` persists |
-| Arm C0 | same | C with `.stealth/` wiped before each task (dir and `.keep` kept) |
+| Series mode | `experiments/abtest/runner.py --series module[:name]` | ordered tasks in one workspace per arm; `.kell/` persists |
+| Arm C0 | same | C with `.kell/` wiped before each task (dir and `.keep` kept) |
 | Learning curve | `report.py <run> --curve` | solved and cost per position, per arm |
 | Series template | `series_toy_task.py`, `test_series_offline.py` | 3 tasks, a repo convention later tasks must keep; `setup_project` / `grade_workspace` hooks |
 | Product: messy input | `packaging/npm/lib/brief.mjs` | brief from the last 6 turns + files the prompt names + the project's file list; gate (code/clear/size); `!opus` / `!cheap` |
@@ -51,7 +51,7 @@ Read section 6 (rules) before building anything. Everything here is to be BUILT 
   needing system libraries or a database). Prefer small-to-medium repos (< 50k lines).
 - Ordering: by issue creation date. Each task starts from the repo at that issue's base commit **with the previous
   tasks' accepted fixes NOT applied** (each issue has its own base commit; the workspace is reset to it), BUT the
-  `.stealth/` directory is carried over in C (and wiped in C0). This keeps grading exact (each issue's tests at its own
+  `.kell/` directory is carried over in C (and wiped in C0). This keeps grading exact (each issue's tests at its own
   commit) while knowledge carries over. Write this down in the module's docstring.
 - Grading: run FAIL_TO_PASS + PASS_TO_PASS at the issue's base commit with the agent's diff applied; solved = all pass.
   Never show these tests to any arm (they live outside the workspace, like today's hidden tests).
@@ -73,8 +73,8 @@ Read section 6 (rules) before building anything. Everything here is to be BUILT 
 
 ### 3.3 Arms
 - **A:** plain Claude Code, Opus 5.5.
-- **C:** StealthLab hooks-only, configuration of section 1, `.stealth/` persists across the series.
-- **C0:** as C, `.stealth/` wiped before each task.
+- **C:** StealthLab hooks-only, configuration of section 1, `.kell/` persists across the series.
+- **C0:** as C, `.kell/` wiped before each task.
 - Same opener, same simulated user (cached), same hidden tests for all arms. Arms run each task in a hashed order
   (as the runner does) so no arm always goes first.
 
@@ -88,7 +88,7 @@ support. Report the mean and every message scoring < 5/6.
 ### 3.5 Metrics (per arm; per repo and overall)
 Solved (hidden tests), cost (sum over turns), wall time p50/p95/p99 per task and per turn, share of turns dispatched,
 cheap wins, wrong cheap answers (accepted but hidden tests fail), questions asked by the assistant, output-check score,
-learning curve (solved and cost by position in the series). C minus C0 = value of `.stealth/`.
+learning curve (solved and cost by position in the series). C minus C0 = value of `.kell/`.
 
 ## 4. Where it runs: Modal
 

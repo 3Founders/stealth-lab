@@ -1,5 +1,5 @@
 """
-G13 P2 -- `.stealth/events.jsonl` journal + single-writer lock
+G13 P2 -- `.kell/events.jsonl` journal + single-writer lock
 (`app.stealth.journal`), pure filesystem, no database.
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_corrupt_trailing_line_is_tolerated(tmp_path):
 
 def test_lock_is_exclusive_and_raises_on_contention(tmp_path, monkeypatch):
     ws = str(tmp_path)
-    os.makedirs(os.path.join(ws, ".stealth"), exist_ok=True)
+    os.makedirs(os.path.join(ws, ".kell"), exist_ok=True)
     # make the retry window short so the test is fast
     monkeypatch.setattr("app.stealth.journal._LOCK_RETRIES", 3)
     monkeypatch.setattr("app.stealth.journal._LOCK_SLEEP", 0.01)
@@ -74,7 +74,7 @@ def test_lock_is_exclusive_and_raises_on_contention(tmp_path, monkeypatch):
 
 def test_stale_lock_is_stolen(tmp_path, monkeypatch):
     ws = str(tmp_path)
-    lockdir = os.path.join(ws, ".stealth")
+    lockdir = os.path.join(ws, ".kell")
     os.makedirs(lockdir, exist_ok=True)
     lockfile = os.path.join(lockdir, ".lock")
     with open(lockfile, "w") as f:
@@ -90,7 +90,7 @@ def test_stale_lock_is_stolen(tmp_path, monkeypatch):
 
 def test_concurrent_appenders_never_collide_on_seq(tmp_path):
     ws = str(tmp_path)
-    os.makedirs(os.path.join(ws, ".stealth"), exist_ok=True)
+    os.makedirs(os.path.join(ws, ".kell"), exist_ok=True)
     errors: list[BaseException] = []
 
     def worker():

@@ -1,5 +1,5 @@
 """
-The `.stealth/` file formats: the `.idx` routing tables and the
+The `.kell/` file formats: the `.idx` routing tables and the
 line-range-addressable `.md` pages.
 
 Design rules (spec A11-A12 / B35, ratified local-architecture decision):
@@ -88,7 +88,7 @@ class IdxRow:
 class RunIdxRow:
     """`run.idx` -- an agent greps this to see current work at a glance.
 
-    `grep -E 'RUNNING|BLOCKED' .stealth/index/run.idx`
+    `grep -E 'RUNNING|BLOCKED' .kell/index/run.idx`
     """
     node_id: str
     status: str
@@ -148,7 +148,7 @@ class RootRow:
 
 def render_root_idx(rows: Iterable[RootRow]) -> str:
     body = "\n".join(r.render() for r in rows)
-    text = "# .stealth router -- grep an entry's idx, get an id + line range, read only that range\n" + body + "\n"
+    text = "# .kell router -- grep an entry's idx, get an id + line range, read only that range\n" + body + "\n"
     return text
 
 

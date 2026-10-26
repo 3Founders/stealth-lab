@@ -1,4 +1,4 @@
-# .stealth library: this repository's own solved problems and model routes
+# .kell library: this repository's own solved problems and model routes
 
 Workstream B of [plan_2026-10_priors_library_survey.md](plan_2026-10_priors_library_survey.md) (§3, §5.3).
 
@@ -9,7 +9,7 @@ The evidence (plan §0): same-repo past fixes with their real diffs lifted "righ
 over the whole corpus. So a repository's own solved problems, with their code, are the core; global knowledge
 enhances them.
 
-## Files (`.stealth/`)
+## Files (`.kell/`)
 
 | file | what | committed? | written by |
 |---|---|---|---|
@@ -68,7 +68,7 @@ or extra spend. It finds the work and shows the evidence; **the agent decides** 
 | command | what |
 |---|---|
 | `library lint` | errors: dangling `goal=` / `way=` / `parent=` links, a Way with no Goal, parent cycles, parse problems (orphan lines, conflicts); warnings: a missing diff file, library.md over 90% of its cap; info: unused Goals / Ways. Exit 1 on an error. |
-| `library tidy [--write]` | the worklist, each item with its evidence and the command to run: duplicate entries (same unit, title overlap ≥ 0.7, or ≥ 0.4 when the touched files overlap ≥ 0.5; failed attempts never), duplicate Goals (title overlap ≥ 0.75), Goals that look like a narrower version of another (give them a parent), stale entries, and, from 75% of the cap, what to archive first (failed and stale entries; current mined history is not a reason). `--write` saves it as `.stealth/library/TIDY.md` (generated; not committed). |
+| `library tidy [--write]` | the worklist, each item with its evidence and the command to run: duplicate entries (same unit, title overlap ≥ 0.7, or ≥ 0.4 when the touched files overlap ≥ 0.5; failed attempts never), duplicate Goals (title overlap ≥ 0.75), Goals that look like a narrower version of another (give them a parent), stale entries, and, from 75% of the cap, what to archive first (failed and stale entries; current mined history is not a reason). `--write` saves it as `.kell/library/TIDY.md` (generated; not committed). |
 | `library drop <L-id> [--superseded-by <L-id>]` | move an entry to `library/archive-superseded.md` (same grammar, greppable, not in the index, so find_ways never offers it), recording what replaced it and when. Its diff stays. Goals and Ways nothing uses any more go with it. |
 | `library merge-goals <keep> <drop>` | the same problem under two titles: entries, Ways and child Goals move to `<keep>`; the global goal link and tags are carried over; a merge that would make a Goal its own ancestor is refused. |
 
@@ -112,7 +112,7 @@ reused for a library request. No diff, step text or check command ever leaves th
 - The knowledge hook (`hook-prompt`) sends `library payload` automatically, shows `library_matches` first with the
   entry's steps and its local diff, and saves `routing_rows` into `routing.md`.
 - The capture hook counts the final test verdict of a resolved prompt as one OBS on that Goal's route (no token
-  needed, local only, only where `.stealth/` exists).
+  needed, local only, only where `.kell/` exists).
 - `stealthlab-mcp library index|check|show|refresh|add|route|obs|payload|lint|tidy|drop|merge-goals` (see `library help`).
 
 ## Not done / open

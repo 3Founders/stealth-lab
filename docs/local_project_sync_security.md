@@ -46,7 +46,7 @@ Read directly, not from prior reports, before writing anything below.
 - **`backend/app/api/me.py`** — `GET /v1/me/stealth-projects[/{project_id}]`,
   gated by `require_authenticated_user`, scoped to `principal.subject`.
 - **`backend/app/stealth/project_sync.py`** — `ensure_stable_project_id`
-  (mints/reads a UUID4 in `.stealth/meta.json`'s `stable_project_id` key,
+  (mints/reads a UUID4 in `.kell/meta.json`'s `stable_project_id` key,
   survives rename/move); `preview_sync`/`sync_project` (insert-or-verify a row
   in `synced_projects`, `project_id` PK, `owner_subject` TEXT — the raw OIDC
   subject, same value space as `stealth_edit_ledger.actor`); `build_bootstrap_
@@ -70,7 +70,7 @@ Read directly, not from prior reports, before writing anything below.
   **`db/108_rename_claimed_projects_to_synced_projects.sql`** (written, **not
   yet applied** to the real DB — this design intentionally does not apply it
   either; see § Migration plan).
-- **`.stealth/events.jsonl`** — `app.stealth.journal`: `SingleWriterLock` +
+- **`.kell/events.jsonl`** — `app.stealth.journal`: `SingleWriterLock` +
   `append_events`/`latest_seq`, a **purely local, append-only, monotonic**
   journal. Never uploaded today. `generate_projection` calls `append_events`
   on every regeneration (`projection_regenerated`); `record_run_update` and
@@ -191,7 +191,7 @@ re-validates `Origin` and `Host`; neither check is trusted alone.
 No step is replayable (each capability is single-use and step-scoped); the
 whole handshake is bounded to ~60 seconds; nothing here is a generic file
 endpoint — `prepare-payload` only ever returns the six allow-listed
-`.stealth/*.md` files for explicitly-selected `project_id`s, the exact same
+`.kell/*.md` files for explicitly-selected `project_id`s, the exact same
 allow-list `project_sync.ALLOWED_SNAPSHOT_FILES` already enforces today.
 
 **Design choice — who encrypts (Phase 5's A vs. B):** **Option B** — the
@@ -301,7 +301,7 @@ Service/libsecret) is the concrete dependency this design proposes adding to
 `backend/requirements.txt`, used only by the local bridge process, only for
 this one purpose: `keyring.set_password("stealthlab-sync", project_id,
 p_dek_base64)` after step C.6, read back on every ongoing-sync hook (§ G).
-Never written to `.stealth/meta.json`, never an environment variable, never
+Never written to `.kell/meta.json`, never an environment variable, never
 logged (§ M). This is genuinely new — no keychain/credential-store
 integration exists anywhere in this codebase today (confirmed by search).
 
@@ -316,11 +316,11 @@ daemon, no realtime infrastructure:
 - Add one new, best-effort, purely local hook at the same call sites: if
   `keyring.get_password("stealthlab-sync", project_id)` returns a key (i.e.
   this project is synced), build a small delta payload (the changed
-  `.stealth/*.md` file(s) plus the new journal event), encrypt it locally
+  `.kell/*.md` file(s) plus the new journal event), encrypt it locally
   with the cached P-DEK, and POST the ciphertext to the remote API,
   tagged with the journal's own monotonic `seq` as the **revision number**.
 - **Offline handling**: if the POST fails, append one line to a new,
-  purely-local `.stealth/.sync-queue.jsonl` (already-encrypted ciphertext +
+  purely-local `.kell/.sync-queue.jsonl` (already-encrypted ciphertext +
   revision, so nothing further needs to happen except "send these bytes") —
   never blocks the local operation that triggered it. On the next local MCP
   call for that workspace (natural "reconnect" point, not a background
@@ -336,7 +336,7 @@ daemon, no realtime infrastructure:
   leak "these two states are the same" to the server).
 - **No CRDT, no bidirectional sync in V1.** This is local-authoritative,
   one-way (local → server) sync only. A second device with its own local
-  `.stealth` checkout syncing concurrent, conflicting local edits back is
+  `.kell` checkout syncing concurrent, conflicting local edits back is
   explicitly a later phase — V1 does not attempt to merge or resolve that,
   and does not pretend to.
 
@@ -405,7 +405,7 @@ New MCP tool (naming follows the established `sync`-terminology convention):
 - Tell the local bridge to `keyring.delete_password(...)` for that
   `project_id` — this is what actually stops ongoing sync (§ G's hook checks
   for a cached key; no key, no more uploads).
-- **Never touches `.stealth/` locally.** Nothing in the unsync path opens,
+- **Never touches `.kell/` locally.** Nothing in the unsync path opens,
   writes, or deletes any local file — it only ever talks to the remote DB/
   object storage and the local OS keychain entry.
 - **Honest deletion semantics**: if the configured object-storage backend
@@ -492,7 +492,7 @@ implementation time, sync revision number, ciphertext size in bytes,
 (`pending`/`synced`/`error`), Argon2id salt and parameters.
 
 **Ciphertext only, server never sees plaintext:**
-all six `.stealth/*.md` contents, activity/event entries, the wrapped P-DEK
+all six `.kell/*.md` contents, activity/event entries, the wrapped P-DEK
 itself (it's ciphertext of a key, not the key).
 
 **Never reaches the server at all, encrypted or not:**
@@ -583,7 +583,7 @@ is rejected; a capability reused for a second request is rejected; a
 capability used for the wrong step is rejected.
 
 **Encryption**: the remote upload endpoint's request body contains no
-`.stealth/*.md`-shaped plaintext; the `synced_projects`/`raw_objects` rows
+`.kell/*.md`-shaped plaintext; the `synced_projects`/`raw_objects` rows
 contain no plaintext (byte-level assertion, not just "no obvious substring");
 a bit-flipped ciphertext fails AES-GCM's tag check and is rejected, not
 silently misdecrypted; two encryptions of identical plaintext under the same
@@ -613,7 +613,7 @@ behaves identically to a nonexistent one (404, indistinguishable) — already
 an established pattern in `app/api/me.py`, must hold for the new
 sync-upload/fetch routes too.
 
-**Unsync**: remote rows deleted; local `.stealth/*` files byte-for-byte
+**Unsync**: remote rows deleted; local `.kell/*` files byte-for-byte
 unchanged after unsync; the OS-keychain entry for that project is gone;
 re-syncing afterward works and mints a fresh P-DEK (not the old one).
 
@@ -649,7 +649,7 @@ silent wrong-key decrypt.
 8. **Recovery flow**: Argon2id(passphrase, salt) → Recovery-KEK → unwrap
    P-DEK → decrypt client-side (§ I).
 9. **Unsync/delete flow**: delete server-side ciphertext + wrapped key rows,
-   purge the local OS-keychain entry, never touch `.stealth/` (§ J).
+   purge the local OS-keychain entry, never touch `.kell/` (§ J).
 10. **Server plaintext vs. ciphertext boundary**: exact table in § L.
 11. **Browser storage strategy**: raw P-DEK held only in memory / as a
     non-extractable `CryptoKey` for the session; no `localStorage`, no
@@ -746,7 +746,7 @@ designed sequence, not new infrastructure).
 
 **Stored**: OS keychain, via the same `keyring` mechanism as the P-DEK (§ F),
 under its own entry namespace (`stealthlab-sync-device`, keyed by
-`project_id` or `device_id`) — never `.stealth/meta.json`, never a plaintext
+`project_id` or `device_id`) — never `.kell/meta.json`, never a plaintext
 file, never an environment variable, never a URL.
 
 **Scope of access**: `sync:upload` only, and only for the `project_id`(s) the
@@ -809,7 +809,7 @@ automated).
 ## 2. Local project discovery — exact source of the list
 
 Inspected directly: `preview_sync_local_project`/`sync_local_project` (and
-every other `.stealth`-touching MCP tool) take `repo_path` as a **caller-
+every other `.kell`-touching MCP tool) take `repo_path` as a **caller-
 supplied parameter on every call** — the MCP server process holds no
 persistent notion of "the current project." It is a single long-lived
 process (one hard-coded port, `8765` — only one instance can bind it at a
@@ -823,7 +823,7 @@ user is currently looking at," a small local registry is required — the
 ADR already anticipated this, and this closes it concretely:**
 
 - **Location**: a user-scoped application-data directory, never inside any
-  single repo's `.stealth/` (it must span multiple repos) — the
+  single repo's `.kell/` (it must span multiple repos) — the
   OS-appropriate convention (e.g. via Python's `platformdirs`:
   `%APPDATA%\stealthlab\local_projects.json` on Windows, `~/.config/
   stealthlab/local_projects.json` on Linux, `~/Library/Application
@@ -859,7 +859,7 @@ ADR already anticipated this, and this closes it concretely:**
   simply shows its last-known path until then; harmless, since the registry
   never claims to be authoritative over anything but "what to show in a
   discovery list," never used as the source of truth for identity itself
-  (that's still `.stealth/meta.json`'s `stable_project_id`, per the
+  (that's still `.kell/meta.json`'s `stable_project_id`, per the
   original ADR).
 
 If a future need arises for one browser session to discover projects

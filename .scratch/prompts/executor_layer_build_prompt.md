@@ -213,7 +213,7 @@ the version).
 ## 6. Claude Code integration (installed by `--with-exec`)
 
 ### 6.1 `~/.claude/agents/stealth-executor.md`
-- Frontmatter: `name`, `description` (when to use: "carry out one NODE from .stealth/run.md and prove it with its
+- Frontmatter: `name`, `description` (when to use: "carry out one NODE from .kell/run.md and prove it with its
   check"), `tools` (minimal: Read, Edit, Write, Bash, Grep, Glob), `isolation: worktree`, `maxTurns` (e.g. 40).
 - Body: the one-line executor contract from `plan_and_run`: read the NODE line and its claims, do only that,
   run the `check=`, reply with *result, proof (diff stat + check output tail), anything learned*.
@@ -228,7 +228,7 @@ the version).
 ### 6.3 Hooks: measure Claude's own subagents
 - `SubagentStart` / `SubagentStop` entries in `~/.claude/settings.json` running `stealthlab-mcp hook subagent-start|subagent-stop`.
 - Read the hook's JSON from stdin. **Verify the payload fields in the current docs**; do not assume field names.
-- `subagent-stop`: find the NODE the subagent handled (from its task text or `.stealth/run.md`), run that NODE's
+- `subagent-stop`: find the NODE the subagent handled (from its task text or `.kell/run.md`), run that NODE's
   `check=` in the subagent's worktree (or the checkout if none), and send `report_model_run(scaffold="claude-code-subagent",
   model=<subagent model if the payload has it, else "claude">, accepted=<check passed>, check_kind="procedure_check")`
   through the same outbox.

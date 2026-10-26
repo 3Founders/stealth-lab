@@ -1,6 +1,6 @@
 """
-`.stealth/events.jsonl` -- the durable, append-only local runtime journal,
-plus the single-writer lock that serialises every mutation of `.stealth/`.
+`.kell/events.jsonl` -- the durable, append-only local runtime journal,
+plus the single-writer lock that serialises every mutation of `.kell/`.
 
 One JSON object per line, each with a strictly monotonic integer `seq`
 (1-based). The journal is the local source of truth for:
@@ -12,7 +12,7 @@ One JSON object per line, each with a strictly monotonic integer `seq`
     events are folded to rebuild `exploration.md` on every regeneration;
   * an audit trail of `projection_regenerated` / `knowledge_fault` events.
 
-`SingleWriterLock` is an advisory `.stealth/.lock` file (`O_CREAT|O_EXCL`,
+`SingleWriterLock` is an advisory `.kell/.lock` file (`O_CREAT|O_EXCL`,
 cross-platform -- no `fcntl`). It records the holder pid + a timestamp and
 is stolen if older than `LOCK_STALE_SECONDS` (a crashed writer must not
 wedge the workspace forever). Contention past `_LOCK_RETRIES` raises
@@ -25,7 +25,7 @@ import os
 import time
 from typing import Any, Iterable
 
-from app.stealth.legacy_context import STEALTH_DIRNAME
+from app.stealth.legacy_context import STEALTH_DIRNAME, workspace_dir
 
 JOURNAL_NAME = "events.jsonl"
 LOCK_NAME = ".lock"
@@ -39,7 +39,7 @@ class StealthLockError(RuntimeError):
 
 
 def _stealth_dir(workspace_root: str) -> str:
-    return os.path.join(workspace_root, STEALTH_DIRNAME)
+    return workspace_dir(workspace_root)
 
 
 def journal_path(workspace_root: str) -> str:

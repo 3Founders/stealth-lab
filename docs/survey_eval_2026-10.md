@@ -42,7 +42,7 @@ The `survey_repo` prompt (`backend/app/mcp_server/prompts.py`) now drives scanne
 
 ## Performance gates (§4.6)
 
-`scripts/survey-bench.mjs`. Each run is a fresh process, `--no-history`; "cold" means no `.stealth/` yet.
+`scripts/survey-bench.mjs`. Each run is a fresh process, `--no-history`; "cold" means no `.kell/` yet.
 
 | repository | files | cold | incremental | peak memory | gate |
 |---|---|---|---|---|---|

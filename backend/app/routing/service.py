@@ -167,7 +167,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     this step); `remaining_steps` are the steps still to come, so the target and the
     value are the WHOLE run's (one-step rollout, see ladder.py).
 
-    `local_obs` ([{unit, n, ok}], the caller's `.stealth/routing.md` OBS counts) are earlier
+    `local_obs` ([{unit, n, ok}], the caller's `.kell/routing.md` OBS counts) are earlier
     instances of this Goal in the caller's own repository: see `local_obs_loglik`."""
     constraints = dict(constraints or {})
     virtual = virtual or constraints.pop(VIRTUAL_KEY, None)

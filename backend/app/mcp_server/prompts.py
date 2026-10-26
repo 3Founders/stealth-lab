@@ -112,14 +112,14 @@ _SURVEY_TOPICS_UNIT = "purpose, stack, build, test"
 
 
 def survey_repo(repo_path: str = "") -> str:
-    """Survey this repo into .stealth/claims.md (and one claims/<unit>.md page per
+    """Survey this repo into .kell/claims.md (and one claims/<unit>.md page per
     package in a monorepo): short, cited facts about its purpose, stack, how work
     is checked, what exists, what it has decided and what is missing, that
     find_ways uses to pick Procedures that fit."""
     where = f" at `{repo_path}`" if repo_path else ""
     target = repo_path or "."
-    return f"""Survey the repository{where}: write cited facts to `.stealth/claims.md`, plus one
-`.stealth/claims/<unit>.md` page per package ("unit") when the repository has several.
+    return f"""Survey the repository{where}: write cited facts to `.kell/claims.md`, plus one
+`.kell/claims/<unit>.md` page per package ("unit") when the repository has several.
 
 1. Scan first (deterministic, local, uploads nothing):
    `npx -y stealthlab-mcp survey {target}`
@@ -127,7 +127,7 @@ def survey_repo(repo_path: str = "") -> str:
    groups, docs sites, notebooks, mobile apps), leaves out vendored, generated and
    fixture code, computes the repository identity, writes the facts a file states
    outright (versions, scripts, CI commands, frameworks) as `by=scanner` lines, mines
-   past fix commits into `.stealth/library.md`, and writes `.stealth/survey/worklist.md`.
+   past fix commits into `.kell/library.md`, and writes `.kell/survey/worklist.md`.
    No Node.js? Do the same by hand: read the manifests, version pins, build/test
    config, CI workflows, Dockerfile, README / AGENTS.md / CONTRIBUTING and the top of
    the source tree, and write the facts yourself.
@@ -161,7 +161,7 @@ def survey_repo(repo_path: str = "") -> str:
 5. Check: `npx -y stealthlab-mcp survey {target} --validate`. It checks every fact against
    the line it cites (the backticked commands, quoted text and versions must be there, and
    commands must exist in the manifests, Makefile or CI) and moves any that fail to
-   `.stealth/survey/rejected.md` with the reason. Fix or drop those, then validate again.
+   `.kell/survey/rejected.md` with the reason. Fix or drop those, then validate again.
 6. Rules: only what a file actually shows -- never guess. Never copy a secret or an env
    value (names only). Coverage, not count: every unit in the worklist covers
    {_SURVEY_TOPICS_UNIT} (the root also {_SURVEY_TOPICS_ROOT}), each by a cited fact or an
@@ -175,25 +175,25 @@ request, and never stored."""
 
 def plan_and_run(task: str) -> str:
     """Do a task with StealthLab: get the known ways with find_ways, compile
-    your own plan into .stealth/run.md, do or delegate each step, check it,
+    your own plan into .kell/run.md, do or delegate each step, check it,
     and report what you learned."""
     return f"""Task: {task}
 
 You are the planner. StealthLab returns knowledge; you make the plan and
-own every file in `.stealth/`.
+own every file in `.kell/`.
 
-1. Facts. If `.stealth/claims.md` is missing, run the survey_repo prompt first. Read
-   `.stealth/SUMMARY.md` whole if it exists, then look the task's files, symbols and error text up in
-   this repo's own solved problems: `rg -i '^<term>\\|' .stealth/index/terms.idx` -> library ids.
-2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .stealth/claims.md, then the
-   .stealth/claims/<unit>.md pages of the units the task touches (index/units.idx maps a path
+1. Facts. If `.kell/claims.md` is missing, run the survey_repo prompt first. Read
+   `.kell/SUMMARY.md` whole if it exists, then look the task's files, symbols and error text up in
+   this repo's own solved problems: `rg -i '^<term>\\|' .kell/index/terms.idx` -> library ids.
+2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .kell/claims.md, then the
+   .kell/claims/<unit>.md pages of the units the task touches (index/units.idx maps a path
    to its page)>, ...)` once, adding this repo's library arguments when they exist:
    `stealthlab-mcp library payload` prints exactly `library_rows`, `route_obs` and `repo_identity`
    (pass them as they are). Also pass `my_model=<the model you are>`, plus `candidates=<other
    "model|scaffold" units you can run>` if you can delegate to other models: the reply then carries a
    `model_plan`.
    - `library_matches` (if any) come first: problems already solved IN THIS REPO. Read each one
-     (`rg '^(GOAL|PROC|STEP)\\|<id>' .stealth/library.md`) and its diff (`.stealth/library/solutions/<id>.diff`)
+     (`rg '^(GOAL|PROC|STEP)\\|<id>' .kell/library.md`) and its diff (`.kell/library/solutions/<id>.diff`)
      before anything global. A `stale` one touched files that changed since: re-check it before reuse.
    - "resolved": you get `procedures` (each with full `steps`, `alternatives`,
      `repo_fit`, and `verified_solution` when one was recorded: the code that passed its checks
@@ -209,10 +209,10 @@ own every file in `.stealth/`.
    Small task? If the way you're following has one or two steps, skip steps 4-5: just do it,
    check it, and go to step 7.
 3. Read past discoveries: `stealth://procedures/<procedure_id>/claims` for each chosen Procedure.
-4. Write `.stealth/procedures.md`: each Procedure under its own header so its steps sit together:
+4. Write `.kell/procedures.md`: each Procedure under its own header so its steps sit together:
    `PROCEDURE|P-1|<procedure_id>|v<version>|<name>|goal=<goal_name>`
    `STEP|P-1:<order>|<action|instruction|subgoal>|<do>|locator=<source_locator.uri or ->|needs=<k=v,...>|check=<check or ->`
-5. Compile `.stealth/run.md` -- one line per unit of work:
+5. Compile `.kell/run.md` -- one line per unit of work:
    `{RUN_MD_FORMAT}`
    e.g. `NODE|N-3|ready|Configure page size|step=P-1:3|claims=R-001..R-004|deps=N-2|check=node build.js && test -s out.docx`
    - Expand `subgoal` steps into that sub-Procedure's steps. `instruction`
@@ -228,7 +228,7 @@ own every file in `.stealth/`.
    Show the plan to the user and get an OK before changing their code.
 6. Do. For each ready node whose deps are done, either do it yourself
    (short plans) or give a subagent ONE line and nothing else:
-   `Do node N-3. Read: rg "N-3" .stealth/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.`
+   `Do node N-3. Read: rg "N-3" .kell/run.md, then the claims and step lines it names. Reply with: result, proof (diff / command output), anything you learned.`
    Use subagents for long plans, independent steps in parallel, or when you
    want the work checked by someone who didn't do it.
    Model choice: if find_ways returned a `model_plan` with status `ok`, its `recommended.ladder`
@@ -240,11 +240,11 @@ own every file in `.stealth/`.
    call `report_result(instance_key, accepted=<check passed>, tokens_in, tokens_out)` -- after
    EVERY attempt, pass or fail. A failed attempt's reply names `next_model`: redo the failed work
    with it, check again, report again. The StealthLab hooks count the outcome in
-   `.stealth/routing.md` themselves; without the hooks, count it with
+   `.kell/routing.md` themselves; without the hooks, count it with
    `stealthlab-mcp library obs <R-id from routing.md> --model <m> --scaffold <s> --ok|--fail`.
 8. Learn. When a step needed a fix or there was a better way:
    - rewrite the remaining nodes in `run.md` now;
-   - keep `.stealth/claims.md` true, in the survey_repo style (plain sentences that name
+   - keep `.kell/claims.md` true, in the survey_repo style (plain sentences that name
      their subject and carry their conditions). Add what this work taught about the repo:
      a decision you made and what you compared ("used the docx npm package, not
      python-docx, because the repo has no Python toolchain"), a feature the change added,
@@ -256,7 +256,7 @@ own every file in `.stealth/`.
      [--g <goal_id from find_ways>] [--p <procedure_id>] [--unit <package path>] [--step "<kind>|<do>|<check>"]...`
      (it re-runs the check and refuses if it fails; it saves the diff and rebuilds the indexes; it reuses the
      repo's Goal and Way for the same problem and procedure, or pass `--goal <G-id>` / `--way <W-id>` to
-     attach to existing ones from `.stealth/library.md`'s G / W lines);
+     attach to existing ones from `.kell/library.md`'s G / W lines);
    - to offer a solved entry to everyone, `stealthlab-mcp library share <L-id>` drafts the
      submit_way call (problem, way, steps and checks only; never the diff or paths): fill its
      placeholders, remove anything specific to this repo, then send it;
@@ -271,7 +271,7 @@ arguments."""
 
 
 _V1_PROMPTS = [
-    ("survey_repo", "Survey this repo into .stealth/claims.md", survey_repo),
+    ("survey_repo", "Survey this repo into .kell/claims.md", survey_repo),
     ("plan_and_run", "Do a task with StealthLab (plan, run, check, report)", plan_and_run),
 ]
 

@@ -1,6 +1,6 @@
 """
 Pure-logic tests for app.stealth.pipe_format -- the exact pipe-delimited
-`.stealth/` grammar (meta-harness directive Sec 23-31). No database, no
+`.kell/` grammar (meta-harness directive Sec 23-31). No database, no
 I/O. Proves both the exact grammar AND the directive's own §30 grep
 claims (rg by stable id retrieves the complete record for that id).
 """

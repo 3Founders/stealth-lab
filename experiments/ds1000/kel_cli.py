@@ -1,6 +1,6 @@
 """Kel's MCP tools as a command, for Claude Code subagents in DS-1000 round 4 (arm KP, model Sonnet).
 
-    python kel_cli.py find_ways --ws <workspace> --query "<what you want done>" [--claims @.stealth/claims.md]
+    python kel_cli.py find_ways --ws <workspace> --query "<what you want done>" [--claims @.kell/claims.md]
     python kel_cli.py read_procedure_claims --ws <workspace> --id <procedure_id>
 
 Same backend as the open models' KP arm: the real `find_ways` / claims resource, in-process, against the

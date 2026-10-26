@@ -96,15 +96,15 @@ test("auto survey: the first prompt starts one detached survey; the next prompts
   const a = run();
   assert.equal(a.started, true);
   assert.equal(started.length, 1);
-  assert.ok(fs.existsSync(path.join(root, ".stealth", ".auto-survey")));
+  assert.ok(fs.existsSync(path.join(root, ".kell", ".auto-survey")));
   assert.deepEqual(run(), { started: false, reason: "already attempted", root: a.root });
   assert.equal(started.length, 1);
 });
 
 test("auto survey: not for an already surveyed repo, a non-repo, the off switch; a start that throws never throws", () => {
   const root = gitRepo();
-  fs.mkdirSync(path.join(root, ".stealth"));
-  fs.writeFileSync(path.join(root, ".stealth", "claims.md"), "x");
+  fs.mkdirSync(path.join(root, ".kell"));
+  fs.writeFileSync(path.join(root, ".kell", "claims.md"), "x");
   assert.equal(maybeStartSurvey({ cwd: root, env: { STEALTHLAB_AUTO_SURVEY: "on" }, start: () => assert.fail("must not start") }).reason, "already surveyed");
   assert.equal(maybeStartSurvey({ cwd: tmp("plain-"), env: { STEALTHLAB_AUTO_SURVEY: "on" }, repoRootImpl: () => null }).reason, "not a git repo");
   assert.equal(maybeStartSurvey({ cwd: gitRepo(), env: { STEALTHLAB_AUTO_SURVEY: "off" } }).reason, "off");
@@ -125,7 +125,7 @@ function libRepo() {
   const root = tmp("lib-");
   execFileSync("git", ["-C", root, "init", "-q"]);
   fs.writeFileSync(path.join(root, "calc.py"), "x = 1\n");
-  fs.mkdirSync(path.join(root, ".stealth"));
+  fs.mkdirSync(path.join(root, ".kell"));
   return root;
 }
 const add = (root, title, diff, day) => addEntry(root, { title, check: "python -m pytest -q", observed: true, diff }, { now: new Date(`2026-10-${day}T00:00:00Z`) });

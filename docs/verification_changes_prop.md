@@ -129,8 +129,8 @@ all required children are `verified`. A change to a child's claims makes the par
 ## 9. Local first (implemented, 2026-10-23)
 
 The first step shipped on the client, in `packaging/npm/`, as `stealthlab-mcp status`: a computed status for every
-`.stealth/run.md` node and `.stealth/library.md` entry, from recorded check runs in a new append-only
-`.stealth/evidence.md`. Details, real output and limits: `docs/stealth_status_results.md`.
+`.kell/run.md` node and `.kell/library.md` entry, from recorded check runs in a new append-only
+`.kell/evidence.md`. Details, real output and limits: `docs/stealth_status_results.md`.
 
 How it maps onto section 4:
 

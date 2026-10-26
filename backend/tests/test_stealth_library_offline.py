@@ -1,4 +1,4 @@
-"""Offline tests for `.stealth/library.md` / `routing.md` (app.stealth.library), the library context in
+"""Offline tests for `.kell/library.md` / `routing.md` (app.stealth.library), the library context in
 find_ways (app.services.library_context + retrieval_service.search_goals + goal_choice), and the local
 OBS conditioning of the model plan (routing.service). No database, no network.
 
@@ -79,7 +79,7 @@ def test_orphans_and_foreign_lines_are_reported_never_invented():
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 def test_real_git_union_merge_of_two_branches_parses_to_both_entries(tmp_path):
-    """merge=union is what .stealth/.gitattributes sets for library.md: prove a real union merge of two
+    """merge=union is what .kell/.gitattributes sets for library.md: prove a real union merge of two
     branches that each appended an entry, while one edited a third, parses to all three, edited."""
     base_e = _entry("L-111111", title="Base entry")
     ours = [base_e, _entry("L-222222", title="Ours")]
@@ -265,7 +265,7 @@ def test_matches_order_and_unjudged_labelling():
     a.judged = False
     got = ctx.matches()
     assert [m["id"] for m in got] == ["L-b00c1e", "L-0a91f2"] and got[1]["judged"] is False
-    assert got[0]["read"] == "rg '^(GOAL|PROC|STEP)\\|L-b00c1e' .stealth/library.md"
+    assert got[0]["read"] == "rg '^(GOAL|PROC|STEP)\\|L-b00c1e' .kell/library.md"
 
 
 def test_tiebreak_only_for_a_single_library_pinned_goal_inside_the_margin():

@@ -4,7 +4,7 @@ There are two kinds of ingestion. They must stay separate.
 
 | | **Local tier** | **Canonical tier** |
 |---|---|---|
-| What | `.stealth/*.md` files, edited by people/agents, driven through the simple local MCP frontend | Postgres (control DB + knowledge shards), workers, projections, JEV/NLI |
+| What | `.kell/*.md` files, edited by people/agents, driven through the simple local MCP frontend | Postgres (control DB + knowledge shards), workers, projections, JEV/NLI |
 | Nature | a disposable, human-readable **cache/projection** of what the user is working with | the shared, deduplicated, sharded, auditable knowledge base |
 | Needs the network / models? | **No.** Plain files; works offline | Yes (embedding + JEV/NLI); fails closed when the judge is down |
 | Sharded? Judged? Projected? | No | Yes |
@@ -33,4 +33,4 @@ canonical pipeline. Rules this pass enforces so the two tiers cannot damage each
    identity when one is configured (never blocking, per rule 4). It does not use sharding (rule 3).
 
 If the local cache should become fully DB-independent (pure `.md` + local search), that is a separate decision: the
-existing `.stealth/` design deliberately treats the files as a *projection of Postgres*, and `local_sync` as the way back.
+existing `.kell/` design deliberately treats the files as a *projection of Postgres*, and `local_sync` as the way back.

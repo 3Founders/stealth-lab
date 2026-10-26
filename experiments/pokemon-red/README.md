@@ -232,7 +232,7 @@ It is a thin pass-through HTTP client for the already-running
 `pokemon-agent` server — no game logic, action-grammar parsing, or state
 interpretation lives in this MCP; whatever `pokemon-agent` returns is
 returned verbatim (or the tool raises, on any non-2xx / connection failure —
-never a fake success). It does not write to `.stealth/` or touch StealthLab
+never a fake success). It does not write to `.kell/` or touch StealthLab
 in any way.
 
 `game_load` has one caller-side fix worth knowing: `pokemon-agent`'s flat

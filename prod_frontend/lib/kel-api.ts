@@ -751,14 +751,14 @@ export const getPublicProfileByUsername = (username: string, signal?: AbortSigna
 export const avatarUrlFor = (username: string): string => `${API_URL}/v1/contributors/by-username/${j(username)}/avatar`;
 
 // ---------------------------------------------------------------------------
-// Synced local `.stealth` projects — CLIENT-SIDE END-TO-END ENCRYPTED. See
+// Synced local `.kell` projects — CLIENT-SIDE END-TO-END ENCRYPTED. See
 // docs/local_project_sync_security.md and backend/app/api/me.py /
 // backend/app/stealth/project_sync.py. A project only appears here once
 // explicitly synced via the local bridge + browser encryption flow
 // (lib/sync.ts) — this backend never sees plaintext file/activity
 // content, ever; everything below is either ciphertext or key-wrapping
 // metadata. `project_id` is the STABLE identity persisted in the
-// workspace's own `.stealth/meta.json` (survives rename/move).
+// workspace's own `.kell/meta.json` (survives rename/move).
 //
 // NAMING: "sync" / "local project sync" / "synced project" / "unsync" —
 // never "claim" (that word already means something else in keळ:

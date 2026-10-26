@@ -74,7 +74,7 @@ def test_files_are_compared_with_the_diff_and_the_arms_own_directories_do_not_co
     assert oc.rule_points(MSG, DIFF2)["files"] == (0, "missing from the message: tests/test_calc.py")
     both = MSG.replace("applied: calc.py.", "applied: calc.py, tests/test_calc.py.")
     assert oc.rule_points(both, DIFF2)["files"][0] == 1
-    own = DIFF + "diff --git a/.stealth/library.md b/.stealth/library.md\n--- a/.stealth/library.md\n"
+    own = DIFF + "diff --git a/.kell/library.md b/.kell/library.md\n--- a/.kell/library.md\n"
     assert oc.diff_files(own) == ["calc.py"] and oc.rule_points(MSG, own)["files"][0] == 1
     assert oc.rule_points(MSG, "")["files"][0] == 0, "an empty diff but files named: a claim the diff does not support"
     assert oc.rule_points(MSG.replace("applied: calc.py.", "applied: no files."), "")["files"][0] == 1

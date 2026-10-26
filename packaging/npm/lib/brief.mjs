@@ -87,7 +87,7 @@ export function projectFiles(cwd) {
   try {
     const r = spawnSync("git", ["-C", cwd, "ls-files"], { encoding: "utf8", timeout: 3000, windowsHide: true });
     if (r.status !== 0) return "";
-    const names = r.stdout.split(/\r?\n/).filter((n) => n && !n.startsWith(".stealth/")).slice(0, PROJECT_FILES);
+    const names = r.stdout.split(/\r?\n/).filter((n) => n && !n.startsWith(".kell/")).slice(0, PROJECT_FILES);
     const text = names.join("\n");
     return text.length <= PROJECT_CHARS ? text : `${text.slice(0, PROJECT_CHARS).replace(/\n[^\n]*$/, "")}\n...`;
   } catch {

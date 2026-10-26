@@ -1,4 +1,4 @@
-// `stealthlab-mcp plan validate`: checks the planner's own files, `.stealth/procedures.md` and `.stealth/run.md`,
+// `stealthlab-mcp plan validate`: checks the planner's own files, `.kell/procedures.md` and `.kell/run.md`,
 // the way `survey --validate` checks claims. The agent writes both by hand (the `plan_and_run` prompt); nothing
 // else reads them back, so a broken reference or a missing check would otherwise go unnoticed until a node is run.
 //
@@ -161,13 +161,13 @@ function depsOf(node) {
   return !d || d === "-" ? [] : d.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
-// The whole check. `root` is the repository (the folder holding .stealth/).
+// The whole check. `root` is the repository (the folder holding .kell/).
 export function validatePlan(root) {
-  const dir = path.join(root, ".stealth");
+  const dir = path.join(root, ".kell");
   const errors = [];
   const warnings = [];
   const runLines = readLines(path.join(dir, "run.md"));
-  if (!runLines) return { ok: false, errors: [{ file: "run.md", line: 0, msg: "no .stealth/run.md" }], warnings, nodes: 0, steps: 0 };
+  if (!runLines) return { ok: false, errors: [{ file: "run.md", line: 0, msg: "no .kell/run.md" }], warnings, nodes: 0, steps: 0 };
   const procLines = readLines(path.join(dir, "procedures.md"));
   const proc = procLines ? parseProcedures(procLines) : { procs: new Map(), steps: new Map(), errors: [] };
   errors.push(...proc.errors);
@@ -182,7 +182,7 @@ export function validatePlan(root) {
     if (!("step" in n)) errors.push({ ...at, msg: `${id}: missing step= (write - for a node no Procedure step covers)` });
     else if (n.step !== "-") {
       if (!/^P-\d+:\d+$/.test(n.step)) errors.push({ ...at, msg: `${id}: step=${n.step} is not P-<n>:<order>` });
-      else if (!procLines) errors.push({ ...at, msg: `${id}: step=${n.step} but there is no .stealth/procedures.md` });
+      else if (!procLines) errors.push({ ...at, msg: `${id}: step=${n.step} but there is no .kell/procedures.md` });
       else if (!proc.steps.has(n.step)) errors.push({ ...at, msg: `${id}: step=${n.step} is not in procedures.md` });
     }
     if (!("claims" in n)) errors.push({ ...at, msg: `${id}: missing claims= (write - for none)` });
@@ -209,11 +209,11 @@ export function validatePlan(root) {
   return { ok: errors.length === 0, errors, warnings, nodes: run.nodes.size, steps: proc.steps.size };
 }
 
-// The closest folder at or above `start` that holds .stealth/ (start itself when there is none).
+// The closest folder at or above `start` that holds .kell/ (start itself when there is none).
 export function nearestStealthRoot(start) {
   let dir = path.resolve(start);
   for (;;) {
-    if (fs.existsSync(path.join(dir, ".stealth"))) return dir;
+    if (fs.existsSync(path.join(dir, ".kell"))) return dir;
     const up = path.dirname(dir);
     if (up === dir) return path.resolve(start);
     dir = up;
@@ -222,7 +222,7 @@ export function nearestStealthRoot(start) {
 
 export const PLAN_HELP = `stealthlab-mcp plan validate [--root <repo>]   (local only; reads, never writes)
 
-  Checks .stealth/procedures.md and .stealth/run.md (the plan_and_run format): line grammar, ids,
+  Checks .kell/procedures.md and .kell/run.md (the plan_and_run format): line grammar, ids,
   statuses, that every step= is in procedures.md, every claims= id or range is on a claims page,
   every deps= node exists with no cycle, and every check= is concrete. Prints JSON; exit 1 on errors.
 `;

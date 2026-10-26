@@ -7,7 +7,7 @@ ids, or write anything into the user's repo. It returns what it knows: for each
 Goal in the tree, the chosen Procedure with every step in full, the
 alternatives it kept, and why the repo facts supported or blocked the choice.
 The planner agent, which can actually see the repo, turns this into
-`.stealth/procedures.md` and `.stealth/run.md` itself.
+`.kell/procedures.md` and `.kell/run.md` itself.
 
 Each step comes back as one of three kinds:
   action      -- the step carries a binding (a script/tool to run) and a

@@ -5,7 +5,7 @@ solved problems are the core and global knowledge is the enhancer: same-repo pas
 lifted "right cause" 27 -> 42 of 96, and repo-first retrieval found useful Goals 22-24% of the time vs
 10% over the whole corpus. So, when the caller sends them:
 
-  * library entries (`.stealth/index/library.idx` rows) are judged by the SAME contextual judge, in the
+  * library entries (`.kell/index/library.idx` rows) are judged by the SAME contextual judge, in the
     SAME batch, as the global Goal candidates -- in addition to the top `rerank_top_k`, never displacing
     one. Matches come back as `library_matches`; the caller reads the entry and its diff locally.
   * a library entry that names a global Goal (`g=`) pins that Goal: it is judged even if the fused
@@ -162,7 +162,7 @@ class LibraryContext:
             out.append({"id": r.id, "title": r.title, "unit": r.unit, "g": r.g, "outcome": r.outcome,
                         "status": r.status, "verified_at": r.verified_at, "judged": bool(h.judged),
                         "relation": h.relation, "confidence": h.confidence,
-                        "read": f"rg '^(GOAL|PROC|STEP)\\|{r.id}' .stealth/library.md"})
+                        "read": f"rg '^(GOAL|PROC|STEP)\\|{r.id}' .kell/library.md"})
         rank = {"matches": 0, "partial": 1}
         out.sort(key=lambda m: (not m["judged"], rank.get(m["relation"] or "", 2), -(m["confidence"] or 0)))
         return out

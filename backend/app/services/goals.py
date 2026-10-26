@@ -398,7 +398,7 @@ async def find_or_create_goal(
         if remote:
             return remote
 
-    # Private/org writes (everything a user pushes from a local .stealth cache) must never be
+    # Private/org writes (everything a user pushes from a local .kell cache) must never be
     # blocked by a model outage: they are recorded and can be reviewed/merged later.
     if on_unavailable is None and visibility != "public":
         on_unavailable = "create"

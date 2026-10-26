@@ -16,7 +16,7 @@ Round 5 ([PREREGISTRATION_5.md](PREREGISTRATION_5.md)) confirmed the Claude Code
 | Arm | What Sonnet gets |
 |---|---|
 | **AG7** | round 4's AG prompt, unchanged: Sonnet alone |
-| **KH7** | the installed product with the hook: the MCP server instructions; Kel's tools as a command; `.stealth/claims.md`; and for each task, the hook's own text (`find_ways` run on the task before the agent starts, formatted by `packaging/npm/lib/hook.mjs`). No `plan_and_run`. The user's message is the task |
+| **KH7** | the installed product with the hook: the MCP server instructions; Kel's tools as a command; `.kell/claims.md`; and for each task, the hook's own text (`find_ways` run on the task before the agent starts, formatted by `packaging/npm/lib/hook.mjs`). No `plan_and_run`. The user's message is the task |
 
 - **Time-matched:** Claude through subagents is not deterministic, so round 4's AG cannot stand in as the baseline. AG7 and KH7 run side by side: each wave launches the same batch numbers for both arms.
 - **Hook content** (computed before this file): of 89 lookups, 19 resolved, 33 ambiguous, 37 no_match; 23 added no text; mean 758 characters.

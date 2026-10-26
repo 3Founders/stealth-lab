@@ -19,7 +19,7 @@ Configuration (environment; no credentials in the repo):
 
 Failure semantics (worker): store unreachable / throttled -> `ObjectStoreUnavailable` (retryable);
 object missing / hash mismatch -> `ObjectStoreCorrupt` (permanent: retrying cannot recover lost data).
-The local `.stealth/*.md` cache never touches this module.
+The local `.kell/*.md` cache never touches this module.
 """
 from __future__ import annotations
 

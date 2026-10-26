@@ -28,7 +28,7 @@ SAFE TO RE-RUN
 
 NOT COVERED (stated, not implied)
     - Goals: a Goal is a task name, not the licensed text; it stays even if its only Procedure was removed.
-    - Content already copied out of Kel by a client (a user's own `.stealth/` files, an agent's session).
+    - Content already copied out of Kel by a client (a user's own `.kell/` files, an agent's session).
     - Contexts opened before migration 126, or by a code path that did not pass the license: they cannot be found
       by license. Only attribution-required licenses are tagged (`repo_license_policy.ATTRIBUTION_REQUIRED`).
 """

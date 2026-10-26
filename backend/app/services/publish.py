@@ -5,7 +5,7 @@ This module used to host `publish_local_procedure` -- the integration
 point between the DB-free per-workspace SQLite `local_procedures` store
 and the global procedure writer. That store was removed with the
 local-architecture rebuild (the local side is now the filesystem
-`.stealth/` working set), so the local->global publish path here is gone.
+`.kell/` working set), so the local->global publish path here is gone.
 
 What survives is the leaf-string scrub that every local->global crossing
 still needs and that `app.services.publication.publish_procedure` reuses
