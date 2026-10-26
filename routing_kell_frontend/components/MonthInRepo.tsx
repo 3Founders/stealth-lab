@@ -51,7 +51,7 @@ export default function MonthInRepo() {
           </button>
         ))}
       </div>
-      <p className="action-note">Illustrative, not measured. How fast this happens depends on the repository, its tests and the kinds of tasks.</p>
+      <p className="action-note">Illustrative. How fast this happens depends on the repository, its tests and the kinds of tasks.</p>
     </div>
   );
 }

@@ -543,3 +543,32 @@ main, footer { position: relative; z-index: 1; }
 .rstrip span { font-size: 14px; font-weight: 400; padding: 6px 12px; border: 1px solid var(--rule); border-radius: 999px; color: var(--grey); transition: background .3s var(--ease), color .3s var(--ease), border-color .3s var(--ease); }
 .rstrip span[data-on="true"] { background: var(--yellow); color: var(--ink); border-color: var(--ink); }
 .rstrip span[data-word="tests"][data-on="true"] { background: var(--ink); color: var(--paper); }
+
+/* the film: centred under the hero, 60% of the screen wide, plays while on screen (components/FilmPlayer.tsx) */
+.hero-q { font-weight: 400; color: var(--ink); margin-bottom: 10px; }
+.film-wrap { display: flex; justify-content: center; padding-block: clamp(48px, 7vw, 96px) 0; }
+.film-box { position: relative; width: min(60vw, 100%); border: 1px solid var(--rule-strong); background: var(--ink); }
+.film-box video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; cursor: pointer; }
+.film-box:fullscreen { width: 100%; border: 0; display: flex; flex-direction: column; justify-content: center; }
+.film-bar { display: flex; align-items: center; gap: 14px; padding: 10px 14px; background: var(--paper); border-top: 1px solid var(--rule-strong); }
+.film-bar button { border: 1px solid var(--rule-strong); background: var(--paper); color: var(--ink); font: inherit; font-size: 14px; min-width: 40px; height: 34px; padding: 0 12px; cursor: pointer; }
+.film-bar button:hover { background: var(--yellow); }
+.film-progress { flex: 1; height: 6px; background: var(--rule); cursor: pointer; }
+.film-progress i { display: block; height: 100%; background: var(--ink); }
+@media (max-width: 900px) { .film-box { width: 100%; } }
+
+/* not a model router: what happens to the session's prompt cache, and to the bill */
+.cache-copy { grid-column: 1 / span 6; margin-top: clamp(28px, 4vw, 56px); }
+.cache-copy p + p { margin-top: 14px; }
+.cache-bars { grid-column: 8 / span 5; margin-top: clamp(28px, 4vw, 56px); display: grid; gap: 28px; align-content: start; }
+.cache-row { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--rule-strong); }
+.cache-row .caption { color: var(--grey); }
+.cache-bar { display: grid; grid-template-columns: 110px 1fr; column-gap: 14px; align-items: center; }
+.cache-bar span { font-size: 14px; color: #55554f; grid-row: 1 / span 2; }
+.cache-bar i { display: block; height: 22px; background: var(--rule); }
+.cache-bar b { display: block; height: 100%; background: #c9c7bf; }
+.cache-bar em { font-style: normal; font-size: 13px; color: #55554f; margin-top: 4px; }
+.cache-row[data-kel="true"] .cache-bar b { background: var(--yellow); outline: 1px solid var(--ink); }
+.cache-row[data-kel="false"] .cache-bar:first-of-type b { background: #e0877f; }
+@media (max-width: 900px) { .cache-copy, .cache-bars { grid-column: 1 / -1; } }
+.results { margin-top: clamp(32px, 4vw, 56px); }
