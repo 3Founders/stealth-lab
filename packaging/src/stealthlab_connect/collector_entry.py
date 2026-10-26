@@ -64,7 +64,7 @@ def collect_payload(payload: dict, trace_dir=None, file_path=None):
         get_backend_root()
     except BackendRootNotFound as exc:
         raise RuntimeError(
-            f"{exc} -- the trace hook needs the StealthLab backend checkout on disk "
+            f"{exc} -- the trace hook needs the kell backend checkout on disk "
             f"to import app.services.trace_collector"
         ) from exc
     from app.services.trace_collector import append_event
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stealthlab-trace-hook",
         description="Claude Code hook command: read one hook JSON payload on stdin, "
-        "redact and append it to the local StealthLab collector file. Always exits 0 "
+        "redact and append it to the local kell collector file. Always exits 0 "
         "-- a collector failure must never block the agent's tool call.",
     )
     parser.add_argument("--file", default=None,
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trace-dir", default=None,
                         help="directory for <session_id>.jsonl files (default: $CLAUDE_PROJECT_DIR/.claude/traces)")
     parser.add_argument("--backend-root", default=None,
-                        help="path to the StealthLab backend checkout (default: $STEALTHLAB_BACKEND_ROOT or auto-discovery)")
+                        help="path to the kell backend checkout (default: $STEALTHLAB_BACKEND_ROOT or auto-discovery)")
     parser.add_argument("--verbose", action="store_true",
                         help="print the written record's dedup_key/sequence to stderr on success")
     args = parser.parse_args(argv)

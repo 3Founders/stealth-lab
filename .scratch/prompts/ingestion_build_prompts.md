@@ -9,7 +9,7 @@ set the budget for the rest); 3-7 can run in parallel after step 0; step 8 waits
 ## Common: read this before any step
 
 ### Context
-StealthLab/Kel turns sources (documents, repositories, agent trajectories, verified solutions) into
+kell/Kel turns sources (documents, repositories, agent trajectories, verified solutions) into
 evidence-backed **Goals, Procedures and Claims**, served to coding agents through MCP (`find_ways`) and the
 Claude Code hook. `docs/findings.md` is the current evidence: knowledge delivered by the hook raised open-model
 agents from 52.0% to 60.6% solved (p = 0.004); the product direction is **routing with a check**, so knowledge

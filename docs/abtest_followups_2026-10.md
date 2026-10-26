@@ -1,6 +1,6 @@
 # A-vs-C product test: results so far and what to improve next (2026-10-10)
 
-A = plain Claude Code on Opus 5.5. C = the same Claude Code with StealthLab installed the product way
+A = plain Claude Code on Opus 5.5. C = the same Claude Code with kell installed the product way
 (`kell install --with-exec`, mirrored per workspace by `experiments/abtest/setup_c.mjs`). Correctness is
 graded on each task's full hidden tests; the agent and dispatch only ever see the visible ones.
 
@@ -57,8 +57,8 @@ In order of value. Each needs the user's go-ahead before building.
 1. **Find the check automatically.** Today the A/B runner hands dispatch the check (STEALTHLAB_DISPATCH_CHECK); a
    real user configures nothing, so dispatch mostly never fires. Detect it: pytest for Python, `npm test` from
    package.json, `dbt test` for dbt projects, and so on; fall back to the matched library entry's check.
-2. **Hooks-only gaps** (the session no longer gets StealthLab's MCP instructions):
-   - a short StealthLab block in CLAUDE.md (as AGENTS.md already gets): record fixes in the library, attach to an
+2. **Hooks-only gaps** (the session no longer gets kell's MCP instructions):
+   - a short kell block in CLAUDE.md (as AGENTS.md already gets): record fixes in the library, attach to an
      existing entry instead of duplicating, finish the survey worklist, look up sub-tasks;
    - the agent uses the CLI through Bash for that (`kell library ...`, `survey`, a `find` command) -- no MCP;
    - run the survey automatically when the hook sees a repo without `.kell`;
@@ -84,8 +84,8 @@ A. Messy prompts and multi-turn sessions
    2. Request type: code task / question / chat, plus clarity, size and checkability; only clear, checkable,
       bounded tasks are dispatched; the rest go to the session's model with the knowledge block.
    3. Unclear -> no dispatch (the session's model can ask the user).
-   4. Continuity: a short per-session log of what StealthLab did; follow-ups carry it (fix 3 is the first step).
-   5. Overrides: `!opus` skips StealthLab for one prompt, `!cheap` forces a try.
+   4. Continuity: a short per-session log of what kell did; follow-ups carry it (fix 3 is the first step).
+   5. Overrides: `!opus` skips kell for one prompt, `!cheap` forces a try.
 B. Long, real repositories
    1. Cheap models get the repo knowledge: the relevant .kell facts, library matches, file hints.
    2. Worktrees reuse the project's installed dependencies (node_modules, the virtualenv) so checks can run.

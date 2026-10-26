@@ -3,7 +3,7 @@
 What this is: with `kell install --client cursor --with-exec`, Cursor's prompt hook lets the cheap open
 models in `~/.stealthlab/exec.json` try each task BEFORE Cursor's own model runs, the way the Claude Code hook does
 (`packaging/npm/lib/dispatch.mjs`, unchanged). A verified change is applied to the checkout and the prompt is stopped with
-a message; otherwise the prompt goes on to Cursor's model as without StealthLab.
+a message; otherwise the prompt goes on to Cursor's model as without kell.
 
 Code: `packaging/npm/lib/cursor_dispatch.mjs` (the hook's dispatch step), `lib/cursor_hooks.mjs` (the hook entry and the
 `hooks.json` writer), `lib/clients.mjs` (the install), `lib/instructions.mjs` (a note in the Cursor rule). Tests:

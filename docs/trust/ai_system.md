@@ -6,7 +6,7 @@ provider's current terms before this is shown to a customer. Nothing here is dep
 
 ## What the system is
 
-StealthLab is a shared memory of verified procedures ("ways") for coding agents, served over MCP. An agent asks for the known
+kell is a shared memory of verified procedures ("ways") for coding agents, served over MCP. An agent asks for the known
 ways to do a task (`find_ways`), may be told which model to try (`model_plan`), reports whether each attempt passed its own
 check (`report_result`), and can run a prompt on a connected model or agent (`call_model`). It does not edit the customer's
 code, does not run customer code, and is not given repository contents: repository facts are request-scoped and never

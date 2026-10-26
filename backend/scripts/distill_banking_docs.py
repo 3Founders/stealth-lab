@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # General Compute credentials for the compressor model
-for line in Path(os.environ.get("ENV_FILE", r"C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\.env")).read_text(encoding="utf-8").splitlines():
+for line in Path(os.environ.get("ENV_FILE", r"C:\Users\chait\Prog\3Found\Stealth\kell\backend\.env")).read_text(encoding="utf-8").splitlines():
     if line.startswith("GENERAL_COMPUTE_"):
         k, _, v = line.strip().partition("=")
         os.environ.setdefault(k, v)

@@ -1,4 +1,4 @@
-# StealthLab MCP installer for Windows (PowerShell 5.1+ / 7+).
+# kell MCP installer for Windows (PowerShell 5.1+ / 7+).
 #
 #   irm https://<site>/install.ps1 | iex
 #
@@ -8,8 +8,8 @@
 #   $env:STEALTHLAB_TOKEN   = "<token>"                # optional; reads are anonymous
 #   $env:STEALTHLAB_MCP_PACKAGE = "kell-mcp@0.1.0" # optional; pin a version
 #
-# Installs nothing StealthLab-side on this machine: it registers the HOSTED
-# StealthLab MCP endpoint with the coding agents it finds (Claude Code,
+# Installs nothing kell-side on this machine: it registers the HOSTED
+# kell MCP endpoint with the coding agents it finds (Claude Code,
 # Cursor, VS Code, Windsurf, Codex, Claude Desktop) and exits. With Node.js
 # 18+ it runs `npx kell-mcp install`; without Node it still registers
 # Claude Code directly via `claude mcp add --transport http`.
@@ -38,7 +38,7 @@
     }
 
     if ($nodeOk) {
-        Write-Host "==> Registering StealthLab MCP ($Url) with your agents" -ForegroundColor Cyan
+        Write-Host "==> Registering kell MCP ($Url) with your agents" -ForegroundColor Cyan
         & npx -y "--package=$Pkg" kell @cliArgs
         return
     }

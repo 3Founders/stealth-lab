@@ -233,7 +233,7 @@ test("parseOverride: !opus and !cheap at the start only; the prefix is removed; 
   assert.deepEqual(parseOverride("!opus hi", { STEALTHLAB_OVERRIDES: "off" }), { kind: null, prompt: "!opus hi" });
 });
 
-test("hook: !opus skips StealthLab entirely (no lookup, no dispatch) and tells the session to ignore the prefix", async () => {
+test("hook: !opus skips kell entirely (no lookup, no dispatch) and tells the session to ignore the prefix", async () => {
   const out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "!opus rewrite the whole parser to be incremental", cwd: os.tmpdir(), session_id: "s1" }),
     settings: { url: "http://x/mcp" }, userAgent: "t", env: { STEALTHLAB_HOME: tmp("h-") },

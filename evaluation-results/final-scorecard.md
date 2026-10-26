@@ -1,4 +1,4 @@
-# StealthLab V1 — Final Evaluation Scorecard
+# kell V1 — Final Evaluation Scorecard
 
 Frozen baseline: commit `a5dace6`, tag `v1-baseline-2026-09-02`. Production code
 (`backend/app/`, `frontend/`, `packaging/`) is byte-identical to that tag as of this scorecard —
@@ -285,7 +285,7 @@ moderate-severity false-verification defect in ChatGPT evidence import, a modera
 prompt-injection gap in skill capability abstraction), and — critically — **the question the
 whole spec exists to answer, "does the value created by procedural memory exceed the cost of
 creating and maintaining it," is not answered by this scorecard at all.** No real economic
-number, no real baseline-vs-Stealth comparison, exists yet. Whether StealthLab V1 is worth
+number, no real baseline-vs-Stealth comparison, exists yet. Whether kell V1 is worth
 running is still an open, unmeasured question; whether it behaves correctly and safely on
 everything measured here is a well-evidenced yes, with two specific, documented, fixable
 exceptions.

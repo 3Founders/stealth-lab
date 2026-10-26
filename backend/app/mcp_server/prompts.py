@@ -1,9 +1,9 @@
 """
-MCP Prompts for StealthLab -- reusable host workflows / orchestration policy.
+MCP Prompts for kell -- reusable host workflows / orchestration policy.
 
 A Prompt here is NOT business logic and NOT autonomous execution. It is a
 short policy the MCP host (Claude Desktop / Cursor / Codex / ...) can load
-to know HOW to use StealthLab's tools and resources for a class of task:
+to know HOW to use kell's tools and resources for a class of task:
 which discovery tool to start from, when to prefer verified evidence, when
 to read a Resource rather than call a tool, when to stop and decompose.
 
@@ -174,12 +174,12 @@ request, and never stored."""
 
 
 def plan_and_run(task: str) -> str:
-    """Do a task with StealthLab: get the known ways with find_ways, compile
+    """Do a task with kell: get the known ways with find_ways, compile
     your own plan into .kell/run.md, do or delegate each step, check it,
     and report what you learned."""
     return f"""Task: {task}
 
-You are the planner. StealthLab returns knowledge; you make the plan and
+You are the planner. kell returns knowledge; you make the plan and
 own every file in `.kell/`.
 
 1. Facts. If `.kell/claims.md` is missing, run the survey_repo prompt first. Read
@@ -239,7 +239,7 @@ own every file in `.kell/`.
    Procedure, else ask the user. With a model plan, once the whole task's final check has run,
    call `report_result(instance_key, accepted=<check passed>, tokens_in, tokens_out)` -- after
    EVERY attempt, pass or fail. A failed attempt's reply names `next_model`: redo the failed work
-   with it, check again, report again. The StealthLab hooks count the outcome in
+   with it, check again, report again. The kell hooks count the outcome in
    `.kell/routing.md` themselves; without the hooks, count it with
    `kell library obs <R-id from routing.md> --model <m> --scaffold <s> --ok|--fail`.
 8. Learn. When a step needed a fix or there was a better way:
@@ -272,7 +272,7 @@ arguments."""
 
 _V1_PROMPTS = [
     ("survey_repo", "Survey this repo into .kell/claims.md", survey_repo),
-    ("plan_and_run", "Do a task with StealthLab (plan, run, check, report)", plan_and_run),
+    ("plan_and_run", "Do a task with kell (plan, run, check, report)", plan_and_run),
 ]
 
 

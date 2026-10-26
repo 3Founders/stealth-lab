@@ -1,7 +1,7 @@
 PROMPT 2 — PRODUCTION GOAL-FIRST RUNTIME, FUZZY INTENT RESOLUTION,
 RECURSIVE COMPILATION, LOCAL META-HARNESS, COST ENGINE & DURABLE EXECUTION
  
-You are working on the StealthLab repository.
+You are working on the kell repository.
  
 Prompt 1 established the canonical knowledge model and ingestion layer:
 Claim, Goal, Procedure, Implementation, provenance/lineage, verification, and Goal relationships.

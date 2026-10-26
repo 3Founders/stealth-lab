@@ -63,7 +63,7 @@ from app.stealth.legacy_context import STEALTH_DIRNAME
 # file the ledger would refuse to log.
 EDITABLE_FILES: tuple[str, ...] = CONTENT_PAGE_FILES + OPTIONAL_CONTENT_PAGE_FILES
 
-app = FastAPI(title="StealthLab .kell/ editor")
+app = FastAPI(title="kell .kell/ editor")
 
 # Local-only tool (loopback default, same posture as every other server
 # in this codebase) -- CORS is opened for the Vite dev server's own

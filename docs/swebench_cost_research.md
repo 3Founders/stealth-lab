@@ -161,7 +161,7 @@ Recommended sequence:
 5. Key results by `instance_id`. Files are appended in completion order, but `grade.py` sorts prediction ids before grading, so output order is cosmetic rather than a grading defect.
 6. Keep one provider for train and all scored arms.
 
-SWE-ReX is a sandbox/command-runtime abstraction. This experiment's generation phase deliberately never runs code, so adopting SWE-ReX for generation would change the protocol. mini-SWE-agent's batch runner is a useful implementation reference, not a replacement for the frozen StealthLab agent.
+SWE-ReX is a sandbox/command-runtime abstraction. This experiment's generation phase deliberately never runs code, so adopting SWE-ReX for generation would change the protocol. mini-SWE-agent's batch runner is a useful implementation reference, not a replacement for the frozen kell agent.
 
 ## 6. Disk, Windows, and WSL2
 

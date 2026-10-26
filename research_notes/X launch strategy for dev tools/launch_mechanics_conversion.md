@@ -62,7 +62,7 @@ For an MCP server with a hosted remote component, the two first-party channels a
 - Recommended sequencing from the same source: "if you build MCP servers you want enterprise buyers to find: Glama first. Claim your listing. Pursue the tier system to whichever level your operational maturity supports." — [Tallyfy](https://tallyfy.com/how-to-list-mcp-server-registry-smithery-glama-pulsemcp) (opinion/vendor-comparison framing)
 
 ### Inferences
-- Given StealthLab's MCP server has a hosted component, it qualifies for the "MCP connector" (remote) submission path rather than the plugin/local path — the privacy-policy and OAuth requirements are non-negotiable gates, not optional polish, and should be built before submission, not after.
+- Given kell's MCP server has a hosted component, it qualifies for the "MCP connector" (remote) submission path rather than the plugin/local path — the privacy-policy and OAuth requirements are non-negotiable gates, not optional polish, and should be built before submission, not after.
 - The "Community connector, auto-listed" default means listing is low-friction and fast; "Verified" status is a separate, presumably slower credibility upgrade worth pursuing after initial traction, not before.
 - PulseMCP's newsletter pairing makes it functionally a distribution channel, not just a directory — worth treating it like the "newsletter" bucket (TLDR/Latent Space/Ben's Bites) rather than purely a static listing.
 
@@ -116,7 +116,7 @@ For a CLI/package-distributed dev tool, the field converges on a funnel of insta
 - Dedicated download-stat services exist as the standard way to read npm/PyPI distribution numbers: npm-stat.com and pypistats.org (official PyPI BigQuery-based stats guide is linked from the Python Packaging User Guide) — [npm-stat.com](https://npm-stat.com/), [PyPI Download Stats](https://pypistats.org/), [Python Packaging User Guide: Analyzing PyPI package downloads](https://packaging.python.org/guides/analyzing-pypi-package-downloads/)
 
 ### Inferences
-- For StealthLab's hosted MCP component, the same install→activated→first_success→d7_retained funnel shape likely transfers directly (install = connector added; activated = first tool call; first_success = first successful task completion; d7_retained = still calling after 7 days), and should be built on explicit opt-in, matching the repo's stated telemetry/hook-wrapper conventions already in use for trace collection.
+- For kell's hosted MCP component, the same install→activated→first_success→d7_retained funnel shape likely transfers directly (install = connector added; activated = first tool call; first_success = first successful task completion; d7_retained = still calling after 7 days), and should be built on explicit opt-in, matching the repo's stated telemetry/hook-wrapper conventions already in use for trace collection.
 
 ### Gaps
 - Did not find primary-sourced guidance specifically on X/Twitter's own analytics metrics (impressions, engagement rate, profile-visit-to-follow conversion) for launch measurement — this sub-question is effectively unanswered in this research pass; a follow-up search restricted to X's own developer/analytics documentation would be needed.
@@ -161,7 +161,7 @@ Standard guidance is to load-test before the known launch date, rely on auto-sca
 - k6 is cited as a developer-friendly load-testing tool for pre-launch capacity validation — [OneUptime: How to Plan for Traffic Spikes](https://oneuptime.com/blog/post/2026-01-27-capacity-planning-traffic-spikes/view)
 
 ### Inferences
-- For StealthLab's hosted component specifically, given the repo's own note that the MCP server must run with `--workers 1` because its `TasksExtension` store is in-memory, a real launch-day spike is a concrete operational risk (single-worker process, no horizontal scale-out) — this is a repo fact, not sourced externally, and worth flagging to whoever owns the launch operationally: the current architecture may need either a scale-tested ceiling estimate or an explicit "expect single-worker capacity" plan before a high-traffic public launch.
+- For kell's hosted component specifically, given the repo's own note that the MCP server must run with `--workers 1` because its `TasksExtension` store is in-memory, a real launch-day spike is a concrete operational risk (single-worker process, no horizontal scale-out) — this is a repo fact, not sourced externally, and worth flagging to whoever owns the launch operationally: the current architecture may need either a scale-tested ceiling estimate or an explicit "expect single-worker capacity" plan before a high-traffic public launch.
 
 ### Gaps
 - No dev-tool-specific (as opposed to generic e-commerce/web) case study of handling an actual HN/PH front-page spike was retrieved — the sourced guidance above is generic DevOps advice, not launch-specific war stories.

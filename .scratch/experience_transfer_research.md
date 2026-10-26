@@ -59,7 +59,7 @@ Column "Held-out?" answers whether the evaluation tasks were disjoint from the t
 | **ReasoningBank** (2025) [12] | WebArena, Mind2Web, SWE-bench-Verified | memory items {title, description, content}: distilled strategies from successes **and failures**; k=1 | WebArena (Gemini-2.5-flash) 40.5 to 48.8; AWM 44.1; Synapse 42.1; Claude-3.7: 41.7 to 46.3 (AWM 40.8, *below* no-memory) | Streaming on the test set with an LLM judge (no ground truth). Successes-only 46.5 vs +failures 49.7. Saves up to 1.6 steps. In EvoAgentBench's held-out setup: **+0.4 to +3.6**. |
 | **ACE** (Zhang 2025) [13] | AppWorld, FiNER, Formula | "playbook" of itemized bullets with helpful/harmful counters; incremental delta updates, dedup | AppWorld (DeepSeek-V3.1) test-normal TGC 63.7 to 76.2 (offline, labels); online 69.6 | AppWorld is the closest *published* analogue to AutomationBench (API-driven app tasks), with separate train and test splits. The authors say it degrades when the feedback signal is weak. It names "context collapse" (iterative rewrites erode detail) and "brevity bias". |
 | **Mem^p** (2025) [14] | TravelPlanner, ALFWorld | procedural memory: step-level instructions + script abstractions ("proceduralization") | Gains across GPT-4o, Claude, Qwen; fewer steps and tokens | Combined format beats either alone. Query-based retrieval beats random. Reflection-based *update* is best over time. Retrieving too many memories plateaus or hurts. |
-| **Memory management / experience-following** (Xiong 2025) [15] | EHRAgent, AgentDriver, CIC-IoT, RegAgent | stored (input, output) records | **Add-all hurts:** EHRAgent 16.75 to 13.05; AgentDriver 40.1 to 32.3. Strict-evaluator selective add: 38.5 and 51.0 | Agents copy the retrieved record when inputs look similar ("experience-following"). Errors propagate. Quality gating on what enters memory is the whole game. **This paper most directly supports StealthLab's "verified" framing.** |
+| **Memory management / experience-following** (Xiong 2025) [15] | EHRAgent, AgentDriver, CIC-IoT, RegAgent | stored (input, output) records | **Add-all hurts:** EHRAgent 16.75 to 13.05; AgentDriver 40.1 to 32.3. Strict-evaluator selective add: 38.5 and 51.0 | Agents copy the retrieved record when inputs look similar ("experience-following"). Errors propagate. Quality gating on what enters memory is the whole game. **This paper most directly supports kell's "verified" framing.** |
 | **Evo-Memory** (Wei 2025) [16] | ALFWorld, BabyAI, ScienceWorld, PDDL, AIME, GPQA, MMLU-Pro, ToolBench | 10+ memory modules, ExpRAG (plain retrieval), ReMem | Claude-3.7 multi-turn success 0.24 to ExpRAG 0.63 / ReMem 0.78 / AWM 0.49 / Mem0 0.50 | Streaming over each dataset. **Simple ExpRAG beats most complex designs.** The gain **correlates with within-dataset task similarity (r = 0.717)**. Mixing failures into memory degrades the simple methods. |
 | **Mem0 / A-MEM / MemGPT** [17][18][19] | LoCoMo, MSC/DMR (conversational recall) | facts / notes / paged context | Mem0 +26% rel. LLM-judge vs OpenAI memory on LoCoMo | **Irrelevant** to procedural transfer. These measure recall of facts from long dialogues (also LongMemEval [20]). Do not cite them as evidence that "memory improves agents at tasks". |
 | **SkillsBench** (2026) [21] | 86 tasks, 11 domains, 7,308 trajectories | curated vs self-generated Agent Skills | Curated: +16.2 pp average (range +4.5 to +51.9); **16 of 84 tasks negative**. Self-generated: **no average benefit** | Their "self-generated" skills are written by the model, not distilled from verified execution, so it is a different condition from ours. Focused 2-3 module skills beat comprehensive docs. |
@@ -97,7 +97,7 @@ for some domains. Budget for detecting about 5 points, not 10.
 - **Raw successful trajectories** win when tasks are near-duplicates (Sarukkai on ALFWorld; Evo-Memory ExpRAG)
   and lose when inputs are only superficially similar, because of experience-following [15].
 - **Whole-manual / full-history injection underperforms** (DC full history; SkillsBench comprehensive docs;
-  ACE's context collapse; StealthLab's own earlier static checklist).
+  ACE's context collapse; kell's own earlier static checklist).
 - **Failures help only when distilled into a "why / what to check" lesson** (ReasoningBank, AutoManual's
   "Corrected Error" rules). Raw failure trajectories in memory hurt [16], and failure-derived insights from
   hallucinated reflections hurt (ExpeL 39 to 29).
@@ -146,7 +146,7 @@ I measured these with a script over `automationbench/domains/*/tasks.py`:
 
 - **Grouped K-fold cross-fitting**, as in ExpeL's four-fold validation and Miller's clustered errors [27], with
   groups defined as follows:
-  1. Embed each task's user prompt, using the same embedder StealthLab uses. Link tasks with cosine similarity
+  1. Embed each task's user prompt, using the same embedder kell uses. Link tasks with cosine similarity
      at or above a threshold (choose it so that obvious pairs like the visa pair link; start at about 0.85)
      **or** a shared named fixture from the list above.
   2. Take connected components as groups.
@@ -217,12 +217,12 @@ I measured these with a script over `automationbench/domains/*/tasks.py`:
 - **Top-k small** (k=1 ReasoningBank; 3 Agent KB and DC-RS; 4 Memento). Performance plateaus or drops with more
   (Mem^p, Memento, Agent KB).
 - **Similarity-retrieved, not random:** ExpeL random retrieval 42.5 vs 59.
-- **Hybrid lexical + dense, fused**, which beats either alone (Agent KB). This matches StealthLab's RRF.
+- **Hybrid lexical + dense, fused**, which beats either alone (Agent KB). This matches kell's RRF.
 - **Items shaped as {title, when-applicable, steps/lesson, pitfalls}**, not transcripts.
 - **Two stages beat one:** plan-time retrieval, then retrieval again on failure or error signals. This is Agent
   KB's retrieve-then-refine; removing Refine cost 6 points. ReMem refines memory during the episode.
 - **An applicability/uptake gate is valuable.** Agent KB uses a disagreement gate (β = 0.8), and experience-following
-  [15] shows that superficially similar items get copied. StealthLab's non-compensatory applicability cascade
+  [15] shows that superficially similar items get copied. kell's non-compensatory applicability cascade
   is the right shape here. The experiment should *measure* it: the gate on vs off.
 
 **Known failure modes of memory:**
@@ -372,7 +372,7 @@ From the paper [26], the README, and a local code read.
 
 ### 6.5 Memory construction (per fold; one extractor version, logged)
 
-- **P (verified procedures):** from passing runs only, via StealthLab's normal ingestion.
+- **P (verified procedures):** from passing runs only, via kell's normal ingestion.
   - Content: goal abstraction, app sequence, parameterized steps with entity values replaced by variables
     (AWM style), and preconditions.
   - Rejection filter: drop items containing any noise-pool string or any literal ID, email, or amount from the
@@ -391,7 +391,7 @@ From the paper [26], the README, and a local code read.
 |---|---|
 | A0 | no memory (from the train pool; or fresh runs if you want strict time matching) |
 | A1 | T: top-3 raw trajectories, injected at start |
-| A2 | P: top-3 verified procedures + applicability gate, injected at start (**StealthLab primary**) |
+| A2 | P: top-3 verified procedures + applicability gate, injected at start (**kell primary**) |
 | A3 | L: top-5 lessons (successes + failures), injected at start |
 | A4 | P+L as a `recall_experience` tool (on demand), with the gate |
 | C1 | random items from M_f, token-matched to A2 |

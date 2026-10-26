@@ -1,4 +1,4 @@
-// Registering the hosted StealthLab MCP server with each supported agent,
+// Registering the hosted kell MCP server with each supported agent,
 // under the server name "stealthlab". JSON configs are edited in place: other servers
 // and keys are preserved, a .bak copy is written first, and a file that
 // doesn't parse is left untouched (we never clobber a config we can't read).
@@ -222,7 +222,7 @@ export function removeClaudeHook(file) {
 
 // Claude Code with dispatch (`install --with-exec`): hooks only. The prompt hook looks the task up and runs the
 // cheap models itself (lib/dispatch.mjs); the capture hooks report outcomes and grow the library. Both call the
-// StealthLab server directly with the saved URL and token, so the session gets no MCP servers, no agents and no
+// kell server directly with the saved URL and token, so the session gets no MCP servers, no agents and no
 // model guard: nothing it would call, and nothing that adds to every turn's context. `dispatch: true` in the saved
 // config marks the local executor as installed (the models in exec.json become plan candidates).
 // settingsFile: Claude Code's settings.json (user level for an install, a project's .claude/ in the A/B test).
@@ -275,7 +275,7 @@ export function clients({ env = process.env, platform = process.platform } = {})
       detect: () => onPath("claude"),
       where: () => "claude mcp (user scope) + knowledge hook in " + claudeSettingsPath(env),
       // keepMcp (`install --with-exec --keep-mcp`): the hooks-only install AND the MCP server, so the session can also call
-      // StealthLab's tools (find_ways, call_model ...) itself. Without it the MCP registration is removed, as before.
+      // kell's tools (find_ways, call_model ...) itself. Without it the MCP registration is removed, as before.
       install: ({ url, token, hooks = true, hookCommand, dispatch = false, launch, keepMcp = false }) => {
         run("claude", ["mcp", "remove", "--scope", "user", SERVER_NAME]);
         if (dispatch && hooks) {                  // hooks only: see installClaudeDispatch

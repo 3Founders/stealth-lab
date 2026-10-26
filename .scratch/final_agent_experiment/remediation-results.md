@@ -174,12 +174,12 @@ Summary linked here for the classification table below.
 
 | issue | classification | justification |
 |---|---|---|
-| `max_steps=8` too small for T1/T3/T7 | **experiment design problem** | The tasks themselves (as worded in `tasks.jsonl`, frozen pre-registration) require more exploration than an 8-step budget allows for this model on this harness. This is a property of the experiment's own task/budget design, not a defect in StealthLab's product, not a bug in the orchestrator's mechanics, and not corpus data quality. See `budget-calibration.md` for whether raising the budget alone resolves it or whether some tasks need re-scoping. |
-| T7/B_default `ExceptionGroup` crash (2/2) | **experiment infrastructure problem** | The bug lives in `backend/app/local_agent/runner.py`'s `_open_client_session` -- a real product-code file, but the DEFECT is in how the experiment's own orchestrator/runner USES that code (holding an MCP session open across a long synchronous gap with too short a client-side timeout for THIS experiment's actual trial durations), not a defect in StealthLab's product behavior as experienced by a normal, shorter-duration MCP client interaction. Classified as infrastructure (the harness's specific usage pattern exposed a latent timeout-sizing gap) rather than "product problem" because the fix is scoped entirely to timeout calibration for long-running experiment trials, not to any StealthLab retrieval/execution/verification behavior. |
+| `max_steps=8` too small for T1/T3/T7 | **experiment design problem** | The tasks themselves (as worded in `tasks.jsonl`, frozen pre-registration) require more exploration than an 8-step budget allows for this model on this harness. This is a property of the experiment's own task/budget design, not a defect in kell's product, not a bug in the orchestrator's mechanics, and not corpus data quality. See `budget-calibration.md` for whether raising the budget alone resolves it or whether some tasks need re-scoping. |
+| T7/B_default `ExceptionGroup` crash (2/2) | **experiment infrastructure problem** | The bug lives in `backend/app/local_agent/runner.py`'s `_open_client_session` -- a real product-code file, but the DEFECT is in how the experiment's own orchestrator/runner USES that code (holding an MCP session open across a long synchronous gap with too short a client-side timeout for THIS experiment's actual trial durations), not a defect in kell's product behavior as experienced by a normal, shorter-duration MCP client interaction. Classified as infrastructure (the harness's specific usage pattern exposed a latent timeout-sizing gap) rather than "product problem" because the fix is scoped entirely to timeout calibration for long-running experiment trials, not to any kell retrieval/execution/verification behavior. |
 | Stealth retrieval matched test-fixture procedures on every completed trial | **corpus/test-data problem** | Confirmed via full investigation (`retrieval-contamination-review.md`): the real retrieval predicate in `backend/app/services/applicability.py` and `unified_retrieval.py` is completely blind to `provenance`/`created_by`/fixture-vs-real distinctions -- this is a real gap, but it is fundamentally about what KIND OF DATA is in the corpus and how it's tagged (or not tagged), not a bug in the retrieval algorithm's own logic, which correctly does exactly what its documented filters say. A secondary product-schema gap exists too (no `provenance`/scope value exists anywhere in the codebase for "test/engineering-only" data) -- flagged in the review doc's "what a real fix would need" section as a real, not-yet-implemented product/schema change, but the PRESENTING problem observed in the pilot is corpus contamination, not a retrieval-code defect. |
 
 **No issue this pass was classified as a pure "product problem"** in the
-sense of "StealthLab's documented, intended retrieval/execution/
+sense of "kell's documented, intended retrieval/execution/
 verification behavior is wrong." The retrieval predicate does exactly what
 its own code says; the transport timeout was a real but narrow
 runner.py sizing bug now fixed; the corpus contamination is a data/schema
@@ -384,7 +384,7 @@ combined wall-clock matching the SLOWER individual time, not their sum).
 Thread count identical before and after both runs -- no thread left
 stuck. All results orders of magnitude under the old 900s ceiling.
 
-**Classification: experiment infrastructure problem.** Not a StealthLab
+**Classification: experiment infrastructure problem.** Not a kell
 product defect (the bug lives entirely in `experiments/swebench_pro/
 agent.py`, the MEASURE-lane research harness both arms share, not
 `backend/app/`) -- though `backend/app/local_agent/runner.py` DOES import

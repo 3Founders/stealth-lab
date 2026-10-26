@@ -326,7 +326,7 @@ def classify_failure(record: dict) -> str:
     # 8. Everything else with no error at all -- the agent ran, stayed
     # within every real budget, and simply did not produce a correct
     # answer. This is the model's own task performance, not a failure of
-    # any StealthLab mechanism -- the honest default, never silently
+    # any kell mechanism -- the honest default, never silently
     # merged into a vaguer bucket.
     return "model_failure"
 

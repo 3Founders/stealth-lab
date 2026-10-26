@@ -1,10 +1,10 @@
-# StealthLab — Grand Vision
+# kell — Grand Vision
 
 ## 1. The vision
 
-StealthLab is building the trust and learning layer for autonomous software agents.
+kell is building the trust and learning layer for autonomous software agents.
 
-Agents do not merely need more memory. They need a way to know which remembered procedures still deserve to influence the next action, under the current task, environment, implementation, and authority conditions. StealthLab turns completed work into an evidence-backed capability system:
+Agents do not merely need more memory. They need a way to know which remembered procedures still deserve to influence the next action, under the current task, environment, implementation, and authority conditions. kell turns completed work into an evidence-backed capability system:
 
 ```text
 experience
@@ -22,7 +22,7 @@ The product thesis is:
 
 > **Agents earn the right to remember.**
 
-A trace is not a capability. A model’s confidence is not evidence. A successful past run does not guarantee that the same procedure works in a changed repository, with a changed implementation, or under a different policy. StealthLab makes those distinctions explicit and operational.
+A trace is not a capability. A model’s confidence is not evidence. A successful past run does not guarantee that the same procedure works in a changed repository, with a changed implementation, or under a different policy. kell makes those distinctions explicit and operational.
 
 ## 2. What exists today
 
@@ -47,13 +47,13 @@ The current maturity is a substantial trust substrate and experimental product, 
 
 ### Layer 1 — Private capability substrate
 
-A developer runs StealthLab locally against their own coding-agent traces. The system redacts and structures experience, extracts candidate procedures, checks whether their assumptions still hold, and retrieves only procedures that are applicable to the current goal and environment.
+A developer runs kell locally against their own coding-agent traces. The system redacts and structures experience, extracts candidate procedures, checks whether their assumptions still hold, and retrieves only procedures that are applicable to the current goal and environment.
 
 The first product is not “more memory.” It is lower reasoning cost with an auditable reason for every reuse decision.
 
 ### Layer 2 — Evidence-backed execution substrate
 
-When an agent executes a procedure, StealthLab records the exact procedure version, implementation binding, inputs, outputs, artifacts, outcome, and evidence. Capability is derived from real executions, including failures and the conditions under which they occurred. A stale or contradicted procedure can be retired or superseded without rewriting history.
+When an agent executes a procedure, kell records the exact procedure version, implementation binding, inputs, outputs, artifacts, outcome, and evidence. Capability is derived from real executions, including failures and the conditions under which they occurred. A stale or contradicted procedure can be retired or superseded without rewriting history.
 
 This creates a capability record that can be inspected, replayed, compared across models, and used as an input to routing policy.
 
@@ -84,7 +84,7 @@ Most agent memory systems optimize recall, compression, or conversational contin
 - Can a user inspect why an agent reused or refused a method?
 - Can a procedure be replayed without silently resolving to a newer implementation?
 
-StealthLab treats memory as a provenance-bearing object with a lifecycle. The differentiator is not the database. It is the closed loop from experience to evidence to belief to procedure to safe reuse or refusal.
+kell treats memory as a provenance-bearing object with a lifecycle. The differentiator is not the database. It is the closed loop from experience to evidence to belief to procedure to safe reuse or refusal.
 
 ## 5. The moat
 
@@ -101,13 +101,13 @@ Every execution can add information that a copied codebase does not have:
 - a reusable correction;
 - a capability update.
 
-Over time, StealthLab can distinguish methods that merely look plausible from methods that repeatedly work under stated conditions. That is a different asset from a static library of skills or a vector database of conversations.
+Over time, kell can distinguish methods that merely look plausible from methods that repeatedly work under stated conditions. That is a different asset from a static library of skills or a vector database of conversations.
 
 The open protocol and registry components should remain open. The defensible value is the operating discipline around evidence, evaluation, adjudication, and safe deployment.
 
 ## 6. Research and product flywheel
 
-StealthLab is both a product and a measurement program:
+kell is both a product and a measurement program:
 
 1. Agents execute real work.
 2. Traces become structured episodes and observations.
@@ -143,7 +143,7 @@ A permissioned exchange of executable methods where trust is earned through inde
 
 A reproducible testbed for studying stale memory, provenance poisoning, procedure reuse, capability estimation, multi-agent coordination, and the gap between empirical trust and formal guarantees.
 
-## 8. What StealthLab should not become
+## 8. What kell should not become
 
 - It should not become a closed vendor memory silo that makes portability impossible.
 - It should not treat model reputation as a substitute for evidence.
@@ -181,11 +181,11 @@ A reproducible testbed for studying stale memory, provenance poisoning, procedur
 
 ### At scale
 
-StealthLab becomes the trust-and-learning plane for autonomous software: the place where experience becomes executable capability, capability becomes measurable, and uncertainty remains visible.
+kell becomes the trust-and-learning plane for autonomous software: the place where experience becomes executable capability, capability becomes measurable, and uncertainty remains visible.
 
 ## 10. One-sentence version
 
-> **StealthLab turns agent traces into a living, evidence-backed capability system—and makes an agent earn the right to reuse what it remembers.**
+> **kell turns agent traces into a living, evidence-backed capability system—and makes an agent earn the right to reuse what it remembers.**
 
 ## 11. Grounding and honesty
 

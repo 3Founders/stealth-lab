@@ -80,7 +80,7 @@ With Kel used the product's way (KP), models solve held-out transfer tasks more 
 (filled in during and after the run)
 1. **Sonnet added, through Claude Code subagents (2026-09-27, before any KP result was looked at; AG was complete).** At the user's request, `claude-sonnet-5` runs arms AG and KP through Claude Code subagents (`sonnet_r4.py`, `kel_cli.py`). What changes for Sonnet:
    - the host is Claude Code, not `coding_agent.Agent`;
-   - its tools are Read/Write/Edit/Glob/Grep, with Bash only for the StealthLab command;
+   - its tools are Read/Write/Edit/Glob/Grep, with Bash only for the kell command;
    - the no-execution rule and the 20-call budget are instructions, not enforced;
    - batches of 6 tasks from 6 different families, the same batches for both arms;
    - tokens are estimated (characters / 4);

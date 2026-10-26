@@ -94,7 +94,7 @@ work = tempfile.mkdtemp(prefix="smoke-work-")
 env = dict(os.environ)
 base = f"http://127.0.0.1:{port}/v1"
 if client == "opencode":
-    cfg = {"$schema": "https://opencode.ai/config.json", "provider": {"stealth-open": {"npm": "@ai-sdk/openai-compatible", "name": "StealthLab", "options": {"baseURL": base, "apiKey": "{env:OPEN_MODEL_API_KEY}"}, "models": {"glm-smoke": {"name": "glm-smoke"}}}}}
+    cfg = {"$schema": "https://opencode.ai/config.json", "provider": {"stealth-open": {"npm": "@ai-sdk/openai-compatible", "name": "kell", "options": {"baseURL": base, "apiKey": "{env:OPEN_MODEL_API_KEY}"}, "models": {"glm-smoke": {"name": "glm-smoke"}}}}}
     env.update({"OPENCODE_CONFIG_CONTENT": json.dumps(cfg), "OPEN_MODEL_API_KEY": "local-test-token"})
     cmd = ["opencode", "run", "--format", "json", "--dir", work, "--model", "stealth-open/glm-smoke", "say hello"]
 elif client == "codex":

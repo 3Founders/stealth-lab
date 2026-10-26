@@ -368,7 +368,7 @@ def test_the_plan_command_prints_and_calls_nothing(fake_series, capsys, monkeypa
 
 def test_a_git_worktree_finds_the_main_checkouts_env_file(tmp_path):
     import subprocess
-    main = tmp_path / "StealthLab"
+    main = tmp_path / "kell"
     (main / "backend").mkdir(parents=True)
     subprocess.run(["git", "-C", str(main), "init", "-q"], check=True)
     subprocess.run(["git", "-C", str(main), "-c", "user.email=t@t.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"], check=True)

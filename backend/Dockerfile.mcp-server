@@ -1,4 +1,4 @@
-# Image for the StealthLab MCP server (demo.md C1's "backend service").
+# Image for the kell MCP server (demo.md C1's "backend service").
 #
 # Renamed from `Dockerfile` to `Dockerfile.mcp-server` so Railway's
 # auto-detection (which prefers a literal `Dockerfile` over railway.json's

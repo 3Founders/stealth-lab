@@ -41,7 +41,7 @@ trace volume" was not "the loop is exercised."**
 
 Meanwhile the real data was sitting on disk untouched: 14 hook-trace files in
 `.claude/traces/` (~14.8 MB, sessions through 2026-08-29) and 47 Claude Code
-transcripts (~122 MB) in `~/.claude/projects/C--Users-chait-Prog-3Found-Stealth-StealthLab/`.
+transcripts (~122 MB) in `~/.claude/projects/C--Users-chait-Prog-3Found-Stealth-kell/`.
 
 ## Part B — the fix was to run the pipeline, not to change code
 

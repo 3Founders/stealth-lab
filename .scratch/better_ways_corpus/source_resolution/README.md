@@ -47,14 +47,14 @@ extra evidence — not a new Procedure.
 | family | seeds | canonical procedure (one per family) | best executable artifact(s) |
 |---|---|---|---|
 | **Context efficiency** | 1–10 | *Assemble the minimal sufficient code context for a task* (symbol/AST retrieval → build context → answer → verify token delta) | gortex (1/2/6/14), TokenPilot (3), hermes `/compress` (4/7/8) |
-| **Tool efficiency** | 11–18 | *Complete a tool-using task with a large catalog while minimizing tool-definition + tool-output tokens* (lazy/searchable tools + output compression) | gortex GCX1 (14), codegraph-mcp lazy load (12/18), StealthLab deferred tools (native) |
+| **Tool efficiency** | 11–18 | *Complete a tool-using task with a large catalog while minimizing tool-definition + tool-output tokens* (lazy/searchable tools + output compression) | gortex GCX1 (14), codegraph-mcp lazy load (12/18), kell deferred tools (native) |
 | **Repository intelligence** | 19–28 | *Answer a repo-structure question (callers of X, where is Y) without sending the repo to the model* (build a code KG → query it) | octocode (22), code-graph-rag (23), AST-KG paper (19/29), GrepRAG (20), cAST (27/28) |
 | **Deterministic execution** | 29–35 | *Replace an LLM call with a deterministic pass where a compiler / parser / LSP / codemod can prove the result* | AST-KG (29), LSP go-to-def (33), + unresolved codemod/static-check artifacts |
-| **Long-running execution** | 36–42 | *Complete a long-horizon task without accumulating conversational history* (fresh sessions + externalized file state + verifiable completion) | Bustamante/Ralph (36/38), InfiAgent (37), StealthLab durable-run (native) |
-| **Verification & reliability** | 43–48 | *Independently verify that an execution actually solved the problem* (deterministic checks first, then an independent adversarial judge) | Bustamante adversarial judge (45/46/47), cross-model review (44), StealthLab evidence.py (native) |
+| **Long-running execution** | 36–42 | *Complete a long-horizon task without accumulating conversational history* (fresh sessions + externalized file state + verifiable completion) | Bustamante/Ralph (36/38), InfiAgent (37), kell durable-run (native) |
+| **Verification & reliability** | 43–48 | *Independently verify that an execution actually solved the problem* (deterministic checks first, then an independent adversarial judge) | Bustamante adversarial judge (45/46/47), cross-model review (44), kell evidence.py (native) |
 | **Model routing** | 49–54 | *Route each step to the cheapest model that can do it, escalating on low confidence* | RouteLLM (50/51), cascade/FrugalGPT class (49/52 — resolve citation), planner/executor split (53) |
-| **Parallelism** | 55–58 | *Run parallel coding agents without merge conflicts* (git-worktree isolation + disjoint file sets; quorum on fan-in) | git-worktree (55, StealthLab native), fan-out/fan-in (56), disjoint sets (57) |
-| **Failure recovery** | 59–60 | *Detect a stalled/failed run and recover* (stall detection → reset; classify failure → retry / rollback / escalate) | Bustamante failure classification (60), StealthLab RETRYABLE_ERROR_CLASSES + durable retry (native) |
+| **Parallelism** | 55–58 | *Run parallel coding agents without merge conflicts* (git-worktree isolation + disjoint file sets; quorum on fan-in) | git-worktree (55, kell native), fan-out/fan-in (56), disjoint sets (57) |
+| **Failure recovery** | 59–60 | *Detect a stalled/failed run and recover* (stall detection → reset; classify failure → retry / rollback / escalate) | Bustamante failure classification (60), kell RETRYABLE_ERROR_CLASSES + durable retry (native) |
 
 **Consequence for canonical ingest:** ~9 canonical Procedures (one per family), each
 carrying multiple source references, Implementations, and Evidence rows — not 60

@@ -50,7 +50,7 @@ boundary it must respect, the persisted result, and the live proof.
 | Field | Value |
 |---|---|
 | Requirement | Docs describe shipped V1; stale claims reconciled ("ingestion stops at observations", "manual", old tool/endpoint counts, HTN, method library); SHIPPED V1 vs POST-V1 distinguished; README answers the new-user questions with no hidden internal-script dependency. |
-| Deliverable | `README.md` — new frozen "StealthLab V1 — what ships" section: install, connect an agent, the one bootstrap command (incl. git), where private memory lives, automatic local learning, candidate maturation, failure ≠ success, staleness, UNKNOWN fails closed, publish (no copied verification count), User B independent reuse, privacy isolation, plus "Not in V1". Corrected the stale "ingestion … does not go further yet / run a script" paragraph. |
+| Deliverable | `README.md` — new frozen "kell V1 — what ships" section: install, connect an agent, the one bootstrap command (incl. git), where private memory lives, automatic local learning, candidate maturation, failure ≠ success, staleness, UNKNOWN fails closed, publish (no copied verification count), User B independent reuse, privacy isolation, plus "Not in V1". Corrected the stale "ingestion … does not go further yet / run a script" paragraph. |
 | Status | **CLOSED for README** (the directive's "especially clear" target). `proj_status.md` / `commLLM.md` broader reconciliation: partial — the V1 section is the authoritative new-user statement; remaining historical docs are already flagged historical in CLAUDE.md's doc map. |
 
 ---

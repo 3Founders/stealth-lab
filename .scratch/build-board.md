@@ -2056,7 +2056,7 @@ process_transcript_session() -> load_transcript() -> discover_subagent_files()
 
 5. USABILITY NOTE: run from `backend/` (as every documented repo command
    is), `_default_transcript_dir()` mangles the CWD and yields
-   `...StealthLab-backend`, then reports "no matching transcripts" and
+   `...kell-backend`, then reports "no matching transcripts" and
    exits 1. Needs `CLAUDE_PROJECT_DIR` or an explicit `--transcript-dir`.
    Flagged, not changed.
 
@@ -2590,7 +2590,7 @@ PROVEN END TO END on the real DB:
 
 --- BUG 2 (NOT FIXED, needs a design call): probe_environment is non-recursive ---
 It reads manifests only at the exact root handed to it. project_id from
-the hook is CLAUDE_PROJECT_DIR = the REPO ROOT. StealthLab is a monorepo
+the hook is CLAUDE_PROJECT_DIR = the REPO ROOT. kell is a monorepo
 with no root manifest, so:
     probe_environment(<repo root>) -> 0 facts
     probe_environment(<repo>/backend)  -> 3 (language=python, pip, pytest)
@@ -4092,7 +4092,7 @@ Grounded findings from  3_access.sql/ 4_governance.sql/deps.py review. Sequence:
   the internal `src/tau2/domains/...` subpath past the anchor is
   unverified, carried forward as-is). (3) `backend/README.md` opened
   with "# Workflow Debate Platform" and framed the debate/decompose
-  system as the whole product — stale since the pivot to StealthLab
+  system as the whole product — stale since the pivot to kell
   (confirmed against `commLLM.md` + root `README.md`/`demo.md`): the
   debate loop is real and still lives at `app/debate/` (still wired
   into the MCP tool surface as `detect_conflict_trigger`/

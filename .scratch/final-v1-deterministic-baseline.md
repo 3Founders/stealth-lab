@@ -1,4 +1,4 @@
-# StealthLab Final-V1 — Deterministic Baseline (2026-09-04)
+# kell Final-V1 — Deterministic Baseline (2026-09-04)
 
 **This is the PRE-INGESTION deterministic Final-V1 baseline.**
 

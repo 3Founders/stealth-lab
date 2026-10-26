@@ -57,7 +57,7 @@ def preflight_http() -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stealthlab-mcp-server",
-        description="Launch the StealthLab MCP server (9 tools over the bi-temporal "
+        description="Launch the kell MCP server (9 tools over the bi-temporal "
         "knowledge/task graph) for an external agent. Default: Streamable HTTP on "
         "loopback, bearer-token gated. Use --stdio for a stdio-transport client.",
     )
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stdio", action="store_true",
                         help="serve over stdio instead of HTTP (no token needed; stdio bypasses auth by protocol design)")
     parser.add_argument("--backend-root", default=None,
-                        help="path to the StealthLab backend checkout (default: $STEALTHLAB_BACKEND_ROOT or auto-discovery)")
+                        help="path to the kell backend checkout (default: $STEALTHLAB_BACKEND_ROOT or auto-discovery)")
     args = parser.parse_args(argv)
 
     try:

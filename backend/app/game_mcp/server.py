@@ -17,7 +17,7 @@ Scope, honestly stated:
     exactly what the caller passed and returns exactly what pokemon-agent
     returned (or raises on a connection failure / non-2xx response --
     never a successful-looking response for a real failure).
-  - Does not write to .kell/ and does not touch the StealthLab
+  - Does not write to .kell/ and does not touch the kell
     knowledge graph/Postgres in any way -- this module imports nothing
     from app.stealth or app.db.
 

@@ -2,9 +2,9 @@
 //
 // A dispatched prompt is BLOCKED (lib/dispatch.mjs): the session's model never sees it, so on the next prompt it knows
 // nothing of the change already sitting in the working tree. "Earlier in this session, <model> changed <files> to
-// <task> (StealthLab, check passed)" is added to the next prompt's context, one line per earlier dispatch.
+// <task> (kell, check passed)" is added to the next prompt's context, one line per earlier dispatch.
 //
-// Kept per session, under the StealthLab home (hooks/continuity/<session_id>.json): the last 5 dispatches, each marked
+// Kept per session, under the kell home (hooks/continuity/<session_id>.json): the last 5 dispatches, each marked
 // `shown` once it has been put in a prompt's context -- the session's own transcript carries it from then on, so it is
 // said once, not on every later prompt. Swept after 24 h. Never leaves the machine. STEALTHLAB_CONTINUITY=off turns it off.
 //
@@ -55,11 +55,11 @@ function oneLine(text, max) {
 
 // The line for one dispatch. The model name, the files it changed (at most 5, then "and N more") and the task.
 export function continuityLine(e) {
-  if (e.kind === "answer") return `Earlier in this session, ${e.model} answered "${oneLine(e.task, TASK_MAX)}" (StealthLab, checked by a reviewer).`;
+  if (e.kind === "answer") return `Earlier in this session, ${e.model} answered "${oneLine(e.task, TASK_MAX)}" (kell, checked by a reviewer).`;
   const files = (e.files || []).map(String);
   const shown = files.slice(0, FILES_SHOWN).join(", ") || "no files";
   const more = files.length > FILES_SHOWN ? ` and ${files.length - FILES_SHOWN} more` : "";
-  return `Earlier in this session, ${e.model} changed ${shown}${more} to ${oneLine(e.task, TASK_MAX) || "do the task"} (StealthLab, check passed).`;
+  return `Earlier in this session, ${e.model} changed ${shown}${more} to ${oneLine(e.task, TASK_MAX) || "do the task"} (kell, check passed).`;
 }
 
 // After a verified cheap answer was applied. Never throws: remembering must not fail the hook.

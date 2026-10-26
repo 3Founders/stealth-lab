@@ -16,7 +16,7 @@ from typing import Any, Mapping, Optional
 
 class DataClass(str, Enum):
     PUBLIC_SOURCE = "PUBLIC_SOURCE"          # a fetched public web/repo/doc/dataset source
-    PUBLIC_DERIVED = "PUBLIC_DERIVED"        # StealthLab-derived from public sources
+    PUBLIC_DERIVED = "PUBLIC_DERIVED"        # kell-derived from public sources
     GLOBAL_PROCEDURE = "GLOBAL_PROCEDURE"    # a published Global Commons procedure
     ORG_PRIVATE = "ORG_PRIVATE"              # organization-scoped private knowledge
     USER_PRIVATE = "USER_PRIVATE"            # a single user's private knowledge

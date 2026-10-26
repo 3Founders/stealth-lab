@@ -17,7 +17,7 @@ import output_check as oc  # noqa: E402
 REPO = HERE.parents[1]
 
 # the message exactly as lib/dispatch.mjs builds it (a test below guards that the template has not drifted)
-MSG = ("Done by gpt-oss-120b in 41 s (StealthLab dispatched it before this session's model ran, $0.0001). "
+MSG = ("Done by gpt-oss-120b in 41 s (kell dispatched it before this session's model ran, $0.0001). "
        "It passed python -m pytest -q in an isolated worktree and the change is applied: calc.py. "
        "Recorded in the library as L-1a2b. To put it back as it was: kell undo."
        "\n\nThe add function now returns a + b instead of a - b.")
@@ -43,7 +43,7 @@ def item(message=MSG, diff=DIFF, id="t.C.t1", truncated=False):
 
 def test_the_message_template_in_dispatch_has_not_drifted_from_what_the_rubric_reads():
     src = (REPO / "packaging" / "npm" / "lib" / "dispatch.mjs").read_text(encoding="utf-8")
-    for fragment in ("Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost})",
+    for fragment in ("Done by ${rung.model} in ${secs} s (kell dispatched it before this session's model ran${cost})",
                      "It passed ${checkLabel} in an isolated worktree and the change is applied: ",
                      "To put it back as it was: kell undo."):
         assert fragment in src, fragment

@@ -1,6 +1,6 @@
 # Security policy & threat model
 
-StealthLab v0.1 is a **single-user, local-first** system: one coding agent,
+kell v0.1 is a **single-user, local-first** system: one coding agent,
 one machine, one Postgres instance you run yourself. This document states
 that posture plainly — what it protects against, what it deliberately does
 not, and how to report a problem. It is the threat-model reference cited by
@@ -15,7 +15,7 @@ access and trust boundaries.
 
 Everything below describes v0.1 as shipped: an MCP server and a status page
 you run on your own machine against your own Postgres, fed by a Claude Code
-hook. There is no StealthLab-hosted service, no multi-tenant deployment, and
+hook. There is no kell-hosted service, no multi-tenant deployment, and
 no team/org access model in v0.1 — see `demo.md` §4's non-goals. If you
 expose any of these processes beyond loopback, or run them on a shared or
 multi-user host, everything below stops applying and you are outside this

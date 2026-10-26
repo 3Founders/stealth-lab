@@ -1,6 +1,6 @@
 // Shared test helpers for the executor runtime tests: stub adapters (same interface as
 // lib/executors/<id>.mjs), throwaway git repos, a temp STEALTHLAB_HOME, and a mock hosted MCP endpoint.
-// Nothing here touches the real home directory or the StealthLab checkout.
+// Nothing here touches the real home directory or the kell checkout.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";

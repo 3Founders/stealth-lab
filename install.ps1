@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    One-command bring-up for a personal StealthLab instance.
+    One-command bring-up for a personal kell instance.
 
 .DESCRIPTION
     Automates every setup step that ISN'T a real human decision:
@@ -102,7 +102,7 @@ $hasApiKey = ($envLines | Where-Object { $_ -match '^(ANTHROPIC|OPENAI|GENERAL_C
 if ($alreadyDecided -or $hasApiKey) {
     Write-Ok "Model source already configured in backend/.env -- leaving it alone."
 } else {
-    Write-Host "    How should StealthLab talk to a model?"
+    Write-Host "    How should kell talk to a model?"
     Write-Host "      [1] Local, free, via Ollama (recommended for a personal instance)"
     Write-Host "      [2] I'll paste a real API key myself"
     $choice = Read-Host "    Choose 1 or 2"
@@ -119,7 +119,7 @@ if ($alreadyDecided -or $hasApiKey) {
         }
         $envLines = $envLines -replace '^USE_LOCAL_MODELS=false\s*$', 'USE_LOCAL_MODELS=true'
         Set-Content -Path $EnvFile -Value $envLines -Encoding utf8
-        Write-Ok "USE_LOCAL_MODELS=true set. Make sure 'ollama serve' is running before you use StealthLab."
+        Write-Ok "USE_LOCAL_MODELS=true set. Make sure 'ollama serve' is running before you use kell."
     } else {
         Write-Warn "Open backend/.env now and paste at least one API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GENERAL_COMPUTE_API_KEY), then re-run this script."
         exit 0
@@ -127,7 +127,7 @@ if ($alreadyDecided -or $hasApiKey) {
 }
 
 # --- 5. Bring the stack up -------------------------------------------------
-Write-Step "Starting StealthLab (docker compose up -d --build)"
+Write-Step "Starting kell (docker compose up -d --build)"
 Push-Location $RepoRoot
 try {
     docker compose up -d --build
@@ -165,7 +165,7 @@ try {
 
 # --- 7. Done ---------------------------------------------------------------
 $savedToken = ((Get-Content $EnvFile) | Where-Object { $_ -match '^STEALTHLAB_MCP_TOKEN=(.+)$' } | Select-Object -First 1)
-Write-Step "StealthLab is running"
+Write-Step "kell is running"
 Write-Host @"
 
     MCP endpoint: http://127.0.0.1:8765/mcp

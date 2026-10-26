@@ -1,7 +1,7 @@
-# StealthLab
+# kell
 
 **North star:** *agents that earn the right to remember.* Most agent memory
-records what happened. StealthLab distills what an agent *believes*, tracks
+records what happened. kell distills what an agent *believes*, tracks
 whether that belief still holds, and refuses to let an agent reuse a
 procedure whose preconditions have quietly changed — with a cited reason,
 not a shrug.
@@ -22,7 +22,7 @@ statement of what ships and what proves it.
 
 ---
 
-## StealthLab V1 — what ships (frozen)
+## kell V1 — what ships (frozen)
 
 V1 is a **verified _personal_ procedural memory** for coding agents, with an
 explicit path to a shared commons. The lifecycle a user actually experiences:

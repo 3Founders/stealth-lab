@@ -20,7 +20,7 @@ Remotion is a React-based programmatic video framework, currently on the 4.0.4xx
 
 ### Inferences
 - For a startup's dev-tool demo video pipeline built with a coding agent, the natural setup is: install the Claude Code plugin/skills, author a data-driven Remotion composition (JSON props + captions JSON), render locally for one-offs/iteration, and switch to Remotion Lambda once you need to batch-render variants (e.g., per-feature or per-platform cuts) or need faster turnaround than local CPU parallelism allows.
-- If the team (including agent-driven "renderers") stays at 3 people or fewer, Remotion is free; StealthLab-style small teams likely qualify for the Free License, but should re-check headcount before scaling render pipelines or hiring, since crossing to 4 people triggers a Company License (Automators plan is the relevant one for CI/agent-triggered rendering, at $0.01/render with a $100/month floor).
+- If the team (including agent-driven "renderers") stays at 3 people or fewer, Remotion is free; kell-style small teams likely qualify for the Free License, but should re-check headcount before scaling render pipelines or hiring, since crossing to 4 people triggers a Company License (Automators plan is the relevant one for CI/agent-triggered rendering, at $0.01/render with a $100/month floor).
 
 ### Gaps
 - Could not directly scrape `remotion.dev/docs/license/pricing` (client-rendered React content) to independently confirm the $25/seat and $0.01/render numbers beyond the FAQ page text — these are corroborated by the FAQ page's own quoted pricing language, so confidence is high, but a live-page visual check would be prudent before finalizing budget assumptions.

@@ -1,13 +1,13 @@
-# StealthLab V1 evaluation suite
+# kell V1 evaluation suite
 
 This directory plus `backend/tests/evaluation/` and `evaluation-results/` together answer one
-question with reproducible evidence: **is StealthLab V1 correct, safe, reliable, useful,
+question with reproducible evidence: **is kell V1 correct, safe, reliable, useful,
 generalizable, and economically worthwhile?** Frozen baseline: commit `a5dace6`, tag
 `v1-baseline-2026-09-02`. See `ARCHITECTURE.md` for how the pieces fit together and why they
 live where they do, and `METRICS.md` for exact metric definitions.
 
 This is a **test system**, not a verdict. A green suite here means the invariants and gold
-benchmarks it checks hold on this baseline — it is not, by itself, a claim that StealthLab's
+benchmarks it checks hold on this baseline — it is not, by itself, a claim that kell's
 product performance is strong. `evaluation-results/final-scorecard.md` keeps those two claims
 explicitly separate.
 

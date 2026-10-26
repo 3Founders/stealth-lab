@@ -1,6 +1,6 @@
 // Process handling shared by executor runs and check commands.
 //
-// - The child env is the parent env minus every STEALTHLAB_* variable (the StealthLab token must never
+// - The child env is the parent env minus every STEALTHLAB_* variable (the kell token must never
 //   reach a third-party agent or a repo's test command) and minus GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
 //   (so a run launched from inside a git hook cannot be redirected at another repository). PATH, HOME
 //   and the agent's own config dirs / provider keys are inherited on purpose: the agent runs with the
@@ -33,7 +33,7 @@ export function childEnv(env = process.env, extra = {}) {
   }
   for (const [k, v] of Object.entries(extra || {})) {
     // An adapter may add its own variables (e.g. the test-only STEALTHLAB_FAKE_SCENARIO), but it can never
-    // re-inject StealthLab's credentials or endpoint, even by copying the whole parent env.
+    // re-inject kell's credentials or endpoint, even by copying the whole parent env.
     if (/^STEALTHLAB_/i.test(k) && (/TOKEN|SECRET|KEY|PASSWORD|MCP_URL|HOME/i.test(k) || env[k] === v && k !== "STEALTHLAB_FAKE_SCENARIO")) continue;
     if (v === undefined || v === null) delete out[k];
     else out[k] = String(v);

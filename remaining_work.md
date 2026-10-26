@@ -7,7 +7,7 @@ Items are independent unless a dependency is named. Read "Ground rules" first.
 
 ## Ground rules (read before touching anything)
 
-1. **Architecture source of truth:** `final_architecture.md` (v1 split: StealthLab
+1. **Architecture source of truth:** `final_architecture.md` (v1 split: kell
    *knows*, the local agent *plans and does*) plus the Goal-hierarchy rules below.
    The server never executes or edits a user's repo.
 2. **Orthogonal semantics — never couple these:**

@@ -2,7 +2,7 @@
 
 **STATUS: DRAFT — REQUIRES LEGAL REVIEW.**
 
-This document explains exactly what "Candidate" and "Verified" mean for a StealthLab procedure,
+This document explains exactly what "Candidate" and "Verified" mean for a kell procedure,
 based on what the verification code actually checks — not on how those words might sound. It is
 referenced by the [Terms of Service](./TERMS_OF_SERVICE.md) and
 [Global Commons Terms](./GLOBAL_COMMONS_TERMS.md).
@@ -45,7 +45,7 @@ supported the claimed behavior. It does **not** mean:
 - The procedure is universally correct, in every environment, OS, dependency version, or
   configuration.
 - The procedure will keep working forever. Environments, dependencies, and third-party APIs
-  change; a procedure verified against yesterday's conditions can go **stale**. StealthLab's
+  change; a procedure verified against yesterday's conditions can go **stale**. kell's
   design accounts for this (see references to staleness/applicability controls in
   `STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` §1) but does not promise continuous re-verification
   of every Verified procedure on every dependency change.
@@ -67,7 +67,7 @@ possibly-idiosyncratic local success can't silently promote a shared, public cla
 ## 4. Revalidation
 
 A procedure that was Verified under one set of conditions (dependency versions, OS, repository
-state) may no longer hold under different conditions. StealthLab does not currently guarantee
+state) may no longer hold under different conditions. kell does not currently guarantee
 automatic, continuous revalidation of every previously-Verified procedure — treat a "Verified"
 label as time-stamped evidence, not a permanent certification. Before relying on a Verified
 procedure in a materially different environment, re-run it or check for staleness signals if the

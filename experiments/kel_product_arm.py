@@ -30,7 +30,7 @@ CLAIMS_REF = "@.kell/claims.md"
 KP_TOOLS_EXTRA = [
     {"type": "function", "function": {
         "name": "find_ways",
-        "description": ("StealthLab: find the known ways to do something. Returns knowledge (the Goal, the chosen "
+        "description": ("kell: find the known ways to do something. Returns knowledge (the Goal, the chosen "
                         "Procedure(s) with every step, alternatives, repo_fit, and verified_solution when one was "
                         "recorded), not a plan."),
         "parameters": {"type": "object", "properties": {
@@ -41,7 +41,7 @@ KP_TOOLS_EXTRA = [
             "required": ["query"]}}},
     {"type": "function", "function": {
         "name": "read_procedure_claims",
-        "description": "Read the StealthLab resource stealth://procedures/<procedure_id>/claims.",
+        "description": "Read the kell resource stealth://procedures/<procedure_id>/claims.",
         "parameters": {"type": "object", "properties": {
             "procedure_id": {"type": "string"}}, "required": ["procedure_id"]}}},
 ]
@@ -52,7 +52,7 @@ def mcp_system(base: str) -> str:
     Braces are escaped because Agent formats the system prompt with {repo}/{max_steps}."""
     from app.mcp_server.server import _V1_INSTRUCTIONS
 
-    extra = "\n\nConnected MCP server: StealthLab (Kel). Its instructions:\n" + _V1_INSTRUCTIONS
+    extra = "\n\nConnected MCP server: kell (Kel). Its instructions:\n" + _V1_INSTRUCTIONS
     return base + extra.replace("{", "{{").replace("}", "}}")
 
 
@@ -185,7 +185,7 @@ def make_agent(model_client, model: str, max_steps: int, temperature: float, bri
             if name not in ("find_ways", "read_procedure_claims"):
                 return Agent._dispatch(name, args, sandbox)
             if bridge is None:
-                return "StealthLab is not available in this episode.", False
+                return "kell is not available in this episode.", False
             t0 = time.time()
             try:
                 if name == "find_ways":

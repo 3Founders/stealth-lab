@@ -4,7 +4,7 @@
 
 ## 1. What the Global Commons is
 
-The Global Commons is StealthLab's shared, public library of procedures — step-by-step
+The Global Commons is kell's shared, public library of procedures — step-by-step
 instructions, contributed either by users explicitly publishing their own private work, or
 ingested from public internet sources through an automated admission gate. Anyone can read and
 search it; you do not need an account to view it. See §0 of
@@ -68,7 +68,7 @@ separate, independent opt-in from publishing a procedure.
 
 ## 5. License you grant on published content
 
-By publishing content to the Global Commons, you grant StealthLab and other users a worldwide,
+By publishing content to the Global Commons, you grant kell and other users a worldwide,
 non-exclusive, royalty-free, sublicensable license to host, display, execute, adapt, and
 redistribute that content as part of the shared library — including allowing other users to run,
 fork, or build derivative procedures from it. **[LEGAL: select and confirm the actual license
@@ -87,7 +87,7 @@ by a user (see `backend/app/services/skill_ingestion.py` and
 - Retains provenance (source reference) where available.
 - Is **not** vetted for license compliance with the original source by a legal review — see
   [Copyright & Third-Party Sources](./COPYRIGHT_AND_THIRD_PARTY_SOURCES.md). Content being
-  publicly accessible on the internet does not mean it is free to republish, and StealthLab does
+  publicly accessible on the internet does not mean it is free to republish, and kell does
   not represent that ingested content is cleared for reuse.
 - Starts as a Global Candidate, never Verified — ingestion admission is a safety decision, never
   a correctness or licensing decision.
@@ -132,7 +132,7 @@ generated from it, consistent with the append-only, evidence-preserving design d
 ## 10. Versioning
 
 Each publish action creates a new, independently-evidenced candidate, as described in §2.
-StealthLab does not currently present an explicit semantic-version number for published
+kell does not currently present an explicit semantic-version number for published
 procedures in the reviewed code paths — versioning today is effectively "each publish is a new,
 separately-tracked object with its own provenance." **[FOUNDER: confirm whether a formal version
 scheme is planned.]**

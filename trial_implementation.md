@@ -501,7 +501,7 @@ favors our synthetic-fintech KB design implicitly (fresh, closed corpus) but
 warns against evaluating on public KBs the agent may have memorized. Item 14
 reframes positioning: procedural scaffolds are reasoning crutches for small
 models, so the decisive ablation is gold-docs+scaffold versus gold-docs-bare
-on gemma — if the scaffold lifts the gold ceiling itself, StealthLab is a
+on gemma — if the scaffold lifts the gold ceiling itself, kell is a
 small-model enablement layer, not a retrieval improvement. Item 15 validates
 write-depth distillation (our procedure extraction) as the winning family
 for agentic regimes and warns against read-breadth maximization; formalize

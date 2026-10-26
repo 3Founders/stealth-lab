@@ -1,11 +1,11 @@
-# bugsfix.md — agent-harness failure catalog vs. StealthLab's own harness
+# bugsfix.md — agent-harness failure catalog vs. kell's own harness
 
 Source: a pasted catalog of ~55 known failure modes from general-purpose agent
 harnesses (ticket refs like `workers#507`, `iii#2006` are external — not this
 repo's issue tracker; they're cited here only as-given, for traceability back
 to the original list). This doc does **not** claim to fix any of them in
 whatever system they originally happened in. It answers a narrower, real
-question: **for each failure class, does StealthLab's own execution harness
+question: **for each failure class, does kell's own execution harness
 (`backend/app/execution/durable_run.py`, `durable_resume.py`,
 `goal_execution.py`, `app/mcp_server/tasks_extension.py`, `app/stealth/
 journal.py`/`atomic.py`) already have a real, existing mechanism that would
@@ -62,7 +62,7 @@ doesn't map to this system's architecture.
   eventually recover a *stuck* worker, but nothing here caps or rejects an
   oversized single payload before it causes the stall in the first place.
 - **10mb session log replayed synchronously under a mutex** (`workers#1119`)
-  — ❌ No equivalent found. Real gap if StealthLab ever grows a comparable
+  — ❌ No equivalent found. Real gap if kell ever grows a comparable
   "replay a large log under a lock" path.
 
 ## Malformed / truncated output treated as success
@@ -134,7 +134,7 @@ doesn't map to this system's architecture.
   reasoning-effort or model-capability inheritance anywhere in `app/`.
   `recursion_guard.py` governs *whether* a child run may start (cycle/depth/
   budget), never *what config* it inherits. Real gap, though it's worth
-  noting StealthLab's "child run" today is a re-executed Procedure, not an
+  noting kell's "child run" today is a re-executed Procedure, not an
   LLM sub-agent with tunable inference settings — so this may not be a live
   exposure yet, but there's no guard if it becomes one.
 
@@ -253,7 +253,7 @@ different subsystem checked before answering honestly rather than guessing:
 
 ## Bottom line
 
-StealthLab's durable-run layer (`durable_run.py`) is the strongest part of
+kell's durable-run layer (`durable_run.py`) is the strongest part of
 this story — lease-based crash recovery, idempotency keys, guarded state
 transitions, and a documented "one real write path per transition"
 discipline cover a solid majority of the crash/dangling-state/duplicate-
@@ -266,7 +266,7 @@ The honest gaps, in priority order:
    exposure for anything routed through `tasks_extension.py` rather than the
    Postgres-backed durable-run path.
 2. **No cache-vs-fresh token/cost accounting** — real risk of the exact
-   double-billing/phantom-overflow bugs in the source list if StealthLab's
+   double-billing/phantom-overflow bugs in the source list if kell's
    own LLM calls hit a caching provider.
 3. **Silent-abandonment of a child run** — the parent has no timeout on
    "child never checked back in," only on the child's own internal leases.

@@ -38,7 +38,7 @@ def preflight() -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stealthlab-status-page",
-        description="Serve the StealthLab minimal status surface: one read-only "
+        description="Serve the kell minimal status surface: one read-only "
         "page listing episodes -> claims -> procedures with capability scores and "
         "evidence trails. Loopback by default; no write endpoints exist.",
     )
@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"port (default {_DEFAULT_PORT}; 8000 is app/main.py's API, "
                              "8765 is stealthlab-mcp-server)")
     parser.add_argument("--backend-root", default=None,
-                        help="path to the StealthLab backend checkout "
+                        help="path to the kell backend checkout "
                              "(default: $STEALTHLAB_BACKEND_ROOT or auto-discovery)")
     args = parser.parse_args(argv)
 

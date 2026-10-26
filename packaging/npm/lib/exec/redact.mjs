@@ -64,7 +64,7 @@ export function redactPorted(text) {
 }
 
 // redact(text, { secrets }) -- ported patterns + the superset + any literal secret values the caller
-// knows (e.g. the saved StealthLab token), which are replaced wherever they appear.
+// knows (e.g. the saved kell token), which are replaced wherever they appear.
 export function redact(text, { secrets = [] } = {}) {
   if (text === null || text === undefined) return text;
   let out = String(text);

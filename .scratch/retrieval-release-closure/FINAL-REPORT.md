@@ -305,7 +305,7 @@ secret values). Blocking for a production embedding migration:
 - a **paid tier** on the selected provider (Voyage payment method OR
   Gemini billing) — free tiers cannot complete a 2478-doc migration;
 - an explicit **recorded decision** that the selected provider + General
-  Compute are approved to receive StealthLab procedure text.
+  Compute are approved to receive kell procedure text.
 
 ## 21. Unresolved risks
 

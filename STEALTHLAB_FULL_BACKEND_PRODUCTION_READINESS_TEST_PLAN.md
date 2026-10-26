@@ -1,4 +1,4 @@
-# StealthLab --- Full Backend Production Readiness & Systems Verification Plan
+# kell --- Full Backend Production Readiness & Systems Verification Plan
 
 **Target commit:** `c5ebdea246adc4af6164207c590ab88e2abf4d27`\
 **Repository:** `3Founders/stealth-lab`
@@ -10,7 +10,7 @@ systems auditor, security reviewer, QA lead, and production-readiness
 reviewer.
 
 Your job is NOT to confirm that the code looks reasonable. Determine
-whether the backend actually behaves like the intended StealthLab system
+whether the backend actually behaves like the intended kell system
 under normal operation, malformed inputs, authorization failures,
 private/global scope boundaries, concurrency, retries, crashes,
 recursive execution, partial failure, stale state, conflicting
@@ -44,7 +44,7 @@ MUST independently run and report the backend tests.
 
 # 1. Intended system
 
-StealthLab is a permissioned, evidence-backed procedural capability
+kell is a permissioned, evidence-backed procedural capability
 layer for AI agents.
 
 It is not merely memory, a prompt library, a vector database, an LLM
@@ -1218,7 +1218,7 @@ This distinction is expected to be important for this project.
 
 The question is not:
 
-> "Does StealthLab have all the features?"
+> "Does kell have all the features?"
 
 The question is:
 

@@ -1,16 +1,16 @@
-# StealthLab Acceptable Use Policy
+# kell Acceptable Use Policy
 
 **STATUS: DRAFT — REQUIRES LEGAL REVIEW. NOT YET PUBLISHED OR IN EFFECT.**
 
 ## 1. Purpose
 
-This policy tells you what you may not do with StealthLab, and describes — honestly, matching
+This policy tells you what you may not do with kell, and describes — honestly, matching
 what the code actually does — how we try to catch violations before content becomes public. It
 does not replace the [Terms of Service](./TERMS_OF_SERVICE.md), which it supplements.
 
 ## 2. Prohibited activities
 
-You may not use StealthLab to create, request, execute, publish, or ingest a procedure that:
+You may not use kell to create, request, execute, publish, or ingest a procedure that:
 
 - **Steals or harvests credentials** — passwords, API keys, tokens, SSH/private keys, session
   cookies, browser-saved credentials, or similar.
@@ -34,7 +34,7 @@ You may not use StealthLab to create, request, execute, publish, or ingest a pro
   publishing spam/duplicate/low-effort content at scale, or manipulating Candidate/Verified
   status.
 - **Is illegal, or facilitates illegal activity,** in a jurisdiction relevant to you or to
-  StealthLab.
+  kell.
 
 This list is illustrative, not exhaustive. **[LEGAL: confirm enforceability and add any
 jurisdiction-specific prohibited-use language.]**

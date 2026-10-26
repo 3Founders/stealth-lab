@@ -11,9 +11,9 @@ FROZEN BASELINE: Gate 2B at 47a944b. Verification thresholds, B_default,
 Postgres evidence, and experiments/ are untouched by this driver.
 
 ARMS:
-  A = frontier agent + NO StealthLab procedural retrieval
+  A = frontier agent + NO kell procedural retrieval
       (LocalAgentRunner.run(..., experimental_no_retrieval=True))
-  B = the SAME agent + StealthLab procedural retrieval
+  B = the SAME agent + kell procedural retrieval
       (LocalAgentRunner.run(..., allow_unverified=True) -- the existing
       sanctioned experimental path; B_default / thresholds unchanged)
 

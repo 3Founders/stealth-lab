@@ -46,7 +46,7 @@ analytics or error reporting, add a consent mechanism first.]**
 
 ## What this means
 
-As shipped today, StealthLab's frontend does not run any third-party advertising or analytics
+As shipped today, kell's frontend does not run any third-party advertising or analytics
 tracking, and does not set tracking cookies. The only client-side persistence found is
 functional: keeping you signed in (Supabase session) and a legacy fallback identity value
 (`sessionStorage`) used ahead of full auth rollout.

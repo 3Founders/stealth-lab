@@ -1,16 +1,16 @@
 # Data statement
 
 Plain language, no legalese. This is what happens to your data when you run
-StealthLab v0.1. For who can access it once it's stored, see `SECURITY.md`.
+kell v0.1. For who can access it once it's stored, see `SECURITY.md`.
 
 ## The short version
 
 Your traces stay on your machine, in a Postgres database you run yourself.
-There is no StealthLab-hosted backend in v0.1 — we don't have a server that
+There is no kell-hosted backend in v0.1 — we don't have a server that
 your data flows to, because it doesn't exist. The one thing that does leave
 your machine is text sent to an embedding provider you configure, so search
 works. We never train a model on your traces. There is no telemetry to
-StealthLab in v0.1 — not opt-out, not hidden: the code path to send us
+kell in v0.1 — not opt-out, not hidden: the code path to send us
 anything simply isn't built yet.
 
 ## What's stored, and where
@@ -19,7 +19,7 @@ anything simply isn't built yet.
   client-side, then written to a local JSONL file
   (`$CLAUDE_PROJECT_DIR/.claude/traces/` by default) and ingested into your
   own Postgres instance.
-- Everything StealthLab derives from those traces — episodes, observations,
+- Everything kell derives from those traces — episodes, observations,
   claims, procedures, evidence — lives in that same Postgres database. It is
   yours: it's the container/volume you started, on infrastructure you
   control (see `backend/README.md` for setup).
@@ -58,7 +58,7 @@ above only ever sends already-redacted text, never a raw trace.
 ## We never train on your traces
 
 This is a durable commitment, not a v0.1-only fact of nothing being built
-yet: StealthLab will not train a model on your traces or derived data
+yet: kell will not train a model on your traces or derived data
 without asking you first, explicitly, separately from this document. Today
 that commitment is easy to keep because no training pipeline exists at all.
 If that ever changes — a hosted tier, an opt-in shared corpus, anything —

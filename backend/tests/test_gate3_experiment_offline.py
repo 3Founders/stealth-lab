@@ -380,4 +380,4 @@ def test_task_definitions_are_naturally_worded():
         text = get_task(task_id)["task_text"]
         assert "mcp-lazy-tool-schema-loading" not in text
         assert "lazy" not in text.lower()
-        assert "StealthLab" not in text
+        assert "kell" not in text

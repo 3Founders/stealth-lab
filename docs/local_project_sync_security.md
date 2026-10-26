@@ -12,7 +12,7 @@ project**, never "claim" — "claim" is an established, different keळ term
 Nothing in this document touches that unrelated concept.
 
 Related document: `SECURITY.md` (repo root) states the *pre-existing* v0.1
-threat model — "single-user, local-first... no StealthLab-hosted service."
+threat model — "single-user, local-first... no kell-hosted service."
 That document predates the multi-user REST API, Supabase Auth, and Commons
 that already exist in this codebase today, and predates this feature. This
 document does not attempt to reconcile that drift; it only adds the new

@@ -30,10 +30,10 @@ Sources: [findings.md](findings.md), [experiments/ds1000/PREREGISTRATION_5.md](.
 | A13 | Routing with **no** check | 66% vs Sonnet's 82% | Simulation |
 | A14 | Run-to-run noise | Sonnet: 12 of 82 outcomes flipped between identical runs | Measured |
 
-## B. The first product A/B: Claude Code ± StealthLab on 205 benchmark tasks
+## B. The first product A/B: Claude Code ± kell on 205 benchmark tasks
 
 Source: [HANDOFF_abtest_2026-10-11.md](HANDOFF_abtest_2026-10-11.md), section 12 (final, 2026-10-14). Arm A = Opus
-alone; arm C = StealthLab on main as of `11b7e67`.
+alone; arm C = kell on main as of `11b7e67`.
 
 | # | Result | Numbers |
 |---|---|---|
@@ -77,8 +77,8 @@ Notes:
 
 ## D. Real repo issues: the long-horizon series v4–v7
 
-1 issue each from jsonargparse and sqlglot; arms A (plain Claude Code), C (StealthLab, `.kell` carried over), C0
-(StealthLab, `.kell` wiped). Source: `experiments/abtest/results/chaitanya-2026-10-16/series/`.
+1 issue each from jsonargparse and sqlglot; arms A (plain Claude Code), C (kell, `.kell` carried over), C0
+(kell, `.kell` wiped). Source: `experiments/abtest/results/chaitanya-2026-10-16/series/`.
 
 **Costs are corrected:** Claude isn't charged for a turn a cheap model answered (the harness fix in `4ace441`). The
 stored `*-report.txt` files for **v7 sqlglot** (C $2.40, C0 $3.55) and **v6 jsonargparse C0** ($0.46) still show the

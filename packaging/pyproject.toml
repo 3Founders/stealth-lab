@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stealthlab-connect"
 version = "0.1.0"
-description = "Installable entry points that connect an external agent to StealthLab: MCP server launcher, Claude Code trace-collector hook CLI, and the read-only status page server."
+description = "Installable entry points that connect an external agent to kell: MCP server launcher, Claude Code trace-collector hook CLI, and the read-only status page server."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }

@@ -1,6 +1,6 @@
-# Deploying the StealthLab backend to Railway
+# Deploying the kell backend to Railway
 
-This document is the production configuration contract for the StealthLab
+This document is the production configuration contract for the kell
 REST API (`backend/app/main.py`) on Railway. It covers exactly one
 deployable: the FastAPI backend a frontend talks to. **The MCP server
 (`backend/app/mcp_server/server.py`) is intentionally out of scope** — see

@@ -104,7 +104,7 @@ export class Relay {
         body: raw,
       });
     } catch (err) {
-      this.fail(msg, `StealthLab MCP unreachable at ${this.url}: ${err.cause?.message || err.message}`);
+      this.fail(msg, `kell MCP unreachable at ${this.url}: ${err.cause?.message || err.message}`);
       return;
     }
     const sid = res.headers.get("mcp-session-id");
@@ -120,13 +120,13 @@ export class Relay {
         hint = " -- server session expired; restart the MCP server in your agent";
         this.sessionId = undefined;
       }
-      this.fail(msg, `StealthLab MCP HTTP ${res.status}${hint}${text ? `: ${text.slice(0, 300)}` : ""}`);
+      this.fail(msg, `kell MCP HTTP ${res.status}${hint}${text ? `: ${text.slice(0, 300)}` : ""}`);
       return;
     }
 
     const type = (res.headers.get("content-type") || "").toLowerCase();
     const body = type.includes("text/event-stream") ? this.pumpSse(res) : this.pumpJson(res);
-    const tracked = body.catch((err) => this.fail(msg, `StealthLab MCP stream error: ${err.message}`));
+    const tracked = body.catch((err) => this.fail(msg, `kell MCP stream error: ${err.message}`));
     this.inflight.add(tracked);
     tracked.finally(() => this.inflight.delete(tracked));
     if (!Array.isArray(msg) && msg.method === "initialize") {

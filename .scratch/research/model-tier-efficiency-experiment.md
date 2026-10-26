@@ -1,4 +1,4 @@
-# Design brief: does a cheap model + StealthLab match/beat a frontier model alone?
+# Design brief: does a cheap model + kell match/beat a frontier model alone?
 
 _Status: design only, not authorized to run live. Zero cost until someone approves
 model access. Written 2026-08-27 by the integrator, at the founder's request._

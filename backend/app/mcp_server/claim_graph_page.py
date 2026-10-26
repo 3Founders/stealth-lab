@@ -26,7 +26,7 @@ CLAIM_GRAPH_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StealthLab — Claim Graph</title>
+<title>kell — Claim Graph</title>
 <style>
   :root{
     --bg:#0d0f14; --panel:#151922; --line:#232936; --ink:#e7ebf3; --muted:#8b93a7;
@@ -91,7 +91,7 @@ CLAIM_GRAPH_HTML = r"""<!doctype html>
 <div id="loading">loading claim graph…</div>
 
 <div class="bar">
-  <span class="brand">StealthLab · Claim Graph</span>
+  <span class="brand">kell · Claim Graph</span>
   <input id="q" type="search" placeholder="filter statement…" size="18">
   <select id="group" title="colour nodes by">
     <option value="status">colour: status</option>

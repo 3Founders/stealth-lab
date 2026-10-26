@@ -1,4 +1,4 @@
-// StealthLab's own small agent as an executor (lib/agent/step_agent.mjs). Unlike the other adapters it launches
+// kell's own small agent as an executor (lib/agent/step_agent.mjs). Unlike the other adapters it launches
 // no third-party binary: the child is `node step_agent.mjs`, shipped in this package, so "installed" means only that
 // the file is here. It needs a profile (exec.json "profiles") naming an OpenAI-compatible endpoint and the env var
 // that holds the user's own key for it; without one it refuses to build a command.

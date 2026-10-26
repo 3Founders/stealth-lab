@@ -5,7 +5,7 @@
 # mcpServers is inline so the main conversation never loads the executor tools; it only works
 # in a user-level agent file (plugin agents ignore mcpServers).
 name: stealth-delegator
-description: Hand ONE goal or NODE from .kell/run.md to a local non-Claude coding agent (OpenCode, Codex, Gemini, ...) through the StealthLab executor, which runs it in an isolated worktree and verifies it with the node's own checks. Use to save Claude quota on well-specified steps. Returns summary, verified and diff stat; never applies the change.
+description: Hand ONE goal or NODE from .kell/run.md to a local non-Claude coding agent (OpenCode, Codex, Gemini, ...) through the kell executor, which runs it in an isolated worktree and verifies it with the node's own checks. Use to save Claude quota on well-specified steps. Returns summary, verified and diff stat; never applies the change.
 tools: Read, Grep, Glob, mcp__stealthlab-exec__list_executors, mcp__stealthlab-exec__achieve, mcp__stealthlab-exec__run_status, mcp__stealthlab-exec__run_result, mcp__stealthlab-exec__cancel_run
 disallowedTools: mcp__stealthlab-exec__apply_run
 model: haiku
@@ -30,7 +30,7 @@ you never apply a run.
    - `scope`: globs for the files the node may change (as narrow as the node allows);
    - `procedure_id` and `step_order` when the node has `step=P-n:<order>` and `.kell/procedures.md` maps
      `P-n` to a procedure id. Leave `executor` and `model` unset unless the task names them;
-   - if the task says "Run it with executor=<e> model=<m> instance_key=<k>" (StealthLab's model plan), pass exactly
+   - if the task says "Run it with executor=<e> model=<m> instance_key=<k>" (kell's model plan), pass exactly
      those three as `executor`, `model` and `instance_key`: every attempt is then reported to that plan;
    - `escalate: 2`: if the first (cheapest) rung fails its checks, the executor tries up to two further rungs
      of the ladder by itself, each verified by the same checks. Use `escalate: 0` only if the task says so.

@@ -1,7 +1,7 @@
 # Evaluating Agent-Memory and Goal Retrieval: Metrics, Golden Sets, and a Defensible Design
 
 **Date:** 2026-09-27  
-**Scope:** retrieval-quality evaluation for StealthLab's verified procedural-memory substrate  
+**Scope:** retrieval-quality evaluation for kell's verified procedural-memory substrate  
 **Rule applied throughout:** every citation below was resolved to an arXiv id, DOI, ACL Anthology id, or official proceedings URL. Where a claim or identifier could not be verified, it is marked **[UNVERIFIED — could not resolve]** and is not used as evidence.
 
 **Evidence tiers:** `[PEER-REVIEWED]`, `[PREPRINT]`, `[TECH REPORT]`, `[PRODUCTION WRITEUP]`, `[DATASET CARD]`.
@@ -26,7 +26,7 @@
 
 8. **Isolation should be a measured rate, not an assumption, but the literature has no standard.** Authorization-First Retrieval separates **structural leak rate**—unauthorized chunks entering the context—from **answer leak rate**; under retrieve-then-filter it measured 86.1% structural exposure but 29.5–41.3% answer disclosure, model-dependent (Namboothiri, TrustNLP 2026, ACL `2026.trustnlp-main.15`, `[PEER-REVIEWED]`). The number we should certify is structural exposure = 0; answer leakage is a separate model-dependent diagnostic.
 
-9. **Almost no LLM-agent memory paper publishes retrieval quality.** Of Generative Agents, Reflexion, Voyager, RET-LLM, A-MEM, MemGPT and others, six of nine publish no retrieval evaluation; the rest report end-task accuracy, latency or downstream ablations. ExpeL is the notable exception because it ablates the ranking function (arXiv:`2308.10144`, `[PEER-REVIEWED]`). This absence is the white space StealthLab can occupy.
+9. **Almost no LLM-agent memory paper publishes retrieval quality.** Of Generative Agents, Reflexion, Voyager, RET-LLM, A-MEM, MemGPT and others, six of nine publish no retrieval evaluation; the rest report end-task accuracy, latency or downstream ablations. ExpeL is the notable exception because it ablates the ranking function (arXiv:`2308.10144`, `[PEER-REVIEWED]`). This absence is the white space kell can occupy.
 
 10. **The recommended first build is a 150-query human/log core plus 60 derived queries, not an ingestion-only set.** At least 20 queries must be no-answer, at least 40 must be long-tail/hard buckets, and the headline metric is computed on the 90-query human/log core. Exit requires α ≥ 0.80 at the lower bootstrap bound on double-annotated items, zero structural exposure, and a paired 95% CI for every configuration delta.
 

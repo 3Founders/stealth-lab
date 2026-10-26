@@ -20,7 +20,7 @@ import flow_check as fc  # noqa: E402
 REPO_ROOT = HERE.parents[1]
 NODE = shutil.which("node")
 
-MSG = ("Done by gpt-oss-120b in 41 s (StealthLab dispatched it before this session's model ran, $0.0001). It passed the tests "
+MSG = ("Done by gpt-oss-120b in 41 s (kell dispatched it before this session's model ran, $0.0001). It passed the tests "
        "written for this task in an isolated worktree and the change is applied: calc.py. To put it back as it was: kell undo."
        "\n\nIt changed add().")
 FIXED = fc.CALC.replace("def add(a, b):\n    return a - b", "def add(a, b):\n    return a + b")
@@ -55,7 +55,7 @@ class FakeHooks:
             return fc.HookResult({"decision": "block", "reason": MSG} if self.flaws.get("dispatch_opus") else {}, 0.1)
         if text == "thanks" and self.flaws.get("dispatch_thanks"):
             return fc.HookResult({"decision": "block", "reason": MSG}, 5.0)
-        note = f"{fc.CONTINUITY} gpt-oss-120b changed calc.py to make it reject strings (StealthLab, check passed)."
+        note = f"{fc.CONTINUITY} gpt-oss-120b changed calc.py to make it reject strings (kell, check passed)."
         if not self.delivered or self.flaws.get("repeat_continuity"):
             self.delivered = True
             return fc.HookResult({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}}, 0.1)

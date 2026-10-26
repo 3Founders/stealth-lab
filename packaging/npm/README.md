@@ -1,10 +1,10 @@
 # kell
 
-Connects your coding agent to the **hosted** StealthLab MCP server
+Connects your coding agent to the **hosted** kell MCP server
 (`find_ways`, `report_discovery`, the `survey_repo` / `plan_and_run` prompts;
 see `final_architecture.md`).
 
-Nothing from StealthLab runs on your machine: no Postgres, no Python, no
+Nothing from kell runs on your machine: no Postgres, no Python, no
 backend. The installer adds one `stealthlab` entry to each agent's MCP config,
 pointing at the hosted endpoint, and then exits. The only files your agent
 writes locally are its own `.kell/*.md` plan files. (The one exception is
@@ -81,7 +81,7 @@ The hooks make knowledge flow both ways without the model having to decide to ca
 
 | Hook | When it runs | What it does | What leaves your machine |
 |---|---|---|---|
-| `hook-prompt` (UserPromptSubmit) | you send a task-like prompt (at least 6 words, not a slash command) | runs `find_ways` on the prompt and adds what Kel knows to Claude's context (at most 8,000 characters); nothing when Kel has nothing | the prompt (up to 1,500 characters) and `.kell/claims.md`, to your StealthLab endpoint |
+| `hook-prompt` (UserPromptSubmit) | you send a task-like prompt (at least 6 words, not a slash command) | runs `find_ways` on the prompt and adds what Kel knows to Claude's context (at most 8,000 characters); nothing when Kel has nothing | the prompt (up to 1,500 characters) and `.kell/claims.md`, to your kell endpoint |
 | `hook capture-tool` (PostToolUse, Bash) | Claude runs a test command (pytest, npm test, go test, cargo test, jest, vitest, …) | reads pass or fail from the runner's own summary line | nothing; kept locally as a verdict only |
 | `hook capture-stop` (Stop) | Claude finishes a turn | if the prompt's lookup identified a Goal and a test verdict is known, reports one outcome per prompt with `report_model_run` (from a detached process, so you never wait) | model, `scaffold="claude-code"`, pass/fail, the Goal/Procedure ids, `check_kind="tests"`. Never the prompt, commands, test output, diffs or transcript |
 

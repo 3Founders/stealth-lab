@@ -1,7 +1,7 @@
 /**
- * The one Supabase browser client. Supabase Auth is StealthLab's canonical
+ * The one Supabase browser client. Supabase Auth is kell's canonical
  * end-user identity provider (launch compliance Phase 1). This client issues
- * the session; the StealthLab backend is the only token *validator* — it
+ * the session; the kell backend is the only token *validator* — it
  * verifies "Authorization: Bearer <access_token>" against
  * {SUPABASE_URL}/auth/v1 JWKS (ES256/RS256).
  *

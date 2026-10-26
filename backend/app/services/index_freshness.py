@@ -1,7 +1,7 @@
 """
 G14 -- retrieval index-freshness contract (spec §B37).
 
-There is no detached retrieval index in StealthLab: embeddings and every
+There is no detached retrieval index in kell: embeddings and every
 authoritative column live on the `procedures` row, retrieval returns bare
 ids, and every candidate is re-hydrated from its live row before ranking
 and selection. So "a stale index makes an agent act on outdated text"

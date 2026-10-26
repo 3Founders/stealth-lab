@@ -239,9 +239,9 @@ def render(sections) -> str:
     return (
         "<!doctype html><meta charset='utf-8'>"
         f"<meta http-equiv='refresh' content='{REFRESH_SECONDS}'>"
-        "<title>StealthLab dev dashboard</title>"
+        "<title>kell dev dashboard</title>"
         f"<style>{CSS}</style>"
-        "<h1>StealthLab &mdash; dev dashboard (read-only)</h1>"
+        "<h1>kell &mdash; dev dashboard (read-only)</h1>"
         f"<div class='meta'>{now} &middot; refreshes every {REFRESH_SECONDS}s "
         f"&middot; {html.escape(_dsn_hint())}</div>"
         f"<div class='grid'>{''.join(parts)}</div>"
@@ -286,7 +286,7 @@ def make_app():
     from fastapi import FastAPI
     from fastapi.responses import HTMLResponse
 
-    app = FastAPI(title="StealthLab dev dashboard", docs_url=None, redoc_url=None)
+    app = FastAPI(title="kell dev dashboard", docs_url=None, redoc_url=None)
 
     @app.get("/", response_class=HTMLResponse)
     async def index():  # noqa: D401

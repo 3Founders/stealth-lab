@@ -1,12 +1,12 @@
 # stealthlab-connect
 
-> **Connecting an agent to the hosted StealthLab MCP?** Use
+> **Connecting an agent to the hosted kell MCP?** Use
 > [`packaging/npm`](npm/README.md) (`npx -y kell-mcp install`,
 > `curl … /install.sh | bash`, `irm … /install.ps1 | iex`). It needs
 > nothing local: no Postgres, no Python, no backend checkout. This Python
 > package is for self-hosting / developing the server itself.
 
-Installable entry points that let an external agent connect to StealthLab in
+Installable entry points that let an external agent connect to kell in
 minutes. This package adds **zero business logic** — every real capability is
 imported from the backend checkout (`backend/app/services/trace_collector.py`,
 `backend/app/mcp_server/server.py`) at runtime; this wrapper only resolves
@@ -16,7 +16,7 @@ Two surfaces:
 
 | Command | What it launches |
 |---|---|
-| `stealthlab-mcp-server` | The StealthLab MCP server (29 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
+| `stealthlab-mcp-server` | The kell MCP server (29 tools over the bi-temporal knowledge/task graph) — Streamable HTTP on loopback by default, or `--stdio` |
 | `stealthlab-trace-hook` | Claude Code hook command: reads one hook JSON payload on stdin, redacts it (`trace_redaction`), appends it to the local collector file (`trace_collector.append_event`) |
 | `stealthlab-status-page` | The minimal status surface: one read-only page listing episodes -> claims -> procedures with capability scores and evidence trails (board item P2) |
 | `stealthlab-public-board` | The public scoreboard generator: static markdown + HTML page from a real-arms sweep's results + spend JSONL, power-analysis footer with discordant pairs beside every p-value (board item P5) |

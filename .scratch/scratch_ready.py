@@ -11,12 +11,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, r"C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend")
+sys.path.insert(0, r"C:\Users\chait\Prog\3Found\Stealth\kell\backend")
 from dotenv import load_dotenv  # noqa: E402
 
-load_dotenv(r"C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\.env")
+load_dotenv(r"C:\Users\chait\Prog\3Found\Stealth\kell\backend\.env")
 
-BACKEND = r"C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend"
+BACKEND = r"C:\Users\chait\Prog\3Found\Stealth\kell\backend"
 SCRATCH_DB = "stealth_scratch_ready"
 
 

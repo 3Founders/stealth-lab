@@ -2,7 +2,7 @@
 
 Why: with developer-held keys each of 2,000 people sets an environment variable, and the company can neither see nor
 limit what is spent. Here an admin stores the company's key (encrypted, app/services/secret_box.py); a developer's agent
-sends its StealthLab token to `/v1/chat/completions`; the gateway resolves the org's key at call time, applies the org's
+sends its kell token to `/v1/chat/completions`; the gateway resolves the org's key at call time, applies the org's
 policy and budget, and writes the ledger row. The key never reaches a developer's machine.
 
 Three pieces:

@@ -52,7 +52,7 @@ test("a reply the reviewer calls good is the answer; the model saw the notes; it
   const a = await answerTurn({ prompt: "so group() returns 0 now?", root: repo, transcriptPath: transcript, sessionId: "s1", env,
                                fetchImpl: chat("Yes: calc.py's group() now returns 0 instead of None.", seen), review: reviewer("good", reviewed) });
   assert.equal(a.handled, true);
-  assert.match(a.text, /^Answered by glm-5\.3-flash in \d+ s \(StealthLab answered it before this session's model ran; checked by claude-sonnet-5-5\)\.\n\nYes: calc\.py/);
+  assert.match(a.text, /^Answered by glm-5\.3-flash in \d+ s \(kell answered it before this session's model ran; checked by claude-sonnet-5-5\)\.\n\nYes: calc\.py/);
   const user = seen[0].body.messages.find((m) => m.role === "user").content;
   assert.match(user, /\+    return 0/, "the change itself");
   assert.match(user, /The developer's latest message:\nso group\(\) returns 0 now\?$/);
@@ -93,5 +93,5 @@ test("hook: the judge says work=answer -> the cheap answer is delivered, remembe
   assert.equal(out[0].decision, "block");
   assert.match(out[0].reason, /^Answered by glm-5\.3-flash in \d+ s[\s\S]*Yes, group\(\) returns 0 now\./);
   assert.deepEqual(dispatchedTurns("s1", { env: e }).map((t) => t.role), ["user", "assistant"]);
-  assert.deepEqual(pendingLines("s1", { env: e }), ['Earlier in this session, glm-5.3-flash answered "so group() returns 0 now?" (StealthLab, checked by a reviewer).']);
+  assert.deepEqual(pendingLines("s1", { env: e }), ['Earlier in this session, glm-5.3-flash answered "so group() returns 0 now?" (kell, checked by a reviewer).']);
 });

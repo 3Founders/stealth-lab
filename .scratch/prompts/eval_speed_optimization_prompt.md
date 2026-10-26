@@ -1,6 +1,6 @@
 # Optimization prompt: make the SWE-bench knowledge-transfer experiment run end to end in about 5 hours
 
-You are optimizing the test setup of the StealthLab knowledge-transfer experiment so that **one full benchmark
+You are optimizing the test setup of the kell knowledge-transfer experiment so that **one full benchmark
 run (every stage, every arm, graded) completes in about 5 hours of wall time**, as cheaply as possible,
 **without weakening the protocol**. Read everything below, then produce: (1) a quantified plan, (2) the code and
 infrastructure changes, (3) `experiments/OPTIMIZATION_SUMMARY.md`. Do not launch anything that spends money

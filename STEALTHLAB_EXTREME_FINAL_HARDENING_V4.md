@@ -1,4 +1,4 @@
-# StealthLab — Final Ingestion Repair & MCP Hardening Plans
+# kell — Final Ingestion Repair & MCP Hardening Plans
 
 **Repository:** `3Founders/stealth-lab`  
 **Audited revision:** `main` at `301b9bf3f0de4cf0d51dbd25e8761f62d3a89498`  
@@ -3925,7 +3925,7 @@ No gate is complete because code compiles or an API returns 200.
 
 # Part VI — Final acceptance bar
 
-StealthLab is hardened only when this is true:
+kell is hardened only when this is true:
 
 > Any source entering Stealth produces a scope-correct, provenance-correct chain of evidence and knowledge objects; any learned procedure is independently searchable; private procedures remain private until explicitly published; global procedures are admitted through publication and verification gates; and any execution claiming Stealth procedural provenance passes through a durable server-enforced lifecycle with complete outcome/evidence lineage, including recursively invoked child procedures.
 

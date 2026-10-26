@@ -1253,7 +1253,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const parts = dagRes.dag.nodes.length;
       return { handled: true, dag: dagRes.dag, files: dagRes.files, tried: dagRes.tried, spec, loc, runMd, library_entry: entry, explanation,
         model: dagRes.models, unit: `${dagRes.models}|dag`,
-        text: `Done in ${parts} parts by ${dagRes.models} in ${secs} s (StealthLab ${dagRes.dag.entry === "request" ? "split the request into the things it asks for"
+        text: `Done in ${parts} parts by ${dagRes.models} in ${secs} s (kell ${dagRes.dag.entry === "request" ? "split the request into the things it asks for"
           : "planned it from a similar fix made here"} and dispatched each part ` +
           `before this session's model ran, $${(dagRes.cost_usd || 0).toFixed(4)}). All parts together passed ${checkLabel} in an isolated worktree ` +
           `and the change is applied: ${dagRes.files.join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
@@ -1573,7 +1573,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), winner: rung.model, tried });
     return { handled: true, run_id: runId, unit: rung.unit, model: rung.model, files: applied.files || [], library_entry: entry, tried, spec, loc,
       explanation,
-      text: `Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost}). ` +
+      text: `Done by ${rung.model} in ${secs} s (kell dispatched it before this session's model ran${cost}). ` +
         `It passed ${checkLabel} in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
         (undoPoint ? " To put it back as it was: kell undo." : undoNote) +
@@ -1681,7 +1681,7 @@ export async function crossCheck({ rt, rung, result, rungs, env, payload, root, 
 // The note the session gets when dispatch ran but nothing passed.
 export function triedNote(d) {
   if (d?.notApplied) {
-    return `StealthLab: ${d.notApplied.model} solved this and its check passed, but the change was NOT applied: you edited ` +
+    return `kell: ${d.notApplied.model} solved this and its check passed, but the change was NOT applied: you edited ` +
       `${d.notApplied.files.join(", ")} while it ran. Do the task yourself, starting from your current files; there is nothing to report.`;
   }
   if (!d || d.handled) return "";
@@ -1691,7 +1691,7 @@ export function triedNote(d) {
     const yours = d.partial.nodes.filter((n) => n.status === "ready");
     const waiting = d.partial.nodes.filter((n) => n.status === "waiting");
     const list = (ns) => ns.map((n) => `${n.id} (${n.at.join(", ")})`).join(", ");
-    return `StealthLab split this task into ${d.partial.nodes.length} parts, ` +
+    return `kell split this task into ${d.partial.nodes.length} parts, ` +
       (d.partial.entry === "request" ? "one per thing the request asks for. " : `planned from a similar fix already made here (${d.partial.entry}). `) +
       (done.length && d.partial.applied.length
         ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; kell undo removes them" : ""}. `
@@ -1710,13 +1710,13 @@ export function triedNote(d) {
   const passed = d.tried.filter((t) => /^passed the check/.test(String(t.state)) && t.patch);
   if (passed.length) {
     const p = passed[0];
-    return `StealthLab first tried this on ${d.tried.map((t) => t.unit.split("|")[0]).join(", ")}. ${p.unit.split("|")[0]}'s answer ` +
+    return `kell first tried this on ${d.tried.map((t) => t.unit.split("|")[0]).join(", ")}. ${p.unit.split("|")[0]}'s answer ` +
       `passed the project's check but was not applied: the acceptance rule did not accept it ` +
       `(evidence: ${String(p.state).replace(/^passed the check, not accepted by the rule \(|\)$/g, "").slice(0, 300)}). Its change is in ${p.patch}. Read it first: ` +
       "if it does what the task asks, apply it (`git apply` that file), run the tests and finish from there; if not, do the " +
       "task yourself. There is nothing to report." + handoffNote(d);
   }
-  return "StealthLab first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
+  return "kell first tried this on " + d.tried.map((t) => `${t.unit.split("|")[0]} (${t.state})`).join(", ") +
     "; none passed the check and nothing was applied. Do the task yourself; there is nothing to report." +
     (d.sharedFail ? ` Two of those answers failed the same tests written in advance (${d.sharedFail}); those tests may ` +
                     "themselves be wrong, so judge the task from its own words." : "") +
@@ -1724,7 +1724,7 @@ export function triedNote(d) {
     handoffNote(d);
 }
 
-// this StealthLab's own command line, runnable from the session's shell whether or not kell is on its PATH
+// this kell's own command line, runnable from the session's shell whether or not kell is on its PATH
 export function selfCommand() {
   const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
   return `node "${bin}"`;

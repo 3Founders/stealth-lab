@@ -1,4 +1,4 @@
-# Funding Tracker — StealthLab (v2, canonical)
+# Funding Tracker — kell (v2, canonical)
 
 Last verified: **2026-08-23**. Sweep diffs go to `GRANTS/discovery_log.md`; drafts live in `GRANTS/applications/`.
 Legend: ☐ todo · ◐ drafted · ✅ submitted · ❌ passed/skipped

@@ -1,8 +1,8 @@
 """modal_series: the long-horizon test (arms A, C, C0 over a real repository's issues, runner.py --series) on Modal.
 
-Why Modal: each repository needs Linux and its own Python (the SWE-rebench environments are 3.9), the StealthLab backend needs
+Why Modal: each repository needs Linux and its own Python (the SWE-rebench environments are 3.9), the kell backend needs
 Postgres with pgvector, and a series is many long Claude Code sessions -- none of that belongs on a laptop. One container per
-repository holds everything: Postgres + the StealthLab test backend (run_backend.py, a local identity), Node + Claude Code, `uv`
+repository holds everything: Postgres + the kell test backend (run_backend.py, a local identity), Node + Claude Code, `uv`
 and the Pythons the repositories need, and runs `runner.py` over the series task by task. Results and logs go to a Modal Volume.
 
     # once: the secrets (values from YOUR environment / backend/.env by NAME; nothing is printed, nothing goes on a command line)
@@ -82,9 +82,9 @@ PROBE_EVERY_S = 3600                      # on Bedrock, the subscription is trie
 KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
              "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
 ARMS = ("A", "C0", "C-R", "C-L", "C")
-STEALTH_ARMS = tuple(a for a in ARMS if a != "A")      # the arms with StealthLab installed (they need the test backend)
+STEALTH_ARMS = tuple(a for a in ARMS if a != "A")      # the arms with kell installed (they need the test backend)
 ARM_PERSISTENCE = {
-    "A": "plain Claude Code, no StealthLab",
+    "A": "plain Claude Code, no kell",
     "C0": "no facts, library wiped, local routing wiped, router state RESET before each issue",
     "C-R": "facts kept (one survey at series start), library wiped, local routing wiped, router state RESET",
     "C-L": "facts and library kept, local routing wiped, router state RESET",
@@ -123,7 +123,7 @@ class RunSpec:
     seed: int = 20261014
     testfirst_model: str = "glm-5.3"            # the test writer; a slow or failed open writer falls back to Sonnet (dispatch)
     gc_key_name: str = "GENERAL_COMPUTE_API_KEY"
-    cheap_agent: str = "stealth"                 # who drives the cheap models: stealth (StealthLab's own loop) or claude (Claude Code)
+    cheap_agent: str = "stealth"                 # who drives the cheap models: stealth (kell's own loop) or claude (Claude Code)
     accept_rule: str = ""                        # arm C's acceptance rule (STEALTHLAB_DISPATCH_ACCEPT); "" keeps the product's default
     cheap_timeout_s: int = 0                     # arm C's cheap-model time budget (STEALTHLAB_DISPATCH_TIMEOUT_S); 0 keeps the product's budget (600)
     context_pack: bool = False                   # arm C's context pack for cheap agents (STEALTHLAB_DISPATCH_CONTEXT_PACK)

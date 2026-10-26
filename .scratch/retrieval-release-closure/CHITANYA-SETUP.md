@@ -25,7 +25,7 @@ workstream and are **not** covered here beyond the shared `DATABASE_URL`.
 | verify without printing | `python -c "import os;from dotenv import load_dotenv;load_dotenv('backend/.env');print('set' if os.environ.get('DATABASE_URL') else 'MISSING')"` ; connectivity: `python backend/scripts/migrate.py --status` (prints migration state, no secret) |
 | prod settings | `DATABASE_URL` = the **pooled** (transaction-mode / PgBouncer) string for the app; `DATABASE_URL_DIRECT` = the **direct/session** string — `scripts/migrate.py` must use the direct one (DDL under a transaction pooler is unsafe; `app/db/session.py` docstring). Pooled connections need `create_pool(..., statement_cache_size=0)`. |
 | quota/billing | Supabase project on a plan that allows the connection count the worker + API need; pgvector extension enabled (migration 01 requires `pgvector/pgvector:pg15`, not stock `postgres:15`). |
-| region / retention | choose the Supabase region for your data-residency policy; the procedure corpus is treated as StealthLab-internal content. |
+| region / retention | choose the Supabase region for your data-residency policy; the procedure corpus is treated as kell-internal content. |
 
 ---
 
@@ -49,7 +49,7 @@ never a runtime fallback chain.
 | **billing / quota — ACTION REQUIRED** | the current key is on the **free tier without a payment method**: **3 RPM / 10 000 TPM**, plus 200 M free series-3 tokens. That rate limit makes both the initial ~2 478-doc migration and ongoing ingestion writes impractical. **Add a payment method at `https://dashboard.voyageai.com/`** for the org that owns this key to unlock standard rate limits. The 200 M free tokens still apply. |
 | model pin | `voyage-3-large`, 1024-dim (matches `VECTOR(1024)` / `embedding_dimension`). |
 | endpoint / region | Voyage is single-region SaaS; no region control. |
-| data-use / retention policy | confirm Voyage's data-use terms are acceptable for StealthLab-internal procedure text before enabling in production. StealthLab has **no code-level provider-policy gate** on the embedding path (see §6) — approval is a manual/contractual decision. |
+| data-use / retention policy | confirm Voyage's data-use terms are acceptable for kell-internal procedure text before enabling in production. kell has **no code-level provider-policy gate** on the embedding path (see §6) — approval is a manual/contractual decision. |
 
 ### 2b. If the selected model is **Gemini** (`gemini-embedding-001`)
 
@@ -134,7 +134,7 @@ is sent to an external embedding or LLM provider. Current mitigations:
 
 **Action for Chaitanya:** make an explicit, recorded decision that the
 selected embedding provider and General Compute are approved to receive
-StealthLab procedure text (including any private procedures). If private
+kell procedure text (including any private procedures). If private
 procedures must be excluded, that gate has to be built before enabling
 `PRIVATE_VISIBILITY_ENABLED` — it is out of scope for this closure and is
 listed as a release risk.

@@ -3,7 +3,7 @@
 // `install --with-exec`. This is the package's first LOCAL runtime component: it runs other coding
 // agents that the user installed, with the user's own logins and keys, inside disposable git worktrees.
 // It never proxies, pools or relays anyone's session or key: adapters are spawned as local processes
-// only, and the only network egress is the user's own hosted StealthLab endpoint (recommend_models,
+// only, and the only network egress is the user's own hosted kell endpoint (recommend_models,
 // report_model_run -- see hosted.mjs).
 //
 // Every tool returns in well under 2 s except run_result with wait_s (capped at 55 s so MCP clients
@@ -19,7 +19,7 @@ const str = (description) => ({ type: "string", description });
 export const TOOLS = [
   {
     name: "list_executors",
-    description: "List the local coding agents StealthLab can drive as executors: installed?, version, whether " +
+    description: "List the local coding agents kell can drive as executors: installed?, version, whether " +
       "their headless flags were verified, health, and the models configured for each in ~/.stealthlab/exec.json.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
@@ -37,8 +37,8 @@ export const TOOLS = [
         task: str("<= 2,000 chars: the objective + the NODE/STEP lines + claim lines."),
         checks: { type: "array", items: { type: "string" }, description: "Shell commands run in the worktree; each must exit 0. Defaults to the NODE lines' check= fields." },
         scope: { type: "array", items: { type: "string" }, description: "Globs (repo-relative, anchored) the run may modify." },
-        goal_id: str("StealthLab Goal id (enables recommend_models and evidence)."),
-        procedure_id: str("StealthLab Procedure id."),
+        goal_id: str("kell Goal id (enables recommend_models and evidence)."),
+        procedure_id: str("kell Procedure id."),
         instance_key: str("The model plan's instance_key (find_ways model_plan), when this run is one of its steps: each " +
           "attempt is reported with report_result, and escalate follows the plan's next model."),
         step_order: { type: "integer", description: "The Procedure step this node runs." },

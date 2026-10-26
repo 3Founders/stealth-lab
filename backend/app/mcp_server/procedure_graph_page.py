@@ -18,7 +18,7 @@ PROCEDURE_GRAPH_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>StealthLab — procedure & task graph</title>
+<title>kell — procedure & task graph</title>
 <style>
   :root{
     --bg:#0d0f14; --panel:#151922; --line:#232936; --ink:#e7ebf3; --muted:#8b93a7;
@@ -86,7 +86,7 @@ PROCEDURE_GRAPH_HTML = r"""<!doctype html>
 <div id="loading">loading procedure graph…</div>
 
 <div class="bar">
-  <span class="brand">StealthLab · procedures &amp; tasks</span>
+  <span class="brand">kell · procedures &amp; tasks</span>
   <input id="q" type="search" placeholder="filter name / goal…" size="18">
   <select id="group" title="colour procedures by">
     <option value="verification">colour: verification</option>

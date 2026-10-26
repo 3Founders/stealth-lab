@@ -1,5 +1,5 @@
-// The spend ledger (<StealthLab home>/dispatch_costs.jsonl): one line per model call StealthLab makes besides the cheap
-// tries themselves -- the brief, the locate model, the reviewers, the survey's fill. Anyone totalling what StealthLab
+// The spend ledger (<kell home>/dispatch_costs.jsonl): one line per model call kell makes besides the cheap
+// tries themselves -- the brief, the locate model, the reviewers, the survey's fill. Anyone totalling what kell
 // cost reads this file (experiments/abtest/runner.py counts its lines in a task's time window). Before 2026-10-17 only
 // the brief wrote here, so the Opus reviews, the locate model and the survey fill were missing from arm C's cost.
 import fs from "node:fs";

@@ -179,7 +179,7 @@ credit-assignment research (TRIAL/EFCA) wants fed into it.
 A separate editable install at `vendor/tau2-bench` (Python 3.13) drives the
 substrate through retrieval variants: `resolve_variant()` → `build_tools()`
 composes base banking tools with retrieval MixIns into one toolkit per
-simulation thread. The StealthLab bridge crosses the sync/async boundary with
+simulation thread. The kell bridge crosses the sync/async boundary with
 `asyncio.run()` per call over a bare asyncpg connection; `SubstrateSessionMixin`
 overrides `use_tool()` (the toolkit's single dispatch point) to feed a
 mechanical step-tracker, and enum values are extracted from the domain's own

@@ -4,7 +4,7 @@
 
 This list is derived from what's actually referenced in `backend/requirements.txt`,
 `backend/.env.example`, and related config as of 2026-09-09 — not from a claimed vendor
-relationship. **We do not assert that any provider below has a signed DPA/SCC with StealthLab
+relationship. **We do not assert that any provider below has a signed DPA/SCC with kell
 unless a founder/counsel confirms that separately** — the codebase cannot prove a contract exists.
 
 ## Currently configured / in active use
@@ -43,7 +43,7 @@ code, not your infrastructure/hosting arrangement.]**
 - **Data residency/region** for each provider — not configured explicitly anywhere reviewed;
   default provider regions apply unless stated otherwise in a provider-specific config not found
   here.
-- **Retention at the provider** — governed by each provider's own terms, not StealthLab's.
+- **Retention at the provider** — governed by each provider's own terms, not kell's.
 
 Per `STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` LC-005, a formal provider/model policy registry
 (with region, retention, training-use, subprocessor, and DPA fields, plus a `can_send()` decision

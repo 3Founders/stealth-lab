@@ -13,7 +13,7 @@ test("a dispatch is remembered and said once, in the agreed words", () => {
   const env = { STEALTHLAB_HOME: home() };
   assert.deepEqual(pendingLines("s1", { env }), []);
   assert.equal(recordDispatch({ sessionId: "s1", model: "gemma-4-31b-it", files: ["calc.py"], task: "Fix the calc constant" }, { env }), true);
-  assert.deepEqual(pendingLines("s1", { env }), ["Earlier in this session, gemma-4-31b-it changed calc.py to Fix the calc constant (StealthLab, check passed)."]);
+  assert.deepEqual(pendingLines("s1", { env }), ["Earlier in this session, gemma-4-31b-it changed calc.py to Fix the calc constant (kell, check passed)."]);
   markShown("s1", { env });
   assert.deepEqual(pendingLines("s1", { env }), []);
 });
@@ -32,7 +32,7 @@ test("one line per dispatch, the last 5 kept, per session", () => {
 test("many files are shortened, a long or multi-line task is one short line", () => {
   const files = Array.from({ length: 8 }, (_, i) => `a${i}.py`);
   const line = continuityLine({ model: "m", files, task: "x".repeat(400) });
-  assert.match(line, /a0\.py, a1\.py, a2\.py, a3\.py, a4\.py and 3 more to x+\.\.\. \(StealthLab, check passed\)\.$/);
+  assert.match(line, /a0\.py, a1\.py, a2\.py, a3\.py, a4\.py and 3 more to x+\.\.\. \(kell, check passed\)\.$/);
   assert.ok(!line.includes("\n"));
   assert.match(continuityLine({ model: "m", files: [], task: "line one\n  line two" }), /changed no files to line one line two \(/);
 });
@@ -79,7 +79,7 @@ test("hook: a blocked (dispatched) prompt is remembered; the NEXT prompt's conte
 
   const second = await prompt(env, { text: "now add a DOCX export to the report page please", dispatchImpl: async () => null });
   const ctx = second[0].hookSpecificOutput.additionalContext;
-  assert.ok(ctx.startsWith("Earlier in this session, gemma-4-31b-it changed calc.py to fix the constant in calc.py so that it returns 2 please (StealthLab, check passed)."), ctx);
+  assert.ok(ctx.startsWith("Earlier in this session, gemma-4-31b-it changed calc.py to fix the constant in calc.py so that it returns 2 please (kell, check passed)."), ctx);
   assert.match(ctx, /Export DOCX/);                       // the lookup's own knowledge follows
 
   const third = await prompt(env, { text: "and add a PDF export to the report page too please", dispatchImpl: async () => null });

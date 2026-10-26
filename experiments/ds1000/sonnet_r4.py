@@ -39,7 +39,7 @@ CLI = demo_env.HERE / "kel_cli.py"
 
 RULES = """Rules for every task (the same rules the other models run under):
 - Work only inside that task's workspace directory. Use Read, Write, Edit, Glob and Grep.
-- Do NOT run Python or any other code, and do not use Bash for anything except the StealthLab command below
+- Do NOT run Python or any other code, and do not use Bash for anything except the kell command below
   (when it is offered). No web access.
 - At most 20 tool calls per task.
 - Treat every task independently: do not reuse anything from another task in this batch.
@@ -54,21 +54,21 @@ AG_HEAD = ("You are an expert Python data scientist. Solve each DS-1000 task bel
 
 
 def kel_tools(ws: str) -> str:
-    return (f"StealthLab's MCP tools are available as commands (run them with Bash; this is the ONLY allowed use "
+    return (f"kell's MCP tools are available as commands (run them with Bash; this is the ONLY allowed use "
             f"of Bash):\n"
             f"- find_ways: `\"{PY}\" \"{CLI}\" find_ways --ws \"{ws}\" --query \"<what you want done>\" "
             f"--claims @.kell/claims.md`\n"
             f"- read_procedure_claims (the resource stealth://procedures/<id>/claims): "
             f"`\"{PY}\" \"{CLI}\" read_procedure_claims --ws \"{ws}\" --id <procedure_id>`\n"
-            f"Each StealthLab call counts as one tool call.")
+            f"Each kell call counts as one tool call.")
 
 
 def kp_head() -> str:
     from app.mcp_server.server import _V1_INSTRUCTIONS
 
     return ("You are an expert Python data scientist working through tasks in Claude Code.\n\n"
-            "Connected MCP server: StealthLab (Kel). Its instructions:\n" + _V1_INSTRUCTIONS + "\n\n"
-            "For EACH task below, the user invokes StealthLab's plan_and_run prompt with that task; the prompt is:\n\n"
+            "Connected MCP server: kell (Kel). Its instructions:\n" + _V1_INSTRUCTIONS + "\n\n"
+            "For EACH task below, the user invokes kell's plan_and_run prompt with that task; the prompt is:\n\n"
             + kpa.task_prompt("the problem in this workspace's TASK.md", KP_ADAPTATIONS) + "\n\n")
 
 

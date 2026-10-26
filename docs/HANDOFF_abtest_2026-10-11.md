@@ -1,4 +1,4 @@
-# Handoff: StealthLab A-vs-C product test and product state (2026-10-11, 15:30 UTC)
+# Handoff: kell A-vs-C product test and product state (2026-10-11, 15:30 UTC)
 
 For Chaitanya (or anyone resuming). Everything needed to continue from this exact state: what was measured,
 what the product does now, what is queued, and verbatim steps to resume. Older context:
@@ -11,7 +11,7 @@ what the product does now, what is queued, and verbatim steps to resume. Older c
 
 ## 1. TL;DR
 
-- **The test:** arm A is plain Claude Code on Opus 5.5. Arm C is the same Claude Code with StealthLab installed
+- **The test:** arm A is plain Claude Code on Opus 5.5. Arm C is the same Claude Code with kell installed
   the product way (`kell install --with-exec`, hooks only). Correctness is graded on each task's full
   hidden tests; the agent and dispatch only ever see the visible ones.
 - **Phase 1** (130 tasks, 5 suites; this is the main result): C costs **38% less** than A and solved **114/128
@@ -127,7 +127,7 @@ Claude Code, `kell install --with-exec`, without the global library.
 
 1. `kell install --with-exec` does three things:
    - saves the server URL and token, plus `dispatch: true`, in `~/.stealthlab/config.json`;
-   - removes the StealthLab MCP registration (hooks-only mode; `--keep-mcp` is queued, not built);
+   - removes the kell MCP registration (hooks-only mode; `--keep-mcp` is queued, not built);
    - writes three hooks into Claude Code's `settings.json`: UserPromptSubmit (`hook-prompt`), PostToolUse on
      Bash|PowerShell (`capture-tool`), and Stop (`capture-stop`).
 2. `~/.stealthlab/exec.json` lists the cheap models (gemma-4-31b-it, gpt-oss-120b, minimax-m2-7 on General Compute)
@@ -320,7 +320,7 @@ Each item needs the owner's go-ahead.
 1. **Find the check automatically:** pytest config or test files, `npm test` (not the placeholder), vitest/jest,
    `dbt build`, `go test`, `cargo test`. Without this, real users rarely get dispatch.
 2. **Hooks-only gaps:**
-   - a CLAUDE.md StealthLab block (record fixes, attach to existing entries, finish the survey worklist, use the
+   - a CLAUDE.md kell block (record fixes, attach to existing entries, finish the survey worklist, use the
      new `kell find` command for sub-tasks);
    - an automatic first survey (background, once per repo);
    - an automatic library tidy (exact duplicates);
@@ -348,8 +348,8 @@ Each item needs the owner's go-ahead.
 2. **Request type:** code task / question / chat, plus clarity, size and checkability. Only clear, checkable,
    bounded tasks are dispatched.
 3. **Unclear request:** no dispatch; Opus may ask the user.
-4. **Continuity:** a per-session log of StealthLab's actions, carried into follow-ups (fix 3 is the first step).
-5. **Overrides:** `!opus` skips StealthLab; `!cheap` forces a try.
+4. **Continuity:** a per-session log of kell's actions, carried into follow-ups (fix 3 is the first step).
+5. **Overrides:** `!opus` skips kell; `!cheap` forces a try.
 
 **B. Long, real repositories**
 
@@ -458,7 +458,7 @@ not run it). What "done" means for each:
   a prompt. Tidy removes exact duplicates only. `--keep-mcp` keeps the MCP servers alongside the hooks.
 - 6.1 #3 continuity: after a dispatched (blocked) prompt, the NEXT prompt's hook context carries one line per
   earlier dispatch in this session: "Earlier in this session, <model> changed <files> to <one-line task>
-  (StealthLab, check passed)". Kept in a per-session file under the StealthLab home; at most the last 5 lines.
+  (kell, check passed)". Kept in a per-session file under the kell home; at most the last 5 lines.
 - 6.2 A1 task brief: a cheap model (gpt-oss-120b via the existing stealth executor's provider, NOT a Claude model)
   turns the last <=6 turns of `transcript_path` plus the prompt into a brief: {task, files_hinted, acceptance,
   parts[], clarity: clear|unclear, kind: code|question|chat, size: small|medium|large}. Budget: <=3 s typical,
@@ -466,7 +466,7 @@ not run it). What "done" means for each:
   prompt, goes to the cheap models and to the test writer.
 - 6.2 A2/A3: dispatch only if kind=code AND clarity=clear AND size!=large AND a check exists; otherwise no
   dispatch (the session model handles it, as in arm A). Never ask the user anything from the hook.
-- 6.2 A5 overrides: a prompt starting with `!opus` skips StealthLab entirely (the prefix is stripped from what the
+- 6.2 A5 overrides: a prompt starting with `!opus` skips kell entirely (the prefix is stripped from what the
   session sees); `!cheap` forces a dispatch attempt even if routing would skip.
 - 6.2 C1-C4: before applying a cheap answer, record an undo point (a git stash-like ref, NOT a commit on the user's
   branch); `kell undo` restores it. If any file the answer touches changed in the user's tree during the

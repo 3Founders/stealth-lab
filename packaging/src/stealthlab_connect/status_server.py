@@ -355,7 +355,7 @@ def create_status_app(
                 if hasattr(result, "__await__"):
                     await result
 
-    app = FastAPI(title="StealthLab Status", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="kell Status", version="0.1.0", lifespan=lifespan)
 
     # Same identity gate as app/main.py: pass-through while OIDC is
     # unconfigured, validated-actor propagation when it is.

@@ -1,9 +1,9 @@
-# StealthLab Terms of Service
+# kell Terms of Service
 
 **STATUS: DRAFT — REQUIRES LEGAL REVIEW. NOT YET PUBLISHED OR IN EFFECT.**
 
 This draft was generated from the current codebase (backend + `frontendv1`) as of 2026-09-09,
-to describe what StealthLab actually does today. It is not legal advice and must be reviewed by
+to describe what kell actually does today. It is not legal advice and must be reviewed by
 qualified counsel before it is shown to a real user or given contractual effect. Every bracketed
 placeholder (e.g. `[LEGAL ENTITY NAME]`) must be filled in by the founder(s)/counsel — do not
 invent these values.
@@ -12,15 +12,15 @@ invent these values.
 
 ## 1. Who this agreement is with
 
-These Terms are between you and **[LEGAL ENTITY NAME]** ("StealthLab," "we," "us"), a
+These Terms are between you and **[LEGAL ENTITY NAME]** ("kell," "we," "us"), a
 **[LEGAL ENTITY TYPE, e.g. corporation]** organized in **[JURISDICTION]**. By creating an account
-or using StealthLab, you agree to these Terms and to our
+or using kell, you agree to these Terms and to our
 [Privacy Policy](./PRIVACY_POLICY.md), [Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md), and
 [Global Commons Terms](./GLOBAL_COMMONS_TERMS.md), each incorporated by reference.
 
-## 2. What StealthLab is
+## 2. What kell is
 
-StealthLab is a system for capturing, verifying, and sharing "procedures" — step-by-step
+kell is a system for capturing, verifying, and sharing "procedures" — step-by-step
 instructions an AI coding agent (or a person) can follow to accomplish a task — along with
 execution evidence, provenance, and (optionally) publishing them to a shared public library
 called the **Global Commons**. As implemented today, this includes:
@@ -43,7 +43,7 @@ limitations" for why this matters.]**
 
 ## 3. Eligibility and accounts
 
-- You must be able to form a binding contract in your jurisdiction to use StealthLab.
+- You must be able to form a binding contract in your jurisdiction to use kell.
 - Sign-in is via Supabase Auth (email/password or Google OAuth) — see
   `frontendv1/src/lib/auth.ts` and `frontendv1/src/app/auth/page.tsx`.
 - You are responsible for safeguarding your account credentials and for all activity under your
@@ -61,7 +61,7 @@ submit, whether private or published to the Global Commons.
   `backend/app/services/access.py` and `backend/app/services/publish.py` for the enforcement
   mechanism.
 - **You keep ownership** of Your Content, subject to the licenses you grant below.
-- **License to operate the service:** you grant StealthLab a worldwide, non-exclusive,
+- **License to operate the service:** you grant kell a worldwide, non-exclusive,
   royalty-free license to host, store, process, and display Your Content solely to operate,
   secure, and improve the service for you (and, for published content, for other users — see
   §6).
@@ -73,7 +73,7 @@ submit, whether private or published to the Global Commons.
 
 You agree to the [Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md), which prohibits, among
 other things, submitting credential-theft, exfiltration, destructive, or malware-shaped
-procedures. StealthLab runs automated admission screening on internet-sourced content before it
+procedures. kell runs automated admission screening on internet-sourced content before it
 becomes visible (`app/services/ingestion_admission.py`), but **this screening is not a
 guarantee** — see §9 and the Acceptable Use Policy for its actual scope and limits.
 
@@ -89,7 +89,7 @@ anything.
 
 ## 7. Candidate vs. Verified — no guarantee of correctness
 
-StealthLab distinguishes procedures that are merely proposed ("Global Candidate") from those with
+kell distinguishes procedures that are merely proposed ("Global Candidate") from those with
 independent supporting execution evidence ("Global Verified"). See the
 [Verification Disclaimer](./VERIFICATION_DISCLAIMER.md) for what that distinction actually means
 and does not mean. **Neither status is a warranty.** Following any procedure — Candidate or
@@ -98,10 +98,10 @@ production-affecting actions.
 
 ## 8. Third-party services
 
-StealthLab's backend calls third-party AI/model providers (for embeddings, model calls, and
+kell's backend calls third-party AI/model providers (for embeddings, model calls, and
 optional debate/verification panels) and, if configured, a third-party observability provider.
 See [Subprocessors](./SUBPROCESSORS.md) for the current list. Your interactions that flow through
-these providers are also subject to those providers' own terms, which StealthLab does not
+these providers are also subject to those providers' own terms, which kell does not
 control.
 
 ## 9. Disclaimers
@@ -110,7 +110,7 @@ STEALTHLAB IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIN
 IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
 Automated safety screening (admission gate), automated behavioral verification, and any
 "Verified" status are **best-effort technical checks, not guarantees** — they can miss real
-issues and can be wrong. StealthLab does not guarantee that any procedure, whether Candidate or
+issues and can be wrong. kell does not guarantee that any procedure, whether Candidate or
 Verified, is safe, correct, current, or fit for your environment. You are solely responsible for
 reviewing any procedure before executing it, especially in production or security-sensitive
 contexts.

@@ -6,7 +6,7 @@ Date: 2026-08-24 · Method: websearch (market/vendor/pain) + arXiv API (credibil
 
 ## 1. Context
 
-StealthLab MCP releases an "earned memory" layer for coding agents: ingest traces → distill evidence-backed procedures → refuse stale reuse provably. The monitoring ask ("Sentry-level tracking of agentic failures") needs (a) a vendor map of who already plays here, (b) how their architecture works, (c) the legal/ethical rules of the telemetry road, (d) the research that de-risks our classifier/attribution design.
+kell MCP releases an "earned memory" layer for coding agents: ingest traces → distill evidence-backed procedures → refuse stale reuse provably. The monitoring ask ("Sentry-level tracking of agentic failures") needs (a) a vendor map of who already plays here, (b) how their architecture works, (c) the legal/ethical rules of the telemetry road, (d) the research that de-risks our classifier/attribution design.
 
 ## 2. Vendor landscape (the space is real, funded, consolidating)
 
@@ -73,7 +73,7 @@ Settled norms (Go's transparent-telemetry saga ended opt-IN Feb 2023; LF best-pr
 | **FORGE'26 16-class taxonomy** (earlier wave) | Fine-grained reasoning-failure labels for classifier v1. |
 | **Veracium** (earlier wave) | Provenance-typed graphs win long-horizon recall + injection resistance → provenance fields are also a *security* control, not just bookkeeping. |
 
-## 7. Design implications — StealthLab failure-telemetry v1
+## 7. Design implications — kell failure-telemetry v1
 
 ```
 capture:   MCPServer middleware wraps every tool call → immutable Event rows

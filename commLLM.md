@@ -1,8 +1,8 @@
-# commLLM.md — Consolidated Reference: Verified Procedural Experience System (StealthLab)
+# commLLM.md — Consolidated Reference: Verified Procedural Experience System (kell)
 
 Last updated: 2026-09-02 · Companion to: `verified_procedural_experience_system_ideal_specification_v4.md`, `ARCHITECTURE.md`, `Exec.md`
 
-> Provenance note: the 2026-08-23 QuantAsm↔StealthLab session summary that
+> Provenance note: the 2026-08-23 QuantAsm↔kell session summary that
 > formerly filled this file now lives at
 > `.scratch/archive/quantasm-integration-session-2026-08-23.md`. Its Week-1
 > "backfill runs/*.jsonl" step is superseded by ROADMAP's fresh-start

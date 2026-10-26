@@ -6,7 +6,7 @@ or has not been run against the real thing. Nothing here is a measured result, a
 
 ## 1. The idea in one paragraph
 
-StealthLab is a verified procedural memory for AI agents. The MCP server is the door agents use. The new goal: let a
+kell is a verified procedural memory for AI agents. The MCP server is the door agents use. The new goal: let a
 company's developers keep using Cursor and Claude Code, while the MCP (a) gives them proven, evidence-backed procedures
 and (b) routes the work that does not need a frontier model to cheaper open models, under the company's own policy and
 budget, with every step recorded. The saving comes from routing and from giving small models the right context. It is a

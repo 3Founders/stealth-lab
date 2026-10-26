@@ -1,5 +1,5 @@
 """
-MCP Resources for StealthLab -- canonical, read-only, id-addressable
+MCP Resources for kell -- canonical, read-only, id-addressable
 knowledge objects.
 
 WHY THIS EXISTS

@@ -1,4 +1,4 @@
-// For the pipeline survey (pipeline_survey.py): StealthLab's locate on one checked-out repository and one issue text --
+// For the pipeline survey (pipeline_survey.py): kell's locate on one checked-out repository and one issue text --
 // the search alone, and (SURVEY_NARROW=1) the search narrowed by a cheap model (lib/locate_model.mjs).
 // argv: <root> <file with the prompt>; prints {search: {...}, narrowed: {...} | null}.
 import fs from "node:fs";

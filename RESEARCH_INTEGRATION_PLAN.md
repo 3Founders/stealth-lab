@@ -1,4 +1,4 @@
-# Research Integration Plan — Papers → StealthLab
+# Research Integration Plan — Papers → kell
 
 Compiled Aug 23, 2026. Workflow: websearch (market/vendor/pain-point) + arXiv/S2/OpenAlex via webfetch → this synthesis.
 Thesis: nobody has combined **verified procedural memory** + **layered world models** + **memory-aware RL credit assignment** — the pieces published separately within the last 60 days. Assembling them is product roadmap, paper, and moat at once.

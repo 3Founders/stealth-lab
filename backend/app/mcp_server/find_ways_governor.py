@@ -7,7 +7,7 @@ does, this keeps the server in control -- per caller (MCP session, else viewer),
 * cache       -- an identical request (same query, same repo facts) within the window is answered from
                  the earlier reply instantly, marked `governor: {"cached": true}`;
 * loop breaker -- the same request more than `identical_limit` times in the window is refused with an
-                 instruction to proceed without StealthLab;
+                 instruction to proceed without kell;
 * budget      -- more than `max_calls` requests in the window are refused until the window frees up;
 * minimum size -- a request under `min_words` words is answered "handle this yourself" (a fast, cheap
                  refusal beats a wasted judge round-trip).
@@ -90,7 +90,7 @@ class FindWaysGovernor:
                 return Decision("refuse", self._refusal(
                     "repeated_request", f"the same request {len(same)} times in {self.window_s}s",
                     "You already have this answer. Do not call find_ways again for it: proceed with what it "
-                    "returned, or without StealthLab."), key)
+                    "returned, or without kell."), key)
             hit = c.cache.get(key)
             if hit is not None and hit[0] >= cutoff:
                 same.append(now)

@@ -187,7 +187,7 @@ export function scrubEnv(env = process.env) {
   return out;
 }
 
-// The environment for a `claude` process StealthLab starts itself (the test writer, an audit, the page judge, the claude
+// The environment for a `claude` process kell starts itself (the test writer, an audit, the page judge, the claude
 // executor). Claude Code removes CLAUDE_CODE_OAUTH_TOKEN from the environment of the hooks it runs, so where the login IS
 // that token (a container, CI, a server: no login stored in ~/.claude) the child started from a hook had none -- "Not
 // logged in", no test-first tests, every cheap answer rejected (Modal run, 2026-10-15). The same token under

@@ -525,7 +525,7 @@ class LocalAgentRunner:
         by name.
 
         experimental_no_retrieval: EXPERIMENTAL-ONLY (Gate 3 A/B arm A),
-        default False. When True, StealthLab procedure retrieval is
+        default False. When True, kell procedure retrieval is
         bypassed ENTIRELY -- no local search, no remote search_procedures
         call, no match -- and the task routes straight into the EXISTING
         ad-hoc execution machinery below (the same single-step path a
@@ -583,7 +583,7 @@ class LocalAgentRunner:
                 # point -- it is created by _execute_steps below -- so the
                 # marker is appended there.)
                 no_retrieval_note = (
-                    "EXPERIMENTAL NO-RETRIEVAL ARM: StealthLab procedure "
+                    "EXPERIMENTAL NO-RETRIEVAL ARM: kell procedure "
                     "retrieval bypassed by explicit caller request.")
             else:
                 # P5 decouple: GLOBAL-only retrieval via the MCP tool

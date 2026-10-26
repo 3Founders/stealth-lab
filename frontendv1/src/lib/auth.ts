@@ -1,7 +1,7 @@
 /**
  * Frontend identity, backed by Supabase Auth (launch compliance Phase 1).
  *
- * Supabase issues the session; the StealthLab backend is the only token
+ * Supabase issues the session; the kell backend is the only token
  * validator — it verifies "Authorization: Bearer <access_token>" against the
  * project's JWKS (app/services/authn.py, ES256/RS256). The access token is
  * kept in a module variable, refreshed transparently by supabase-js and

@@ -1,14 +1,14 @@
-# StealthLab Launch Compliance Specification V1
+# kell Launch Compliance Specification V1
 
 **Date:** 2026-09-08  
-**Product:** StealthLab  
+**Product:** kell  
 **Repo:** `3Founders/stealth-lab`
 
 > Engineering/compliance specification, not legal advice. Counsel must review final legal documents and jurisdictional applicability.
 
 ## 0. Product decision: Global Commons is a launch feature
 
-StealthLab **will let users explicitly publish procedures, implementations, claims, and related knowledge into the Global Commons at launch.** This is not a post-release feature.
+kell **will let users explicitly publish procedures, implementations, claims, and related knowledge into the Global Commons at launch.** This is not a post-release feature.
 
 Canonical flow:
 
@@ -114,7 +114,7 @@ Provide a machine-readable export workflow for account/profile, private procedur
 ### LC-008 — Privacy/Data UI
 
 Settings → Privacy & Data:
-- What StealthLab stores
+- What kell stores
 - Export my data
 - Delete my data
 - Connected repositories / disconnect
@@ -135,7 +135,7 @@ At minimum: repository connected/disconnected; private object created/deleted; p
 
 ### LC-012 — Source/license gate
 
-Public-source-derived global objects retain source URL, retrieval time, content hash, publisher/author where known, publication date, license, license source, attribution requirements, provenance, and derivation method. Keep separate states for source fact, extracted claim, StealthLab interpretation, and verified procedure.
+Public-source-derived global objects retain source URL, retrieval time, content hash, publisher/author where known, publication date, license, license source, attribution requirements, provenance, and derivation method. Keep separate states for source fact, extracted claim, kell interpretation, and verified procedure.
 
 ## 4. Security requirements
 
@@ -171,7 +171,7 @@ Engineering: data inventory/RoPA, DPA/subprocessor register, access/export/delet
 
 ### EU — AI Act
 
-Article 50 transparency obligations apply from 2 August 2026. Do not label every AI-generated artifact identically. Map each StealthLab feature to the actual applicable Article 50 obligation and document the decision.
+Article 50 transparency obligations apply from 2 August 2026. Do not label every AI-generated artifact identically. Map each kell feature to the actual applicable Article 50 obligation and document the decision.
 
 ### UK
 

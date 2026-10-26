@@ -78,7 +78,7 @@ confound in trial isolation).
    for a fundamentally multi-agent technique -- see T4's own confound note)
    and defer-tool-schema-loading-until-needed (this procedure's own
    admission record already carries the caveat that it was measured on a
-   proxy system, not StealthLab's own MCP surface -- no strong reason to
+   proxy system, not kell's own MCP surface -- no strong reason to
    expect it changes THIS agent's behavior at all, since nothing in this
    experiment's own tool-calling setup varies whether tool schemas are
    deferred).

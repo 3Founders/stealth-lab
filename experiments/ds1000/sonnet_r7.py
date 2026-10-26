@@ -8,7 +8,7 @@ As round 4's Sonnet arms (sonnet_r4.py): batches of 6 tasks from 6 different fam
 models' loop, as instructions (no code execution, 20 tool calls per task, answer in solution.py); tokens are the
 batch's reported total split over its tasks.
 * AG7: round 4's AG prompt, unchanged.
-* KH7: what Claude Code shows the model when StealthLab is installed with the hook -- the MCP server instructions,
+* KH7: what Claude Code shows the model when kell is installed with the hook -- the MCP server instructions,
   Kel's tools (find_ways, read_procedure_claims) as a command, .kell/claims.md (Sonnet's round-4 survey), and
   for each task the hook's own text: find_ways run on the task BEFORE the agent starts (round 5's settings:
   related examples, suggested candidate, governor), formatted by packaging/npm/lib/hook.mjs. No plan_and_run.
@@ -48,7 +48,7 @@ ARMS = ("AG7", "KH7")
 # Round 4's Sonnet rules and AG header, verbatim (sonnet_r4.py; not imported: that module fixes runs4 on import).
 RULES = """Rules for every task (the same rules the other models run under):
 - Work only inside that task's workspace directory. Use Read, Write, Edit, Glob and Grep.
-- Do NOT run Python or any other code, and do not use Bash for anything except the StealthLab command below
+- Do NOT run Python or any other code, and do not use Bash for anything except the kell command below
   (when it is offered). No web access.
 - At most 20 tool calls per task.
 - Treat every task independently: do not reuse anything from another task in this batch.
@@ -66,20 +66,20 @@ def kh_head() -> str:
 
     return ("You are an expert Python data scientist working through tasks in Claude Code. Each task has its own "
             "workspace, and TASK.md in it holds the problem together with its setup code.\n\n"
-            "Connected MCP server: StealthLab (Kel). Its instructions:\n" + _V1_INSTRUCTIONS + "\n\n"
-            "For EACH task below, the user's message is the problem in that workspace's TASK.md. StealthLab's "
+            "Connected MCP server: kell (Kel). Its instructions:\n" + _V1_INSTRUCTIONS + "\n\n"
+            "For EACH task below, the user's message is the problem in that workspace's TASK.md. kell's "
             "UserPromptSubmit hook ran on it before you started; what it added to the user's message is shown "
             "under the task.\n\n")
 
 
 def kel_tools(ws: str) -> str:
-    return (f"StealthLab's MCP tools are available as commands (run them with Bash; this is the ONLY allowed use "
+    return (f"kell's MCP tools are available as commands (run them with Bash; this is the ONLY allowed use "
             f"of Bash):\n"
             f"- find_ways: `KEL_CLI_ROUND=7 \"{PY}\" \"{CLI}\" find_ways --ws \"{ws}\" --query \"<what you want done>\" "
             f"--claims @.kell/claims.md`\n"
             f"- read_procedure_claims (the resource stealth://procedures/<id>/claims): "
             f"`KEL_CLI_ROUND=7 \"{PY}\" \"{CLI}\" read_procedure_claims --ws \"{ws}\" --id <procedure_id>`\n"
-            f"Each StealthLab call counts as one tool call.")
+            f"Each kell call counts as one tool call.")
 
 
 def workspace(arm: str, pid: str, claims: str | None) -> str:
@@ -150,8 +150,8 @@ def prepare() -> None:
                 if arm == "KH7":
                     text = hooks[pid]["text"]
                     section += kel_tools(ws) + "\n\n" + (
-                        f"What the StealthLab hook added to the user's message for this task:\n\n{text}\n"
-                        if text else "(The StealthLab hook found nothing to add for this task.)\n")
+                        f"What the kell hook added to the user's message for this task:\n\n{text}\n"
+                        if text else "(The kell hook found nothing to add for this task.)\n")
                 parts.append(section)
             parts.append("When every task's solution.py is written, reply with one line per task: "
                          "`<task> done` or `<task> no answer`.")

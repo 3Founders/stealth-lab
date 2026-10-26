@@ -1,9 +1,9 @@
-# StealthLab: from the current state to the first real ingestion
+# kell: from the current state to the first real ingestion
 
 > **Automated path:** most of this document is now scripted by `stealth-ops` — see [OPERATIONS_AUTOMATION.md](OPERATIONS_AUTOMATION.md). This file remains the manual reference for what each step does.
 
 This is the whole path, in order: accounts → Neon databases → keys → environment → migrations → shards → smoke test →
-workers → bulk ingestion → monitoring. Every StealthLab command below exists in this repo (run from `backend/` unless noted).
+workers → bulk ingestion → monitoring. Every kell command below exists in this repo (run from `backend/` unless noted).
 The Neon, Cloudflare, Google Cloud and GitHub click-paths are written from general knowledge of those products; their
 dashboards change, so treat the *setting names* as what to look for, not exact menu positions.
 
@@ -129,7 +129,7 @@ store in production. **Never commit a connection string.**
 
 ## 3. Provider keys
 
-| Provider | What StealthLab uses it for | Where to get it | Env var |
+| Provider | What kell uses it for | Where to get it | Env var |
 |---|---|---|---|
 | Google Gemini | embeddings (`gemini-embedding-001`, first in `EMBEDDING_PROVIDER_CHAIN=gemini,voyage`) and semantic judge fallback | aistudio.google.com → *Get API key* | `GEMINI_API_KEY` (or several: `GEMINI_API_KEYS=k1,k2,…` to spread rate limits) |
 | Voyage AI | embeddings fallback (`voyage-3-large`) | dash.voyageai.com → *API keys* | `VOYAGE_API_KEY` |

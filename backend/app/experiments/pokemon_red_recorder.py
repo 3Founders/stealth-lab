@@ -7,7 +7,7 @@ infrastructure, not a product feature -- intentionally small:
     under experiments/pokemon-red/runs/: a JSON summary record and a
     JSONL chronological event log, plus one derived, always-rewritable
     experiments/pokemon-red/results/summary.csv.
-  - This module does NOT touch StealthLab's event/trace/episode
+  - This module does NOT touch kell's event/trace/episode
     infrastructure (app/execution/recorder.py) -- that facade is
     Postgres/asyncpg-backed and durable-run-scoped by design; forcing a
     filesystem-only, no-DB experiment harness through it would mean

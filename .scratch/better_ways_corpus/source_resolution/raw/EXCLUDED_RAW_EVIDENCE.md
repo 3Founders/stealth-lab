@@ -44,9 +44,9 @@ pattern* the family's seeds describe (advertise tool names only up front, load
 a full schema only on demand) using this session's own Claude Code harness
 deferred-tool mechanism (`ToolSearch`) as a real, directly-measurable instance
 of that pattern — explicitly disclosed in `candidates.jsonl` as `"artifact":
-"StealthLab's own deferred/searchable-tool mechanism (native -- this session's
+"kell's own deferred/searchable-tool mechanism (native -- this session's
 own tool list is the evidence, not a third-party artifact)"`. It is not a
-measurement of StealthLab's own MCP tool-schema surface specifically. The
+measurement of kell's own MCP tool-schema surface specifically. The
 numbers themselves (67.5x reduction, per-tool token counts) are preserved in
 `candidates.jsonl` candidate `C05` and are unaffected by this file's exclusion.
 

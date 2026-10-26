@@ -1,4 +1,4 @@
-# Ingesting a 10M-Paper Corpus into StealthLab — Plan (OpenAlex bulk + Exa enrichment)
+# Ingesting a 10M-Paper Corpus into kell — Plan (OpenAlex bulk + Exa enrichment)
 
 Researched 2026-08-26 against live vendor docs. Companion to `commLLM.md` §3B and the
 extraction pipeline (`procedure_extraction/evidence.py`).
@@ -60,7 +60,7 @@ S7 tombstone apply deleted_ids.csv; S8 smoke: run retrieval leave-one-out sanity
 | Load wall-clock | S1 dominates (hundreds of GB over network); DB stages ≈ hours; embedding ≈ overnight |
 | Hot-path impact | ZERO if corpus lives in its own table + its own retriever leg; core OLTP paths untouched |
 
-## StealthLab-specific integration points (files that change)
+## kell-specific integration points (files that change)
 
 - NEW: `backend/app/services/corpus_ingest.py` (staging→emit, V0-gated) +
   `db/NN_corpus_works.sql` (table + HNSW + deleted-log application)

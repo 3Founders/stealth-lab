@@ -7,7 +7,7 @@ it is a **deliberate deviation from the frozen spec** (v4 §A11 / §A12 / §B35 
 
 ## The decision
 
-The local side of StealthLab is a **filesystem-native working set plus a durable
+The local side of kell is a **filesystem-native working set plus a durable
 runtime journal**. There is **no local SQLite and no local Postgres**. Global
 Postgres + pgvector remains authoritative for semantic retrieval, the Claim
 graph, ranking, permissions, and publication.

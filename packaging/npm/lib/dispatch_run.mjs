@@ -1,13 +1,13 @@
-// .kell/run.md for a dispatched task: the plan StealthLab followed, in the plan_and_run NODE format (lib/plan_check.mjs),
+// .kell/run.md for a dispatched task: the plan kell followed, in the plan_and_run NODE format (lib/plan_check.mjs),
 // so the session's model can pick up where the cheap tries stopped instead of starting from nothing:
 //   N-1 locate   where the task is (lib/locate.mjs)                     done
 //   N-2 tests    tests written in advance that fail on the unchanged code   done / skipped (none could be written)
 //   N-3 change   the change itself, checked by N-2's tests (+ the module's own tests)   done (a cheap model) / ready (yours)
-// run.md belongs to the planner (the agent, plan_and_run): one that StealthLab dispatch did not write is never touched.
+// run.md belongs to the planner (the agent, plan_and_run): one that kell dispatch did not write is never touched.
 import fs from "node:fs";
 import path from "node:path";
 
-export const RUN_HEAD = "# run.md -- written by StealthLab dispatch for the task below; plan_and_run may replace it.";
+export const RUN_HEAD = "# run.md -- written by kell dispatch for the task below; plan_and_run may replace it.";
 
 const clean = (s, n = 160) => String(s || "").replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 

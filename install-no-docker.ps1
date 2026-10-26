@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    Docker-free bring-up for a personal StealthLab instance.
+    Docker-free bring-up for a personal kell instance.
 
 .DESCRIPTION
     No Docker Desktop, anywhere. Two real decisions instead of Docker's
@@ -172,7 +172,7 @@ if ($alreadyDecided -or $hasApiKey) {
         }
         $envLines = $envLines -replace '^USE_LOCAL_MODELS=false\s*$', 'USE_LOCAL_MODELS=true'
         Set-Content -Path $EnvFile -Value $envLines -Encoding utf8
-        Write-Ok "USE_LOCAL_MODELS=true set. Make sure 'ollama serve' is running before you use StealthLab."
+        Write-Ok "USE_LOCAL_MODELS=true set. Make sure 'ollama serve' is running before you use kell."
     } else {
         Write-Warn "Open backend/.env and paste an API key, then re-run this script."
         exit 0
@@ -223,7 +223,7 @@ try {
     Write-Warn "Could not reach http://127.0.0.1:8765/mcp yet -- it may still be starting (PID $($proc.Id))."
 }
 
-Write-Step "StealthLab is running (no Docker) -- PID $($proc.Id)"
+Write-Step "kell is running (no Docker) -- PID $($proc.Id)"
 Write-Host @"
 
     MCP endpoint: http://127.0.0.1:8765/mcp

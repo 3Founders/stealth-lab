@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// kell -- connect your coding agent to the hosted StealthLab MCP.
+// kell -- connect your coding agent to the hosted kell MCP.
 //
-// Nothing StealthLab runs on your machine: no database, no Python, no
+// Nothing kell runs on your machine: no database, no Python, no
 // server. `install` writes one entry into each agent's MCP config pointing
 // at the hosted endpoint and exits. The only thing that ever runs locally is
 // the tiny stdio relay (`kell` with no args), and only for Claude
@@ -45,7 +45,7 @@ const pkg = readPackage();
 const UA = `kell/${pkg.version} node/${process.versions.node}`;
 const out = (m = "") => process.stderr.write(m + "\n");
 
-const HELP = `kell ${pkg.version} -- connect your coding agent to StealthLab
+const HELP = `kell ${pkg.version} -- connect your coding agent to kell
 
 Usage:
   npx -y kell-mcp setup [options]           the whole first-time install in one command: register your agents,
@@ -55,14 +55,14 @@ Usage:
                                              your company already connected its provider key: sign in, join the
                                              organization, write the model list, test one call through the gateway
                                              (no provider key on this machine; exit 0 = ready, 3 = not ready)
-  npx -y kell-mcp install [options]         register StealthLab with your agents
+  npx -y kell-mcp install [options]         register kell with your agents
   kell uninstall [--client <id>]             remove it again
   kell doctor                                check the hosted server is reachable
   kell undo [<id>] [--list] [--force]
                                              put back what a dispatched cheap answer changed in this repository
                                              (the latest, or <id>); refuses if you edited those files since, unless --force
   kell instructions [--dir <repo>] [--client cursor] [--remove] [--dry-run]
-                                             tell the agents in a repo when to use StealthLab: a marked block in
+                                             tell the agents in a repo when to use kell: a marked block in
                                              AGENTS.md (Cursor, Codex, opencode read it) and, for Cursor,
                                              .cursor/rules/stealthlab.mdc. Edit or remove it any time.
   kell login [--no-browser]                  sign in through your browser (OAuth); the hooks then keep their token
@@ -119,7 +119,7 @@ Setup options (setup also takes the install options below):
   --guided           go one step at a time: say what the next step changes and wait for Enter (q quits)
 
 Join options (join also takes --client, --no-hooks, --no-exec, --dry-run):
-  --api <url>        your company's StealthLab API address (the invite page shows the whole command)
+  --api <url>        your company's kell API address (the invite page shows the whole command)
   --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
 
 Install options:
@@ -132,8 +132,8 @@ Install options:
   --with-exec     Claude Code, opt-in: the prompt hook runs cheap models (~/.stealthlab/exec.json) before
                   your session's model and applies a verified answer. Hooks only: no MCP server, agents or
                   model guard in the session. With --no-hooks: the old executor agents instead.
-  --keep-mcp      with --with-exec: keep the StealthLab MCP server registered as well, so the session can call
-                  StealthLab's tools too. Hooks-only is the default.
+  --keep-mcp      with --with-exec: keep the kell MCP server registered as well, so the session can call
+                  kell's tools too. Hooks-only is the default.
 
 Config: ${configPath()}
 `;
@@ -170,7 +170,7 @@ async function cmdInstall(v) {
 
   if (!v["dry-run"]) writeConfig({ url, ...(v.token ? { token: v.token } : {}) });
 
-  out(`StealthLab MCP -> ${url}${settings.token ? " (with token)" : " (anonymous reads)"}`);
+  out(`kell MCP -> ${url}${settings.token ? " (with token)" : " (anonymous reads)"}`);
   if (!chosen.length) {
     out("\nNo supported agent detected. Add it by hand, e.g.:");
     out(`  claude mcp add --scope user --transport http ${SERVER_NAME} ${url}`);
@@ -218,7 +218,7 @@ async function cmdInstall(v) {
       }
     }
   }
-  out("\nRestart your agent (or reload its MCP servers) to pick up StealthLab.");
+  out("\nRestart your agent (or reload its MCP servers) to pick up kell.");
   if (failed) process.exitCode = 1;
 }
 
@@ -246,7 +246,7 @@ async function cmdSetup(v) {
     out(`setup (dry run): would install${dispatch ? " with dispatch" : " connect-only"}, ${dispatch ? `write exec.json if absent (key variable ${keyEnv}), ` : ""}save the Cursor model, then check readiness`);
     return cmdInstall({ ...v, "with-exec": dispatch });
   }
-  await step("register your agents", `adds the StealthLab server and hooks to ${(await pickClients(v.client)).chosen.map((c) => c.label).join(", ") || "no detected agent"} (the hooks run in every workspace), and saves the URL${v.token ? " and token" : ""} in ~/.stealthlab/config.json. Undo: kell uninstall.`);
+  await step("register your agents", `adds the kell server and hooks to ${(await pickClients(v.client)).chosen.map((c) => c.label).join(", ") || "no detected agent"} (the hooks run in every workspace), and saves the URL${v.token ? " and token" : ""} in ~/.stealthlab/config.json. Undo: kell uninstall.`);
   await cmdInstall({ ...v, "with-exec": dispatch });
   if (process.exitCode) return;
   await step("model list and Cursor model", dispatch ? `writes ~/.stealthlab/exec.json (cheap open models; your key is read from $${keyEnv}, never stored) if there is none${v["cursor-model"] ? `, and saves the Cursor model ${v["cursor-model"]}` : ""}.` : "saves the Cursor model only (connect-only mode).");        // the install failed for a client: nothing to check yet

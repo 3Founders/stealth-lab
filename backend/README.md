@@ -1,6 +1,6 @@
 # Backend — debate & decomposition subsystem
 
-This backend now serves StealthLab (see root `README.md` / `demo.md` for the
+This backend now serves kell (see root `README.md` / `demo.md` for the
 current product framing: a local-first MCP server giving coding agents earned
 memory). What this doc describes is the debate/decompose subsystem living
 inside it: detect a bottleneck in a company's workflows → debate the fix among

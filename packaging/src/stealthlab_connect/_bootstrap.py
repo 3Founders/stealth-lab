@@ -49,11 +49,11 @@ def find_backend_root(explicit: str | os.PathLike | None = None) -> Path:
         searched.append(candidate)
     hint = ""
     if explicit:
-        hint = f"The path passed explicitly ({explicit}) is not a StealthLab backend checkout."
+        hint = f"The path passed explicitly ({explicit}) is not a kell backend checkout."
     elif os.environ.get(_ENV_VAR):
-        hint = f"$STEALTHLAB_BACKEND_ROOT={os.environ[_ENV_VAR]} is not a StealthLab backend checkout."
+        hint = f"$STEALTHLAB_BACKEND_ROOT={os.environ[_ENV_VAR]} is not a kell backend checkout."
     raise BackendRootNotFound(
-        f"could not locate the StealthLab backend (looked for {_SERVER_MARKER} and "
+        f"could not locate the kell backend (looked for {_SERVER_MARKER} and "
         f"{_COLLECTOR_MARKER} under each candidate). Set STEALTHLAB_BACKEND_ROOT to "
         f"the backend/ checkout, or pass --backend-root. {hint} "
         f"Candidates tried: {[str(p) for p in searched]}"
@@ -64,7 +64,7 @@ def ensure_backend_importable(backend_root: Path) -> Path:
     root = backend_root.resolve()
     if not _is_backend_root(root):
         raise BackendRootNotFound(
-            f"{root} is not a StealthLab backend checkout (missing "
+            f"{root} is not a kell backend checkout (missing "
             f"{_SERVER_MARKER} or {_COLLECTOR_MARKER})"
         )
     existing = sys.modules.get("app")

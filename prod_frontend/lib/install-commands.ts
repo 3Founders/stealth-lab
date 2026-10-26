@@ -1,4 +1,4 @@
-// One-line installers for the StealthLab MCP connector. The scripts are
+// One-line installers for the kell MCP connector. The scripts are
 // served by this site (public/install.sh, public/install.ps1 -- copied from
 // packaging/npm/install at build time), so the commands point at whatever
 // origin the site is running on.

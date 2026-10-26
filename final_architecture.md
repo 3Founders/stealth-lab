@@ -1,4 +1,4 @@
-# final_architecture.md — StealthLab v1
+# final_architecture.md — kell v1
 
 How v1 works, in simple points. `final_thing.md` has the product story and
 checklist; this file is the architecture as built.
@@ -7,15 +7,15 @@ checklist; this file is the architecture as built.
 
 ## One line
 
-StealthLab **knows** proven ways to do things. The agent in your repo **plans
-and does** the work. StealthLab never plans, never runs anything, and never
+kell **knows** proven ways to do things. The agent in your repo **plans
+and does** the work. kell never plans, never runs anything, and never
 touches your repo.
 
 ---
 
 ## Who does what
 
-**StealthLab server**
+**kell server**
 - Stores the shared Goals, Procedures and claims.
 - Searches them: text → Goal → the Procedure that fits your repo.
 - Returns knowledge: full steps, alternatives, and why it chose them.
@@ -45,7 +45,7 @@ touches your repo.
 
 **Per task**
 2. The agent calls `find_ways(query, repo_claims=<claims.md text>)`.
-3. StealthLab picks the Goal, then the Procedure that fits the repo facts, and
+3. kell picks the Goal, then the Procedure that fits the repo facts, and
    returns every step in full.
 4. The agent writes `procedures.md` and `run.md` and shows you the plan.
    Nothing changes until you say OK.
@@ -82,7 +82,7 @@ touches your repo.
 One of three outcomes. It never guesses.
 - `resolved`: one Goal is clearly best (or repo facts broke a tie).
 - `ambiguous`: 2+ Goals are too close. You pick, or rephrase.
-- `no_match`: nothing known. Do the task without StealthLab.
+- `no_match`: nothing known. Do the task without kell.
 
 When resolved (trimmed example):
 

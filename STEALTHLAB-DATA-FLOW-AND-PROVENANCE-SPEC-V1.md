@@ -1,14 +1,14 @@
-# StealthLab Data Flow and Provenance Specification V1
+# kell Data Flow and Provenance Specification V1
 
 **Date:** 2026-09-08  
-**Product:** StealthLab  
+**Product:** kell  
 **Repo:** `3Founders/stealth-lab`
 
 > Engineering specification, not legal advice. Counsel must validate controller/processor roles, lawful bases, publication rights, licensing, and jurisdiction-specific deletion/retention rules.
 
 ## 1. Core product rule
 
-StealthLab is a permissioned procedural capability and evidence system, not a generic memory dump.
+kell is a permissioned procedural capability and evidence system, not a generic memory dump.
 
 ```text
 SOURCE → OBSERVATION → CLAIM → PROCEDURE → TASK → IMPLEMENTATION → EXECUTION → VERIFICATION → EVIDENCE
@@ -108,7 +108,7 @@ public repository
 → verified procedure
 ```
 
-Do not encode a source's marketing/documentation claim as StealthLab-verified capability without execution evidence.
+Do not encode a source's marketing/documentation claim as kell-verified capability without execution evidence.
 
 ## 7. Private flow
 

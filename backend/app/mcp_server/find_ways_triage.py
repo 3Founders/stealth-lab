@@ -1,7 +1,7 @@
 """find_ways triage: one cheap judgment, first, decides whether a request needs a lookup at all.
 
 Why: find_ways is now called for every task-like prompt whatever the model decides (the Claude Code and Cursor
-hooks call it themselves), so many requests reach it that StealthLab holds nothing for -- "explain what this
+hooks call it themselves), so many requests reach it that kell holds nothing for -- "explain what this
 function does", "rename foo to bar", "thanks, continue". Each still cost a hybrid search, several judge calls and
 10-30 s. One classification through the semantic chain (JEV first: a single typed choice question; then the
 OpenAI-compatible fallbacks) sorts the request into prompts.TRIAGE_KINDS before any of that runs. Only
@@ -29,10 +29,10 @@ log = logging.getLogger(__name__)
 RETRIEVE_KIND = "reusable_task"
 
 _NEXT = {
-    "repo_specific": "Answer from this repository: read the code it names. StealthLab holds no knowledge about it.",
+    "repo_specific": "Answer from this repository: read the code it names. kell holds no knowledge about it.",
     "trivial_edit": "Make the change directly; it is too small to need a known way.",
     "conversation": "Carry on with the conversation; there is nothing to look up.",
-    "knowledge_question": "Answer from what you know; StealthLab stores ways of doing work, not explanations.",
+    "knowledge_question": "Answer from what you know; kell stores ways of doing work, not explanations.",
 }
 
 
@@ -159,7 +159,7 @@ def not_needed_reply(t: Triage) -> str:
     return json.dumps({
         "outcome": "not_needed",
         "triage": t.as_dict(),
-        "next": _NEXT.get(t.kind or "", "Handle this yourself; StealthLab has nothing to add for it.") +
+        "next": _NEXT.get(t.kind or "", "Handle this yourself; kell has nothing to add for it.") +
                 " If this IS a task others have done before, call find_ways again with the task in a full sentence.",
     })
 

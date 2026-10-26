@@ -92,7 +92,7 @@ Keep canonical `goals` sharded, keep Procedures on their home shards with a dire
 - The sharded control plane already has the right registry ingredients: global exact-name identity (`goal_names`), object-to-home-shard routing (`object_routes`), rebuildable lexical/vector Goal search (`goal_search_index`), rebuildable Procedure search carrying `goal_id` and `home_shard_id` (`procedure_search_index`), retrieval-decision audit, and an outbox. — `backend/db/95_control_plane_shards_projections.sql:17-63`; `backend/db/95_control_plane_shards_projections.sql:139-166`; `backend/db/95_control_plane_shards_projections.sql:168-246`; `backend/db/95_control_plane_shards_projections.sql:248-266`
 - Cross-database physical FKs were deliberately removed. A route-aware trigger accepts a Goal reference only when the Goal is local or present in the central route table. This is the appropriate integrity mechanism for a central relation registry over sharded Goals. — `backend/db/96_sharded_canonical_writes.sql:18-64`; `backend/db/96_sharded_canonical_writes.sql:72-103`
 - The existing `sources` table is the stable origin registry, with source type, locator, publisher, reliability, provenance, visibility/owner, scope, and bitemporal fields. Free-text relation provenance is therefore weaker than the repository's existing provenance model. — `backend/db/64_sources.sql:58-125`
-- A system-versioned relational design keeps current rows plus previous versions with start/end validity periods, supporting audit and point-in-time reconstruction. This is evidence for the append-only pattern, although StealthLab additionally needs its own transaction/recorded time. — [Microsoft Learn, temporal tables](https://learn.microsoft.com/en-us/sql/relational-databases/tables/temporal-tables?view=sql-server-ver16)
+- A system-versioned relational design keeps current rows plus previous versions with start/end validity periods, supporting audit and point-in-time reconstruction. This is evidence for the append-only pattern, although kell additionally needs its own transaction/recorded time. — [Microsoft Learn, temporal tables](https://learn.microsoft.com/en-us/sql/relational-databases/tables/temporal-tables?view=sql-server-ver16)
 - PROV-O distinguishes entities, activities, and agents and provides derivation, revision, generation/invalidation, attribution, and qualified-influence patterns. This supports recording who proposed/accepted a relation, what evidence informed it, and which edge version a route used. — [W3C PROV-O](https://www.w3.org/TR/prov-o/)
 
 #### Current gaps in `goal_relations`
@@ -135,7 +135,7 @@ A repository-native shape can mirror the Procedure version pattern: a row `id` i
 | `visibility visibility_level`, `owner_id TEXT` | Required pair if private/owner-scoped relations are supported |
 | `t_valid TIMESTAMPTZ` | When the assertion became accepted in domain/world time |
 | `t_invalid TIMESTAMPTZ NULL` | When a later version superseded it |
-| `t_created TIMESTAMPTZ` | When StealthLab recorded this version |
+| `t_created TIMESTAMPTZ` | When kell recorded this version |
 | `t_expired TIMESTAMPTZ NULL` | Optional source/claim expiration already used elsewhere in the repository |
 
 If multiple evidence sources are normal, add a small child table rather than a JSON array:
@@ -212,7 +212,7 @@ The generation or equivalent digest must be recorded in each route decision. Rej
 7. Record candidate Goals, relation-version IDs, hierarchy generation, Procedure row/version IDs, applicability outcomes, selected Procedure, and fallback order in `retrieval_decisions`.
 8. Compile any selected Procedure's own steps into a run-specific execution graph; do not use the semantic DAG as the scheduler.
 
-This follows the small-reference-data/control-plane pattern used by distributed relational systems: Citus documents reference tables as small data replicated to workers for frequent joins, and separately notes that placement/join behavior depends on co-location. The analogy supports a small central registry; it does not imply that StealthLab must adopt Citus. — [Citus DDL and reference tables](https://docs.citusdata.com/en/stable/develop/reference_ddl.html); [Citus data modeling and co-location](https://docs.citusdata.com/en/stable/sharding/data_modeling.html)
+This follows the small-reference-data/control-plane pattern used by distributed relational systems: Citus documents reference tables as small data replicated to workers for frequent joins, and separately notes that placement/join behavior depends on co-location. The analogy supports a small central registry; it does not imply that kell must adopt Citus. — [Citus DDL and reference tables](https://docs.citusdata.com/en/stable/develop/reference_ddl.html); [Citus data modeling and co-location](https://docs.citusdata.com/en/stable/sharding/data_modeling.html)
 
 ### Inferences
 

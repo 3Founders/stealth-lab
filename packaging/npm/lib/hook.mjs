@@ -1,4 +1,4 @@
-// Claude Code UserPromptSubmit hook: StealthLab knowledge reaches the agent whether or not the model
+// Claude Code UserPromptSubmit hook: kell knowledge reaches the agent whether or not the model
 // decides to call find_ways.
 //
 // Why: with MCP the model decides when to call a tool, and models differ. In DS-1000 round 4
@@ -172,7 +172,7 @@ export function deliveryMode(policy, model) {
   return policy.mode;
 }
 
-// A git repo StealthLab has not seen yet: dispatch needs .kell/ (routing record, library), which the first survey
+// A git repo kell has not seen yet: dispatch needs .kell/ (routing record, library), which the first survey
 // would only create minutes later -- so the first prompt makes it, and the cheap models can help from that prompt on.
 // -> the repo's root, or null (not a git repo, or not writable). Used by the Claude Code and Cursor prompt hooks.
 export async function ensureDispatchRoot(cwd) {
@@ -437,7 +437,7 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
     const leanPlan = planPart(reply.model_plan, process.env, mine);
     if (leanPlan) parts.push(leanPlan);
     if (!parts.length) return "";
-    return cut("StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +
+    return cut("kell (Kel) looked this task up before you started (find_ways already ran for it -- " +
       "don't call it again for the same request). What it knows:\n\n" + parts.join("\n\n"), maxChars);
   }
   if (reply.outcome === "ambiguous") {
@@ -461,7 +461,7 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
   const plan = planPart(reply.model_plan, process.env, mine);
   if (plan) parts.push(plan);
   if (!parts.length) return "";
-  const head = "StealthLab (Kel) looked this task up before you started (find_ways already ran for it -- " +
+  const head = "kell (Kel) looked this task up before you started (find_ways already ran for it -- " +
     "don't call it again for the same request). What it knows:\n\n";
   return cut(head + parts.join("\n\n"), maxChars);
 }
@@ -520,14 +520,14 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
   } catch {
     return;
   }
-  // overrides (lib/brief.mjs): `!opus` skips StealthLab for this prompt; `!cheap` forces a dispatch attempt. A hook cannot
+  // overrides (lib/brief.mjs): `!opus` skips kell for this prompt; `!cheap` forces a dispatch attempt. A hook cannot
   // rewrite the prompt, so the session still sees the prefix: for `!opus` it is told to ignore it (a `!cheap` prompt is
   // stopped by dispatch when it works, and otherwise the session sees the prefix as plain text).
   const override = parseOverride(payload.prompt, env);
   if (override.kind === "opus") {
     try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }
     write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit",
-      additionalContext: 'StealthLab is skipped for this prompt: the leading "!opus" is an override for it, not part of the task.' } }));
+      additionalContext: 'kell is skipped for this prompt: the leading "!opus" is an override for it, not part of the task.' } }));
     return;
   }
   if (override.kind === "cheap") payload.prompt = override.prompt;
@@ -620,7 +620,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
         return;
       }
       if (d) {
-        // The cheap models tried and none passed: the session does the task as it would without StealthLab -- no
+        // The cheap models tried and none passed: the session does the task as it would without kell -- no
         // plan, no hand-overs, no report to make (the capture hooks record the outcome). Anything more only adds
         // turns to the one path that already costs the most.
         // the plan as it now stands -- the session's own model is next -- so the model guard lets it work

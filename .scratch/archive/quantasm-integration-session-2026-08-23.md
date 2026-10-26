@@ -1,4 +1,4 @@
-﻿# QuantAsm ↔ StealthLab Integration — Session Summary (2026-08-23)
+﻿# QuantAsm ↔ kell Integration — Session Summary (2026-08-23)
 
 > **Status: ARCHIVED 2026-08-25.** This session summary was formerly the
 > entire content of `commLLM.md`, which has since been repurposed as the
@@ -19,7 +19,7 @@ nm symbol gate (sole defined global = kern), import denylist,
 64-byte placement symmetry, A/B/B/A TSC medians. Calibrated 16/16 at ~1.0x.
 
 ## The decision
-QuantAsm rollout traces + procedures will be stored in StealthLab's VPES
+QuantAsm rollout traces + procedures will be stored in kell's VPES
 backend (direct asyncpg writes, no HTTP dependency). This gives VPES its
 second domain (asm optimization alongside tau3bench) — the first live test
 of cross-domain `capability_statement` retrieval (spec §10 / migration 20).
@@ -69,7 +69,7 @@ mxbai-embed-large (1024-dim matches schema). Extraction dogfooding:
 USE_LOCAL_MODELS=true. Governance budgets already cap spend ($10/day).
 
 ## Division of labor
-- StealthLab: receives task nodes + traces; extractor registry mines
+- kell: receives task nodes + traces; extractor registry mines
   procedures; capability_statement gets its cross-domain test
 - QuantAsm: emits episodes/traces per rollout; owns kernel specs, gates,
   timing oracle, HF corpus export

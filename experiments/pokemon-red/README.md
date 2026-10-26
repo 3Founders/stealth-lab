@@ -215,7 +215,7 @@ What is recorded, precisely:
 
 `backend/app/game_mcp/server.py` — a **separate** MCP server from the
 `stealthlab` one (`backend/app/mcp_server/server.py`); it never imports
-`app.mcp_server` and never touches StealthLab's Postgres-backed knowledge
+`app.mcp_server` and never touches kell's Postgres-backed knowledge
 graph. **Its six tools are frozen for this experiment — do not add, remove,
 or change the signature of any of them:**
 
@@ -232,7 +232,7 @@ It is a thin pass-through HTTP client for the already-running
 `pokemon-agent` server — no game logic, action-grammar parsing, or state
 interpretation lives in this MCP; whatever `pokemon-agent` returns is
 returned verbatim (or the tool raises, on any non-2xx / connection failure —
-never a fake success). It does not write to `.kell/` or touch StealthLab
+never a fake success). It does not write to `.kell/` or touch kell
 in any way.
 
 `game_load` has one caller-side fix worth knowing: `pokemon-agent`'s flat
@@ -305,11 +305,11 @@ section H).
    ```
 
 **Port collision to know about:** `pokemon-agent` defaults to `:8765`, and
-so does StealthLab's own MCP HTTP server
+so does kell's own MCP HTTP server
 (`uvicorn app.mcp_server.server:app --port 8765`, see
 `backend/README_MCP_SERVER.md`). If Condition C needs both Game MCP (which
 just needs `pokemon-agent` reachable) **and** the Stealth MCP server running
-at the same time, start the StealthLab MCP server on a different port (its
+at the same time, start the kell MCP server on a different port (its
 `_MCP_PORT` in `backend/app/mcp_server/server.py`, and the matching URL in
 your own `.mcp.json`) rather than moving `pokemon-agent` off its default —
 `game_mcp`'s default already assumes `pokemon-agent` is on `:8765`.
@@ -371,25 +371,25 @@ them.
    you need the dashboard/graph UI), Postgres 15+ with pgvector (only
    needed for the Stealth MCP server itself — Game MCP alone needs none of
    this).
-3. **StealthLab Python environment** (separate from pokemon-agent's):
+3. **kell Python environment** (separate from pokemon-agent's):
    ```bash
    cd backend
    python -m venv .venv
    source .venv/bin/activate        # or .venv\Scripts\activate on Windows
    ```
-4. **Install StealthLab's dependencies:**
+4. **Install kell's dependencies:**
    ```bash
    pip install -r requirements.txt
    ```
 5. **Set up `pokemon-agent` separately** — its own repo, own Python
    environment (or however it's packaged); do not install its deps into
-   the StealthLab `.venv` from step 3. See section G.
+   the kell `.venv` from step 3. See section G.
 6. **Obtain/build the Pokemon Red ROM independently** (section G, step 2).
    Never commit it here.
 7. **Start `pokemon-agent`** (its own instructions; defaults to
    `http://localhost:8765`).
 8. **Start Game MCP** — add the `.mcp.json` entry from section F (with your
-   own clone path and Python interpreter), pointing at the StealthLab
+   own clone path and Python interpreter), pointing at the kell
    `.venv`'s Python from step 3.
 9. **Start Stealth MCP when needed** (Condition C only) — see
    `backend/README_MCP_SERVER.md` for `STEALTHLAB_MCP_TOKEN` setup and the
@@ -399,7 +399,7 @@ them.
     ```bash
     cd backend
     python -m pytest tests/test_game_mcp_offline.py -q        # Game MCP, offline
-    python -m pytest tests/test_mcp_six_tool_surface_offline.py tests/test_mcp_minimal_surface_offline.py -q  # StealthLab MCP, offline
+    python -m pytest tests/test_mcp_six_tool_surface_offline.py tests/test_mcp_minimal_surface_offline.py -q  # kell MCP, offline
     curl http://localhost:8765/                                 # pokemon-agent, live
     curl -X POST http://127.0.0.1:8765/mcp -H "Authorization: Bearer $STEALTHLAB_MCP_TOKEN"  # Stealth MCP, live (only if running it)
     ```

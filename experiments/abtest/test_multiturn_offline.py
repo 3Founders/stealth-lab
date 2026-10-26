@@ -208,7 +208,7 @@ def test_a_turn_that_does_not_finish_ends_the_session_and_decides_the_status(tmp
 
 def test_what_the_user_reads_is_the_shown_message_when_a_cheap_model_did_the_turn(tmp_path):
     llm = FakeLlm()
-    shown = "Done by gpt-oss-120b in 41 s (StealthLab dispatched it before this session's model ran)."
+    shown = "Done by gpt-oss-120b in 41 s (kell dispatched it before this session's model ran)."
     out, _ = session(tmp_path, [turn("")], max_turns=2, llm=llm, observe=lambda n, a, b, o: {"shown": shown})
     sim_prompt = llm.of(multiturn.SIM_SYSTEM)[0][1]
     assert shown in sim_prompt and out["ended_by"] == "thanks"
@@ -237,7 +237,7 @@ def sandbox(tmp_path, monkeypatch):
             with (ws / "textutils.py").open("a", encoding="utf-8") as f:
                 f.write("\n" + GOOD["slugify"])
         log = {"type": "system", "subtype": "hook_response", "output": json.dumps(
-            {"decision": "block", "reason": "Done by gpt-oss-120b in 41 s (StealthLab dispatched it before this session's model ran, $0.0001). It passed x."})} \
+            {"decision": "block", "reason": "Done by gpt-oss-120b in 41 s (kell dispatched it before this session's model ran, $0.0001). It passed x."})} \
             if (arm == "C" and n == 2) else {"type": "result"}
         log_path.write_text(json.dumps(log) + "\n", encoding="utf-8")
         return {"status": "done", "is_error": False, "claude_cost_usd": 0.1, "turns": 2, "duration_ms": 1000, "models": [],
@@ -363,7 +363,7 @@ def test_snapshots_diff_one_turn_and_leave_the_workspace_alone(tmp_path):
 
 
 def test_shown_message_is_found_in_the_stream_json_log(tmp_path):
-    reason = "Done by minimax-m2-7 in 51 s (StealthLab dispatched it before this session's model ran, $0.0011). It passed the check."
+    reason = "Done by minimax-m2-7 in 51 s (kell dispatched it before this session's model ran, $0.0011). It passed the check."
     log = tmp_path / "t.jsonl"
     log.write_text("\n".join(json.dumps(x) for x in [
         {"type": "system", "subtype": "init"},
@@ -470,7 +470,7 @@ def test_the_simulated_user_falls_back_to_gpt_oss_when_z_ai_fails(monkeypatch):
 
 def test_a_cheap_answer_is_the_shown_message_too(tmp_path):
     log = tmp_path / "t.jsonl"
-    reason = "Answered by glm-5.3-flash in 7 s (StealthLab answered it before this session's model ran; checked by claude-sonnet-5-5).\n\nYes, it does."
+    reason = "Answered by glm-5.3-flash in 7 s (kell answered it before this session's model ran; checked by claude-sonnet-5-5).\n\nYes, it does."
     log.write_text(json.dumps({"type": "system", "hook_output": json.dumps({"decision": "block", "reason": reason})}) + "\n", encoding="utf-8")
     msg = multiturn.shown_message(log)
     assert msg == reason

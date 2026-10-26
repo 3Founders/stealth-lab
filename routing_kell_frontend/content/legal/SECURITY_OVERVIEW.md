@@ -5,19 +5,19 @@
 This is a trimmed, public-facing summary of `SECURITY.md` (the repository's internal/engineering
 threat-model document, which remains the authoritative, more detailed reference — link to it
 alongside this page if you want to be maximally transparent). This summary avoids exploitable
-implementation detail and does not claim any certification StealthLab does not hold.
+implementation detail and does not claim any certification kell does not hold.
 
 ## Current posture: two modes, and they are very different
 
-StealthLab's codebase supports two deployment shapes, and the security posture depends entirely
+kell's codebase supports two deployment shapes, and the security posture depends entirely
 on which one you're using:
 
 1. **Local-first (v0.1, as shipped and documented in `SECURITY.md`):** you run the server and
    database yourself, on your own machine, bound to loopback by default. There is no
-   StealthLab-hosted service in this mode. A bearer token gates access to the MCP server, but it
+   kell-hosted service in this mode. A bearer token gates access to the MCP server, but it
    is authentication (proves you have the token), not fine-grained authorization (there is no
    per-tool/per-scope permission model in this mode).
-2. **Hosted, multi-user (in progress):** StealthLab operates authentication (Supabase Auth),
+2. **Hosted, multi-user (in progress):** kell operates authentication (Supabase Auth),
    authorization, and the database for you. As of this audit, this mode is **partially built** —
    see "Known limitations" below before relying on it for anything sensitive.
 

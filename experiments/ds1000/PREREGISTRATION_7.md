@@ -49,12 +49,12 @@ Round 5 ([PREREGISTRATION_5.md](PREREGISTRATION_5.md)) confirmed the Claude Code
 ## Deviations
 
 1. **2026-09-28, KH7's own `find_ways` calls are effectively unavailable (found after wave 1; prompts unchanged).**
-   - This Claude Code session has a StealthLab MCP server configured that is not running (ECONNREFUSED); the subagents inherit it. The KH7 batch 00 agent reported that it looked for StealthLab there, found it disconnected, and solved the tasks without calling Kel. It did not use the `kel_cli.py` command its prompt offers, which works: checked by running the exact command.
+   - This Claude Code session has a kell MCP server configured that is not running (ECONNREFUSED); the subagents inherit it. The KH7 batch 00 agent reported that it looked for kell there, found it disconnected, and solved the tasks without calling Kel. It did not use the `kel_cli.py` command its prompt offers, which works: checked by running the exact command.
    - No KH7 batch in wave 1 made a Kel command call.
    - **What it means:** the hook's text reached every KH7 task as designed, so the primary tests the hook. The "`find_ways` stays callable" part is in practice absent. Round 5's hook arms rarely used it anyway (gemma and gpt-oss 0 calls; deepseek 25 in 89 episodes).
    - The number of Kel command calls is reported.
    - Batch delivery: each subagent is told to read its batch prompt file and follow it; the file is byte-identical to the prepared prompt.
-   - The configured StealthLab MCP server must stay down during round 7. If it came up, subagents could call it, and a server started with `backend/.env` would point at the hosted database.
+   - The configured kell MCP server must stay down during round 7. If it came up, subagents could call it, and a server started with `backend/.env` would point at the hosted database.
 
 ## Results (2026-09-28)
 

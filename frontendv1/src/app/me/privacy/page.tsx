@@ -197,7 +197,7 @@ export default function PrivacyPage() {
       <h1 className="text-2xl font-semibold tracking-tight">Privacy &amp; Data</h1>
 
       <section className="mt-8 space-y-2 text-sm text-neutral-600">
-        <h2 className="font-medium text-neutral-900">What StealthLab stores</h2>
+        <h2 className="font-medium text-neutral-900">What kell stores</h2>
         <ul className="list-disc space-y-1 pl-5">
           <li>Your account (from Supabase Auth): user id, email.</li>
           <li>Procedures you add — private by default until you publish them.</li>

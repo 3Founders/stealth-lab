@@ -1,4 +1,4 @@
-# Reading List — Building the StealthLab Retrieval/Memory Stack
+# Reading List — Building the kell Retrieval/Memory Stack
 
 Compiled via Exa semantic search + web research (2026-08-24). Ordered by
 leverage against our known gaps: dense-only retrieval, `ts_rank`≠BM25,
@@ -259,7 +259,7 @@ without paid API keys; maturity varies (many are young repos).
   retrieval designed to replace an agent's file-search tools.
 - **TriSeek** — https://sagart-cactus.github.io/TriSeek/ — shared local
   context substrate (find → remember-read → reuse search context across
-  sessions). Architecturally closest cousin to what StealthLab does for
+  sessions). Architecturally closest cousin to what kell does for
   knowledge nodes.
 
 **Practical picks**: for *my* tooling, web-forager or websearch-skill gives

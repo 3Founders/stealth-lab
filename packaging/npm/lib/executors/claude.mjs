@@ -64,7 +64,7 @@ export const LEAN_SYSTEM = [
 //  * every Anthropic / Claude / other-vendor credential is removed from the child's env, so the user's own keys
 //    are never sent to the third party;
 //  * CLAUDE_CONFIG_DIR points at an empty private directory, so the user's logged-in Claude session and their
-//    hooks (including StealthLab's own) are neither presented to the third party nor re-entered by this run;
+//    hooks (including kell's own) are neither presented to the third party nor re-entered by this run;
 //  * all three model aliases are mapped to the open model, because Claude Code makes background calls on its
 //    small-model alias and a provider that does not know that name would fail them.
 // Claude Code itself is still the user's own installed binary. We do not bundle, wrap or redistribute it.
@@ -150,7 +150,7 @@ const adapter = {
       "--no-session-persistence",
       "--permission-mode", "acceptEdits",
       "--permission-prompts", "none",
-      // the worktree is a copy of the project, StealthLab hooks included: project settings must not load here, or
+      // the worktree is a copy of the project, kell hooks included: project settings must not load here, or
       // the run would look the task up and dispatch it again (and no MCP server is needed for one step's work)
       "--setting-sources", "user",
       "--strict-mcp-config",

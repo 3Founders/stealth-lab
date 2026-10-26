@@ -25,7 +25,7 @@ const SELF_TEST_PROMPT = "Reply with the single word: ok";
 
 export function parseInvite(code) {
   const c = String(code || "").trim();
-  if (!CODE.test(c)) throw new Error("that is not a StealthLab invite code (it starts with sl1_); ask your admin for a new one");
+  if (!CODE.test(c)) throw new Error("that is not a kell invite code (it starts with sl1_); ask your admin for a new one");
   return c;
 }
 

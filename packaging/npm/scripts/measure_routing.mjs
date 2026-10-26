@@ -1,4 +1,4 @@
-// Measures how long routing takes (docs/latencycheck.md): the real prompt hook against a running StealthLab server, with
+// Measures how long routing takes (docs/latencycheck.md): the real prompt hook against a running kell server, with
 // STEALTHLAB_ROUTING_TIMING=1, over three kinds of prompt. Everything up to the first cheap model is real: the /triage
 // judge, find_ways and its model plan, dispatch's checks (with its quota lookup), the brief and the locate step. The one
 // stand-in is the cheap model's run itself: it fails at once, so a prompt ends right after routing and no cheap model

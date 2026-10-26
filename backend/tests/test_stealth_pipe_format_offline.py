@@ -293,13 +293,13 @@ def test_collab_summary_a_resolved_blocker_does_not_affect_a_separate_open_one()
 
 def test_index_md_exact_grammar():
     md = render_index_md(
-        repo="StealthLab", revision=184, active_run="R-82",
+        repo="kell", revision=184, active_run="R-82",
         claim_groups=[GroupLine("generated-code", ["C-022", "C-037"])],
         procedure_groups=[GroupLine("generated-code", ["P-031"])],
                 run_states=[RunStateLine("RUNNING", ["N-003"]), RunStateLine("BLOCKED", [])],
     )
     lines = md.splitlines()
-    assert "REPO|StealthLab" in lines
+    assert "REPO|kell" in lines
     assert "REVISION|184" in lines
     assert "ACTIVE_RUN|R-82" in lines
     assert "CLAIM_GROUP|generated-code|C-022 C-037" in lines

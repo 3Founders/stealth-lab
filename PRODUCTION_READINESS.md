@@ -1,4 +1,4 @@
-# StealthLab — Production Readiness Assessment
+# kell — Production Readiness Assessment
 
 _Compiled 2026-08-26, refreshed 2026-08-27 from the live repo (`main`), the build
 board, and all five lane sessions. Companion doc: `proj_status.md` (phase/roadmap

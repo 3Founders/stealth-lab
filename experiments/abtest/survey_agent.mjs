@@ -1,6 +1,6 @@
 // For the pipeline survey, stage 3: one cheap model on one issue, through the real executor (worktree, agent, limits), with
 // the task text dispatch would send (the request + the "likely place" line). No check gates it here: the survey judges the
-// answer afterwards, both by the tests StealthLab wrote and by the real hidden tests.
+// answer afterwards, both by the tests kell wrote and by the real hidden tests.
 // argv: <root> <prompt file> <where file> <executor: stealth|claude> <model>. Prints {state, patch, files, secs, cost_usd, tokens}.
 import fs from "node:fs";
 import path from "node:path";

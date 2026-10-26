@@ -95,7 +95,7 @@ reported truthfully below rather than padded.
   Apache-2.0 (verified via raw LICENSE fetch at the tag).
 - **Evidence:** real, independently measured: 77.0% token reduction
   (6,723 raw tokens -> 1,549 outline tokens, tiktoken `cl100k_base`) running
-  `octocode view --format text` against StealthLab's own real 594-line
+  `octocode view --format text` against kell's own real 594-line
   `backend/app/services/product_model.py`.
 - **Measured result:** 77.0% reduction, single real file, deterministic
   mechanism (tree-sitter), no embeddings/API dependency for this command
@@ -128,7 +128,7 @@ reported truthfully below rather than padded.
   verified).
 - **Evidence:** real, independently measured, but PARTIAL. The project's own
   no-database/no-LLM-key benchmark (`benchmarks/bench_indexing.py`) was run
-  for real against StealthLab's own `backend/app` directory: 176 files,
+  for real against kell's own `backend/app` directory: 176 files,
   1,998 nodes, 8,811 edges, 59.65s. The query layer (NL->Cypher over
   Memgraph) -- the actual value proposition ("answer 'who calls X'/'where is
   Y' without sending the repo to the model") -- was **never tested**: Memgraph
@@ -147,7 +147,7 @@ reported truthfully below rather than padded.
 
 ### C04 -- Git-worktree isolation
 
-- **Source:** native technique, no third-party artifact (StealthLab already
+- **Source:** native technique, no third-party artifact (kell already
   uses this pattern operationally, including in this very session's own 8
   worktrees). License: n/a.
 - **Evidence:** real, independently measured, the cleanest result of the
@@ -179,15 +179,15 @@ reported truthfully below rather than padded.
   implementation resolution correctly finds none (by design). Not marked
   verified (correctly).
 
-### C05 -- StealthLab's "own" deferred-tool loading
+### C05 -- kell's "own" deferred-tool loading
 
 - **Source:** n/a as a third-party artifact. **Important caveat, carried
   through every representation of this candidate:** the actual measurement's
   subject was the evaluating agent's OWN Claude Code harness (its
-  `ToolSearch` deferred-tool mechanism), NOT StealthLab's own MCP tool
+  `ToolSearch` deferred-tool mechanism), NOT kell's own MCP tool
   surface, despite the candidate's working name implying otherwise. This was
   a proxy-system measurement of the same architectural pattern, not a
-  StealthLab-native result.
+  kell-native result.
 - **Evidence:** real, independently measured on that proxy system: deferred
   name-only tool listing cost ~5.6 tokens/tool vs. ~377.8 tokens/tool average
   for 4 sampled full schemas (WebFetch, WebSearch, CronCreate,
@@ -195,14 +195,14 @@ reported truthfully below rather than padded.
   (2 of 4 schemas were lightly abbreviated to write the measurement
   reliably).
 - **Measured result:** 67.5x, real, but on a proxy system.
-- **Limitations:** NOT a StealthLab-native measurement. Must never be
-  represented as "StealthLab has verified this in its own product" -- every
+- **Limitations:** NOT a kell-native measurement. Must never be
+  represented as "kell has verified this in its own product" -- every
   place this claim appears (procedure `evidence_refs`, the claim statement
   itself) carries this caveat explicitly and permanently.
 - **Admission decision: B -- ADMIT WITH CONDITIONS.** Admitted only as
   evidence for the general "defer tool-schema loading until needed" claim/
   procedure, always caveated. No Implementation Registry entry (no bindable
-  StealthLab-native service to register -- this is architectural/descriptive
+  kell-native service to register -- this is architectural/descriptive
   knowledge, not an invocable artifact).
 - **Canonical procedure family:** `defer-tool-schema-loading-until-needed`
   (C05 alone).
@@ -213,7 +213,7 @@ reported truthfully below rather than padded.
   (load-schema-on-demand).
 - **Implementations created:** 0, deliberately -- same reasoning as C04's
   "no implementation is a valid state", plus there genuinely is no
-  StealthLab-native artifact to bind.
+  kell-native artifact to bind.
 - **Verification status:** retrieval PASS, applicability PASS (ALLOW),
   implementation resolution correctly finds none (by design). Not marked
   verified (correctly).
@@ -227,15 +227,15 @@ reported truthfully below rather than padded.
   with C07's test file for 9/9 total). This is evidence the mechanism EXISTS
   and FUNCTIONS in hermes-agent's own codebase -- it is evidence about
   hermes-agent's implementation, not proof the technique improves Stealth.
-  No StealthLab-context comparative measurement exists.
-- **Measured result:** 2/2 (upstream tests), no StealthLab-side number.
+  No kell-context comparative measurement exists.
+- **Measured result:** 2/2 (upstream tests), no kell-side number.
 - **Limitations:** exactly the case the task's own review criteria named --
   "a passed upstream test is evidence about the upstream implementation, not
   proof that the technique universally improves Stealth." Tagged
   `SOURCE_DERIVED`, not `EXPERIMENTAL`, for this reason.
 - **Admission decision: C -- HOLD FOR MORE EVIDENCE.** Not ingested. Would
-  need a real StealthLab-context comparative experiment (does protecting
-  recent turns from compression measurably help a real StealthLab-run task)
+  need a real kell-context comparative experiment (does protecting
+  recent turns from compression measurably help a real kell-run task)
   before reconsideration.
 - **Canonical procedure family:** none created (held).
 - **Claims/task nodes/implementations created:** 0.
@@ -248,7 +248,7 @@ reported truthfully below rather than padded.
   (`tests/agent/test_proactive_tool_result_pruning.py`, 7/7) passes. Same
   "evidence about the upstream implementation" caveat as C06 applies
   identically.
-- **Measured result:** 7/7 (upstream tests), no StealthLab-side number.
+- **Measured result:** 7/7 (upstream tests), no kell-side number.
 - **Limitations:** identical reasoning to C06.
 - **Admission decision: C -- HOLD FOR MORE EVIDENCE.** Not ingested. Same
   bar to clear as C06 before reconsideration.
@@ -292,7 +292,7 @@ insufficiently critical.
   faith. C05 carries an additional mandatory proxy-system caveat, present in
   every representation of it.
 - `SOURCE_DERIVED`: C06, C07 -- confirms the mechanism exists and functions
-  as the upstream source describes; explicitly NOT a StealthLab-context
+  as the upstream source describes; explicitly NOT a kell-context
   experimental result.
 - `USER_REPORTED` / `MODEL_INFERRED`: not used -- neither applies to any of
   these 7.
@@ -317,7 +317,7 @@ Proven through real calls against the live Supabase DB, not assumed:
    correctly resolve to no Implementation (by design, confirmed via direct
    query against `implementation_tasks`, not merely absence-of-error).
 4. **Execution**: NOT exercised this pass. Running `octocode view` for real
-   through StealthLab's own `implementation_executor.py` would require
+   through kell's own `implementation_executor.py` would require
    re-fetching the octocode binary (only present in the candidate-testing
    pass's now-cleaned-up scratchpad) and represents a real, unbounded step
    (spawning an external process) beyond this admission pass's intentionally

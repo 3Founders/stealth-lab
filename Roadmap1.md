@@ -1,7 +1,7 @@
 # Roadmap1.md — System-by-System Scope, Explanation & Future Roadmap
 
 Companion to `ROADMAP.md` (band plan). This file scopes each subsystem of
-StealthLab, explains how it works today, where it is going, and cites the
+kell, explains how it works today, where it is going, and cites the
 external research landscape gathered via Exa (web) and OpenAlex (scholarly)
 on 2026-08-26.
 

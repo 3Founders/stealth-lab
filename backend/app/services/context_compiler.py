@@ -2,7 +2,7 @@
 
 `compile_context()` is the missing piece a caller (a future MCP tool, or
 `find_best_way`) needs when it wants to hand an LLM a *task-scoped* slice of
-everything StealthLab knows, instead of dumping full history/transcripts at
+everything kell knows, instead of dumping full history/transcripts at
 it. It mirrors `app/execution/plans.py::compile_plan`'s shape: pure,
 synchronous, deterministic over caller-supplied data. It does not call an
 LLM and does not touch the database -- fetching the real claims/evidence/

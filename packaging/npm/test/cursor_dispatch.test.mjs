@@ -72,11 +72,11 @@ test("a verified cheap change stops the prompt with a message to the user", asyn
   let got = null;
   const dispatchImpl = async (args) => {
     got = args;
-    return { handled: true, unit: "gemma-4|ollama", tried: [], text: "Done by gemma-4 (StealthLab dispatched it). calc.py" };
+    return { handled: true, unit: "gemma-4|ollama", tried: [], text: "Done by gemma-4 (kell dispatched it). calc.py" };
   };
   const out = await onBeforeSubmitPromptDispatch(payload(ws), { env, settings: SETTINGS, userAgent: "t",
     fetchImpl: fakeServer(REPLY, calls), dispatchImpl });
-  assert.deepEqual(out, { continue: false, user_message: "Done by gemma-4 (StealthLab dispatched it). calc.py" });
+  assert.deepEqual(out, { continue: false, user_message: "Done by gemma-4 (kell dispatched it). calc.py" });
   // dispatch() gets what the Claude Code hook gives it: the prompt, the workspace, the plan, the session's unit
   assert.equal(got.payload.prompt, PROMPT);
   assert.equal(got.payload.cwd, ws);

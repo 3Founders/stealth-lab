@@ -11,7 +11,7 @@ Measured so far (benchmark harness, not a customer's sessions):
 | | Median | p95 |
 |---|---|---|
 | Arm A (plain Claude Code, Opus), 128 tasks | 33 s | 92 s |
-| Arm C (with StealthLab), 128 tasks | 56 s | 286 s |
+| Arm C (with kell), 128 tasks | 56 s | 286 s |
 | Later re-run after the stall fixes, A / C | 15-37 s / 42-55 s | not reported |
 
 Sources: `docs/HANDOFF_abtest_2026-10-11.md` (section 1, and the latency list L1-L3 around line 480), `docs/pilot_plan_lead_2026-10.md`,

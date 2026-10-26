@@ -5,7 +5,7 @@
 // (ct-series-v5, jsonargparse, arm A: $0.22 for the fix, $0.53 for the two turns after it). A cheap model answers
 // from the session's notes instead -- what was asked, what changed and how (the diff), the code the message is about,
 // the last turns -- and a strong reviewer checks the reply before the developer sees it. A reply it does not call
-// good is never shown: the session's model answers, as with no StealthLab.
+// good is never shown: the session's model answers, as with no kell.
 //
 // Which turns: the server's judge (POST /triage, the hook's call) says work=answer or work=conversation. A change goes
 // to dispatch (lib/dispatch.mjs); an unclear change to the session's model, which can ask. STEALTHLAB_ANSWERS=off turns
@@ -103,5 +103,5 @@ export async function answerTurn({ prompt, root = null, transcriptPath = null, s
   const secs = Math.round((Date.now() - started) / 1000);
   log(`answer: ${name} answered in ${secs} s; review: good`);
   return { handled: true, model: name, answer: reply,
-           text: `Answered by ${name} in ${secs} s (StealthLab answered it before this session's model ran; checked by ${v.model || "a reviewer"}).\n\n${reply}` };
+           text: `Answered by ${name} in ${secs} s (kell answered it before this session's model ran; checked by ${v.model || "a reviewer"}).\n\n${reply}` };
 }

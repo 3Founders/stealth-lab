@@ -6,14 +6,14 @@
       "family": "parallelism",
       "canonical_procedure": "Run parallel coding agents each in its own git worktree so concurrent file/git operations never collide.",
       "headline_number": "1/8 -> 8/8 success rate under real concurrent git operations",
-      "adopt_as": "Confirms an already-real, already-in-use StealthLab pattern (this session itself ran across 8 worktrees) with hard numbers -- worth citing as evidenced practice, not a new build."
+      "adopt_as": "Confirms an already-real, already-in-use kell pattern (this session itself ran across 8 worktrees) with hard numbers -- worth citing as evidenced practice, not a new build."
     },
     {
       "candidate_id": "C05",
       "family": "tool",
       "canonical_procedure": "Advertise tool names only up front; load a tool's full schema on demand.",
       "headline_number": "67.5x token reduction per unused tool (conservative)",
-      "adopt_as": "Already StealthLab's own deployed mechanism -- this is independent confirmation of its value, not a new adoption."
+      "adopt_as": "Already kell's own deployed mechanism -- this is independent confirmation of its value, not a new adoption."
     },
     {
       "candidate_id": "C02",
@@ -27,7 +27,7 @@
       "family": "context",
       "canonical_procedure": "Protect the most recent N turns from context compression even under pressure.",
       "headline_number": "9/9 of the artifact's own real tests passing",
-      "adopt_as": "Reference implementation worth studying for StealthLab's own context-compaction paths, if/when they grow one."
+      "adopt_as": "Reference implementation worth studying for kell's own context-compaction paths, if/when they grow one."
     },
     {
       "candidate_id": "C07",
@@ -40,7 +40,7 @@
       "candidate_id": "C03",
       "family": "repo",
       "canonical_procedure": "Parse a codebase with tree-sitter into a deterministic call/definition/import graph for structural questions.",
-      "headline_number": "176 files / 1998 nodes / 8811 edges in 59.65s on StealthLab's own backend/app",
+      "headline_number": "176 files / 1998 nodes / 8811 edges in 59.65s on kell's own backend/app",
       "adopt_as": "Partial win -- the parsing/graph-construction stage is proven fast and real; the query layer needs infrastructure (Memgraph) not evaluated this pass. Selected for the proven stage only."
     },
     {

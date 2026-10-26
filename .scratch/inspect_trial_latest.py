@@ -1,7 +1,7 @@
 import asyncio, os, json
 from dotenv import load_dotenv
 import asyncpg
-load_dotenv(r'C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\.env')
+load_dotenv(r'C:\Users\chait\Prog\3Found\Stealth\kell\backend\.env')
 async def main():
  p=await asyncpg.create_pool(os.environ['DATABASE_URL'])
  try:

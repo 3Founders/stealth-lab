@@ -1,6 +1,6 @@
 # demo.md — The Minimal Shippable Product (v0.1 "earned memory" slice)
 
-This file defines the **smallest end-to-end slice of StealthLab that may ship to
+This file defines the **smallest end-to-end slice of kell that may ship to
 production**, and the exact evidence that proves each claim before release. If a
 claim below lacks its proving command passing on the release commit, the slice
 does not ship. Companion docs: `commLLM.md` (positioning), `demo-fixture` story

@@ -286,12 +286,12 @@ def tree_diff(ws: Path, before: str | None, after: str | None, limit: int = 2000
 
 
 DONE_BY = re.compile(r"(?:Done|Answered) by (\S+) in (\d+) s")
-# what StealthLab shows when a cheap model did the turn: a change ("Done by ...") or an answer ("Answered by ...")
-SHOWN = (("Done by ", "StealthLab dispatched it"), ("Answered by ", "StealthLab answered it"))
+# what kell shows when a cheap model did the turn: a change ("Done by ...") or an answer ("Answered by ...")
+SHOWN = (("Done by ", "kell dispatched it"), ("Answered by ", "kell answered it"))
 
 
 def shown_message(log_path: Path) -> str | None:
-    """The message StealthLab showed the user when a cheap model did the turn ("Done by <model> in N s ..." for a change,
+    """The message kell showed the user when a cheap model did the turn ("Done by <model> in N s ..." for a change,
     "Answered by <model> in N s ..." for an answer), found in
     the turn's stream-json log: the hook's output reaches the log inside some message field, so every string in every
     line is searched. None when the turn was not dispatched."""

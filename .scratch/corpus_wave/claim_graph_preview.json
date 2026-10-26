@@ -452,6 +452,6 @@
     "Every node is candidate / candidate-not-verified: nothing here has independent supporting execution evidence yet (Phase 10).",
     "USER_REPORTED claims (c.s10.*) are attribution of Huntley's blog, NOT restated as established fact.",
     "EXPERIMENTAL claims (c.s20.*) carry measured conditions in candidates/S20.md; the executable form is p.s19.reproduce_context_rot.",
-    "VALIDATED_BY here means 'the report's own method produces this evidence', not 'StealthLab verified it'."
+    "VALIDATED_BY here means 'the report's own method produces this evidence', not 'kell verified it'."
   ]
 }

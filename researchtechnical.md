@@ -4,7 +4,7 @@
 **"next"**, the next unchecked point is researched via **Exa (web)** + **OpenAlex
 (scholarly API)**; findings are appended inline under that point (dated), status
 flips `[pending]` → `[researched @date]`, and the pointer advances. Findings must
-name what changes in StealthLab (system refs S1–S10 per Roadmap1.md), not just
+name what changes in kell (system refs S1–S10 per Roadmap1.md), not just
 summarize papers.
 
 ---

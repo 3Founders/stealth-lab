@@ -146,7 +146,7 @@ def gateway_url() -> str:
 
 async def client_config(pool: Any, org_id: str) -> dict[str, Any]:
     """The `exec.json` pieces a developer's machine needs, from the organisation's connected keys. No credential: the
-    machine authenticates to the gateway with its own StealthLab sign-in, and the gateway holds the provider key."""
+    machine authenticates to the gateway with its own kell sign-in, and the gateway holds the provider key."""
     base = gateway_url()
     async with tenant_transaction(pool, gov._scope(org_id)) as conn:
         rows = await conn.fetch("SELECT provider, units FROM org_provider_keys WHERE organization_id = $1::uuid AND enabled "

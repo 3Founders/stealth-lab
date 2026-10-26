@@ -1,4 +1,4 @@
-// Arm C's StealthLab install, scoped to ONE workspace: the same hooks and agents `kell install --with-exec`
+// Arm C's kell install, scoped to ONE workspace: the same hooks and agents `kell install --with-exec`
 // writes, but into <workspace>/.claude/ (project level) instead of the user's ~/.claude, so the person's own Claude
 // Code is never changed. The runner starts `claude -p --setting-sources project`, so only these settings load.
 //

@@ -28,7 +28,7 @@ from app.services.ingestion_sources.document_adapters.pdf_adapter import PdfAdap
 
 _MAX_BYTES = 20 * 1024 * 1024
 _MAX_REDIRECTS = 3
-_UA = "StealthLab-ingestion/1.0 (+document fetch)"
+_UA = "kell-ingestion/1.0 (+document fetch)"
 
 
 def _format_adapter(content_type: str, url: str):

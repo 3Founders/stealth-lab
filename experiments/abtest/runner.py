@@ -1,7 +1,7 @@
-"""A-vs-C runner: the same tasks through headless Claude Code, plain (A) and with StealthLab (C).
+"""A-vs-C runner: the same tasks through headless Claude Code, plain (A) and with kell (C).
 
   A  plain Claude Code on MODEL. Its workspace has no .claude/ and no .kell/.
-  C  the same Claude Code on MODEL, with StealthLab installed in the workspace (setup_c.mjs: knowledge hook, capture
+  C  the same Claude Code on MODEL, with kell installed in the workspace (setup_c.mjs: knowledge hook, capture
      hooks, model guard, executor agents), the local test server (run_backend.py) and the open models in exec.json.
   C0 (long-horizon series only) exactly C, but its .kell/ is wiped before EVERY task: what C gains from a library
      and survey that persist across tasks of one repo, C0 does not. C minus C0 is the value of .kell.
@@ -175,7 +175,7 @@ def env_file(path: Path) -> dict[str, str]:
 
 ARMS = ("A", "C0", "C-R", "C-L", "C")
 
-# What persists from one issue to the next, per StealthLab arm (every one of them has the SAME install and settings; only this differs):
+# What persists from one issue to the next, per kell arm (every one of them has the SAME install and settings; only this differs):
 #   facts   .kell/claims.md and survey/ (one `kell survey` at series start; none for C0)
 #   library .kell/library.md, library/, index/, SUMMARY.md, evidence (what was fixed before)
 #   routing .kell/routing.md, areas.md, dag_state.json (the local per-model counts)
@@ -196,7 +196,7 @@ STATE_KEEP = (".keep", "meta.json", "workspace.md", ".auto-survey", ".gitignore"
 
 
 def is_c(arm: str) -> bool:
-    """Every StealthLab arm (C0, C-R, C-L, C) is the same install; arm A is plain Claude Code."""
+    """Every kell arm (C0, C-R, C-L, C) is the same install; arm A is plain Claude Code."""
     return arm in ARM_STATE
 
 
@@ -207,7 +207,7 @@ def server_resets(arm: str) -> bool:
 
 def wipe_stealth(ws: Path, arm: str = "C0") -> None:
     """Empty what `arm` does NOT keep between issues (ARM_STATE), leaving the directory, its .keep and the repository's bookkeeping,
-    so the workspace still counts as a StealthLab repo. C0 keeps nothing; C keeps everything (this is then a no-op)."""
+    so the workspace still counts as a kell repo. C0 keeps nothing; C keeps everything (this is then a no-op)."""
     keep = ARM_STATE[arm]
     d = ws / ".kell"
     if d.exists():
@@ -302,8 +302,8 @@ def c_home() -> Path:
     home = LOCAL / "C_home"
     home.mkdir(parents=True, exist_ok=True)
     cfg = json.loads((HERE / "exec.json").read_text(encoding="utf-8"))
-    # ABTEST_CHEAP_AGENT=claude: the same open models, driven by Claude Code (through StealthLab's local bridge) instead
-    # of StealthLab's own minimal agent loop -- only WHO drives the models changes; models, profiles, checks, .kell
+    # ABTEST_CHEAP_AGENT=claude: the same open models, driven by Claude Code (through kell's local bridge) instead
+    # of kell's own minimal agent loop -- only WHO drives the models changes; models, profiles, checks, .kell
     # and dispatch stay as they are
     if os.environ.get("ABTEST_CHEAP_AGENT", "stealth").lower() == "claude":
         models = [m for spec in cfg.get("executors", {}).values() for m in (spec.get("models") or []) if m in cfg.get("profiles", {})]
@@ -380,7 +380,7 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
                if os.environ.get("ABTEST_GC_MIN_TOKENS") else {}),
             "STEALTHLAB_EXEC_WORKTREE_ROOT": str(LOCAL / "worktrees"),
             "GENERAL_COMPUTE_API_KEY": secrets["gc"],
-            # Claude Code removes CLAUDE_CODE_OAUTH_TOKEN from its hooks' environment; StealthLab hands this copy to the
+            # Claude Code removes CLAUDE_CODE_OAUTH_TOKEN from its hooks' environment; kell hands this copy to the
             # claude processes its hooks start (test-first writer, audit, page judge) -- packaging/npm claudeChildEnv
             **({"STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN": env["CLAUDE_CODE_OAUTH_TOKEN"]} if env.get("CLAUDE_CODE_OAUTH_TOKEN") else {}),
             # z.ai (GLM) for the cheap rungs and an open-model test writer, when backend/.env has it
@@ -465,7 +465,7 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
     text = str(result.get("result") or "")
     if result.get("is_error") and any(w in text.lower() for w in LIMIT_WORDS):
         return {"status": "rate_limited", "error": text[:300]}
-    # a prompt the hook stopped (StealthLab's cheap model did the turn) never reaches the model: no assistant message, and
+    # a prompt the hook stopped (kell's cheap model did the turn) never reaches the model: no assistant message, and
     # Claude Code's result then repeats the session's previous cost -- that is not this turn's (ct-series-v7: every
     # cheap turn after an Opus turn was charged that Opus turn again)
     cost = result.get("total_cost_usd") if answered else 0.0
@@ -625,7 +625,7 @@ ANSWER_JUDGE_SYSTEM = (
 
 
 def grade_answers(task: dict, mod, rec: dict, env: dict[str, str]) -> None:
-    """Each turn a cheap model ANSWERED (StealthLab's "Answered by ...") gets `answer_grade`: a strong model's verdict on it
+    """Each turn a cheap model ANSWERED (kell's "Answered by ...") gets `answer_grade`: a strong model's verdict on it
     against the issue and the merged fix. The final code's hidden tests say nothing about an explanation, so this is how
     a cheap answer's quality is measured. Grading, not the arm's work: its cost is kept apart (answer_grade.cost_usd)."""
     turns = [t for t in rec.get("turn_log") or [] if t.get("answered") and t.get("shown")]
@@ -742,7 +742,7 @@ def dry_run(args, arms: list[str]) -> int:
         print(f"  conversations: up to {args.turns} user turns per task -- a vague opener (the same for every arm, cached), then a "
               "simulated user answers questions or says thanks; turns are `claude --resume`")
     start = {"A": "plain Claude Code; its workspace has no .claude/ and no .kell/, and persists across the series",
-             "C": "StealthLab hooks-only install; its .kell/ (facts, library, routing counts) and the server's router state PERSIST",
+             "C": "kell hooks-only install; its .kell/ (facts, library, routing counts) and the server's router state PERSIST",
              "C0": "the same install as C, but .kell/ is wiped before every task and the server's router state is reset (no survey)",
              "C-R": "the same install; the facts (one survey at series start) stay, the library and routing counts are wiped, the router state is reset",
              "C-L": "the same install; facts and library stay, the local routing counts are wiped, the router state is reset"}

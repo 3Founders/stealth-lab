@@ -4,7 +4,7 @@
 // The undo point is a stash-like git ref, written with plumbing only: `refs/stealthlab/undo/<id>` points at a commit
 // whose tree holds each file the answer will touch AS IT IS NOW (a file that does not exist yet is recorded as absent).
 // It is not on any branch, never in `git log` of the user's branch, never in their index or working tree, and the ref
-// keeps its objects from `git gc`. A small manifest under the StealthLab home (undo/<id>.json) says which files, the
+// keeps its objects from `git gc`. A small manifest under the kell home (undo/<id>.json) says which files, the
 // model, the task and, once the answer is applied, the hash each file has then.
 //
 //   kell undo            restore the latest undo point of this repository

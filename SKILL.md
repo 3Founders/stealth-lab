@@ -1,9 +1,9 @@
 ---
-name: StealthLab
+name: kell
 description: A brief description of what this skill does
 ---
 
-# StealthLab
+# kell
 
 Instructions for the agent to follow when this skill is activated.
 

@@ -3,7 +3,7 @@ paste.txt
 
 paste.txt
 
-I’ve read paste.txt. It contains a detailed specification for a primary-source legal/compliance research memo for StealthLab, including India-first analysis, international privacy law, EU AI Act, copyright and open-source ingestion, UGC, model providers, code execution, data governance, technical controls, and a P0–P3 launch plan.
+I’ve read paste.txt. It contains a detailed specification for a primary-source legal/compliance research memo for kell, including India-first analysis, international privacy law, EU AI Act, copyright and open-source ingestion, UGC, model providers, code execution, data governance, technical controls, and a P0–P3 launch plan.
 
 The requested output is too broad to research reliably in a single response—especially because it asks for law current as of September 2026, exact effective dates, and primary-source citations across seven jurisdictions. I can turn it into a rigorous, staged research project rather than produce an unsupported “everything at once” memo.
 
@@ -66,16 +66,16 @@ Launch approval package
 
 P0/P1/P2/P3 launch plan.
 
-Direct answers to the 50 StealthLab-specific questions.
+Direct answers to the 50 kell-specific questions.
 
 Hostile review.
 
 Primary-source register.
 
 Important limitation
-No legal memo can honestly answer “Can StealthLab legally launch today?” without several facts that the prompt leaves open:
+No legal memo can honestly answer “Can kell legally launch today?” without several facts that the prompt leaves open:
 
-Where StealthLab is incorporated and where personnel operate.
+Where kell is incorporated and where personnel operate.
 
 Whether the launch is B2B, B2C, or both.
 
@@ -87,7 +87,7 @@ Whether model providers retain or train on submitted content.
 
 Whether public/community procedures are enabled at launch.
 
-Whether StealthLab stores source snapshots or only metadata and extracted procedures.
+Whether kell stores source snapshots or only metadata and extracted procedures.
 
 Whether it executes code against customer repositories or only disposable environments.
 
@@ -95,7 +95,7 @@ Whether it makes decisions affecting people, employment, access, security, or ot
 
 Expected user count, revenue, and applicable US state thresholds.
 
-Whether StealthLab acts as an intermediary for user-generated content.
+Whether kell acts as an intermediary for user-generated content.
 
 The most important immediate design rule is:
 
@@ -108,7 +108,7 @@ If you want the memo produced from this prompt, the most reliable next step is t
 continue
 
 SECTION 1 — EXECUTIVE VERDICT
-Can StealthLab legally launch today? → YELLOW (launch possible with strict scope limits and documented gating).
+Can kell legally launch today? → YELLOW (launch possible with strict scope limits and documented gating).
 
 Top 10 blockers/risks right now
 
@@ -133,7 +133,7 @@ Code-execution security is not just “best practice” — sandboxing, network 
 Children/minors policy must be explicit — DPDP has specific verifiable parental-consent rules; GDPR and US state laws add constraints. A default “no minors” policy is safest for a developer/AI platform.
 
 SECTION 2 — STEALTHLAB DATA MAP (condensed, launch-relevant subset)
-Data category	Personal?	Sensitive?	Typical legal basis (B2C)	Typical legal basis (B2B)	Controller/Processor (StealthLab)	Can enter GLOBAL?	Model-provider exposure?	Retention principle
+Data category	Personal?	Sensitive?	Typical legal basis (B2C)	Typical legal basis (B2B)	Controller/Processor (kell)	Can enter GLOBAL?	Model-provider exposure?	Retention principle
 Account (email, name, org)	Yes	No	Consent / Contract	Contract	Controller	No (by default)	Possible (auth, support)	Until deletion + legal hold
 Org membership / roles	Yes	No	Contract	Contract	Controller	No	Possible	As above
 Repository metadata (names, URLs)	Possibly	No	Legitimate interests / Contract	Contract	Mixed (often Controller)	Conditional (public only)	Possible	Minimize; align with source
@@ -150,7 +150,7 @@ Support communications	Yes	Potentially	Contract	Contract	Controller	No	Possible	
 Key rule: PRIVATE/ORGANIZATION data must not enter GLOBAL knowledge without explicit authorization, license compatibility checks, and an auditable promotion event.
 
 SECTION 3 — JURISDICTION MATRIX (high-level applicability)
-Jurisdiction	Applicability to StealthLab (India-first startup)	Primary laws (2026)	Main obligations that matter at launch	Trigger conditions	Launch impact
+Jurisdiction	Applicability to kell (India-first startup)	Primary laws (2026)	Main obligations that matter at launch	Trigger conditions	Launch impact
 India	High (incorporation/operations)	DPDP Act 2023 + Rules 2025; IT Act (intermediary aspects)	Notice, consent architecture, security safeguards, breach intimation (72h to Board), data-principal rights, grievance redressal, cross-border transfer rules (pending orders)	Processing digital personal data of individuals in India; SDF designation if thresholds met	Must architect for 13 May 2027 enforceability; Board already active; Consent Managers from 13 Nov 2026. 
 EU/EEA	Conditional (if offering AI services to individuals in EU)	GDPR; EU AI Act (Reg 2024/1689)	Lawful basis, transparency, DSARs, security, transfers (SCCs), DPIA if high risk; AI Act Art 50 transparency (chatbot disclosure, AI-content marking) from 2 Aug 2026	Art 3(2) GDPR: offering services/monitoring in EU; AI Act: provider/deployer roles	If EU users targeted, Article 50 duties apply now; high-risk AI obligations deferred to 2 Dec 2027 for Annex III standalone systems. 
 UK	Conditional (if offering to individuals in UK)	UK GDPR; UK AI framework (no AI Act copy)	Similar to GDPR; transparency, DSARs, security, transfers	Offering services to UK individuals	Treat similarly to EU GDPR; monitor UK AI guidance. 
@@ -159,7 +159,7 @@ Canada	Conditional	PIPEDA + provincial laws (e.g., Quebec Law 25)	Consent, purpo
 Australia	Conditional	Privacy Act 1988 + APPs; reforms ongoing	APPs (notice, use/disclosure, security, access/correction), breach notification (NDB)	Carrying on business in Australia	Baseline APP-aligned controls; monitor reforms.
 Singapore	Conditional	PDPA	Consent/notification, purpose limitation, protection, access/correction, DND	Carrying on business in SG	Baseline PDPA-aligned controls.
 SECTION 4 — LEGAL ROLE MATRIX (selected processing activities)
-Processing activity	StealthLab role	Why
+Processing activity	kell role	Why
 Account creation, billing, support	Controller (own service data)	You determine purposes/means for account/service ops. 
 Processing customer’s private repo content on their instructions	Processor (for that content)	Customer dictates purposes; you provide the service. 
 Ingesting public repos/docs to extract factual procedures	Controller (for derived knowledge)	You decide purposes/means of ingestion and knowledge creation. 
@@ -210,7 +210,7 @@ Deepfake and certain public-interest text disclosures by deployers.
 
 High-risk AI: Annex III standalone systems deferred to 2 Dec 2027; product-embedded high-risk to 2 Aug 2028.
 
-StealthLab implication: If you deploy generative/interactive AI to EU users, implement chatbot notices and AI-content labeling now; high-risk conformity assessments likely not required yet unless your system fits Annex III.
+kell implication: If you deploy generative/interactive AI to EU users, implement chatbot notices and AI-content labeling now; high-risk conformity assessments likely not required yet unless your system fits Annex III.
 
 SECTION 7 — COPYRIGHT / OSS / SOURCE INGESTION
 Public GitHub: Respect ToS, API rate limits (unauthenticated 60/hr; authenticated 5k/hr; higher for enterprise).
@@ -265,7 +265,7 @@ GDPR: Right to erasure (Art 17), restriction, portability; backup deletion is nu
 
 US states: Deletion rights vary; implement a unified DSAR portal with role-based export/delete.
 
-StealthLab model:
+kell model:
 
 Account/org deletion → cascade to private knowledge; preserve independently sourced global knowledge.
 

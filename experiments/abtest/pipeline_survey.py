@@ -1,8 +1,8 @@
-"""The pipeline survey: each stage of StealthLab's cheap-model pipeline measured on its own, against the real fix, on many
+"""The pipeline survey: each stage of kell's cheap-model pipeline measured on its own, against the real fix, on many
 real issues from many repositories (SWE-rebench) -- so a change is judged by where the pipeline loses issues across
 repos, not by the one run that happened to show a problem.
 
-Stage 1, locate: does StealthLab's "likely place" contain the code the real fix changed?
+Stage 1, locate: does kell's "likely place" contain the code the real fix changed?
   file@1 / file@3   the first / any of the first three located files is a source file the real fix changed
   spot              a located range overlaps a hunk of the real fix (old-file lines, +-10)
   empty             nothing located
@@ -172,7 +172,7 @@ def run_spec(py: Path, spec: Path, cwd: Path) -> tuple[int, str]:
 
 
 def stage2(iid: str, work: Path) -> dict:
-    """The tests StealthLab writes for the issue: written at all? failing on the original code? passing with the real fix?
+    """The tests kell writes for the issue: written at all? failing on the original code? passing with the real fix?
     Valid (fail before, pass after) is what makes them trustworthy evidence; failing WITH the real fix means they would
     reject a right answer."""
     import swe_series_task as S

@@ -1,4 +1,4 @@
-// StealthLab's own small coding agent: a bounded tool loop (read, list, search, edit, write, shell) over ONE
+// kell's own small coding agent: a bounded tool loop (read, list, search, edit, write, shell) over ONE
 // OpenAI-compatible chat/completions endpoint. It is the "stealth" executor's child process, so the runtime gives it
 // a throwaway git worktree as cwd and verifies the result with the node's checks; the agent never decides success.
 //
@@ -194,7 +194,7 @@ function toolWriteFile(cwd, a) {
 }
 
 function shellEnv(env) {
-  // the shell sees the user's environment minus the provider key and StealthLab's own variables
+  // the shell sees the user's environment minus the provider key and kell's own variables
   const out = {};
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined || k === KEY_ENV || /^STEALTHLAB_/i.test(k)) continue;
@@ -335,7 +335,7 @@ export function worktreeFingerprint(cwd) {
 // the task, or "". Never throws: a file that is missing, outside cwd or not text is simply left out.
 const PRELOAD_FILES = 3;
 const NAMED = /(?:^|[\s`'"(])((?:[\w.-]+\/)*[\w.-]+\.(?:md|txt|json|ya?ml|toml|py|js|mjs|cjs|ts|tsx|jsx|sql|csv|html|css|go|rs|java|rb|sh))(?=$|[\s`'".,;:)!?])/g;
-// path:start-end in the task (StealthLab's "likely place" line, lib/locate.mjs): those lines, not the file's first 200
+// path:start-end in the task (kell's "likely place" line, lib/locate.mjs): those lines, not the file's first 200
 const RANGED = /(?:^|[\s`'"(,])((?:[\w.-]+\/)*[\w.-]+\.(?:py|js|mjs|cjs|ts|tsx|jsx|go|rs|java|rb|sql|sh)):(\d+)-(\d+)(?=$|[\s`'".,;:)!?])/g;
 export function preloadNamedFiles(task, cwd) {
   const parts = [];

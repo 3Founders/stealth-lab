@@ -1,6 +1,6 @@
-# Build prompt: StealthLab local executor layer (external agents + Claude Code subagents)
+# Build prompt: kell local executor layer (external agents + Claude Code subagents)
 
-You are implementing a feature in the StealthLab repository (`github.com/3Founders/stealth-lab`, branch `main`).
+You are implementing a feature in the kell repository (`github.com/3Founders/stealth-lab`, branch `main`).
 Read this whole prompt before writing code. When something here conflicts with what you find in the code, the
 code is the truth for *how things work today*. Stop and report the conflict in section 11(f) instead of silently
 choosing.
@@ -19,7 +19,7 @@ This is a hard requirement, not a write-up you add afterwards.
    commit prefixes, line 2665; claim-your-item, line 2661). Read both.
 2. `packaging/npm/bin/kell.mjs`, `packaging/npm/lib/{clients,config,proxy}.mjs`,
    `packaging/npm/test/*.test.mjs`: the npm installer you are extending. Note its principle: *"Nothing
-   StealthLab runs on your machine … `install` writes one entry into each agent's MCP config pointing at the
+   kell runs on your machine … `install` writes one entry into each agent's MCP config pointing at the
    hosted endpoint."* This feature deliberately adds the **first local runtime component**, and it must stay opt-in.
 3. `backend/app/mcp_server/server.py`: only to learn the **hosted** tools you will call over HTTPS:
    `recommend_models(...)` (line ~3324) and `report_model_run(...)` (line ~3393). Read their docstrings and

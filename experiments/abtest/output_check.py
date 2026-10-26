@@ -3,7 +3,7 @@
 When arm C (or C0) answers a prompt with a cheap model, the hook blocks the prompt and shows ONE message
 (packaging/npm/lib/dispatch.mjs):
 
-    Done by <model> in <N> s (StealthLab dispatched it before this session's model ran, $<cost>). It passed <check> in an
+    Done by <model> in <N> s (kell dispatched it before this session's model ran, $<cost>). It passed <check> in an
     isolated worktree and the change is applied: <files>. Recorded in the library as <id>. To put it back as it was:
     kell undo.
 
@@ -59,7 +59,7 @@ Judge = Callable[[str, str], dict]      # (message, diff) -> {"correct": bool, "
 # ---------------------------------------------------------------- reading messages
 
 def diff_files(diff: str) -> list[str]:
-    """The files a unified diff touches, without StealthLab's own directories."""
+    """The files a unified diff touches, without kell's own directories."""
     files = re.findall(r"^diff --git a/(\S+) b/\S+$", diff or "", flags=re.M)
     return [f for f in dict.fromkeys(files) if not f.startswith(IGNORED_PATHS)]
 
@@ -73,7 +73,7 @@ def message_from_log(log: Path) -> str | None:
 
     def walk(x: object) -> None:
         if isinstance(x, str):
-            if "Done by " in x and "StealthLab dispatched it" in x:
+            if "Done by " in x and "kell dispatched it" in x:
                 found.append(x)
         elif isinstance(x, dict):
             for v in x.values():
@@ -180,7 +180,7 @@ def parse_verdict(text: str) -> dict | None:
 
 def claude_judge(model: str = JUDGE_MODEL, timeout: int = 240) -> Judge:
     """The judge: headless Claude Code on Sonnet with a one-line system prompt and nothing to read. It runs in an empty
-    temp directory with project settings only, so none of the person's hooks (StealthLab's own included) can touch it.
+    temp directory with project settings only, so none of the person's hooks (kell's own included) can touch it.
     Needs the Claude Code login (or CLAUDE_CODE_OAUTH_TOKEN) of whoever runs it; about $0.01-0.02 a message."""
     exe = shutil.which("claude") or "claude"
 

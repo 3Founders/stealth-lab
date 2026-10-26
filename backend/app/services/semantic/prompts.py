@@ -377,7 +377,7 @@ def parse_identity_batch(kind: str, body: Any, candidate_count: int) -> list[dic
 # ------------------------------------------------------------- triage
 #
 # Before find_ways spends a search and its judge calls, one judgment decides whether a request is the kind of
-# work StealthLab holds knowledge for at all (app/mcp_server/find_ways_triage.py). Only "reusable_task" is worth
+# work kell holds knowledge for at all (app/mcp_server/find_ways_triage.py). Only "reusable_task" is worth
 # a lookup; every other kind is something the agent handles from the repository and its own knowledge.
 
 TRIAGE_PROMPT_VERSION = "find_ways_triage@v1"

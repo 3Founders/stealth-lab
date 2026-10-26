@@ -1,4 +1,4 @@
-// For the pipeline survey, stage 2: StealthLab's test writer on one issue, exactly as dispatch calls it (the located code,
+// For the pipeline survey, stage 2: kell's test writer on one issue, exactly as dispatch calls it (the located code,
 // the baseline rule, GLM-5.3 hedged with Sonnet). argv: <root> <prompt file> <python> <out dir>.
 // Prints {file, model?, ambiguous?, ms} or {file: null}.
 import fs from "node:fs";

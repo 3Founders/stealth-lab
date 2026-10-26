@@ -119,13 +119,13 @@ function onOpenModelStep(payload, step, local, input, mode, env) {
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow",
         updatedInput: { ...input, executor: local.executor, model: local.model, ...(key ? { instance_key: key } : {}) } } };
     }
-    return deny(step, `StealthLab's model plan runs this step on ${local.model} through the local ${local.executor} ` +
+    return deny(step, `kell's model plan runs this step on ${local.model} through the local ${local.executor} ` +
       `executor${pOkNote(step.plan)}. Call achieve again with the same arguments plus ${args}.`, env,
       `achieve without the plan's unit (${local.model}|${local.executor})`);
   }
   const prompt = String(input.prompt || "");
   if (input.subagent_type === DELEGATOR && (!key || prompt.includes(key))) return null;
-  return deny(step, `StealthLab's model plan runs this step on ${local.model}, an open model a Claude subagent cannot ` +
+  return deny(step, `kell's model plan runs this step on ${local.model}, an open model a Claude subagent cannot ` +
     `run${pOkNote(step.plan)}. Call the ${payload.tool_name} tool with subagent_type: "${DELEGATOR}" and the same ` +
     `task, adding this line to the prompt: "Run it with ${args}." It runs in a worktree, is verified by the node's ` +
     `check and reports to the plan; apply the verified run afterwards.`, env, `asked ${input.subagent_type || "default"}, plan says ${local.model}|${local.executor}`);
@@ -145,7 +145,7 @@ function onMainEdit(payload, step, env) {
         `executor=${local.executor} model=${local.model}${key ? ` instance_key=${key}` : ""}."`
       : null;
   if (!how) return null;                                            // nothing here can run that model
-  return deny(step, `StealthLab's model plan runs this step on ${plan.current.split("|")[0]}${pOkNote(plan)}, not ` +
+  return deny(step, `kell's model plan runs this step on ${plan.current.split("|")[0]}${pOkNote(plan)}, not ` +
     `in this session. Hand it over instead of editing: ${how}. Then check its result and call report_result.`,
   env, `main session ${payload.tool_name} while the plan says ${plan.current}`);
 }
@@ -173,7 +173,7 @@ export function onClaudePreToolUse(payload, { env = process.env } = {}) {
     return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow",
                                    updatedInput: { ...input, model: alias } } };
   }
-  return deny(step, `StealthLab's model plan for this task runs this step on ${alias}${pOkNote(step.plan)}. ` +
+  return deny(step, `kell's model plan for this task runs this step on ${alias}${pOkNote(step.plan)}. ` +
     `Call the ${tool} tool again with the same arguments and model: "${alias}".`, env,
     `asked ${input.model || "default"}, plan says ${alias}`);
 }
@@ -291,7 +291,7 @@ export function onCursorPreToolUse(payload, { env = process.env } = {}) {
   if (denials >= MAX_DENIALS) return {};
   step.plan.denials = denials + 1;
   writeJson(step.file, step.session);
-  return { permission: "deny", agent_message: `StealthLab's model plan runs this step on ${want}. Start the Task again with model "${want}".` };
+  return { permission: "deny", agent_message: `kell's model plan runs this step on ${want}. Start the Task again with model "${want}".` };
 }
 
 // --- settings.json (Claude Code) ------------------------------------------------------------

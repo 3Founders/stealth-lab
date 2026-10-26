@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# StealthLab MCP installer for macOS / Linux.
+# kell MCP installer for macOS / Linux.
 #
 #   curl -fsSL https://<site>/install.sh | bash
 #   curl -fsSL https://<site>/install.sh | bash -s -- --client claude-code --token <tok>
 #
-# Installs nothing StealthLab-side on this machine: it registers the HOSTED
-# StealthLab MCP endpoint with the coding agents it finds (Claude Code,
+# Installs nothing kell-side on this machine: it registers the HOSTED
+# kell MCP endpoint with the coding agents it finds (Claude Code,
 # Cursor, VS Code, Windsurf, Codex, Claude Desktop) and exits. With Node.js
 # 18+ it runs `npx kell-mcp install`; without Node it still registers
 # Claude Code directly via `claude mcp add --transport http`.
@@ -37,7 +37,7 @@ node_ok() {
 }
 
 if node_ok; then
-  say "==> Registering StealthLab MCP ($URL) with your agents"
+  say "==> Registering kell MCP ($URL) with your agents"
   exec npx -y --package="$PKG" kell install --url "$URL" ${ARGS[@]+"${ARGS[@]}"}
 fi
 

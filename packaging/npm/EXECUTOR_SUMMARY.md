@@ -278,12 +278,12 @@ worktree or spawning. Tests assert the agent's pid file is never created. Gemini
 
 **Secrets:** `redact()` runs on check commands and tails, summary (<= 1,200 chars), `learned` (<= 5), stdout/stderr
 logs, `events.jsonl`, the task/checks in `run.json`, error strings, and outbox/hosted payloads. The saved token is
-also redacted as a literal. `childEnv` keeps StealthLab credentials out of every agent's environment.
+also redacted as a literal. `childEnv` keeps kell credentials out of every agent's environment.
 
 **ToS boundary, enforced in code:**
 - Agents are spawned only as local child processes of the user's own binaries (`common.mjs` `resolveBin` on the user's PATH). There is no session relay anywhere.
 - `childEnv`/`scrubEnv` pass the user's own agent keys only to the user's own agent.
-- The only egress is the user's own StealthLab endpoint.
+- The only egress is the user's own kell endpoint.
 - The README states the rule: only your own locally installed agents and logins; never proxied, shared, pooled or relayed.
 
 ## (h) Next steps, in order

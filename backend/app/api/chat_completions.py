@@ -10,7 +10,7 @@ All of them end in one place, app/providers/chat.py, so the policy, budget, ledg
 the same whichever shape a client speaks. The Messages and Responses shapes are translated by app/providers/shims.py.
 This module is HTTP only: identity, limits, headers, error envelopes.
 
-Point a client at `{server}/v1` with a StealthLab bearer token (Anthropic clients: ANTHROPIC_AUTH_TOKEN, which is sent as
+Point a client at `{server}/v1` with a kell bearer token (Anthropic clients: ANTHROPIC_AUTH_TOKEN, which is sent as
 `Authorization: Bearer`; a key sent only as `x-api-key` is not read).
 
 Per-request controls are headers, because the bodies are the vendors' schemas and must stay that:

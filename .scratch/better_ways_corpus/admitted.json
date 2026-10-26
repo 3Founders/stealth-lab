@@ -54,7 +54,7 @@
     },
     {
       "candidate_id": "C05",
-      "artifact": "StealthLab deferred-tool loading (measured on a proxy system -- see caveat)",
+      "artifact": "kell deferred-tool loading (measured on a proxy system -- see caveat)",
       "decision": "B - ADMIT WITH CONDITIONS (proxy-system measurement, mandatory caveat)",
       "canonical_procedure_family": "defer-tool-schema-loading-until-needed",
       "procedure_row_id": "01a069f2-3921-7f5f-ab8a-142e8a8a514b",
@@ -62,9 +62,9 @@
       "task_node_ids": ["87a3fa45-480e-46d0-8563-8b2b0a692d23", "8e595f42-6566-482b-8f70-a1ce32991f10"],
       "claim_ids": ["722d58e2-ffdc-4880-9a35-e1e7bb58de4b"],
       "implementation_id": null,
-      "implementation_note": "deliberately none -- no bindable StealthLab-native artifact; architectural/descriptive knowledge",
+      "implementation_note": "deliberately none -- no bindable kell-native artifact; architectural/descriptive knowledge",
       "epistemic_tag": "EXPERIMENTAL",
-      "caveat": "measured on the evaluating agent's own Claude Code harness (ToolSearch), NOT StealthLab's own MCP tool surface -- never to be represented as StealthLab-verified",
+      "caveat": "measured on the evaluating agent's own Claude Code harness (ToolSearch), NOT kell's own MCP tool surface -- never to be represented as kell-verified",
       "verification_status": {
         "retrieval": "pass", "applicability": "pass (ALLOW)",
         "implementation_resolution": "pass (correctly none)", "execution": "no implementation to execute (by design)",

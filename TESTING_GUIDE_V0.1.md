@@ -1,4 +1,4 @@
-# StealthLab v0.1 — End-to-End Testing Guide
+# kell v0.1 — End-to-End Testing Guide
 
 > **Historical (v0.1).** Tool counts and suite numbers below predate Final
 > V1. The current MCP surface is **29 tools** (`apply_change_set` was

@@ -280,7 +280,7 @@ weighted_rendezvous(key, shards, wanted=1):
 
 - No public source or repository benchmark establishes an optimal `B` (number of shards), `m` (local top candidates), or hierarchy expansion threshold for this corpus. These must be tuned against a full-fanout oracle. [Gap.]
 
-- The literature’s reported throughput/recall gains come from particular datasets, dimensionalities, index implementations, and hardware. They support the architecture class, not a forecast for StealthLab’s 1,024-dimensional Procedures. [Gap; see the workload-specific Pyramid and graph-partition evaluations.]
+- The literature’s reported throughput/recall gains come from particular datasets, dimensionalities, index implementations, and hardware. They support the architecture class, not a forecast for kell’s 1,024-dimensional Procedures. [Gap; see the workload-specific Pyramid and graph-partition evaluations.]
 
 - The current corpus does not expose distributions for Procedures per concrete Goal, accepted-relation fanout/depth, rollover frequency, cross-Goal cross-over, or unindexed recent writes. Those distributions determine whether a Goal→shard set is usually 1, 2, or many shards. [Gap.]
 
@@ -391,4 +391,4 @@ Keep canonical Procedure identity and lifecycle on its home shard, make `goal_id
 
 - The current remote route-before-write sequence is repairable but not an atomic distributed transaction. A crash study has not been run to quantify dangling routes, silent projection gaps, and operator recovery time across a real 100-shard topology. [Gap.]
 
-- The external literature supports selective hierarchical routing, but none supplies turnkey PostgreSQL implementation for accepted multi-parent Goal hierarchies. The proposed posting table and watermark protocol are an architectural recommendation, not an experimentally validated StealthLab result. [Gap.]
+- The external literature supports selective hierarchical routing, but none supplies turnkey PostgreSQL implementation for accepted multi-parent Goal hierarchies. The proposed posting table and watermark protocol are an architectural recommendation, not an experimentally validated kell result. [Gap.]

@@ -1,7 +1,7 @@
 // A cheap reviewer of a cheap model's answer: one call, shown the request and the patch, says whether the patch does
 // what was asked. It is evidence for accepting an answer, alongside the project's own tests -- not a check by itself.
 //
-// Why: the tests StealthLab writes before the fix guess the interface or the behaviour about half the time, so as the
+// Why: the tests kell writes before the fix guess the interface or the behaviour about half the time, so as the
 // only judge they accepted 11 cheap answers of which 2 were right and rejected 7 right ones (pipeline survey stage 3,
 // 2026-10-16). A reviewer reads the change against the request instead; whether it helps is measured offline on stage
 // 3's saved answers before any rule uses it. The prompt and the default model are fixed BEFORE that measurement

@@ -51,7 +51,7 @@ export function openModelConfig(profile) {
     provider: {
       [PROFILE_PROVIDER_ID]: {
         npm: "@ai-sdk/openai-compatible",
-        name: "StealthLab open model",
+        name: "kell open model",
         options,
         models: { [profile.model_id]: { name: profile.model_id } },
       },

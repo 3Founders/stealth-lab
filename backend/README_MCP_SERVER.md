@@ -1,6 +1,6 @@
-# StealthLab MCP Server — v1
+# kell MCP Server — v1
 
-Exposes StealthLab's bi-temporal knowledge/task graph, procedure lifecycle,
+Exposes kell's bi-temporal knowledge/task graph, procedure lifecycle,
 Goal/Procedure/Implementation Registry, the Problem/Benchmark/Solution/
 Evaluation product model, and a retrieval-grounded coding agent as MCP
 tools.

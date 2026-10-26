@@ -1,4 +1,4 @@
-# final_thing.md — StealthLab v1
+# final_thing.md — kell v1
 
 What we're building, in plain words, plus what v1 contains and what moves to v2.
 Everything not listed under v1 is v2: the code stays, it's just not part of v1.
@@ -8,8 +8,8 @@ The architecture as built is in `final_architecture.md`.
 
 ## The idea in one paragraph
 
-An agent working in your repo asks StealthLab "what's the best known way to do
-this?" StealthLab returns a step-by-step plan built from proven Procedures,
+An agent working in your repo asks kell "what's the best known way to do
+this?" kell returns a step-by-step plan built from proven Procedures,
 picked using facts about *your* repo. The agent does the work. Whatever it
 learns along the way — a fix, a missing step, a better way — it reports back, so
 the next person gets the improved version.
@@ -19,7 +19,7 @@ the next person gets the improved version.
 ## The whole thing, in simple words
 
 ### Setup (once per repo)
-1. You connect the agent to StealthLab. Reading needs no login; contributing does.
+1. You connect the agent to kell. Reading needs no login; contributing does.
 2. The agent looks around your repo and writes down plain facts in
    `.kell/claims.md`: "Node 20", "uses docx@9", "tests run with `pnpm test`".
    Each fact points at the file line it came from, and facts are grouped by
@@ -28,7 +28,7 @@ the next person gets the improved version.
 ### Doing a task
 3. You ask for something: "add a DOCX export."
 4. The **planner** (the main agent) calls `find_ways` and sends your repo facts along.
-5. StealthLab finds the best-matching Goal and Procedure. Your repo facts pick
+5. kell finds the best-matching Goal and Procedure. Your repo facts pick
    the right one and rule out ones that can't work here. It returns the
    **knowledge**, not a plan: the Goal tree, the chosen Procedure(s) with every
    step in full (what to do, source locator, success check, requirements), the

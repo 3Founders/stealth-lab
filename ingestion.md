@@ -1,4 +1,4 @@
-You are working on the existing StealthLab repository.
+You are working on the existing kell repository.
 
 This is the FIRST major production implementation pass.
 

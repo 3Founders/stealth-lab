@@ -1,4 +1,4 @@
-# StealthLab Final-V1 Candidate — Evaluation Scorecard
+# kell Final-V1 Candidate — Evaluation Scorecard
 
 **System under test:** `core-a/ingestion-testing` @ `4208b87cbf8233b2ff1b912f67b625217aa4e42c`
 (not yet merged to `main`, no frozen tag exists yet — see Freeze Handoff below).

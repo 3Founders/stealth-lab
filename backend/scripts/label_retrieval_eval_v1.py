@@ -6,7 +6,7 @@ retrieval_eval_v1.jsonl (candidates array), flagged for human review.
 import json, re
 from pathlib import Path
 
-DATA = Path(r"C:\Users\chait\Prog\3Found\Stealth\StealthLab\backend\tests\data")
+DATA = Path(r"C:\Users\chait\Prog\3Found\Stealth\kell\backend\tests\data")
 CAND = DATA / "retrieval_eval_v1.candidates.jsonl"
 OUT = DATA / "retrieval_eval_v1.jsonl"
 

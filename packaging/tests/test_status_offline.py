@@ -205,7 +205,7 @@ def test_root_serves_the_single_page(client):
     assert res.status_code == 200
     assert "text/html" in res.headers["content-type"]
     body = res.text
-    assert "StealthLab status" in body
+    assert "kell status" in body
     assert "/api/overview" in body
     assert "renderProcedure" in body
 

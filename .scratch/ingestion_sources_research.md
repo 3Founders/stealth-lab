@@ -203,7 +203,7 @@ episode, the successful recovery, and a machine-verifiable outcome (`FAIL_TO_PAS
    generative-model training. For all-rights-reserved sources: store extracted claims/procedures with short quotes
    plus a link and hash, not full text. Never re-serve the full text.
 9. **GitHub ToS:** the D.9 "Access Reciprocity" clause (effective 2026-04-27) applies only to entities with ≥700M MAU,
-   so it does not bind StealthLab. The Acceptable Use Policy forbids spam and selling personal information scraped
+   so it does not bind kell. The Acceptable Use Policy forbids spam and selling personal information scraped
    from GitHub.
 10. **Security, not only legal:** third-party SKILL.md and AGENTS.md files are prompt-injection surfaces
     (VoltAgent's README carries a security notice to the same effect). Ingested procedures should stay `candidate`,

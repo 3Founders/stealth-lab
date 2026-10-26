@@ -1,8 +1,8 @@
-# StealthLab Privacy Policy
+# kell Privacy Policy
 
 **STATUS: DRAFT — REQUIRES LEGAL REVIEW. NOT YET PUBLISHED OR IN EFFECT.**
 
-This draft describes, as accurately as the current codebase allows, what data StealthLab
+This draft describes, as accurately as the current codebase allows, what data kell
 collects and processes, and what happens to it. It intentionally does **not** claim compliance
 with any specific privacy law or certification (GDPR, CCPA, SOC 2, ISO 27001, HIPAA, or
 otherwise) — applicability of those regimes is **undetermined** and must be assessed by counsel
@@ -10,20 +10,20 @@ per `STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` §5. Every bracketed placeholder m
 by the founder(s)/counsel.
 
 This document supersedes and supersets `DATA_STATEMENT.md` (which describes the earlier,
-single-user local-only v0.1 posture) once StealthLab moves to a hosted, multi-user posture. Read
+single-user local-only v0.1 posture) once kell moves to a hosted, multi-user posture. Read
 both — the older statement's honesty about limits ("best-effort, not a guarantee") still applies.
 
 ## 1. Deployment posture matters
 
-StealthLab can run in two very different modes, and what applies depends on which one you're
+kell can run in two very different modes, and what applies depends on which one you're
 using:
 
 - **Local-first (v0.1, as documented in `SECURITY.md`/`DATA_STATEMENT.md`):** you run the backend
-  and Postgres yourself; there is no StealthLab-hosted server; the only data that leaves your
+  and Postgres yourself; there is no kell-hosted server; the only data that leaves your
   machine is text sent to your own configured embedding/model provider.
-- **Hosted (in progress — see `docs/launch_compliance_implementation_ledger.md`):** StealthLab
+- **Hosted (in progress — see `docs/launch_compliance_implementation_ledger.md`):** kell
   operates the backend, database, and authentication (Supabase Auth) for you. This is the mode
-  most of this Policy addresses, since it involves StealthLab as a data controller/processor.
+  most of this Policy addresses, since it involves kell as a data controller/processor.
 
 **[FOUNDER: state plainly, per deployment you actually ship, which mode a given user is in.]**
 
@@ -58,7 +58,7 @@ in some code paths — meaning not every sensitive transition may yet produce an
 - To run the safety/admission screening described in
   [Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md) before internet-sourced content becomes
   visible.
-- To generate embeddings for search (sent to your configured or StealthLab-configured provider —
+- To generate embeddings for search (sent to your configured or kell-configured provider —
   see [Subprocessors](./SUBPROCESSORS.md)).
 - To operate the Global Commons: showing what you've explicitly published, and, if you opt in,
   your public profile and contribution counts.

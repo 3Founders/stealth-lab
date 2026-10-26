@@ -180,7 +180,7 @@ Gold-ceiling says reasoning binds at the frontier — our claim is that
 structure substitutes for some reasoning at small scale.
 Status: **PLAUSIBLE, UNTESTED.** The decisive experiment is cheap and
 specified: gold-docs+scaffold vs gold-docs-bare on gemma over dev-12.
-If scaffold lifts the gold ceiling itself, StealthLab is a small-model
+If scaffold lifts the gold ceiling itself, kell is a small-model
 enablement layer; if not, it is a retrieval improvement competing in the
 smaller band.
 Falsifier: gold-docs arms statistically indistinguishable.

@@ -1,5 +1,5 @@
 """
-StealthLab MCP server. Representative tools:
+kell MCP server. Representative tools:
   - retrieve_precedent: thin read wrapper, zero new business logic, wraps
     an already-tested retrieval function.
   - find_best_way (renamed from solve_task): NOT a pure wrapper -- see its
@@ -460,7 +460,7 @@ _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 # (find_best_way, search_procedures, run tracking, ...) was removed.
 
 _V1_INSTRUCTIONS = (
-    "StealthLab: proven procedures for coding tasks. You plan; StealthLab "
+    "kell: proven procedures for coding tasks. You plan; kell "
     "knows. 0) Once per repo, run the survey_repo prompt to write "
     ".kell/claims.md (facts about this repo, each citing file:line). If "
     "your client doesn't show MCP prompts, read the same text from the "
@@ -649,7 +649,7 @@ observability.init("mcp")
 
 # ---------------------------------------------------------------------------
 # Claim-graph viewer -- a read-only web page + JSON feed served by THIS MCP
-# server, so anyone running the StealthLab MCP setup can open
+# server, so anyone running the kell MCP setup can open
 # http://127.0.0.1:8765/claim-graph and see the live claim graph. The
 # graph renderer (force-graph, vendored under app/mcp_server/vendor/) is
 # served from /claim-graph/vendor/... -- no CDN, no build step, works
@@ -808,7 +808,7 @@ async def procedure_graph_data(request: Request) -> JSONResponse:
 # Chrome DevTools /json/version discovery request landing on this same
 # port). Deliberately unauthenticated (same posture as /claim-graph and
 # /procedure-graph below) and deliberately minimal -- no secrets, no
-# tool listing, just enough to confirm this IS the StealthLab MCP server
+# tool listing, just enough to confirm this IS the kell MCP server
 # and point a human at the real endpoint.
 # ---------------------------------------------------------------------------
 @server.custom_route("/", methods=["GET"], include_in_schema=False)
@@ -2119,7 +2119,7 @@ def _tool_entry(info: Any, full: bool) -> dict[str, Any]:
 @server.tool()
 async def discover_tools(ctx: Context, need: str = "", names: list[str] | None = None) -> str:
     """
-    Find more StealthLab tools when you need them. Only the core tools are listed up front; this returns the others
+    Find more kell tools when you need them. Only the core tools are listed up front; this returns the others
     that match what you need to do, with their full arguments. Run one with use_tool(name, arguments).
 
     need: what you want to do in plain words ("run a prompt on another model", "propose a new way", "report a

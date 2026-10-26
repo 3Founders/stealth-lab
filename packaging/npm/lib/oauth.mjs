@@ -126,7 +126,7 @@ function listenForCode({ expectState, timeoutMs }) {
       rejectCode(new Error(`sign-in was not completed (${err || "no code returned"}${u.searchParams.get("error_description") ? `: ${u.searchParams.get("error_description")}` : ""})`));
       return;
     }
-    reply(200, "Signed in", "StealthLab is connected. You can close this tab and return to your terminal.");
+    reply(200, "Signed in", "kell is connected. You can close this tab and return to your terminal.");
     resolveCode(code);
   });
   const timer = setTimeout(() => rejectCode(new Error(`no sign-in within ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);

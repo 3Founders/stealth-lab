@@ -309,7 +309,7 @@ test("edit_file refuses ambiguous or missing text and tells the model why", asyn
   assert.equal(fs.readFileSync(path.join(repo, "f.txt"), "utf8"), "a\na\n");
 });
 
-test("run_shell withholds the provider key and StealthLab variables from the command", async () => {
+test("run_shell withholds the provider key and kell variables from the command", async () => {
   const repo = tmpRepo({});
   const out = await runTool("run_shell", { command: `"${process.execPath}" -e "console.log(JSON.stringify([process.env.OPEN_MODEL_API_KEY||null, process.env.STEALTHLAB_TOKEN||null, process.env.KEEP||null]))"` },
     { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY, STEALTHLAB_TOKEN: "t", KEEP: "yes", PATH: process.env.PATH, SystemRoot: process.env.SystemRoot } });

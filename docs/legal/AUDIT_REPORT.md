@@ -226,7 +226,7 @@ exist yet, per the codebase itself (mainly `docs/launch_compliance_implementatio
     jurisdiction-specific compliance claim will be made.
 
 **These documents are drafts. They are not legally reviewed, not complete, and are not a
-representation that StealthLab is ready for public launch.**
+representation that kell is ready for public launch.**
 
 ---
 *Audit performed by reading (not modifying) backend authorization, publication, verification, and

@@ -1,6 +1,6 @@
 # Combined real-use test: long horizon, `.kell`, multi-turn, messy/vague input, what the user sees (plan, 2026-10-14)
 
-The A-vs-C benchmark (docs/HANDOFF_abtest_2026-10-11.md, sections 11-12) measured StealthLab on one-prompt, clean,
+The A-vs-C benchmark (docs/HANDOFF_abtest_2026-10-11.md, sections 11-12) measured kell on one-prompt, clean,
 independent tasks: on 150 code tasks C saves 49% at 137 vs 140 solved. This test measures what that cannot:
 
 1. **Long horizon:** a series of real issues in ONE repository, in the order they happened, so `.kell/` (library,
@@ -73,7 +73,7 @@ Read section 6 (rules) before building anything. Everything here is to be BUILT 
 
 ### 3.3 Arms
 - **A:** plain Claude Code, Opus 5.5.
-- **C:** StealthLab hooks-only, configuration of section 1, `.kell/` persists across the series.
+- **C:** kell hooks-only, configuration of section 1, `.kell/` persists across the series.
 - **C0:** as C, `.kell/` wiped before each task.
 - Same opener, same simulated user (cached), same hidden tests for all arms. Arms run each task in a hashed order
   (as the runner does) so no arm always goes first.
@@ -93,7 +93,7 @@ learning curve (solved and cost by position in the series). C minus C0 = value o
 ## 4. Where it runs: Modal
 
 - Each repo needs its own environment (Docker image) -> Modal, one image per repo: the repo's Python and deps, Node,
-  Claude Code, the StealthLab package from this repo, Python with pytest/playwright, **Postgres and the StealthLab
+  Claude Code, the kell package from this repo, Python with pytest/playwright, **Postgres and the kell
   backend inside the container** (`backend/scripts/migrate.py`, `experiments/abtest/run_backend.py`; a Modal container
   cannot reach a laptop's backend). Results and logs to a Modal Volume; the runner's resumability keyed by run name.
 - **Claude auth:** either (a) the owner's subscription: `claude setup-token` on the owner's machine, the token stored as
@@ -118,7 +118,7 @@ learning curve (solved and cost by position in the series). C minus C0 = value o
 4. **Modal app** (`experiments/abtest/modal_series.py`): image per repo, backend + Postgres in the container, secrets,
    volume, `--repos --arms --max-issues --auth subscription|api`; a dry run on 1 issue per arm.
 5. **flow_check.py:** the scripted real-session check (fresh repo, no check configured, messy prompt, follow-up with
-   "it", own edit, `kell undo`, "thanks") as a committed script -- every StealthLab change should pass it.
+   "it", own edit, `kell undo`, "thanks") as a committed script -- every kell change should pass it.
 6. **Pages (separate, small):** send long screenshots as tiles (to GLM and to the judge) instead of cutting at 2400 px;
    re-run GLM-flash on the 5 failed pages of the 10-page test. If the pass rate rises clearly, turn `vision: true` back
    on for glm-5.3-flash with the Sonnet judge and re-run the page tasks.

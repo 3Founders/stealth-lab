@@ -19,7 +19,7 @@ Reduce: C costs at least 15% less than A, with at least as many issues solved.
 Recall: C-R solves at least 1 more issue per 10 than C0, or costs at least 10% less than C0 with the same number solved.
 Reuse: C-L solves at least 1 more issue per 10 than C-R, or costs at least 10% less than C-R with the same number solved.
 Route learning: C costs at least 10% less than C-L, or has fewer wasted cheap attempts than C-L in issues 6-10, with the same number solved.
-Tests decide: wrong fixes applied (graded by the hidden tests) are at most 2% of all accepted cheap fixes, across all StealthLab arms in the whole run.
+Tests decide: wrong fixes applied (graded by the hidden tests) are at most 2% of all accepted cheap fixes, across all kell arms in the whole run.
 
 **Note on Tests decide:** 2% is a rate, so with fewer than 50 accepted cheap fixes in the run, any single wrong fix
 applied exceeds it. Report the count and the denominator.

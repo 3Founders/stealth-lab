@@ -97,7 +97,7 @@ def stage2_batch(job: dict) -> list[dict]:
 def stage3_batch(job: dict) -> list[dict]:
     iids = job["iids"]
     _settings(job)
-    """The cheap agent on each issue -- lean Claude Code and StealthLab's own loop, both on SURVEY_AGENT_MODEL -- judged by
+    """The cheap agent on each issue -- lean Claude Code and kell's own loop, both on SURVEY_AGENT_MODEL -- judged by
     our tests and by the real hidden tests."""
     import shutil, tempfile
     os.environ.setdefault("HF_HOME", f"{VOL}/cache/hf")

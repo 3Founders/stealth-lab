@@ -28,7 +28,7 @@ from collections import Counter
 HERE = os.path.dirname(os.path.abspath(__file__))
 RESULTS = os.path.join(HERE, "experiments", "swebench_pro")
 LOGDIR = os.path.expanduser(
-    "~/AppData/Local/Temp/claude/c--Users-chait-Prog-3Found-Stealth-StealthLab/"
+    "~/AppData/Local/Temp/claude/c--Users-chait-Prog-3Found-Stealth-kell/"
     "5fbae7cf-2574-4394-9fc8-749fecbdad2b/scratchpad")
 
 # Colour only where it will actually render. The legacy Windows console prints

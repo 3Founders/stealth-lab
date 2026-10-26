@@ -5,13 +5,13 @@ a public benchmark or is built on public data. Facts are from the cited pages; a
 
 ## 1. What we are testing
 
-Whether our routed setup (cheaper open models plus the StealthLab knowledge layer and executors) solves the same tasks as
+Whether our routed setup (cheaper open models plus the kell knowledge layer and executors) solves the same tasks as
 the model the customer's developers use today, at lower cost. Same tasks, same tools, three arms:
 
 | Arm | What runs |
 |---|---|
 | A. Baseline | The model the customer uses now (decide with them; "Claude 3.5 Sonnet" in the first draft is dated), in its own harness |
-| B. Cheap model, solo | An open model via the `docs/provider_catalog.md` providers, no StealthLab memory |
+| B. Cheap model, solo | An open model via the `docs/provider_catalog.md` providers, no kell memory |
 | C. Routed | `find_ways` + the executors (`stealth`, `opencode`) with the routing ladder |
 
 Use the existing rig (`experiments/harness/`, three-arm sweeps, McNemar power) instead of a new one.

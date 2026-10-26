@@ -11,13 +11,13 @@ DISCOVERED -> FETCHED -> EXTRACTED -> TESTED -> REVIEWED -> SELECTED
 **`SELECTED` means only "survived this pass's empirical test with a genuine,
 independently-measured positive (or informative) result."** It does **not**
 mean, and must never be read to mean:
-- `SELECTED` = **VERIFIED** (in StealthLab's own product sense — `procedures`'
+- `SELECTED` = **VERIFIED** (in kell's own product sense — `procedures`'
   `verification_state='verified'` is a different, stronger, DB-backed claim)
 - `SELECTED` = **APPROVED** (no human or process has signed off on adoption)
-- `SELECTED` = **ADMITTED** (nothing here has entered StealthLab's canonical
+- `SELECTED` = **ADMITTED** (nothing here has entered kell's canonical
   `procedures`/`claims`/`implementations` tables — see confirmation below)
 - `SELECTED` = **globally available** (these are research findings about
-  external techniques, not a StealthLab capability anyone can invoke)
+  external techniques, not a kell capability anyone can invoke)
 
 No candidate from this experiment was inserted into the canonical global
 corpus by this task. Promoting a `SELECTED` candidate into that corpus is a
@@ -31,7 +31,7 @@ Run date: 2026-09-04. Input: the existing 60-seed pool at
 redone). This phase is real hands-on empirical testing — cloning real
 artifacts, running real local measurements — of the 36 seeds that already had
 a `RESOLVED_VERIFIED`/`RESOLVED_UNVERIFIED` primary artifact. Nothing was
-written to StealthLab's canonical corpus (no `capture_procedure`, no
+written to kell's canonical corpus (no `capture_procedure`, no
 `capture_claim`, no admission). Nothing was merged, committed, or pushed.
 
 ## The funnel
@@ -74,7 +74,7 @@ paper (AST-KG, GrepRAG, cAST/chunking study).
 
 ## Top winners (see `ranking.json` / `selected.json` for full detail)
 1. **Git worktree isolation** (C04) — parallelism
-2. **StealthLab's own deferred-tool loading** (C05) — tool efficiency
+2. **kell's own deferred-tool loading** (C05) — tool efficiency
 3. **octocode `view`** (C02) — repository intelligence
 4. **hermes-agent tail-protection** (C06) — context efficiency
 5. **hermes-agent tool-result pruning** (C07) — tool efficiency
@@ -95,7 +95,7 @@ reduction, wall-clock timing, or unit-test pass counts, not a reliability
 rate under a real failure-inducing condition.
 
 ## Biggest token/latency saving
-**Token saving: StealthLab's own deferred-tool loading (C05), 67.5x per
+**Token saving: kell's own deferred-tool loading (C05), 67.5x per
 unused tool** (conservative lower bound — see the caveat in `candidates.jsonl`
 about two abbreviated schema samples). Close behind: TokenPilot 92.8% (C01)
 and octocode 77.0% (C02), both independently tiktoken-measured against real
@@ -133,9 +133,9 @@ honestly rather than omitting it or reframing it as a saving.
 - **Deterministic execution, verification & reliability, model routing
   (beyond RouteLLM), and failure recovery families** — none produced a
   tested survivor this pass. Model routing and failure recovery both have
-  a real, testable artifact only through RouteLLM (blocked) and StealthLab's
+  a real, testable artifact only through RouteLLM (blocked) and kell's
   own native mechanisms respectively (native mechanisms were out of scope
-  to "test" here — testing StealthLab against itself isn't what this phase
+  to "test" here — testing kell against itself isn't what this phase
   asked for). Deterministic-execution and verification families are
   currently backed only by article/paper sources with no located runnable
   artifact (LSP go-to-definition, the ~57 static-checks article, the
@@ -176,7 +176,7 @@ Verification (task step 2) surfaced two things worth carrying forward:
 
 ## Incident: code-graph-rag wrote cache files into product code (caught and resolved)
 
-While indexing StealthLab's own `backend/app` directory for candidate `C03`
+While indexing kell's own `backend/app` directory for candidate `C03`
 (code-graph-rag), that tool's own indexer wrote 4 cache files directly into
 `backend/app/` as an undocumented side effect of pointing it at that
 directory — not a deliberate action by this task, but a real side effect of
@@ -203,15 +203,15 @@ external tool touching product-adjacent paths as a side effect is exactly the
 kind of thing this phase's "no production corpus modification" constraint
 exists to catch — and it was caught, not missed.
 
-## No blockers found in StealthLab's own pipeline
+## No blockers found in kell's own pipeline
 Per the task's own scope rule, no production-code change was made or judged
 necessary this pass — every obstacle encountered (missing C toolchain,
 missing GPU, no live-LLM authorization, one repo's heavy dependency tree) was
-external to StealthLab, not a defect in StealthLab's own ingestion/candidate
-pipeline. Nothing here blocks StealthLab's pipeline itself from proceeding.
+external to kell, not a defect in kell's own ingestion/candidate
+pipeline. Nothing here blocks kell's pipeline itself from proceeding.
 
 ## What this phase deliberately did NOT do
-- Did not ingest any candidate into StealthLab's canonical
+- Did not ingest any candidate into kell's canonical
   `procedures`/`claims`/`implementations` tables.
 - Did not modify the production corpus, this repo's product code, or the
   read-only `stealth-lab`/`source_resolution` input.

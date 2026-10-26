@@ -171,7 +171,7 @@ test("the time-limit line says when an answer did pass but was not accepted", as
   assert.ok(logs.some((l) => /minimax-m2-7\|stealth: no pass \(timed out/.test(l)), "the cut-off try has its own line");
 });
 
-test("the reviewers' cost goes to the spend ledger, so it counts in what StealthLab cost", async () => {
+test("the reviewers' cost goes to the spend ledger, so it counts in what kell cost", async () => {
   const { reviewPatch } = await import("../lib/review.mjs");
   const { env } = setup();
   fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": {
@@ -191,7 +191,7 @@ test("evidence mode: a lone passing answer the rule does not accept goes to the 
     env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S F X A" }, runtime: rt });
   assert.equal(d.handled, false);
   assert.match(d.tried.find((t) => t.unit.startsWith("gemma")).state, /passed the check, not accepted by the rule/);
-  assert.match(triedNote(d), /StealthLab first tried this/);
+  assert.match(triedNote(d), /kell first tried this/);
   const rt2 = stub(repo, { "gemma-4-31b-it": ["verified", SWALLOW], "minimax-m2-7": ["failed", ""], "gpt-oss-120b": ["failed", ""] });
   const d2 = await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
     env: { ...env, STEALTHLAB_DISPATCH_ACCEPT: "E S X" }, runtime: rt2 });

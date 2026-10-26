@@ -1,6 +1,6 @@
-"""flow_check: the scripted real-session check of StealthLab's Claude Code hooks. Every StealthLab change should pass it.
+"""flow_check: the scripted real-session check of kell's Claude Code hooks. Every kell change should pass it.
 
-What a developer does in a repository that has never seen StealthLab and has no check configured, as one session:
+What a developer does in a repository that has never seen kell and has no check configured, as one session:
 
   1 fix     a messy first prompt ("add is broken, fix it pls") -> dispatched from the FIRST prompt (a new repo gets its
             .kell/), the prompt is stopped with "Done by <cheap model> in N s ... kell undo", the fix is in the tree
@@ -108,7 +108,7 @@ class Step:
 # ---------------------------------------------------------------- the sandbox: a fresh repository, a transcript, the hook's environment
 
 def make_repo(root: Path) -> Path:
-    """A fresh git repository StealthLab has never seen: no .kell/, no .claude/, no check configured anywhere."""
+    """A fresh git repository kell has never seen: no .kell/, no .claude/, no check configured anywhere."""
     repo = root / "repo"
     (repo / "tests").mkdir(parents=True)
     (repo / "calc.py").write_text(CALC, encoding="utf-8")
@@ -151,7 +151,7 @@ def read_env_names(names: list[str]) -> dict[str, str]:
 
 
 def hook_env(home: Path, token: str, keys: dict[str, str], *, base: dict[str, str] | None = None) -> dict[str, str]:
-    """What the hook process sees: a sandbox StealthLab home, the test backend, the cheap models and their keys, and NO
+    """What the hook process sees: a sandbox kell home, the test backend, the cheap models and their keys, and NO
     check command (no STEALTHLAB_DISPATCH_CHECK: the fresh-repo case)."""
     env = {k: v for k, v in (base if base is not None else os.environ).items()
            if not k.startswith("STEALTHLAB_") and k not in ("ANTHROPIC_BASE_URL", "CLAUDE_CONFIG_DIR")}
@@ -262,7 +262,7 @@ def run_flow(hooks, repo: Path, *, transcript_mode: str = "earlier", log=print) 
         log(f"[{name}] ...")
         return st
 
-    # 1 fix: a messy first prompt in a repo StealthLab has never seen
+    # 1 fix: a messy first prompt in a repo kell has never seen
     st = begin("fix")
     res = hooks.prompt(FIRST)
     dispatch_checks(st, res, name="the first prompt")

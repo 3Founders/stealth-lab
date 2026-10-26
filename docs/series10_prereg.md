@@ -14,13 +14,13 @@ Related: `docs/acceptance_rules_preregistered_2026-10-16.md` (the cheap-model ac
 ## What is run
 
 Two repositories, `jsonargparse` and `sqlglot`, 10 consecutive issues each (one Python version, the gold check, the windows in
-`experiments/abtest/swe_series_task.py`; a third repository only if the Part 5 estimate allows it). Five arms. Every StealthLab arm has
-the same install and settings; only what persists between issues differs. The background survey is OFF in every StealthLab arm
+`experiments/abtest/swe_series_task.py`; a third repository only if the Part 5 estimate allows it). Five arms. Every kell arm has
+the same install and settings; only what persists between issues differs. The background survey is OFF in every kell arm
 (`STEALTHLAB_AUTO_SURVEY=off`); the survey is a setup step.
 
 | Arm | Repo facts (`claims.md`) | Library | Local routing counts | Server routing state |
 |---|---|---|---|---|
-| A | plain Claude Code, no StealthLab | – | – | – |
+| A | plain Claude Code, no kell | – | – | – |
 | C0 | none (no survey) | wiped before each issue | wiped | **reset** before each issue |
 | C-R | kept (one survey at series start) | wiped | wiped | **reset** |
 | C-L | kept | **kept** | wiped | **reset** |
@@ -44,11 +44,11 @@ applied** (a wrong cheap fix delivered) and **correct cheap fixes thrown away**,
 
 | Comparison | Arms | Question | Metric the verdict is about |
 |---|---|---|---|
-| Reduce | C vs A | does StealthLab cost less at an equal or better solved rate? | total cost per issue, solved count |
+| Reduce | C vs A | does kell cost less at an equal or better solved rate? | total cost per issue, solved count |
 | Recall | C-R vs C0 | do repo facts (the survey) help? | solved, cost, cheap accepted-and-correct |
 | Reuse | C-L vs C-R | does a library of earlier fixes help? | solved, cost, cheap accepted-and-correct |
 | Route learning | C vs C-L | does the router learning from outcomes help? | cost, cheap acceptance rate, seconds |
-| Tests decide | every StealthLab arm | do the checks catch wrong cheap fixes and keep right ones? | wrong fixes applied; correct cheap fixes thrown away |
+| Tests decide | every kell arm | do the checks catch wrong cheap fixes and keep right ones? | wrong fixes applied; correct cheap fixes thrown away |
 
 "Tests decide" is a count per arm, pooled; it has a threshold like the others.
 

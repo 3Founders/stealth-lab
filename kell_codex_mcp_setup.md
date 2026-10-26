@@ -8,7 +8,7 @@ This guide is for building the **full production keळ website with OpenAI Codex
 2. **Mobbin MCP** — UX research and interaction-pattern research
 3. **Storybook MCP / Codex plugin** — coded component and design-system source of truth
 4. **Playwright / browser tooling** — real browser and visual verification
-5. **Existing StealthLab MCP** — keep the existing product/backend knowledge connection
+5. **Existing kell MCP** — keep the existing product/backend knowledge connection
 
 Do not install a collection of website generators. These tools are enough.
 
@@ -210,7 +210,7 @@ Do not declare UI complete merely because the build/tests pass.
 
 # 5. EXISTING STEALTHLAB MCP
 
-Keep the existing StealthLab MCP.
+Keep the existing kell MCP.
 
 It is separate from the design/research tools.
 
@@ -231,7 +231,7 @@ Storybook
 Playwright
   = browser / visual verification
 
-StealthLab MCP
+kell MCP
   = product/backend knowledge
 ```
 
@@ -248,7 +248,7 @@ User/account:
 
 Project:
   Storybook
-  StealthLab
+  kell
   other project-specific MCPs
 ```
 
@@ -280,7 +280,7 @@ After configuration, verify:
 - browser can load the site
 - visual inspection/screenshots work
 
-### StealthLab
+### kell
 - existing MCP still connects
 - no unnecessary configuration changes
 

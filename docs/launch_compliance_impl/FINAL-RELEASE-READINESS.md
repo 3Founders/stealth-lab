@@ -1,4 +1,4 @@
-# StealthLab — Final Release Readiness (Auth / Policy / Launch Compliance)
+# kell — Final Release Readiness (Auth / Policy / Launch Compliance)
 
 **Date:** 2026-09-09 (final — Option A)
 **Branch:** `gate-2b` · **Acceptance checkpoint tag:** `authpolicy-verified-a610645`
@@ -221,7 +221,7 @@ risk (embeddings, private-repo LLM runs) is covered. Documented gap.
   `publication_records` untouched. Refused under legal hold.
 - Endpoints: `GET /v1/me/export`, `GET /v1/me/deletion` (preview),
   `POST /v1/me/deletion` (execute).
-- Frontend: `/me/privacy` (`4ee89d5`) — what StealthLab stores, download export,
+- Frontend: `/me/privacy` (`4ee89d5`) — what kell stores, download export,
   preview + confirm deletion, connected repos link, AI/provider note, privacy
   contact.
 

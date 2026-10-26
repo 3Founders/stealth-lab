@@ -78,7 +78,7 @@ test("failing check (spec 8.2): verified=false, tail present and redacted; logs 
       .map((f) => fs.readFileSync(path.join(env.STEALTHLAB_HOME, "runs", run_id, f), "utf8")).join("\n") +
     JSON.stringify(outboxFiles(env));
   assert.ok(!everything.includes("sk-test-ABCDEFGHIJKLMNOPQRSTUVWX"), "secret must not reach result, run store or outbox");
-  assert.ok(!everything.includes(env.STEALTHLAB_TOKEN), "the StealthLab token must not appear anywhere");
+  assert.ok(!everything.includes(env.STEALTHLAB_TOKEN), "the kell token must not appear anywhere");
   assert.equal(outboxFiles(env)[0].args.accepted, false);
   assert.ok(fs.existsSync(res.diff.worktree), "failed WITH a diff: worktree kept for inspection");
 });

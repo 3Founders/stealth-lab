@@ -39,7 +39,7 @@ offerings; unpriced offerings produce no unit, because the recommender cannot ra
 ## Using a routed model as a harness's main model: `/v1/chat/completions`
 
 The API serves an OpenAI-compatible `POST /v1/chat/completions` (tools, streaming) and `GET /v1/models`
-(`app/api/chat_completions.py`, `app/providers/chat.py`). Point a harness at `{server}/v1` with a StealthLab bearer
+(`app/api/chat_completions.py`, `app/providers/chat.py`). Point a harness at `{server}/v1` with a kell bearer
 token; the connections the caller can see are its models. Every call goes through the same checks and organisation
 ledger as `call_model`: visibility, data class, egress policy, cost cap, endpoint safety, key rotation and failover,
 reserve-then-settle against the org's budgets.
@@ -63,7 +63,7 @@ reserve-then-settle against the org's budgets.
 Example harness config (OpenCode, project `opencode.json`; keys stay in the environment):
 
 ```json
-{ "provider": { "stealthlab": { "npm": "@ai-sdk/openai-compatible", "name": "StealthLab",
+{ "provider": { "stealthlab": { "npm": "@ai-sdk/openai-compatible", "name": "kell",
   "options": { "baseURL": "https://your-server.example.com/v1", "apiKey": "{env:STEALTHLAB_TOKEN}" },
   "models": { "glm-5.3": {} } } } }
 ```

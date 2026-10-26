@@ -6,7 +6,7 @@ test("a hook's claude child gets the token from STEALTHLAB_CLAUDE_CODE_OAUTH_TOK
   const env = { PATH: "/bin", STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN: "tok", STEALTHLAB_HOME: "/h" };
   const out = claudeChildEnv(env);
   assert.equal(out.CLAUDE_CODE_OAUTH_TOKEN, "tok");
-  assert.equal(out.STEALTHLAB_HOME, undefined, "StealthLab's own variables still never reach the child");
+  assert.equal(out.STEALTHLAB_HOME, undefined, "kell's own variables still never reach the child");
   assert.equal(out.STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN, undefined);
 });
 

@@ -1,7 +1,7 @@
-# StealthLab setup — enterprise rollout
+# kell setup — enterprise rollout
 
-Who this is for: whoever at a customer (for example a company of about 2,000 people) decides how StealthLab reaches
-their developers, and whoever at StealthLab runs the rollout. It describes what is in the repo, how a rollout uses it, and
+Who this is for: whoever at a customer (for example a company of about 2,000 people) decides how kell reaches
+their developers, and whoever at kell runs the rollout. It describes what is in the repo, how a rollout uses it, and
 what is **not** done. Where something is unproven it says so.
 
 **Status in one paragraph.** The flow below is built end to end and tested offline: the company's admin connects the
@@ -14,7 +14,7 @@ lists the exact gaps.
 ## 1. The idea in one picture
 
 ```
-   CTO / admin (browser)                         StealthLab server                          model provider
+   CTO / admin (browser)                         kell server                          model provider
 ┌──────────────────────────┐   1 connect key   ┌─────────────────────────────┐
 │ admin console  /start    │──────────────────►│ org_provider_keys (encrypted)│
 │  2 apply policy + budget │──────────────────►│ org_policies                 │
@@ -29,7 +29,7 @@ lists the exact gaps.
 └──────────────────────────┘
 ```
 
-The provider key lives in one place (the server, encrypted). A developer's machine holds only their own StealthLab sign-in.
+The provider key lives in one place (the server, encrypted). A developer's machine holds only their own kell sign-in.
 Every model call goes through the gateway, so the company's policy and budget apply to it and every call is in the ledger.
 
 ## 2. What the developer does
@@ -71,7 +71,7 @@ Sign in to the admin console (`admin/`, port 3200) and open **Get started** (`/s
 
 Set `NEXT_PUBLIC_KEL_MCP_URL` for the console so the invite command carries the MCP address.
 
-## 4. What the operator (StealthLab) does, once per customer
+## 4. What the operator (kell) does, once per customer
 
 There is no self-serve sign-up yet.
 
@@ -91,7 +91,7 @@ There is no self-serve sign-up yet.
 
 | Phase | Who | Change | Move on when |
 |---|---|---|---|
-| 0. Prepare | StealthLab | Host the server, publish the package, run the flow on our own machines in a real Cursor | the join self-test passes on a real machine |
+| 0. Prepare | kell | Host the server, publish the package, run the flow on our own machines in a real Cursor | the join self-test passes on a real machine |
 | 1. Watch | 10–20 volunteers | Invite with a small budget and `join --no-exec` (connected and tested, dispatch off) | a week of real tasks |
 | 2. Dispatch | same group | Dispatch tries cheap models first; the check decides | pass rate and added time acceptable to them |
 | 3. One team | 100–200 | A second invite with a larger cap | a measured saving the CTO can read |
@@ -144,7 +144,7 @@ Any member: `GET /v1/orgs/{org}/client-config`. A signed-in person with an invit
 - **Invite code:** sent only to `<api>/v1/join`; stored as a SHA-256 hash; one generic error for unknown, expired, revoked or
   used-up codes.
 - **Prompts:** with central keys, the cheap-model prompts go through the company's own gateway to the company's provider. The
-  Cursor hook separately sends the prompt (up to 1,500 characters) and `.kell/claims.md` to the StealthLab endpoint for the
+  Cursor hook separately sends the prompt (up to 1,500 characters) and `.kell/claims.md` to the kell endpoint for the
   lookup, while `packaging/npm/README.md` says only run reports leave. That contradiction is **still unresolved** and a
   security reviewer will find it; there is no per-organization switch for it yet.
 - **Admins** see usage by person, calls, denials and the audit log (hash-chained, append-only), all existing pages.
@@ -161,7 +161,7 @@ Any member: `GET /v1/orgs/{org}/client-config`. A signed-in person with an invit
 | Membership | No removal, role change or SSO/SCIM provisioning; a leaver keeps access until a database edit. Everyone joins as `member`. |
 | Claude Code via the gateway | Central keys serve the stealth/opencode-style profiles (OpenAI shape). Claude-Code-driven runs need an `anthropic_base_url` profile; the `/v1/messages` route exists but is not wired into `join`. |
 | MCP `call_model` | The org key store is registered in the API app only, not in the separate MCP server process. |
-| Wallet and billing | Spend is the company's own provider bill; StealthLab does not meter or invoice it. |
+| Wallet and billing | Spend is the company's own provider bill; kell does not meter or invoice it. |
 | Compliance | SOC 2, a data processing agreement, a pen test, India data residency and a load test of the abuse limiter are open. |
 | Evidence | No saving measured on a customer's real sessions. |
 

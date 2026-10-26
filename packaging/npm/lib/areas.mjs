@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const FILE = "areas.md";
-const HEAD = "# areas.md -- cheap-model outcomes per file of this repository, written by StealthLab dispatch.";
+const HEAD = "# areas.md -- cheap-model outcomes per file of this repository, written by kell dispatch.";
 const MAX_LINES = 400;
 
 function parse(text) {

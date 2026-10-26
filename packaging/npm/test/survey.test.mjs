@@ -1,5 +1,5 @@
 // Offline tests for `kell survey` (lib/survey/): every repo shape in plan §4.1 and every edge case
-// in §4.6, on generated fixture repositories. No network, no StealthLab server.
+// in §4.6, on generated fixture repositories. No network, no kell server.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";

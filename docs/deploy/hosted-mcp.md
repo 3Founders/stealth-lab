@@ -1,9 +1,9 @@
-# Hosting the StealthLab MCP server
+# Hosting the kell MCP server
 
 Users connect with `irm https://<site>/install.ps1 | iex`,
 `curl -fsSL https://<site>/install.sh | bash` or `npx -y kell-mcp install`.
 Each of these points their agent at **one hosted MCP endpoint**. Nothing
-StealthLab-side runs on the user's machine. This page covers standing that
+kell-side runs on the user's machine. This page covers standing that
 endpoint up.
 
 ## 1. Create the service (Railway)

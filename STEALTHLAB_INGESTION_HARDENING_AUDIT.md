@@ -1,4 +1,4 @@
-# StealthLab — Ingestion + Knowledge Hardening Audit (Plan A / Gates G0–G14, G23–G24)
+# kell — Ingestion + Knowledge Hardening Audit (Plan A / Gates G0–G14, G23–G24)
 
 **Lane:** INGESTION + KNOWLEDGE architecture hardening.
 **Spec audited against:** `STEALTHLAB_EXTREME_FINAL_HARDENING_V4.md` (Part II Plan A, Part II-A §1–§38, Part IV G0–G14/G23/G24, Part VI, Testing T1–T15).
@@ -180,7 +180,7 @@ budget — left for the user to schedule, not run from here.
 
 ## LOCAL WORKING-SET ARCHITECTURE — ratified spec deviation + P1 (2026-09-10)
 
-**Decision (user-ratified).** The local side of StealthLab is redefined as a
+**Decision (user-ratified).** The local side of kell is redefined as a
 **filesystem-native working set + a durable runtime journal**, with **no local
 SQLite / local Postgres**. Global Postgres + pgvector stays authoritative for
 semantic retrieval, the Claim graph, ranking, permissions, publication. "Cloud
