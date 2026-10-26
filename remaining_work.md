@@ -70,7 +70,7 @@ Run the real MCP server locally:
 ```bash
 DATABASE_URL=... STEALTHLAB_MCP_TOKEN=local STEALTHLAB_MCP_PUBLIC_URL=https://mcp.test \
   .venv/bin/python -m uvicorn app.mcp_server.server:app --port 8765 --workers 1
-npx -y --package=./packaging/npm stealthlab-mcp doctor --url http://127.0.0.1:8765/mcp
+npx -y --package=./packaging/npm kell doctor --url http://127.0.0.1:8765/mcp
 ```
 
 7. **`find_best_way` is DEPRECATED (2026-09-28, founder decision).** Do not
@@ -101,20 +101,20 @@ These need a human with accounts; agents can prepare and verify.
   (`JEV_BASE_URL` and/or `GEMINI_API_KEY`), embeddings (`VOYAGE_API_KEY` or
   `GEMINI_API_KEY`).
 - **Done when:** `curl https://mcp.<domain>/` returns
-  `{"service":"stealthlab-mcp"...}` and
-  `npx -y stealthlab-mcp doctor --url https://mcp.<domain>/mcp` prints `ok`.
+  `{"service":"kell"...}` and
+  `npx -y kell-mcp doctor --url https://mcp.<domain>/mcp` prints `ok`.
 
 ### 2. Point the website installers at it — *human*
 - Set `NEXT_PUBLIC_KEL_MCP_URL=https://mcp.<domain>/mcp` on the prod_frontend
   deployment and rebuild (the build injects it into `public/install.sh|ps1`).
 - **Done when:** `curl -fsSL https://<site>/install.sh | grep DEFAULT_URL` shows the URL.
 
-### 3. Publish the npm package `stealthlab-mcp` — *human + agent*
+### 3. Publish the npm package `kell` — *human + agent*
 - Agent: set the URL in `packaging/npm/package.json` (`stealthlab.defaultMcpUrl`),
   `packaging/npm/install/install.sh` (`DEFAULT_URL`),
   `packaging/npm/install/install.ps1` (`$DefaultUrl`) — `prepublishOnly`
   (`scripts/check-publish.mjs`) refuses to publish unless all three match.
-- Human: add repo secret `NPM_TOKEN`, push tag `stealthlab-mcp-v0.1.0`
+- Human: add repo secret `NPM_TOKEN`, push tag `kell-mcp-v0.1.0`
   (`.github/workflows/publish-mcp-client.yml`). Name is free on npm.
 - **Until published, the one-liners fail at the `npx` step** (except Claude
   Code without Node, which registers the URL directly).
@@ -362,7 +362,7 @@ Root-cause each (code or stale test); never skip or delete a test to get green.
 - Dedicated `benchmark_transfer` judgment kind; placement prunes transitively
   redundant edges, enqueues neighbour frozen-Benchmark transfers, repair sweep.
 - MCP server hostable (`STEALTHLAB_MCP_PUBLIC_URL`, `$PORT`, healthcheck).
-- Connector `packaging/npm` (`stealthlab-mcp`), installers served by the site,
+- Connector `packaging/npm` (`kell`), installers served by the site,
   verified `curl | bash` and `irm | iex` journeys.
 - `report_discovery` source rows private per reporter; `create_goal_from_user`
   requires rationale + outcome and strips server-owned metadata keys.

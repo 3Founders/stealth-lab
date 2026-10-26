@@ -1,4 +1,4 @@
-// `stealthlab-mcp plan validate`: checks the planner's own files, `.kell/procedures.md` and `.kell/run.md`,
+// `kell plan validate`: checks the planner's own files, `.kell/procedures.md` and `.kell/run.md`,
 // the way `survey --validate` checks claims. The agent writes both by hand (the `plan_and_run` prompt); nothing
 // else reads them back, so a broken reference or a missing check would otherwise go unnoticed until a node is run.
 //
@@ -220,7 +220,7 @@ export function nearestStealthRoot(start) {
   }
 }
 
-export const PLAN_HELP = `stealthlab-mcp plan validate [--root <repo>]   (local only; reads, never writes)
+export const PLAN_HELP = `kell plan validate [--root <repo>]   (local only; reads, never writes)
 
   Checks .kell/procedures.md and .kell/run.md (the plan_and_run format): line grammar, ids,
   statuses, that every step= is in procedures.md, every claims= id or range is on a claims page,

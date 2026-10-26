@@ -501,16 +501,16 @@ def test_library_format_resource_carries_the_real_grammar():
 
     text = _run(library_format_resource())
     assert L.LIBRARY_HEADER in text and L.ROUTING_HEADER in text and L.IDX_HEADER in text
-    assert "stealthlab-mcp library add" in text
+    assert "kell library add" in text
 
 
 def test_plan_and_run_reads_this_repos_library_first_and_writes_back():
     from app.mcp_server.prompts import plan_and_run
 
     text = plan_and_run("t")
-    for needle in ("SUMMARY.md", "terms.idx", "stealthlab-mcp library payload", "library_matches",
-                   "stealthlab-mcp library route --from-reply", "stealthlab-mcp library obs",
-                   "stealthlab-mcp library add"):
+    for needle in ("SUMMARY.md", "terms.idx", "kell library payload", "library_matches",
+                   "kell library route --from-reply", "kell library obs",
+                   "kell library add"):
         assert needle in text, needle
     assert text.index("library_matches") < text.index('"resolved"')     # local before global
 

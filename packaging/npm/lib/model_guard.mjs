@@ -47,6 +47,7 @@ import { sessionFile } from "./capture_hook.mjs";
 import path from "node:path";
 import { ensureRoute, recordObs } from "./library.mjs";
 import { localUnit, readExecConfig } from "./exec/store.mjs";
+import { isOwnCommand } from "./names.mjs";
 
 export const MAX_DENIALS = 2;
 export const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
@@ -297,7 +298,7 @@ export function onCursorPreToolUse(payload, { env = process.env } = {}) {
 
 const isOursFor = (mark) => (group) => (group?.hooks || []).some((h) => {
   const cmd = String(h?.command || "").trimEnd();
-  return cmd.includes("stealthlab-mcp") && cmd.endsWith(mark);
+  return isOwnCommand(cmd) && cmd.endsWith(mark);
 });
 
 

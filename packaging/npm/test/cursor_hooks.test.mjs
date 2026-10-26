@@ -172,7 +172,7 @@ test("hooks.json: ours added next to the user's own, refreshed not duplicated, r
   const file = path.join(dir, "hooks.json");
   const mine = { command: "./audit.sh" };
   fs.writeFileSync(file, JSON.stringify({ version: 1, hooks: { beforeSubmitPrompt: [mine] } }));
-  const launch = { command: "/usr/bin/node", args: ["/opt/stealthlab-mcp/bin/stealthlab-mcp.mjs"] };
+  const launch = { command: "/usr/bin/node", args: ["/opt/kell/bin/kell.mjs"] };
   upsertCursorHooks(file, launch, "linux");
   upsertCursorHooks(file, launch, "linux");
   const doc = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -191,15 +191,15 @@ test("hooks.json that does not parse is left untouched", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sl-cursor-cfg-"));
   const file = path.join(dir, "hooks.json");
   fs.writeFileSync(file, "{ broken");
-  assert.throws(() => upsertCursorHooks(file, { command: "node", args: ["x/stealthlab-mcp.mjs"] }), /not valid JSON/);
+  assert.throws(() => upsertCursorHooks(file, { command: "node", args: ["x/kell.mjs"] }), /not valid JSON/);
   assert.equal(fs.readFileSync(file, "utf8"), "{ broken");
 });
 
 test("Windows: a node path with spaces becomes `node` so PowerShell and cmd can both run it", () => {
-  const launch = { command: "C:\\Program Files\\nodejs\\node.exe", args: ["C:\\Users\\a\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs"] };
+  const launch = { command: "C:\\Program Files\\nodejs\\node.exe", args: ["C:\\Users\\a\\kell\\bin\\kell.mjs"] };
   assert.equal(cursorCommand(launch, "hook cursor-tool", "win32"),
-    'node "C:\\Users\\a\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs" hook cursor-tool');   // quoted: bash keeps the backslashes
-  const doc = addCursorHooks({}, { command: "/usr/bin/node", args: ["/x/stealthlab-mcp.mjs"] }, "linux");
+    'node "C:\\Users\\a\\kell\\bin\\kell.mjs" hook cursor-tool');   // quoted: bash keeps the backslashes
+  const doc = addCursorHooks({}, { command: "/usr/bin/node", args: ["/x/kell.mjs"] }, "linux");
   assert.equal(doc.version, 1);
   assert.ok(removeCursorHooks(doc));
 });

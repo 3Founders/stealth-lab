@@ -5,7 +5,7 @@ The flow this serves:
      sign-up; that is deliberate for the first customers.
   2. The owner signs in to the admin console, connects the company's provider key (services/org_keys.py), applies the
      recommended policy with a budget they type, and creates an invite.
-  3. A developer runs `stealthlab-mcp join <code>`: they sign in, `join` below adds them to the organisation as a
+  3. A developer runs `kell join <code>`: they sign in, `join` below adds them to the organisation as a
      `member`, and `client_config` tells their machine which models to use and where the gateway is.
   4. The CLI's self-test makes one tiny call through the gateway; the ledger row it writes is what counts them as ready.
 

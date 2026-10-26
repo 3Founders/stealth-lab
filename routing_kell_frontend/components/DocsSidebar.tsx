@@ -51,21 +51,21 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <p className="small dim">It ends with a checklist. When something is missing, such as a sign-in or a model key, the fix is printed next to it. Run it again any time: it changes only what still needs changing. Add <code>--dry-run</code> to see what it would do first.</p>
 
             <h3>2. Sign in</h3>
-            <pre><code>npx -y stealthlab-mcp login</code></pre>
+            <pre><code>npx -y kell-mcp login</code></pre>
             <p>This opens your browser. After that, keळ keeps your sign-in fresh on its own.</p>
 
             <h3>3. Restart your agent</h3>
             <p>Quit and reopen Claude Code or Cursor so it picks keळ up. For Cursor, tell setup which model you use with <code>--cursor-model &lt;model&gt;</code>.</p>
 
             <h3>4. Once per repository</h3>
-            <pre><code>npx -y stealthlab-mcp survey</code></pre>
+            <pre><code>npx -y kell-mcp survey</code></pre>
             <p>This writes your repository&rsquo;s <a href="#stealth-folder" style={{ textDecoration: "underline" }} onClick={(e) => { e.preventDefault(); go("stealth-folder"); }}>.kell folder</a>. It runs on your machine and uploads nothing.</p>
 
             <h3>Other commands</h3>
             <table><tbody>
-              <tr><td><code>npx -y stealthlab-mcp doctor</code></td><td>Check that keळ&rsquo;s server is reachable.</td></tr>
-              <tr><td><code>npx -y stealthlab-mcp undo</code></td><td>Put back the last change keळ made in this repository.</td></tr>
-              <tr><td><code>npx -y stealthlab-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
+              <tr><td><code>npx -y kell-mcp doctor</code></td><td>Check that keळ&rsquo;s server is reachable.</td></tr>
+              <tr><td><code>npx -y kell-mcp undo</code></td><td>Put back the last change keळ made in this repository.</td></tr>
+              <tr><td><code>npx -y kell-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
             </tbody></table>
           </section>
         )}
@@ -86,8 +86,8 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <h3>You stay in control</h3>
             <table><tbody>
               <tr><td><code>!opus</code> at the start of a prompt</td><td>Skip keळ for that prompt. Your agent&rsquo;s own model does it.</td></tr>
-              <tr><td><code>npx -y stealthlab-mcp undo</code></td><td>Put back the last change keळ made. <code>--list</code> shows earlier ones; it refuses if you have edited those files since.</td></tr>
-              <tr><td><code>npx -y stealthlab-mcp uninstall</code></td><td>Turn keळ off completely.</td></tr>
+              <tr><td><code>npx -y kell-mcp undo</code></td><td>Put back the last change keळ made. <code>--list</code> shows earlier ones; it refuses if you have edited those files since.</td></tr>
+              <tr><td><code>npx -y kell-mcp uninstall</code></td><td>Turn keळ off completely.</td></tr>
             </tbody></table>
           </section>
         )}
@@ -125,7 +125,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             </ol>
 
             <h3>Each developer</h3>
-            <pre><code>npx -y stealthlab-mcp join &lt;invite&gt; --url &lt;mcp-address&gt; --api &lt;api-address&gt;</code></pre>
+            <pre><code>npx -y kell-mcp join &lt;invite&gt; --url &lt;mcp-address&gt; --api &lt;api-address&gt;</code></pre>
             <p>It signs them in with the company login, sets up their agents, and makes one small test call to confirm everything works. No provider key is ever stored on a developer&rsquo;s machine.</p>
 
             <h3>What the company gets</h3>

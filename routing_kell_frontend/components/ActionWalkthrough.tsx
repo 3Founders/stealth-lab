@@ -40,7 +40,7 @@ const scenarios: Scenario[] = [
       { at: 4100, kind: "diff-add", text: "+    rows = data.splitlines()" },
       { at: 4800, kind: "run", text: "running your tests: pytest, from the repo root" },
       { at: 6200, kind: "ok", text: "212 passed in 8.4s", r: ["tests"] },
-      { at: 7000, kind: "done", text: "✓ applied by keळ · undo any time: stealthlab-mcp undo" },
+      { at: 7000, kind: "done", text: "✓ applied by keळ · undo any time: kell undo" },
     ],
     cost: [[0, 0], [2900, 2], [7000, 18]],
     outcome: "Done by a cheaper model, checked by your tests.",

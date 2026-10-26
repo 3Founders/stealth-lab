@@ -12,6 +12,7 @@ import { addCaptureHooks, removeCaptureHooks } from "./capture_hook.mjs";
 import { addRouteHooks, removeRouteHooks } from "./model_guard.mjs";
 import { uninstallCursorHooks, upsertCursorHooks } from "./cursor_hooks.mjs";
 import { installClaudeMd, uninstallClaudeMd } from "./claude_md.mjs";
+import { PACKAGE, isOwnCommand } from "./names.mjs";
 
 export const SERVER_NAME = "stealthlab";
 
@@ -20,7 +21,7 @@ export const SERVER_NAME = "stealthlab";
 // even for GUI apps that don't inherit the shell's PATH. When we're running
 // from the throwaway npx cache, we register `npx` itself instead, since that
 // cache can be garbage-collected.
-export function launchSpec({ scriptPath = process.argv[1], nodePath = process.execPath, platform = process.platform, pkgName = "stealthlab-mcp" } = {}) {
+export function launchSpec({ scriptPath = process.argv[1], nodePath = process.execPath, platform = process.platform, pkgName = PACKAGE } = {}) {
   const real = safeRealpath(scriptPath);
   const fromNpx = /[\\/]_npx[\\/]/.test(real);
   if (fromNpx) {
@@ -150,7 +151,7 @@ export function removeCodexServer(file) {
 
 // --- Claude Code knowledge hook (~/.claude/settings.json) --------------------
 //
-// A UserPromptSubmit hook that runs `stealthlab-mcp hook-prompt`: every task-like prompt gets one
+// A UserPromptSubmit hook that runs `kell hook-prompt`: every task-like prompt gets one
 // find_ways lookup and the knowledge is added to the agent's context (lib/hook.mjs). Our entry is
 // recognised by HOOK_MARK in its command, so other hooks in the file are never touched.
 
@@ -175,7 +176,7 @@ function readJsonOrThrow(file) {
 function isOurs(group) {
   return (group?.hooks || []).some((h) => {
     const cmd = String(h.command || "");
-    return cmd.includes("stealthlab-mcp") && cmd.trimEnd().endsWith(HOOK_MARK);
+    return isOwnCommand(cmd) && cmd.trimEnd().endsWith(HOOK_MARK);
   });
 }
 

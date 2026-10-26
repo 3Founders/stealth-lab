@@ -530,7 +530,7 @@ async def library_format_resource() -> str:
 
     return (
         "# .kell library: this repository's own solved problems and model routes\n\n"
-        "Kept on the user's machine by `stealthlab-mcp library <command>` (npm package stealthlab-mcp); the\n"
+        "Kept on the user's machine by `kell library <command>` (npm package kell-mcp); the\n"
         "server only ever sees what find_ways' `library_rows` / `route_obs` / `repo_identity` carry, for one request.\n\n"
         "## library.md (committed; `.kell/.gitattributes`: library.md merge=union)\n```\n" + LIBRARY_HEADER + "```\n"
         "Free text is escaped: `|` -> %7C, newline -> %0A, a literal %XX -> %25XX.\n\n"
@@ -538,12 +538,12 @@ async def library_format_resource() -> str:
         "## routing.md (generated ROUTE lines from find_ways' routing_rows; OBS counts from this machine)\n```\n"
         + ROUTING_HEADER + "```\n\n"
         "## Commands\n"
-        "- `stealthlab-mcp library index` -- canonical library.md, library.idx, terms.idx, SUMMARY.md\n"
-        "- `stealthlab-mcp library add --title <goal> --check <cmd> [--g <goal id>] ...` -- write back a solved "
+        "- `kell library index` -- canonical library.md, library.idx, terms.idx, SUMMARY.md\n"
+        "- `kell library add --title <goal> --check <cmd> [--g <goal id>] ...` -- write back a solved "
         "problem (re-runs the check; refuses if it fails; keeps the diff in library/solutions/)\n"
-        "- `stealthlab-mcp library check` / `refresh <id>` -- staleness from git hash-object of touched files\n"
-        "- `stealthlab-mcp library route --from-reply <reply.json>` / `obs <R-id> --model m --scaffold s --ok|--fail`\n"
-        "- `stealthlab-mcp library payload` -- exactly what the knowledge hook sends to find_ways\n"
+        "- `kell library check` / `refresh <id>` -- staleness from git hash-object of touched files\n"
+        "- `kell library route --from-reply <reply.json>` / `obs <R-id> --model m --scaffold s --ok|--fail`\n"
+        "- `kell library payload` -- exactly what the knowledge hook sends to find_ways\n"
     )
 
 
@@ -568,7 +568,7 @@ _V1_RESOURCES = [
      "learned. Same text as the MCP prompt.", plan_and_run_prompt_resource),
     ("stealth://formats/library", "format-library", ".kell library format",
      "The grammar of .kell/library.md (this repo's solved problems), index/library.idx and routing.md, "
-     "and the stealthlab-mcp library commands that keep them.", library_format_resource),
+     "and the kell library commands that keep them.", library_format_resource),
     ("stealth://guides/find_ways", "guide-find-ways", "find_ways guide",
      "Every find_ways argument, what each step does, and the reply fields (the listed description is short).",
      find_ways_guide_resource),

@@ -16,7 +16,7 @@ trees with `taskkill /T /F` on Windows and process groups elsewhere). Backend un
 |---|---|
 | **A: runtime** | `packaging/npm/lib/exec/**` (runstore, worktree, verify, evidence/outbox, redact, select, server), `packaging/npm/test/exec_*.test.mjs`, `packaging/npm/test/fixtures/exec/**` |
 | **B: adapters** | `packaging/npm/lib/executors/**`, `packaging/npm/test/executors*.test.mjs`, `packaging/npm/test/fixtures/fake_agent.mjs`, `packaging/npm/test/fixtures/executors/**` |
-| **C: Claude integration + CLI** | `packaging/npm/lib/claude_exec.mjs`, `packaging/npm/lib/subagent_hook.mjs`, `packaging/npm/lib/agents/**` (agent definition templates), `packaging/npm/bin/stealthlab-mcp.mjs` (wiring only), `packaging/npm/lib/clients.mjs` (only if install needs it; it has fresh changes from 2363b26, so preserve them), `packaging/npm/README.md`, `packaging/npm/test/claude_exec*.test.mjs`, `packaging/npm/test/subagent_hook*.test.mjs` |
+| **C: Claude integration + CLI** | `packaging/npm/lib/claude_exec.mjs`, `packaging/npm/lib/subagent_hook.mjs`, `packaging/npm/lib/agents/**` (agent definition templates), `packaging/npm/bin/kell.mjs` (wiring only), `packaging/npm/lib/clients.mjs` (only if install needs it; it has fresh changes from 2363b26, so preserve them), `packaging/npm/README.md`, `packaging/npm/test/claude_exec*.test.mjs`, `packaging/npm/test/subagent_hook*.test.mjs` |
 | Integrator | `packaging/npm/EXECUTOR_SUMMARY.md`, `package.json`, commits, board |
 
 ## Interfaces (fixed: build against these exactly)
@@ -57,7 +57,7 @@ export async function runChecks({ cwd, checks, timeoutS, env }) -> [{ cmd, exit,
 State dirs: `~/.stealthlab/runs/<run_id>/`, `~/.stealthlab/outbox/`, `~/.stealthlab/exec.json` (config), all
 overridable with env `STEALTHLAB_HOME` (tests MUST set it to a temp dir).
 
-**CLI (C wires in bin)**: `stealthlab-mcp exec` -> `runExecServer()`; `stealthlab-mcp hook subagent-start|subagent-stop`
+**CLI (C wires in bin)**: `kell exec` -> `runExecServer()`; `kell hook subagent-start|subagent-stop`
 -> `lib/subagent_hook.mjs`; `install --with-exec` / `uninstall` -> `lib/claude_exec.mjs` (writes/removes
 `~/.claude/agents/stealth-executor.md`, `~/.claude/agents/stealth-delegator.md`, the hooks entries in
 `~/.claude/settings.json` (merge, never clobber) and the local `stealthlab-exec` MCP entry). Honour env

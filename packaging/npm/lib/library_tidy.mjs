@@ -1,4 +1,4 @@
-// `stealthlab-mcp library lint` and `library tidy`: keep library.md from rotting. Local, deterministic, read-only.
+// `kell library lint` and `library tidy`: keep library.md from rotting. Local, deterministic, read-only.
 //
 // A library that only ever grows turns into near-duplicates and dangling references: the same fix recorded twice
 // from two sessions, a Goal whose parent was dropped, a Way pointing at a Goal that was merged away. Retrieval then
@@ -61,16 +61,16 @@ export function lintLibrary(root, { lib = L.loadLibrary(root) } = {}) {
   const wayIds = new Set(lib.ways.map((w) => w.id));
 
   for (const problem of lib.problems) add(/^conflict/.test(problem) ? "warn" : "error", "parse", null, problem,
-    "stealthlab-mcp library index   (canonicalises the file; a conflict keeps the later verified_at)");
+    "kell library index   (canonicalises the file; a conflict keeps the later verified_at)");
 
   for (const e of lib.entries) {
     if (e.goal && !goalIds.has(e.goal)) {
-      add("error", "dangling_goal", e.id, `${e.id} links goal=${e.goal}, which is not in library.md`, "stealthlab-mcp library link");
+      add("error", "dangling_goal", e.id, `${e.id} links goal=${e.goal}, which is not in library.md`, "kell library link");
     }
     for (const p of e.procs || []) {
       if (p.way && !wayIds.has(p.way)) {
         add("error", "dangling_way", `${e.id}.p${p.index}`, `${e.id}.p${p.index} links way=${p.way}, which is not in library.md`,
-          "stealthlab-mcp library link");
+          "kell library link");
       }
       if (p.solution && !fs.existsSync(path.join(L.stealthDir(root), "library", p.solution))) {
         add("warn", "missing_diff", e.id, `${e.id} names ${p.solution}, which is not on disk (the entry is kept, but its diff cannot be shown)`);
@@ -80,12 +80,12 @@ export function lintLibrary(root, { lib = L.loadLibrary(root) } = {}) {
   for (const g of lib.goals) {
     if (g.parent && !goalIds.has(g.parent)) {
       add("error", "dangling_parent", g.id, `${g.id} has parent=${g.parent}, which is not in library.md`,
-        `stealthlab-mcp library goal ${g.id} --parent -`);
+        `kell library goal ${g.id} --parent -`);
     }
   }
   for (const w of lib.ways) {
     if (!w.goal || !goalIds.has(w.goal)) {
-      add("error", "way_without_goal", w.id, `${w.id} achieves ${w.goal || "no goal"}, which is not in library.md`, "stealthlab-mcp library link");
+      add("error", "way_without_goal", w.id, `${w.id} achieves ${w.goal || "no goal"}, which is not in library.md`, "kell library link");
     }
   }
 
@@ -101,7 +101,7 @@ export function lintLibrary(root, { lib = L.loadLibrary(root) } = {}) {
         if (!reported.has(key)) {
           reported.add(key);
           add("error", "parent_cycle", cur, `goals ${[...new Set(cycle)].sort().join(", ")} are each other's ancestors`,
-            `stealthlab-mcp library goal ${cur} --parent -`);
+            `kell library goal ${cur} --parent -`);
         }
         break;
       }
@@ -119,7 +119,7 @@ export function lintLibrary(root, { lib = L.loadLibrary(root) } = {}) {
   const pct = bytes / L.LIBRARY_MAX_BYTES;
   if (pct >= NEAR_BUDGET) {
     add("warn", "near_budget", null, `library.md is ${bytes} of ${L.LIBRARY_MAX_BYTES} bytes (${Math.round(pct * 100)}%); ` +
-      "the oldest entries are archived when it passes the cap -- drop duplicates and superseded entries first", "stealthlab-mcp library tidy");
+      "the oldest entries are archived when it passes the cap -- drop duplicates and superseded entries first", "kell library tidy");
   }
   const order = { error: 0, warn: 1, info: 2 };
   issues.sort((a, b) => order[a.severity] - order[b.severity] || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0) || String(a.id) .localeCompare(String(b.id)));
@@ -158,7 +158,7 @@ export function duplicateEntries(lib) {
         file_overlap: f === null ? null : Math.round(f * 100) / 100,
         keep_title: keep.title, drop_title: drop.title, keep_verified_at: keep.verified_at, drop_verified_at: drop.verified_at,
         drop_is_stale: drop.status === "stale",
-        command: `stealthlab-mcp library drop ${drop.id} --superseded-by ${keep.id}`,
+        command: `kell library drop ${drop.id} --superseded-by ${keep.id}`,
         judge: "Compare the two diffs (library show <id>; library/solutions/). Keep the one that is right for the code as it " +
           "is now -- the more recently verified wins unless its diff shows the older one is correct.",
       });
@@ -231,7 +231,7 @@ export function goalCandidates(lib) {
         const [keep, drop] = a.id < b.id ? [a, b] : [b, a];
         if (!isAncestor(drop.id, keep.id) && !isAncestor(keep.id, drop.id)) {
           merges.push({ keep: keep.id, drop: drop.id, similarity: Math.round(sim * 100) / 100, keep_title: keep.title,
-            drop_title: drop.title, command: `stealthlab-mcp library merge-goals ${keep.id} ${drop.id}` });
+            drop_title: drop.title, command: `kell library merge-goals ${keep.id} ${drop.id}` });
         }
         continue;
       }
@@ -239,7 +239,7 @@ export function goalCandidates(lib) {
         // `big` is the narrower problem (its title adds words to `small`'s); one that already has a parent is left alone
         if (ts.size >= 2 && ts.size < tb2.size && [...ts].every((w) => tb2.has(w)) && !big.parent && !isAncestor(big.id, small.id)) {
           parents.push({ goal: big.id, parent: small.id, goal_title: big.title, parent_title: small.title,
-            command: `stealthlab-mcp library goal ${big.id} --parent ${small.id}` });
+            command: `kell library goal ${big.id} --parent ${small.id}` });
         }
       }
     }
@@ -261,7 +261,7 @@ export function archiveCandidates(lib, bytes) {
   return lib.entries.filter((e) => rank(e) < 2)
     .sort((a, b) => rank(a) - rank(b) || (a.verified_at || "").localeCompare(b.verified_at || "") || (a.id < b.id ? -1 : 1))
     .map((e) => ({ id: e.id, title: e.title, outcome: e.outcome, status: e.status, verified_at: e.verified_at,
-      command: `stealthlab-mcp library drop ${e.id}` }));
+      command: `kell library drop ${e.id}` }));
 }
 
 const cap = (list) => ({ items: list.slice(0, TIDY_MAX_PER_SECTION), total: list.length, truncated: Math.max(0, list.length - TIDY_MAX_PER_SECTION) });
@@ -275,7 +275,7 @@ export function tidyReport(root, { lib = L.loadLibrary(root) } = {}) {
     lint: { ok: lint.ok, counts: lint.counts, issues: cap(lint.issues.filter((i) => i.severity !== "info")) },
     stale: cap(lib.entries.filter((e) => e.status === "stale").map((e) => ({
       id: e.id, title: e.title, verified_at: e.verified_at,
-      command: `stealthlab-mcp library check   # then, if it still holds: stealthlab-mcp library refresh ${e.id}`,
+      command: `kell library check   # then, if it still holds: kell library refresh ${e.id}`,
     }))),
     duplicate_entries: cap(duplicateEntries(lib)),
     duplicate_goals: cap(goals.merges),
@@ -298,7 +298,7 @@ export const TIDY_RULES = [
 // The worklist as the agent reads it (written to .kell/library/TIDY.md by `library tidy --write`; generated,
 // not committed -- delete it any time).
 export function renderTidy(report) {
-  const out = ["# library TIDY worklist (generated by `stealthlab-mcp library tidy --write`; safe to delete)", "",
+  const out = ["# library TIDY worklist (generated by `kell library tidy --write`; safe to delete)", "",
     `${report.totals.entries} entries, ${report.totals.goals} goals, ${report.totals.ways} ways; library.md is ${report.budget.pct}% of its ${report.budget.max_bytes}-byte cap.`,
     "", "## Rules", ...TIDY_RULES.map((r) => `- ${r}`), ""];
   const section = (title, block, line) => {

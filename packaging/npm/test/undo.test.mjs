@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { KEEP, createUndoPoint, discardUndoPoint, finishUndoPoint, listUndoPoints, runUndoCli, undo } from "../lib/undo.mjs";
 import { dispatch, triedNote } from "../lib/dispatch.mjs";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 function repoWith(files) {
@@ -90,7 +90,7 @@ test("binary and executable-looking content survive the round trip byte for byte
   assert.ok(fs.readFileSync(path.join(repo, "data.bin")).equals(bytes));
 });
 
-test("stealthlab-mcp undo: --list, the latest point, an error outside a repo", () => {
+test("kell undo: --list, the latest point, an error outside a repo", () => {
   const { repo } = repoWith({ "calc.py": "x = 1\n" });
   const e = env();
   const p = createUndoPoint({ repo, files: ["calc.py"], model: "gemma", task: "fix x", env: e });
@@ -137,7 +137,7 @@ test("dispatch: the answer is applied with an undo point, the message names mode
   assert.equal(d.handled, true);
   assert.match(d.text, /Done by gemma-4-31b-it .*\$0\.0012/);
   assert.match(d.text, /applied: calc\.py/);
-  assert.match(d.text, /To put it back as it was: stealthlab-mcp undo\./);
+  assert.match(d.text, /To put it back as it was: kell undo\./);
   assert.equal(read(s.repo, "calc.py"), "x = 2\n");
   const r = undo({ repo: s.repo, env: s.env });
   assert.deepEqual(r.restored, ["calc.py"]);
@@ -170,7 +170,7 @@ test("dispatch: STEALTHLAB_DISPATCH_ASK=on stops before applying and shows the s
   assert.equal(d.ask, true);
   assert.match(d.text, /Ready, NOT applied: gemma-4-31b-it/);
   assert.match(d.text, /calc\.py \| 2 \+-/);
-  assert.match(d.text, /stealthlab-mcp exec apply r-20261012000000-abc123/);
+  assert.match(d.text, /kell exec apply r-20261012000000-abc123/);
   assert.equal(read(s.repo, "calc.py"), "x = 1\n");
 });
 
@@ -178,7 +178,7 @@ test("dispatch: STEALTHLAB_DISPATCH_UNDO=off applies without a point, as before"
   const s = setup({ STEALTHLAB_DISPATCH_UNDO: "off" });
   const d = await run(s, stubRuntime(s.repo));
   assert.equal(d.handled, true);
-  assert.doesNotMatch(d.text, /stealthlab-mcp undo/);
+  assert.doesNotMatch(d.text, /kell undo/);
   assert.deepEqual(listUndoPoints({ repo: s.repo, env: s.env }), []);
   assert.equal(read(s.repo, "calc.py"), "x = 2\n");
 });
@@ -205,7 +205,7 @@ test("exec apply: the run is applied with an undo point, and undo puts calc.txt 
   const r = await applyWithUndo(rt, run_id, { env });
   assert.equal(r.applied, true);
   assert.match(r.undo_point, /^u-\d{14}-[0-9a-f]{6}$/);
-  assert.equal(r.undo_command, "stealthlab-mcp undo");
+  assert.equal(r.undo_command, "kell undo");
   assert.equal(read(repo, "calc.txt"), "fixed\n");
   assert.deepEqual({ log: gitIn(repo, "log", "--oneline"), stash: gitIn(repo, "stash", "list") }, before, "nothing on the user's branch or stash");
   const u = undo({ repo, env });
@@ -231,7 +231,7 @@ test("exec apply: STEALTHLAB_DISPATCH_UNDO=off applies without a point and says 
   assert.deepEqual(listUndoPoints({ repo, env }), []);
 });
 
-test("the real CLI: stealthlab-mcp exec apply <run> in another process prints the undo point, and stealthlab-mcp undo restores", async () => {
+test("the real CLI: kell exec apply <run> in another process prints the undo point, and kell undo restores", async () => {
   const { repo, env, run_id } = await verifiedRun();
   const proc = spawnSync(process.execPath, [BIN, "exec", "apply", run_id], { cwd: repo, encoding: "utf8", env });
   assert.equal(proc.status, 0, proc.stderr);

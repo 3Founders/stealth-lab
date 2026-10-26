@@ -12,7 +12,7 @@ All paths below are relative to `packaging/npm/` unless marked.
 | §1A run external agents headlessly on a goal, verify independently, record outcome | done | `lib/exec/runtime.mjs` (ExecRuntime: achieve/status/result/apply/cancel/list/gc, state machine, races, persistence); `lib/exec/server.mjs` (MCP stdio server) | |
 | §1B fit Claude Code's subagent model | done | `lib/agents/stealth-executor.md`, `lib/agents/stealth-delegator.md` (templates); `lib/claude_exec.mjs` (install/remove agents + hooks) | |
 | §2.1 hosted server stays knowledge-only | done | no backend file changed | |
-| §2.2 opt-in; uninstall reverses everything | done | `bin/stealthlab-mcp.mjs` (`install --with-exec`, `uninstall`); `lib/claude_exec.mjs` | `.bak` copies of settings.json are left (by design, a safety copy) |
+| §2.2 opt-in; uninstall reverses everything | done | `bin/kell.mjs` (`install --with-exec`, `uninstall`); `lib/claude_exec.mjs` | `.bak` copies of settings.json are left (by design, a safety copy) |
 | §2.3 never touch the main checkout except `apply_run` | done | `lib/exec/worktree.mjs` `applyToCheckout` (blob-hash guard) | |
 | §2.4 auto-approve only in a worktree | done | `lib/exec/runtime.mjs` (cwd = detached worktree); adapter flags in `lib/executors/*.mjs` | containers (§7) not built |
 | §2.5 ToS: user's own local CLIs/logins; never proxied/pooled | done | `lib/executors/common.mjs` (boundary comment + `scrubEnv`); `lib/exec/proc.mjs` `childEnv`; README section | |
@@ -32,10 +32,10 @@ All paths below are relative to `packaging/npm/` unless marked.
 | §5 ACP adapter (phase 2) | not done | | phase 2 by spec; build only after phase 1 acceptance |
 | §6.1 executor agent | done | `lib/agents/stealth-executor.md` | |
 | §6.2 delegator agent (inline MCP) | done | `lib/agents/stealth-delegator.md` | user-level agent only (plugins ignore `mcpServers`) |
-| §6.3 SubagentStart/Stop hooks, never slow the user | done | `lib/subagent_hook.mjs`, `bin/stealthlab-mcp.mjs hook ...` | stop hook hands off to a detached worker (returns in ms) |
+| §6.3 SubagentStart/Stop hooks, never slow the user | done | `lib/subagent_hook.mjs`, `bin/kell.mjs hook ...` | stop hook hands off to a detached worker (returns in ms) |
 | §6.4 plugin | not done | | optional/last in spec; hooks + MCP must stay installer-managed anyway |
 | §6 register local `stealthlab-exec` for non-Claude clients | partial | README + HELP document manual registration | needs `clients.mjs` writers parameterized by server name (Q-EXEC-3) |
-| §6 `stealthlab-mcp exec enable` alias | not done | | optional alternative to `--with-exec` |
+| §6 `kell exec enable` alias | not done | | optional alternative to `--with-exec` |
 | §7 worktrees (detached, base HEAD / working-tree, merge-state refusal, cleanup, 7-day GC) | done | `lib/exec/worktree.mjs`, `lib/exec/runtime.mjs` `gc` | |
 | §7 scope enforcement | done | `lib/exec/verify.mjs` `scopeViolations`; artifact exclusions in `lib/exec/worktree.mjs` `ARTIFACT_EXCLUDES` | |
 | §7 containers | not done | | phase 2 |
@@ -61,7 +61,7 @@ during verification. Help excerpts are quoted in each adapter file and saved und
 ## (c) Tool contracts as built
 
 Transport: MCP over stdio, newline-delimited JSON-RPC 2.0 (`initialize`, `ping`, `tools/list`, `tools/call`);
-requests handled concurrently; client disconnect cancels active runs. Launched as `stealthlab-mcp exec`.
+requests handled concurrently; client disconnect cancels active runs. Launched as `kell exec`.
 
 | Tool | Input (required*) | Output |
 |---|---|---|
@@ -134,7 +134,7 @@ reload after restart, GC at 6 days vs 8 days, and integration against the real f
 ## (e) Acceptance evidence
 
 **9.2, manual end-to-end.** Toy repo: `calc.py` with `return a - b`; `test_calc.py::test_add` expects 3. Driven
-through the real `stealthlab-mcp exec` server over stdio: `achieve(task=…, checks=["python -m pytest -q"],
+through the real `kell exec` server over stdio: `achieve(task=…, checks=["python -m pytest -q"],
 scope=["calc.py"], executor="opencode", goal_id=<test id>, step_order=1)`, then polling `run_result`. Paths are
 redacted to `<tmp>`.
 
@@ -181,9 +181,9 @@ temp home, `STEALTHLAB_PRINT_SETTINGS_DIFF=1`). Before (the user's own hooks):
 ```
 After `install --with-exec`, only appended (paths shortened):
 ```
-UserPromptSubmit[1] = {"hooks":[{"type":"command","command":"\"…\\node.exe\" …\\bin\\stealthlab-mcp.mjs hook-prompt","timeout":30}]}
-SubagentStop[1]     = {"hooks":[{"type":"command","command":"\"…\\node.exe\" …\\bin\\stealthlab-mcp.mjs hook subagent-stop","timeout":15}]}
-SubagentStart       = [{"hooks":[{"type":"command","command":"\"…\\node.exe\" …\\bin\\stealthlab-mcp.mjs hook subagent-start","timeout":15}]}]
+UserPromptSubmit[1] = {"hooks":[{"type":"command","command":"\"…\\node.exe\" …\\bin\\kell.mjs hook-prompt","timeout":30}]}
+SubagentStop[1]     = {"hooks":[{"type":"command","command":"\"…\\node.exe\" …\\bin\\kell.mjs hook subagent-stop","timeout":15}]}
+SubagentStart       = [{"hooks":[{"type":"command","command":"\"…\\node.exe\" …\\bin\\kell.mjs hook subagent-start","timeout":15}]}]
 ```
 After `uninstall`, identical to "before" (asserted `deepEqual`; byte-identical in the run above).
 
@@ -248,8 +248,8 @@ After `uninstall`, identical to "before" (asserted `deepEqual`; byte-identical i
 | `lib/proxy.mjs:101` | POST | the `url` | one JSON-RPC line verbatim | bearer | loopback-only `http://` rule |
 | `lib/proxy.mjs:173` | GET | the `url` | none | bearer | 405/404 treated as absent |
 | `lib/proxy.mjs:196` | DELETE | the `url` | none | bearer | 2 s abort, session-only |
-| `bin/stealthlab-mcp.mjs:164` (was :117) | POST | the `url` | probe payload | bearer | 15 s timeout |
-| `bin/stealthlab-mcp.mjs:178` (was :131) | DELETE | the `url` | none | bearer | - |
+| `bin/kell.mjs:164` (was :117) | POST | the `url` | probe payload | bearer | 15 s timeout |
+| `bin/kell.mjs:178` (was :131) | DELETE | the `url` | none | bearer | - |
 | `lib/hook.mjs:60`, `:78` (from `2363b26`; not in the spec's table) | POST / DELETE | the `url` | the `find_ways` query from the user's prompt | bearer | fail-open, timeout |
 
 ### Network egress, after (new rows)
@@ -264,7 +264,7 @@ After `uninstall`, identical to "before" (asserted `deepEqual`; byte-identical i
 and comments in `lib/agents/*.md`; nothing fetches them.
 
 **Paths written outside a worktree** (mode; reversed by `uninstall`?):
-- `~/.claude/agents/stealth-executor.md`, `stealth-delegator.md`: 0600, with a `# stealthlab-mcp:managed` marker; a same-named file without the marker is refused. Yes, removed.
+- `~/.claude/agents/stealth-executor.md`, `stealth-delegator.md`: 0600, with a `# kell:managed` marker; a same-named file without the marker is refused. Yes, removed.
 - `~/.claude/settings.json`: existing mode kept (new file 0600); `.bak` written before each change. Yes, entries removed; the `.bak` stays.
 - `$STEALTHLAB_HOME` (default `~/.stealthlab`), dirs 0700 / files 0600. Not removed by `uninstall` (user data):
   - `runs/<id>/`: `run.json`, `events.jsonl`, `aN.std{out,err}.log`, all redacted per line; `aN.patch` is raw (it is the product).

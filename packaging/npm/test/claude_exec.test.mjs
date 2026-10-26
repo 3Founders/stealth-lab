@@ -17,7 +17,7 @@ import {
 import { upsertClaudeHook, removeClaudeHook } from "../lib/clients.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(HERE, "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(HERE, "..", "bin", "kell.mjs");
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "slexec-"));
 const readJson = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
 
@@ -38,7 +38,7 @@ function tempEnv() {
   return { home, env: { CLAUDE_CONFIG_DIR: path.join(home, ".claude"), STEALTHLAB_TEST_HOME: home, STEALTHLAB_HOME: path.join(home, ".stealthlab") } };
 }
 
-const LAUNCH = { command: "/usr/bin/node", args: ["/opt/stealthlab-mcp/bin/stealthlab-mcp.mjs"] };
+const LAUNCH = { command: "/usr/bin/node", args: ["/opt/kell/bin/kell.mjs"] };
 
 // Pull a top-level scalar/flow value out of the YAML frontmatter (enough for our own templates).
 function frontmatter(text) {
@@ -67,10 +67,10 @@ test("installExec/uninstallExec: other hooks (incl. UserPromptSubmit) survive; s
   assert.equal(mid.hooks.SubagentStop.length, 2);
   assert.deepEqual(mid.hooks.SubagentStop[0], USER_SETTINGS.hooks.SubagentStop[0]);
   assert.deepEqual(mid.hooks.SubagentStop[1], {
-    hooks: [{ type: "command", command: "/usr/bin/node /opt/stealthlab-mcp/bin/stealthlab-mcp.mjs hook subagent-stop", timeout: 15 }],
+    hooks: [{ type: "command", command: "/usr/bin/node /opt/kell/bin/kell.mjs hook subagent-stop", timeout: 15 }],
   });
   assert.equal(mid.hooks.SubagentStart[0].hooks[0].command,
-    "/usr/bin/node /opt/stealthlab-mcp/bin/stealthlab-mcp.mjs hook subagent-start");
+    "/usr/bin/node /opt/kell/bin/kell.mjs hook subagent-start");
   assert.equal(mid.model, "opus");
   assert.ok(fs.existsSync(`${settings}.bak`));
 
@@ -141,7 +141,7 @@ test("agent files: written with verified frontmatter keys, removed on uninstall;
   assert.match(de.keys.tools, /mcp__stealthlab-exec__run_result/);
   assert.doesNotMatch(de.keys.tools, /apply_run/);
   assert.equal(de.keys.disallowedTools, "mcp__stealthlab-exec__apply_run");
-  assert.match(de.raw, /mcpServers:\n {2}- stealthlab-exec:\n {6}type: stdio\n {6}command: "\/usr\/bin\/node"\n {6}args: \["\/opt\/stealthlab-mcp\/bin\/stealthlab-mcp.mjs","exec"\]/);
+  assert.match(de.raw, /mcpServers:\n {2}- stealthlab-exec:\n {6}type: stdio\n {6}command: "\/usr\/bin\/node"\n {6}args: \["\/opt\/kell\/bin\/kell.mjs","exec"\]/);
   assert.doesNotMatch(de.raw, /\{\{/);
   assert.doesNotMatch(de.body, /\{\{/);
 
@@ -149,16 +149,16 @@ test("agent files: written with verified frontmatter keys, removed on uninstall;
   uninstallExec({ env });
   for (const f of Object.values(agents)) assert.equal(fs.existsSync(f), false);
   fs.writeFileSync(agents["stealth-executor"], "---\nname: stealth-executor\ndescription: mine\n---\nmine\n");
-  assert.throws(() => installExec({ env, launch: LAUNCH }), /not written by stealthlab-mcp/);
+  assert.throws(() => installExec({ env, launch: LAUNCH }), /not written by kell/);
   assert.equal(fs.existsSync(agents["stealth-delegator"]), false, "all-or-nothing: no partial agent install");
   uninstallExec({ env });
   assert.match(fs.readFileSync(agents["stealth-executor"], "utf8"), /description: mine/);
 });
 
 test("Windows launch paths: quoted in the hook command, JSON-escaped in the agent YAML, still recognised on uninstall", () => {
-  const launch = { command: "C:\\Program Files\\nodejs\\node.exe", args: ["C:\\Users\\A B\\AppData\\Roaming\\npm\\node_modules\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs"] };
+  const launch = { command: "C:\\Program Files\\nodejs\\node.exe", args: ["C:\\Users\\A B\\AppData\\Roaming\\npm\\node_modules\\kell\\bin\\kell.mjs"] };
   assert.equal(shellJoin({ command: launch.command, args: [...launch.args, "hook", "subagent-stop"] }),
-    '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\A B\\AppData\\Roaming\\npm\\node_modules\\stealthlab-mcp\\bin\\stealthlab-mcp.mjs" hook subagent-stop');
+    '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\A B\\AppData\\Roaming\\npm\\node_modules\\kell\\bin\\kell.mjs" hook subagent-stop');
   const fm = frontmatter(renderAgent("stealth-delegator", launch)).raw;
   const cmd = /command: (.*)/.exec(fm)[1];
   const args = /args: (.*)/.exec(fm)[1];
@@ -173,8 +173,8 @@ test("Windows launch paths: quoted in the hook command, JSON-escaped in the agen
   fs.mkdirSync(path.dirname(settings), { recursive: true });
   fs.writeFileSync(settings, JSON.stringify(USER_SETTINGS));
   installExec({ env, launch });
-  // npx launch spec on Windows (cmd /c npx -y stealthlab-mcp@latest) is also recognised
-  upsertExecHooks(settings, { command: "cmd", args: ["/c", "npx", "-y", "stealthlab-mcp@latest"] });
+  // npx launch spec on Windows (cmd /c npx -y kell-mcp@latest) is also recognised
+  upsertExecHooks(settings, { command: "cmd", args: ["/c", "npx", "-y", "kell-mcp@latest"] });
   assert.equal(readJson(settings).hooks.SubagentStop.length, 2, "re-install with another launch spec replaces ours");
   uninstallExec({ env });
   assert.deepEqual(readJson(settings), USER_SETTINGS);
@@ -281,7 +281,8 @@ test("--help lists every dispatched subcommand (dispatch <-> help parity)", () =
   const r = spawnSync(process.execPath, [BIN, "--help"], { encoding: "utf8" });
   const help = r.stderr;
   for (const c of cases) {
-    assert.match(help, new RegExp(`stealthlab-mcp (\\[)?${c}\\b`), `HELP is missing subcommand "${c}"`);
+    // the command (kell <sub>), or for first-run subcommands the npx form (npx -y kell-mcp <sub>)
+    assert.match(help, new RegExp(`kell(-mcp)? (\\[)?${c}\\b`), `HELP is missing subcommand "${c}"`);
   }
   for (const ev of ["subagent-start", "subagent-stop"]) assert.match(help, new RegExp(`hook ${ev}`));
   const opts = [...src.matchAll(/^\s*"?([\w-]+)"?: \{ type: "(?:string|boolean)"/gm)].map((m) => m[1]);

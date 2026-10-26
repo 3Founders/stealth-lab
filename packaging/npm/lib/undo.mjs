@@ -7,10 +7,10 @@
 // keeps its objects from `git gc`. A small manifest under the StealthLab home (undo/<id>.json) says which files, the
 // model, the task and, once the answer is applied, the hash each file has then.
 //
-//   stealthlab-mcp undo            restore the latest undo point of this repository
-//   stealthlab-mcp undo --list     the undo points of this repository
-//   stealthlab-mcp undo <id>       a particular one
-//   stealthlab-mcp undo --force    restore even when a file was edited again since the answer was applied
+//   kell undo            restore the latest undo point of this repository
+//   kell undo --list     the undo points of this repository
+//   kell undo <id>       a particular one
+//   kell undo --force    restore even when a file was edited again since the answer was applied
 //
 // Without --force an undo refuses when a touched file no longer matches what the answer wrote: your own later edit is
 // never thrown away silently. The 20 newest points per repository are kept. STEALTHLAB_DISPATCH_UNDO=off skips making them.
@@ -109,7 +109,7 @@ function prune(repo, env) {
 export function undo({ repo, id = null, force = false, env = process.env }) {
   const points = listUndoPoints({ repo, env });
   const m = id ? points.find((p) => p.id === id) : points.find((p) => p.after && !p.undone);
-  if (!m) throw new Error(id ? `no undo point ${id} for ${repo}` : `nothing to undo in ${repo} (stealthlab-mcp undo --list shows what is kept)`);
+  if (!m) throw new Error(id ? `no undo point ${id} for ${repo}` : `nothing to undo in ${repo} (kell undo --list shows what is kept)`);
   if (m.undone) throw new Error(`${m.id} was already undone`);
   if (!m.after) throw new Error(`${m.id} was never applied`);
   if (!force) {
@@ -137,7 +137,7 @@ export function undo({ repo, id = null, force = false, env = process.env }) {
 
 // ---- apply a run by hand, with the same safety net ------------------------------------------------------------------------
 
-// `stealthlab-mcp exec apply <run_id>` (and ask mode, which stops before applying and tells the user to run it): the undo point first,
+// `kell exec apply <run_id>` (and ask mode, which stops before applying and tells the user to run it): the undo point first,
 // then the runtime's own apply, which still refuses when a touched file was edited since the run started. -> the apply result plus
 // { undo_point, undo_command } (undo_point null, with undo_note, when none could be made or the switch is off).
 export async function applyWithUndo(rt, runId, { env = process.env } = {}) {
@@ -163,7 +163,7 @@ export async function applyWithUndo(rt, runId, { env = process.env } = {}) {
     throw err;
   }
   if (point) finishUndoPoint(point, { repo: run.repo, env });
-  return { ...applied, undo_point: point ? point.id : null, ...(point ? { undo_command: "stealthlab-mcp undo" } : { undo_note: note }) };
+  return { ...applied, undo_point: point ? point.id : null, ...(point ? { undo_command: "kell undo" } : { undo_note: note }) };
 }
 
 // ---- the command ---------------------------------------------------------------------------------------------------------

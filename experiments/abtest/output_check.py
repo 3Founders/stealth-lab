@@ -5,7 +5,7 @@ When arm C (or C0) answers a prompt with a cheap model, the hook blocks the prom
 
     Done by <model> in <N> s (StealthLab dispatched it before this session's model ran, $<cost>). It passed <check> in an
     isolated worktree and the change is applied: <files>. Recorded in the library as <id>. To put it back as it was:
-    stealthlab-mcp undo.
+    kell undo.
 
     <a short explanation by a cheap model>
 
@@ -15,7 +15,7 @@ This scores each stored message out of 6, one point each (plan 3.4):
   2 files     names the changed files (all of them, when the diff is known)
   3 correct   the explanation is correct for the diff            \\ judged by a model (Sonnet through Claude Code, a short
   4 checked   says how it was checked ("It passed <check>")        > system prompt, as lib/visual_check.mjs does) that sees
-  5 undo      says how to undo ("stealthlab-mcp undo")            /  the DIFF and the MESSAGE; 1, 2, 4 and 5 need no model
+  5 undo      says how to undo ("kell undo")            /  the DIFF and the MESSAGE; 1, 2, 4 and 5 need no model
   6 honest    no claim the diff does not support               /
 
 Without a diff (a single-prompt result keeps only the first 400 characters of the reply) criteria 3 and 6 are not scored
@@ -146,7 +146,7 @@ def rule_points(message: str, diff: str | None) -> dict[str, tuple[int, str]]:
         out["files"] = (1, f"names {len(listed)} file(s) (no diff to compare)") if listed else (0, "names no file")
     c = CHECKED.search(message)
     out["checked"] = (1, "check: " + " ".join(c.group(1).split())[:60]) if c else (0, "does not say how it was checked")
-    out["undo"] = (1, "undo command given") if "stealthlab-mcp undo" in message else (0, "does not say how to undo")
+    out["undo"] = (1, "undo command given") if "kell undo" in message else (0, "does not say how to undo")
     return out
 
 

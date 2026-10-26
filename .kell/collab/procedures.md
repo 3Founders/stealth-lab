@@ -1,6 +1,6 @@
 # procedures.md -- hand-written planner file (the plan_and_run format) for the organization-key and join work.
-# `stealthlab-mcp plan validate` reads .kell/procedures.md and .kell/run.md; to check this copy, put these three
-# files under a temporary <root>/.kell/ and run `stealthlab-mcp plan validate --root <root>`.
+# `kell plan validate` reads .kell/procedures.md and .kell/run.md; to check this copy, put these three
+# files under a temporary <root>/.kell/ and run `kell plan validate --root <root>`.
 
 PROCEDURE|P-1|org-key-onboarding-v1|v1|Org-held provider keys and developer onboarding|goal=A company's developers use its models through the company's own key with one command
 STEP|P-1:0|action|Apply migration 151 and set ORG_KEY_ENCRYPTION_KEY and PUBLIC_API_URL|locator=backend/db/151_org_provider_keys_and_invites.sql|needs=DATABASE_URL|check=python backend/scripts/migrate.py --status

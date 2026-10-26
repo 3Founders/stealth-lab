@@ -13,7 +13,7 @@ import { addEntry, loadLibrary } from "../lib/library.mjs";
 import { clients, installClaudeDispatch } from "../lib/clients.mjs";
 
 const tmp = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 
 // ---- CLAUDE.md block ---------------------------------------------------------------------------------------------
 
@@ -48,7 +48,7 @@ test("installClaudeDispatch writes the block once; the Claude Code client's unin
   const dir = tmp("cmd-");
   const env = { STEALTHLAB_HOME: path.join(dir, "home"), CLAUDE_CONFIG_DIR: path.join(dir, "claude"), STEALTHLAB_TEST_HOME: dir };
   const settingsFile = path.join(env.CLAUDE_CONFIG_DIR, "settings.json");
-  const launch = { command: "node", args: ["stealthlab-mcp.mjs"] };
+  const launch = { command: "node", args: ["kell.mjs"] };
   installClaudeDispatch({ settingsFile, launch, env });
   installClaudeDispatch({ settingsFile, launch, env });
   const md = claudeMdPath(settingsFile);

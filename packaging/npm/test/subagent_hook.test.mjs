@@ -16,7 +16,7 @@ import {
 } from "../lib/subagent_hook.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const BIN = path.join(HERE, "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(HERE, "..", "bin", "kell.mjs");
 const tmp = (p = "slsub-") => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 const RUN_MD = [

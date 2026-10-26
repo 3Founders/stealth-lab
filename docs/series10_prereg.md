@@ -26,7 +26,7 @@ the same install and settings; only what persists between issues differs. The ba
 | C-L | kept | **kept** | wiped | **reset** |
 | C | kept | kept | kept | **kept** (learns) |
 
-- The survey is `stealthlab-mcp survey` (local, no model, uploads nothing) run once before issue 1 in C-R, C-L and C. Its seconds and fact
+- The survey is `kell survey` (local, no model, uploads nothing) run once before issue 1 in C-R, C-L and C. Its seconds and fact
   count are recorded with issue 1.
 - The server's router state is reset with a data-only database snapshot taken right after setup; it covers every table except
   `schema_migrations`, and the run refuses to start if the router's tables (`routing_observations`, `routing_posteriors`,

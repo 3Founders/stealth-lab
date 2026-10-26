@@ -42,8 +42,9 @@ import { logHook } from "./subagent_hook.mjs";
 import { autoTidy } from "./library_tidy.mjs";
 import { addEntry, codeWays, diffFromGit, ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
+import { isOwnCommand } from "./names.mjs";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const SESSION_TTL_MS = 24 * 3600 * 1000;
 const MAX_TESTS = 20;
 const TRANSCRIPT_TAIL_BYTES = 512 * 1024;
@@ -348,7 +349,7 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
   return { status: "detached", ...(report ? { report } : {}), ...(added ? { library_entry: added } : {}) };
 }
 
-// The detached worker: `stealthlab-mcp hook capture-stop` with STEALTHLAB_CAPTURE_JOB set.
+// The detached worker: `kell hook capture-stop` with STEALTHLAB_CAPTURE_JOB set.
 export async function runCaptureWorker(file, { env = process.env, report } = {}) {
   let job;
   try {
@@ -424,7 +425,7 @@ export async function runCaptureHook(event, { stdinText, env = process.env, hasT
 
 const isOursFor = (mark) => (group) => (group?.hooks || []).some((h) => {
   const cmd = String(h?.command || "").trimEnd();
-  return cmd.includes("stealthlab-mcp") && cmd.endsWith(mark);
+  return isOwnCommand(cmd) && cmd.endsWith(mark);
 });
 
 

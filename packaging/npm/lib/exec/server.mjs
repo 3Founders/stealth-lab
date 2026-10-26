@@ -1,5 +1,5 @@
 // stealthlab-exec: the local MCP stdio server (JSON-RPC 2.0, one message per line; stdout carries
-// protocol only, diagnostics go to stderr) -- launched as `stealthlab-mcp exec`, opt-in via
+// protocol only, diagnostics go to stderr) -- launched as `kell exec`, opt-in via
 // `install --with-exec`. This is the package's first LOCAL runtime component: it runs other coding
 // agents that the user installed, with the user's own logins and keys, inside disposable git worktrees.
 // It never proxies, pools or relays anyone's session or key: adapters are spawned as local processes

@@ -1,10 +1,10 @@
-# `stealthlab-mcp survey`: evaluation (Workstream C, 2026-10-07)
+# `kell survey`: evaluation (Workstream C, 2026-10-07)
 
 What was built for plan §4 (`docs/plan_2026-10_priors_library_survey.md`), how it was measured, and what is still open. All numbers below were measured on this machine (Windows 10, Node 24, git 2.50) on the date above.
 
 ## What it is
 
-`stealthlab-mcp survey [path]` is the deterministic half of `survey_repo`. It lives in the npm client (`packaging/npm/lib/survey/`, no dependencies), runs locally and uploads nothing.
+`kell survey [path]` is the deterministic half of `survey_repo`. It lives in the npm client (`packaging/npm/lib/survey/`, no dependencies), runs locally and uploads nothing.
 
 | step | module | output |
 |---|---|---|
@@ -220,7 +220,7 @@ I followed the new `survey_repo` prompt on ky as the agent: read only the workli
 
 ## Open items
 
-1. **Publishing:** the prompt tells agents to run `npx -y stealthlab-mcp survey`. That works only once a version with `survey` is published to npm (publishing is the user's step). Until then the prompt's manual fallback applies.
+1. **Publishing:** the prompt tells agents to run `npx -y kell-mcp survey`. That works only once a version with `survey` is published to npm (publishing is the user's step). Until then the prompt's manual fallback applies.
 2. **Workstream B:**
    - `find_ways` does not yet receive `repo_identity` (a new optional argument that B owns). `meta.json` already holds it, including `strength`, so B can stop `weak` identities matching other repositories.
    - `library.md` entries use B's §3.2 grammar but B's generated indexes do not exist yet.

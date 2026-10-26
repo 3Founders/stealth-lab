@@ -1,6 +1,6 @@
 // The first survey of a repo, started by the prompt hook itself.
 //
-// `stealthlab-mcp survey` writes .kell/claims.md (cited facts about the repo) and a worklist; until it has run the
+// `kell survey` writes .kell/claims.md (cited facts about the repo) and a worklist; until it has run the
 // lookups have no repo facts to break ties with, and a user who installed with `install --with-exec` never runs it by
 // hand. So the first prompt in a git repo starts it, once, DETACHED: the prompt never waits for it and a failure never
 // shows (the hook exits 0 whatever happens here).
@@ -13,7 +13,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 
 // under `node --test` an unset switch is off: a test that runs the prompt hook in a temp repo must not start a survey
 export const autoSurveyEnabled = (env = process.env) =>

@@ -58,7 +58,7 @@ jobs:
       - run: pytest packaging/tests -q
 
   mcp-client:
-    # packaging/npm: the zero-dependency `stealthlab-mcp` connector (npx /
+    # packaging/npm: the zero-dependency `kell` connector (npx /
     # curl | bash / irm | iex). Pure Node, offline -- its relay test runs
     # against an in-process HTTP server. All three OSes, because it writes
     # agent configs at OS-specific paths and spawns .cmd shims on Windows.
@@ -78,7 +78,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
-      - run: node bin/stealthlab-mcp.mjs --help
+      - run: node bin/kell.mjs --help
       - if: runner.os != 'Windows'
         run: bash -n install/install.sh
       - if: runner.os == 'Windows'

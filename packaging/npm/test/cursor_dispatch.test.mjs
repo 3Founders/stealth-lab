@@ -143,7 +143,7 @@ test("the hook entry without the executor keeps the old instant answer", async (
 });
 
 test("hooks.json: with dispatch the prompt hook gets minutes, the others keep their limits", () => {
-  const launch = { command: "node", args: ["/x/bin/stealthlab-mcp.mjs"] };
+  const launch = { command: "node", args: ["/x/bin/kell.mjs"] };
   const plain = addCursorHooks({}, launch, "linux");
   assert.equal(plain.hooks.beforeSubmitPrompt[0].timeout, CURSOR_HOOKS.beforeSubmitPrompt.timeout);
   const withDispatch = addCursorHooks({}, launch, "linux", { dispatch: true });
@@ -190,7 +190,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 
 test("install --client cursor --with-exec writes the prompt hook with minutes and turns dispatch on; without --with-exec it keeps the short limit; uninstall removes the hooks", () => {
   const run = (args, env) => spawnSync(process.execPath, [BIN, ...args, "--url", "https://kel.example/mcp"], { encoding: "utf8", env: { ...process.env, ...env } });

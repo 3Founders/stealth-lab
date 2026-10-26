@@ -53,10 +53,10 @@ test("codex toml: replaces our table and its subtables, leaves the rest", () => 
 });
 
 test("launchSpec: npx cache -> npx (cmd /c on Windows), global install -> absolute node + script", () => {
-  const npx = "/home/u/.npm/_npx/abc/node_modules/stealthlab-mcp/bin/stealthlab-mcp.mjs";
-  assert.deepEqual(launchSpec({ scriptPath: npx, platform: "linux" }), { command: "npx", args: ["-y", "stealthlab-mcp@latest"] });
+  const npx = "/home/u/.npm/_npx/abc/node_modules/kell/bin/kell.mjs";
+  assert.deepEqual(launchSpec({ scriptPath: npx, platform: "linux" }), { command: "npx", args: ["-y", "kell-mcp@latest"] });
   assert.deepEqual(launchSpec({ scriptPath: npx, platform: "win32" }).args.slice(0, 2), ["/c", "npx"]);
-  const g = "/usr/lib/node_modules/stealthlab-mcp/bin/stealthlab-mcp.mjs";
+  const g = "/usr/lib/node_modules/kell/bin/kell.mjs";
   assert.deepEqual(launchSpec({ scriptPath: g, nodePath: "/usr/bin/node" }), { command: "/usr/bin/node", args: [g] });
 });
 

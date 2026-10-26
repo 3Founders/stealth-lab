@@ -23,7 +23,7 @@ lists the exact gaps.
                                                │  /v1/join                    │
  developer (terminal)                          │  /v1/chat/completions        │──── company's key ───►
 ┌──────────────────────────┐  join <invite>    │   policy → budget → ledger   │
-│ npx stealthlab-mcp join …│──────────────────►│                              │
+│ npx kell-mcp join …│──────────────────►│                              │
 │ sign in with company login│  model list      └─────────────────────────────┘
 │ no provider key here     │◄──────────────────
 └──────────────────────────┘
@@ -35,7 +35,7 @@ Every model call goes through the gateway, so the company's policy and budget ap
 ## 2. What the developer does
 
 ```powershell
-npx -y stealthlab-mcp join <invite> --url <https://mcp-host/mcp> --api <https://api-host> [--cursor-model <model>]
+npx -y kell-mcp join <invite> --url <https://mcp-host/mcp> --api <https://api-host> [--cursor-model <model>]
 ```
 
 The admin console prints this whole line, so a developer copies and runs it. It then:
@@ -117,7 +117,7 @@ may be zero, and the dashboard's spend then measures only the gateway's metered 
 
 | Path | Role |
 |---|---|
-| `packaging/npm/lib/join.mjs`, `bin/stealthlab-mcp.mjs` (`cmdJoin`) | the `join` command |
+| `packaging/npm/lib/join.mjs`, `bin/kell.mjs` (`cmdJoin`) | the `join` command |
 | `packaging/npm/lib/executors/profile.mjs` | `key_from: "stealthlab"` profiles |
 | `packaging/npm/lib/setup.mjs` | older `setup` (developer-held keys) and its checklist |
 | `packaging/npm/test/join.test.mjs` | 13 tests, including the whole command against a stub server |
@@ -173,7 +173,7 @@ python scripts\migrate.py --status
 python -m pytest tests\test_org_onboarding_offline.py -q          # 41 pass
 python scripts\provision_org.py --name "<Company>" --slug <slug> --owner-email <email> --dry-run
 # client (from packaging\npm)
-node bin\stealthlab-mcp.mjs join <invite> --url <mcp> --api <api> --dry-run
+node bin\kell.mjs join <invite> --url <mcp> --api <api> --dry-run
 node --test test\join.test.mjs                                    # 13 pass
 # console (from admin\)
 npx vitest run ; npx tsc --noEmit
@@ -184,7 +184,7 @@ npx vitest run ; npx tsc --noEmit
 The work above is also written as a plan that people and coding agents can pick up, in the `plan_and_run` format the rest of
 `.kell/` uses: `claims.md` (18 facts, each with file, line and blob sha), `procedures.md` (the operator / owner / developer
 procedure) and `run.md` (14 nodes). It is the only part of `.kell/` tracked in git (`.gitignore` ignores `.kell/*` except
-`collab/`); everything else there is a generated, machine-local projection. `stealthlab-mcp plan validate` passes on it (14 nodes,
+`collab/`); everything else there is a generated, machine-local projection. `kell plan validate` passes on it (14 nodes,
 5 steps, 0 errors). To take a node: set it `running`, do it, run its `check=`, set it `done`, add what you learned as a claim.
 
 | Node | State | What |
@@ -222,7 +222,7 @@ python experiments\abtest\org_flow_check.py
 ```
 
 `org_flow_check.py` signs in two test users, provisions the organization, connects the provider key as the CTO, applies the
-policy, creates an invite, runs `stealthlab-mcp join` as the developer (one real 8-token call through the gateway, a fraction of a
+policy, creates an invite, runs `kell join` as the developer (one real 8-token call through the gateway, a fraction of a
 cent), then checks: the key is not on the developer machine or in plain text in the database, one settled call is in the ledger,
 the dashboard counts show 2 joined / 1 ready / running, a member cannot read the keys, a wrong or revoked invite gets 404, and the
 kill switch stops the gateway and resumes it.

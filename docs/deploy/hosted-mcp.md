@@ -1,7 +1,7 @@
 # Hosting the StealthLab MCP server
 
 Users connect with `irm https://<site>/install.ps1 | iex`,
-`curl -fsSL https://<site>/install.sh | bash` or `npx -y stealthlab-mcp install`.
+`curl -fsSL https://<site>/install.sh | bash` or `npx -y kell-mcp install`.
 Each of these points their agent at **one hosted MCP endpoint**. Nothing
 StealthLab-side runs on the user's machine. This page covers standing that
 endpoint up.
@@ -65,8 +65,8 @@ one instance.
 ## 3. Check it
 
 ```bash
-curl -s https://mcp.<your-domain>/            # {"service":"stealthlab-mcp","status":"ok",...}
-npx -y stealthlab-mcp doctor --url https://mcp.<your-domain>/mcp
+curl -s https://mcp.<your-domain>/            # {"service":"kell","status":"ok",...}
+npx -y kell-mcp doctor --url https://mcp.<your-domain>/mcp
 ```
 
 `doctor` must print `server : stealthlab 1.0.0` and `ok`.
@@ -79,7 +79,7 @@ deployment and rebuild it. The build step (`prod_frontend/scripts/sync-installer
 writes it into the served `install.sh` and `install.ps1` as their default
 endpoint. No repository edit is needed.
 
-**`npx -y stealthlab-mcp install` with no `--url`** reads the default baked into
+**`npx -y kell-mcp install` with no `--url`** reads the default baked into
 the npm package. Set the same URL in the three places below, then release:
 
 1. `packaging/npm/package.json` → `stealthlab.defaultMcpUrl`
@@ -87,7 +87,7 @@ the npm package. Set the same URL in the three places below, then release:
 3. `packaging/npm/install/install.ps1` → `$DefaultUrl`
 
 `npm publish` refuses to run until all three match. Push the tag
-`stealthlab-mcp-v<version>` to publish (this needs the `NPM_TOKEN` repository
+`kell-mcp-v<version>` to publish (this needs the `NPM_TOKEN` repository
 secret). The website serves `install.sh` and `install.ps1` from
 `prod_frontend/public/`, which is copied from `packaging/npm/install/` at build
 time.

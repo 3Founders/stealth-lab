@@ -1,4 +1,4 @@
-// Run workstream C's scanner (stealthlab-mcp survey) on one checkout, for the local tier of arm L1.
+// Run workstream C's scanner (kell survey) on one checkout, for the local tier of arm L1.
 //
 //   node survey_runner.mjs <survey.mjs path> <checkout> <since ISO date> <max commits>
 //

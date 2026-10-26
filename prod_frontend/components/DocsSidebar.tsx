@@ -56,9 +56,9 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
 
             <h3>Other options</h3>
             <table><tbody>
-              <tr><td><code>npx -y stealthlab-mcp install --client claude-code</code></td><td>Configure one agent only.</td></tr>
-              <tr><td><code>npx -y stealthlab-mcp doctor</code></td><td>Check that the keळ server is reachable.</td></tr>
-              <tr><td><code>npx -y stealthlab-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
+              <tr><td><code>npx -y kell-mcp install --client claude-code</code></td><td>Configure one agent only.</td></tr>
+              <tr><td><code>npx -y kell-mcp doctor</code></td><td>Check that the keळ server is reachable.</td></tr>
+              <tr><td><code>npx -y kell-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
             </tbody></table>
             <p className="small dim" style={{ marginTop: 14 }}>
               Reading is free and needs no account. Reporting what you learned (<code>report_discovery</code>) needs a signed-in account.

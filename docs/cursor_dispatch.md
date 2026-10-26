@@ -1,6 +1,6 @@
 # Dispatch for Cursor
 
-What this is: with `stealthlab-mcp install --client cursor --with-exec`, Cursor's prompt hook lets the cheap open
+What this is: with `kell install --client cursor --with-exec`, Cursor's prompt hook lets the cheap open
 models in `~/.stealthlab/exec.json` try each task BEFORE Cursor's own model runs, the way the Claude Code hook does
 (`packaging/npm/lib/dispatch.mjs`, unchanged). A verified change is applied to the checkout and the prompt is stopped with
 a message; otherwise the prompt goes on to Cursor's model as without StealthLab.

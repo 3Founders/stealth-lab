@@ -19,7 +19,7 @@ REPO = HERE.parents[1]
 # the message exactly as lib/dispatch.mjs builds it (a test below guards that the template has not drifted)
 MSG = ("Done by gpt-oss-120b in 41 s (StealthLab dispatched it before this session's model ran, $0.0001). "
        "It passed python -m pytest -q in an isolated worktree and the change is applied: calc.py. "
-       "Recorded in the library as L-1a2b. To put it back as it was: stealthlab-mcp undo."
+       "Recorded in the library as L-1a2b. To put it back as it was: kell undo."
        "\n\nThe add function now returns a + b instead of a - b.")
 DIFF = ("diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def add(a, b):\n-    return a - b\n+    return a + b\n")
 DIFF2 = DIFF + "diff --git a/tests/test_calc.py b/tests/test_calc.py\n--- a/tests/test_calc.py\n+++ b/tests/test_calc.py\n@@ -1 +1 @@\n-x\n+y\n"
@@ -45,7 +45,7 @@ def test_the_message_template_in_dispatch_has_not_drifted_from_what_the_rubric_r
     src = (REPO / "packaging" / "npm" / "lib" / "dispatch.mjs").read_text(encoding="utf-8")
     for fragment in ("Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost})",
                      "It passed ${checkLabel} in an isolated worktree and the change is applied: ",
-                     "To put it back as it was: stealthlab-mcp undo."):
+                     "To put it back as it was: kell undo."):
         assert fragment in src, fragment
 
 
@@ -60,7 +60,7 @@ def test_a_complete_message_scores_every_rule_criterion():
 @pytest.mark.parametrize("message, criterion, why", [
     (MSG.replace(", $0.0001", ""), "names", "the cost"),
     (MSG.replace("Done by gpt-oss-120b in 41 s", "Done"), "names", "the model"),
-    (MSG.replace(" To put it back as it was: stealthlab-mcp undo.", ""), "undo", "undo"),
+    (MSG.replace(" To put it back as it was: kell undo.", ""), "undo", "undo"),
     (MSG.replace("It passed python -m pytest -q in an isolated worktree and ", ""), "checked", "how it was checked"),
     (MSG.replace("applied: calc.py.", "applied: no files."), "files", "missing from the message: calc.py"),
 ])
@@ -110,8 +110,8 @@ def test_a_judge_that_fails_costs_that_message_two_criteria_not_the_run():
 
 def test_the_report_gives_the_mean_and_every_message_below_five():
     scores = [oc.score_item(item(id="a"), judge()),
-              oc.score_item(item(MSG.replace(" To put it back as it was: stealthlab-mcp undo.", ""), id="b"), judge()),
-              oc.score_item(item(MSG.replace(", $0.0001", "").replace(" To put it back as it was: stealthlab-mcp undo.", ""), id="c"), judge(honest=False)),
+              oc.score_item(item(MSG.replace(" To put it back as it was: kell undo.", ""), id="b"), judge()),
+              oc.score_item(item(MSG.replace(", $0.0001", "").replace(" To put it back as it was: kell undo.", ""), id="c"), judge(honest=False)),
               oc.score_item(item(diff=None, id="d", truncated=True), None)]
     text = oc.report(scores)
     assert "4 message(s)" in text and "scored out of 6: 3 message(s), mean 4.67/6" in text and "scored out of 4: 1 message(s), mean 4.00/4" in text

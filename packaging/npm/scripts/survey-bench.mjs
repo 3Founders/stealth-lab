@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Performance gates for `stealthlab-mcp survey` (docs/plan_2026-10_priors_library_survey.md §4.6):
+// Performance gates for `kell survey` (docs/plan_2026-10_priors_library_survey.md §4.6):
 //   scanner < 10 s at 100k files, < 60 s at 1M files, < 500 MB memory.
 //
 //   node scripts/survey-bench.mjs synth <files> [packages]   build a synthetic pnpm monorepo and time it
@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const gitc = (cwd, args, input) => execFileSync("git", ["-c", "core.autocrlf=false", ...args], { cwd, input, maxBuffer: 1 << 30, encoding: "utf8",
   env: { ...process.env, GIT_AUTHOR_NAME: "b", GIT_AUTHOR_EMAIL: "b@x", GIT_COMMITTER_NAME: "b", GIT_COMMITTER_EMAIL: "b@x" } });
 

@@ -50,7 +50,7 @@ This document lets a new session pick up where this one stopped. Read it top to 
 | Per-client call statistics | `_record_find_ways` detail now includes `client` (MCP clientInfo + user agent) and `governor` |
 | Tool description: when to call, when not | `find_ways` docstring |
 | `plan_and_run`: use `suggested` and `related_examples`, don't re-ask, small-task fast path | `backend/app/mcp_server/prompts.py` |
-| **Claude Code knowledge hook** (deterministic delivery) | `packaging/npm/lib/hook.mjs`, `bin/stealthlab-mcp.mjs hook-prompt`, installed by `install` into `~/.claude/settings.json` (`--no-hooks` to skip; `uninstall` removes only ours); env `STEALTHLAB_HOOK=off`, `_MIN_WORDS` (6), `_TIMEOUT_MS` (25000), `_MAX_CHARS` (8000) |
+| **Claude Code knowledge hook** (deterministic delivery) | `packaging/npm/lib/hook.mjs`, `bin/kell.mjs hook-prompt`, installed by `install` into `~/.claude/settings.json` (`--no-hooks` to skip; `uninstall` removes only ours); env `STEALTHLAB_HOOK=off`, `_MIN_WORDS` (6), `_TIMEOUT_MS` (25000), `_MAX_CHARS` (8000) |
 | Agent options for experiments | `app/execution/coding_agent.Agent(tools=, tool_max_chars=, system=)`; unset = unchanged |
 
 **Tests:**

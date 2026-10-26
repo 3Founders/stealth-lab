@@ -122,7 +122,7 @@ def survey_repo(repo_path: str = "") -> str:
 `.kell/claims/<unit>.md` page per package ("unit") when the repository has several.
 
 1. Scan first (deterministic, local, uploads nothing):
-   `npx -y stealthlab-mcp survey {target}`
+   `npx -y kell-mcp survey {target}`
    It finds every unit (workspaces of any ecosystem, nested packages, Bazel/Buck/Pants
    groups, docs sites, notebooks, mobile apps), leaves out vendored, generated and
    fixture code, computes the repository identity, writes the facts a file states
@@ -141,7 +141,7 @@ def survey_repo(repo_path: str = "") -> str:
    - `STALE|...` lines name facts whose cited line changed: re-check each one; if it no
      longer holds, leave it `stale` and append the corrected fact.
    Units not in the worklist keep their scanner facts until a task touches them; then run
-   `npx -y stealthlab-mcp survey {target} --touch <path>` and survey that unit.
+   `npx -y kell-mcp survey {target} --touch <path>` and survey that unit.
 3. What to capture.
 {_WHAT_TO_CAPTURE}
 4. Write one fact per line, in this exact format:
@@ -158,7 +158,7 @@ def survey_repo(repo_path: str = "") -> str:
    - ids: next free number on that page (`R-012` in claims.md, `R-<unit slug>-007` on a
      unit page); add each fact at the end of its topic block, topics in this order:
      {_TOPICS}.
-5. Check: `npx -y stealthlab-mcp survey {target} --validate`. It checks every fact against
+5. Check: `npx -y kell-mcp survey {target} --validate`. It checks every fact against
    the line it cites (the backticked commands, quoted text and versions must be there, and
    commands must exist in the manifests, Makefile or CI) and moves any that fail to
    `.kell/survey/rejected.md` with the reason. Fix or drop those, then validate again.
@@ -188,7 +188,7 @@ own every file in `.kell/`.
 2. Ask. Call `find_ways(query=<the task>, repo_claims=<text of .kell/claims.md, then the
    .kell/claims/<unit>.md pages of the units the task touches (index/units.idx maps a path
    to its page)>, ...)` once, adding this repo's library arguments when they exist:
-   `stealthlab-mcp library payload` prints exactly `library_rows`, `route_obs` and `repo_identity`
+   `kell library payload` prints exactly `library_rows`, `route_obs` and `repo_identity`
    (pass them as they are). Also pass `my_model=<the model you are>`, plus `candidates=<other
    "model|scaffold" units you can run>` if you can delegate to other models: the reply then carries a
    `model_plan`.
@@ -205,7 +205,7 @@ own every file in `.kell/`.
      worked examples, not verified to apply here: compare each to your task, adapt what fits, and
      never copy one as-is.
    - `routing_rows` (with a model plan): save them with
-     `stealthlab-mcp library route --from-reply <reply.json>` so this repo's outcomes count against them.
+     `kell library route --from-reply <reply.json>` so this repo's outcomes count against them.
    Small task? If the way you're following has one or two steps, skip steps 4-5: just do it,
    check it, and go to step 7.
 3. Read past discoveries: `stealth://procedures/<procedure_id>/claims` for each chosen Procedure.
@@ -222,7 +222,7 @@ own every file in `.kell/`.
    - `check=` must be concrete (a command, a file that must exist, a test).
      If the Procedure gives none, write one.
    - status: ready | blocked | running | done | failed | skipped.
-   Then run `npx -y stealthlab-mcp plan validate` (local, reads only): it checks both files'
+   Then run `npx -y kell-mcp plan validate` (local, reads only): it checks both files'
    lines, that every step=, claims= and deps= points at something real, no dependency cycle,
    and a concrete check= on every node. Fix what it reports, and run it again after you edit run.md.
    Show the plan to the user and get an OK before changing their code.
@@ -241,7 +241,7 @@ own every file in `.kell/`.
    EVERY attempt, pass or fail. A failed attempt's reply names `next_model`: redo the failed work
    with it, check again, report again. The StealthLab hooks count the outcome in
    `.kell/routing.md` themselves; without the hooks, count it with
-   `stealthlab-mcp library obs <R-id from routing.md> --model <m> --scaffold <s> --ok|--fail`.
+   `kell library obs <R-id from routing.md> --model <m> --scaffold <s> --ok|--fail`.
 8. Learn. When a step needed a fix or there was a better way:
    - rewrite the remaining nodes in `run.md` now;
    - keep `.kell/claims.md` true, in the survey_repo style (plain sentences that name
@@ -252,12 +252,12 @@ own every file in `.kell/`.
      step showed a fact is wrong, set that line to `status=stale` and append the corrected
      fact -- never edit it in place. When two facts disagree, keep both and say so;
    - record what was solved HERE once its check passes, so the next task in this repo finds it:
-     `stealthlab-mcp library add --title "<the problem, as a goal>" --check "<the command that proved it>"
+     `kell library add --title "<the problem, as a goal>" --check "<the command that proved it>"
      [--g <goal_id from find_ways>] [--p <procedure_id>] [--unit <package path>] [--step "<kind>|<do>|<check>"]...`
      (it re-runs the check and refuses if it fails; it saves the diff and rebuilds the indexes; it reuses the
      repo's Goal and Way for the same problem and procedure, or pass `--goal <G-id>` / `--way <W-id>` to
      attach to existing ones from `.kell/library.md`'s G / W lines);
-   - to offer a solved entry to everyone, `stealthlab-mcp library share <L-id>` drafts the
+   - to offer a solved entry to everyone, `kell library share <L-id>` drafts the
      submit_way call (problem, way, steps and checks only; never the diff or paths): fill its
      placeholders, remove anything specific to this repo, then send it;
    - if it would help anyone doing this Procedure, not just this repo, call

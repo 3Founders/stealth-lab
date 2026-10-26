@@ -3,20 +3,20 @@
 What a developer does in a repository that has never seen StealthLab and has no check configured, as one session:
 
   1 fix     a messy first prompt ("add is broken, fix it pls") -> dispatched from the FIRST prompt (a new repo gets its
-            .kell/), the prompt is stopped with "Done by <cheap model> in N s ... stealthlab-mcp undo", the fix is in the tree
+            .kell/), the prompt is stopped with "Done by <cheap model> in N s ... kell undo", the fix is in the tree
             and the project's tests pass
   2 it      a follow-up that only makes sense with the first ("now also make it reject strings - raise a TypeError") -> "it" is
             resolved, dispatched, add() raises TypeError for a str; WARNs if the change went wider than add() (the scope
             creep seen in the Cursor test, 2026-10-14)
   3 own     the developer edits a file of their own (notes.md)
-  4 undo    `stealthlab-mcp undo` -> only the LAST change is undone (add() keeps the step-1 fix, loses the TypeError check),
+  4 undo    `kell undo` -> only the LAST change is undone (add() keeps the step-1 fix, loses the TypeError check),
             and the developer's own file is untouched
   5 thanks  "thanks" -> NOT dispatched; the continuity note ("Earlier in this session, <model> changed ...") is delivered
   6 again   one more plain prompt ("ok great") -> NOT dispatched; the continuity note is NOT repeated ("shown once")
   7 opus    "!opus explain what calc.py does" -> not dispatched, the session's model is left alone
 
 Each step is PASS, WARN (a quality finding, not a failure) or FAIL; the exit code is 0 with no FAIL, 1 with any, 2 when the
-check could not start (see `preflight`). It runs the real hook (`stealthlab-mcp hook-prompt`) with Claude Code-shaped payloads
+check could not start (see `preflight`). It runs the real hook (`kell hook-prompt`) with Claude Code-shaped payloads
 against a real backend and the real cheap models, so it costs a few cents of open-model tokens and the test-first call of the
 session model; it never starts Claude Code itself and never touches your own ~/.claude or ~/.stealthlab (a sandbox home).
 
@@ -48,7 +48,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-BIN = REPO / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"
+BIN = REPO / "packaging" / "npm" / "bin" / "kell.mjs"
 SERVER = os.environ.get("ABTEST_SERVER", "http://127.0.0.1:8765")
 MODEL = os.environ.get("ABTEST_MODEL", "claude-opus-5-5")
 SLOW_S = 90                           # a dispatched prompt slower than this is a WARN (the user waits that long)
@@ -183,7 +183,7 @@ def preflight(*, token_file: Path | None = None) -> list[str]:
 # ---------------------------------------------------------------- running the real hooks
 
 class Hooks:
-    """The real thing: `stealthlab-mcp hook-prompt` and `stealthlab-mcp undo` as child processes."""
+    """The real thing: `kell hook-prompt` and `kell undo` as child processes."""
 
     def __init__(self, repo: Path, home: Path, env: dict[str, str], transcript: Path, session_id: str = "flow-1"):
         self.repo, self.home, self.env, self.transcript, self.session_id = repo, home, env, transcript, session_id
@@ -244,7 +244,7 @@ def dispatch_checks(st: Step, res: HookResult, *, name: str) -> None:
     st.seconds = res.seconds
     if st.check(res.dispatched, f"{name} was not dispatched: the prompt went on to the session's model (hook said {json.dumps(res.out)[:160]})"):
         st.shown = res.reason
-        st.check("stealthlab-mcp undo" in res.reason, "the message does not say how to undo")
+        st.check("kell undo" in res.reason, "the message does not say how to undo")
         st.check("calc.py" in res.reason, "the message does not name calc.py")
         st.check("$" in res.reason.split("\n\n")[0], "the message shows no cost")
         if res.seconds > SLOW_S:

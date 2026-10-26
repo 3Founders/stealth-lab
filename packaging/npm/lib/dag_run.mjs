@@ -241,7 +241,7 @@ export async function runDag(ctx) {
   const accepted = new Map();            // node id -> winner
   const tried = [];
   const yours = new Set();               // parts for the session's model
-  const waiting = new Set();             // cheap parts after one of yours: `stealthlab-mcp dag continue` does them
+  const waiting = new Set();             // cheap parts after one of yours: `kell dag continue` does them
   const left = { get size() { return yours.size + waiting.size; } };
   const order = plan.dag.waves.flat();
   const patchesBefore = (n) => order.filter((id) => accepted.has(id) && id !== n.id).map((id) => accepted.get(id).patch);
@@ -301,7 +301,7 @@ export async function runDag(ctx) {
     catch (err) { log(`dag: the accepted parts could not be applied (${err.message})`); accepted.clear(); }
   }
   const status = (n) => (accepted.has(n.id) ? "done" : waiting.has(n.id) ? "waiting" : "ready");
-  // the cheap parts after yours: saved so `stealthlab-mcp dag continue` can do them once your part is in
+  // the cheap parts after yours: saved so `kell dag continue` can do them once your part is in
   const resumable = waiting.size > 0 && saveDagState(root, {
     task: rawPayload.prompt, entry: plan.entry.id, slots: plan.slots, where, interCheck, fullCheck, instanceKey, goalId,
     policy: { timeoutS: policy.timeoutS, maxParallel: policy.maxParallel, scope: policy.scope },
@@ -324,14 +324,14 @@ export function loadDagState(root) {
   try { return JSON.parse(fs.readFileSync(path.join(root, ".kell", STATE), "utf8")); } catch { return null; }
 }
 
-// `stealthlab-mcp dag continue`: the session has done its part(s) of the plan in the working tree. Checks them ("no new
+// `kell dag continue`: the session has done its part(s) of the plan in the working tree. Checks them ("no new
 // failures"), then runs the waiting parts on cheap models wave by wave (each applied as it passes, with an undo
 // point), then the full check over the whole task. -> {ok, lines: [what happened], state}
 export async function continueDag({ root, env = process.env, rt, log = () => {}, runShell, undo, fresh = false }) {
   const st = loadDagState(root);
   const out = [];
   if (!st) return { ok: false, lines: ["No plan to continue here (.kell/dag_state.json): nothing was handed over in parts."] };
-  if (st.awaiting_plan) return { ok: false, lines: [`This task waits for your plan: \`${"stealthlab-mcp"} dag plan\` first (see its usage).`] };
+  if (st.awaiting_plan) return { ok: false, lines: [`This task waits for your plan: \`${"kell"} dag plan\` first (see its usage).`] };
   const repo = await repoTopLevel(root, env);
   // fresh: a plan just made -- the session's parts are not done yet, so only the cheap parts that need none of them run
   const yours = fresh ? [] : st.nodes.filter((n) => n.status === "ready");
@@ -399,7 +399,7 @@ export async function continueDag({ root, env = process.env, rt, log = () => {},
 // STEALTHLAB_DISPATCH_SESSION_PLAN=off: the large task is handed back whole, as before.
 export const sessionPlanEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_SESSION_PLAN || "on").toLowerCase() !== "off";
 
-export const PLAN_USAGE = 'stealthlab-mcp dag plan < plan.json   with {"parts": [{"desc": "what this part does", ' +
+export const PLAN_USAGE = 'kell dag plan < plan.json   with {"parts": [{"desc": "what this part does", ' +
   '"files": ["path/a.py"], "gives": ["names it adds"], "needs": ["names it uses from other parts"], "who": "me" | "cheap"}]}';
 
 // -> {ok, steps, error}: the session's plan, checked (2-8 parts, each with a description; files must exist or be new
@@ -423,7 +423,7 @@ export function readPlan(text, root) {
   return { ok: true, steps };
 }
 
-// `stealthlab-mcp dag plan`: the session's plan -> the DAG (lib/dag.mjs: data flow, same file, unsure -> in order); its
+// `kell dag plan`: the session's plan -> the DAG (lib/dag.mjs: data flow, same file, unsure -> in order); its
 // own parts are "ready" (yours), the rest "waiting"; the cheap parts that need none of the session's run at once.
 export async function planDag({ root, text, env = process.env, rt, log = () => {}, runShell, undo }) {
   const st = loadDagState(root);
@@ -442,7 +442,7 @@ export async function planDag({ root, text, env = process.env, rt, log = () => {
 
 export async function runDagCli(argv, { cwd = process.cwd(), env = process.env, print = (s) => process.stdout.write(`${s}\n`), stdin = null } = {}) {
   if (argv[0] !== "continue" && argv[0] !== "plan") {
-    print("usage: stealthlab-mcp dag continue   (after doing your part of a plan handed over in parts)");
+    print("usage: kell dag continue   (after doing your part of a plan handed over in parts)");
     print(`       ${PLAN_USAGE}`);
     return 2;
   }

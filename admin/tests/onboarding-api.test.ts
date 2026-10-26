@@ -25,11 +25,11 @@ describe("parseUnits", () => {
 describe("joinCommand", () => {
   it("is one line carrying the code and both addresses", () => {
     const c = joinCommand("sl1_abc", "https://mcp.example.com/mcp", "https://api.example.com");
-    expect(c).toBe("npx -y stealthlab-mcp join sl1_abc --url https://mcp.example.com/mcp --api https://api.example.com");
+    expect(c).toBe("npx -y kell-mcp join sl1_abc --url https://mcp.example.com/mcp --api https://api.example.com");
     expect(c).not.toContain("\n");
   });
   it("leaves out an address it does not have rather than printing an empty flag", () => {
-    expect(joinCommand("sl1_abc", "", "https://api.example.com")).toBe("npx -y stealthlab-mcp join sl1_abc --api https://api.example.com");
+    expect(joinCommand("sl1_abc", "", "https://api.example.com")).toBe("npx -y kell-mcp join sl1_abc --api https://api.example.com");
   });
 });
 

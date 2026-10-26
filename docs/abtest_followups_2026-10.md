@@ -1,7 +1,7 @@
 # A-vs-C product test: results so far and what to improve next (2026-10-10)
 
 A = plain Claude Code on Opus 5.5. C = the same Claude Code with StealthLab installed the product way
-(`stealthlab-mcp install --with-exec`, mirrored per workspace by `experiments/abtest/setup_c.mjs`). Correctness is
+(`kell install --with-exec`, mirrored per workspace by `experiments/abtest/setup_c.mjs`). Correctness is
 graded on each task's full hidden tests; the agent and dispatch only ever see the visible ones.
 
 ## Results
@@ -60,7 +60,7 @@ In order of value. Each needs the user's go-ahead before building.
 2. **Hooks-only gaps** (the session no longer gets StealthLab's MCP instructions):
    - a short StealthLab block in CLAUDE.md (as AGENTS.md already gets): record fixes in the library, attach to an
      existing entry instead of duplicating, finish the survey worklist, look up sub-tasks;
-   - the agent uses the CLI through Bash for that (`stealthlab-mcp library ...`, `survey`, a `find` command) -- no MCP;
+   - the agent uses the CLI through Bash for that (`kell library ...`, `survey`, a `find` command) -- no MCP;
    - run the survey automatically when the hook sees a repo without `.kell`;
    - tidy the library (merge duplicates) automatically now and then;
    - upgrade note: `install --with-exec` removes the MCP registration; offer `--keep-mcp`.
@@ -93,7 +93,7 @@ B. Long, real repositories
    4. Time limit from the project's own test duration.
    5. Size gating: big multi-file changes go to the session's model (or bounded steps of a plan).
 C. Real user flow
-   1. Safe apply: an undo point before applying, a short diff summary, `stealthlab-mcp undo`.
+   1. Safe apply: an undo point before applying, a short diff summary, `kell undo`.
    2. Don't overwrite files the user changed during the run: hand over instead.
    3. A clear message for a cheaply-handled prompt: who, what changed, cost, how to undo.
    4. Optional "ask before applying" mode.

@@ -2,7 +2,7 @@
 //
 // A hook cannot switch Claude Code's model, so any plan the session itself carries out leaves that model reading,
 // handing over and checking -- on a small task that costs more than the task. Here the prompt hook runs the plan's
-// rungs that a local executor can run (open models through `stealthlab-mcp exec`), in a worktree, verified by the
+// rungs that a local executor can run (open models through `kell exec`), in a worktree, verified by the
 // project's check:
 //   * one passes: its change is applied, the attempt is recorded, and the prompt is stopped with a short report --
 //     the session's model (Opus, say) never runs;
@@ -99,7 +99,7 @@ export function dispatchPolicy(env = process.env) {
     // a provider with fewer tokens left today than this is not tried: a big task's cheap tries take ~100k-500k
     minQuotaTokens: Math.max(0, Number(env.STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS ?? 300000)),
     // "on": a verified cheap answer is NOT applied: the prompt is stopped with a summary of the change and the command that
-    // applies it (`stealthlab-mcp exec apply <run>`). Default off: it is applied, with an undo point (lib/undo.mjs)
+    // applies it (`kell exec apply <run>`). Default off: it is applied, with an undo point (lib/undo.mjs)
     ask: (env.STEALTHLAB_DISPATCH_ASK || "off").toLowerCase() === "on",
     // per-MODEL timing learned from this repo's own cheap wins (lib/model_speed.mjs): a run is capped at 3 x its model's p90 win time (not
     // below 60 s, not above the limit above; fewer than 5 wins: no cap), a capped run hands in its change to be judged; and the rungs start
@@ -1257,7 +1257,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
           : "planned it from a similar fix made here"} and dispatched each part ` +
           `before this session's model ran, $${(dagRes.cost_usd || 0).toFixed(4)}). All parts together passed ${checkLabel} in an isolated worktree ` +
           `and the change is applied: ${dagRes.files.join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
-          (dagRes.undone ? " To put it back as it was: stealthlab-mcp undo." : "") + (explanation ? `\n\n${explanation}` : "") };
+          (dagRes.undone ? " To put it back as it was: kell undo." : "") + (explanation ? `\n\n${explanation}` : "") };
     }
   }
 
@@ -1496,8 +1496,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const stat = result.diff?.stat ? `\n${result.diff.stat}\n` : " ";
       return { handled: true, ask: true, run_id: runId, unit: rung.unit, model: rung.model, files, library_entry: null, tried, spec,
         text: `Ready, NOT applied: ${rung.model} solved this and ${checkLabel} passed in an isolated worktree${costNote}. ` +
-          `It would change: ${files.join(", ") || "no files"}.${stat}Apply it with: stealthlab-mcp exec apply ${runId}  ` +
-          "(dispatch asks first because STEALTHLAB_DISPATCH_ASK=on). That command makes an undo point first: stealthlab-mcp undo puts it back." };
+          `It would change: ${files.join(", ") || "no files"}.${stat}Apply it with: kell exec apply ${runId}  ` +
+          "(dispatch asks first because STEALTHLAB_DISPATCH_ASK=on). That command makes an undo point first: kell undo puts it back." };
     }
     // the way back first: an undo point for the files the answer will touch (lib/undo.mjs), then the apply, which itself
     // refuses when one of those files was edited in the checkout since the run started
@@ -1576,7 +1576,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       text: `Done by ${rung.model} in ${secs} s (StealthLab dispatched it before this session's model ran${cost}). ` +
         `It passed ${checkLabel} in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
-        (undoPoint ? " To put it back as it was: stealthlab-mcp undo." : undoNote) +
+        (undoPoint ? " To put it back as it was: kell undo." : undoNote) +
         (explanation ? `\n\n${explanation}` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));
@@ -1694,7 +1694,7 @@ export function triedNote(d) {
     return `StealthLab split this task into ${d.partial.nodes.length} parts, ` +
       (d.partial.entry === "request" ? "one per thing the request asks for. " : `planned from a similar fix already made here (${d.partial.entry}). `) +
       (done.length && d.partial.applied.length
-        ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; stealthlab-mcp undo removes them" : ""}. `
+        ? `Done by cheap models, checked (no new test failures) and applied: ${list(done)}${d.partial.undone ? "; kell undo removes them" : ""}. `
         : "No part was applied. ") +
       `Yours: ${list(yours)}.` +
       (waiting.length && d.partial.resumable
@@ -1724,9 +1724,9 @@ export function triedNote(d) {
     handoffNote(d);
 }
 
-// this StealthLab's own command line, runnable from the session's shell whether or not stealthlab-mcp is on its PATH
+// this StealthLab's own command line, runnable from the session's shell whether or not kell is on its PATH
 export function selfCommand() {
-  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+  const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
   return `node "${bin}"`;
 }
 

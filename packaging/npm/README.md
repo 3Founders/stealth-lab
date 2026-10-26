@@ -1,4 +1,4 @@
-# stealthlab-mcp
+# kell
 
 Connects your coding agent to the **hosted** StealthLab MCP server
 (`find_ways`, `report_discovery`, the `survey_repo` / `plan_and_run` prompts;
@@ -16,21 +16,21 @@ opt-in: the local executor layer, `install --with-exec`, described below.)
 |---|---|
 | macOS / Linux | `curl -fsSL https://<site>/install.sh \| bash` |
 | Windows (PowerShell) | `irm https://<site>/install.ps1 \| iex` |
-| Any OS with Node 18.17+ | `npx -y stealthlab-mcp install` |
+| Any OS with Node 18.17+ | `npx -y kell-mcp install` |
 
 It configures every supported agent it detects. To limit it to some agents:
 
 ```bash
-npx -y stealthlab-mcp install --client claude-code --client cursor
+npx -y kell-mcp install --client claude-code --client cursor
 curl -fsSL https://<site>/install.sh | bash -s -- --client claude-code
 $env:STEALTHLAB_CLIENTS = "claude-code,cursor"; irm https://<site>/install.ps1 | iex
 ```
 
 `STEALTHLAB_MCP_PACKAGE` pins what the scripts install (for example
-`stealthlab-mcp@0.1.0`, or a local `.tgz` for testing before a release).
+`kell-mcp@0.1.0`, or a local `.tgz` for testing before a release).
 
-Other commands: `stealthlab-mcp doctor` checks that the endpoint answers
-`initialize`. `stealthlab-mcp uninstall` removes the entries. `--dry-run`
+Other commands: `kell doctor` checks that the endpoint answers
+`initialize`. `kell uninstall` removes the entries. `--dry-run`
 shows what would change without changing anything.
 
 ## What each agent gets
@@ -46,7 +46,7 @@ shows what would change without changing anything.
 | Claude Desktop | `claude_desktop_config.json` → the stdio relay (see below) | a small Node relay while Desktop runs |
 
 Claude Desktop's config file only accepts local commands, so that one agent
-launches `stealthlab-mcp` (with no arguments). That is a zero-dependency
+launches `kell` (with no arguments). That is a zero-dependency
 stdio↔HTTP relay: it forwards JSON-RPC unchanged and handles the session ID,
 protocol-version and auth headers. To avoid the relay there too, add the URL
 under Desktop's **Settings → Connectors → Add custom connector** instead.
@@ -59,8 +59,8 @@ copy is written first, and a file that doesn't parse is left untouched.
 Only Claude Code has hooks, so other agents have to be told. Run this in a repo:
 
 ```
-npx -y stealthlab-mcp instructions            # add --client cursor to force the Cursor rule
-npx -y stealthlab-mcp instructions --remove   # take it out again; --dry-run shows what would change
+npx -y kell-mcp instructions            # add --client cursor to force the Cursor rule
+npx -y kell-mcp instructions --remove   # take it out again; --dry-run shows what would change
 ```
 
 It writes a short block between `<!-- stealthlab:begin -->` and `<!-- stealthlab:end -->` in `AGENTS.md` (Cursor,
@@ -85,7 +85,7 @@ The hooks make knowledge flow both ways without the model having to decide to ca
 | `hook capture-tool` (PostToolUse, Bash) | Claude runs a test command (pytest, npm test, go test, cargo test, jest, vitest, …) | reads pass or fail from the runner's own summary line | nothing; kept locally as a verdict only |
 | `hook capture-stop` (Stop) | Claude finishes a turn | if the prompt's lookup identified a Goal and a test verdict is known, reports one outcome per prompt with `report_model_run` (from a detached process, so you never wait) | model, `scaffold="claude-code"`, pass/fail, the Goal/Procedure ids, `check_kind="tests"`. Never the prompt, commands, test output, diffs or transcript |
 
-- Capture is active only with a saved token (`stealthlab-mcp login`); without one nothing is recorded or queued.
+- Capture is active only with a saved token (`kell login`); without one nothing is recorded or queued.
   Reports that can't be sent wait in `~/.stealthlab/outbox/`.
 - Locally, capture keeps only ids, verdicts and times (`~/.stealthlab/hooks/sessions/`, mode 0600, deleted after
   24 h). Failures go to `~/.stealthlab/hooks.log`, never to your session.
@@ -139,7 +139,7 @@ switch your main session's model, but the guard makes the plan bind wherever wor
       `next_model` while a local executor can run it;
     - **`PostToolUse` on `run_result`:** a verified run ends the plan, a failed one moves it to `next_model`.
     - The plan text already names the delegator and that line, and the delegator's reply ends with the command
-      that applies a verified run: `stealthlab-mcp exec apply <run_id>`.
+      that applies a verified run: `kell exec apply <run_id>`.
     - With no local executor for the model, the guard stands aside.
 - **Cursor:**
   - **`preToolUse` on `Task`:** refuses a Task that names a different model, with `agent_message`. Cursor has no
@@ -170,7 +170,7 @@ Claude Code. `STEALTHLAB_HOOK=off` and `STEALTHLAB_CAPTURE=off` work here too; s
   (`package.json` → `stealthlab.defaultMcpUrl`). Plain `http://` is only
   allowed for loopback addresses.
 - **Token.** Optional. Reads are anonymous; only `report_discovery` needs a
-  signed-in user. `--token` (or `stealthlab-mcp login --token …`) saves it to
+  signed-in user. `--token` (or `kell login --token …`) saves it to
   `~/.stealthlab/config.json` (mode 0600). For the HTTP clients it is also
   written into that client's config as an `Authorization` header, because
   that's the only place they read one from.
@@ -181,10 +181,10 @@ Everything above leaves nothing running on your machine. The executor layer is
 the one exception, and it is **off unless you ask for it**:
 
 ```bash
-npx -y stealthlab-mcp install --with-exec      # plus the usual --client / --url options
+npx -y kell-mcp install --with-exec      # plus the usual --client / --url options
 ```
 
-It adds a local MCP server, `stealthlab-mcp exec` (stdio), that hands one
+It adds a local MCP server, `kell exec` (stdio), that hands one
 well-specified step to a coding agent **you already have installed**
 (OpenCode, Codex CLI, Gemini CLI, Claude Code, ...), runs it headlessly in a
 throwaway git worktree, re-runs the step's own checks there, and returns a
@@ -208,7 +208,7 @@ For Claude Code, `--with-exec` also writes (and `uninstall` removes):
 |---|---|
 | `~/.claude/agents/stealth-executor.md` | a subagent that does ONE `.kell/run.md` node in its own worktree (`isolation: worktree`, tools `Read, Edit, Write, Bash, Grep, Glob`, `maxTurns: 40`) and ends its reply with a `STEALTH_RESULT` line |
 | `~/.claude/agents/stealth-delegator.md` | a subagent that carries the executor MCP server **inline** (`mcpServers`), so your main conversation never loads those tools; it calls `achieve`, polls `run_result`, and returns `summary` + `verified` + `diff.stat`. `apply_run` is outside its tool list: it can never apply a change |
-| `~/.claude/settings.json` → `hooks.SubagentStart`, `hooks.SubagentStop` | `stealthlab-mcp hook subagent-start` / `subagent-stop`: when any subagent that handled a plan node stops, the node's `check=` is re-run and the outcome is reported as `scaffold="claude-code-subagent"` |
+| `~/.claude/settings.json` → `hooks.SubagentStart`, `hooks.SubagentStop` | `kell hook subagent-start` / `subagent-stop`: when any subagent that handled a plan node stops, the node's `check=` is re-run and the outcome is reported as `scaffold="claude-code-subagent"` |
 
 The two agent files are user-level on purpose: Claude Code ignores
 `mcpServers` and `hooks` in plugin agents. `$CLAUDE_CONFIG_DIR` replaces
@@ -220,7 +220,7 @@ limit). Failures go to `~/.stealthlab/hooks.log`, never to your session. A
 subagent that did not handle a plan node is ignored.
 
 Without Claude Code, point any MCP client at the executor as a stdio command:
-`stealthlab-mcp exec`.
+`kell exec`.
 
 ### Your agents, your logins -- never shared
 
@@ -234,7 +234,7 @@ of service; using it any other way is not supported.
 ### Security notes
 
 - **Opt-in, reversible.** Plain `install` behaves exactly as before. `uninstall`
-  removes the two agent files (only if they carry the `stealthlab-mcp:managed`
+  removes the two agent files (only if they carry the `kell:managed`
   marker -- an agent file of the same name that you wrote is never touched) and
   exactly our two hook entries; every other key and hook in `settings.json`,
   including your own `SubagentStart`/`SubagentStop`/`UserPromptSubmit` hooks,
@@ -260,7 +260,7 @@ of service; using it any other way is not supported.
 
 ### Check evidence: recorded here always, uploaded only if you switch it on
 
-`stealthlab-mcp status` computes a status (verified, open, failed, contested, expired) for every `.kell/run.md` node and
+`kell status` computes a status (verified, open, failed, contested, expired) for every `.kell/run.md` node and
 `.kell/library.md` entry from check runs recorded in `.kell/evidence.md`. `status --run` lists the commands it will run (they
 come from the repository's own files) and asks before running them; dispatch records the check and the strong reviewer's verdict for
 each answer it accepts. **That file stays on your machine.**
@@ -294,7 +294,7 @@ sends with a short bound and queues what it cannot send.
    (`stealthlab.defaultMcpUrl`), `install/install.sh` (`DEFAULT_URL`) and
    `install/install.ps1` (`$DefaultUrl`). `prepublishOnly` refuses to publish
    while they're empty or don't match.
-2. Bump `version`, then push the tag `stealthlab-mcp-v<version>`.
+2. Bump `version`, then push the tag `kell-mcp-v<version>`.
    `.github/workflows/publish-mcp-client.yml` publishes to npm (this needs
    the `NPM_TOKEN` secret).
 3. The site serves the installers at `/install.sh` and `/install.ps1`. The

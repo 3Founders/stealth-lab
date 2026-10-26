@@ -24,7 +24,7 @@ Round 4 ([PREREGISTRATION_4.md](PREREGISTRATION_4.md)) showed the knowledge work
   - the same request more than 3 times in 10 minutes is refused;
   - 30 calls per 10 minutes;
   - requests under 3 words are refused.
-- **Claude Code knowledge hook** (`stealthlab-mcp hook-prompt`, installed by `stealthlab-mcp install`): each task-like prompt is looked up with `find_ways` **before** the agent starts, and the knowledge is added to its context. The model no longer decides whether knowledge arrives.
+- **Claude Code knowledge hook** (`kell hook-prompt`, installed by `kell install`): each task-like prompt is looked up with `find_ways` **before** the agent starts, and the knowledge is added to its context. The model no longer decides whether knowledge arrives.
 
 ## Design
 

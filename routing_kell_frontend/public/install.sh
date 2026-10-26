@@ -7,14 +7,14 @@
 # Installs nothing StealthLab-side on this machine: it registers the HOSTED
 # StealthLab MCP endpoint with the coding agents it finds (Claude Code,
 # Cursor, VS Code, Windsurf, Codex, Claude Desktop) and exits. With Node.js
-# 18+ it runs `npx stealthlab-mcp install`; without Node it still registers
+# 18+ it runs `npx kell-mcp install`; without Node it still registers
 # Claude Code directly via `claude mcp add --transport http`.
 set -euo pipefail
 
 # Hosted endpoint. Empty until the production URL is fixed; override with
 # STEALTHLAB_MCP_URL=... or --url.
 DEFAULT_URL=""
-PKG="${STEALTHLAB_MCP_PACKAGE:-stealthlab-mcp@latest}"   # override to pin a version
+PKG="${STEALTHLAB_MCP_PACKAGE:-kell-mcp@latest}"   # override to pin a version
 
 URL="${STEALTHLAB_MCP_URL:-$DEFAULT_URL}"
 ARGS=()
@@ -38,7 +38,7 @@ node_ok() {
 
 if node_ok; then
   say "==> Registering StealthLab MCP ($URL) with your agents"
-  exec npx -y --package="$PKG" stealthlab-mcp install --url "$URL" ${ARGS[@]+"${ARGS[@]}"}
+  exec npx -y --package="$PKG" kell install --url "$URL" ${ARGS[@]+"${ARGS[@]}"}
 fi
 
 say "Node.js 18.17+ not found -- registering what can be done without it."

@@ -36,7 +36,7 @@ line ranges are disposable (the idx is trusted only while its `source_sha` and e
 
 | line | what |
 |---|---|
-| `G|G-…|<title>|parent=<G-id or ->|g=|unit=|tags=` | a Goal; `parent=` builds a hierarchy (`stealthlab-mcp library goal <G> --parent <G>`) |
+| `G|G-…|<title>|parent=<G-id or ->|g=|unit=|tags=` | a Goal; `parent=` builds a hierarchy (`kell library goal <G> --parent <G>`) |
 | `W|W-…|<name>|goal=<G-id>|p=|v=|code=` | a Way (procedure) that achieves the Goal, reusable across problems; `code=` its semantic code (docs/routing_priors.md) |
 | `S|W-…:<k>|<kind>|<do>|check=` | the Way's steps |
 
@@ -49,7 +49,7 @@ line ranges are disposable (the idx is trusted only while its `source_sha` and e
 - **What links entries:**
   - `library add` (or `--goal` / `--way` to attach to an existing one);
   - the survey's history mining;
-  - `stealthlab-mcp library link`, which migrates an older file.
+  - `kell library link`, which migrates an older file.
 - **Size budget:** when the knowledge lines push `library.md` past 64 KB, the oldest entries are archived and
   Goals / Ways nothing uses any more are dropped. A Goal another kept Goal names as its parent stays.
 - **Routing:** a plan for a matched entry is keyed to its **Way**: `task_features` names the entry's Goal and
@@ -113,7 +113,7 @@ reused for a library request. No diff, step text or check command ever leaves th
   entry's steps and its local diff, and saves `routing_rows` into `routing.md`.
 - The capture hook counts the final test verdict of a resolved prompt as one OBS on that Goal's route (no token
   needed, local only, only where `.kell/` exists).
-- `stealthlab-mcp library index|check|show|refresh|add|route|obs|payload|lint|tidy|drop|merge-goals` (see `library help`).
+- `kell library index|check|show|refresh|add|route|obs|payload|lint|tidy|drop|merge-goals` (see `library help`).
 
 ## Not done / open
 
@@ -124,10 +124,10 @@ reused for a library request. No diff, step text or check command ever leaves th
     leaves room, the judge budget is filled with the most recently verified entries, so a paraphrased title is
     still judged. The judge decides; overlap only orders the budget.
   - `library.md` is in `ALLOWED_SNAPSHOT_FILES` (encrypted project sync). Its diffs and `routing.md` are not.
-  - `stealthlab-mcp library share <L-id>` drafts the `submit_way` call that offers an entry to everyone: the
+  - `kell library share <L-id>` drafts the `submit_way` call that offers an entry to everyone: the
     problem, the way and its steps with checks. It never includes the diff, touched paths, unit or route. The
     agent fills the judgement fields and sends it.
-  - `stealthlab-mcp plan validate` checks `procedures.md` and `run.md`: ids, `step=` / `claims=` / `deps=`
+  - `kell plan validate` checks `procedures.md` and `run.md`: ids, `step=` / `claims=` / `deps=`
     references, no cycles, and a concrete `check=` on every node.
   - One routing path. The prompt hook sends `my_model` (the session's model) and `candidates` (the other Claude
     models a Claude Code subagent can run; `STEALTHLAB_HOOK_CANDIDATES` replaces the list,

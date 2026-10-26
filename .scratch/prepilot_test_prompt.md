@@ -31,7 +31,7 @@ Rules for run 2 and 3:
 Each run has two arms per task, so StealthLab is compared with its absence:
 - **baseline**: Claude Code with no MCP servers.
 - **stealthlab**: Claude Code with only the StealthLab MCP server (local server for run 1; local server pointed
-  at the branch for runs 2 and 3), installed the way users install it (`packaging/npm`, `stealthlab-mcp install`)
+  at the branch for runs 2 and 3), installed the way users install it (`packaging/npm`, `kell install`)
   so the install path is tested too.
 
 Run each task headless and record the JSON result, for example:

@@ -187,7 +187,7 @@ test("a task in parts: planned from the similar past fix, part 2 starts from par
   assert.match(d.text, /^Done in 2 parts by gemma-4-31b-it/);
   const run = fs.readFileSync(path.join(repo, ".kell", "run.md"), "utf8");
   assert.match(run, /^NODE\|N-2\|done\|The change in pkg\/parser\.py[^\n]*\|deps=N-1\|model=gemma-4-31b-it\|check=/m);
-  const v = spawnSync(process.execPath, [path.resolve("bin/stealthlab-mcp.mjs"), "plan", "validate"], { cwd: repo, encoding: "utf8" });
+  const v = spawnSync(process.execPath, [path.resolve("bin/kell.mjs"), "plan", "validate"], { cwd: repo, encoding: "utf8" });
   assert.equal(JSON.parse(v.stdout).ok, true, v.stdout);
   assert.ok(loadLibrary(repo).entries.length >= 2, "the new fix is in the library, with its steps, for the next one");
 });
@@ -255,7 +255,7 @@ test("two fixes of the same kind, described: one general Goal, one Way with {slo
   assert.match(t, /\{function\} was ARRAY_(FILTER|SLICE); find their values for this task/);
 });
 
-// ------------------------------------------------------------------ after the session's part (stealthlab-mcp dag continue)
+// ------------------------------------------------------------------ after the session's part (kell dag continue)
 
 import { continueDag, loadDagState } from "../lib/dag_run.mjs";
 import { recordArea } from "../lib/areas.mjs";
@@ -273,7 +273,7 @@ test("a part for the session, then cheap parts after it: handed over, then `dag 
   assert.equal(rt.calls.length, 0, "nothing ran yet: the first part is the session's, the second waits for it");
   const note = triedNote(d);
   assert.match(note, /Yours: N-1 \(pkg\/expressions\.py\)/);
-  assert.match(note, /Do only your part; then run `node "[^`]*stealthlab-mcp\.mjs" dag continue`[^.]*has cheap models do N-2 \(pkg\/parser\.py\)/);
+  assert.match(note, /Do only your part; then run `node "[^`]*kell\.mjs" dag continue`[^.]*has cheap models do N-2 \(pkg\/parser\.py\)/);
   assert.ok(loadDagState(repo));
   // the session does its part
   execFileSync("git", ["-C", repo, "apply", "-"], { input: p1 });

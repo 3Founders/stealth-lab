@@ -44,13 +44,14 @@ import { buildReport, captureEnabled, looksLikeTest, rememberLookup, sessionFile
 import { logHook } from "./subagent_hook.mjs";
 import { onCursorPreToolUse } from "./model_guard.mjs";
 import { findStealthRoot, requestPayload } from "./library.mjs";
+import { isOwnCommand } from "./names.mjs";
 
 // beforeSubmitPrompt's time limit in hooks.json when dispatch is installed (seconds). Dispatch bounds its own cheap
 // tries (STEALTHLAB_DISPATCH_TIMEOUT_S, default 150 s); the lookup, the test writer, applying the change and the
 // library entry come on top. Cursor lets the prompt through if the hook outlives this (fail open).
 export const CURSOR_DISPATCH_TIMEOUT_S = 600;
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const MAX_TESTS = 20;
 const POLL_MS = 250;
 
@@ -129,7 +130,7 @@ export function onBeforeSubmitPrompt(payload, { env = process.env, settings, now
   return ok;
 }
 
-// The detached worker: `stealthlab-mcp hook cursor-lookup` with STEALTHLAB_CURSOR_JOB set.
+// The detached worker: `kell hook cursor-lookup` with STEALTHLAB_CURSOR_JOB set.
 export async function runCursorLookupWorker(jobFile, { env = process.env, settings, userAgent, fetchImpl } = {}) {
   let job;
   try {
@@ -293,7 +294,7 @@ export async function runCursorHook(event, { stdinText, env = process.env, setti
 
 const isOurs = (mark) => (entry) => {
   const cmd = String(entry?.command || "").trimEnd();
-  return cmd.includes("stealthlab-mcp") && cmd.endsWith(mark);
+  return isOwnCommand(cmd) && cmd.endsWith(mark);
 };
 
 // A command line every shell Cursor may use can run. On Windows a quoted program path ("C:\Program Files\...")

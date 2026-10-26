@@ -100,13 +100,13 @@ test("settings.json: hook upsert keeps other hooks; uninstall removes only ours"
   const file = path.join(dir, "settings.json");
   fs.writeFileSync(file, JSON.stringify({ model: "x", hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "other-tool" }] }],
                                                                 Stop: [{ hooks: [{ type: "command", command: "s" }] }] } }));
-  const spec = { command: "npx", args: ["-y", "stealthlab-mcp@latest", "hook-prompt"] };
+  const spec = { command: "npx", args: ["-y", "kell-mcp@latest", "hook-prompt"] };
   upsertClaudeHook(file, spec);
   upsertClaudeHook(file, spec);   // idempotent
   let doc = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.equal(doc.model, "x");
   assert.equal(doc.hooks.UserPromptSubmit.length, 2);
-  assert.equal(doc.hooks.UserPromptSubmit[1].hooks[0].command, "npx -y stealthlab-mcp@latest hook-prompt");
+  assert.equal(doc.hooks.UserPromptSubmit[1].hooks[0].command, "npx -y kell-mcp@latest hook-prompt");
   assert.equal(removeClaudeHook(file), true);
   doc = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.deepEqual(doc.hooks.UserPromptSubmit, [{ hooks: [{ type: "command", command: "other-tool" }] }]);

@@ -3,7 +3,7 @@ import { SETUP_COMMAND, defaultInstallPlatform, installPrompt } from "@/lib/inst
 
 describe("install commands", () => {
   it("is the first-time setup command", () => {
-    expect(SETUP_COMMAND).toBe("npx -y stealthlab-mcp setup");
+    expect(SETUP_COMMAND).toBe("npx -y kell-mcp setup");
   });
 
   it("shows a PowerShell prompt to Windows visitors", () => {

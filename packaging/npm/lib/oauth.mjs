@@ -22,7 +22,7 @@ import { readConfig, writeConfig } from "./config.mjs";
 
 const SCOPE = "openid email profile";          // what Supabase's OAuth server can issue (backend oauth_resource.py)
 const REFRESH_SKEW_MS = 120_000;                 // refresh when the access token has under two minutes left
-export const CLIENT_NAME = "stealthlab-mcp CLI";
+export const CLIENT_NAME = "kell CLI";
 
 const b64url = (buf) => Buffer.from(buf).toString("base64url");
 export const pkcePair = () => {

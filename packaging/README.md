@@ -1,7 +1,7 @@
 # stealthlab-connect
 
 > **Connecting an agent to the hosted StealthLab MCP?** Use
-> [`packaging/npm`](npm/README.md) (`npx -y stealthlab-mcp install`,
+> [`packaging/npm`](npm/README.md) (`npx -y kell-mcp install`,
 > `curl … /install.sh | bash`, `irm … /install.ps1 | iex`). It needs
 > nothing local: no Postgres, no Python, no backend checkout. This Python
 > package is for self-hosting / developing the server itself.

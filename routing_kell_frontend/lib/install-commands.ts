@@ -3,7 +3,7 @@
 // the agents and nothing else.)
 export type InstallPlatform = "unix" | "windows";
 
-export const SETUP_COMMAND = "npx -y stealthlab-mcp setup";
+export const SETUP_COMMAND = "npx -y kell-mcp setup";
 
 export function installPrompt(platform: InstallPlatform): string {
   return platform === "windows" ? "PS> " : "$ ";

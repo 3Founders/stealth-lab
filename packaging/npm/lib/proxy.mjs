@@ -1,6 +1,6 @@
 // stdio <-> Streamable HTTP relay.
 //
-// Agents launch `stealthlab-mcp` as a local stdio MCP server; every JSON-RPC
+// Agents launch `kell` as a local stdio MCP server; every JSON-RPC
 // line it receives is POSTed verbatim to the hosted /mcp endpoint and every
 // reply (plain JSON or an SSE stream) is written back as one stdout line.
 // The relay never interprets tool calls -- it only carries the transport
@@ -115,7 +115,7 @@ export class Relay {
       const text = await res.text().catch(() => "");
       let hint = "";
       if (res.status === 401 || res.status === 403) {
-        hint = " -- set a token with `stealthlab-mcp login` (or STEALTHLAB_TOKEN)";
+        hint = " -- set a token with `kell login` (or STEALTHLAB_TOKEN)";
       } else if (res.status === 404 && this.sessionId) {
         hint = " -- server session expired; restart the MCP server in your agent";
         this.sessionId = undefined;
@@ -200,7 +200,7 @@ export class Relay {
 }
 
 export async function runStdioRelay({ url, token, userAgent }) {
-  const log = (m) => process.stderr.write(`[stealthlab-mcp] ${m}\n`);
+  const log = (m) => process.stderr.write(`[kell] ${m}\n`);
   const relay = new Relay({ url, token, userAgent, log, write: (s) => process.stdout.write(s) });
   const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   rl.on("line", (line) => {

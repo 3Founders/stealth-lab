@@ -6,7 +6,7 @@ status this feeds). Spec v4 and `schema.md` stay frozen; the request to CORE-A i
 
 ## 0. Why
 
-`stealthlab-mcp status --run` appends `EVIDENCE` lines to `.kell/evidence.md`. Today they stay on the machine, so the
+`kell status --run` appends `EVIDENCE` lines to `.kell/evidence.md`. Today they stay on the machine, so the
 proposal's server-side status (goal_claims, computed Goal status) would read an empty table. The server already has a
 ladder (`backend/db/55_verification_results.sql`, `backend/app/services/verification.py`), but it is keyed to an execution
 run, and a local check has none.

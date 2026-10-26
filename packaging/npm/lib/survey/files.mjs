@@ -1,4 +1,4 @@
-// File listing for `stealthlab-mcp survey`: what is in this repository, read locally, never uploaded.
+// File listing for `kell survey`: what is in this repository, read locally, never uploaded.
 //
 // With git: one `git ls-files -s -t` pass gives every tracked path with its index blob sha (used for
 // incremental re-survey) and its skip-worktree tag (sparse checkout: listed but not on disk), plus one

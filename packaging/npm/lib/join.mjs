@@ -1,4 +1,4 @@
-// `stealthlab-mcp join <code>`: a developer's whole setup when their company has already connected its provider key.
+// `kell join <code>`: a developer's whole setup when their company has already connected its provider key.
 //
 // Why: `setup` still asks each person for a provider key in an environment variable. Here the company's admin stores that
 // key once in the admin console (backend/app/services/org_keys.py); a developer needs only the invite the admin created.
@@ -52,7 +52,7 @@ export async function redeem({ api, token, code, fetchImpl = fetch, timeoutMs = 
   } catch (err) {
     throw new Error(`cannot reach ${api} (${err.cause?.message || err.message})`);
   }
-  if (res.status === 401) throw new Error("the server did not accept your sign-in; run `stealthlab-mcp login` and try again");
+  if (res.status === 401) throw new Error("the server did not accept your sign-in; run `kell login` and try again");
   if (res.status === 404) throw new Error("this invite is not valid, has expired, or was revoked; ask your admin for a new one");
   if (!res.ok) throw new Error(`the server refused the invite (HTTP ${res.status}): ${await readError(res)}`);
   const body = await res.json();
@@ -114,11 +114,11 @@ export function joinChecklist({ org, models, selfTest: st, hooksOk, wantsCursor,
     { name: "organization", ok: Boolean(org), detail: org ? `joined ${org}` : "not joined" },
     { name: "models", ok: models.length > 0, detail: models.length ? models.join(", ") : "none" },
     { name: "gateway test", ok: st.ok, detail: st.detail, fix: st.ok ? undefined : "tell your admin; the line above is what the server said" },
-    { name: "agent hooks", ok: hooksOk, detail: hooksOk ? "installed" : "not installed", fix: hooksOk ? undefined : "stealthlab-mcp install --with-exec" },
+    { name: "agent hooks", ok: hooksOk, detail: hooksOk ? "installed" : "not installed", fix: hooksOk ? undefined : "kell install --with-exec" },
   ];
   if (wantsCursor) {
     items.push({ name: "cursor model", ok: Boolean(cursorModel), detail: cursorModel || "not set ('auto' is not a model: dispatch stays off)",
-                 fix: cursorModel ? undefined : "stealthlab-mcp join <code> --cursor-model <the model you picked in Cursor>" });
+                 fix: cursorModel ? undefined : "kell join <code> --cursor-model <the model you picked in Cursor>" });
   }
   return { ready: items.every((i) => i.ok), items };
 }

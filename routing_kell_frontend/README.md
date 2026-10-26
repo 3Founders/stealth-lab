@@ -15,7 +15,7 @@ Copy `.env.example` to `.env.local` to connect a backend (`NEXT_PUBLIC_KEL_API_U
 `/` (hero with install, then `#about` what you get, `#action` see it work, `#use` use it) · `/docs` (getting started, how to use, the .kell folder, for teams, legal) · `/sign-in` · `/account`. "About" is a homepage section (`/#about`), not a page — the nav's "About" link scrolls to the homepage's first content section.
 
 ## Decisions
-- **Install command** is `npx -y stealthlab-mcp setup`, the first-time install. The npm package is not published yet, so it doesn't work for visitors until it is.
+- **Install command** is `npx -y kell-mcp setup`, the first-time install. The npm package is not published yet, so it doesn't work for visitors until it is.
 - **Fonts:** `Bahnschrift` first in the stack (present on Windows; its licence doesn’t allow redistributing it as a web font), falling back to bundled **Barlow** (SIL OFL, DIN-like). To ship Bahnschrift itself, add a licensed webfont via `@font-face`.
 - **Logo:** `public/kel-logo-source.webp` is the supplied artwork untouched. `kel-wordmark.png` / `kel-mark.png` are crops of it with the flat cream background made transparent (colours and shapes unchanged), so it sits on paper or ink without a box.
 - **Motion:** Lenis (smooth scroll + `/#about` glide) and CSS/IntersectionObserver reveals. No GSAP — nothing here needs scrubbing or pinning (`position: sticky` covers the one pinned column). All motion is off under `prefers-reduced-motion`.

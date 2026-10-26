@@ -21,7 +21,7 @@ REPO_ROOT = HERE.parents[1]
 NODE = shutil.which("node")
 
 MSG = ("Done by gpt-oss-120b in 41 s (StealthLab dispatched it before this session's model ran, $0.0001). It passed the tests "
-       "written for this task in an isolated worktree and the change is applied: calc.py. To put it back as it was: stealthlab-mcp undo."
+       "written for this task in an isolated worktree and the change is applied: calc.py. To put it back as it was: kell undo."
        "\n\nIt changed add().")
 FIXED = fc.CALC.replace("def add(a, b):\n    return a - b", "def add(a, b):\n    return a + b")
 STRICT = FIXED.replace("def add(a, b):\n    return a + b",
@@ -197,7 +197,7 @@ def test_the_real_hook_gets_a_claude_shaped_payload_and_its_last_json_line_is_th
     h = fc.Hooks(tmp_path / "repo", tmp_path / "home", {"X": "1"}, tmp_path / "t.jsonl", session_id="s-9")
     res = h.prompt("fix it")
     payload = json.loads(seen["kw"]["input"])
-    assert seen["cmd"][0] == "node" and seen["cmd"][-1] == "hook-prompt" and seen["cmd"][1].endswith("stealthlab-mcp.mjs")
+    assert seen["cmd"][0] == "node" and seen["cmd"][-1] == "hook-prompt" and seen["cmd"][1].endswith("kell.mjs")
     assert payload == {"session_id": "s-9", "transcript_path": str(tmp_path / "t.jsonl"), "cwd": str(tmp_path / "repo"),
                        "hook_event_name": "UserPromptSubmit", "prompt": "fix it"}
     assert seen["kw"]["env"] == {"X": "1"} and res.dispatched and res.reason.startswith("Done by m")

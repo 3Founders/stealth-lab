@@ -123,7 +123,7 @@ test("run.md: written for a dispatched task; the planner's own run.md is never t
   assert.match(text, /^NODE\|N-2\|done\|Tests written in advance.*\|deps=N-1\|check=python -m pytest -q -p no:cacheprovider "\/s\/test_spec\.py"$/m);
   assert.match(text, /^NODE\|N-3\|ready\|Make the change\. Cheap tries: gemma failed\.\|step=-\|claims=-\|deps=N-2\|check=.*test_spec\.py" && python -m pytest -q -x -p no:cacheprovider tests\/test_typehints\.py$/m);
   // the plan_and_run validator accepts it
-  const v = spawnSync(process.execPath, [path.resolve("bin/stealthlab-mcp.mjs"), "plan", "validate"], { cwd: repo, encoding: "utf8" });
+  const v = spawnSync(process.execPath, [path.resolve("bin/kell.mjs"), "plan", "validate"], { cwd: repo, encoding: "utf8" });
   assert.equal(JSON.parse(v.stdout).ok, true, v.stdout + v.stderr);
   fs.writeFileSync(path.join(repo, ".kell", "run.md"), "NODE|N-1|ready|the planner's own|step=-|claims=-|deps=-|check=make\n");
   assert.equal(writeDispatchRun(repo, { task: "x", loc }), false);

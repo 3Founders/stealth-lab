@@ -1,5 +1,5 @@
 {
-  "_comment": "Gold set for stealthlab-mcp survey (plan §4.5): public repositories covering the §4.1 shapes. Cloned --depth 1 at the pinned commit by scripts/survey-gold.mjs; ground truth (units + key facts) in survey-gold-truth.json was written by reading each repository's own config and docs.",
+  "_comment": "Gold set for kell survey (plan §4.5): public repositories covering the §4.1 shapes. Cloned --depth 1 at the pinned commit by scripts/survey-gold.mjs; ground truth (units + key facts) in survey-gold-truth.json was written by reading each repository's own config and docs.",
   "repos": [
     { "id": "ky", "url": "https://github.com/sindresorhus/ky", "shape": "single npm package" },
     { "id": "vite", "url": "https://github.com/vitejs/vite", "shape": "pnpm workspace" },

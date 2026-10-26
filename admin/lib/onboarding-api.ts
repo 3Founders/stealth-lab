@@ -102,7 +102,7 @@ export function parseUnits(text: string): { ok: true; units: ModelUnit[] } | { o
 
 /** The whole line a developer runs. Both addresses are the ones this console talks to; the MCP address is a separate service. */
 export function joinCommand(code: string, mcpUrl: string, apiUrl: string = API_URL): string {
-  const parts = ["npx -y stealthlab-mcp join", code];
+  const parts = ["npx -y kell-mcp join", code];
   if (mcpUrl) parts.push("--url", mcpUrl);
   if (apiUrl) parts.push("--api", apiUrl);
   return parts.join(" ");

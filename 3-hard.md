@@ -14,7 +14,7 @@ contracts are shared by all four, so read §0, §5 and §6 before changing any o
 |---|---|---|
 | A | `feat/routing-priors` | `find_ways` picks a model **by default** and knows something before any of our own data: model cards and public benchmark results enter the Bayesian router |
 | B | `feat/library` | `.kell/library.md` (this repo's solved problems + diffs), `routing.md`, SUMMARY and indexes; `find_ways` takes the repo's own library and local results |
-| C | `feat/survey` | A deterministic `stealthlab-mcp survey` scanner that handles every repo shape (monorepos etc.) and writes cited facts + repo identity |
+| C | `feat/survey` | A deterministic `kell survey` scanner that handles every repo shape (monorepos etc.) and writes cited facts + repo identity |
 | D | `feat/local-eval` | An experiment that proves (or disproves) that local `.kell` context alone pays off, with enterprise and global knowledge as extra arms |
 
 How the merge was done:
@@ -144,7 +144,7 @@ How the merge was done:
 **Docs:** `docs/stealth_library.md`.
 **Code:**
 - `backend/app/stealth/library.py`, `packaging/npm/lib/library.mjs` and `library_cli.mjs`
-  (`stealthlab-mcp library ...`), with shared fixtures in `packaging/npm/test/fixtures/library`;
+  (`kell library ...`), with shared fixtures in `packaging/npm/test/fixtures/library`;
 - `backend/app/services/library_context.py`;
 - `find_ways` args `repo_identity` / `library_rows` / `route_obs`;
 - local OBS = importance reweighting of the stored joint draws in `routing/service.py`
@@ -154,7 +154,7 @@ How the merge was done:
 **Remaining:**
 1. **End-to-end quality is not measured.** That is fork D's job (below).
 2. **Done 2026-10-08** (`tests/test_survey_library_identity_offline.py`: the real scanner and payload builder, read by the server's parser). It found a bug, now fixed: the survey sends `github.com/owner/name`, the benchmark lookup wanted `owner/name` (`RepoIdentity.benchmark_repo`). **Survey → library:** pass `meta.json` `repo_identity` from the survey into `find_ways` (the
-   `stealthlab-mcp library payload` path), and make sure `strength: weak` identities never match other
+   `kell library payload` path), and make sure `strength: weak` identities never match other
    repos. The test above is that merged test: it covers fork B (library payload, server parser) and fork C (survey scanner) together.
 3. **Tests in a worktree** need `STEALTHLAB_MCP_TOKEN=offline-test-dummy` (there is no `.env`). The
    `exec_runtime` timing tests fail under heavy CPU load; that is unrelated.
@@ -164,7 +164,7 @@ How the merge was done:
 **Docs:** `docs/survey_eval_2026-10.md`.
 **Code:**
 - `packaging/npm/lib/survey/` (in the npm client, so users need no Python);
-- `stealthlab-mcp survey [path]`;
+- `kell survey [path]`;
 - the gold/held-out scripts `packaging/npm/scripts/survey-gold.mjs` and `survey-*-truth.json`.
 
 **Remaining:**
@@ -178,8 +178,8 @@ How the merge was done:
    ```
 
    Then fix what it finds.
-3. **Publish to npm.** The `survey_repo` prompt calls `npx -y stealthlab-mcp survey`, which works only
-   after `stealthlab-mcp` is published to npm (the owner's step).
+3. **Publish to npm.** The `survey_repo` prompt calls `npx -y kell-mcp survey`, which works only
+   after `kell` is published to npm (the owner's step).
 
 ## Fork D: local vs. global evaluation
 
@@ -279,7 +279,7 @@ use; **(C)** = Chaitanya; **(Agent)** = an agent session. Details for each item 
 ### Stage 2: usable by outside people (hosted)
 - [ ] 8. (Owner) Host the MCP server on Railway; give the URL.
 - [ ] 9. (Agent) Put the URL in the npm package (3 places); (Owner) confirm the NPM_TOKEN secret; publish
-      stealthlab-mcp.
+      kell.
 - [ ] 10. (Owner) Switch production to the stealth_app role: Railway variables, see "Decisions to be taken" 1.
       Set up S005/S006 first: migrations 134-150 and stealth_app; their URLs are needed.
 - [ ] 11. (Owner) Rotate the database password in .scratch/research/v0.1-honest-scope.md (~line 305).
@@ -421,7 +421,7 @@ Until then the SLA says "99.9% is a target, not yet offered".
 
 ### 8. Fork work that needs the owner
 
-1. **npm publish of `stealthlab-mcp`** (fork C). `npx -y stealthlab-mcp survey` only works after it.
+1. **npm publish of `kell`** (fork C). `npx -y kell-mcp survey` only works after it.
 2. **A machine with ≥16 GB RAM and ≥8 cores** for fork A's evaluation and fork D's experiment. Both stalled on the
    8 GB laptop.
 3. **Fork A production import:**

@@ -1,4 +1,4 @@
-// Offline tests for `stealthlab-mcp survey` (lib/survey/): every repo shape in plan §4.1 and every edge case
+// Offline tests for `kell survey` (lib/survey/): every repo shape in plan §4.1 and every edge case
 // in §4.6, on generated fixture repositories. No network, no StealthLab server.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ import { compileGitignore, ignored } from "../lib/survey/files.mjs";
 import { parseToml } from "../lib/survey/parse.mjs";
 import { SHAPES, git, makeRepo, tmpDir, writeFiles } from "./fixtures/survey/repos.mjs";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const survey = (dir, o = {}) => runSurvey(dir, { history: false, ...o });
 const page = (dir, rel = "claims.md") => readPage(path.join(dir, ".kell", rel));
 const allClaims = (dir) => {
@@ -449,7 +449,7 @@ test("history: fix commits become library.md entries with diffs; non-fixes, bots
   assert.equal(r2.history.added, 1);
 });
 
-test("CLI: `stealthlab-mcp survey <dir> --json` runs end to end", () => {
+test("CLI: `kell survey <dir> --json` runs end to end", () => {
   const dir = makeRepo(SHAPES["go-work"].files);
   const out = execFileSync(process.execPath, [BIN, "survey", dir, "--json", "--no-history"], { encoding: "utf8" });
   const r = JSON.parse(out);

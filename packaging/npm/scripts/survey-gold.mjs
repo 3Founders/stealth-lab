@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Gold-set evaluation of `stealthlab-mcp survey` (docs/plan_2026-10_priors_library_survey.md §4.5).
+// Gold-set evaluation of `kell survey` (docs/plan_2026-10_priors_library_survey.md §4.5).
 //
 //   node scripts/survey-gold.mjs <cache-dir> [--only id,id] [--local-root <path>]
 //

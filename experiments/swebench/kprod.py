@@ -17,7 +17,7 @@ arm), knowledge frozen (report_discovery / submit_way / recommend_models / repor
 offered), and `repo_claims` may be passed as "@.kell/claims.md" so the file need not be retyped
 inside a 2,000-token completion (find_ways receives the same text either way).
 
-Arm KH is the installed product with the Claude Code knowledge hook (`stealthlab-mcp install` adds it; DS-1000
+Arm KH is the installed product with the Claude Code knowledge hook (`kell install` adds it; DS-1000
 round 5's confirmed arm, experiments/ds1000/PREREGISTRATION_5.md). Same agent, tools, system prompt and claims.md
 as KP, but the user's message is the issue itself (no plan_and_run workflow): before the agent starts, the hook
 looks the issue up with `find_ways` (its own MCP session) and appends its own formatted text

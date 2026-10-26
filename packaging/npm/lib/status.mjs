@@ -1,4 +1,4 @@
-// `stealthlab-mcp status`: a COMPUTED status for every `.kell/run.md` node and every `.kell/library.md` entry:
+// `kell status`: a COMPUTED status for every `.kell/run.md` node and every `.kell/library.md` entry:
 // verified | open | failed | contested | expired. Nobody types it. A run.md node marked `done` by hand is a claim,
 // not evidence; the status comes from recorded check runs (`.kell/evidence.md`) and from what the target relies on.
 //
@@ -39,7 +39,7 @@ const RESULTS = new Set(["pass", "fail"]);
 const CHECK_MAX = 500;
 const SHA_LEN = 12;
 export const EVIDENCE_HEADER =
-  "# evidence.md -- one line per check run by `stealthlab-mcp status --run`. Append-only. No output, no prompt text, no secrets.\n" +
+  "# evidence.md -- one line per check run by `kell status --run`. Append-only. No output, no prompt text, no secrets.\n" +
   "# EVIDENCE|<target id>|<deterministic_check|independent_agent>|<pass|fail>|at=<iso>|commit=<sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<command>\n";
 
 // ---------------------------------------------------------------------------------------------- evidence lines
@@ -563,7 +563,7 @@ export function renderTable(result) {
   return lines.join("\n");
 }
 
-export const STATUS_HELP = `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--server] [--run [--yes] [--in-place] [--only <ids>]] [--compact]
+export const STATUS_HELP = `kell status [--root <repo>] [--stealth-dir <dir>] [--json] [--server] [--run [--yes] [--in-place] [--only <ids>]] [--compact]
 
   A computed status for every .kell/run.md node and .kell/library.md entry:
     verified   a check exists, its latest run on the current code passed, and every deps= node is verified

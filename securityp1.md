@@ -44,7 +44,7 @@ Seven tools in `backend/app/mcp_server/server.py`: `find_ways`, `recommend_model
 | Org governance, `FORCE ROW LEVEL SECURITY` on its tables, budgets, kill switch, `provider_call_ledger` | `backend/db/136_org_governance.sql` |
 | Routing tables (`routing_decisions`, `routing_observations`, `routing_posteriors`), carry `visibility` and `owner_id` | `backend/db/120_model_routing.sql`, `121_model_routing_search.sql`, `backend/app/routing/store.py` |
 | Provider calls (`call_model`), BYOK and platform modes, SSRF guard, ledger | `backend/app/providers/` |
-| Health route `GET /` returns `{"service":"stealthlab-mcp","status":"ok","mcp_endpoint":"/mcp"}` (static, unauthenticated) | `server.py` `root_health` (~line 790) |
+| Health route `GET /` returns `{"service":"kell","status":"ok","mcp_endpoint":"/mcp"}` (static, unauthenticated) | `server.py` `root_health` (~line 790) |
 | Docker HEALTHCHECK runs `scripts/docker_healthcheck.py` (GET `/` on `$PORT`) | `backend/Dockerfile.mcp-server`, `backend/scripts/docker_healthcheck.py` |
 | Railway: 1 replica, `healthcheckPath: "/"`, restart on failure, 5 retries | `railway.mcp.json` |
 | Container command: `python scripts/migrate.py && exec uvicorn ... --workers 1 --proxy-headers` | `backend/Dockerfile.mcp-server` |

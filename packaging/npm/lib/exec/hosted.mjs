@@ -105,7 +105,7 @@ export async function callHostedTool(name, args, opts = {}) {
   return text;
 }
 
-// Reads one MCP resource (resources/read) -> its text. Read only; used by `stealthlab-mcp status --server`.
+// Reads one MCP resource (resources/read) -> its text. Read only; used by `kell status --server`.
 export async function readHostedResource(uri, opts = {}) {
   const body = await hostedRequest("resources/read", { uri }, uri, opts);
   if (body.error) throw new HostedError(`${uri}: ${body.error.message || "JSON-RPC error"}`, { transient: true });

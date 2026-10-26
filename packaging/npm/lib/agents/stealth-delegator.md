@@ -1,6 +1,6 @@
 ---
 # {{MANAGED_MARK}}
-# Written by `stealthlab-mcp install --with-exec`; removed by `stealthlab-mcp uninstall`.
+# Written by `kell install --with-exec`; removed by `kell uninstall`.
 # Frontmatter keys verified against https://code.claude.com/docs/en/sub-agents on 2026-09-27.
 # mcpServers is inline so the main conversation never loads the executor tools; it only works
 # in a user-level agent file (plugin agents ignore mcpServers).

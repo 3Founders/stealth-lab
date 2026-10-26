@@ -6,8 +6,8 @@ client, where the checks already run, before any server work.
 
 ## What shipped
 
-- `stealthlab-mcp status [--root <repo>] [--stealth-dir <dir>] [--json] [--run] [--only <ids>] [--in-place]`
-  (`packaging/npm/lib/status.mjs`, wired in `bin/stealthlab-mcp.mjs`).
+- `kell status [--root <repo>] [--stealth-dir <dir>] [--json] [--run] [--only <ids>] [--in-place]`
+  (`packaging/npm/lib/status.mjs`, wired in `bin/kell.mjs`).
 - A new append-only `.kell/evidence.md`, one line per check run:
   `EVIDENCE|<target id>|deterministic_check|pass|fail|at=<iso>|commit=<sha or ->|tree=<tree id or ->|hashes=<path#sha=<hex>,...>|where=<worktree|in-place>|check=<cmd>`
   (`tree=` and `where=` were added in the follow-up below; older lines without them still parse).
@@ -52,13 +52,13 @@ A git repo with `src/math.js`, one claim citing its line 1, and four nodes (`don
 fails on purpose, and `check=-`):
 
 ```
-$ stealthlab-mcp status
+$ kell status
 N-1  node  open  marked done by hand; no recorded check run
 N-2  node  open  no recorded check run
 N-3  node  open  no recorded check run
 N-4  node  open  no check (check=-)
 
-$ stealthlab-mcp status --run                      # ran 3 checks
+$ kell status --run                      # ran 3 checks
 N-1  node  verified  its check passed on the current code
 N-2  node  verified  its check passed on the current code
 N-3  node  failed    the latest recorded run of its check failed on the current code
@@ -80,7 +80,7 @@ N-4       expired    claim T-001 no longer holds (its cited line changed)
 `.kell/collab/*.md` copied to a temp folder (so evidence is not written into the tracked folder), `--root` the repository:
 
 ```
-$ stealthlab-mcp status --root . --stealth-dir <temp copy> --run --only N-1,N-5,N-8     # 3 checks, about 19 s
+$ kell status --root . --stealth-dir <temp copy> --run --only N-1,N-5,N-8     # 3 checks, about 19 s
 N-1   verified   its check passed on the current code
 N-2   open       marked done by hand; no recorded check run
 N-3   open       marked done by hand; no recorded check run
@@ -100,7 +100,7 @@ verified 1  ·  open 10  ·  failed 1  ·  contested 0  ·  expired 2
 
 What it shows: five nodes the plan calls `done` are only `open` until their checks are run; N-8 (`grep -q "what leaves"
 packaging/npm/README.md`) fails, which is true, since that node is `ready` and unbuilt; and N-9/N-13 are `expired`
-because claim O-015 cites a line of `packaging/npm/bin/stealthlab-mcp.mjs`, which this very change edited. An expired case
+because claim O-015 cites a line of `packaging/npm/bin/kell.mjs`, which this very change edited. An expired case
 produced by editing a file, found by the status and not by hand.
 
 ## Tests
@@ -154,10 +154,10 @@ but its `tree=` differs from now, the target stays `verified` with `changed_sinc
 changed since the check ran)". Old lines without `tree=` parse and give `changed_since: null`, never true. No sixth state.
 
 ```
-$ stealthlab-mcp status --run --yes
+$ kell status --run --yes
 N-1  node  verified  its check passed on the current code
 $ echo more >> notes.txt        # a tracked file that neither the claim nor the check cites
-$ stealthlab-mcp status
+$ kell status
 N-1  node  verified  verified (code changed since the check ran): its check passed on the current code
 ```
 
@@ -168,7 +168,7 @@ once, `Run these? [y/N]`, and a no runs nothing; with no terminal it runs only w
 run these checks" and exits 3.
 
 ```
-$ stealthlab-mcp status --run          # stdin piped, no terminal, no --yes
+$ kell status --run          # stdin piped, no terminal, no --yes
 --run will run 1 command(s) from the repository's own files, each in a throwaway worktree:
   $ node check.mjs
 pass --yes to run these checks
@@ -247,7 +247,7 @@ tenants, two-account corroboration, goal link).
 Real output, `STEALTHLAB_EVIDENCE_UPLOAD=on`, the packaged CLI against the local server (a throwaway git repository, one plan node):
 
 ```
-$ STEALTHLAB_EVIDENCE_UPLOAD=on stealthlab-mcp status --run --yes --json     # client -> local MCP server -> scratch Postgres
+$ STEALTHLAB_EVIDENCE_UPLOAD=on kell status --run --yes --json     # client -> local MCP server -> scratch Postgres
 {"targets": [{"id": "N-1", "status": "verified", "why": "its check passed on the current code"}], "run": {"appended": 1, "upload": {"built": 1, "queued": 0, "sent": 1, "skipped": 0}}}
 outbox files after the send: 0
 row on the server:
@@ -287,7 +287,7 @@ already recorded on the guarantee claims, and `goals.status` keeps its own meani
 - **open**: anything else, including an empty contract.
 
 It is read-only on the goal read path: the MCP resource `stealth://goals/<id>/claims` now starts with one `GOAL_STATUS|...` line, then the
-contract's claims (topic = role), then related claims. `stealthlab-mcp status --server` asks for that resource once per Goal and adds it
+contract's claims (topic = role), then related claims. `kell status --server` asks for that resource once per Goal and adds it
 to each row (`server` in `--json`, `[server: ...]` in the table); the local status is never changed by it, and an unreachable server is
 not an error.
 

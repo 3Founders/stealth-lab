@@ -1,6 +1,6 @@
 # Open models in the local executors
 
-Three executors can run an open model (GLM, DeepSeek, Kimi, ...) through `stealthlab-mcp exec`'s `achieve`:
+Three executors can run an open model (GLM, DeepSeek, Kimi, ...) through `kell exec`'s `achieve`:
 
 | Executor | What runs | Endpoint it needs | Notes |
 |---|---|---|---|
@@ -39,7 +39,7 @@ Compliance fields are declarations, absent = unknown. A profile is keyed by the 
   `escalate` follows the reply's `next_model` while a local executor can run it, and `run_result.next_model` names
   the model after that. The guard then follows it, e.g. back to a Claude subagent.
 - The plan text (`planPart`) tells the agent to use the delegator for such a step and not to report it again. A
-  verified run is applied from the shell with `stealthlab-mcp exec apply <run_id>`, which makes the same checks
+  verified run is applied from the shell with `kell exec apply <run_id>`, which makes the same checks
   as `apply_run`; the delegator's reply gives the exact command.
 - Not yet run end to end: a live Claude Code session, the hosted `report_result` and a real provider key.
 

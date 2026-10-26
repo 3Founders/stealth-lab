@@ -12,7 +12,7 @@ import { normaliseProfile, profileKey } from "../lib/executors/profile.mjs";
 import { checklist } from "../lib/setup.mjs";
 import { readExecConfig } from "../lib/exec/store.mjs";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const mk = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const CODE = `sl1_${"ab".repeat(16)}_${"cd".repeat(12)}`;
 const ORG = "0b0f6a0e-3a33-4c1c-9f3b-2f3f6f0a0001";

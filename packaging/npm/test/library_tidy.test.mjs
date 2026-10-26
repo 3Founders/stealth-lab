@@ -209,7 +209,7 @@ test("the rendered worklist carries the rules, the evidence and the commands", (
   assert.match(text, /## Rules/);
   assert.match(text, /Search before you write/);
   assert.match(text, /most recent verified entry wins unless its diff shows/);
-  assert.match(text, /`stealthlab-mcp library drop L-000001 --superseded-by L-000002`/);
+  assert.match(text, /`kell library drop L-000001 --superseded-by L-000002`/);
   assert.match(T.renderTidy(T.tidyReport(seedClean())), /Nothing to do/);
   function seedClean() { const r = repo(); seed(r, [entry("L-000009", "Deploy the service")]); return r; }
 });

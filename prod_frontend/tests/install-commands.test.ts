@@ -5,7 +5,7 @@ describe("install commands", () => {
   it("point at the site's own installer scripts", () => {
     expect(installCommand("unix", "https://kel.example/")).toBe("curl -fsSL https://kel.example/install.sh | bash");
     expect(installCommand("windows", "https://kel.example")).toBe("irm https://kel.example/install.ps1 | iex");
-    expect(installCommand("npx", "https://kel.example")).toBe("npx -y stealthlab-mcp install");
+    expect(installCommand("npx", "https://kel.example")).toBe("npx -y kell-mcp install");
   });
 
   it("defaults Windows visitors to the PowerShell one-liner", () => {

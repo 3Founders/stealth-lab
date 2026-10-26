@@ -917,7 +917,7 @@ ROUTING_CODES_MAX_CHARS = 4000
 
 @server.custom_route("/routing/codes", methods=["POST"], include_in_schema=False)
 async def routing_codes_route(request: Request) -> JSONResponse:
-    """Semantic codes for a repository's own Ways (`stealthlab-mcp library link` calls it once per new Way).
+    """Semantic codes for a repository's own Ways (`kell library link` calls it once per new Way).
 
     Body `{"items": [{"id": "<W-id>", "text": "<name and steps>"}, ...]}` (at most 50, each at most 4,000
     characters). Reply `{"version", "embedding_model_id", "codes": {id: code}, "vectors": {id: [...]}}`: the text is

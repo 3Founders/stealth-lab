@@ -1,4 +1,4 @@
-// `stealthlab-mcp setup`: the whole first-time install in one command, and an honest checklist of what is still missing.
+// `kell setup`: the whole first-time install in one command, and an honest checklist of what is still missing.
 //
 // Why: the install used to be nine separate steps (a server, a token, install, a hand-copied exec.json, a provider key,
 // the Cursor model, a check command, a restart, hope). Several of them failed silently: a wrong key name or a missing
@@ -70,7 +70,7 @@ export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 1
   const headers = { accept: "application/json, text/event-stream", "content-type": "application/json" };
   if (token) headers.authorization = `Bearer ${token}`;
   const body = { jsonrpc: "2.0", id: 1, method: "initialize",
-                 params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "stealthlab-mcp-setup", version: "0" } } };
+                 params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "kell-setup", version: "0" } } };
   let res;
   try {
     res = await fetchImpl(url, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
@@ -87,9 +87,9 @@ export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 1
 // -> { ready, items: [{ name, ok, detail, fix? }] }. Pure given its inputs, so tests can drive every branch.
 export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv, key, dispatch, cursorModel, wantsCursor, central = false, platform = process.platform }) {
   const items = [];
-  items.push({ name: "server", ok: server.ok, detail: server.detail, fix: server.ok ? undefined : "start it, or pass --url <https://host/mcp>; check with `stealthlab-mcp doctor`" });
+  items.push({ name: "server", ok: server.ok, detail: server.detail, fix: server.ok ? undefined : "start it, or pass --url <https://host/mcp>; check with `kell doctor`" });
   items.push({ name: "token", ok: hasToken, detail: hasToken ? "saved" : "none (reads are anonymous; reporting outcomes needs one)",
-               fix: hasToken ? undefined : "stealthlab-mcp login   (or: setup --token-file <file>)" });
+               fix: hasToken ? undefined : "kell login   (or: setup --token-file <file>)" });
   if (dispatch) {
     items.push({ name: "exec.json", ok: execOk, detail: execOk ? `${models.length} model(s): ${models.join(", ")}` : execDetail,
                  fix: execOk ? undefined : "fix or delete ~/.stealthlab/exec.json, then run setup again" });
@@ -99,7 +99,7 @@ export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv
     else items.push({ name: `key ${keyEnv}`, ok: key.set, detail: key.set ? `set in ${key.where}` : "not set", fix: key.set ? undefined : setx });
     if (wantsCursor) {
       items.push({ name: "cursor model", ok: Boolean(cursorModel), detail: cursorModel ? cursorModel : "not set ('auto' is not a model: dispatch stays off)",
-                   fix: cursorModel ? undefined : "stealthlab-mcp setup --cursor-model <the model you picked in Cursor>" });
+                   fix: cursorModel ? undefined : "kell setup --cursor-model <the model you picked in Cursor>" });
     }
   }
   return { ready: items.every((i) => i.ok), items };

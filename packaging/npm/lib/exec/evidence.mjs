@@ -72,7 +72,7 @@ function secretsFor(env) {
 async function send(args, { env, fetchImpl, timeoutMs, tool = "report_model_run" }) {
   const { token } = hostedSettings(env);
   if (!token) {
-    const e = new Error("not logged in (run `stealthlab-mcp login --token <token>`)");
+    const e = new Error("not logged in (run `kell login --token <token>`)");
     e.transient = true;
     throw e;
   }

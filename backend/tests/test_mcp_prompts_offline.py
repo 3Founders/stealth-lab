@@ -67,9 +67,9 @@ def test_survey_repo_states_the_claims_grammar_the_parser_reads():
 def test_survey_repo_runs_the_scanner_then_the_worklist_then_the_validator():
     body = prm.survey_repo("/repo")
     # The deterministic scanner first, the agent per unit from the worklist, the validator last.
-    scan = body.index("npx -y stealthlab-mcp survey /repo")
+    scan = body.index("npx -y kell-mcp survey /repo")
     work = body.index(".kell/survey/worklist.md")
-    check = body.index("npx -y stealthlab-mcp survey /repo --validate")
+    check = body.index("npx -y kell-mcp survey /repo --validate")
     assert scan < work < check
     assert "scope: `repository` in claims.md; `unit:<path>` on a unit's page" in body
     assert "never edit or repeat a `by=scanner` line" in body

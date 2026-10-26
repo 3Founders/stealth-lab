@@ -6,7 +6,7 @@ What it does, in order (statuses only; no key or token is printed):
   1. both test users sign in once (that creates their user rows);
   2. provision_org.py creates the organization and makes the `cto` user its owner (loopback database only);
   3. as the CTO, over the REST API: connect the provider key, apply the recommended policy, create an invite;
-  4. as the developer, in a throwaway home directory: run  stealthlab-mcp join  with a Cursor model (a REAL call through the
+  4. as the developer, in a throwaway home directory: run  kell join  with a Cursor model (a REAL call through the
      gateway to the provider: one 8-token request, a fraction of a cent);
   5. check the ledger row, the onboarding counts, and that the key is nowhere in plain text on the developer's machine or in the
      database.
@@ -104,7 +104,7 @@ def main() -> int:
     sl = tempfile.mkdtemp(prefix="orgtest-sl-")
     env = {**os.environ, "STEALTHLAB_TEST_HOME": home, "STEALTHLAB_HOME": sl, "STEALTHLAB_TOKEN": tok("dev"),
            "STEALTHLAB_MCP_URL": "", "STEALTHLAB_CURSOR_MODEL": ""}
-    cli = ["node", str(ROOT / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"), "join", code, "--client", "cursor",
+    cli = ["node", str(ROOT / "packaging" / "npm" / "bin" / "kell.mjs"), "join", code, "--client", "cursor",
            "--url", "http://127.0.0.1:8765/mcp", "--api", API, "--cursor-model", "test-model"]
     r = subprocess.run(cli, capture_output=True, text=True, timeout=180, env=env)
     out = r.stdout + r.stderr

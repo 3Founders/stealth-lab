@@ -3,7 +3,7 @@
 // Writes, and on `uninstall` removes exactly:
 //   <claude dir>/agents/stealth-executor.md   one NODE, isolation: worktree, minimal tools
 //   <claude dir>/agents/stealth-delegator.md  carries the local `stealthlab-exec` MCP server INLINE
-//   <claude dir>/settings.json                SubagentStart / SubagentStop -> `stealthlab-mcp hook ...`
+//   <claude dir>/settings.json                SubagentStart / SubagentStop -> `kell hook ...`
 // where <claude dir> is $CLAUDE_CONFIG_DIR, else ~/.claude (STEALTHLAB_TEST_HOME overrides ~ for tests).
 //
 // This is the package's second write surface in ~/.claude: `install` (without --with-exec) already
@@ -26,8 +26,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isOwnCommand } from "./names.mjs";
 
-export const MANAGED_MARK = "stealthlab-mcp:managed";
+export const MANAGED_MARK = "kell:managed";
 export const AGENT_NAMES = ["stealth-executor", "stealth-delegator"];
 export const EXEC_HOOKS = {
   SubagentStart: "hook subagent-start",
@@ -95,7 +96,7 @@ function writePrivate(file, text) {
 
 const isOursFor = (mark) => (group) => (group?.hooks || []).some((h) => {
   const cmd = String(h?.command || "").trimEnd();
-  return cmd.includes("stealthlab-mcp") && cmd.endsWith(mark);
+  return isOwnCommand(cmd) && cmd.endsWith(mark);
 });
 
 export function upsertExecHooks(file, launch) {
@@ -146,7 +147,7 @@ export function writeAgents(env, launch) {
   const { agents } = execPaths(env);
   for (const file of Object.values(agents)) {
     if (fs.existsSync(file) && !isManaged(file)) {
-      throw new Error(`${file} exists and was not written by stealthlab-mcp; left untouched -- rename it and retry`);
+      throw new Error(`${file} exists and was not written by kell; left untouched -- rename it and retry`);
     }
   }
   for (const [name, file] of Object.entries(agents)) writePrivate(file, renderAgent(name, launch));

@@ -176,7 +176,7 @@ def env_file(path: Path) -> dict[str, str]:
 ARMS = ("A", "C0", "C-R", "C-L", "C")
 
 # What persists from one issue to the next, per StealthLab arm (every one of them has the SAME install and settings; only this differs):
-#   facts   .kell/claims.md and survey/ (one `stealthlab-mcp survey` at series start; none for C0)
+#   facts   .kell/claims.md and survey/ (one `kell survey` at series start; none for C0)
 #   library .kell/library.md, library/, index/, SUMMARY.md, evidence (what was fixed before)
 #   routing .kell/routing.md, areas.md, dag_state.json (the local per-model counts)
 #   server  the router's state in the test database: reset to its post-setup snapshot before each issue unless kept
@@ -223,7 +223,7 @@ def wipe_stealth(ws: Path, arm: str = "C0") -> None:
 
 
 def setup_survey(arm: str, ws: Path, env: dict[str, str]) -> dict | None:
-    """The ONE survey of a series, run before issue 1 in the arms that keep repo facts (C-R, C-L, C): `stealthlab-mcp survey`
+    """The ONE survey of a series, run before issue 1 in the arms that keep repo facts (C-R, C-L, C): `kell survey`
     on the workspace at the first issue's base commit, local only. Returns {seconds, facts, ...} (also written to
     .kell/.series_survey.json so a resume does not run it twice), or None when this arm has none or it already ran."""
     if not ARM_STATE.get(arm, {}).get("facts"):
@@ -232,7 +232,7 @@ def setup_survey(arm: str, ws: Path, env: dict[str, str]) -> dict | None:
     if marker.exists():
         return None
     t0 = time.time()
-    proc = subprocess.run(["node", str(REPO / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"), "survey", str(ws)], cwd=ws, env=env,
+    proc = subprocess.run(["node", str(REPO / "packaging" / "npm" / "bin" / "kell.mjs"), "survey", str(ws)], cwd=ws, env=env,
                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3600)
     claims = ws / ".kell" / "claims.md"
     facts = sum(1 for ln in claims.read_text(encoding="utf-8").splitlines() if ln.startswith("CLAIM|")) if claims.exists() else 0
@@ -401,7 +401,7 @@ def mcp_config(secrets: dict[str, str]) -> Path:
     path.write_text(json.dumps({"mcpServers": {
         "stealthlab": {"type": "http", "url": f"{SERVER}/mcp", "headers": {"Authorization": f"Bearer {secrets['token']}"}},
         "stealthlab-exec": {"type": "stdio", "command": "node",
-                            "args": [str(REPO / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"), "exec"]}}}),
+                            "args": [str(REPO / "packaging" / "npm" / "bin" / "kell.mjs"), "exec"]}}}),
         encoding="utf-8")
     try:
         os.chmod(path, 0o600)

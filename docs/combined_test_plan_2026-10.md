@@ -17,7 +17,7 @@ Read section 6 (rules) before building anything. Everything here is to be BUILT 
 
 ## 1. Current product configuration (what arm C runs)
 
-- Main at `329a0d5` or later. Hooks-only install (`stealthlab-mcp install --with-exec`), as in the benchmark.
+- Main at `329a0d5` or later. Hooks-only install (`kell install --with-exec`), as in the benchmark.
 - Cheap models (`experiments/abtest/exec.json`): gemma-4-31b-it, gpt-oss-120b, minimax-m2-7 on General Compute, and
   **glm-5.3-flash on z.ai** (`strong: true` -- it alone tries tasks the brief calls large, starts in the first wave, gets
   +120 s; `reasoning_effort: low`; `vision: false`).
@@ -38,7 +38,7 @@ Read section 6 (rules) before building anything. Everything here is to be BUILT 
 | Series template | `series_toy_task.py`, `test_series_offline.py` | 3 tasks, a repo convention later tasks must keep; `setup_project` / `grade_workspace` hooks |
 | Product: messy input | `packaging/npm/lib/brief.mjs` | brief from the last 6 turns + files the prompt names + the project's file list; gate (code/clear/size); `!opus` / `!cheap` |
 | Product: multi-turn | `lib/continuity.mjs` | the next prompt is told what a cheap model did earlier in the session |
-| Product: output | `lib/explain.mjs`, `lib/undo.mjs` | explanation by a cheap model in the hook's message; `stealthlab-mcp undo` |
+| Product: output | `lib/explain.mjs`, `lib/undo.mjs` | explanation by a cheap model in the hook's message; `kell undo` |
 | Real-flow script | (was a scratch script) | drove the hook directly in a fresh repo; turn it into `experiments/abtest/flow_check.py` (5.5) |
 
 ## 3. Design of the test
@@ -118,7 +118,7 @@ learning curve (solved and cost by position in the series). C minus C0 = value o
 4. **Modal app** (`experiments/abtest/modal_series.py`): image per repo, backend + Postgres in the container, secrets,
    volume, `--repos --arms --max-issues --auth subscription|api`; a dry run on 1 issue per arm.
 5. **flow_check.py:** the scripted real-session check (fresh repo, no check configured, messy prompt, follow-up with
-   "it", own edit, `stealthlab-mcp undo`, "thanks") as a committed script -- every StealthLab change should pass it.
+   "it", own edit, `kell undo`, "thanks") as a committed script -- every StealthLab change should pass it.
 6. **Pages (separate, small):** send long screenshots as tiles (to GLM and to the judge) instead of cutting at 2400 px;
    re-run GLM-flash on the 5 failed pages of the 10-page test. If the pass rate rises clearly, turn `vision: true` back
    on for glm-5.3-flash with the Sonnet judge and re-run the page tasks.

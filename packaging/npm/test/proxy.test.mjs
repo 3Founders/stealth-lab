@@ -44,7 +44,7 @@ test("relay carries session id, protocol version and token; relays JSON, SSE and
   const byId = Object.fromEntries(lines.filter((l) => "id" in l).map((l) => [l.id, l]));
   assert.equal(byId[1].result.protocolVersion, "2099-01-01");
   assert.deepEqual(byId[2].result, { ok: true });
-  assert.match(byId[3].error.message, /HTTP 401.*stealthlab-mcp login/);
+  assert.match(byId[3].error.message, /HTTP 401.*kell login/);
   assert.equal(byId[null].error.code, -32700);
   assert.ok(lines.some((l) => l.method === "notifications/progress"));
 

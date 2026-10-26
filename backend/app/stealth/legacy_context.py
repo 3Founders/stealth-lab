@@ -2,7 +2,7 @@
 
 The server-side projection that used to write `.kell/` (context.md, run.json, meta.json and the pages, from
 `app.stealth.generator`) was removed on 2026-10-08: nothing in the live server or API called it, and the agent now
-owns every `.kell/` file (the `plan_and_run` and `survey_repo` prompts, `stealthlab-mcp survey|library|plan`).
+owns every `.kell/` file (the `plan_and_run` and `survey_repo` prompts, `kell survey|library|plan`).
 """
 from __future__ import annotations
 

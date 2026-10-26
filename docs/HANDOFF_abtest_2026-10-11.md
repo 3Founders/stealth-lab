@@ -12,7 +12,7 @@ what the product does now, what is queued, and verbatim steps to resume. Older c
 ## 1. TL;DR
 
 - **The test:** arm A is plain Claude Code on Opus 5.5. Arm C is the same Claude Code with StealthLab installed
-  the product way (`stealthlab-mcp install --with-exec`, hooks only). Correctness is graded on each task's full
+  the product way (`kell install --with-exec`, hooks only). Correctness is graded on each task's full
   hidden tests; the agent and dispatch only ever see the visible ones.
 - **Phase 1** (130 tasks, 5 suites; this is the main result): C costs **38% less** than A and solved **114/128
   vs A's 120/128**. Latency, p50/p95: A 33 s / 92 s, C 56 s / 286 s.
@@ -121,18 +121,18 @@ screenshot. MultiPL-E JS is where C should save.
 
 ## 3. The product, end to end, as it is now
 
-Claude Code, `stealthlab-mcp install --with-exec`, without the global library.
+Claude Code, `kell install --with-exec`, without the global library.
 
 ### Setup (once)
 
-1. `stealthlab-mcp install --with-exec` does three things:
+1. `kell install --with-exec` does three things:
    - saves the server URL and token, plus `dispatch: true`, in `~/.stealthlab/config.json`;
    - removes the StealthLab MCP registration (hooks-only mode; `--keep-mcp` is queued, not built);
    - writes three hooks into Claude Code's `settings.json`: UserPromptSubmit (`hook-prompt`), PostToolUse on
      Bash|PowerShell (`capture-tool`), and Stop (`capture-stop`).
 2. `~/.stealthlab/exec.json` lists the cheap models (gemma-4-31b-it, gpt-oss-120b, minimax-m2-7 on General Compute)
    with their `key_env`. The key itself is never in the file.
-3. Per repo, `stealthlab-mcp survey` creates `.kell/`. This is **manual today**; an automatic survey is queued.
+3. Per repo, `kell survey` creates `.kell/`. This is **manual today**; an automatic survey is queued.
 
 ### Every prompt
 
@@ -249,7 +249,7 @@ Claude Code, `stealthlab-mcp install --with-exec`, without the global library.
     the **outbox** (retries offline).
 17. **Library** (`.kell/library.md`). Solved problems with their check and diff, grouped into reusable
     Goals/Ways, plus semantic codes for Ways. Grows automatically from dispatch and capture.
-18. **Survey** (`stealthlab-mcp survey`). Scanner facts and a worklist for `.kell`. **Manual today**; an
+18. **Survey** (`kell survey`). Scanner facts and a worklist for `.kell`. **Manual today**; an
     automatic survey is queued.
 19. **Logs and ledgers:** `hooks.log`, `dispatch_costs.jsonl`, per-run `runs/<id>/` (events, patch, stdout),
     `provider_quota.json`.
@@ -321,7 +321,7 @@ Each item needs the owner's go-ahead.
    `dbt build`, `go test`, `cargo test`. Without this, real users rarely get dispatch.
 2. **Hooks-only gaps:**
    - a CLAUDE.md StealthLab block (record fixes, attach to existing entries, finish the survey worklist, use the
-     new `stealthlab-mcp find` command for sub-tasks);
+     new `kell find` command for sub-tasks);
    - an automatic first survey (background, once per repo);
    - an automatic library tidy (exact duplicates);
    - `install --with-exec --keep-mcp`.
@@ -362,7 +362,7 @@ Each item needs the owner's go-ahead.
 
 **C. Real user flow**
 
-1. Safe apply: an undo point, a diff summary, `stealthlab-mcp undo`.
+1. Safe apply: an undo point, a diff summary, `kell undo`.
 2. Do not overwrite files the user changed during the run.
 3. A clear message: who did it, what changed, the cost, and how to undo.
 4. An optional "ask before applying" mode.
@@ -469,7 +469,7 @@ not run it). What "done" means for each:
 - 6.2 A5 overrides: a prompt starting with `!opus` skips StealthLab entirely (the prefix is stripped from what the
   session sees); `!cheap` forces a dispatch attempt even if routing would skip.
 - 6.2 C1-C4: before applying a cheap answer, record an undo point (a git stash-like ref, NOT a commit on the user's
-  branch); `stealthlab-mcp undo` restores it. If any file the answer touches changed in the user's tree during the
+  branch); `kell undo` restores it. If any file the answer touches changed in the user's tree during the
   run, do not apply: report "not applied, you edited <file>". The block message states model, files, cost, and
   the undo command. `STEALTHLAB_DISPATCH_ASK=on` stops before applying and shows the diff summary instead.
 - 6.2 B1: the cheap models' task text gets the relevant `.kell` facts and the judged library matches (the same

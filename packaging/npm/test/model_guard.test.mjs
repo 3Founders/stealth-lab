@@ -86,7 +86,7 @@ test("Cursor: a Task naming another model is refused with agent_message; no mode
 });
 
 test("hook installation: route hooks added and removed; Cursor gets preToolUse", () => {
-  const launch = { command: "node", args: ["/x/stealthlab-mcp.mjs"] };
+  const launch = { command: "node", args: ["/x/kell.mjs"] };
   const doc = addRouteHooks({ hooks: { PostToolUse: [{ matcher: "Bash", hooks: [{ command: "other" }] }] } }, launch);
   assert.equal(doc.hooks.PreToolUse[0].matcher, "Agent|Task|mcp__stealthlab-exec__achieve|Edit|Write|MultiEdit|NotebookEdit");
   assert.match(doc.hooks.PostToolUse[1].matcher, /mcp__stealthlab-exec__run_result$/);

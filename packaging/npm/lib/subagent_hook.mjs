@@ -31,7 +31,7 @@ export const HARD_TIMEOUT_MS = 60_000;
 const CHECK_TIMEOUT_S = 50;
 const STASH_TTL_MS = 24 * 3600 * 1000;
 const LOG_MAX_BYTES = 1024 * 1024;
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 
 // --- logging -----------------------------------------------------------------
 
@@ -280,7 +280,7 @@ function spawnDetachedWorker(file, env) {
   child.unref();
 }
 
-// What `stealthlab-mcp hook <event>` runs. Never throws; the caller always exits 0.
+// What `kell hook <event>` runs. Never throws; the caller always exits 0.
 // detach=false runs the check in-process (tests, and STEALTHLAB_HOOK_SYNC=1).
 export async function runSubagentHook(event, {
   stdinText = "", env = process.env, detach = env.STEALTHLAB_HOOK_SYNC !== "1", spawnWorker = spawnDetachedWorker, ...deps
@@ -318,7 +318,7 @@ export async function runSubagentHook(event, {
   }
 }
 
-// The detached worker: `stealthlab-mcp hook subagent-stop` with STEALTHLAB_HOOK_WORKER_FILE set.
+// The detached worker: `kell hook subagent-stop` with STEALTHLAB_HOOK_WORKER_FILE set.
 export async function runStopWorker(file, { env = process.env, ...deps } = {}) {
   let job;
   try {

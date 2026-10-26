@@ -17,7 +17,7 @@ This is a hard requirement, not a write-up you add afterwards.
 1. `CLAUDE.md`: hard rules, commit conventions, code conventions. **Breaking a hard rule invalidates the work.**
    It has **no lane-to-path table** — that is in `.scratch/build-board.md` (SHIP owns `packaging/**`, line 1278;
    commit prefixes, line 2665; claim-your-item, line 2661). Read both.
-2. `packaging/npm/bin/stealthlab-mcp.mjs`, `packaging/npm/lib/{clients,config,proxy}.mjs`,
+2. `packaging/npm/bin/kell.mjs`, `packaging/npm/lib/{clients,config,proxy}.mjs`,
    `packaging/npm/test/*.test.mjs`: the npm installer you are extending. Note its principle: *"Nothing
    StealthLab runs on your machine … `install` writes one entry into each agent's MCP config pointing at the
    hosted endpoint."* This feature deliberately adds the **first local runtime component**, and it must stay opt-in.
@@ -54,8 +54,8 @@ subagents save **context, not quota**; quota savings come only from delegating t
 
 1. **The hosted server stays knowledge-only.** No execution, no repo access, no new hosted tools. Everything that
    runs code runs locally, in the new component.
-2. **Opt-in.** `npx stealthlab-mcp install` keeps its current behaviour. The executor layer is enabled only by
-   `npx stealthlab-mcp install --with-exec` (or `stealthlab-mcp exec enable`). `uninstall` removes every file and
+2. **Opt-in.** `npx kell-mcp install` keeps its current behaviour. The executor layer is enabled only by
+   `npx kell-mcp install --with-exec` (or `kell exec enable`). `uninstall` removes every file and
    config entry it added.
 3. **Never touch the user's main checkout** except through the explicit `apply_run` tool (section 4), and only
    when the run is verified and the target files are unchanged since the run started.
@@ -97,7 +97,7 @@ subagents save **context, not quota**; quota savings come only from delegating t
 orchestrator (Claude Code / Codex / Cursor)
    | MCP (stdio, local)
    v
-   stealthlab-exec   (NEW: in packaging/npm; launched as `stealthlab-mcp exec`)
+   stealthlab-exec   (NEW: in packaging/npm; launched as `kell exec`)
    |-- executor registry --> adapters: opencode | codex | claude | gemini | openhands | cline | fake (tests)
    |-- worktree manager  --> <repo>/.git/worktrees, run dirs under OS temp: stealth-runs/<run_id>
    |-- verifier          --> runs the step's check commands in the worktree; scope enforcement
@@ -109,7 +109,7 @@ orchestrator (Claude Code / Codex / Cursor)
 Also installed (opt-in, by `--with-exec`) for Claude Code:
 - `~/.claude/agents/stealth-executor.md` (section 6.1)
 - `~/.claude/agents/stealth-delegator.md` (section 6.2)
-- hooks in `~/.claude/settings.json`: `SubagentStart`, `SubagentStop` -> `stealthlab-mcp hook <event>` (section 6.3)
+- hooks in `~/.claude/settings.json`: `SubagentStart`, `SubagentStop` -> `kell hook <event>` (section 6.3)
 
 **Two facts about the existing tree that constrain this design.** Both were read on 2026-09-27; re-verify if
 you touch them.
@@ -168,7 +168,7 @@ with `wait_s`.
 **Evidence:** on every terminal state, call hosted `report_model_run(model, scaffold=<executor id>,
 accepted=<verified>, instance_key, goal_id, procedure_id, step_order, check_kind="tests" if checks ran else
 "self_report", latency_ms, tokens_*, cost_usd, recommendation_id, attempt_index)`. Needs the user's saved token
-(`stealthlab-mcp login`). If offline, not logged in, or the hosted call errors, write to the outbox and flush later.
+(`kell login`). If offline, not logged in, or the hosted call errors, write to the outbox and flush later.
 **Known production gap:** the hosted routing tables may not exist yet (pending migrations). Treat a
 server-side "undefined table" style error as "queue and retry later", never as a failed run.
 
@@ -226,7 +226,7 @@ the version).
 - This works only as a user-level agent (plugins ignore `mcpServers`). The installer writes it; `uninstall` removes it.
 
 ### 6.3 Hooks: measure Claude's own subagents
-- `SubagentStart` / `SubagentStop` entries in `~/.claude/settings.json` running `stealthlab-mcp hook subagent-start|subagent-stop`.
+- `SubagentStart` / `SubagentStop` entries in `~/.claude/settings.json` running `kell hook subagent-start|subagent-stop`.
 - Read the hook's JSON from stdin. **Verify the payload fields in the current docs**; do not assume field names.
 - `subagent-stop`: find the NODE the subagent handled (from its task text or `.kell/run.md`), run that NODE's
   `check=` in the subagent's worktree (or the checkout if none), and send `report_model_run(scaffold="claude-code-subagent",
@@ -277,7 +277,7 @@ throwaway git repo created per test:
     `clients()` is **never invoked by any current test** (only the free `upsert*`/`remove*` functions are), and the
     `STEALTHLAB_TEST_HOME` seam at `lib/clients.mjs:38` is dead capacity. Test the real client table, including
     its `detect()` branches, before you add `~/.claude` writing to that same path.
-15. `--help` completeness: the `config` subcommand exists in the dispatch (`bin/stealthlab-mcp.mjs:175`) but is
+15. `--help` completeness: the `config` subcommand exists in the dispatch (`bin/kell.mjs:175`) but is
     **absent from the `HELP` text**. Add every subcommand you introduce (`exec`, `hook`, …) to `HELP`, and assert
     dispatch↔help parity so the gap cannot reopen.
 
@@ -441,8 +441,8 @@ property of the design, and hiding it is worse than naming it.
 | `lib/proxy.mjs:101` | POST | the `url` | one JSON-RPC line verbatim | bearer | loopback-only `http://` rule |
 | `lib/proxy.mjs:173` | GET | the `url` | none | bearer | 405/404 treated as absent |
 | `lib/proxy.mjs:196` | DELETE | the `url` | none | bearer | 2 s abort, session-only |
-| `bin/stealthlab-mcp.mjs:117` | POST | the `url` | probe payload | bearer | 15 s timeout |
-| `bin/stealthlab-mcp.mjs:131` | DELETE | the `url` | none | bearer | 15 s timeout |
+| `bin/kell.mjs:117` | POST | the `url` | probe payload | bearer | 15 s timeout |
+| `bin/kell.mjs:131` | DELETE | the `url` | none | bearer | 15 s timeout |
 
 The property to preserve and to assert: **there is no hardcoded host anywhere in `lib/`, `bin/` or `scripts/`.**
 Egress resolves entirely at runtime through the four-source precedence chain in `lib/config.mjs:64` (`--url` →

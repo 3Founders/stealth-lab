@@ -3,7 +3,7 @@
 // _parse_claims_md): `CLAIM|<id>|<status>|<topic>|<scope>|<statement>|source=...|version=n[|k=v...]`.
 // Extra `k=v` fields are ignored by the server's parser, so `by=scanner|key=...|inherits=...` are safe.
 //
-// Ownership: lines with `by=scanner` belong to `stealthlab-mcp survey` and are regenerated (same id, same
+// Ownership: lines with `by=scanner` belong to `kell survey` and are regenerated (same id, same
 // line) on every run; every other line belongs to the agent and is only ever re-validated, never rewritten.
 import fs from "node:fs";
 import path from "node:path";

@@ -11,7 +11,7 @@ import { checklist, ensureExecConfig, execTemplate, keyIsSet, keyIsSetAsync, pro
 import { cursorPlanModel } from "../lib/cursor_dispatch.mjs";
 import { clients } from "../lib/clients.mjs";
 
-const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "stealthlab-mcp.mjs");
+const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const mk = (p) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 
 // async spawn: the stub server below lives in this process, so a blocking spawnSync would deadlock it

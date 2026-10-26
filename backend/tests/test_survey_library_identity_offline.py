@@ -1,6 +1,6 @@
 """
 Cross-fork test (3-hard.md, fork B item 2): the repo identity the SURVEY scanner writes (fork C,
-packaging/npm/lib/survey) reaches find_ways through the LIBRARY payload (fork B, `stealthlab-mcp library
+packaging/npm/lib/survey) reaches find_ways through the LIBRARY payload (fork B, `kell library
 payload`), and the server reads it the way plan §5.1 means:
 
   * a repository with a GitHub remote -> a strong `r:` identity; with the owner's consent its public name maps
@@ -25,7 +25,7 @@ import pytest
 from app.services import library_context as lc
 
 ROOT = Path(__file__).resolve().parents[2]
-BIN = ROOT / "packaging" / "npm" / "bin" / "stealthlab-mcp.mjs"
+BIN = ROOT / "packaging" / "npm" / "bin" / "kell.mjs"
 
 pytestmark = pytest.mark.skipif(shutil.which("node") is None or not BIN.exists(), reason="needs node and the npm client")
 

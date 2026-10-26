@@ -15,13 +15,13 @@ not been run end to end.
 
 | Tool | How |
 |---|---|
-| Claude Code | `claude mcp add --transport http stealthlab <url>/mcp`, then `/mcp` to sign in. Optional: `npx -y stealthlab-mcp install --client claude-code` also adds the knowledge hook. |
+| Claude Code | `claude mcp add --transport http stealthlab <url>/mcp`, then `/mcp` to sign in. Optional: `npx -y kell-mcp install --client claude-code` also adds the knowledge hook. |
 | Cursor | `~/.cursor/mcp.json`: `{"mcpServers":{"stealthlab":{"url":"<url>/mcp"}}}`. In settings, auto-run `find_ways` and `report_result`; leave `call_model` on "ask" because it sends your prompt to another model and can spend money. |
 | Codex CLI | `~/.codex/config.toml`: `[mcp_servers.stealthlab]` with `url = "<url>/mcp"`. |
-| Cline | `npx -y stealthlab-mcp install --client cline`, or by hand in Cline's MCP settings (VS Code: Command Palette → "MCP Servers" → "Installed" tab → the JSON config). It lives in VS Code globalStorage as `cline_mcp_settings.json`: `{"mcpServers":{"stealthlab":{"url":"<url>/mcp","headers":{"Authorization":"Bearer <token>"},"disabled":false,"autoApprove":[]}}}`. Restart or reload VS Code afterwards — Cline reads the file at startup. Leave `autoApprove` empty so `call_model` asks before spending. |
+| Cline | `npx -y kell-mcp install --client cline`, or by hand in Cline's MCP settings (VS Code: Command Palette → "MCP Servers" → "Installed" tab → the JSON config). It lives in VS Code globalStorage as `cline_mcp_settings.json`: `{"mcpServers":{"stealthlab":{"url":"<url>/mcp","headers":{"Authorization":"Bearer <token>"},"disabled":false,"autoApprove":[]}}}`. Restart or reload VS Code afterwards — Cline reads the file at startup. Leave `autoApprove` empty so `call_model` asks before spending. |
 | opencode | `opencode.json`: `"mcp": {"stealthlab": {"type": "remote", "url": "<url>/mcp", "enabled": true}}`. |
 
-Then, in each repository, tell the agent when to use it: `npx -y stealthlab-mcp instructions` (writes a marked block into
+Then, in each repository, tell the agent when to use it: `npx -y kell-mcp instructions` (writes a marked block into
 `AGENTS.md`, and `.cursor/rules/stealthlab.mdc` for Cursor repos; `--remove` takes it out).
 
 ## Local single-user trial (tested)

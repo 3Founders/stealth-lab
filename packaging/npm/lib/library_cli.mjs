@@ -1,4 +1,4 @@
-// `stealthlab-mcp library <command>`: deterministic upkeep of .kell/library.md, its indexes, SUMMARY.md and
+// `kell library <command>`: deterministic upkeep of .kell/library.md, its indexes, SUMMARY.md and
 // routing.md (lib/library.mjs). Everything runs locally; nothing is sent anywhere. Output is JSON on stdout
 // (agents read it); errors go to stderr with exit 1.
 import fs from "node:fs";
@@ -8,7 +8,7 @@ import { parseArgs } from "node:util";
 import * as L from "./library.mjs";
 import * as T from "./library_tidy.mjs";
 
-export const LIBRARY_HELP = `stealthlab-mcp library <command> [--root <repo>]   (.kell/library.md upkeep; local only)
+export const LIBRARY_HELP = `kell library <command> [--root <repo>]   (.kell/library.md upkeep; local only)
 
   index                         canonicalise library.md, rebuild index/library.idx, index/terms.idx, SUMMARY.md
   check                         mark entries stale whose touched files changed (git hash-object)

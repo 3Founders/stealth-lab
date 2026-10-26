@@ -1,6 +1,6 @@
 ---
 # {{MANAGED_MARK}}
-# Written by `stealthlab-mcp install --with-exec`; removed by `stealthlab-mcp uninstall`.
+# Written by `kell install --with-exec`; removed by `kell uninstall`.
 # Frontmatter keys verified against https://code.claude.com/docs/en/sub-agents on 2026-09-27.
 name: stealth-executor
 description: Carry out ONE node from .kell/run.md and prove it with that node's check. Use when a StealthLab plan (plan_and_run) delegates a single NODE, e.g. "Do node N-3".

@@ -1,6 +1,6 @@
-name: Publish stealthlab-mcp
+name: Publish kell
 
-# Publishes packaging/npm to npm when a `stealthlab-mcp-v<version>` tag is
+# Publishes packaging/npm to npm when a `kell-mcp-v<version>` tag is
 # pushed. The tag must match package.json's version, and prepublishOnly
 # (scripts/check-publish.mjs) refuses to publish until the hosted MCP URL is
 # set identically in package.json, install.sh and install.ps1.
@@ -8,7 +8,7 @@ name: Publish stealthlab-mcp
 
 on:
   push:
-    tags: ["stealthlab-mcp-v*"]
+    tags: ["kell-mcp-v*"]
 
 permissions:
   contents: read
@@ -27,7 +27,7 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Tag matches package.json version
         run: |
-          want="stealthlab-mcp-v$(node -p "require('./package.json').version")"
+          want="kell-mcp-v$(node -p "require('./package.json').version")"
           [ "$GITHUB_REF_NAME" = "$want" ] || { echo "tag $GITHUB_REF_NAME != $want"; exit 1; }
       - run: npm publish --access public
         env:

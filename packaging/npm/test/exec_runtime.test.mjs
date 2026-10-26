@@ -332,7 +332,7 @@ test("gc: a verified-but-unapplied run's worktree is removed after 7 days, not b
 });
 
 // Integration with Builder B's real adapter registry (lib/executors/index.mjs), loaded lazily exactly as
-// `stealthlab-mcp exec` does. Skipped until that module exists in the tree.
+// `kell exec` does. Skipped until that module exists in the tree.
 const HAS_REGISTRY = fs.existsSync(new URL("../lib/executors/index.mjs", import.meta.url));
 test("lazy adapter registry: the real `fake` adapter runs end to end (STEALTHLAB_EXEC_ALLOW_FAKE=1)",
   { skip: !HAS_REGISTRY && "lib/executors/index.mjs not present yet (built in parallel by the adapters builder)" }, async () => {

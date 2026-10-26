@@ -18,7 +18,7 @@ export function installCommand(platform: InstallPlatform, origin: string): strin
     case "windows":
       return `irm ${base}/install.ps1 | iex`;
     case "npx":
-      return "npx -y stealthlab-mcp install";
+      return "npx -y kell-mcp install";
   }
 }
 

@@ -220,7 +220,7 @@ export function mineHistory(root, stealthDir, opts) {
     const header = lib.header.length ? lib.header : [
       "# library.md -- this repository's solved problems. One block per entry, sorted by id; append-only.",
       "# GOAL|<id>|<title>|unit=|g=|outcome=|verified_at=|route=   PROC|<id>.p1|<name>|p=|solution=|touches=path#sha=   STEP|<id>.p1:<n>|<kind>|<do>|check=",
-      "# outcome=historical entries were mined from git history by `stealthlab-mcp survey` (fix commits; diffs in library/solutions/).",
+      "# outcome=historical entries were mined from git history by `kell survey` (fix commits; diffs in library/solutions/).",
     ];
     // library.md stays within its 64 KB budget (plan §3.1): every non-historical entry (written by the agent after
     // a verified task) stays; historical entries fill the rest newest first; older ones go to the archive.

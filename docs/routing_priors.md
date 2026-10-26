@@ -107,7 +107,7 @@ model stayed with that Goal. `model_update.py` closes this:
 
 - In every non-Goal case, `find_ways`' `suggested` Goal (on `ambiguous`) is added as a parent. It pulls the prior
   toward what is known about that Goal.
-- **Fix sizes:** `stealthlab-mcp library payload` sends them as `task_features`, counted from
+- **Fix sizes:** `kell library payload` sends them as `task_features`, counted from
   `library/solutions/*.diff` (files, hunks, lines added/removed, languages, packages). Only numbers are sent,
   never the diff. They go through the fitted regression `W`, the same way a Goal's features do.
 - **Logging:** a virtual key's decisions and attempts are logged like a Goal's, so these all work unchanged:
@@ -130,7 +130,7 @@ to 8 sub-codes (`app/routing/semantic_codes.py`). Ways with the same code do sim
 - **Building:** `scripts/build_prior_bundle.py --codes <procedure_vectors.npz>` builds the codebook from the
   embeddings of the Ways that achieve our benchmark Goals, which were exported once read-only. It then fits on
   every public source the production import reads.
-- **Coding a repository's Ways:** `stealthlab-mcp library link` sends each uncoded Way's name and steps to
+- **Coding a repository's Ways:** `kell library link` sends each uncoded Way's name and steps to
   `POST /routing/codes` once (signed in). The server embeds them with the codebook's model, answers with the code
   and the vector, and stores nothing. The code is written on the `W` line (`code=`); the vector stays in
   `.kell/index/way_vectors.json` (gitignored). A later codebook version re-codes from the kept vectors, so the

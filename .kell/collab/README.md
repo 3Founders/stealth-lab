@@ -9,6 +9,6 @@ three hand-written files in the plan_and_run format that anyone (a person or a c
 
 Take a node: set it to `running`, do it, run its `check=`, set it to `done`, add what you learned as a claim. Validate:
 
-    mkdir -p /tmp/p/.kell && cp .kell/collab/*.md /tmp/p/.kell/ && npx stealthlab-mcp plan validate --root /tmp/p
+    mkdir -p /tmp/p/.kell && cp .kell/collab/*.md /tmp/p/.kell/ && npx kell-mcp plan validate --root /tmp/p
 
 Nothing here holds a secret, a customer name or a price. Keep it that way: this folder is pushed.

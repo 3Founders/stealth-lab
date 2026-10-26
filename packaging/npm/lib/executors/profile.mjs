@@ -14,7 +14,7 @@
 // Organization-held keys: a profile may say  "key_from": "stealthlab"  instead of key_env. It then carries no provider key at all:
 // the request goes to the organization's StealthLab gateway (openai_base_url = <server>/v1) with the person's own StealthLab
 // sign-in as the bearer, and the gateway uses the key the company's admin stored (backend/app/services/org_keys.py), under the
-// company's policy and budget. `stealthlab-mcp join` writes these profiles; there is nothing to set in the environment.
+// company's policy and budget. `kell join` writes these profiles; there is nothing to set in the environment.
 //
 // Boundary (same as common.mjs): the provider key is the USER'S OWN key for that provider, read from the user's own
 // environment and handed only to the process that talks to that provider. It is never written to disk by us, never
@@ -137,7 +137,7 @@ export function profileKey(profile, env = process.env) {
     // the person's own sign-in (kept fresh by the hooks, lib/oauth.mjs freshToken); never a provider key
     let token = String(env.STEALTHLAB_TOKEN || "").trim();
     if (!token) { try { token = String(readConfig(env).token || "").trim(); } catch { token = ""; } }
-    if (!token) throw new Error(`profile ${profile.name}: you are not signed in to StealthLab (run: stealthlab-mcp login)`);
+    if (!token) throw new Error(`profile ${profile.name}: you are not signed in to StealthLab (run: kell login)`);
     return token;
   }
   const v = env[profile.key_env];

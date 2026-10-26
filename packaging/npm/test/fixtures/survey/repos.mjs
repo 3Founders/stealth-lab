@@ -1,4 +1,4 @@
-// Fixture generator for `stealthlab-mcp survey`: one small repository per repo shape in
+// Fixture generator for `kell survey`: one small repository per repo shape in
 // docs/plan_2026-10_priors_library_survey.md §4.1, plus the §4.6 edge cases. Each fixture is a plain
 // {path: content} map; `makeRepo` writes it to a throwaway directory and (optionally) commits it to git.
 // Every fixture states the units it MUST resolve to (`units`) -- the ground truth the tests check.

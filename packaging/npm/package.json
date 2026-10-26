@@ -1,11 +1,13 @@
 {
-  "name": "stealthlab-mcp",
+  "name": "kell-mcp",
   "version": "0.1.0",
   "description": "Connect Claude Code, Cursor, Cline, Claude Desktop, Windsurf, Codex and VS Code to the hosted StealthLab (keळ) MCP server.",
   "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "stealthlab-mcp": "bin/stealthlab-mcp.mjs"
+    "kell": "bin/kell.mjs",
+    "kell-mcp": "bin/kell.mjs",
+    "stealthlab-mcp": "bin/kell.mjs"
   },
   "files": [
     "bin",

@@ -269,7 +269,7 @@ Keep **one replica** and attach the custom domain `mcp.<your-domain>`.
 
 ```bash
 curl https://mcp.<your-domain>/
-npx -y stealthlab-mcp doctor --url https://mcp.<your-domain>/mcp
+npx -y kell-mcp doctor --url https://mcp.<your-domain>/mcp
 ```
 
 Both succeed. The API's `/health` returns 200.
@@ -345,11 +345,11 @@ Then **rebuild**. `NEXT_PUBLIC_*` values are baked in at build time.
 4. Tag the release:
 
    ```bash
-   git tag stealthlab-mcp-v0.1.0
-   git push origin stealthlab-mcp-v0.1.0
+   git tag kell-mcp-v0.1.0
+   git push origin kell-mcp-v0.1.0
    ```
 
-**Check:** the publish workflow is green, and `npx -y stealthlab-mcp@0.1.0 doctor` works on a clean machine.
+**Check:** the publish workflow is green, and `npx -y kell-mcp@0.1.0 doctor` works on a clean machine.
 
 ---
 
@@ -550,7 +550,7 @@ On a Windows machine without the tool installed, run the installer from the webs
 - once in **Windows PowerShell 5.1**;
 - once in **PowerShell 7**.
 
-**Check:** both finish, and `stealthlab-mcp doctor` reports the hosted URL as reachable.
+**Check:** both finish, and `kell doctor` reports the hosted URL as reachable.
 
 ### 24. Known test status (so you don't chase old failures)
 

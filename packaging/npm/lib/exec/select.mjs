@@ -1,7 +1,7 @@
 // Executor registry + selection.
 //
 // Adapters come from lib/executors/index.mjs (Builder B), imported lazily so the runtime can be tested
-// with injected stub adapters and so nothing loads until `stealthlab-mcp exec` actually runs. The `fake`
+// with injected stub adapters and so nothing loads until `kell exec` actually runs. The `fake`
 // adapter is selectable only when STEALTHLAB_EXEC_ALLOW_FAKE=1 (tests), never in production config.
 //
 // The VERIFIED_WITH gate lives here and is enforced by the runtime before any spawn: an adapter with no
