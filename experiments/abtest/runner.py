@@ -173,7 +173,14 @@ def env_file(path: Path) -> dict[str, str]:
 
 # ---------------------------------------------------------------- tasks
 
-ARMS = ("A", "C0", "C-R", "C-L", "C")
+ARMS = ("A", "C0", "C-R", "C-L", "C", "R", "RC")
+# the prompt-cache benchmark (docs/cache_bench.md): R and RC are plain Claude Code behind a per-request router that can switch
+# the session's model (cache_proxy.py); with ABTEST_CACHE_BENCH=on every arm runs behind the proxy, which logs each request's
+# cache use, and only R / RC let it switch
+ROUTER_MODE = {"R": "naive", "RC": "cache-aware"}
+# the router's cheaper model: one of kell's own cheaper models, on another provider (z.ai's Anthropic-format endpoint), as
+# a real router's are; the proxy reads Z_AI_KEY from the container's environment
+CACHE_SWITCH_MODEL = os.environ.get("ABTEST_SWITCH_MODEL", "zai:glm-5.3-flash")
 
 # What persists from one issue to the next, per kell arm (every one of them has the SAME install and settings; only this differs):
 #   facts   .kell/claims.md and survey/ (one `kell survey` at series start; none for C0)
@@ -346,6 +353,8 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
         drop = (drop - {"ANTHROPIC_API_KEY"}) | {"CLAUDE_CODE_OAUTH_TOKEN"}
     env = {k: v for k, v in os.environ.items() if not k.startswith("STEALTHLAB_") and k not in drop}
     env["ANTHROPIC_MODEL"] = session_model()
+    if os.environ.get("ABTEST_CACHE_BENCH") == "on":
+        env["ABTEST_PROXY_ROUTE"] = ROUTER_MODE.get(arm, "off")
     if on_bedrock():
         # the same Claude, served by Bedrock: its login variables are dropped (never both in one session), the model aliases
         # the reviewer and the judge use map to Bedrock's ids, and the AWS credentials stay in this environment only
@@ -431,6 +440,45 @@ def run_claude(ws: Path, prompt: str, env: dict[str, str], extra: list[str], log
     cmd = [exe, "-p", prompt, "--model", session_model(), "--setting-sources", "project", "--strict-mcp-config",
            "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits", "--allowedTools", *TOOLS,
            *(["--resume", resume] if resume else []), *extra]
+    proxy = None
+    if env.get("ABTEST_PROXY_ROUTE"):
+        proxy, env = start_proxy(env, log_path, ws)
+    try:
+        return _run_claude(cmd, ws, env, log_path)
+    finally:
+        if proxy:
+            proxy.terminate()
+            try:
+                proxy.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proxy.kill()
+
+
+def start_proxy(env: dict[str, str], log_path: Path, ws: Path) -> tuple[subprocess.Popen, dict[str, str]]:
+    """cache_proxy.py on a free local port for this turn: its request log sits next to the turn's log, its router memory
+    (how warm the session's cache is) in one file per workspace, so `--resume` turns keep it."""
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    state = LOCAL / f"proxy_state_{ws.name}.json"
+    req_log = log_path.with_name(log_path.stem + ".requests.jsonl")
+    proc = subprocess.Popen([sys.executable, str(HERE / "cache_proxy.py"), "--port", str(port), "--log", str(req_log),
+                             "--route", env["ABTEST_PROXY_ROUTE"], "--session-model", "claude-opus",
+                             "--switch-model", CACHE_SWITCH_MODEL, "--state", str(state)],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+    for _ in range(100):                       # up within a few seconds
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.1)
+    env = {**env, "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{port}"}
+    env.pop("ABTEST_PROXY_ROUTE", None)
+    return proc, env
+
+
+def _run_claude(cmd: list[str], ws: Path, env: dict[str, str], log_path: Path) -> dict:
     proc = subprocess.Popen(cmd, cwd=ws, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     lines: "queue.Queue[str | None]" = queue.Queue()
@@ -667,7 +715,10 @@ def run_one(task: dict, arm: str, run: str, secrets: dict[str, str], turns: int 
     ws = workspace(arm, task["workspace"])
     if is_c(arm):
         wipe_stealth(ws, arm)                   # what each arm is: C with only its own state carried over in .kell/ (ARM_STATE)
-    if hasattr(mod, "setup_project") and not (ws / ".series_ready").exists():
+    # a module that keeps its project outside the workspace says itself whether it is there (a restored container has
+    # the workspace's marker but not, say, the venvs)
+    ready = (ws / ".series_ready").exists() and (not hasattr(mod, "project_ready") or mod.project_ready(task, ws))
+    if hasattr(mod, "setup_project") and not ready:
         mod.setup_project(task, ws)             # a series: the shared project, built once per workspace and arm
         (ws / ".series_ready").write_text("", encoding="utf-8")
     if hasattr(mod, "prepare_task"):
@@ -745,7 +796,9 @@ def dry_run(args, arms: list[str]) -> int:
              "C": "kell hooks-only install; its .kell/ (facts, library, routing counts) and the server's router state PERSIST",
              "C0": "the same install as C, but .kell/ is wiped before every task and the server's router state is reset (no survey)",
              "C-R": "the same install; the facts (one survey at series start) stay, the library and routing counts are wiped, the router state is reset",
-             "C-L": "the same install; facts and library stay, the local routing counts are wiped, the router state is reset"}
+             "C-L": "the same install; facts and library stay, the local routing counts are wiped, the router state is reset",
+             "R": "plain Claude Code behind a per-request router: a routine step goes to the cheaper model (cache_proxy.py naive)",
+             "RC": "plain Claude Code behind a cache-aware router: the same, but no switch while a large cache is warm"}
     for a in arms:
         print(f"  arm {a}: {start[a]}")
     for t in tasks:

@@ -308,10 +308,24 @@ def grade_python(task: dict) -> Path:
     return py
 
 
+def arm_ready_marker(task: dict, ws: Path) -> Path:
+    return VENVS / f"{arm_of(ws)}-{task['series_name']}.ready"
+
+
+def project_ready(task: dict, ws: Path) -> bool:
+    """The arm's venv has its requirements in THIS container. The marker sits beside the venv, not in the workspace: a
+    container restored from a snapshot gets the workspace (with its .series_ready) but not the venvs, and the agents then
+    ran in an empty venv -- 28 more jsonargparse tests failed on the unchanged code after a resume (cache-full-1, 2026-10-27)."""
+    return arm_ready_marker(task, ws).exists()
+
+
 def setup_project(task: dict, ws: Path) -> None:
     """Once per workspace and arm: the arm's venv with the first issue's pinned requirements (the agents' `python`)."""
     py = arm_python(task, ws)
     TOOLCHAIN.install(py, env_requirements(first_record(task)["requirements"]))
+    marker = arm_ready_marker(task, ws)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("", encoding="utf-8")
 
 
 def record_history(r: dict, ws: Path) -> None:

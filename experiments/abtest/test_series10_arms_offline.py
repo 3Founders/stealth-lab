@@ -58,10 +58,12 @@ def test_c0_and_c_r_start_every_issue_with_an_empty_library():
 
 
 def test_the_arms_are_one_list_everywhere():
-    assert runner.ARMS == ms.ARMS == ("A", "C0", "C-R", "C-L", "C")
+    assert runner.ARMS == ms.ARMS == ("A", "C0", "C-R", "C-L", "C", "R", "RC")
     assert tuple(runner.ARM_STATE) == ms.STEALTH_ARMS
     assert {a for a in runner.ARM_STATE if runner.server_resets(a)} == set(ms.SERVER_RESET_ARMS)
     assert not runner.is_c("A") and all(runner.is_c(a) for a in ms.STEALTH_ARMS)
+    # the cache benchmark's router arms are plain Claude Code, not kell arms
+    assert not any(runner.is_c(a) for a in ("R", "RC")) and not set(ms.STEALTH_ARMS) & {"R", "RC"}
 
 
 def test_every_stealthlab_arm_has_the_background_survey_off_and_arm_a_has_nothing_of_it(monkeypatch, tmp_path):

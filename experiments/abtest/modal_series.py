@@ -39,6 +39,7 @@ container are unverified until the dry run (1 issue per arm) has been done.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import re
 import importlib
@@ -51,6 +52,7 @@ import sys
 import tarfile
 import time
 import urllib.request
+import zlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -81,14 +83,16 @@ ROTATE_AFTER_S = int(4.5 * 3600)          # a token this far into its window is 
 PROBE_EVERY_S = 3600                      # on Bedrock, the subscription is tried again about once an hour
 KEY_NAMES = ("GENERAL_COMPUTE_API_KEY", "general_compute_api_key1", "Z_AI_KEY", "JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL",
              "JEV_CAPABILITIES", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "VOYAGE_API_KEY")
-ARMS = ("A", "C0", "C-R", "C-L", "C")
-STEALTH_ARMS = tuple(a for a in ARMS if a != "A")      # the arms with kell installed (they need the test backend)
+ARMS = ("A", "C0", "C-R", "C-L", "C", "R", "RC")
+STEALTH_ARMS = ("C0", "C-R", "C-L", "C")               # the arms with kell installed (they need the test backend)
 ARM_PERSISTENCE = {
     "A": "plain Claude Code, no kell",
     "C0": "no facts, library wiped, local routing wiped, router state RESET before each issue",
     "C-R": "facts kept (one survey at series start), library wiped, local routing wiped, router state RESET",
     "C-L": "facts and library kept, local routing wiped, router state RESET",
     "C": "facts, library, local routing and router state all KEPT (it learns)",
+    "R": "plain Claude Code behind a naive per-request router (cache benchmark)",
+    "RC": "plain Claude Code behind a cache-aware per-request router (cache benchmark)",
 }
 # what each arm keeps between issues; the single source is runner.ARM_STATE (kept in step by a test)
 SERVER_RESET_ARMS = ("C0", "C-R", "C-L")               # their router state is put back to the post-setup snapshot before each issue
@@ -136,6 +140,7 @@ class RunSpec:
     units_in_flight: int = 1               # how many one-arm containers may start a Bedrock session at once (the cap keeps room for each)
     force_overflow: bool = False           # a test switch: the first session of this unit reports a usage limit, so it moves to Bedrock
     blind: bool = False                    # series10: nothing that compares arms is computed, printed or logged (docs/series10_prereg.md)
+    cache_bench: bool = False              # the prompt-cache benchmark: every arm behind cache_proxy.py (docs/cache_bench.md)
     task_ids: list[str] | None = None      # the issues to run, already gold-checked (prepare); None: this container picks them itself
     unit_arm: str = ""                     # set for the one-arm container of a split run: its results live in <run>/<repository>/<arm>/
 
@@ -318,7 +323,7 @@ def build_image():
                       "uv python install " + " ".join(PYTHONS))
         .add_local_file(REPO / "backend" / "requirements.txt", "/tmp/backend-requirements.txt", copy=True)
         .add_local_file(REPO / "backend" / "requirements-routing.txt", "/tmp/backend-requirements-routing.txt", copy=True)
-        .run_commands("pip install -r /tmp/backend-requirements.txt", "pip install uvicorn pytest pyarrow pandas huggingface_hub",
+        .run_commands("pip install -r /tmp/backend-requirements.txt", "pip install uvicorn pytest pyarrow pandas huggingface_hub aiohttp",
                       # the router's worker (run_backend.py --worker): its refits need JAX/NumPyro
                       "pip install -r /tmp/backend-requirements-routing.txt")
         .env({"PYTHONPATH": f"{APP_DIR}/experiments/abtest", "PYTHONUNBUFFERED": "1", "ABTEST_CONTAINER": "1"})   # NOT the cache variables: see Container.__init__
@@ -382,7 +387,8 @@ class Container:
                         **({"ABTEST_CHEAP_TIMEOUT_S": str(spec.cheap_timeout_s)} if spec.cheap_timeout_s else {}),
                         **({"ABTEST_CONTEXT_PACK": "on"} if spec.context_pack else {}),
                         **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {}),
-                        **({"ABTEST_BLIND": "1"} if spec.blind else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+                        **({"ABTEST_BLIND": "1"} if spec.blind else {}),
+                        **({"ABTEST_CACHE_BENCH": "on"} if spec.cache_bench else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
         # the Bedrock credentials are kept OUT of the environment every subscription session and every setup command gets
         self.tokens = claude_tokens(self.environ) if spec.auth in ("subscription", COMBO) else []
         for t in self.tokens:                            # the extra logins are not in the environment any session or setup command gets
@@ -414,10 +420,16 @@ class Container:
         for sub, src in (("results", self.local / "results"), ("logs", self.local / "logs" / run)):
             if src.exists():
                 shutil.copytree(src, self.out / sub, dirs_exist_ok=True)
-        with tarfile.open(self.out / "state.tgz", "w:gz") as tf:
+        # written beside the old one and renamed into place, the old kept as state.prev.tgz: a container preempted in the
+        # middle of a write (ct cache-full-1, 2026-10-27) must not leave the only copy half-written
+        tmp = self.out / "state.tgz.tmp"
+        with tarfile.open(tmp, "w:gz") as tf:
             for name in ("ws", "C_home", "openers", "simuser"):
                 if (self.local / name).exists():
                     tf.add(self.local / name, arcname=name)
+        if (self.out / "state.tgz").exists():
+            os.replace(self.out / "state.tgz", self.out / "state.prev.tgz")
+        os.replace(tmp, self.out / "state.tgz")
         if self.uses_backend:
             dump = self.sh(f"{PG_BIN}/pg_dump -h 127.0.0.1 -p {PG_PORT} -U kel_owner kel_abtest | gzip > {self.out / 'db.sql.gz'}")
             self.log.append(f"snapshot (db dump rc={getattr(dump, 'returncode', '?')})")
@@ -432,12 +444,44 @@ class Container:
             shutil.copytree(self.out / "logs", self.local / "logs" / self.spec.run_name(), dirs_exist_ok=True)
         if not (self.out / "state.tgz").exists():
             return "cold"
-        with tarfile.open(self.out / "state.tgz") as tf:
-            try:
-                tf.extractall(self.local, filter="data")
-            except TypeError:                                  # Python < 3.12
-                tf.extractall(self.local)
+        # the newest snapshot that opens whole; failing both, everything readable from the newest (a half-written
+        # archive still holds the files before the break)
+        for name in ("state.tgz", "state.prev.tgz"):
+            path = self.out / name
+            if path.exists() and self._intact(path) and self._extract(path):
+                if name != "state.tgz":
+                    self.log.append("restore: state.tgz was damaged; restored state.prev.tgz")
+                return "restored"
+        self._extract(self.out / "state.tgz", partial=True)
+        self.log.append("restore: every snapshot was damaged; kept what could be read")
         return "restored"
+
+    @staticmethod
+    def _intact(path: Path) -> bool:
+        """Read the whole archive through: gzip checks its checksum only at the end, which extracting may never reach."""
+        try:
+            with gzip.open(path, "rb") as f:
+                while f.read(1 << 20):
+                    pass
+            return True
+        except (OSError, EOFError, zlib.error):
+            return False
+
+    def _extract(self, path: Path, partial: bool = False) -> bool:
+        """Extract a snapshot into self.local; True if all of it came out. partial: keep going past a damaged member."""
+        try:
+            with tarfile.open(path) as tf:
+                for member in tf:
+                    try:
+                        tf.extract(member, self.local, filter="data")
+                    except TypeError:                          # Python < 3.12
+                        tf.extract(member, self.local)
+            return True
+        except (tarfile.TarError, OSError, EOFError, zlib.error) as exc:
+            if not partial:
+                return False
+            self.log.append(f"restore: stopped at a damaged part of {path.name} ({type(exc).__name__})")
+            return False
 
     # -- services
     def start_services(self) -> None:
@@ -1054,12 +1098,14 @@ if modal is not None:
              series_module: str = SERIES_MODULE, allow_cold_resume: bool = False, plan: bool = False, sequential_arms: bool = False,
              testfirst_model: str = "glm-5.3", gc_key_name: str = "GENERAL_COMPUTE_API_KEY", cheap_agent: str = "stealth", accept_rule: str = "",
              cheap_timeout_s: int = 0, context_pack: bool = False, review_model: str = "", blind: bool = False,
-             bedrock_cap_usd: float = BEDROCK_CAP_USD, bedrock_price_factor: float = 1.0, force_overflow: bool = False):
+             bedrock_cap_usd: float = BEDROCK_CAP_USD, bedrock_price_factor: float = 1.0, force_overflow: bool = False,
+             cache_bench: bool = False):
         spec = RunSpec(repos=[r.strip() for r in repos.split(",") if r.strip()], arms=[a.strip() for a in arms.split(",") if a.strip()],
                        max_issues=max_issues, auth=auth, turns=turns, run=run, series_module=series_module,
                        allow_cold_resume=allow_cold_resume, split_arms=not sequential_arms, testfirst_model=testfirst_model, gc_key_name=gc_key_name, cheap_agent=cheap_agent, accept_rule=accept_rule,
                        cheap_timeout_s=cheap_timeout_s, context_pack=context_pack, review_model=review_model, blind=blind,
-                       bedrock_cap_usd=bedrock_cap_usd, bedrock_price_factor=bedrock_price_factor, force_overflow=force_overflow)
+                       bedrock_cap_usd=bedrock_cap_usd, bedrock_price_factor=bedrock_price_factor, force_overflow=force_overflow,
+                       cache_bench=cache_bench)
         problems = validate_spec(spec)
         if problems:
             raise SystemExit("; ".join(problems))
@@ -1203,6 +1249,7 @@ def cli(argv: list[str] | None = None) -> int:
     p.add_argument("--arms", default="A,C0,C-R,C-L,C")
     p.add_argument("--bedrock-cap-usd", type=float, default=BEDROCK_CAP_USD)
     p.add_argument("--blind", action="store_true", help="series10: nothing that compares arms is computed or printed")
+    p.add_argument("--cache-bench", action="store_true", help="the prompt-cache benchmark: every arm behind cache_proxy.py")
     p.add_argument("--max-issues", type=int, default=0)
     p.add_argument("--auth", default="subscription")
     p.add_argument("--turns", type=int, default=1)
@@ -1220,7 +1267,8 @@ def cli(argv: list[str] | None = None) -> int:
         return secrets_cli(args)
     spec = RunSpec(repos=[r.strip() for r in args.repos.split(",") if r.strip()], arms=[a.strip() for a in args.arms.split(",") if a.strip()],
                    max_issues=args.max_issues, auth=args.auth, turns=args.turns, run=args.run, series_module=args.series_module,
-                   split_arms=not args.sequential_arms, blind=args.blind, bedrock_cap_usd=args.bedrock_cap_usd)
+                   split_arms=not args.sequential_arms, blind=args.blind, bedrock_cap_usd=args.bedrock_cap_usd,
+                   cache_bench=args.cache_bench)
     problems = validate_spec(spec)
     if problems:
         print("; ".join(problems))

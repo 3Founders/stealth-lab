@@ -7,6 +7,7 @@ interpreter (no venv, no installs; pytest runs for real). Run from experiments/a
 """
 from __future__ import annotations
 
+import shutil
 import json
 import subprocess
 import sys
@@ -375,3 +376,17 @@ def test_the_window_with_the_most_reuse_wins_among_the_tight_ones_and_slack_zero
     assert swe.pick_window(spans, overlaps, slack=30) == 3, "window 2 is too loose; 1 and 3 tie on reuse and 3 is tighter"
     assert swe.pick_window([10, 12], [0.4, 0.4], slack=30) == 0, "ties go to the tighter span"
     assert swe.pick_window(spans, overlaps, slack=0) == 0, "slack 0: the tightest window only"
+
+
+def test_a_restored_container_without_the_venvs_installs_them_again(sandbox, upstream):
+    # the workspace (with its .series_ready) comes back from the snapshot, the venvs do not: the agents must not get an
+    # empty venv (cache-full-1: 28 more tests failed on the unchanged code after a resume)
+    tasks = runner.load_series("swe_series_task:mini")
+    deps = lambda: sum(1 for kind, _ in upstream["toolchain"].installs if kind == "deps")
+    runner.run_one(tasks[0], "A", "swe", SECRETS)
+    after_first = deps()
+    runner.run_one(tasks[1], "A", "swe", SECRETS)
+    assert deps() == after_first, "same container: set up once"
+    shutil.rmtree(swe.VENVS)
+    runner.run_one(tasks[1], "A", "swe", SECRETS)
+    assert deps() > after_first, "venvs gone: the arm's requirements are installed again"
