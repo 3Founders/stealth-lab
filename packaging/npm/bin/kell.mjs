@@ -639,6 +639,9 @@ Ctrl+C to stop.`);
           }
         } else if (sub === "capture-stop" && process.env.STEALTHLAB_CAPTURE_JOB) {
           await (await lazy.capture()).runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
+        } else if (sub === "ensure-server") {
+          const { ensureServer } = await import("../lib/ensure_server.mjs");
+          await ensureServer({ url: resolveSettings({}).url });
         } else if (sub === "route-subagent" || sub === "route-report") {
           const chunks = [];
           for await (const c of process.stdin) chunks.push(c);

@@ -54,6 +54,7 @@ export const WORKER_TIMEOUT_MS = 30_000;
 export const CAPTURE_HOOKS = {
   PostToolUse: { matcher: "Bash|PowerShell", mark: "hook capture-tool" },   // Windows Claude Code has both
   Stop: { mark: "hook capture-stop" },
+  SessionStart: { mark: "hook ensure-server" },     // starts a local kell server that is down (lib/ensure_server.mjs)
 };
 
 const SHELL_TOOLS = new Set(["Bash", "PowerShell"]);
