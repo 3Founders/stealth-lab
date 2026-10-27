@@ -244,3 +244,19 @@ test("triage: a skipped prompt clears the previous prompt's remembered lookup", 
   assert.equal(rememberLookup(payload, null, { env }), false);
   assert.ok(before === true || before === false);
 });
+
+test("callFindWays: sends up to FIND_WAYS_QUERY_MAX characters of the prompt, not 1500", async () => {
+  const { FIND_WAYS_QUERY_MAX } = await import("../lib/hook.mjs");
+  assert.equal(FIND_WAYS_QUERY_MAX, 4000);
+  let sent = null;
+  const fetchImpl = async (_url, init) => {
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (body.method === "tools/call") sent = body.params.arguments.query;
+    const reply = body.method === "initialize"
+      ? { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } }
+      : { jsonrpc: "2.0", id: 2, result: { content: [{ type: "text", text: "{}" }] } };
+    return { ok: true, status: 200, headers: { get: () => "sid" }, text: async () => JSON.stringify(reply) };
+  };
+  await callFindWays({ url: "http://x/mcp", userAgent: "t", query: "a".repeat(6000), repoClaims: "", timeoutMs: 5000, fetchImpl });
+  assert.equal(sent.length, FIND_WAYS_QUERY_MAX);
+});

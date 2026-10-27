@@ -202,6 +202,10 @@ export function shouldLookUp(prompt, policy) {
   return (text.match(/\w+/g) || []).length >= policy.minWords;
 }
 
+// The find_ways lookup gets up to this much of a prompt; the triage question (callTriage) keeps its own, smaller
+// 1500-character cut because it only judges whether to look up at all, and costs a model call on every prompt.
+export const FIND_WAYS_QUERY_MAX = 4000;
+
 const CLAIMS_BUDGET = 64000; // the server's MAX_REPO_CLAIMS_BYTES
 
 // Repository facts for find_ways: claims.md, then the claims/<unit>.md pages of the units this prompt is
@@ -281,7 +285,7 @@ export async function callFindWays({ url, token, userAgent, query, repoClaims, t
   await post({ jsonrpc: "2.0", method: "notifications/initialized" }, sid, proto);
   const res = await post({
     jsonrpc: "2.0", id: 2, method: "tools/call",
-    params: { name: "find_ways", arguments: { query: query.slice(0, 1500), repo_claims: repoClaims, ...extra } },
+    params: { name: "find_ways", arguments: { query: String(query).slice(0, FIND_WAYS_QUERY_MAX), repo_claims: repoClaims, ...extra } },
   }, sid, proto);
   if (!res.ok) throw new Error(`find_ways HTTP ${res.status}`);
   const body = parseBody(await res.text());

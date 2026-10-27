@@ -38,7 +38,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./config.mjs";
-import { callFindWays, deliveryMode, formatKnowledge, hookPolicy, parseCandidateList, readClaims, routingArgs,
+import { FIND_WAYS_QUERY_MAX, callFindWays, deliveryMode, formatKnowledge, hookPolicy, parseCandidateList, readClaims, routingArgs,
   shouldLookUp } from "./hook.mjs";
 import { buildReport, captureEnabled, looksLikeTest, rememberLookup, sessionFile, testVerdict } from "./capture_hook.mjs";
 import { logHook } from "./subagent_hook.mjs";
@@ -123,7 +123,7 @@ export function onBeforeSubmitPrompt(payload, { env = process.env, settings, now
   const job = path.join(configDir(env), "hooks", "jobs", `cursor-${now}-${crypto.randomUUID()}.json`);
   writeJson(job, {
     conversation_id: payload.conversation_id, generation_id: payload.generation_id || null,
-    prompt: String(payload.prompt).trim().slice(0, 1500), workspace: workspaceOf(payload), mode,
+    prompt: String(payload.prompt).trim().slice(0, FIND_WAYS_QUERY_MAX), workspace: workspaceOf(payload), mode,
     model: typeof payload.model === "string" ? payload.model : null,
   });
   spawnWorker(job, env);
