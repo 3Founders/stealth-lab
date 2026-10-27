@@ -24,6 +24,7 @@
 // The compliance fields are declarations by whoever wrote the file, kept so a run can show what was claimed. Unknown
 // stays unknown (absent), never "true". Nothing here proves what a provider does with prompts.
 import { readConfig } from "../config.mjs";
+import { readEnvFileVar } from "../envfile.mjs";
 
 const REGION = /^[a-z]{2,8}(-[a-z0-9]{1,8})?$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -44,6 +45,13 @@ function httpsUrl(name, field, value) {
   }
   if (u.username || u.password) throw new Error(`profile ${name}: ${field} must not contain credentials`);
   return String(value).replace(/\/+$/, "");
+}
+
+export function isLoopbackUrl(value) {
+  try {
+    const u = new URL(String(value));
+    return u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]");
+  } catch { return false; }
 }
 
 function price(name, field, value) {
@@ -69,8 +77,10 @@ export function normaliseProfile(name, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`profile ${name}: must be an object`);
   const keyFrom = raw.key_from;
   if (keyFrom !== undefined && keyFrom !== KEY_FROM_STEALTHLAB) throw new Error(`profile ${name}: key_from can only be "${KEY_FROM_STEALTHLAB}"`);
-  const keyEnv = keyFrom ? undefined : raw.key_env;
-  if (!keyFrom && (typeof keyEnv !== "string" || !NAME.test(keyEnv))) throw new Error(`profile ${name}: key_env must be the NAME of an environment variable`);
+  // a model on this machine (an http loopback address) has no key to hold: key_env may then be left out
+  const localOnly = !keyFrom && raw.key_env === undefined && !raw.anthropic_base_url && isLoopbackUrl(raw.openai_base_url);
+  const keyEnv = keyFrom || localOnly ? undefined : raw.key_env;
+  if (!keyFrom && !localOnly && (typeof keyEnv !== "string" || !NAME.test(keyEnv))) throw new Error(`profile ${name}: key_env must be the NAME of an environment variable`);
   const modelId = String(raw.model_id || name).trim();
   if (!modelId || /[\s|]/.test(modelId)) throw new Error(`profile ${name}: model_id must be a single token`);
   const anthropic = httpsUrl(name, "anthropic_base_url", raw.anthropic_base_url);
@@ -140,7 +150,9 @@ export function profileKey(profile, env = process.env) {
     if (!token) throw new Error(`profile ${profile.name}: you are not signed in to kell (run: kell login)`);
     return token;
   }
-  const v = env[profile.key_env];
+  // the process environment first; then, only if one is named (lib/envfile.mjs), the env file, for this variable alone
+  if (!profile.key_env) return "local";            // a model on this machine: the server wants some bearer value, not a secret
+  const v = (env[profile.key_env] && String(env[profile.key_env]).trim()) || readEnvFileVar(profile.key_env, env);
   if (!v || !String(v).trim()) throw new Error(`profile ${profile.name}: environment variable ${profile.key_env} is not set`);
   return String(v);
 }

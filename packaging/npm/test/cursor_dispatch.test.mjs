@@ -59,11 +59,13 @@ test("dispatch is on only with the executor installed and no off switch", () => 
 });
 
 test("Cursor's model slug becomes the plan's model; auto needs STEALTHLAB_CURSOR_MODEL", () => {
-  assert.equal(cursorPlanModel({ model: "claude-4.5-sonnet" }, {}), "claude-sonnet-4-5");
-  assert.equal(cursorPlanModel({ model: "claude-4.1-opus-thinking" }, {}), "claude-opus-4-1");
-  assert.equal(cursorPlanModel({ model: "gpt-5" }, {}), "gpt-5");
-  assert.equal(cursorPlanModel({ model: "auto" }, {}), null);
-  assert.equal(cursorPlanModel({ model: "auto" }, { STEALTHLAB_CURSOR_MODEL: "claude-sonnet-4-5" }), "claude-sonnet-4-5");
+  // an empty home of its own: the developer's real config.json may already name a Cursor model (`setup --cursor-model`)
+  const home = { STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cpm-")) };
+  assert.equal(cursorPlanModel({ model: "claude-4.5-sonnet" }, home), "claude-sonnet-4-5");
+  assert.equal(cursorPlanModel({ model: "claude-4.1-opus-thinking" }, home), "claude-opus-4-1");
+  assert.equal(cursorPlanModel({ model: "gpt-5" }, home), "gpt-5");
+  assert.equal(cursorPlanModel({ model: "auto" }, home), null);
+  assert.equal(cursorPlanModel({ model: "auto" }, { ...home, STEALTHLAB_CURSOR_MODEL: "claude-sonnet-4-5" }), "claude-sonnet-4-5");
 });
 
 test("a verified cheap change stops the prompt with a message to the user", async () => {

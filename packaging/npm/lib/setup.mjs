@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile, spawnSync } from "node:child_process";
 import { execConfigPath, readExecConfig } from "./exec/store.mjs";
+import { readEnvFileVar } from "./envfile.mjs";
 
 export const DEFAULT_KEY_ENV = "GENERAL_COMPUTE_API_KEY";
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -47,6 +48,7 @@ export function ensureExecConfig({ env = process.env, keyEnv = DEFAULT_KEY_ENV }
 // `setx` (and the System dialog) write and a running shell does not see until restarted.
 export function keyIsSet(name, { env = process.env, platform = process.platform, spawn = spawnSync } = {}) {
   if (String(env[name] || "").trim()) return { set: true, where: "this shell" };
+  if (readEnvFileVar(name, env)) return { set: true, where: "your env file" };
   if (platform === "win32") {
     const r = spawn("reg", ["query", "HKCU\\Environment", "/v", name], { encoding: "utf8", windowsHide: true });
     if (r.status === 0 && new RegExp(`\\b${name}\\b`, "i").test(String(r.stdout || ""))) return { set: true, where: "your user environment" };
@@ -57,6 +59,7 @@ export function keyIsSet(name, { env = process.env, platform = process.platform,
 // The same check without blocking: setup runs it alongside the server probe (the `reg` process costs tens of milliseconds).
 export function keyIsSetAsync(name, { env = process.env, platform = process.platform, execFileImpl = execFile } = {}) {
   if (String(env[name] || "").trim()) return Promise.resolve({ set: true, where: "this shell" });
+  if (readEnvFileVar(name, env)) return Promise.resolve({ set: true, where: "your env file" });
   if (platform !== "win32") return Promise.resolve({ set: false, where: "" });
   return new Promise((resolve) => {
     execFileImpl("reg", ["query", "HKCU\\Environment", "/v", name], { windowsHide: true }, (err, stdout) => {

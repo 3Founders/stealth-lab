@@ -15,6 +15,7 @@
 import { parseArgs } from "node:util";
 import { configPath, readConfig, readPackage, resolveSettings, writeConfig } from "../lib/config.mjs";
 import fs from "node:fs";
+import path from "node:path";
 
 // Everything else is imported by the command that needs it. A hook is a fresh node process on EVERY prompt, and each module
 // costs 5-50 ms to load (measured), so a hook now loads only its own path instead of the installer, the OAuth flow and the
@@ -57,6 +58,9 @@ Usage:
                                              (no provider key on this machine; exit 0 = ready, 3 = not ready)
   npx -y kell-mcp install [options]         register kell with your agents
   kell uninstall [--client <id>]             remove it again
+  kell console [--port N] [--ui-dir <dir>] [--allow-origin <url>]
+                                             the local helper the MCP console page talks to: install, keys, local
+                                             models, streamed replies; loopback only, the address it prints holds a token
   kell doctor                                check the hosted server is reachable
   kell undo [<id>] [--list] [--force]
                                              put back what a dispatched cheap answer changed in this repository
@@ -115,6 +119,9 @@ Setup options (setup also takes the install options below):
   --token-file <f>   read the bearer token from a file (no pasting a long token onto a command line)
   --key-env <NAME>   the environment variable that holds YOUR provider key (default: GENERAL_COMPUTE_API_KEY)
   --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
+  --answers on|off   let a cheap model answer questions and chat (default on); saved in config.json
+  --env-file <path>  read provider keys from this dotenv file (e.g. backend/.env) when they are not in the environment;
+                     only the variables your profiles name are read, nothing is copied; saved in config.json
   --no-exec          connect only: no cheap-model dispatch, nothing blocks a prompt
   --guided           go one step at a time: say what the next step changes and wait for Enter (q quits)
 
@@ -251,6 +258,19 @@ async function cmdSetup(v) {
   if (process.exitCode) return;
   await step("model list and Cursor model", dispatch ? `writes ~/.stealthlab/exec.json (cheap open models; your key is read from $${keyEnv}, never stored) if there is none${v["cursor-model"] ? `, and saves the Cursor model ${v["cursor-model"]}` : ""}.` : "saves the Cursor model only (connect-only mode).");        // the install failed for a client: nothing to check yet
   if (v["cursor-model"]) writeConfig({ cursor_model: String(v["cursor-model"]).trim() });
+  // --answers off|on: whether a cheap model may answer questions and chat (lib/answer.mjs); saved in config.json
+  if (v.answers !== undefined) {
+    const a = String(v.answers).toLowerCase();
+    if (a !== "on" && a !== "off") die("--answers must be on or off", 2);
+    writeConfig({ answers: a });
+  }
+  // --env-file: provider keys are read from this file when they are not in the environment (lib/envfile.mjs); only the
+  // variables the profiles name, never copied out of the file
+  if (v["env-file"]) {
+    const f = path.resolve(String(v["env-file"]));
+    if (!fs.existsSync(f)) die(`--env-file: ${f} does not exist`, 2);
+    writeConfig({ env_file: f });
+  }
   let created = false;
   if (dispatch) {
     try { created = ensureExecConfig({ keyEnv }).created; } catch (err) { die(err.message, 2); }
@@ -498,6 +518,11 @@ async function main() {
         api: { type: "string" },
         "key-env": { type: "string" },
         "cursor-model": { type: "string" },
+        "env-file": { type: "string" },
+        answers: { type: "string" },
+        port: { type: "string" },
+        "ui-dir": { type: "string" },
+        "allow-origin": { type: "string", multiple: true },
         "no-exec": { type: "boolean" },
         guided: { type: "boolean" },
         help: { type: "boolean", short: "h" },
@@ -516,6 +541,18 @@ async function main() {
   switch (cmd) {
     case "join":
       return cmdJoin(sub, v);
+    case "console": {
+      // the local helper behind the MCP console (lib/console.mjs): loopback only, a token in the printed address
+      const { createConsole } = await import("../lib/console.mjs");
+      const c = createConsole({ uiDir: v["ui-dir"] ? path.resolve(String(v["ui-dir"])) : null,
+                                allowOrigins: [].concat(v["allow-origin"] || []).map(String) });
+      const { port, url } = await c.listen(v.port ? Number(v.port) : 0);
+      out(`kell console on 127.0.0.1:${port} (this machine only). Open:
+  ${url}
+Ctrl+C to stop.`);
+      await new Promise(() => {});
+      return;
+    }
     case "setup":
       return cmdSetup(v);
     case "install":

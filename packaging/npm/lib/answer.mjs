@@ -11,6 +11,7 @@
 // to dispatch (lib/dispatch.mjs); an unclear change to the session's model, which can ask. STEALTHLAB_ANSWERS=off turns
 // this off; STEALTHLAB_ANSWER_MODEL (an exec.json profile, default glm-5.3-flash) is the model.
 import { spawnSync } from "node:child_process";
+import { readConfig } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
 import { recordSpend } from "./spend.mjs";
@@ -20,7 +21,13 @@ import { sessionTurns, turnsText } from "./brief.mjs";
 import { sessionStartedAt } from "./dag_run.mjs";
 import { changedSince } from "./dispatch.mjs";
 
-export const answersEnabled = (env = process.env) => (env.STEALTHLAB_ANSWERS || "on").toLowerCase() !== "off";
+// The environment variable wins; otherwise `answers` in ~/.stealthlab/config.json (`setup --answers off|on`), so the switch
+// does not depend on the variable reaching the agent's process (Cursor and Claude Code each start hooks from their own).
+export const answersEnabled = (env = process.env) => {
+  let v = String(env.STEALTHLAB_ANSWERS || "").trim();
+  if (!v) { try { v = String(readConfig(env).answers ?? "").trim(); } catch { v = ""; } }
+  return (v || "on").toLowerCase() !== "off";
+};
 
 export const ANSWER_SYSTEM = [
   "You are the assistant in a developer's coding session, answering their latest message. You get the session's notes",
