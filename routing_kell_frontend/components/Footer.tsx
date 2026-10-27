@@ -7,7 +7,7 @@ const cols = [
   {
     h: "How to use",
     items: [
-      ["Getting started", "/docs#getting-started"], ["For teams", "/docs#teams"],
+      ["For teams", "/docs#teams"],
     ],
   },
   { h: "Account", items: [["Sign in", "/sign-in"], ["Connected apps", "/account/connections"]] },

@@ -41,7 +41,7 @@ export default function InstallCommand() {
       </div>
       <div className="install-foot">
         Sets keळ up in Claude Code and Cursor, then tells you anything still missing.{" "}
-        <a href="/docs#getting-started" style={{ textDecoration: "underline" }}>Setup details</a>
+        <a href="/docs" style={{ textDecoration: "underline" }}>Setup details</a>
       </div>
     </div>
   );

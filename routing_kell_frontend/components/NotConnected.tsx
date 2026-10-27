@@ -16,7 +16,7 @@ export default function StateNotice({ state, empty }: { state: ApiState<unknown>
     return (
       <div className="empty">
         <b>Not connected to a keळ backend.</b>
-        <p>Nothing is shown here because there is nothing to show. Set <code>NEXT_PUBLIC_KEL_API_URL</code> to a running backend (see <a href="/docs#getting-started" style={{ textDecoration: "underline" }}>Getting started</a>) and this page will read from it.</p>
+        <p>Nothing is shown here because there is nothing to show. Set <code>NEXT_PUBLIC_KEL_API_URL</code> to a running backend (see <a href="/docs" style={{ textDecoration: "underline" }}>the docs</a>) and this page will read from it.</p>
       </div>
     );
   if (state.kind === "error")

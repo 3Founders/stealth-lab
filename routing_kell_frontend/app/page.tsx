@@ -131,7 +131,6 @@ export default function Home() {
           <h2 id="h-use" className="h1">Set it up once. <span className="dim">Then just work.</span></h2>
         </Reveal>
         <div className="close-links">
-          <Link href="/docs#getting-started">Getting started <span>→</span></Link>
           <Link href="/docs#teams">For teams <span>→</span></Link>
           <Link href="/docs">Read the docs <span>→</span></Link>
         </div>

@@ -2,10 +2,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { LegalDoc } from "@/lib/legal";
-import InstallCommand from "@/components/InstallCommand";
 
 const SECTIONS = [
-  { id: "getting-started", label: "Getting started" },
   { id: "teams", label: "For teams" },
   { id: "legal", label: "Legal" },
 ] as const;
@@ -13,7 +11,7 @@ type SectionId = (typeof SECTIONS)[number]["id"];
 const isSectionId = (v: string): v is SectionId => SECTIONS.some((s) => s.id === v);
 
 export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
-  const [active, setActive] = useState<SectionId>("getting-started");
+  const [active, setActive] = useState<SectionId>("teams");
 
   useEffect(() => {
     const fromHash = () => {
@@ -38,36 +36,6 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
       </nav>
 
       <div>
-        {active === "getting-started" && (
-          <section id="getting-started" className="doc-sec">
-            <h2>Getting started</h2>
-            <p>Set keळ up once on your machine. It works in Claude Code and Cursor.</p>
-
-            <h3>1. Install</h3>
-            <p>You need Node.js 18.17 or later. One command sets up the agents it finds on your machine, then checks what is still missing and says how to fix each item.</p>
-            <InstallCommand />
-            <p className="small dim">It ends with a checklist. When something is missing, such as a sign-in or a model key, the fix is printed next to it. Run it again any time: it changes only what still needs changing. Add <code>--dry-run</code> to see what it would do first.</p>
-
-            <h3>2. Sign in</h3>
-            <pre><code>npx -y kell-mcp login</code></pre>
-            <p>This opens your browser. After that, keळ keeps your sign-in fresh on its own.</p>
-
-            <h3>3. Restart your agent</h3>
-            <p>Quit and reopen Claude Code or Cursor so it picks keळ up. For Cursor, tell setup which model you use with <code>--cursor-model &lt;model&gt;</code>.</p>
-
-            <h3>4. Once per repository</h3>
-            <pre><code>npx -y kell-mcp survey</code></pre>
-            <p>This writes your repository&rsquo;s .kell folder. It runs on your machine and uploads nothing.</p>
-
-            <h3>Other commands</h3>
-            <table><tbody>
-              <tr><td><code>npx -y kell-mcp doctor</code></td><td>Check that keळ&rsquo;s server is reachable.</td></tr>
-              <tr><td><code>npx -y kell-mcp undo</code></td><td>Put back the last change keळ made in this repository.</td></tr>
-              <tr><td><code>npx -y kell-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
-            </tbody></table>
-          </section>
-        )}
-
         {active === "teams" && (
           <section id="teams" className="doc-sec">
             <h2>For teams</h2>
