@@ -5,6 +5,7 @@ import "@fontsource/barlow/500.css";
 import "./globals.css";
 import AdminHeader from "@/components/AdminHeader";
 import DemoBanner from "@/components/DemoBanner";
+import SmoothScroll from "@/components/SmoothScroll";
 import { OrgProvider } from "@/components/OrgContext";
 
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
+        <SmoothScroll />
         <a className="skip" href="#main">Skip to content</a>
         <div className="gridlines" aria-hidden="true">
           <div className="frame"><i /><i /><i /><i /><i /></div>

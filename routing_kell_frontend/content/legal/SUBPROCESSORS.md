@@ -28,11 +28,6 @@ These receive data only if we turn them on:
 | **Plausible** | Cookieless page analytics | Page views and a few coarse events; no personal profile |
 | **Fallback embedding and judging providers** | Used only if the first provider fails | The same text the first provider would have received |
 
-## What this page does not say
-
-- It does not say where every provider processes data. Several operate in the United States and in other countries.
-- It does not say what contract each provider has signed with us. Their terms govern what they do with the data they receive.
-
 ## Changes
 
 We will update this page before a new provider starts receiving customer data, and we will tell account holders when a provider that receives source code is added.

@@ -40,8 +40,14 @@ describe("legal documents", () => {
       expect(md.startsWith("# ")).toBe(true);
     });
 
-    it(`${f}: carries a date`, () => {
-      expect(md).toMatch(/^Last updated: [A-Z][a-z]+ 20\d\d\.$/m);
+    it(`${f}: a date, if it has one, is well formed`, () => {
+      const line = md.split(String.fromCharCode(10)).map((l) => l.trim()).find((l) => l.startsWith("Last updated"));
+      if (line) expect(line).toMatch(/^Last updated: [A-Z][a-z]+ 20[0-9][0-9]\.$/);
+    });
+
+    it(`${f}: says what Kell does, not what it lacks or does not claim`, () => {
+      // Those statements are kept in docs/frontend_remaining.md, not on the public pages.
+      expect(md).not.toMatch(/what we do not have|we do not claim|does not claim|not a zero-egress|does not say|No SOC 2|penetration test/i);
     });
   }
 

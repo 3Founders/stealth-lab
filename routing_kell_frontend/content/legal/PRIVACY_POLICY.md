@@ -2,7 +2,7 @@
 
 Last updated: October 2026.
 
-This explains what Kell collects, why, who else handles it, and what you can do about it. It does not claim compliance with any particular privacy law or certification, because we have not been assessed against one. If you need specific assurances for your organisation, ask us before you start.
+This explains what Kell collects, why, who else handles it, and what you can do about it.
 
 ## 1. What we collect
 

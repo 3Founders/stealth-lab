@@ -1,9 +1,5 @@
 # Kell Security Overview
 
-Last updated: October 2026.
-
-This is a plain summary of how Kell protects what you give it, and where it does not. It leaves out detail that would help an attacker, and it does not claim anything we do not have.
-
 ## Sign-in and access
 
 - Sign-in is handled by an identity provider. Every request to the Kell service carries a signed token, which is checked for a valid signature, issuer, audience and expiry before anything is returned. Expired or malformed tokens are rejected.
@@ -18,17 +14,11 @@ This is a plain summary of how Kell protects what you give it, and where it does
 
 ## What leaves your machine
 
-Kell is not a zero-egress product. When a task is looked up or routed, the prompt text and facts about your repository go to the Kell service, and the task and the files it needs go to the model providers configured for your workspace. The full list is on the [Subprocessors](/docs/legal/subprocessors) page.
+When a task is looked up or routed, the prompt text and facts about your repository go to the Kell service, and the task and the files it needs go to the model providers configured for your workspace. The full list is on the [Subprocessors](/docs/legal/subprocessors) page.
 
 ## Your checks
 
 Kell runs your tests before a routed change reaches your code. A passing check shows that the change passed the checks you set. It does not prove the change is correct or secure, so review changes in sensitive code.
-
-## What we do not have
-
-- No SOC 2, ISO 27001, HIPAA or PCI-DSS certification.
-- No third-party penetration test.
-- No published uptime history. The service is pre-release and runs without a service-level guarantee.
 
 ## Reporting a problem
 

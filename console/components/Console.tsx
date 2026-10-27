@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ConnectPanel from "@/components/ConnectPanel";
 import CopyCommand from "@/components/CopyCommand";
 import ModelsPanel from "@/components/ModelsPanel";
+import StatusBar from "@/components/StatusBar";
 import PlaygroundPanel from "@/components/PlaygroundPanel";
 import { HelperClient, connectFromLocation } from "@/lib/helper";
 import type { ClientInfo } from "@/lib/types";
@@ -105,6 +106,7 @@ export default function Console() {
 
       {gate.kind === "ready" && (
         <>
+          <StatusBar client={gate.client} />
           <div role="tablist" aria-label="Console" className="tabs">
             {TABS.map((t, i) => (
               <button key={t.id} id={`tab-${t.id}`} role="tab" type="button" aria-selected={tab === t.id} aria-controls={`panel-${t.id}`}
