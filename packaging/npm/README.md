@@ -51,6 +51,8 @@ stdio↔HTTP relay: it forwards JSON-RPC unchanged and handles the session ID,
 protocol-version and auth headers. To avoid the relay there too, add the URL
 under Desktop's **Settings → Connectors → Add custom connector** instead.
 
+claude.ai (web) uses a custom connector against a public HTTPS server, not this installer: see `docs/claude_web_connector.md`.
+
 JSON configs are edited in place. Other servers and keys are kept, a `.bak`
 copy is written first, and a file that doesn't parse is left untouched.
 
