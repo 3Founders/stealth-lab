@@ -1,70 +1,29 @@
-# Cookies & Tracking
+# Cookies and Tracking
 
-**STATUS: DRAFT — REQUIRES LEGAL REVIEW.**
+Last updated: October 2026.
 
-This document describes only what was actually found in the `frontendv1` codebase during this
-audit (2026-09-09) — it does not describe an aspirational or planned tracking program.
+This page describes what the Kell website stores in your browser and what it measures.
 
-## What we found
+## What the site stores
 
-- **No cookie usage found.** A repo-wide search of `frontendv1/src` for `document.cookie` found
-  no matches.
-- **`sessionStorage` — used for one thing: a fallback "viewer id" identity value** used before
-  full authentication is wired in (`frontendv1/src/lib/auth.ts`). This is functional/essential
-  storage (it identifies your session to the backend), not tracking or analytics.
-- **Supabase Auth session client** (`frontendv1/src/lib/supabase/client.ts`) persists your
-  authentication session and handles token auto-refresh, using Supabase's standard browser client
-  behavior (typically `localStorage`-backed). This is essential to staying signed in and is not
-  used for tracking third parties.
-- **No analytics or tracking SDKs found.** A search for common analytics/tracking tooling
-  (Google Analytics/`gtag`, PostHog, Segment, Mixpanel, Amplitude, Hotjar, LogRocket) across
-  `frontendv1/src` returned no matches.
-- **No `frontendv1/package.json` dependency** on any analytics package was found either.
-- **Sentry (error observability) exists on the backend only, and only if configured.**
-  `backend/app/observability.py` initializes Sentry only when a `SENTRY_DSN` environment variable
-  is set; otherwise it is a no-op. This is server-side error/trace telemetry, not a browser
-  tracking cookie or client-side analytics pixel, and it was not found wired into `frontendv1` at
-  all.
+- **Your sign-in.** When you sign in, your browser keeps a session so you stay signed in and the session can refresh. This is needed for the account pages to work. It is not used for advertising or to follow you to other sites.
+- **A copy of the page you were on and small preferences**, only where a page needs them to work.
 
-## The keळ website (`prod_frontend`) — optional analytics and error reporting
+The site sets no advertising cookies and uses no advertising or cross-site tracking.
 
-The public website in `prod_frontend/` can run two privacy-first tools. **Both are off unless the operator configures them at
-build time, and both are skipped entirely when the visitor's browser sends Do Not Track or Global Privacy Control.**
+## Optional measurement
 
-- **Website analytics — Plausible (cloud or self-hosted), only if `NEXT_PUBLIC_PLAUSIBLE_DOMAIN` is set.** Cookieless: it sets no
-  cookies and stores nothing on your device, keeps no personal profile and does not follow you across sites. It records page
-  views and a handful of coarse events: *install command copied*, *Sign in clicked*, *a search was run* (never what you typed),
-  *number of results (bucketed)*, and Core Web Vitals timings (LCP, CLS, INP, TTFB). Code: `prod_frontend/lib/analytics.ts`.
-- **Browser error reporting — Sentry, only if `NEXT_PUBLIC_SENTRY_DSN` is set.** Sends the error and its stack trace, browser and
-  operating system, and the page path *without* its query string or fragment. No user identity, no IP-derived profile
-  (`sendDefaultPii` is off), no cookies, no request bodies, no console output, no session replay, no performance tracing.
-  Code: `prod_frontend/lib/monitoring.ts`.
+The site can use two privacy-first tools. Each is switched on only if we configure it, and each is skipped entirely when your browser sends Do Not Track or Global Privacy Control.
 
-Because neither tool sets cookies or non-essential storage, no consent banner is shown for them. **[FOUNDER / COUNSEL: confirm
-this position for the jurisdictions you serve before enabling either in production; if a jurisdiction requires consent for
-analytics or error reporting, add a consent mechanism first.]**
+- **Page analytics (Plausible).** Cookieless: it stores nothing on your device, builds no profile of you and does not follow you across sites. It counts page views and a few coarse events, such as an install command being copied or Sign in being clicked, plus page-speed timings. It never records what you type.
+- **Error reports (Sentry).** Sent only if configured. A report carries the error, its stack trace, your browser and operating system, and the page path without its query string. It carries no identity, no cookies, no form contents and no session recording.
 
-## What this means
+Because neither tool sets cookies or stores anything on your device, the site does not show a consent banner for them.
 
-As shipped today, kell's frontend does not run any third-party advertising or analytics
-tracking, and does not set tracking cookies. The only client-side persistence found is
-functional: keeping you signed in (Supabase session) and a legacy fallback identity value
-(`sessionStorage`) used ahead of full auth rollout.
+## The tool on your machine
 
-**This can change** as the product adds features (e.g. product analytics, crash reporting in the
-frontend). If and when it does, this document must be updated to reflect what's actually added —
-do not let this document go stale relative to the code. **[FOUNDER: re-run this audit before
-adding any analytics/tracking dependency, and update this document and any required consent
-banner at that time.]**
+Kell's command-line tool and hooks run on your computer, not in the website. What they send to us is described in the [Privacy Policy](/docs/legal/privacy).
 
-## No cookie-consent banner needed today
+## Changes
 
-Because no non-essential cookies or tracking were found, no cookie-consent banner currently
-appears in `frontendv1`, and none was added by this audit — adding one prematurely would overstate
-what the product does. If tracking is added later, a consent mechanism appropriate to that
-tracking (and the jurisdictions involved) will need to be added at that time, per
-[Privacy Policy](./PRIVACY_POLICY.md).
-
----
-*Generated from repository state on 2026-09-09. Cross-references: `frontendv1/src/lib/auth.ts`,
-`frontendv1/src/lib/supabase/client.ts`, `backend/app/observability.py`.*
+If we add tracking, we will update this page first and, where the law requires, ask for your consent.

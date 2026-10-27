@@ -1,86 +1,40 @@
-# Copyright & Third-Party Sources Policy
+# Copyright and Third-Party Sources
 
-**STATUS: DRAFT — REQUIRES LEGAL REVIEW. NOT YET PUBLISHED OR IN EFFECT.**
+Last updated: October 2026.
 
-This document has no legal conclusions about any specific license or source. It states policy and
-process only. **[LEGAL: review before publication — this is exactly the kind of document that
-needs counsel's sign-off given DMCA/copyright-law specifics.]**
+## 1. Where Kell's knowledge comes from
 
-## 1. kell ingests from public sources
+Kell recalls knowledge when you give it a task. Some of that knowledge comes from your own repositories and past work. Some is extracted and rewritten from material published on the public internet, such as documentation and open guides. We say this plainly so you know that not every item Kell shows was written by us or by a Kell user.
 
-Part of the Global Commons is populated automatically from public internet sources
-(`backend/app/services/skill_ingestion.py`). This is disclosed plainly: some procedures in the
-library were not authored by a kell user, but extracted and normalized from something
-publicly published elsewhere.
+## 2. We keep track of where it came from
 
-## 2. Provenance is retained, not discarded
+Material taken from outside keeps a reference to its source, so it is not presented as if it began with Kell. Where the source says who wrote it and under what licence, we keep that too.
 
-Ingested content keeps a provenance reference (source, derivation method) rather than being
-presented as if it originated with kell or an anonymous user — see
-`STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` LC-003/LC-012 for the intended provenance field set
-(source URL, retrieval time, content hash, publisher/author where known, publication date,
-license, license source, attribution requirements). **[FOUNDER: confirm current coverage of this
-field set in production data — the compliance ledger notes provenance completeness as partial as
-of this audit.]**
+## 3. Public does not mean free to reuse
 
-## 3. Public does not mean free to republish
+Material being on the public internet does not mean it is free of copyright or free to republish. When Kell takes material from a source, it screens it for safety and structure. It does not decide who owns the rights or whether a licence allows reuse. Do not assume an item has been cleared for any particular use because Kell showed it to you.
 
-**Content being publicly accessible on the internet does not automatically mean it is free of
-copyright, free to republish, or licensed for reuse.** kell does not make a legal
-determination about the license status of ingested content at ingestion time — the admission gate
-(see [Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md) §3) screens for safety and structural
-validity, **not** for copyright clearance. Do not assume any given piece of ingested content has
-been cleared for reuse just because it passed admission.
+## 4. What you must not send us
 
-## 4. Your obligations when submitting content
+Do not send content you have no right to send. That includes:
 
-When you author or publish content to kell — private or public — you must have the rights
-necessary to do so. Do not submit:
+- material copied from a source whose licence or terms forbid it,
+- confidential material that belongs to an employer, client or other party, unless you are authorised to share it, and
+- anything that infringes someone else's copyright, trademark, patent or other right.
 
-- Content copied from a source whose license or terms prohibit republication or redistribution.
-- Proprietary or confidential material belonging to an employer, client, or third party, without
-  authorization.
-- Content that infringes another party's copyright, trademark, patent, or other intellectual
-  property right.
+You are responsible for what you send. See the [Terms of Service](/docs/legal/terms).
 
-You are responsible for the content you submit. See [Terms of Service](./TERMS_OF_SERVICE.md) §4
-for the representations you make when submitting content.
+## 5. Licences with conditions
 
-## 5. Attribution and license terms must be respected
+Some sources require credit or place other conditions on reuse. We keep source information to help honour those conditions, but we cannot promise that every condition is met for every item. If you believe an item carries conditions we are not honouring, tell us.
 
-Where a source's license requires attribution or imposes other conditions (e.g. share-alike,
-non-commercial), kell's retention of provenance metadata is intended to preserve the
-information needed to honor those conditions — but kell does not independently verify that
-every condition is being met for every ingested item. If you know a specific piece of content
-carries license conditions kell is not honoring, please report it (§6).
+## 6. Takedown and corrections
 
-## 6. Takedown and correction
+If you believe something on Kell infringes your rights, or credits the wrong source, write to us using the contact details at the bottom of this page. Tell us:
 
-If you believe content on kell infringes your copyright or other rights, or misattributes a
-source:
+- who you are and how to reach you,
+- what the material is and where you saw it,
+- what right you say it infringes and why, and
+- a statement that the information you give is accurate and that you are the owner or authorised to act for the owner.
 
-**[FOUNDER/LEGAL: stand up an actual takedown process before launch.]** At minimum this should
-include: a designated contact (**[CONTACT EMAIL]**), what information a notice must contain
-(identification of the work, the allegedly infringing content's location, your contact info, a
-good-faith statement), and a defined response process (removal or quarantine pending review,
-notice to the contributor where applicable, and a counter-notice path). If kell intends to
-rely on a formal safe-harbor regime (e.g. DMCA §512 in the US), counsel must confirm eligibility
-and register a designated agent — **not something this codebase audit can determine.**
-
-Pending a formal process, the fastest interim remedy is: republish a corrected/removed version
-(see [Global Commons Terms](./GLOBAL_COMMONS_TERMS.md) §8) or contact **[CONTACT EMAIL]** for
-manual review, since the automated withdrawal state machine described in the launch-compliance
-spec was not yet implemented as of this audit.
-
-## 7. What kell owns vs. what it hosts
-
-Publicly-sourced content ingested into the Global Commons is not automatically "kell-owned"
-by virtue of ingestion — kell hosts and indexes it, retaining provenance to the original
-source. Content you author yourself is governed by the license you grant under
-[Global Commons Terms](./GLOBAL_COMMONS_TERMS.md) §5 upon publication, or remains private and
-unlicensed to anyone else while it stays private.
-
----
-*Generated from repository state on 2026-09-09. Cross-references:
-`backend/app/services/skill_ingestion.py`, `backend/app/services/ingestion_admission.py`,
-`STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md` (LC-003, LC-012).*
+We will review it promptly, remove or correct the item where the claim stands, and may tell the person who supplied the item. We may end the access of people who repeatedly infringe.

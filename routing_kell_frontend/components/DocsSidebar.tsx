@@ -39,7 +39,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
         {active === "teams" && (
           <section id="teams" className="doc-sec">
             <h2>For teams</h2>
-            <p>For a company rolling keळ out to its developers. Team setup is in early access.</p>
+            <p>For a company rolling Kell out to its developers. Team setup is in early access.</p>
 
             <h3>The admin, once</h3>
             <ol>
@@ -64,7 +64,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
         {active === "legal" && (
           <section id="legal" className="doc-sec">
             <h2>Legal</h2>
-            <p>Terms, privacy and policy documents. These are drafts awaiting legal review and are not yet in effect.</p>
+            <p>The terms, privacy policy and other policies that govern Kell.</p>
             <ul style={{ listStyle: "none", padding: 0 }}>
               {legalDocs.map((d) => (
                 <li key={d.slug} style={{ borderBottom: "1px solid var(--rule)", padding: "10px 0" }}>

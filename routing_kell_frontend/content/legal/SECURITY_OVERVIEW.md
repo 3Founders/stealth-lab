@@ -1,105 +1,35 @@
-# Security Overview (public summary)
+# Kell Security Overview
 
-**STATUS: DRAFT — REQUIRES LEGAL/FOUNDER REVIEW before publishing.**
+Last updated: October 2026.
 
-This is a trimmed, public-facing summary of `SECURITY.md` (the repository's internal/engineering
-threat-model document, which remains the authoritative, more detailed reference — link to it
-alongside this page if you want to be maximally transparent). This summary avoids exploitable
-implementation detail and does not claim any certification kell does not hold.
+This is a plain summary of how Kell protects what you give it, and where it does not. It leaves out detail that would help an attacker, and it does not claim anything we do not have.
 
-## Current posture: two modes, and they are very different
+## Sign-in and access
 
-kell's codebase supports two deployment shapes, and the security posture depends entirely
-on which one you're using:
+- Sign-in is handled by an identity provider. Every request to the Kell service carries a signed token, which is checked for a valid signature, issuer, audience and expiry before anything is returned. Expired or malformed tokens are rejected.
+- Access to stored data is checked on every request against who you are and which team you belong to. Private records are visible to their owner and, for a team, to the team's administrators as the team's settings allow.
+- Team administrators can set budgets, turn Kell off for the whole organisation, and see an audit log of administrative actions.
 
-1. **Local-first (v0.1, as shipped and documented in `SECURITY.md`):** you run the server and
-   database yourself, on your own machine, bound to loopback by default. There is no
-   kell-hosted service in this mode. A bearer token gates access to the MCP server, but it
-   is authentication (proves you have the token), not fine-grained authorization (there is no
-   per-tool/per-scope permission model in this mode).
-2. **Hosted, multi-user (in progress):** kell operates authentication (Supabase Auth),
-   authorization, and the database for you. As of this audit, this mode is **partially built** —
-   see "Known limitations" below before relying on it for anything sensitive.
+## Secrets
 
-**We will not claim a security posture in the published version of this page that the current
-deployment doesn't actually have.** Confirm which mode is live before publishing.
+- A team's model-provider key is stored encrypted, is never shown again after it is saved, and is used only to make the calls you ask for.
+- Keys you keep on your own machine stay there. Kell refers to them by name and does not upload them.
+- Before trace text is stored, strings that look like secrets are removed. This is pattern-based and is a safety net, not a guarantee. Do not rely on it to make confidential material safe to send.
 
-## Authentication
+## What leaves your machine
 
-- Sign-in uses Supabase Auth (email/password, Google OAuth), issuing OIDC-shaped JWTs.
-- The backend validates every bearer token centrally: JWKS-based signature verification,
-  algorithm allow-list (asymmetric signing only — HS256/`none` are rejected), and standard claim
-  checks (audience/issuer/expiry/not-before/subject). Expired or malformed tokens are rejected.
-- MCP server access (for tool-calling clients) is gated by a separate bearer token, checked with
-  constant-time comparison; `stdio` transport has no authentication, by MCP protocol design (if
-  you can spawn the process, you already have equivalent access).
+Kell is not a zero-egress product. When a task is looked up or routed, the prompt text and facts about your repository go to the Kell service, and the task and the files it needs go to the model providers configured for your workspace. The full list is on the [Subprocessors](/docs/legal/subprocessors) page.
 
-## Authorization and tenant isolation
+## Your checks
 
-- A centralized access-control layer (`backend/app/services/access.py`) evaluates
-  visibility/tenancy predicates before content is returned — not an ad-hoc per-endpoint check.
-- Private content is scoped to the owning user (and, where organization scoping is live,
-  the owning organization); public Global Commons content is visible to anyone.
-- PostgreSQL row-level security policies are written as a backstop beneath the application-level
-  checks, but they are **not yet in force in production**: the services still connect with a database role
-  that bypasses them. They take effect once the services connect with the restricted database role. Until
-  then, isolation rests on the application-level checks.
-- **Known limitation, stated plainly:** as of this audit, organization-level (`org`) visibility
-  enforcement was not yet reachable from the live HTTP path in every case, and some
-  cross-tenant/IDOR test coverage was still partial per the internal compliance ledger. Treat
-  organization-scoped sharing as **still maturing**, not a settled guarantee, until that ledger
-  shows it complete.
+Kell runs your tests before a routed change reaches your code. A passing check shows that the change passed the checks you set. It does not prove the change is correct or secure, so review changes in sensitive code.
 
-## Private vs. public boundary
+## What we do not have
 
-- Nothing becomes public except through an explicit publish action — see
-  [Global Commons Terms](./GLOBAL_COMMONS_TERMS.md). Retrieval, embedding, and ingestion never
-  promote private content to public on their own.
-- Publishing creates an independent public copy; it does not "flip a visibility bit" on your
-  private data, and does not carry your private execution history with it.
+- No SOC 2, ISO 27001, HIPAA or PCI-DSS certification.
+- No third-party penetration test.
+- No published uptime history. The service is pre-release and runs without a service-level guarantee.
 
-## Secret handling
+## Reporting a problem
 
-- A single redaction choke point (`trace_redaction.py`) runs on traces before they are written to
-  disk or transmitted anywhere, catching known secret shapes (cloud/provider API key formats,
-  generic bearer tokens, private-key blocks) and excluding tool input/output wholesale when a
-  sensitive path was touched.
-- The same redaction primitive is reused by both the explicit publish path and the internet
-  ingestion admission gate.
-- **This is a best-effort floor, not a guarantee** — stated exactly this way in the underlying
-  code's own documentation. No fixed pattern set catches every secret shape that will ever exist.
-  Do not rely on automated redaction as your only safeguard against submitting a secret.
-
-## Hosted execution
-
-Hosted execution against a connected repository (running a procedure against your own code) is
-gated behind workspace/tenant authorization when enabled (`HOSTED_EXECUTION_ENABLED`), and is
-**off by default**. When off, the execution path uses a caller-provided path directly — acceptable
-only for local/loopback use, not for a shared, hosted deployment. Confirm which mode is active
-before treating hosted execution as tenant-isolated.
-
-## Auditability
-
-An append-only audit-event writer exists (`backend/app/services/audit.py`) intended to record
-sensitive transitions (publication requested/approved, scope changes, export/deletion requests,
-provider-call decisions, etc.). **As of this audit, coverage of this writer across all sensitive
-transitions was not fully confirmed** — re-verify before making a completeness claim publicly.
-
-## Vulnerability reporting
-
-**[CONTACT/CHANNEL]** — the current internal document (`SECURITY.md`) points to GitHub's private
-vulnerability reporting feature on this repository. Confirm this is the channel you want to
-publicize, and add a formal SLA if you intend to commit to one.
-
-## What we do not claim
-
-We do not claim SOC 2, ISO 27001, HIPAA, PCI-DSS, or any other certification. We do not claim
-that any automated screening (admission gate, redaction) is a perfect or complete defense — see
-[Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md) §3 and [Privacy Policy](./PRIVACY_POLICY.md)
-§9.
-
----
-*Generated from repository state on 2026-09-09. Cross-references: `SECURITY.md`,
-`backend/app/services/access.py`, `backend/app/services/audit.py`,
-`backend/app/services/trace_redaction.py`, `backend/app/services/workspace_registry.py`,
-`docs/launch_compliance_implementation_ledger.md`.*
+If you find a security problem, tell us using the contact details at the bottom of this page, and give us reasonable time to fix it before you make it public. Please do not access other people's data, and do not disrupt the service while you investigate.

@@ -35,12 +35,12 @@ export default function Footer() {
           </nav>
         ))}
         <nav className="footer-legal" aria-label="Legal">
-          <span>Legal (drafts)</span>
+          <span>Legal</span>
           <Link href="/docs#legal">Legal documents</Link>
         </nav>
         <div className="footer-base">
           <span>© {new Date().getFullYear()} keळ</span>
-          <span>Pre-release · v0.1 · legal docs are drafts</span>
+          <span>Pre-release · v0.1</span>
         </div>
       </div>
     </footer>

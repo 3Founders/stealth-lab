@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { marked } from "marked";
+import { legalFooterHtml } from "@/lib/legal-config";
 
 export type LegalDoc = { slug: string; title: string; file: string; blurb: string };
 
-// Order = display order. Sources are the repo's docs/legal drafts, copied to content/legal by scripts/sync-legal.mjs.
+// Order = display order. The text of each document is the Markdown file in content/legal.
 export const LEGAL_DOCS: LegalDoc[] = [
   { slug: "terms", title: "Terms of Service", file: "TERMS_OF_SERVICE.md", blurb: "The agreement for using the service." },
   { slug: "privacy", title: "Privacy Policy", file: "PRIVACY_POLICY.md", blurb: "What data is collected and what happens to it." },
@@ -22,7 +23,7 @@ export function getLegalDoc(slug: string) {
   return LEGAL_DOCS.find((d) => d.slug === slug);
 }
 
-/** Render a legal draft to HTML. Links to sibling legal docs are routed in-site; links to other repo files are kept as plain text. */
+/** Renders a legal document to HTML. Links between documents are routed in-site; any other link must be absolute or it is shown as plain text. */
 export function renderLegal(doc: LegalDoc): string {
   const md = fs.readFileSync(path.join(dir, doc.file), "utf-8");
   const renderer = new marked.Renderer();
@@ -31,8 +32,9 @@ export function renderLegal(doc: LegalDoc): string {
     const file = href.replace(/^\.\//, "").split("#")[0];
     const slug = byFile.get(file);
     if (slug) return `<a href="/docs/legal/${slug}"${title ? ` title="${title}"` : ""}>${text}</a>`;
+    if (/^\/docs\/legal\/[a-z-]+$/.test(href)) return `<a href="${href}">${text}</a>`;
     if (/^(https?:|mailto:|#)/.test(href)) return `<a href="${href}" rel="noopener">${text}</a>`;
     return text;
   };
-  return marked.parse(md, { renderer, async: false }) as string;
+  return (marked.parse(md, { renderer, async: false }) as string) + legalFooterHtml();
 }

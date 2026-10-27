@@ -1,153 +1,62 @@
-# kell Terms of Service
+# Kell Terms of Service
 
-**STATUS: DRAFT — REQUIRES LEGAL REVIEW. NOT YET PUBLISHED OR IN EFFECT.**
+Last updated: October 2026.
 
-This draft was generated from the current codebase (backend + `frontendv1`) as of 2026-09-09,
-to describe what kell actually does today. It is not legal advice and must be reviewed by
-qualified counsel before it is shown to a real user or given contractual effect. Every bracketed
-placeholder (e.g. `[LEGAL ENTITY NAME]`) must be filled in by the founder(s)/counsel — do not
-invent these values.
+These Terms cover your use of Kell, the service that remembers what has already been solved in your repositories, routes routine coding tasks to lower-cost models, and checks the result against your own tests before it reaches your code. By creating an account or using Kell you agree to these Terms and to our [Privacy Policy](/docs/legal/privacy) and [Acceptable Use Policy](/docs/legal/acceptable-use).
 
----
+## 1. What Kell is
 
-## 1. Who this agreement is with
+Kell has two parts:
 
-These Terms are between you and **[LEGAL ENTITY NAME]** ("kell," "we," "us"), a
-**[LEGAL ENTITY TYPE, e.g. corporation]** organized in **[JURISDICTION]**. By creating an account
-or using kell, you agree to these Terms and to our
-[Privacy Policy](./PRIVACY_POLICY.md), [Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md), and
-[Global Commons Terms](./GLOBAL_COMMONS_TERMS.md), each incorporated by reference.
+- **A tool on your machine.** It installs into the coding tools you already use, keeps a `.kell` folder in your repository, and runs the checks you configure.
+- **A service we operate.** It looks up relevant knowledge for a task, keeps the records your team asks it to keep, and, for teams, holds the company's model-provider key, budgets and usage records.
 
-## 2. What kell is
+Kell is pre-release software. Features change, and some are in early access.
 
-kell is a system for capturing, verifying, and sharing "procedures" — step-by-step
-instructions an AI coding agent (or a person) can follow to accomplish a task — along with
-execution evidence, provenance, and (optionally) publishing them to a shared public library
-called the **Global Commons**. As implemented today, this includes:
+## 2. Accounts
 
-- Private, per-user procedures and traces (`backend/app/services/procedures.py`,
-  `backend/app/services/personal_contributions.py`).
-- Optional, explicit publication of a private procedure into the public Global Commons
-  (`backend/app/services/publish.py`, `backend/app/services/publication.py`).
-- Automated ingestion of procedures from public internet sources, screened by an admission
-  gate before becoming visible (`backend/app/services/ingestion_admission.py`,
-  `backend/app/services/skill_ingestion.py`).
-- Execution and, for some capabilities, behavioral verification of procedures against evidence
-  (`backend/app/execution/behavior_verification.py` and `backend/app/execution/verifiers/`).
-- Optional hosted execution against a connected repository, gated by workspace/tenant
-  authorization (`backend/app/services/workspace_registry.py`).
+- You need to be able to form a binding contract where you live.
+- You are responsible for your sign-in and for what happens under your account. Tell us promptly if you think it has been used without your permission.
+- If you use Kell for a company, you confirm you are allowed to accept these Terms for it.
 
-The product is under active development. **[FOUNDER: confirm current deployment posture —
-local-only vs. hosted — before publishing these Terms; see SECURITY_OVERVIEW.md §"Known
-limitations" for why this matters.]**
+## 3. Your content
 
-## 3. Eligibility and accounts
+"Your Content" means your code, prompts, task descriptions, repository facts, records and anything else you send to Kell.
 
-- You must be able to form a binding contract in your jurisdiction to use kell.
-- Sign-in is via Supabase Auth (email/password or Google OAuth) — see
-  `frontendv1/src/lib/auth.ts` and `frontendv1/src/app/auth/page.tsx`.
-- You are responsible for safeguarding your account credentials and for all activity under your
-  account.
-- **[LEGAL: minimum age requirement — e.g. 18, or 13 with guardian consent — not determined by
-  the codebase and must be set by the business.]**
+- **You keep ownership** of Your Content.
+- **You give us a licence** to host, process and display it only as needed to run, secure and support the service for you, and to send it to the model providers you or your team have chosen for a task.
+- **You promise** that you have the right to send Your Content to Kell and that doing so does not break the law or anyone's rights, including your employer's or client's confidentiality rules.
+- **Shared knowledge is a choice.** Nothing you send is added to knowledge other people can see unless you explicitly share it.
+- You choose which repositories, files and prompts Kell may see. Do not send anything you are not allowed to send to the providers listed on our [Subprocessors](/docs/legal/subprocessors) page.
 
-## 4. Your content
+## 4. Acceptable use
 
-"Your Content" means procedures, claims, code, execution traces, and any other material you
-submit, whether private or published to the Global Commons.
+You agree to the [Acceptable Use Policy](/docs/legal/acceptable-use).
 
-- **Private content** stays scoped to you (or your organization, once organization-scoped
-  access is live) unless and until you take an explicit action to publish it. See
-  `backend/app/services/access.py` and `backend/app/services/publish.py` for the enforcement
-  mechanism.
-- **You keep ownership** of Your Content, subject to the licenses you grant below.
-- **License to operate the service:** you grant kell a worldwide, non-exclusive,
-  royalty-free license to host, store, process, and display Your Content solely to operate,
-  secure, and improve the service for you (and, for published content, for other users — see
-  §6).
-- You represent that you have the rights necessary to submit Your Content and that it does not
-  infringe or misappropriate any third party's rights. See
-  [Copyright & Third-Party Sources](./COPYRIGHT_AND_THIRD_PARTY_SOURCES.md).
+## 5. Model providers and your own tools
 
-## 5. Acceptable use
+- Tasks that Kell routes are sent to the model providers configured for your workspace. Their terms apply to what they receive. See [Subprocessors](/docs/legal/subprocessors).
+- Your own Claude Code, Cursor or Codex subscription stays yours and stays under its provider's terms. Kell does not ask for, store or pass on those logins.
+- Provider keys you give Kell are used only to make the calls you ask for.
 
-You agree to the [Acceptable Use Policy](./ACCEPTABLE_USE_POLICY.md), which prohibits, among
-other things, submitting credential-theft, exfiltration, destructive, or malware-shaped
-procedures. kell runs automated admission screening on internet-sourced content before it
-becomes visible (`app/services/ingestion_admission.py`), but **this screening is not a
-guarantee** — see §9 and the Acceptable Use Policy for its actual scope and limits.
+## 6. Results are not guarantees
 
-## 6. Global Commons publication
+Kell checks work against the tests and rules you set. A passing check means the work passed those checks. It does not mean the work is correct, secure, complete or suitable for your use. Cheaper models can be wrong, and a wrong answer can pass a weak check. You are responsible for reviewing what Kell changes before you rely on it, especially in production or security-sensitive code.
 
-Publishing is an explicit, separate action from creating private content — it is never automatic.
-When you publish, additional terms apply: see [Global Commons Terms](./GLOBAL_COMMONS_TERMS.md),
-which covers what becomes public, the license you grant on published content, and the
-Candidate/Verified status system. **Publishing to the Global Commons is generally irreversible in
-effect** even where deletion tooling exists — a published object can be superseded or tombstoned,
-but independent copies and derived evidence may persist. Read that document before publishing
-anything.
+Any figures we publish about cost or quality describe particular tests on particular tasks. Your results will differ.
 
-## 7. Candidate vs. Verified — no guarantee of correctness
+## 7. Disclaimer
 
-kell distinguishes procedures that are merely proposed ("Global Candidate") from those with
-independent supporting execution evidence ("Global Verified"). See the
-[Verification Disclaimer](./VERIFICATION_DISCLAIMER.md) for what that distinction actually means
-and does not mean. **Neither status is a warranty.** Following any procedure — Candidate or
-Verified — is at your own risk, especially for destructive, security-sensitive, or
-production-affecting actions.
+KELL IS PROVIDED "AS IS" AND "AS AVAILABLE". TO THE MAXIMUM EXTENT THE LAW ALLOWS, WE GIVE NO WARRANTY OF ANY KIND, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, UNINTERRUPTED SERVICE, OR THAT RESULTS WILL BE ACCURATE.
 
-## 8. Third-party services
+## 8. Limit of liability
 
-kell's backend calls third-party AI/model providers (for embeddings, model calls, and
-optional debate/verification panels) and, if configured, a third-party observability provider.
-See [Subprocessors](./SUBPROCESSORS.md) for the current list. Your interactions that flow through
-these providers are also subject to those providers' own terms, which kell does not
-control.
+TO THE MAXIMUM EXTENT THE LAW ALLOWS, KELL AND THE PEOPLE WHO RUN IT ARE NOT LIABLE FOR INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, OR FOR LOST DATA, PROFITS OR GOODWILL, ARISING FROM YOUR USE OF KELL. Nothing in these Terms limits liability that cannot be limited by law.
 
-## 9. Disclaimers
+## 9. Suspension and ending
 
-STEALTHLAB IS PROVIDED "AS IS" AND "AS AVAILABLE," WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
-Automated safety screening (admission gate), automated behavioral verification, and any
-"Verified" status are **best-effort technical checks, not guarantees** — they can miss real
-issues and can be wrong. kell does not guarantee that any procedure, whether Candidate or
-Verified, is safe, correct, current, or fit for your environment. You are solely responsible for
-reviewing any procedure before executing it, especially in production or security-sensitive
-contexts.
+We may suspend or end your access if you break these Terms or the law, or if your use puts the service or other people at risk. You can stop using Kell at any time and ask us to delete your data as described in the [Privacy Policy](/docs/legal/privacy).
 
-## 10. Limitation of liability
+## 10. Changes
 
-**[LEGAL: standard limitation-of-liability language — cap, exclusions for indirect/consequential
-damages, carve-outs — to be drafted by counsel per governing law.]** TO THE MAXIMUM EXTENT
-PERMITTED BY LAW, STEALTHLAB AND ITS LEGAL ENTITY, OFFICERS, AND EMPLOYEES WILL NOT BE LIABLE FOR
-ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR LOSS OF DATA, PROFITS,
-OR GOODWILL, ARISING FROM YOUR USE OF THE SERVICE.
-
-## 11. Suspension and termination
-
-We may suspend or terminate access for violation of these Terms, the Acceptable Use Policy, or
-applicable law. You may stop using the service and request deletion of your private data at any
-time — see the Privacy Policy §"Your rights" and the in-app **Privacy & Data** page
-(`frontendv1/src/app/me/privacy/page.tsx`). Deletion of published Global Commons content is
-governed by the [Global Commons Terms](./GLOBAL_COMMONS_TERMS.md), not by simple account deletion,
-because other users may already rely on published, independently-verified content.
-
-## 12. Changes to these Terms
-
-**[LEGAL/FOUNDER: define notice mechanism and effective-date policy for material changes —
-e.g. email notice, in-app banner, minimum notice period.]**
-
-## 13. Governing law and disputes
-
-**[LEGAL: governing law, venue, arbitration clause if any — jurisdiction not determined by the
-codebase.]**
-
-## 14. Contact
-
-**[CONTACT EMAIL for legal/Terms questions]**
-
----
-*Generated from repository state on 2026-09-09. Cross-references: `backend/app/services/publish.py`,
-`backend/app/services/publication.py`, `backend/app/services/ingestion_admission.py`,
-`backend/app/execution/behavior_verification.py`, `SECURITY.md`, `DATA_STATEMENT.md`,
-`STEALTHLAB-LAUNCH-COMPLIANCE-SPEC-V1.md`.*
+We may update these Terms. We will put the new date at the top and, where a change matters, tell account holders. Using Kell after the date means you accept the change.
