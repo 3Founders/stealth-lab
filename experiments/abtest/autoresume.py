@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -127,7 +128,10 @@ def main() -> None:
                 return
         launches += 1
         log(f"launch {launches}: {len(missing)} not done")
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # the client must live as long as the run (a detached run keeps only its last function once the client is gone),
+        # and on Windows it died printing its first "✓" to a pipe in the console's code page: UTF-8, its output kept
+        out = open(Path(tempfile.gettempdir()) / f"autoresume-{a.run}-launch{launches}.log", "w", encoding="utf-8")
+        subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         time.sleep(240)                                # let the app appear before checking again
 
 
