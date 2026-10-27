@@ -259,4 +259,15 @@ test("callFindWays: sends up to FIND_WAYS_QUERY_MAX characters of the prompt, no
   };
   await callFindWays({ url: "http://x/mcp", userAgent: "t", query: "a".repeat(6000), repoClaims: "", timeoutMs: 5000, fetchImpl });
   assert.equal(sent.length, FIND_WAYS_QUERY_MAX);
+  assert.ok(sent.startsWith("aaa"));
+});
+
+test("fitQuery: short text untouched; long text keeps head and tail, exactly max long", async () => {
+  const { fitQuery } = await import("../lib/hook.mjs");
+  assert.equal(fitQuery("short"), "short");
+  const long = "HEAD" + "x".repeat(9000) + "THE REAL ASK";
+  const out = fitQuery(long);
+  assert.equal(out.length, 4000);
+  assert.ok(out.startsWith("HEAD") && out.endsWith("THE REAL ASK"));
+  assert.equal(fitQuery(long, 1500).length, 1500);
 });

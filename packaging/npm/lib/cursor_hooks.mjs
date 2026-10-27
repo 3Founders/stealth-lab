@@ -123,7 +123,7 @@ export function onBeforeSubmitPrompt(payload, { env = process.env, settings, now
   const job = path.join(configDir(env), "hooks", "jobs", `cursor-${now}-${crypto.randomUUID()}.json`);
   writeJson(job, {
     conversation_id: payload.conversation_id, generation_id: payload.generation_id || null,
-    prompt: String(payload.prompt).trim().slice(0, FIND_WAYS_QUERY_MAX), workspace: workspaceOf(payload), mode,
+    prompt: String(payload.prompt).trim(), workspace: workspaceOf(payload), mode,
     model: typeof payload.model === "string" ? payload.model : null,
   });
   spawnWorker(job, env);

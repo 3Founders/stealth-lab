@@ -442,13 +442,20 @@ FIND_WAYS_GUIDE = (
     '(the planner agent) compile the plan and write `.kell/` yourself --\n'
     'the `plan_and_run` prompt has the format.\n'
     '\n'
-    'Call it ONCE, before writing code, for any task you would describe in a\n'
-    'sentence or more (a bug fix, a feature, a data transformation, a config\n'
-    "change). Don't call it for a one-line edit, a question about this repo's\n"
-    'own code, or the same request twice -- repeats are served from cache and\n'
-    'then refused.\n'
+    'The unit is a TASK, not a message: a goal plus the context needed to do\n'
+    'it. Call it at the start of every new task, before writing code (a bug\n'
+    'fix, a feature, a data transformation, a config change), and again when\n'
+    "the task changes. One user message can hold several tasks (one call each);\n"
+    "a follow-up on the same task needs no new call. Don't call it for a\n"
+    "one-line edit, a question about this repo's own code, or the same task\n"
+    'twice -- repeats are served from cache and then refused.\n'
     '\n'
-    'query: what you want done, in plain words ("add a DOCX export").\n'
+    'query: the task as a self-contained statement -- the goal first, then the\n'
+    'context that decides how it is done (language and framework, the files or\n'
+    'components involved, constraints, how success is checked). For example:\n'
+    '"add a DOCX export to the report page of a Django 4 app; keep the existing\n'
+    'table styles; check: the report tests pass". Not a paste of the user\'s\n'
+    'message or logs.\n'
     "repo_claims: the text of this repo's `.kell/claims.md`\n"
     '  (`CLAIM|R-001|current|stack|repository|Node 20.11|source=.nvmrc:1#sha=9f2c|version=1`\n'
     '  lines; up to 200 facts / 64 KB; write it with the `survey_repo` prompt).\n'

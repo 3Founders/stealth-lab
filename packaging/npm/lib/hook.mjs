@@ -206,6 +206,18 @@ export function shouldLookUp(prompt, policy) {
 // 1500-character cut because it only judges whether to look up at all, and costs a model call on every prompt.
 export const FIND_WAYS_QUERY_MAX = 4000;
 
+// Fit a long prompt into `max` characters keeping its head AND its tail: the ask is often last, after pasted logs.
+// Exactly `max` characters when cut. Twin of backend/app/utils/condense.py -- keep the two in step.
+export function fitQuery(text, max = FIND_WAYS_QUERY_MAX, tail = 500) {
+  const s = String(text ?? "");
+  if (s.length <= max) return s;
+  const t = Math.min(tail, Math.floor(max / 4));
+  const marker = "\n...\n";
+  const head = max - t - marker.length;
+  if (head <= 0) return s.slice(0, max);
+  return s.slice(0, head) + marker + (t ? s.slice(s.length - t) : "");
+}
+
 const CLAIMS_BUDGET = 64000; // the server's MAX_REPO_CLAIMS_BYTES
 
 // Repository facts for find_ways: claims.md, then the claims/<unit>.md pages of the units this prompt is
@@ -285,7 +297,7 @@ export async function callFindWays({ url, token, userAgent, query, repoClaims, t
   await post({ jsonrpc: "2.0", method: "notifications/initialized" }, sid, proto);
   const res = await post({
     jsonrpc: "2.0", id: 2, method: "tools/call",
-    params: { name: "find_ways", arguments: { query: String(query).slice(0, FIND_WAYS_QUERY_MAX), repo_claims: repoClaims, ...extra } },
+    params: { name: "find_ways", arguments: { query: fitQuery(query), repo_claims: repoClaims, ...extra } },
   }, sid, proto);
   if (!res.ok) throw new Error(`find_ways HTTP ${res.status}`);
   const body = parseBody(await res.text());
@@ -317,7 +329,7 @@ export async function callTriage({ url, token, userAgent, query, context = "", t
   try {
     const res = await fetchImpl(target, {
       method: "POST", signal: AbortSignal.timeout(timeoutMs),
-      body: JSON.stringify({ query: String(query).slice(0, 1500), ...(context ? { context: String(context).slice(-4000) } : {}) }),
+      body: JSON.stringify({ query: fitQuery(query, 1500), ...(context ? { context: String(context).slice(-4000) } : {}) }),
       headers: { accept: "application/json", "content-type": "application/json", "user-agent": userAgent,
                  ...(token ? { authorization: `Bearer ${token}` } : {}) },
     });

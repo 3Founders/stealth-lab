@@ -30,6 +30,7 @@ import asyncpg
 from app.services.access import AccessScope
 from app.services.goals import normalize_goal_name
 from app.services.routed_reads import fetch_goal
+from app.utils.condense import condense
 from app.utils import stage_timer as _stages
 
 log = logging.getLogger(__name__)
@@ -163,12 +164,12 @@ async def _specific_goal_ids(pool: asyncpg.Pool, goal_id: str, query: str, *, ac
               FROM goal_search_index g
              WHERE g.goal_id IN (SELECT goal_id FROM down) AND g.status IN ('active', 'candidate') AND {vis}
             """,
-            str(goal_id), SPECIFIC_GOAL_DEPTH, query[:2000], *vis_params)
+            str(goal_id), SPECIFIC_GOAL_DEPTH, condense(query, 2000), *vis_params)
         if not cands:
             return []
         rank = {r["id"]: float(r["r"] or 0.0) for r in await search_group.fetch_all(
             pool, "SELECT goal_id::text AS id, ts_rank(search_tsv, plainto_tsquery('english', $2)) AS r "
-            "FROM goal_search_docs WHERE goal_id = ANY($1::uuid[])", [c["id"] for c in cands], query[:2000], strict=True)}
+            "FROM goal_search_docs WHERE goal_id = ANY($1::uuid[])", [c["id"] for c in cands], condense(query, 2000), strict=True)}
         # ORDER BY rank DESC, t_created DESC NULLS LAST, goal_id -- as stable sorts, last key first
         by_id = sorted(cands, key=lambda c: c["id"])
         ordered = (sorted((c for c in by_id if c["t_created"] is not None), key=lambda c: c["t_created"], reverse=True)
@@ -192,7 +193,7 @@ async def _specific_goal_ids(pool: asyncpg.Pool, goal_id: str, query: str, *, ac
          ORDER BY ts_rank(g.search_tsv, plainto_tsquery('english', $3)) DESC, g.t_created DESC NULLS LAST, g.goal_id
          LIMIT {int(SPECIFIC_GOAL_LIMIT)}
         """,
-        str(goal_id), SPECIFIC_GOAL_DEPTH, query[:2000], *vis_params)
+        str(goal_id), SPECIFIC_GOAL_DEPTH, condense(query, 2000), *vis_params)
     return [r["id"] for r in rows]
 
 

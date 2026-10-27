@@ -83,6 +83,7 @@ from app.db.session import create_pool
 from datetime import timedelta
 
 from app.utils import stage_timer as _stages
+from app.utils.condense import condense
 from app.services.access import AccessScope, TenantScope, visibility_predicate
 from app.services.authn import (
     FetchingJwks,
@@ -467,7 +468,14 @@ _V1_INSTRUCTIONS = (
     "resources stealth://prompts/survey_repo and stealth://prompts/plan_and_run. "
     "1) find_ways(query, repo_claims=<claims.md text>) returns knowledge: the "
     "Goal, the chosen Procedure(s) with every step in full, alternatives, and "
-    "which repo facts supported or blocked each choice. 2) You compile the "
+    "which repo facts supported or blocked each choice. The unit is a TASK, not a "
+    "message: a goal plus the context needed to do it. Call find_ways at the start of "
+    "every new task, and again when the task changes; one user message can hold "
+    "several tasks (one call each), and a follow-up on the same task needs no new call. "
+    "Write the query as a self-contained statement of the task: the goal first, then "
+    "the context that decides how it is done (language and framework, the files or "
+    "components involved, constraints, how success is checked), not a paste of the "
+    "user's message or logs. 2) You compile the "
     "plan into .kell/procedures.md + .kell/run.md yourself (the "
     "plan_and_run prompt has the format), then do each step or hand a "
     "one-line pointer to a subagent, and check each step's proof. 3) "
@@ -1002,7 +1010,7 @@ async def triage_route(request: Request) -> JSONResponse:
     query = body.get("query") if isinstance(body, dict) else None
     if not isinstance(query, str) or not query.strip():
         return JSONResponse({"error": "send JSON with a non-empty string `query`"}, status_code=400)
-    query = query.strip()[: _ft.QUERY_MAX]
+    query = condense(query.strip(), _ft.QUERY_MAX)
     context = body.get("context") if isinstance(body.get("context"), str) else ""
     context = context.strip()[-_ft.CONTEXT_MAX:]
     token = await _route_token(request)
@@ -1807,10 +1815,14 @@ async def find_ways(
     Find proven ways to do a coding task. Returns KNOWLEDGE -- the Goal, the chosen Procedure with its steps, the
     alternatives, and which repo facts supported or blocked each -- not a plan: you plan, and write `.kell/`.
 
-    Call it ONCE, before writing code, for a task you would describe in a sentence or more. Not for a one-line
-    edit, a question about this repo's own code, or the same request twice (repeats are cached, then refused).
+    The unit is a TASK, not a message: a goal plus the context needed to do it. Call it at the start of every new
+    task, before writing code, and again when the task changes. One user message can hold several tasks (one call
+    each); a follow-up on the same task needs no new call. Not for a one-line edit, a question about this repo's own
+    code, or the same task twice (repeats are cached, then refused).
 
-    query: the task in plain words ("add a DOCX export"). repo_claims: the text of `.kell/claims.md`, if any.
+    query: the task as a self-contained statement: the goal first, then the context that decides how it is done
+    (stack, files or components, constraints, how success is checked). Not a paste of the user's message or logs.
+    repo_claims: the text of `.kell/claims.md`, if any.
     detail: "full" (default) or "summary" (a line per step; ask again with "full" for the way you will follow).
     outcome: "resolved", "ambiguous" (you pick, or rephrase), "no_match", or "not_needed" (not a reusable task).
     Optional: candidates=["model|scaffold", ...] or my_model -> a `model_plan` (try A; if its check fails, B);
@@ -1953,7 +1965,7 @@ async def _task_code(query: str) -> Optional[str]:
 
     if (_os.environ.get("STEALTH_ROUTING_TASK_CODES") or "on").lower() == "off" or not (query or "").strip():
         return None
-    key = _hl.sha256(query.strip()[:4000].encode("utf-8")).hexdigest()
+    key = _hl.sha256(condense(query.strip(), 4000).encode("utf-8")).hexdigest()
     if key in _TASK_CODE_CACHE:
         return _TASK_CODE_CACHE[key]
     code = None
@@ -1964,7 +1976,7 @@ async def _task_code(query: str) -> Optional[str]:
         cb = _sc.load()
         embedder = Embedder()
         if cb is not None and embedder.embedding_model_id() == cb.embedding_model_id:
-            vec = (await embedder.embed([query.strip()[:4000]], input_type="document"))[0]
+            vec = (await embedder.embed([condense(query.strip(), 4000)], input_type="document"))[0]
             code = cb.assign(vec)
     except Exception:  # noqa: BLE001 -- no code only means the coarser key, as before
         code = None
