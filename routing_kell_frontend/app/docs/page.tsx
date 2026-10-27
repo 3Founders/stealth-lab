@@ -11,7 +11,7 @@ export default function Docs() {
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>DOCS</b></div>
         <h1 className="display"><AnimatedHeading>Docs</AnimatedHeading></h1>
-        <p className="lead">Setup, day-to-day use, the .kell folder, and rolling keळ out to a team.</p>
+        <p className="lead">Setup and rolling keळ out to a team.</p>
       </section>
 
       <div className="frame docs">

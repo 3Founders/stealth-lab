@@ -11,7 +11,7 @@ import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
 
 export const metadata: Metadata = {
-  title: { default: "keळ: Recall, reuse, route, reduce.", template: "%s · keळ" },
+  title: { default: "keळ: Cut LLM API bills by 50% without losing prompt cache retention.", template: "%s · keळ" },
   description:
     "keळ gives your coding agent a memory of your repo, reuses what's already been solved, and hands each task to the cheapest model that can do it. Nothing reaches your code until your own tests pass.",
   icons: { icon: "/kel-mark.png" },

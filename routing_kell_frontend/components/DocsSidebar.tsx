@@ -6,8 +6,6 @@ import InstallCommand from "@/components/InstallCommand";
 
 const SECTIONS = [
   { id: "getting-started", label: "Getting started" },
-  { id: "how-to-use", label: "How to use" },
-  { id: "stealth-folder", label: "The .kell folder" },
   { id: "teams", label: "For teams" },
   { id: "legal", label: "Legal" },
 ] as const;
@@ -59,7 +57,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
 
             <h3>4. Once per repository</h3>
             <pre><code>npx -y kell-mcp survey</code></pre>
-            <p>This writes your repository&rsquo;s <a href="#stealth-folder" style={{ textDecoration: "underline" }} onClick={(e) => { e.preventDefault(); go("stealth-folder"); }}>.kell folder</a>. It runs on your machine and uploads nothing.</p>
+            <p>This writes your repository&rsquo;s .kell folder. It runs on your machine and uploads nothing.</p>
 
             <h3>Other commands</h3>
             <table><tbody>
@@ -67,48 +65,6 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
               <tr><td><code>npx -y kell-mcp undo</code></td><td>Put back the last change keळ made in this repository.</td></tr>
               <tr><td><code>npx -y kell-mcp uninstall</code></td><td>Remove keळ from your agents.</td></tr>
             </tbody></table>
-          </section>
-        )}
-
-        {active === "how-to-use" && (
-          <section id="how-to-use" className="doc-sec">
-            <h2>How to use</h2>
-            <p>Work the way you already do. Ask your agent for what you want, in your own words. keळ takes the tasks it can do for less, and leaves the rest to your agent&rsquo;s own model.</p>
-            <p>A change from keळ reaches your code only after it passes your project&rsquo;s own checks. If it doesn&rsquo;t pass, nothing is applied and your agent does the task as it always has.</p>
-
-            <h3>Getting good results</h3>
-            <ul>
-              <li><b>Have tests.</b> Your project&rsquo;s tests are how keळ knows a change works. The better they cover your code, the more tasks keळ can safely take.</li>
-              <li><b>Say what you want done.</b> &ldquo;The CSV export drops the last row; fix it&rdquo; gives keळ more to go on than &ldquo;look at the export.&rdquo;</li>
-              <li><b>Give it time in a repository.</b> keळ learns which kinds of tasks it handles well in your project, so the savings grow as you use it.</li>
-            </ul>
-
-            <h3>You stay in control</h3>
-            <table><tbody>
-              <tr><td><code>!opus</code> at the start of a prompt</td><td>Skip keळ for that prompt. Your agent&rsquo;s own model does it.</td></tr>
-              <tr><td><code>npx -y kell-mcp undo</code></td><td>Put back the last change keळ made. <code>--list</code> shows earlier ones; it refuses if you have edited those files since.</td></tr>
-              <tr><td><code>npx -y kell-mcp uninstall</code></td><td>Turn keळ off completely.</td></tr>
-            </tbody></table>
-          </section>
-        )}
-
-        {active === "stealth-folder" && (
-          <section id="stealth-folder" className="doc-sec">
-            <h2>The .kell folder</h2>
-            <p>What keळ learns about a repository lives in that repository, in a folder named <code>.kell</code>. It is plain text: you can read it, edit it, and commit it like any other file.</p>
-
-            <h3>What is in it</h3>
-            <table><tbody>
-              <tr><td><code>claims.md</code></td><td>Facts about your project, each pointing at the file and line it comes from.</td></tr>
-              <tr><td><code>library.md</code></td><td>Problems already solved in this repository, each with the check that proved the fix.</td></tr>
-              <tr><td><code>SUMMARY.md</code></td><td>A short overview of the above.</td></tr>
-            </tbody></table>
-
-            <h3>Why it helps</h3>
-            <p>Each new task starts from what the repository already knows, instead of from zero. A problem like one solved last week gets done faster and for less.</p>
-
-            <h3>Share it, or keep it</h3>
-            <p>Commit <code>.kell</code> and everyone on your team starts from the same knowledge. Leave it out of git and it stays on your machine. Either way, you can correct or delete anything in it.</p>
           </section>
         )}
 

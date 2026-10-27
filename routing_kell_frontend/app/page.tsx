@@ -1,5 +1,4 @@
 import Link from "next/link";
-import InstallCommand from "@/components/InstallCommand";
 import Reveal from "@/components/Reveal";
 import SectionRail from "@/components/SectionRail";
 import ActionWalkthrough from "@/components/ActionWalkthrough";
@@ -47,15 +46,15 @@ export default function Home() {
       {/* HERO */}
       <section id="top" className="hero frame grid" aria-labelledby="h-hero">
         <h1 id="h-hero" className="display">
-          <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Recall, reuse,</span></span>
-          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>route, <span className="hl">reduce</span>.</span></span>
+          <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Cut LLM API bills by <span className="hl">50%</span></span></span>
+          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>without losing</span></span>
+          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>prompt cache retention.</span></span>
         </h1>
         <Reveal className="hero-sub stack" delay={250}>
-          <p className="lead hero-q">What if you could halve your coding agent&rsquo;s bill?</p>
+          <p className="lead hero-q">Recall, reuse, route, reduce.</p>
           <p className="lead">keळ remembers your repo, reuses what&rsquo;s already been solved, and sends each task to the cheapest model that can do it, without breaking your agent&rsquo;s prompt cache. Nothing reaches your code until your own tests pass.</p>
           <p className="dim small">Works inside Claude Code and Cursor. What it learns stays in your repository.</p>
         </Reveal>
-        <Reveal className="hero-install" delay={350}><InstallCommand /></Reveal>
         <InteractiveLogo />
       </section>
 
@@ -132,7 +131,6 @@ export default function Home() {
           <h2 id="h-use" className="h1">Set it up once. <span className="dim">Then just work.</span></h2>
         </Reveal>
         <div className="close-links">
-          <Link href="/#install">Install keळ <span>one command</span></Link>
           <Link href="/docs#getting-started">Getting started <span>→</span></Link>
           <Link href="/docs#teams">For teams <span>→</span></Link>
           <Link href="/docs">Read the docs <span>→</span></Link>

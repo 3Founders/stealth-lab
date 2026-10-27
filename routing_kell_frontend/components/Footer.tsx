@@ -3,11 +3,11 @@ import Image from "next/image";
 
 // Only routes and anchors that exist in this build.
 const cols = [
-  { h: "Product", items: [["Install", "/#install"], ["See it work", "/#action"], ["Docs", "/docs"]] },
+  { h: "Product", items: [["See it work", "/#action"], ["Docs", "/docs"]] },
   {
     h: "How to use",
     items: [
-      ["Getting started", "/docs#getting-started"], ["How to use", "/docs#how-to-use"], ["For teams", "/docs#teams"],
+      ["Getting started", "/docs#getting-started"], ["For teams", "/docs#teams"],
     ],
   },
   { h: "Account", items: [["Sign in", "/sign-in"], ["Connected apps", "/account/connections"]] },
