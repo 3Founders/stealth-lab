@@ -1,9 +1,9 @@
 "use client";
 import { useRef, useState } from "react";
-import { track } from "@/lib/analytics";
+import { track, type EventName } from "@/lib/analytics";
 
 // A read-only block with a Copy button, in the same frame as the install command.
-export default function CopyField({ label, value, event }: { label: string; value: string; event: string }) {
+export default function CopyField({ label, value, event }: { label: string; value: string; event: EventName }) {
   const [done, setDone] = useState(false);
   const t = useRef<number>(undefined);
 
