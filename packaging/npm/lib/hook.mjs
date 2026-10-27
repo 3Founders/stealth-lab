@@ -54,6 +54,10 @@ export function hookPolicy(env = process.env) {
     minWords: Number(env.STEALTHLAB_HOOK_MIN_WORDS || 1),
     timeoutMs: Number(env.STEALTHLAB_HOOK_TIMEOUT_MS || 25000),
     triage: (env.STEALTHLAB_HOOK_TRIAGE || "on").toLowerCase() !== "off",
+    // The triage verdict is still asked for (dispatch and routing read it), but by default it no longer SKIPS the
+    // lookup: nearly every prompt is looked up so it can be routed and counted. "no lookup needed" prompts get a
+    // plan-only lookup (nothing reaches the session's context). STEALTHLAB_HOOK_TRIAGE_SKIP=on restores skipping.
+    triageSkips: (env.STEALTHLAB_HOOK_TRIAGE_SKIP || "off").toLowerCase() === "on",
     // a hang guard only: no verdict means no dispatch, so a slow judge must not be cut off (the server's own judge limit
     // is find_ways_triage_timeout_ms)
     triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 30000),
@@ -588,7 +592,9 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     }
   }
   if (policy.triage) {
-    if (verdict && verdict.needs_retrieval === false) {
+    if (verdict && verdict.needs_retrieval === false && !policy.triageSkips) {
+      planOnly = true;                   // looked up anyway, for the plan and the record; no knowledge is injected
+    } else if (verdict && verdict.needs_retrieval === false) {
       // No lookup for this prompt. Clear the previous prompt's remembered Goal so the capture hooks
       // (lib/capture_hook.mjs) never report this prompt's outcome against it.
       try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }

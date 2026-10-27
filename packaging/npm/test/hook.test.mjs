@@ -167,10 +167,10 @@ test("triageUrl: the route sits next to /mcp, keeping origin and base path", () 
   assert.equal(triageUrl("not a url"), null);
 });
 
-test("triage says no lookup needed: find_ways is never called and the prompt is left alone", async () => {
+test("triage says no lookup needed (STEALTHLAB_HOOK_TRIAGE_SKIP=on): find_ways is never called and the prompt is left alone", async () => {
   const calls = [], out = [];
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "explain what parse_args does in cli.py please", cwd: os.tmpdir() }),
-    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: {},
+    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: { STEALTHLAB_HOOK_TRIAGE_SKIP: "on" },
     fetchImpl: triageServer(() => json({ needs_retrieval: false, kind: "knowledge_question" }), RESOLVED, calls),
     write: (s) => out.push(s), log: () => {} });
   assert.equal(out.length, 0);
@@ -270,4 +270,14 @@ test("fitQuery: short text untouched; long text keeps head and tail, exactly max
   assert.equal(out.length, 4000);
   assert.ok(out.startsWith("HEAD") && out.endsWith("THE REAL ASK"));
   assert.equal(fitQuery(long, 1500).length, 1500);
+});
+
+test("triage says no lookup needed, default: the lookup still runs (plan-only), nothing is injected", async () => {
+  const calls = [], out = [];
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "explain what parse_args does in cli.py please", cwd: os.tmpdir() }),
+    settings: { url: "http://x/mcp", token: "tok" }, userAgent: "t", env: {},
+    fetchImpl: triageServer(() => json({ needs_retrieval: false, kind: "knowledge_question" }), RESOLVED, calls),
+    write: (s) => out.push(s), log: () => {} });
+  assert.ok(calls.some((c) => c.rpc === "tools/call"), "find_ways was called");
+  assert.equal(out.length, 0);
 });
