@@ -690,6 +690,17 @@ export async function providerQuota(profile, env = process.env, fetchImpl = glob
   return quota;
 }
 
+// How many cheap agents one provider can run at once: its tokens-per-minute quota (the probe above) over what one agent
+// uses. One agent resends its whole history each step and the provider also counts what an in-flight request may
+// still produce, so it takes ~90K a minute: three agents on General Compute's ~199K/minute got 86 HTTP 429s in 36 runs
+// and spent their 600 s retrying (cache-full-1, jsonargparse, 2026-10-27); two at once did not (ct-smoke, 2026-10).
+// No quota known -> the plain width.
+export const AGENT_TOKENS_PER_MINUTE = 90_000;
+export function providerWidth(minute, width) {
+  if (!Number.isFinite(minute) || minute <= 0) return width;
+  return Math.max(1, Math.min(width, Math.floor(minute / AGENT_TOKENS_PER_MINUTE)));
+}
+
 // The rungs whose provider has enough left today; the others are dropped with a log line.
 export async function withQuota(rungs, env, { min, fetchImpl, log = () => {} } = {}) {
   if (!min) return rungs;
@@ -1271,6 +1282,15 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const runCap = (() => { try { return readExecConfig(env).max_concurrent_runs || Infinity; } catch { return Infinity; } })();
   // a rung's provider: its profile's endpoint host, else its executor
   const providerOf = (r) => { try { return new URL(profilesNow[r.model]?.openai_base_url).host; } catch { return r.executor || "?"; } };
+  // each provider's own width, from its tokens-per-minute quota (cached by the quota check: no new request)
+  const widthOf = new Map();
+  for (const r of rungs) {
+    const prof = profilesNow[r.model], p = providerOf(r);
+    if (widthOf.has(p) || !prof?.openai_base_url || r.executor === "claude") continue;
+    const q = await providerQuota(prof, env, fetchImpl).catch(() => null);
+    widthOf.set(p, providerWidth(q?.minute, width));
+    if (widthOf.get(p) < width) log(`dispatch: ${widthOf.get(p)} at once on ${p} (its tokens-per-minute quota is ${q.minute})`);
+  }
   let winner = null;
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
@@ -1317,7 +1337,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // a middle model waits for every cheaper one to finish (queued or running)
       const t = tierOf(queue[i].model);
       const holdTier = t > 1 && [...queue, ...rungs.filter((r) => pending.has(r.unit))].some((r) => tierOf(r.model) < t);
-      if (!holdLast && !holdTier && pending.size < runCap && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < width) {
+      if (!holdLast && !holdTier && pending.size < runCap && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < (widthOf.get(p) ?? width)) {
         const rung = queue.splice(i, 1)[0];
         if (t > 1 && !tierStarted) {
           // the middle model's own time from now: the cheap models' limit has been used up by them

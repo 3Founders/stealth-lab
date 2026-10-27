@@ -12,6 +12,9 @@
 //   d  six tool calls in a row without any change to the worktree's diff, AFTER the first change was made: it has stopped
 //      making progress (exploring before the first edit is never counted: the first reads and searches are the work).
 //      A read, search or listing not made before is new information, not a stall: it counts only toward 3x the threshold
+//   e  eight times that many tool calls (48) and still no change at all: it is only reading. gpt-oss searched and re-read
+//      the same file 55-75 times without an edit in 8 of 9 runs and always ran out the full 600 s; the runs that did pass
+//      made their first change within 34 calls (cache-full-1, jsonargparse, 2026-10-27)
 //
 // A stalled run is reported as failed (with the rule that stopped it) and counted against its model: it did fail. Thresholds:
 // STEALTHLAB_EARLY_STOP_STEPS (d, default 6), STEALTHLAB_EARLY_STOP_ERRORS (c, default 3). STEALTHLAB_EARLY_STOP=off turns the
@@ -140,6 +143,9 @@ export class StallDetector {
       return { rule: "d", why: `${this.browse + this.still} tool calls in a row without any change to the worktree` };
     }
     if (!this.started && this.fp !== null && this.fp0 !== undefined && this.fp !== this.fp0) this.started = true;
+    if (!this.started && this.step >= this.noChangeSteps * 8) {
+      return { rule: "e", why: `${this.step} tool calls without any change to the worktree` };
+    }
     if (this.started && this.still >= this.noChangeSteps) {
       return { rule: "d", why: `${this.still} tool calls in a row without any change to the worktree` };
     }

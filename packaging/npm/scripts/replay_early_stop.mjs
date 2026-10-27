@@ -10,6 +10,7 @@
 //   rule c  exact: three "(error)" lines in a row
 //   rule d  an UNDER-estimate: six read-only calls (read_file / list_files / search) in a row after the first edit or write; a
 //           run_shell in between could have changed the worktree, so any run_shell resets the count
+//   rule e  an UNDER-estimate too: 48 calls with no edit, write or run_shell (a shell command could have changed the worktree)
 //   rules a and b need the check output and the file contents, which the log does not keep: not replayable from it. They are
 //           covered by the unit tests; run the live arm to see them.
 // Seconds saved are estimated as the attempt's duration x (steps after the stop / all steps): the log has no per-step times.
@@ -24,14 +25,15 @@ export function replayLog(text, { errorRun = 3, noChangeSteps = 6 } = {}) {
     const m = /^step (\d+): (\w+)(?: (\S+))?( \(error\))?$/.exec(line.trim());
     if (m && m[2] !== "asking") steps.push({ n: Number(m[1]), tool: m[2], error: Boolean(m[4]) });
   }
-  let errors = 0, still = 0, started = false;
+  let errors = 0, still = 0, started = false, shell = false;
   for (const [i, s] of steps.entries()) {
     errors = s.error ? errors + 1 : 0;
     if (errors >= errorRun) return { rule: "c", at: i + 1, of: steps.length };
     if (s.tool === "edit_file" || s.tool === "write_file") { started = true; still = 0; }
-    else if (s.tool === "run_shell") still = 0;
+    else if (s.tool === "run_shell") { still = 0; shell = true; }
     else if (started && READ_ONLY.has(s.tool)) still++;
     if (started && still >= noChangeSteps) return { rule: "d", at: i + 1, of: steps.length };
+    if (!started && !shell && i + 1 >= noChangeSteps * 8) return { rule: "e", at: i + 1, of: steps.length };
   }
   return { rule: null, at: steps.length, of: steps.length };
 }

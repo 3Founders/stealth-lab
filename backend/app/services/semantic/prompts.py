@@ -403,10 +403,14 @@ TRIAGE_KINDS = {
 WORK_KINDS = {
     "change": ("It asks the agent to make a change in the project now -- code, tests, config, data, or an answer "
                "written to a file -- and says enough to start without asking anything. A reply that approves a "
-               "change the assistant proposed in the earlier turns ('yes, do it') is a change."),
+               "change the assistant proposed in the earlier turns ('yes, do it') is a change. So is a bug report or "
+               "feature request pasted with no other instruction -- a GitHub issue, an error with its traceback, "
+               "'X fails when Y', expected versus actual behaviour: it asks for the fix, or the feature, to be made."),
     "unclear_change": ("It asks for a change but leaves out what to change or what the result should be, so the "
                        "agent would have to ask first."),
-    "answer": "It asks only for an explanation or information; nothing in the project is to be changed.",
+    "answer": ("It asks only for an explanation or information (how something works, why it behaves as it does, "
+               "what to use); nothing in the project is to be changed. A reported bug or failure is not this: it "
+               "asks for a fix."),
     "conversation": ("Not a new request: thanks, a greeting, a comment, or a confirmation of, or question about, "
                      "what the assistant already did in the earlier turns."),
 }

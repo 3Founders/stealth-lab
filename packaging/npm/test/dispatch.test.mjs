@@ -335,3 +335,11 @@ test("a plan that puts the session's model first still tries the cheap models no
   assert.deepEqual(cheapCandidates(plan, MINE, env, { explore: 0.2, rand: () => 0.1 }).map((r) => r.model),
     ["gemma-4-31b-it", "minimax-m2-7"], "now and then: tried");
 });
+
+test("providerWidth: a provider runs as many cheap agents at once as its tokens-per-minute quota allows", async () => {
+  const { providerWidth } = await import("../lib/dispatch.mjs");
+  assert.equal(providerWidth(198565, 4), 2, "General Compute's ~199K/minute: two at once");
+  assert.equal(providerWidth(50000, 4), 1, "at least one");
+  assert.equal(providerWidth(1_000_000, 3), 3, "never more than the plain width");
+  assert.equal(providerWidth(null, 3), 3, "quota unknown: the plain width");
+});

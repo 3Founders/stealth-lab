@@ -327,3 +327,18 @@ test("rule d: testing an edit with new commands or new results is not a stall; t
   for (let i = 0; i < 7 && !r; i++) r = s.observe({ name: "run_shell", args: { command: "pytest -q" }, result: "[exit 1]\n1 failed", fingerprint: "fp1" });
   assert.equal(r?.rule, "d", "the same command, the same result, over and over");
 });
+
+test("rule e: 48 tool calls without any change stop a run that only reads; a change before that leaves it to rule d", () => {
+  const d = new StallDetector();
+  d.start("fp0");
+  let r = null;
+  for (let i = 0; i < 48 && !r; i++) r = d.observe({ name: "search", args: { query: `q${i}` }, result: "hits" });
+  assert.equal(r?.rule, "e");
+  const e = new StallDetector();
+  e.start("fp0");
+  assert.equal(e.observe({ name: "run_shell", args: { command: "touch x" }, result: "[exit 0]", fingerprint: "fp1" }), null);
+  for (let i = 0; i < 17; i++) assert.equal(e.observe({ name: "read_file", args: { path: `f${i}.py` }, result: "x" }), null);
+  const reads = Array.from({ length: 48 }, (_, i) => `step ${i + 1}: search a.py`);
+  assert.equal(replayLog(logOf(...reads)).rule, "e");
+  assert.equal(replayLog(logOf("step 1: run_shell", ...reads)).rule, null, "a shell command could have changed the worktree");
+});
