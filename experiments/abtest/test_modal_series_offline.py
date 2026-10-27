@@ -694,3 +694,12 @@ def test_a_unit_starts_from_its_own_state_only_and_takes_the_runs_shared_openers
     assert "another unit's lines" not in ((c.local / "logs" / "hooks.log").read_text(encoding="utf-8")
                                           if (c.local / "logs" / "hooks.log").exists() else "")
     assert json.loads((c.local / "openers" / "x__mini-1.json").read_text(encoding="utf-8"))["opener"] == "the run's"
+
+
+def test_the_chosen_general_compute_key_is_the_one_the_whole_container_uses(tmp_path):
+    env = {**ENV_SUB, "GENERAL_COMPUTE_API_KEY": "first", "general_compute_api_key1": "second"}
+    c = ms.Container(spec(gc_key_name="general_compute_api_key1"), "mini", sh=lambda *a, **k: None, environ=env,
+                     vol=tmp_path / "vol", app=tmp_path / "app")
+    assert c.environ["GENERAL_COMPUTE_API_KEY"] == "second"
+    c = ms.Container(spec(), "mini", sh=lambda *a, **k: None, environ=env, vol=tmp_path / "vol", app=tmp_path / "app")
+    assert c.environ["GENERAL_COMPUTE_API_KEY"] == "first"

@@ -389,6 +389,11 @@ class Container:
                         **({"ABTEST_REVIEW_MODEL": spec.review_model} if spec.review_model else {}),
                         **({"ABTEST_BLIND": "1"} if spec.blind else {}),
                         **({"ABTEST_CACHE_BENCH": "on"} if spec.cache_bench else {})}     # NOT uv's cache: a Volume refuses uv's temp-file rename ("Operation not permitted")
+        # --gc-key-name picks the General Compute key for EVERYTHING in the container: the test server (survey, ingest,
+        # its own model calls) reads GENERAL_COMPUTE_API_KEY directly, and on a day the first key ran out it would have
+        # failed while dispatch ran on the second (cache-full-2, 2026-10-27)
+        if spec.gc_key_name != "GENERAL_COMPUTE_API_KEY" and self.environ.get(spec.gc_key_name):
+            self.environ["GENERAL_COMPUTE_API_KEY"] = self.environ[spec.gc_key_name]
         # the Bedrock credentials are kept OUT of the environment every subscription session and every setup command gets
         self.tokens = claude_tokens(self.environ) if spec.auth in ("subscription", COMBO) else []
         for t in self.tokens:                            # the extra logins are not in the environment any session or setup command gets
