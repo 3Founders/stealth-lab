@@ -150,7 +150,7 @@ class CallWindow:
 CACHE = TriageCache()
 RATE_PER_MIN = int(os.environ.get("FIND_WAYS_TRIAGE_RATE_PER_MIN", "30") or 30)
 WINDOW = CallWindow(RATE_PER_MIN)
-QUERY_MAX = 1500          # the hook sends at most this much of a prompt (find_ways cuts it the same way)
+QUERY_MAX = 4000          # the hook sends at most this much of a prompt, the same cut find_ways makes
 CONTEXT_MAX = 4000        # and at most this much of the conversation's earlier turns
 
 

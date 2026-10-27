@@ -263,6 +263,16 @@ test("callFindWays: sends up to FIND_WAYS_QUERY_MAX characters of the prompt, no
   assert.ok(sent.startsWith("aaa"));
 });
 
+test("callTriage: sends up to FIND_WAYS_QUERY_MAX characters of the prompt, not 1500", async () => {
+  let sent = null;
+  const fetchImpl = async (_url, init) => {
+    sent = JSON.parse(init.body).query;
+    return { ok: true, status: 200, json: async () => ({}), text: async () => "{}" };
+  };
+  await callTriage({ url: "http://x/mcp", userAgent: "t", query: "a".repeat(6000), timeoutMs: 5000, fetchImpl });
+  assert.equal(sent.length, 4000);
+});
+
 test("fitQuery: short text untouched; long text keeps head and tail, exactly max long", async () => {
   const { fitQuery } = await import("../lib/hook.mjs");
   assert.equal(fitQuery("short"), "short");

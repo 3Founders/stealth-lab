@@ -115,7 +115,7 @@ async function cursorDispatchBody(payload, { env = process.env, settings, userAg
   extra = { ...extra, ...routingArgs({ ...policy, candidates: execCandidates(env) }, model, "cursor") };
   timer.set("stealth_root", true);
   timer.mark("find_ways_start");
-  let reply = await callFindWays({ url: settings.url, token: settings.token, userAgent, query: prompt.slice(0, 1500),
+  let reply = await callFindWays({ url: settings.url, token: settings.token, userAgent, query: prompt,
     repoClaims: readClaims(workspace, prompt), timeoutMs: policy.timeoutMs, extra, fetchImpl });
   timer.mark("find_ways_end");
   timer.set("plan_ms", Number.isFinite(reply?.model_plan?.plan_ms) ? reply.model_plan.plan_ms : null);
