@@ -457,8 +457,8 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
     const leanPlan = planPart(reply.model_plan, process.env, mine);
     if (leanPlan) parts.push(leanPlan);
     if (!parts.length) return "";
-    return cut("kell (Kel) looked this task up before you started (find_ways already ran for it -- " +
-      "don't call it again for the same request). What it knows:\n\n" + parts.join("\n\n"), maxChars);
+    return cut("kell (Kel) looked this task up before you started (find_ways already ran for this prompt --" +
+      "don't repeat it for the same task; when the task changes, call find_ways yourself with the new task). What it knows:\n\n" + parts.join("\n\n"), maxChars);
   }
   if (reply.outcome === "ambiguous") {
     const s = reply.suggested;
@@ -481,8 +481,8 @@ export function formatKnowledge(reply, maxChars = 8000, { mode = "full", root = 
   const plan = planPart(reply.model_plan, process.env, mine);
   if (plan) parts.push(plan);
   if (!parts.length) return "";
-  const head = "kell (Kel) looked this task up before you started (find_ways already ran for it -- " +
-    "don't call it again for the same request). What it knows:\n\n";
+  const head = "kell (Kel) looked this task up before you started (find_ways already ran for this prompt --" +
+    "don't repeat it for the same task; when the task changes, call find_ways yourself with the new task). What it knows:\n\n";
   return cut(head + parts.join("\n\n"), maxChars);
 }
 
@@ -621,6 +621,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     timer.mark("find_ways_end");
     timer.set("plan_ms", Number.isFinite(reply?.model_plan?.plan_ms) ? reply.model_plan.plan_ms : null);
     timer.set("plan_status", reply?.model_plan?.status || null);
+    log(`stealthlab hook: lookup outcome=${reply?.outcome || "-"} plan=${reply?.model_plan?.status || "none"}${planOnly ? " (plan-only, nothing injected)" : ""}`);
     // The route the server chose for this Goal, kept locally so outcomes can be counted against it.
     try {
       if (root && Array.isArray(reply?.routing_rows) && reply.routing_rows.length) upsertRoutes(root, reply.routing_rows);

@@ -36,7 +36,8 @@ test("format: resolved way with steps and verified code; related examples labell
   assert.match(text, /1\. install docx/);
   assert.match(text, /print\('ok'\)/);
   assert.match(text, /NOT verified to apply/);
-  assert.match(text, /don't call it again/);
+  assert.match(text, /don't repeat it for the same task/);
+  assert.match(text, /when the task changes, call find_ways yourself/);
 });
 
 test("format: ambiguous uses the suggested candidate; nothing usable -> empty", () => {

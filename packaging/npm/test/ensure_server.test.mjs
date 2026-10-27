@@ -5,7 +5,10 @@ import { ensureServer } from "../lib/ensure_server.mjs";
 const up = async () => ({ status: 200 });
 const down = async () => { throw new Error("ECONNREFUSED"); };
 const spawnSpy = () => { const calls = []; return { calls, fn: (...a) => { calls.push(a); return { unref() {} }; } }; };
-const env = (extra = {}) => ({ STEALTHLAB_SERVER_START: process.execPath, ...extra });   // any existing file stands in for the script
+import os from "node:os";
+import path from "node:path";
+const HOME = path.join(os.tmpdir(), "kell-ensure-server-test");   // keep the hook log out of the real ~/.stealthlab
+const env = (extra = {}) => ({ STEALTHLAB_HOME: HOME, STEALTHLAB_SERVER_START: process.execPath, ...extra });   // any existing file stands in for the script
 
 test("a healthy local server is left alone", async () => {
   const s = spawnSpy();
