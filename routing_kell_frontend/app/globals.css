@@ -83,13 +83,19 @@ main, footer { position: relative; z-index: 1; }
 .account-menu a:hover, .account-menu button:hover { background: var(--soft); }
 .account-menu hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 0; }
 
-/* back button */
+/* back button: a labelled pill (an arrow alone was easy to miss), 44px tall, clear of the nav */
 .back-btn {
-  position: absolute; top: clamp(44px, 6vw, 64px); left: var(--pad); z-index: 20;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 40px; height: 40px; color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer;
+  position: absolute; top: clamp(84px, 8vw, 96px); left: var(--pad); z-index: 20;
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px;
+  font: inherit; font-size: 15px; font-weight: 400; color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule-strong); border-radius: 999px; cursor: pointer;
+  transition: background-color .2s var(--ease), transform .2s var(--ease);
 }
-.back-btn:hover { opacity: .6; }
+.back-btn svg { transition: transform .25s var(--ease); }
+.back-btn:hover { background: var(--yellow); }
+.back-btn:hover svg { transform: translateX(-3px); }
+.back-btn:active { transform: scale(.97); }
+.back-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 
 /* nav */
 .nav-wrap { position: sticky; top: 14px; z-index: 50; margin-top: 14px; height: 0; }
