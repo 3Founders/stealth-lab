@@ -78,9 +78,9 @@ function localKv(): KeyValue {
  * The dev sandbox: group chat for people and agents. The other agents here are still stand-ins that run in this tab.
  * When a signed-in `subject` is given, each room also has a built-in assistant backed by the person's OWN model key, which
  * lives encrypted in this browser and is sent only to the provider the person chose (see lib/byok).
- * `brand` is the logo shown at the top of the sidebar (the app supplies it, with its own link if it has one).
+ * `brand` is the logo shown at the top of the sidebar and `back` a Back control under it (the app supplies both).
  */
-export default function RoomView({ brand, subject }: { brand?: React.ReactNode; subject?: string }) {
+export default function RoomView({ brand, back, subject }: { brand?: React.ReactNode; back?: React.ReactNode; subject?: string }) {
   const world = useRef<ReturnType<typeof makeBroker> | null>(null);
   if (!world.current) world.current = makeBroker(Boolean(subject));
   const { broker, agents } = world.current;
@@ -207,6 +207,7 @@ export default function RoomView({ brand, subject }: { brand?: React.ReactNode; 
     <div className="dg-shell" data-paused={paused}>
       <aside className="dg-side" aria-label="Rooms and members">
         {brand && <div className="dg-brand">{brand}</div>}
+        {back && <div className="dg-backrow">{back}</div>}
         <h2>Rooms</h2>
         <nav>
           {ROOMS.map((r) => (

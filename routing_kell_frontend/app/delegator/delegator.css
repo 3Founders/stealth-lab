@@ -117,3 +117,4 @@ body:has(.dg-shell) { overflow: hidden; }
 .dg-addkey { color: var(--cobalt); text-decoration: underline; text-underline-offset: 2px; }
 .dg-stop { margin-left: auto; font: inherit; font-size: 12.5px; padding: 2px 12px; border: 1px solid var(--ink); border-radius: 999px; background: #fff; color: var(--ink); cursor: pointer; }
 .dg-stop:hover { background: var(--yellow); }
+.dg-backrow { padding: 0 6px 12px; }

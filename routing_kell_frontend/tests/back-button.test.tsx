@@ -59,6 +59,15 @@ describe("Back control", () => {
     await mount();
     expect(link()).toBeNull();
   });
+  it("inside the Delegator it is shown in the sidebar (the inline copy), while the floating one stays hidden there", async () => {
+    path = "/delegator";
+    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    await act(async () => { root!.render(<><BackButton /><BackButton inline /></>); });
+    const links = host.querySelectorAll("a.back-btn");
+    expect(links).toHaveLength(1);
+    expect(links[0].classList.contains("back-btn--inline")).toBe(true);
+    expect(links[0].textContent).toBe("Back to home");
+  });
   it("the arrow is hidden from assistive technology and the visible text is the accessible name", async () => {
     await mount();
     expect(link()!.querySelector("svg")!.getAttribute("aria-hidden")).toBe("true");
