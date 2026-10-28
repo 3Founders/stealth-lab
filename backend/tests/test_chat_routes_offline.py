@@ -48,3 +48,16 @@ def test_errors_use_the_openai_envelope_and_a_policy_refusal_is_403():
     assert r.status_code == 403
     assert b'"policy_denied"' in r.body and b'"error"' in r.body
     assert cr._failure(req, ProviderCallDenied("no connection available to you offers 'x'")).status_code == 404
+
+
+def test_the_window_counts_per_key_and_forgets_old_hits():
+    w = cr.Window(2, 60.0)
+    assert w.allow("a", 0) and w.allow("a", 1) and not w.allow("a", 2)
+    assert w.allow("b", 2)                      # another key is separate
+    assert w.allow("a", 61)                     # the first hits have aged out
+
+
+def test_the_client_address_is_the_first_forwarded_entry():
+    req = SimpleNamespace(headers={"x-forwarded-for": "203.0.113.9, 10.0.0.1"}, client=SimpleNamespace(host="10.0.0.1"))
+    assert cr.client_address(req) == "203.0.113.9"
+    assert cr.client_address(SimpleNamespace(headers={}, client=SimpleNamespace(host="198.51.100.4"))) == "198.51.100.4"

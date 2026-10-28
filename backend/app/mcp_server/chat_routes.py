@@ -20,7 +20,13 @@ with a message asking them to name one).
 Data class: X-Stealthlab-Data-Class, default USER_PRIVATE (the most conservative), which the pilot policy refuses. The
 pilot models take PUBLIC_SOURCE, PUBLIC_DERIVED and GLOBAL_PROCEDURE only.
 
-Honest limits: no per-IP rate limiter here (the dollar caps are the control), and a streamed answer is charged on the
+Abuse limits (in this process only; the MCP service runs one worker): per client address 120 requests a minute before the
+token is even checked, per signed-in person 20 a minute, and one request body at most 256 KB. They stand beside the dollar
+caps, which stay the real control. Every answer carries `x-stealthlab-ai-generated: true`, so a client can label it as
+machine-written (Z.ai's terms ask end users to be told). This surface is for kell's own apps and signed-in people, not a
+public pass-through to the providers: do not hand its token to third parties.
+
+Honest limits: the counters reset on restart and are not shared across machines, and a streamed answer is charged on the
 provider's usage when the stream ends, so a client that drops mid-stream may be charged an estimate (chat.py decides).
 """
 from __future__ import annotations
@@ -33,8 +39,43 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from app.mcp_server.delegate_routes import allowed_origins
 
+import os
+import time
+from collections import defaultdict, deque
+
 ALLOWED_HEADERS = "authorization, content-type, x-stealthlab-data-class, x-stealthlab-org, x-stealthlab-max-cost-usd"
-EXPOSED_HEADERS = "x-stealthlab-unit, x-stealthlab-connection, x-stealthlab-cost-usd"
+EXPOSED_HEADERS = "x-stealthlab-unit, x-stealthlab-connection, x-stealthlab-cost-usd, x-stealthlab-ai-generated"
+MAX_BODY_BYTES = 256 * 1024
+
+
+class Window:
+    """A sliding-window counter per key. In memory: enough for one worker, not a distributed limiter."""
+
+    def __init__(self, limit: int, seconds: float = 60.0) -> None:
+        self.limit, self.seconds, self._hits = limit, seconds, defaultdict(deque)
+
+    def allow(self, key: str, now: Optional[float] = None) -> bool:
+        now = time.monotonic() if now is None else now
+        q = self._hits[key]
+        while q and now - q[0] >= self.seconds:
+            q.popleft()
+        if len(q) >= self.limit:
+            return False
+        q.append(now)
+        if len(self._hits) > 20000:                       # forget idle keys so the table cannot grow without bound
+            for k in [k for k, v in self._hits.items() if not v or now - v[-1] >= self.seconds][:5000]:
+                self._hits.pop(k, None)
+        return True
+
+
+BY_ADDRESS = Window(int(os.environ.get("KELL_CHAT_PER_IP_PER_MIN", "120")))
+BY_PERSON = Window(int(os.environ.get("KELL_CHAT_PER_USER_PER_MIN", "20")))
+
+
+def client_address(request: Request) -> str:
+    """The caller's address; behind Railway's proxy that is the first X-Forwarded-For entry."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() or (request.client.host if getattr(request, "client", None) else "unknown")
 TOOL_NAME = "chat_completions"
 
 
@@ -51,6 +92,10 @@ def _error(request: Request, status: int, message: str, kind: str, code: Optiona
     """OpenAI's error envelope, which every client library already parses."""
     return JSONResponse({"error": {"message": message, "type": kind, "code": code}}, status_code=status,
                         headers={**cors_headers(request), "Cache-Control": "no-store"})
+
+
+def _kind(status: int) -> str:
+    return {401: "authentication_error", 429: "rate_limit_error"}.get(status, "api_error")
 
 
 def _failure(request: Request, exc: Exception) -> JSONResponse:
@@ -138,7 +183,12 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
     """Attach the routes to the MCP server's custom-route table."""
 
     async def authed(request: Request):
-        return await resolve_identity(verifier, pool_getter(), request, is_local)
+        if not BY_ADDRESS.allow(client_address(request)):
+            return None, ("too many requests from this address; slow down", 429)
+        who, refusal = await resolve_identity(verifier, pool_getter(), request, is_local)
+        if who is not None and not BY_PERSON.allow(who.actor_id):
+            return None, ("too many requests; wait a minute", 429)
+        return who, refusal
 
     @server.custom_route("/v1/models", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def models(request: Request) -> Response:
@@ -146,7 +196,7 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return Response(status_code=204, headers=cors_headers(request))
         who, refusal = await authed(request)
         if refusal is not None:
-            return _error(request, refusal[1], refusal[0], "authentication_error" if refusal[1] == 401 else "api_error")
+            return _error(request, refusal[1], refusal[0], _kind(refusal[1]))
         from app.providers import chat as _chat
         return JSONResponse({"object": "list", "data": await _chat.list_models(who.scope)},
                             headers={**cors_headers(request), "Cache-Control": "no-store"})
@@ -157,7 +207,9 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return Response(status_code=204, headers=cors_headers(request))
         who, refusal = await authed(request)
         if refusal is not None:
-            return _error(request, refusal[1], refusal[0], "authentication_error" if refusal[1] == 401 else "api_error")
+            return _error(request, refusal[1], refusal[0], _kind(refusal[1]))
+        if int(request.headers.get("content-length") or 0) > MAX_BODY_BYTES:
+            return _error(request, 413, "the request body is too large", "invalid_request_error", "request_too_large")
         try:
             raw = await request.json()
         except ValueError:
@@ -185,7 +237,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                 max_cost_usd=max_cost, tool=TOOL_NAME)
         except (_chat.ChatRequestInvalid, ProviderCallDenied, ProviderCallFailed) as exc:
             return _failure(request, exc)
-        headers = {**cors_headers(request), "x-stealthlab-unit": outcome.unit, "x-stealthlab-connection": outcome.connection_id}
+        headers = {**cors_headers(request), "x-stealthlab-unit": outcome.unit, "x-stealthlab-connection": outcome.connection_id,
+                   "x-stealthlab-ai-generated": "true"}
         if outcome.stream is not None:
             headers.update({"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
             return StreamingResponse(outcome.stream, media_type="text/event-stream", headers=headers)
