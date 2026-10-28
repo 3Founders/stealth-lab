@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     # ENVIRONMENT=production and a still-default/localhost value here.
     frontend_origin: str = "http://localhost:3000"
 
+    # The website's "Contact" form (POST /v1/contact; app/services/contact.py). All optional so imports work without a
+    # .env: with no Turnstile secret the endpoint refuses (503) unless CONTACT_ALLOW_UNVERIFIED=true, which is for local
+    # development only. Notification is best-effort email through Resend; the stored row is the source of truth.
+    contact_turnstile_secret: Optional[str] = None
+    contact_allow_unverified: bool = False
+    contact_notify_to: Optional[str] = None      # a shared team alias, never a visitor-supplied address
+    contact_notify_from: Optional[str] = None    # an address on a domain verified with the email provider
+    resend_api_key: Optional[str] = None
+
     # Heterogeneous debate panel (Section 7): three distinct model families.
     anthropic_api_key: Optional[str] = None
     fireworks_api_key: Optional[str] = None   # Kimi K3

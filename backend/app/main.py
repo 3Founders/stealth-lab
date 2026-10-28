@@ -20,6 +20,7 @@ from app.api.profile import avatar_router as profile_avatar_api
 from app.api import trajectories
 from app.api import economy
 from app.api import goal_review as goal_review_api
+from app.api import contact as contact_api
 from app.api.deps import require_trustworthy_identity
 from app.config import settings
 from app.db.session import close_pool, create_pool
@@ -175,6 +176,7 @@ app.include_router(profile_api.router)
 app.include_router(profile_avatar_api)
 app.include_router(economy.router)
 app.include_router(goal_review_api.router)
+app.include_router(contact_api.router)
 # OpenAI-compatible /v1/chat/completions and /v1/models over the governed provider connections, so a coding
 # harness can use a routed model as its main model (app/providers/chat.py).
 app.include_router(chat_completions.router)
