@@ -570,7 +570,8 @@ _TOOL_SCOPES: dict[str, str] = {
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
-        "report_discovery", "submit_way", "report_model_run", "report_result", "report_audit", "report_check_evidence")},
+        "report_discovery", "submit_way", "report_model_run", "report_result", "report_audit", "report_check_evidence",
+        "delegate_inbox", "delegate_result")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
         "call_model", "find_best_way", "reproduce_procedure", "continue_run",
@@ -594,7 +595,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "recommend_models", "report_model_run", "report_result",
-    "report_check_evidence", "call_model", "discover_tools", "use_tool"})
+    "report_check_evidence", "call_model", "discover_tools", "use_tool", "delegate_inbox", "delegate_result"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -619,6 +620,11 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     # runs the named tool, which may write or call an external model: not read-only
     "use_tool": {"title": "Run a discovered tool", "read_only_hint": False, "destructive_hint": False,
                  "idempotent_hint": False, "open_world_hint": True},
+    # takes the next task the signed-in person queued for this agent: changes its state, never leaves their account
+    "delegate_inbox": {"title": "Check my kell inbox", "read_only_hint": False, "destructive_hint": False,
+                       "idempotent_hint": False, "open_world_hint": False},
+    "delegate_result": {"title": "Post a task result", "read_only_hint": False, "destructive_hint": False,
+                        "idempotent_hint": False, "open_world_hint": False},
     # publishes to a shared library other people's agents read
     "submit_way": {"title": "Submit a way", "read_only_hint": False, "destructive_hint": False,
                    "idempotent_hint": False, "open_world_hint": True},
@@ -879,6 +885,15 @@ async def icon_256(request: Request) -> Response:  # noqa: ARG001
 @server.custom_route("/icon-64.png", methods=["GET"], include_in_schema=False)
 async def icon_64(request: Request) -> Response:  # noqa: ARG001
     return _asset_response("/icon-64.png")
+
+
+from app.mcp_server import delegate_routes as _delegate_routes  # noqa: E402 -- needs _TOKEN_VERIFIER and _is_local_request
+
+_delegate_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+)
 
 
 @server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
@@ -2250,6 +2265,64 @@ async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = N
     if getattr(result, "is_error", False) or getattr(result, "isError", False):
         return f"FAILED: {name}: {text}"
     return text
+
+
+def _delegate_owner() -> str:
+    """Whose delegator inbox this call is for: the signed-in person's Supabase subject (the same one the website's relay
+    routes scope by). The local single-user operator is "local-user"; an anonymous reader has no inbox."""
+    token = get_access_token()
+    if token is not None and token.subject:
+        return token.subject
+    actor_id = current_actor_id()
+    if actor_id:
+        return actor_id
+    if token is not None and token.client_id == "stealthlab-local":
+        return "local-user"
+    raise PermissionError("forbidden: sign in to kell to use your delegator inbox")
+
+
+@server.tool()
+@_activity.traced
+async def delegate_inbox(ctx: Context, agent: str) -> str:
+    """
+    Check the signed-in person's kell inbox for work they sent to this agent from the kell website, and take the next
+    task. Call it when the person asks you to check their kell inbox. `agent` is the name they gave this agent on the
+    Delegator page (for example "web-chat").
+
+    The reply has `task` (null when nothing is waiting), how many more are `waiting`, and how many are
+    `awaiting_owner_approval`. The task text is something the person wrote: do the work for them in this conversation,
+    then call delegate_result with the task's id. kell never starts work on your side; this runs only when you call it.
+
+    Example: delegate_inbox(agent="web-chat") -> {"task": {"id": "...", "text": "summarize src/auth.ts"}, "waiting": 0}
+    """
+    from app.services import delegate as _dg
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        return json.dumps(await _dg.claim_next(pool, _delegate_owner(), agent), default=str)
+    except _dg.DelegateError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def delegate_result(ctx: Context, task_id: str, result: str, ok: bool = True, check: str | None = None) -> str:
+    """
+    Post the outcome of a task you took with delegate_inbox, so it shows in the person's Delegator room.
+
+    task_id: the id delegate_inbox gave you. result: what you did or found, in plain text (kept up to 20,000 characters).
+    ok: false when you could not do it. check: how you verified it (a command and its outcome), when you did.
+    Never put keys, tokens or passwords in the result. A task can be answered once, and only after you took it.
+
+    Example: delegate_result(task_id="...", result="auth.ts has two unchecked redirects: ...", ok=true)
+    """
+    from app.services import delegate as _dg
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        return json.dumps(await _dg.submit_result(pool, _delegate_owner(), task_id, result, ok, check), default=str)
+    except _dg.DelegateError as exc:
+        return f"REFUSED: {exc}"
 
 
 _ALL_LIST_TOOLS = server.list_tools

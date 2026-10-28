@@ -83,6 +83,8 @@ EXPECTED_V1_SURFACE: frozenset[str] = frozenset({
     "report_model_run", "report_result", "call_model", "discover_tools", "use_tool",
     # added since the nine: report_audit (hidden, not in V1_TOOLS) and report_check_evidence (migration 152, discoverable)
     "report_audit", "report_check_evidence",
+    # the Delegator relay's agent side (migration 155): discoverable, scoped knowledge:write
+    "delegate_inbox", "delegate_result",
 })
 
 # The B32 operations whose only implementation lived on the removed v2 surface.
