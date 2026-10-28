@@ -6,6 +6,7 @@ import Avatar from "@/components/Avatar";
 import DevicePhoto, { useDevicePhoto } from "@/components/DevicePhoto";
 import { getSession, signOut } from "@/lib/session";
 import { PROJECT_SYNC_ENABLED } from "@/lib/features";
+import { orgAdminEnabled } from "@/lib/org-admin";
 
 /**
  * Header account menu (V1 identity spec §20). The avatar never navigates
@@ -70,6 +71,7 @@ export default function AccountMenu({ username }: { username: string }) {
           <Link ref={firstItemRef} href="/account/profile" role="menuitem" onClick={() => setOpen(false)}>Profile</Link>
           <Link href="/account/connections" role="menuitem" onClick={() => setOpen(false)}>Connected apps</Link>
           <Link href="/delegator" role="menuitem" onClick={() => setOpen(false)}>Delegator</Link>
+          {orgAdminEnabled() && <Link href="/org" role="menuitem" onClick={() => setOpen(false)}>Organization</Link>}
           <Link href="/account/models" role="menuitem" onClick={() => setOpen(false)}>Models</Link>
           <hr />
           <button type="button" role="menuitem" onClick={handleSignOut}>Sign out</button>
