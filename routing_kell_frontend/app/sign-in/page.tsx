@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import InteractiveLogo from "@/components/interactive-logo/InteractiveLogo";
 import { getSupabase, supabaseConfigured } from "@/lib/supabase";
+import { adminSignInUrl } from "@/lib/admin-link";
 import { isSafeRedirectPath } from "@/lib/session";
 import Turnstile, { TURNSTILE_SITE_KEY, type TurnstileHandle } from "@/components/Turnstile";
 
@@ -182,6 +183,10 @@ function SignInInner() {
           <>Already have an account? <button type="button" className="link-btn" onClick={() => { setMode("signin"); setStatus("idle"); }}>Sign in</button></>
         )}
       </p>
+
+      {adminSignInUrl() && (
+        <p className="small dim">Running keळ for an organisation? <a href={adminSignInUrl()!} rel="noopener" style={{ textDecoration: "underline" }}>Administrator sign in</a>. It opens the admin console, which checks your access itself.</p>
+      )}
 
       <p className="small dim">Reading public knowledge doesn&rsquo;t require an account. Your own private library stays on your machine unless you explicitly publish from it.</p>
     </div>
