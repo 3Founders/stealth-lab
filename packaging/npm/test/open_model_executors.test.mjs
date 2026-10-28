@@ -131,13 +131,20 @@ test("bridge: a malformed tool call from the provider is retried a bounded numbe
   let replies = [];
   let calls = 0;
   const fetchImpl = async () => { calls++; const [status, text] = replies.shift(); return { ok: status === 200, status, text: async () => text }; };
-  const b = await bridgeFor(p, { env: ENV, fetchImpl, retryMs: 0, runTag: "r-1.a1" });
+  const fetchImplRef = { fn: fetchImpl };
+  const b = await bridgeFor(p, { env: ENV, fetchImpl: (u, o) => fetchImplRef.fn(u, o), retryMs: 0, runTag: "r-1.a1" });
   const call = () => fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": b.secret },
     body: JSON.stringify({ model: "x", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }) });
   replies = [[400, GC400], [200, OK]];
+  const sentBodies = [];
+  const inner = fetchImpl;
+  fetchImplRef.fn = async (url, o) => { sentBodies.push(JSON.parse(o.body)); return inner(url, o); };
   let r = await call();
+  fetchImplRef.fn = inner;
   assert.equal(r.status, 200, "the second sample is used");
   assert.equal(calls, 2);
+  assert.equal(sentBodies[0].temperature, undefined, "the first request as Claude Code sent it");
+  assert.ok(sentBodies[1].temperature > 0, "the retry of a malformed call samples differently");
   replies = [[400, GC400], [400, GC400], [400, GC400], [400, GC400]];
   calls = 0;
   r = await call();
@@ -148,7 +155,34 @@ test("bridge: a malformed tool call from the provider is retried a bounded numbe
   r = await call();
   assert.equal(r.status, 400, "a request that is wrong is not retried");
   assert.equal(calls, 1);
+  replies = [[429, '{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}']];
+  calls = 0;
+  r = await call();
+  assert.equal(r.status, 400, "an account out of credit: a 400 Claude Code does not retry, not a 429 it would");
+  assert.equal(calls, 1, "and the bridge does not retry it either");
+  assert.match((await r.json()).error.message, /provider account is out of credit or quota/);
   closeBridge();
+});
+
+test("bridge: a reply's reasoning is kept by its tool call and sent back on that assistant turn (GLM interleaved thinking)", async () => {
+  const { rememberReasoning, toOpenAI } = await import("../lib/anthropic_bridge.mjs");
+  const p = normaliseProfile("glm-5.3-flash", { key_env: "ZAI_API_KEY", openai_base_url: "https://z.example/v4" });
+  rememberReasoning({ reasoning_content: "the bug is the minus sign; read calc.py first", tool_calls: [{ id: "call_r1", function: { name: "Read", arguments: "{}" } }] });
+  const body = toOpenAI({ messages: [
+    { role: "user", content: "fix add" },
+    { role: "assistant", content: [{ type: "tool_use", id: "call_r1", name: "Read", input: { file_path: "calc.py" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call_r1", content: "def add(a, b): return a - b" }] },
+    { role: "assistant", content: [{ type: "tool_use", id: "call_other", name: "Read", input: {} }] },
+  ] }, p);
+  const turns = body.messages.filter((m) => m.role === "assistant");
+  assert.equal(turns[0].reasoning_content, "the bug is the minus sign; read calc.py first");
+  assert.equal(turns[1].reasoning_content, undefined, "a turn whose reasoning the bridge never saw gets none");
+});
+
+test("lean Claude Code: the root-cause method joins the system prompt only with STEALTHLAB_AGENT_METHOD=root_cause", async () => {
+  const { LEAN_SYSTEM, leanSystem } = await import("../lib/executors/claude.mjs");
+  assert.equal(leanSystem({}), LEAN_SYSTEM);
+  assert.match(leanSystem({ STEALTHLAB_AGENT_METHOD: "root_cause" }), /Find the cause, not the symptom[\s\S]*not a fix: change the project's own files/);
 });
 
 test("bridge: tokens are counted per run, so a run killed before Claude Code's summary still has its spend", async () => {
@@ -161,10 +195,10 @@ test("bridge: tokens are counted per run, so a run killed before Claude Code's s
     await fetch(`${b.baseUrl}/v1/messages`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": b.secret },
       body: JSON.stringify({ model: "x", max_tokens: 100, messages: [{ role: "user", content: "hi" }] }) });
   }
-  assert.deepEqual(bridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
+  assert.deepEqual(bridgeUsage("r-2.a1"), { in: 3000, out: 150, cached: 0, calls: 3 });
   assert.equal(bridgeUsage("r-other"), null);
   const { takeBridgeUsage } = await import("../lib/anthropic_bridge.mjs");
-  assert.deepEqual(takeBridgeUsage("r-2.a1"), { in: 3000, out: 150, calls: 3 });
+  assert.deepEqual(takeBridgeUsage("r-2.a1"), { in: 3000, out: 150, cached: 0, calls: 3 });
   assert.equal(bridgeUsage("r-2.a1"), null, "read once, then removed");
   closeBridge();
 });
@@ -251,7 +285,7 @@ test("the agent reads, edits and finishes; tokens and cost are summed; the key r
       { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
     assert.equal(out.stop, "finished");
     assert.equal(fs.readFileSync(path.join(repo, "calc.py"), "utf8"), "def add(a, b):\n    return a + b\n");
-    assert.deepEqual(out.tokens, { in: 300, out: 30 });
+    assert.deepEqual(out.tokens, { in: 300, out: 30, cached: 0 });
     assert.equal(out.costUsd, (300 * 1 + 30 * 2) / 1e6);
     assert.deepEqual(out.learned, ["it used minus"]);
     assert.ok(p.seen.every((r) => r.auth === `Bearer ${KEY}` && r.url === "/v1/chat/completions"));
@@ -268,8 +302,14 @@ test("request_extras are sent but cannot displace the fields the agent owns", as
       { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
     assert.deepEqual(p.seen[0].body.provider, { zdr: true });
     assert.equal(p.seen[0].body.model, "m");
-    assert.equal(p.seen[0].body.temperature, 0);
+    assert.equal(p.seen[0].body.temperature, undefined, "extras cannot set it; with no profile temperature the provider's default applies");
   } finally { p.close(); }
+  const q = await provider(() => reply({ role: "assistant", content: "done" }));
+  try {
+    await runAgent({ task: "t", base_url: q.url, model_id: "m", temperature: 1.0, top_p: 0.95 }, { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
+    assert.equal(q.seen[0].body.temperature, 1.0, "the profile's sampling, as its vendor recommends");
+    assert.equal(q.seen[0].body.top_p, 0.95);
+  } finally { q.close(); }
 });
 
 test("no_system_role: the instructions open the first user turn instead of a system turn (GC's Gemma rejects one)", async () => {
@@ -439,7 +479,7 @@ test("a provider that cannot parse the model's tool call (HTTP 400) is asked aga
     const out = await runAgent({ task: "t", base_url: p.url, model_id: "gpt-oss-120b" }, { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, sleep: noSleep });
     assert.equal(out.stop !== undefined, true);
     assert.equal(p.seen.length, 2);
-    assert.equal(p.seen[0].body.temperature, 0);
+    assert.equal(p.seen[0].body.temperature, undefined);
     assert.ok(p.seen[1].body.temperature > 0, "the retry samples differently");
   } finally { p.close(); }
 });

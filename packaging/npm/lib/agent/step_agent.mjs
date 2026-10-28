@@ -29,6 +29,8 @@ import { exec, execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { StallDetector } from "./stall.mjs";
 import { installRefusal } from "./installs.mjs";
+import { historyFor } from "../area_history.mjs";
+import { OUT_OF_CREDIT } from "./provider_errors.mjs";
 
 export const KEY_ENV = "OPEN_MODEL_API_KEY";
 const PROTECTED = new Set(["model", "messages", "stream", "stream_options", "tools", "tool_choice", "functions",
@@ -40,8 +42,9 @@ const MAX_MATCHES = 60;
 const MAX_FILE_BYTES = 1_000_000;
 const SHELL_TIMEOUT_MS = 120_000;
 const SHELL_TAIL = 6000;
-// ~40k tokens: every step resends the whole history, so a big context multiplies tokens (and rate-limit hits)
-const CONTEXT_CHAR_LIMIT = 160_000;
+// ~80k tokens, inside every cheap model's window (128K+): every step resends the whole history, so a big context costs
+// more per step, but a model that loses what it read early re-reads it (z.ai bills a resent prefix at a fifth, cached)
+const CONTEXT_CHAR_LIMIT = 320_000;
 
 const SYSTEM = `You are a coding agent working inside one git repository (your current directory). Complete the task with the \
 smallest correct change.
@@ -65,6 +68,26 @@ const TOOLS = [
   fn("run_shell", "Run a shell command in the repo root (tests, builds). Output is truncated.", { command: str("The command") }, ["command"]),
   fn("finish", "Finish the task with a summary.", { summary: str("What you changed and how you checked it") }, ["summary"]),
 ];
+
+// How to work on a bug or a change in existing code (cfg.method = "root_cause"). On real repository issues the cheap models either
+// read for their whole budget without editing, or patched the symptom where the error surfaced (an early return, a try/except)
+// while the right fix was a few lines restoring the code's own logic (cache-full-2, 2026-10-27). Nothing here is specific to a
+// language, a project or a benchmark.
+const METHOD = `
+How to do it:
+1. Reproduce first: write a tiny script or command that shows the wrong behaviour from the task, and run it.
+2. Find the cause, not the symptom: follow the wrong value back to the first place it goes wrong. The fix belongs there, even
+   when the error is raised somewhere else.
+3. Fix it the way this code already does things: reuse the helpers and patterns the surrounding code uses. Look at how this code
+   was changed before with the history tool when it is available.
+4. Do not hide the problem: no try/except or early return that only silences the error, no special case for the example's values.
+5. Run your reproduction again, then the project's tests for that module. Change the project's own files -- a reproduction
+   script alone is not a fix -- and keep the change small.
+6. When you have a likely cause, edit it; do not keep re-reading the same code.`;
+
+const HISTORY_TOOL = fn("history", "Show how this repository's code was changed before: recent past commits (bug fixes first) " +
+  "that touched one function of a file, or the file. Use it once you know where the change goes.",
+  { path: str("File path relative to the repo root"), function: str("Function, method or class name in that file (optional)") }, ["path"]);
 
 function str(description) { return { type: "string", description }; }
 function int(description) { return { type: "integer", description }; }
@@ -142,7 +165,19 @@ function toolListFiles(cwd, a) {
   return out.length ? out.join("\n") + (out.length >= MAX_LIST ? "\n... (list truncated)" : "") : "(no files)";
 }
 
+// A plain-text search that finds nothing, for a query written like a pattern ("a|b", "def .*foo", "x\(y"): models write grep
+// patterns without setting regex (glm on jsonargparse-560: four searches, every one "(no matches)"), so it is run again as one.
+const PATTERN_LIKE = /\||\.\*|\\[sdwb(.]|\[[^\]]+\]|^\^|\$$/;
+
 function toolSearch(cwd, a) {
+  const out = searchOnce(cwd, a);
+  if (out !== "(no matches)" || a.regex || !PATTERN_LIKE.test(String(a.query || ""))) return out;
+  let again;
+  try { again = searchOnce(cwd, { ...a, regex: true }); } catch { return out; }
+  return again === "(no matches)" ? "(no matches, as text or as a regex)" : `(no matches as plain text; as a regex:)\n${again}`;
+}
+
+function searchOnce(cwd, a) {
   const { abs, rel } = safePath(cwd, a.path || ".");
   refuseGit(rel);
   const root = realRoot(cwd);
@@ -226,6 +261,10 @@ export async function runTool(name, args, { cwd, env, blockInstalls = true }) {
     case "edit_file": return toolEditFile(cwd, args);
     case "write_file": return toolWriteFile(cwd, args);
     case "run_shell": return toolRunShell(cwd, args, env, blockInstalls);
+    case "history": {
+      const out = historyFor(cwd, args.path, args.function);
+      return out || `no earlier changes found for ${args.path}${args.function ? ` (${args.function})` : ""} in this repository's history`;
+    }
     default: throw new Error(`unknown tool ${name}`);
   }
 }
@@ -258,7 +297,13 @@ async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
       }
     }
     if (res) {
-      if (res.status === 429) {
+      if ((res.status === 429 || res.status === 402 || res.status === 403) && OUT_OF_CREDIT.test(text)) {
+        // the account is out of money or of its daily quota: no retry frees that up -- six of them only burned 150 s per run
+        // before the next model got its turn (z.ai "Insufficient balance ... Please recharge", replay-1, 2026-10-28)
+        const err = new Error(`HTTP ${res.status} (the provider account is out of credit or quota): ${redactKey(text, key).slice(0, 200)}`);
+        err.outOfCredit = true;
+        throw err;
+      } else if (res.status === 429) {
         // a tokens-per-minute limit frees up within the minute: wait what the provider asks (or 10-40 s), not 1-8 s
         lastErr = new Error(`HTTP 429: ${redactKey(text, key).slice(0, 200)}`);
         const after = Number(res.headers?.get?.("retry-after"));
@@ -293,9 +338,24 @@ function compact(messages) {
   }
 }
 
-function costOf(cfg, tin, tout) {
+// the model's sampling: its profile's temperature and top_p, else the provider's default. It was temperature 0 for every
+// model, and all four cheap models are meant to run at 1.0 -- greedy decoding is where their re-read-the-same-file loops
+// come from (probe, 2026-10-28)
+export function sampling(cfg) {
+  return { ...(typeof cfg.temperature === "number" ? { temperature: cfg.temperature } : {}), ...(typeof cfg.top_p === "number" ? { top_p: cfg.top_p } : {}) };
+}
+
+// a reply's reasoning, under the field name the provider used (z.ai: reasoning_content; some OpenAI-style servers: reasoning)
+export function reasoningOf(msg) {
+  for (const f of ["reasoning_content", "reasoning"]) if (typeof msg?.[f] === "string" && msg[f]) return { [f]: msg[f] };
+  return {};
+}
+
+// cached input (usage.prompt_tokens_details.cached_tokens) at cached_input_per_mtok when given (lib/spend.mjs tokenCost)
+function costOf(cfg, tin, tout, tcached = 0) {
   if (typeof cfg.input_per_mtok !== "number" || typeof cfg.output_per_mtok !== "number") return null;
-  return (tin * cfg.input_per_mtok + tout * cfg.output_per_mtok) / 1e6;
+  const c = typeof cfg.cached_input_per_mtok === "number" ? Math.min(tcached, tin) : 0;
+  return ((tin - c) * cfg.input_per_mtok + (c ? c * cfg.cached_input_per_mtok : 0) + tout * cfg.output_per_mtok) / 1e6;
 }
 
 function parseLearned(text) {
@@ -307,6 +367,23 @@ function parseLearned(text) {
 // ---------------------------------------------------------------- the loop
 
 const sha = (buf) => crypto.createHash("sha1").update(buf).digest("hex");
+
+// The arguments as the transcript keeps them: long texts (a whole file written, a big edit) cut.
+function cutArgs(args) {
+  const out = {};
+  for (const [k, v] of Object.entries(args || {})) out[k] = typeof v === "string" && v.length > 2000 ? `${v.slice(0, 2000)}...[${v.length} chars]` : v;
+  return out;
+}
+
+// Whether any file git already tracks has changed in the worktree (new, untracked files -- scratch scripts -- do not count).
+export function projectChanged(cwd) {
+  try {
+    execFileSync("git", ["-C", cwd, "diff", "--quiet", "HEAD", "--"], { stdio: "ignore", timeout: 15000 });
+    return false;
+  } catch (err) {
+    return err && err.status === 1;
+  }
+}
 
 // A file's content hash, "absent" when it does not exist or cannot be read (the stall detector compares these).
 function fileHash(cwd, rel) {
@@ -387,10 +464,22 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   for (const [k, v] of Object.entries(cfg.request_extras || {})) { if (!PROTECTED.has(k)) extras[k] = v; }
   // 30 tool calls was the default and nothing raised it: on real repositories our loop read the code for most of them and
   // ended with no change at all (5 of 26 runs, survey stage 3, 2026-10-16) while Claude Code, driving the same model, had
-  // no cap. STEALTHLAB_AGENT_MAX_STEPS (default 80) or the task's own max_steps.
-  const maxSteps = Math.min(150, Math.max(1, Number(cfg.max_steps) || Number(process.env.STEALTHLAB_AGENT_MAX_STEPS) || 80));
+  // no cap. 80 was still short: GLM-flash made its first edit at call 69 on a solved issue and Claude Code runs took up to
+  // 167 calls (replay-2g, 2026-10-28); the run's time limit is the budget, this only bounds a runaway.
+  // STEALTHLAB_AGENT_MAX_STEPS (default 200) or the task's own max_steps.
+  const maxSteps = Math.min(400, Math.max(1, Number(cfg.max_steps) || Number(process.env.STEALTHLAB_AGENT_MAX_STEPS) || 200));
   const maxCost = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
-  const system = SYSTEM.replace("{max_steps}", String(maxSteps));
+  const rootCause = cfg.method === "root_cause";
+  const system = SYSTEM.replace("{max_steps}", String(maxSteps)) + (rootCause ? `\n${METHOD}` : "");
+  // the history tool (lib/area_history.mjs) needs the repository's git history; cfg.history_tool turns it on
+  const tools = cfg.history_tool ? [...TOOLS, HISTORY_TOOL] : TOOLS;
+  // every tool call with its arguments and (cut) output, one JSON line each, for reading a run afterwards (cfg.transcript: a path)
+  const transcript = typeof cfg.transcript === "string" && cfg.transcript ? cfg.transcript : null;
+  const record = (entry) => {
+    if (!transcript) return;
+    try { fs.appendFileSync(transcript, JSON.stringify(entry) + "\n"); } catch { /* the run goes on without it */ }
+  };
+  let refusedFinish = 0;
   // Some endpoints reject a system turn (General Compute's Gemma 4 answers 400 "invalid base64 image data",
   // checked 2026-10-09); for them the instructions open the first user turn instead.
   // the files the task names are read up front: a model otherwise spends its first 2-3 steps listing and reading them
@@ -406,7 +495,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
       first.content = [{ type: "text", text: first.content }, ...parts];
     }
   }
-  let tin = 0, tout = 0, step = 0, stop = "max_steps", finalMessage = "";
+  let tin = 0, tout = 0, tcached = 0, step = 0, stop = "max_steps", finalMessage = "";
   // stop a stuck run early (lib/agent/stall.mjs); cfg.early_stop === false turns it off
   const detector = cfg.early_stop === false ? null
     : new StallDetector({ noChangeSteps: Number(cfg.early_stop_steps) || 6, errorRun: Number(cfg.early_stop_errors) || 3 });
@@ -414,27 +503,35 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   let stalled = null;
 
   const seen = new Map();          // tool call signature -> its last output, for repeated reads
+  // cfg.max_seconds: the run's own time budget -- it stops itself before it, so its tokens and cost are reported (a run killed
+  // from outside prints nothing, and its spend was counted as $0)
+  const deadline = Number(cfg.max_seconds) > 0 ? Date.now() + Number(cfg.max_seconds) * 1000 : null;
   while (step < maxSteps) {
+    if (deadline && Date.now() >= deadline) { stop = "timed_out"; break; }
     compact(messages);
     log(`step ${step + 1}: asking ${cfg.model_id}`);
     let reply;
     try {
       reply = await chat({
         baseUrl: cfg.base_url, key, fetchImpl, sleep, log,
-        body: { ...extras, model: cfg.model_id, messages, tools: TOOLS, tool_choice: "auto", temperature: 0, max_tokens: Number(cfg.max_tokens) || 16000 },
+        body: { ...extras, model: cfg.model_id, messages, tools, tool_choice: "auto", ...sampling(cfg), max_tokens: Number(cfg.max_tokens) || 16000 },
       });
     } catch (err) {
       // a provider error mid-run: the tokens already spent are real cost, so they leave with the error
-      err.spent = { tokens: { in: tin, out: tout }, costUsd: costOf(cfg, tin, tout), steps: step };
+      err.spent = { tokens: { in: tin, out: tout, cached: tcached }, costUsd: costOf(cfg, tin, tout, tcached), steps: step };
       throw err;
     }
     const usage = reply.usage || {};
     tin += Number(usage.prompt_tokens) || 0;
+    tcached += Number(usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens) || 0;
     tout += Number(usage.completion_tokens) || 0;
     const msg = reply.choices && reply.choices[0] && reply.choices[0].message;
     if (!msg) throw new Error("unexpected reply shape from the endpoint");
     const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
-    messages.push({ role: "assistant", content: msg.content ?? null, ...(calls.length ? { tool_calls: calls } : {}) });
+    // the model's own reasoning goes back with its tool calls: GLM reasons between tool calls (z.ai: "thinking blocks should be
+    // explicitly preserved and returned together with the tool results") and gpt-oss expects its past chain of thought on
+    // tool turns. Dropped, the model rebuilt its working from raw tool output every step (GLM: 146 steps on one issue)
+    messages.push({ role: "assistant", content: msg.content ?? null, ...reasoningOf(msg), ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) { finalMessage = String(msg.content || "").trim(); stop = "answered"; break; }
 
     let finished = false;
@@ -445,7 +542,12 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
       let result;
       try {
         args = call.function && call.function.arguments ? JSON.parse(call.function.arguments) : {};
-        if (name === "finish") { finalMessage = String(args.summary || "").trim(); finished = true; result = "done"; }
+        if (name === "finish" && rootCause && refusedFinish < 2 && !projectChanged(cwd)) {
+          // a run that changed none of the project's files (a reproduction script at most) has not done the task
+          refusedFinish++;
+          result = "not finished: none of the project's own files is changed yet (new scripts do not count). Make the fix in " +
+            "the project's code, check it, then call finish. If you are sure no change is needed, call finish again and say why.";
+        } else if (name === "finish") { finalMessage = String(args.summary || "").trim(); finished = true; result = "done"; }
         else {
           if (detector && (name === "edit_file" || name === "write_file")) detector.seed(args.path, fileHash(cwd, args.path));
           result = await runTool(name, args, { cwd, env, blockInstalls: cfg.block_installs !== false });
@@ -454,6 +556,8 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
         result = `error: ${redactKey(err.message, key)}`;
       }
       log(`step ${step}: ${name}${args && args.path ? " " + args.path : ""}${/^error:/.test(String(result)) ? " (error)" : ""}`);
+      record({ step, tool: name, args: cutArgs(args), result: redactKey(String(result), key).slice(0, 4000),
+               ...(msg.content ? { thought: String(msg.content).slice(0, 1500) } : {}) });
       // the same read or search again, with the same output, while the first is still in context: say so instead of
       // resending it (agents re-read a big spec file over and over; each copy rides along on every later step)
       const sig = `${name}\u0000${JSON.stringify(args)}`;
@@ -476,14 +580,14 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     }
     if (stalled) { stop = "stalled"; break; }
     if (finished) { stop = "finished"; break; }
-    const spent = costOf(cfg, tin, tout);
+    const spent = costOf(cfg, tin, tout, tcached);
     if (maxCost !== null && spent !== null && spent >= maxCost) { stop = "cost_cap"; break; }
   }
 
   if (stalled) finalMessage = `stopped early (stalled, rule ${stalled.rule}): ${stalled.why}`;
   if (!finalMessage) finalMessage = stop === "max_steps" ? `stopped after ${maxSteps} tool calls without finishing` : stop === "cost_cap" ? "stopped: cost cap reached" : "";
-  return { type: "final", message: finalMessage, learned: parseLearned(finalMessage), tokens: { in: tin, out: tout },
-           costUsd: costOf(cfg, tin, tout), steps: step, stop, ...(stalled ? { stalled } : {}) };
+  return { type: "final", message: finalMessage, learned: parseLearned(finalMessage), tokens: { in: tin, out: tout, cached: tcached },
+           costUsd: costOf(cfg, tin, tout, tcached), steps: step, stop, ...(stalled ? { stalled } : {}) };
 }
 
 // ---------------------------------------------------------------- CLI

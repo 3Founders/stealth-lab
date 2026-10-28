@@ -11,6 +11,7 @@ import path from "node:path";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { costOf } from "./spend.mjs";
 
 export const explainEnabled = (env = process.env) => (env.STEALTHLAB_EXPLAIN || "on").toLowerCase() !== "off";
 
@@ -59,10 +60,8 @@ export async function explainChange({ request, diff, check, summary = "", env = 
     if (!res.ok) { log(`explain: HTTP ${res.status}`); return fallback; }
     const body = await res.json();
     const u = body?.usage;
-    if (u && (profile.input_per_mtok || profile.output_per_mtok)) {
-      ledger(env, { what: "explain", model: name,
-        cost_usd: ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 });
-    }
+    const cost = costOf(profile, u);
+    if (cost !== null) ledger(env, { what: "explain", model: name, cost_usd: cost });
     return tidy(body?.choices?.[0]?.message?.content) || fallback;
   } catch (err) {
     log(`explain: ${err.name === "TimeoutError" ? "timed out" : err.message}`);

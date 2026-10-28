@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { enclosingBlock, locate, renderForWriter, renderWhere, taskTerms, testFileFor } from "../lib/locate.mjs";
+import { enclosingBlock, fixDensity, locate, messagePhrases, renderForWriter, renderWhere, taskTerms, testFileFor, tracebackFrames } from "../lib/locate.mjs";
 import { preloadNamedFiles } from "../lib/agent/step_agent.mjs";
 import { readArea, recordArea } from "../lib/areas.mjs";
 import { RUN_HEAD, renderDispatchRun, writeDispatchRun } from "../lib/dispatch_run.mjs";
@@ -92,12 +92,12 @@ test("preload: path:start-end in the task reads those lines, not the file's star
   assert.doesNotMatch(out, /def helper_0\b/);
 });
 
-test("withWhere: the line always fits inside the executor's 12,000 characters; the request is cut, not the line", () => {
+test("withWhere: the line always fits inside the executor's 40,000 characters; the request is cut, not the line", () => {
   const where = "Likely place in this repository: pkg/_typehints.py:900-910 (adapt_typehints).";
   assert.equal(withWhere("short task", where), `short task\n\n${where}`);
   assert.equal(withWhere("x".repeat(5000), where), `${"x".repeat(5000)}\n\n${where}`, "a 5,000-character issue is whole (2,000 cut 8 of 25 real issues)");
-  const long = withWhere("x".repeat(13000), where);
-  assert.ok(long.length <= 12000 && long.endsWith(where));
+  const long = withWhere("x".repeat(41000), where);
+  assert.ok(long.length <= 40000 && long.endsWith(where));
   assert.equal(withWhere("task", ""), "task");
 });
 
@@ -131,11 +131,51 @@ test("run.md: written for a dispatched task; the planner's own run.md is never t
   assert.match(renderDispatchRun({ task: "t", loc: { spots: [] }, winner: "gemma" }), /N-3\|done\|Make the change \(done by gemma\)/);
 });
 
+test("messagePhrases: the error text a task quotes, from code fences even when the task is one line; code and short bits are not phrases", () => {
+  const p = messagePhrases("Bug ```import pkg from typing import Optional``` We get ``` usage: x [-h] error: Validation failed: " +
+    "Parser key \"a.b\": Does not validate against any of the Union subtypes Subtypes: (<class B>) - Type <class B> expects a dict or Namespace ```");
+  assert.ok(p.includes("Does not validate against any"), p.join(" / "));
+  assert.ok(p.includes("expects a dict or Namespace"));
+  assert.ok(!p.some((x) => /import/.test(x)), "a line of code is not a message");
+  assert.ok(!p.includes("Validation failed"), "two words say too little");
+});
+
+test("locate: an error message the task quotes leads to the code that raises it, and the pointer is strong", () => {
+  const repo = repoWithPackage();
+  fs.appendFileSync(path.join(repo, "pkg", "_typehints.py"), "\n\ndef raise_union_unexpected_value(subtypes):\n" +
+    "    raise ValueError(f\"Does not validate against any of the Union subtypes\\nSubtypes: {subtypes}\")\n");
+  execFileSync("git", ["-C", repo, "commit", "-qam", "msg"], { stdio: "pipe" });
+  const loc = locate({ prompt: "Optional fails. We get ``` error: Parser key \"a\": Does not validate against any of the Union subtypes ```", root: repo, env: {} });
+  assert.equal(loc.files[0], "pkg/_typehints.py");
+  assert.equal(loc.spots[0].symbol, "raise_union_unexpected_value");
+  assert.equal(loc.strong, true);
+  assert.equal(locate({ prompt: "adapt_typehints returns None for Optional[int]", root: repo, env: {} }).strong, false, "a name match alone is a guess");
+});
+
+test("tracebackFrames: a quoted traceback's frames are this repository's files by path suffix", () => {
+  const tb = 'Traceback (most recent call last): File "/home/u/x/main.py", line 4, in <module> main() File ' +
+    '"/home/u/.venv/lib/python3.11/site-packages/pkg/_cli.py", line 9, in run cfg = adapt_typehints(x)';
+  assert.deepEqual(tracebackFrames(tb, new Set(["pkg/_cli.py", "pkg/_typehints.py"])), [{ file: "pkg/_cli.py", fn: "run" }]);
+});
+
+test("fixDensity: files the bug-fix commits touched most score highest; other commits do not count", () => {
+  const repo = repoWithPackage();
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
+  for (const [f, msg] of [["_typehints.py", "Fix optional (#12)"], ["_typehints.py", "fix: union default"], ["_cli.py", "Fix exit code"], ["_cli.py", "Add a flag"], ["_cli.py", "Docs"]]) {
+    fs.appendFileSync(path.join(repo, "pkg", f), "\n# change\n");
+    g("commit", "-qam", msg);
+  }
+  const d = fixDensity(repo);
+  assert.equal(d.get("pkg/_typehints.py"), 1);
+  assert.equal(d.get("pkg/_cli.py"), 0.5);
+});
+
 test("the note to the session's model: where to look and the tests that fail on the unchanged code", () => {
   const d = { handled: false, tried: [{ unit: "gemma|stealth", state: "failed" }], runMd: true, spec: { file: "/s/test_spec.py" },
-              loc: { spots: [{ file: "pkg/_typehints.py", start: 900, end: 905, symbol: "adapt_typehints" }] } };
+              loc: { strong: true, spots: [{ file: "pkg/_typehints.py", start: 900, end: 905, symbol: "adapt_typehints" }] } };
   const note = triedNote(d);
   assert.match(note, /points at pkg\/_typehints\.py:900-905 \(adapt_typehints\)/);
+  assert.doesNotMatch(triedNote({ ...d, loc: { ...d.loc, strong: false } }), /points at/, "a word-match guess is not passed on to the session's model");
   assert.match(note, /Tests written for this task, which fail on the unchanged code, are at \/s\/test_spec\.py/);
   assert.match(note, /\.kell\/run\.md \(node N-3 is yours\)/);
   assert.doesNotMatch(triedNote({ ...d, sharedFail: "test_a" }), /are at \/s\/test_spec\.py/, "tests two answers failed alike may be wrong: not offered");

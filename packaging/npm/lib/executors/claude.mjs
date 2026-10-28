@@ -51,9 +51,24 @@ export const LEAN_SYSTEM = [
   "-I` ignores this directory and runs the installed copy, not your change). Do not add new files unless the task needs them, do not",
   "reformat unrelated code, and never edit a test to hide a failure your change causes. When the task changes a behaviour",
   "that an existing test asserts, the test is out of date: update it to the new behaviour. Use the tools",
-  "directly; several independent reads or searches may go in one turn. When done, reply with two or three sentences on",
-  "what you changed and how you checked it.",
+  "directly; several independent reads or searches may go in one turn. Check with your reproduction and the tests of the",
+  "module you changed; run the whole test suite at most once. As soon as those pass, stop: do not look for linters or",
+  "other tools that are not installed, and do not re-run checks that already passed (a run that kept checking a finished",
+  "fix ran out of time). When done, reply with two or three sentences on what you changed and how you checked it.",
 ].join(" ");
+
+// The root-cause method (lib/agent/step_agent.mjs's, for the same failures: cheap models edited the right file and patched the
+// symptom, or never edited): added to LEAN_SYSTEM with STEALTHLAB_AGENT_METHOD=root_cause.
+export const LEAN_METHOD = [
+  "Method: reproduce the wrong behaviour first with a tiny script or command and run it. Find the cause, not the symptom:",
+  "follow the wrong value back to the first place it goes wrong and fix it there, even when the error is raised elsewhere.",
+  "Fix it the way this code already does things (its helpers and patterns; `git log -p -L` or `git log -p -- <file>` shows",
+  "how this code was changed before). Do not hide the problem: no try/except or early return that only silences it, no",
+  "special case for the example's values. Rerun the reproduction, then the module's tests. A reproduction script alone is",
+  "not a fix: change the project's own files. Once you have a likely cause, edit it instead of re-reading the same code.",
+].join(" ");
+export const leanSystem = (env = process.env) =>
+  (String(env.STEALTHLAB_AGENT_METHOD || "").toLowerCase() === "root_cause" ? `${LEAN_SYSTEM} ${LEAN_METHOD}` : LEAN_SYSTEM);
 
 // Open-model mode (a profile with anthropic_base_url): the same `claude -p`, but pointed at a third party's
 // Anthropic-compatible endpoint with THAT provider's key (the pattern Z.ai documents:
@@ -129,7 +144,7 @@ const adapter = {
     const lean = (env.STEALTHLAB_CLAUDE_LEAN || "on").toLowerCase() !== "off";
     const args = [...launch.prefix, "-p", safeTaskArg(task), "--output-format", "stream-json", "--verbose", "--no-session-persistence",
       "--permission-mode", "acceptEdits", "--permission-prompts", "none", "--setting-sources", "user", "--strict-mcp-config",
-      ...(lean ? ["--system-prompt", LEAN_SYSTEM, "--tools", CLAUDE_ALLOWED_TOOLS] : []),
+      ...(lean ? ["--system-prompt", leanSystem(env), "--tools", CLAUDE_ALLOWED_TOOLS] : []),
       "--model", profile.model_id, "--allowedTools", CLAUDE_ALLOWED_TOOLS];
     void worktree; void timeoutS;
     return { cmd: launch.cmd, args, env: { ...scrubEnv(env), ...overlay }, stdinText: undefined };

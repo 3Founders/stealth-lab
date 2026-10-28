@@ -7,9 +7,12 @@
 // 3's saved answers before any rule uses it. The prompt and the default model are fixed BEFORE that measurement
 // (.scratch/acceptance_rules_preregistered_2026-10-16.md) and are not tuned on it.
 // STEALTHLAB_REVIEW_MODEL names the model (an exec.json profile; default gemma-4-31b-it); "off": no review.
+import fs from "node:fs";
+import path from "node:path";
 import { readExecConfig } from "./exec/store.mjs";
+import { enclosingBlock } from "./locate.mjs";
 import { profileKey } from "./executors/profile.mjs";
-import { recordSpend } from "./spend.mjs";
+import { costOf, recordSpend } from "./spend.mjs";
 
 export const REVIEW_SYSTEM = [
   "You review a code change made by another engineer for a request. You get the request and the change as a unified",
@@ -20,7 +23,51 @@ export const REVIEW_SYSTEM = [
   '{"verdict": "fixes" | "does_not_fix" | "unsure", "why": one sentence}.',
 ].join(" ");
 
+// The same, plus the two ways a plausible wrong answer got past it (sqlglot-4067, cache-full-2: Sonnet said "fixes" to a change
+// that made T-SQL read `||` as bitwise OR -- a meaning nobody asked for -- and wrote CONCAT(...) where the request said `+`
+// is the operator that works). A deviation from the pre-registered prompt (docs/acceptance_rules_preregistered_2026-10-16.md).
+export const REVIEW_SYSTEM_V2 = [
+  REVIEW_SYSTEM.replace(/ Reply with only a JSON object:.*$/, ""),
+  "Also NOT: a change that gives existing code, syntax or options a new meaning the request does not ask for, or that",
+  "produces a different form than the one the request (or a source it cites) says is right -- when the request says what",
+  "the correct behaviour or output is, the change must give exactly that. Check what the changed code actually returns for",
+  "the request's own example, reading the diff line by line. Reply with only a JSON object:",
+  '{"verdict": "fixes" | "does_not_fix" | "unsure", "why": one sentence}.',
+].join(" ");
+// v2 by default: on 15 real answers graded by their hidden tests, v2 with the changed functions accepted 7/8 right and 1/7 wrong,
+// v1 (diff alone or with the functions) 7/8 and 2/7 (reviewer replay 2026-10-28). STEALTHLAB_REVIEW_PROMPT=v1: the pre-registered prompt
+const reviewSystem = (env) => (String(env.STEALTHLAB_REVIEW_PROMPT || "v2").toLowerCase() === "v1" ? REVIEW_SYSTEM : REVIEW_SYSTEM_V2);
+
 const DIFF_MAX = 14000;
+const CODE_MAX = 16000;
+
+// The functions a diff changes, as they read after the change (from the answer's worktree), with line numbers: a reviewer
+// shown only the diff guessed at what the code around it does -- "I can't tell from the diff whether the parser already
+// defines ..." (unsure on a wrong answer), and a real fix rejected for code it could not see (sqlglot-4067, jsonargparse-560;
+// reviewer replay 2026-10-28). Test files are left out; each function once, at most CODE_MAX characters in all.
+export function changedCode(worktree, diff, { max = CODE_MAX } = {}) {
+  if (!worktree) return "";
+  const parts = [];
+  let used = 0;
+  for (const block of String(diff || "").split(/(?=^diff --git )/m)) {
+    const file = /^\+\+\+ b\/(\S+)/m.exec(block)?.[1];
+    if (!file || /(^|\/)(tests?|testing)\/|(^|\/)test_[^/]*$|_test\.\w+$|\.(test|spec)\.\w+$/.test(file)) continue;
+    let lines;
+    try { lines = fs.readFileSync(path.join(worktree, file), "utf8").split(/\r?\n/); } catch { continue; }
+    const seen = [];
+    for (const m of block.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
+      const b = enclosingBlock(lines, Number(m[1]) + Math.min(3, Math.max(0, Number(m[2] || 1) - 1)));
+      if (seen.some((s) => !(b.end < s.start || b.start > s.end))) continue;
+      seen.push(b);
+      const body = lines.slice(b.start - 1, b.end).map((l, i) => `${b.start + i}\t${l}`).join("\n");
+      const piece = `--- ${file} lines ${b.start}-${b.end}${b.symbol ? ` (${b.symbol})` : ""}, after the change ---\n${body}`;
+      if (used + piece.length > max) return parts.join("\n\n");
+      parts.push(piece);
+      used += piece.length;
+    }
+  }
+  return parts.join("\n\n");
+}
 
 // -> {verdict: "fixes"|"does_not_fix"|"unsure", why} | null (no model, an error, an unusable reply)
 export function parseVerdict(text) {
@@ -37,14 +84,17 @@ export function parseVerdict(text) {
 // model: an exec.json profile (one chat call on its endpoint), or a Claude model (one lean, tool-less `claude -p` under
 // the user's own login: a strong reviewer reads only the request and the diff, a small share of what solving costs).
 // runClaude: for tests, a stand-in for lib/claude_call.mjs runClaudeAsync.
-export async function reviewPatch({ prompt, diff, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 90000,
+export async function reviewPatch({ prompt, diff, worktree = null, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 90000,
                                     model = null, runClaude = null, signal = null }) {
   const name = String(model || env.STEALTHLAB_REVIEW_MODEL || "gemma-4-31b-it").trim();
   if (name.toLowerCase() === "off" || !String(diff || "").trim()) return null;
   const d = String(diff);
+  // STEALTHLAB_REVIEW_CODE=off: the request and the diff alone, as before
+  const code = (env.STEALTHLAB_REVIEW_CODE || "on").toLowerCase() !== "off" ? changedCode(worktree, d) : "";
   const user = `The request:\n${String(prompt || "").slice(0, 6000)}\n\nThe change:\n` +
-    (d.length > DIFF_MAX ? `${d.slice(0, DIFF_MAX)}\n[... the rest of the diff is cut]` : d);
-  return askReviewer({ name, system: REVIEW_SYSTEM, user, parse: parseVerdict, what: "review", env, fetchImpl, log, timeoutMs, runClaude, signal });
+    (d.length > DIFF_MAX ? `${d.slice(0, DIFF_MAX)}\n[... the rest of the diff is cut]` : d) +
+    (code ? `\n\nThe changed functions as they read after the change:\n${code}` : "");
+  return askReviewer({ name, system: reviewSystem(env), user, parse: parseVerdict, what: "review", env, fetchImpl, log, timeoutMs, runClaude, signal });
 }
 
 // A cheap model's reply to a question or a conversational turn (lib/answer.mjs), checked before the developer sees it.
@@ -108,8 +158,7 @@ async function askReviewer({ name, system, user, parse, what, env, fetchImpl, lo
     const v = parse(body?.choices?.[0]?.message?.content);
     if (!v) { log(`${what}: no usable verdict`); return null; }
     const u = body?.usage || {};
-    const cost = (profile.input_per_mtok || profile.output_per_mtok)
-      ? ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 : null;
+    const cost = costOf(profile, u);
     log(`${what}: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
     recordSpend(env, { what, model: name, cost_usd: cost });
     return { ...v, model: name, cost_usd: cost };

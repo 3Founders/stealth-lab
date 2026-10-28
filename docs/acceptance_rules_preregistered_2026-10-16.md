@@ -106,3 +106,20 @@ project's check (E); our written tests and the reviewer judge the finished answe
   (no test writer): they are not scorable and not chosen.
 - Step 4 (time budget) is replaced by the owner's decision: arm C's limits only catch hangs and service errors
   (experiments/abtest/runner.py LIMITS_S = 3600 s for the cheap tries, the middle model and each run).
+
+## Deviation, recorded 2026-10-28: the reviewer prompt and what it is shown
+After sqlglot-4067 (cache-full-2), where the strong reviewer said "fixes" to a wrong cheap answer, the reviewer
+(lib/review.mjs) changed in two ways, measured on 15 real answers whose label comes from their hidden tests (7 wrong
+cheap answers from cache-full-2 and replay-1, 8 real fixes), Sonnet as the reviewer:
+
+| reviewer                                   | right accepted | wrong accepted |
+|--------------------------------------------|----------------|----------------|
+| v1 (pre-registered), diff only             | 7/8            | 2/7            |
+| v1 + the changed functions after the change| 7/8            | 2/7            |
+| v2 prompt, diff only                       | 6/8            | 1/7            |
+| v2 prompt + the changed functions          | 7/8            | 1/7            |
+
+v2 adds: a change that gives existing code a meaning the request does not ask for, or produces another form than the
+one the request says is right, does not fix it. The last row is the default now (STEALTHLAB_REVIEW_PROMPT=v1 and
+STEALTHLAB_REVIEW_CODE=off restore the pre-registered reviewer). 15 answers are few: this is chosen after seeing the
+failure it addresses, so it must be re-measured on stage 3's saved answers (acceptance_eval.py) before it is relied on.

@@ -205,6 +205,32 @@ export function testVerdict(output) {
   return passed.some((re) => re.test(t)) ? true : null;
 }
 
+// pytest's short summary -> failing test ids (the same reading as dispatch's failingTests)
+export function failingIds(out) {
+  return [...new Set([...String(out || "").matchAll(/^(?:FAILED|ERROR|SUBFAIL(?:ED)?\[.*?\]) (\S+)/gm)].map((m) => m[1]))];
+}
+
+// A test run passed for the session's purposes: its runner said so, or every test it failed already failed on the unchanged
+// code (s.base_fails, written by dispatch's baseline). Many real projects have such tests (jsonargparse's permission tests
+// fail as root): judged on the plain verdict, every session there "failed" and no fix went into the library (cache-full-2:
+// Opus solved 518, 527 and 559, none was recorded).
+export function passedRun(t, s) {
+  if (!t) return false;
+  if (t.verdict === true) return true;
+  const base = Array.isArray(s?.base_fails) ? new Set(s.base_fails) : null;
+  return t.verdict === false && !!base && Array.isArray(t.fails) && t.fails.length > 0 && t.fails.every((f) => base.has(f));
+}
+
+// dispatch's baseline -> the session: the tests that fail on the code as it was when the prompt arrived
+export function rememberBaseFails(env, sessionId, fails) {
+  const file = sessionFile(env, sessionId);
+  const s = file && readSession(file);
+  if (!s || !Array.isArray(fails)) return false;
+  s.base_fails = fails.slice(0, 500);
+  writeSession(file, s);
+  return true;
+}
+
 function toolOutput(resp) {
   if (!resp || typeof resp !== "object") return String(resp || "");
   if (typeof resp.text === "string") return resp.text;
@@ -217,9 +243,13 @@ export function onPostToolUse(payload, { env = process.env, now = Date.now() } =
   const file = sessionFile(env, payload.session_id);
   const s = file && readSession(file);
   if (!s || s.reported) return null;
-  const verdict = testVerdict(toolOutput(payload.tool_response));
+  const out = toolOutput(payload.tool_response);
+  const verdict = testVerdict(out);
+  // the failing tests' ids, so a run whose only failures already failed on the unchanged code counts as passing (passedRun)
+  const fails = verdict === false ? failingIds(out).slice(0, 200) : [];
   // the command is kept only when the library will use it as the new entry's check (see rememberLookup)
-  s.tests = [...(s.tests || []), { verdict, at: now, ...(s.title ? { command: String(payload.tool_input?.command || "").slice(0, 500) } : {}) }]
+  s.tests = [...(s.tests || []), { verdict, at: now, ...(fails.length ? { fails } : {}),
+                                   ...(s.title ? { command: String(payload.tool_input?.command || "").slice(0, 500) } : {}) }]
     .slice(-MAX_TESTS);
   writeSession(file, s);
   return verdict;
@@ -259,11 +289,11 @@ export function buildReport(session, { sessionId, model }) {
   // with the next model. Without one, it is a standalone observation (report_model_run).
   if (session.lookup.instance_key) {
     return { via: "report_result", instance_key: session.lookup.instance_key, model, scaffold: "claude-code",
-             accepted: last.verdict === true, check_kind: "tests" };
+             accepted: passedRun(last, session), check_kind: "tests" };
   }
   const key = crypto.createHash("sha256").update(`${sessionId}|${session.prompt_key}`).digest("hex").slice(0, 24);
   return {
-    model, scaffold: "claude-code", accepted: last.verdict === true, instance_key: `cc-${key}`,
+    model, scaffold: "claude-code", accepted: passedRun(last, session), instance_key: `cc-${key}`,
     goal_id: session.lookup.goal_id || undefined, procedure_id: session.lookup.procedure_id || undefined,
     check_kind: "tests", attempt_index: 0,
   };
@@ -289,7 +319,7 @@ export function recordLocalObs(s, model, { now = new Date() } = {}) {
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last || !fs.existsSync(path.join(s.cwd, ".kell"))) return false;
   const route = s.route || ensureRoute(s.cwd, s.lookup.goal_id, { now });
-  recordObs(s.cwd, route, model, "claude-code", last.verdict === true, { now });
+  recordObs(s.cwd, route, model, "claude-code", passedRun(last, s), { now });
   s.obs_recorded = true;
   return true;
 }
@@ -340,7 +370,7 @@ export function recordLibraryEntry(s, { env = process.env, now = new Date(), git
   if (!libraryAutoEnabled(env) || !s || s.library_added || s.library_match || !s.cwd || !s.title) return null;
   if (!fs.existsSync(path.join(s.cwd, ".kell"))) return null;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
-  if (!last || last.verdict !== true || !last.command) return null;
+  if (!last || !passedRun(last, s) || !last.command) return null;
   if (!Array.isArray(edits) || !edits.length) return null;
   const diff = diffFromGit(s.cwd, "HEAD", { files: edits, ...(gitImpl ? { gitImpl } : {}) });
   if (!diff.trim()) return null;                    // nothing changed: not a solved problem

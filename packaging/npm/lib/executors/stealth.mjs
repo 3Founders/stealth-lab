@@ -27,7 +27,7 @@ const adapter = {
     return { installed, version: installed ? AGENT_VERSION : null, bin: installed ? STEP_AGENT : null };
   },
 
-  buildCommand({ task, model, worktree, timeoutS, env = process.env, profile, limits } = {}) {
+  buildCommand({ task, model, worktree, timeoutS, env = process.env, profile, limits, transcriptPath } = {}) {
     if (!profile) throw new Error(`the stealth executor needs a profile for model "${model}" in ~/.stealthlab/exec.json (profiles.<model> with openai_base_url and key_env)`);
     if (!profile.openai_base_url) throw new Error(`profile ${profile.name} has no openai_base_url, which the stealth executor needs`);
     const key = profileKey(profile, env);
@@ -36,7 +36,11 @@ const adapter = {
     const input = {
       task: safeTaskArg(task), base_url: profile.openai_base_url, model_id: profile.model_id,
       input_per_mtok: profile.input_per_mtok, output_per_mtok: profile.output_per_mtok,
+      ...(profile.cached_input_per_mtok !== undefined ? { cached_input_per_mtok: profile.cached_input_per_mtok } : {}),
+      ...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}), ...(profile.top_p !== undefined ? { top_p: profile.top_p } : {}),
       request_extras: profile.request_extras, ...(profile.no_system_role ? { no_system_role: true } : {}),
+      // the run stops itself just before its time limit, so its spend is reported (a killed run printed nothing)
+      ...(Number(timeoutS) > 60 ? { max_seconds: Number(timeoutS) - 20 } : {}),
       // stop a stuck run early (lib/agent/stall.mjs); the child's env carries no STEALTHLAB_ variable, so it travels here
       early_stop: earlyStopEnabled(env),
       ...(Number(env.STEALTHLAB_EARLY_STOP_STEPS) > 0 ? { early_stop_steps: Number(env.STEALTHLAB_EARLY_STOP_STEPS) } : {}),
@@ -48,6 +52,12 @@ const adapter = {
       ...((env.STEALTHLAB_AGENT_PRELOAD || "on").toLowerCase() === "off" ? { preload: false } : {}),
       // a model that can see (exec.json profile `vision: true`) gets the images the task names in its first turn
       ...(profile.vision ? { vision: true } : {}),
+      // each tool call and its output, beside the attempt's logs (lib/exec/runtime.mjs gives the path)
+      ...(transcriptPath ? { transcript: transcriptPath } : {}),
+      // the history tool: past changes to the code being edited (lib/area_history.mjs); STEALTHLAB_AGENT_HISTORY=on
+      ...((env.STEALTHLAB_AGENT_HISTORY || "off").toLowerCase() === "on" ? { history_tool: true } : {}),
+      // reproduce, find the cause, fix it there, no finish without a change (lib/agent/step_agent.mjs); STEALTHLAB_AGENT_METHOD=root_cause
+      ...((env.STEALTHLAB_AGENT_METHOD || "").toLowerCase() === "root_cause" ? { method: "root_cause" } : {}),
       ...(limits || {}),
     };
     void worktree; void timeoutS;

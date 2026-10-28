@@ -323,7 +323,8 @@ test("cheap models at once: the limit is per provider, so a model on another pro
   const p = dispatch({ payload: { cwd: repo, prompt: "Fix calc.py" }, reply: { model_plan: PLAN }, root: repo, mine: MINE,
     env: { ...env, K: "k", STEALTHLAB_DISPATCH_MIN_QUOTA_TOKENS: "0", STEALTHLAB_DISPATCH_FASTEST_FIRST: "off", STEALTHLAB_DISPATCH_PARALLEL: "on",
            STEALTHLAB_DISPATCH_MODEL_CAP: "off", STEALTHLAB_DISPATCH_TIMEOUT_S: "10" }, runtime: rt });
-  await new Promise((r) => setTimeout(r, 1500));
+  // time to start them all (the runs only end once the gate opens, so a longer wait cannot let one finish first)
+  await new Promise((r) => setTimeout(r, 4000));
   assert.deepEqual([...started].sort(), ["gemma-4-31b-it", "glm-5.3-flash", "minimax-m2-7"], "two on the shared provider plus flash on its own");
   release();
   await p;

@@ -54,6 +54,11 @@ export function isLoopbackUrl(value) {
   } catch { return false; }
 }
 
+function sampling(name, field, value, max) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > max) throw new Error(`profile ${name}: ${field} must be a number from 0 to ${max}`);
+  return value;
+}
+
 function price(name, field, value) {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error(`profile ${name}: ${field} must be a non-negative number`);
@@ -102,13 +107,20 @@ export function normaliseProfile(name, raw) {
   const inP = price(name, "input_per_mtok", raw.input_per_mtok);
   const outP = price(name, "output_per_mtok", raw.output_per_mtok);
   if ((inP === undefined) !== (outP === undefined)) throw new Error(`profile ${name}: give both input_per_mtok and output_per_mtok, or neither`);
+  // the price of input the provider served from its cache (optional; without it cached input costs the full price)
+  const cachedP = price(name, "cached_input_per_mtok", raw.cached_input_per_mtok);
   return Object.freeze({
     name, model_id: modelId, key_env: keyEnv, key_from: keyFrom, anthropic_base_url: anthropic, openai_base_url: openai,
-    input_per_mtok: inP, output_per_mtok: outP,
+    input_per_mtok: inP, output_per_mtok: outP, ...(cachedP !== undefined ? { cached_input_per_mtok: cachedP } : {}),
     zdr: flag(name, "zdr", raw.zdr), no_training: flag(name, "no_training", raw.no_training),
     dpa_signed: flag(name, "dpa_signed", raw.dpa_signed) ?? false, region,
     request_extras: Object.freeze(extras),
     no_system_role: flag(name, "no_system_role", raw.no_system_role) ?? false,
+    // the vendor's sampling settings (optional): every one of the cheap models is meant to run at temperature 1.0, and
+    // General Compute's default for gpt-oss and gemma is greedy -- the step agent forced 0 for all, the bridge sent none
+    // (probe, 2026-10-28). Unset: the provider's default.
+    ...(raw.temperature !== undefined ? { temperature: sampling(name, "temperature", raw.temperature, 2) } : {}),
+    ...(raw.top_p !== undefined ? { top_p: sampling(name, "top_p", raw.top_p, 1) } : {}),
     // the model reads images (a GLM-V, say): tasks built on a screenshot may go to it, and it gets the image
     vision: flag(name, "vision", raw.vision) ?? false,
     // the strongest cheap model (GLM-5.3-flash, say): it alone tries a task the brief calls large, is never cut by the

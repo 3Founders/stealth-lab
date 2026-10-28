@@ -6,13 +6,13 @@
 // spent. The rules are deterministic and look only at what the agent did -- no model, nothing trained:
 //
 //   a  the same check failed twice with the same failing tests (or the same first error line) and the edits between the two
-//      runs touched nothing the failure points at: the agent changed things that cannot matter
+//      runs touched nothing the failure points at: the agent changed things that cannot matter (counted after its first change)
 //   b  a file came back to a content it already had (an edit undone, then redone): it is oscillating
 //   c  three tool calls in a row failed (an edit that never matches, a path that does not exist): it is not reading its errors
 //   d  six tool calls in a row without any change to the worktree's diff, AFTER the first change was made: it has stopped
 //      making progress (exploring before the first edit is never counted: the first reads and searches are the work).
 //      A read, search or listing not made before is new information, not a stall: it counts only toward 3x the threshold
-//   e  eight times that many tool calls (48) and still no change at all: it is only reading. gpt-oss searched and re-read
+//   e  before the first change, 24 calls that brought nothing new (repeats), or 144 calls in all: it is only reading. gpt-oss searched and re-read
 //      the same file 55-75 times without an edit in 8 of 9 runs and always ran out the full 600 s; the runs that did pass
 //      made their first change within 34 calls (cache-full-1, jsonargparse, 2026-10-27)
 //
@@ -65,6 +65,7 @@ export class StallDetector {
     this.lastFail = null;            // {cmd, sig, paths}
     this.fp = null;                  // the worktree's fingerprint now
     this.started = false;            // a change has been made
+    this.changed = false;            // a successful edit/write, or the worktree changed (rule a counts only after one)
     this.still = 0;                  // tool calls since the fingerprint last changed (once started) that brought nothing new
     this.browse = 0;                 // reads/searches of something not read before, since the last change
     this.seenCalls = new Set();      // read/search/list calls made so far (name + arguments)
@@ -96,8 +97,10 @@ export class StallDetector {
       this.hashes.set(p, seen);
       this.last.set(p, hash);
       this.edited.add(p);
+      this.changed = true;
     }
 
+    if (fingerprint !== undefined && fingerprint !== null && this.fp0 !== undefined && fingerprint !== this.fp0) this.changed = true;
     if (name === "run_shell" && !failed) {
       const code = exitOf(result);
       if (code === 0) this.lastFail = null;
@@ -106,7 +109,9 @@ export class StallDetector {
         const sig = failureSignature(result);
         const fails = sig.names.length > 0 || sig.first !== "";
         const paths = failurePaths(result);
-        if (fails && this.lastFail && this.lastFail.cmd === cmd
+        // only once the agent has changed something: before that, re-running a probe while reading the code is exploring
+        // (glm on jsonargparse-560 was stopped mid-diagnosis, with no edit made, printing exactly the value the fix changes)
+        if (fails && this.changed && this.lastFail && this.lastFail.cmd === cmd
             && JSON.stringify(this.lastFail.sig) === JSON.stringify(sig) && !touches(this.edited, new Set([...paths, ...this.lastFail.paths]))) {
           return { rule: "a", why: `the check failed again the same way (${sig.names.slice(0, 3).join(", ") || sig.first}) and the edits since touched nothing it points at` };
         }
@@ -143,8 +148,13 @@ export class StallDetector {
       return { rule: "d", why: `${this.browse + this.still} tool calls in a row without any change to the worktree` };
     }
     if (!this.started && this.fp !== null && this.fp0 !== undefined && this.fp !== this.fp0) this.started = true;
-    if (!this.started && this.step >= this.noChangeSteps * 8) {
-      return { rule: "e", why: `${this.step} tool calls without any change to the worktree` };
+    // e, before the first change: only calls that brought nothing new count (a read, search or command it already made, with
+    // the same result) -- reading new code is the work. GLM-flash explores long before its first edit (first edit at call 69
+    // on a solved jsonargparse-508), and a ceiling of 48 calls of any kind stopped all 10 of its step-agent tries at 2-6 min of
+    // their 10 (replay-2g, 2026-10-28). A hard ceiling (24x) still stops endless browsing.
+    if (!this.started && !fresh) this.repeatsBeforeChange = (this.repeatsBeforeChange || 0) + 1;
+    if (!this.started && ((this.repeatsBeforeChange || 0) >= this.noChangeSteps * 4 || this.step >= this.noChangeSteps * 24)) {
+      return { rule: "e", why: `${this.step} tool calls without any change to the worktree (${this.repeatsBeforeChange || 0} of them repeats)` };
     }
     if (this.started && this.still >= this.noChangeSteps) {
       return { rule: "d", why: `${this.still} tool calls in a row without any change to the worktree` };

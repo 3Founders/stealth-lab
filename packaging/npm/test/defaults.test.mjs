@@ -1,5 +1,5 @@
 // The dispatch defaults (2026-10-18): what a user gets with no STEALTHLAB_DISPATCH_* setting -- every configured cheap
-// model at once, one 600 s budget, and an answer delivered when it passes the project's own tests and the strong
+// model at once, one 900 s budget, and an answer delivered when it passes the project's own tests and the strong
 // reviewer says it fixes the request.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -14,11 +14,11 @@ const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gem
 const MINE = "claude-opus-5-5|claude-code";
 const SPEC = "from calc import x\n\ndef test_x_is_two():\n    assert x == 2\n";
 
-test("the defaults: the evidence rule, all models at once, a 600 s budget, and none of the limits without a measured basis", () => {
+test("the defaults: the evidence rule, all models at once, a 900 s budget, and none of the limits without a measured basis", () => {
   const p = dispatchPolicy({});
   assert.equal(p.accept, "E Rs", "the project's tests and the strong reviewer: nothing else gates");
   assert.equal(p.parallel, true);
-  assert.equal(p.timeoutS, 600);
+  assert.equal(p.timeoutS, 900);
   assert.equal(p.maxParallel, Infinity, "no per-provider limit");
   assert.equal(p.maxRungs, Infinity, "every configured model is tried");
   assert.equal(p.strongExtraS, 0);
@@ -141,7 +141,7 @@ test("every configured model starts at once, with the budget as each run's own l
     env: s.env, runtime: s.rt, runClaude: writer(SPEC), triage: CHANGE, fetchImpl: reviewer("fixes") });
   assert.equal(d.handled, true);
   assert.equal(started, 3);
-  assert.ok(s.rt.calls.every((c) => c.timeout_s === 600 && c.hang_s === 600), JSON.stringify(s.rt.calls.map((c) => [c.timeout_s, c.hang_s])));
+  assert.ok(s.rt.calls.every((c) => c.timeout_s === 900 && c.hang_s === 900), JSON.stringify(s.rt.calls.map((c) => [c.timeout_s, c.hang_s])));
 });
 
 test("at the time limit the runs still going hand in their change; a handed-in answer that passes is delivered", { skip: !hasPytest }, async () => {

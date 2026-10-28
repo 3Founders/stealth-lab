@@ -57,7 +57,7 @@ test("a cheap rung that passes the check is applied, recorded, and handles the p
   assert.equal(d.handled, true);
   assert.equal(d.unit, "minimax-m2-7|stealth");
   assert.deepEqual(rt.calls.map((c) => [c.executor, c.model, c.instance_key, c.checks[0]]),
-    [["stealth", "gemma-4-31b-it", "g1.k1", "python -m pytest -q"], ["stealth", "minimax-m2-7", "g1.k1", "python -m pytest -q"]]);
+    [["stealth", "gemma-4-31b-it", "g1.k1", "python -m pytest --continue-on-collection-errors -q"], ["stealth", "minimax-m2-7", "g1.k1", "python -m pytest --continue-on-collection-errors -q"]]);
   assert.match(d.text, /Done by minimax-m2-7/);
   assert.match(d.text, /calc\.py/);
   const routing = fs.readFileSync(path.join(repo, ".kell", "routing.md"), "utf8");

@@ -11,9 +11,13 @@
 // random per-process secret for the bridge, which refuses any request without it. Listens on loopback only.
 // Not streamed upstream: the reply is fetched whole, then sent to Claude Code as one SSE stream (simple and robust;
 // the model's own generation time dominates).
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
 import crypto from "node:crypto";
 import { profileKey } from "./executors/profile.mjs";
+import { outOfCredit } from "./agent/provider_errors.mjs";
+import { cachedTokensOf } from "./spend.mjs";
 
 let shared = null;          // {server, port, secret, profiles: Map(name -> profile), env}
 // tokens per run (the runtime's attempt tag in the route): a run that is killed (time limit, cancel) never prints Claude
@@ -44,8 +48,24 @@ const RETRIES = 3;
 const textOf = (c) => (typeof c === "string" ? c
   : Array.isArray(c) ? c.map((b) => (b?.type === "text" ? b.text : b?.type === "image" ? "[image omitted]" : "")).filter(Boolean).join("\n") : "");
 
+// The model's reasoning, kept by the tool calls it came with. Claude Code keeps the conversation and sends it back each turn,
+// but it does not know an OpenAI reply's reasoning_content, so the bridge keeps it and puts it back on that assistant turn:
+// GLM reasons between tool calls and z.ai asks for those blocks back with the tool results; without them the model lost
+// its working after every call. Bounded (oldest dropped first).
+const reasoningByCall = new Map();
+const REASONING_KEEP = 4000;
+export function rememberReasoning(msg) {
+  const field = ["reasoning_content", "reasoning"].find((f) => typeof msg?.[f] === "string" && msg[f]);
+  if (!field) return;
+  for (const c of msg.tool_calls || []) {
+    if (!c?.id) continue;
+    reasoningByCall.set(c.id, { [field]: msg[field] });
+    if (reasoningByCall.size > REASONING_KEEP) reasoningByCall.delete(reasoningByCall.keys().next().value);
+  }
+}
+
 // Anthropic request -> OpenAI chat completions body
-export function toOpenAI(req, profile) {
+export function toOpenAI(req, profile, { reasoningFor = (id) => reasoningByCall.get(id) } = {}) {
   const messages = [];
   const sys = Array.isArray(req.system) ? req.system.map((b) => b?.text || "").join("\n\n") : String(req.system || "");
   if (sys && !profile.no_system_role) messages.push({ role: "system", content: sys });
@@ -56,7 +76,8 @@ export function toOpenAI(req, profile) {
       const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
       const calls = blocks.filter((b) => b.type === "tool_use").map((b) => ({ id: b.id, type: "function",
         function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
-      messages.push({ role: "assistant", content: text || (calls.length ? null : ""), ...(calls.length ? { tool_calls: calls } : {}) });
+      const kept = calls.length ? reasoningFor(calls[0].id) : null;
+      messages.push({ role: "assistant", content: text || (calls.length ? null : ""), ...(kept || {}), ...(calls.length ? { tool_calls: calls } : {}) });
     } else {
       for (const b of blocks.filter((x) => x.type === "tool_result")) {
         messages.push({ role: "tool", tool_call_id: b.tool_use_id, content: (b.is_error ? "ERROR: " : "") + (textOf(b.content) || "(no output)") });
@@ -82,6 +103,7 @@ export function toOpenAI(req, profile) {
     model: profile.model_id, messages, max_tokens: maxOut,
     ...(tools.length ? { tools } : {}), ...(tools.length && choice ? { tool_choice: choice } : {}),
     ...(req.stop_sequences?.length ? { stop: req.stop_sequences.slice(0, 4) } : {}),
+    ...(typeof profile.temperature === "number" ? { temperature: profile.temperature } : {}), ...(typeof profile.top_p === "number" ? { top_p: profile.top_p } : {}),
     ...(profile.request_extras || {}),
   };
 }
@@ -139,28 +161,45 @@ async function handle(req, res, state, fetchImpl) {
   try { body = JSON.parse(raw || "{}"); } catch { return send(400, { type: "error", error: { type: "invalid_request_error", message: "bad JSON" } }); }
   if (m[3].endsWith("count_tokens")) return send(200, { input_tokens: Math.ceil(raw.length / 4) });
   try {
-    const upBody = JSON.stringify(toOpenAI(body, profile));
+    const req = toOpenAI(body, profile);
     let up;
     let text = "";
+    let malformed = false;
     for (let i = 0; ; i++) {
+      // a retry of a malformed tool call samples with a little variation: the same request at the same temperature came
+      // back with the same unparseable call, and every gpt-oss try driven by Claude Code ended on it ("Failed to parse
+      // tool call from GPT OSS output", replay-2, 2026-10-28) -- as lib/agent/step_agent.mjs already does
+      const upBody = JSON.stringify(malformed ? { ...req, temperature: Math.min(1, 0.4 + 0.2 * i) } : req);
       up = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(600000),
         headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, state.env)}` },
         body: upBody,
       });
       text = await up.text();
-      const transient = up.status >= 500 || up.status === 429 || (up.status === 400 && TRANSIENT_400.test(text));
-      if (up.ok || !transient || i >= RETRIES) break;
+      malformed = up.status === 400 && TRANSIENT_400.test(text);
+      const transient = up.status >= 500 || up.status === 429 || malformed;
+      if (up.ok || !transient || i >= RETRIES || outOfCredit(up.status, text)) break;
       await new Promise((r) => setTimeout(r, state.retryMs ?? 1000 * (i + 1)));
     }
+    // the provider account is out: a 400 (Claude Code does not retry it), worded so the runtime records a provider limit
+    if (outOfCredit(up.status, text)) {
+      return send(400, { type: "error", error: { type: "invalid_request_error", message: `upstream ${up.status} (the provider account is out of credit or quota): ${text.slice(0, 300)}` } });
+    }
     if (!up.ok) {
+      // STEALTHLAB_BRIDGE_DEBUG_DIR (off unless set): the request the provider refused, for diagnosis -- it holds the task and
+      // code, so it is written only to a directory the person names, never by default
+      if (state.env.STEALTHLAB_BRIDGE_DEBUG_DIR) {
+        try { fs.writeFileSync(path.join(state.env.STEALTHLAB_BRIDGE_DEBUG_DIR, `refused-${Date.now()}.json`), JSON.stringify({ status: up.status, reply: text.slice(0, 2000), request: req }, null, 1)); } catch { /* diagnosis only */ }
+      }
       const kind = up.status === 429 ? "rate_limit_error" : up.status >= 500 ? "api_error" : "invalid_request_error";
       return send(up.status === 429 ? 429 : up.status >= 500 ? 529 : 400, { type: "error", error: { type: kind, message: `upstream ${up.status}: ${text.slice(0, 300)}` } });
     }
     const parsedUp = JSON.parse(text);
+    rememberReasoning(parsedUp?.choices?.[0]?.message);
     if (m[2]) {
-      const u = usage.get(m[2]) || { in: 0, out: 0, calls: 0 };
+      const u = usage.get(m[2]) || { in: 0, out: 0, cached: 0, calls: 0 };
       u.in += Number(parsedUp?.usage?.prompt_tokens) || 0;
+      u.cached += cachedTokensOf(parsedUp?.usage);
       u.out += Number(parsedUp?.usage?.completion_tokens) || 0;
       u.calls += 1;
       usage.set(m[2], u);

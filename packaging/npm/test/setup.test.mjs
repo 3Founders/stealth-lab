@@ -133,6 +133,8 @@ test("the template names the key variable and holds no key; a key-looking name i
   for (const p of Object.values(t.profiles)) assert.equal(p.key_env, "MY_KEY");
   assert.ok(!JSON.stringify(t).includes("sk-"));
   assert.throws(() => execTemplate("sk-1234567890abcdef"), /environment variable NAME/);
+  assert.deepEqual(Object.keys(execTemplate("K", { claudeCode: true }).executors), ["claude"], "Claude Code drives the open models when asked");
+  assert.deepEqual(Object.keys(execTemplate("K").executors), ["stealth"], "by default kell's own step agent");
   const dir = mk("setup-tpl-");
   const first = ensureExecConfig({ env: { STEALTHLAB_HOME: dir }, keyEnv: "MY_KEY" });
   assert.equal(first.created, true);

@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import { readConfig } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
-import { recordSpend } from "./spend.mjs";
+import { costOf, recordSpend } from "./spend.mjs";
 import { reviewAnswer } from "./review.mjs";
 import { locate, renderForWriter } from "./locate.mjs";
 import { sessionTurns, turnsText } from "./brief.mjs";
@@ -94,8 +94,7 @@ export async function answerTurn({ prompt, root = null, transcriptPath = null, s
     const body = await res.json();
     reply = String(body?.choices?.[0]?.message?.content || "").trim();
     const u = body?.usage || {};
-    const cost = (profile.input_per_mtok || profile.output_per_mtok)
-      ? ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 : null;
+    const cost = costOf(profile, u);
     recordSpend(env, { what: "answer", model: name, cost_usd: cost });
   } catch (err) {
     log(`answer: ${name} ${err.name === "TimeoutError" ? "timed out" : err.message}`);

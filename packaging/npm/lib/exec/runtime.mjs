@@ -23,7 +23,8 @@ import {
   appendPrivate, ensureDir, newRunId, readExecConfig, readJson, redactingLog, RUN_ID_RE, runDir, runsDir, writePrivate,
 } from "./store.mjs";
 import { NO_CHANGE_RE, parseNodeLines } from "./task.mjs";
-import { localUnit } from "./store.mjs";
+import { TASK_CHARS_MAX, localUnit } from "./store.mjs";
+import { tokenCost } from "../spend.mjs";
 import { runChecks, scopeViolations } from "./verify.mjs";
 import { depsEnv } from "./deps.mjs";
 import { relatedChecks } from "./related.mjs";
@@ -36,7 +37,10 @@ export const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]
 // an executor run stopped by its own account's usage limit (not the model failing the task)
 export const USAGE_LIMIT = /hit your (session|usage|weekly) limit|usage_limit_reached|usage limit reached/i;
 // an open-model provider that kept refusing (rate limit or its daily token budget): the model never got to try
-export const PROVIDER_LIMIT = /kept failing: HTTP 429|Rate limit exceeded|Tokens per (minute|day) limit/i;
+// ... and the provider's own faults after the retries: a 5xx, or its "provider_error" (General Compute could not parse
+// gpt-oss's tool call; every gpt-oss try driven by Claude Code ended on one, replay-2, 2026-10-28) -- the model was not
+// judged, so it is not a model outcome (docs/routing_issues.md #17)
+export const PROVIDER_LIMIT = /kept failing: HTTP (429|5\d\d)|Rate limit exceeded|Tokens per (minute|day) limit|provider account is out of credit or quota|upstream 5\d\d|"provider_error"|API Error: 5\d\d/i;
 const ORDER = { queued: 0, running: 1, verifying: 2 };
 const KEEP_MS = 7 * 24 * 3600 * 1000;
 const OUT_KEEP = 1024 * 1024;
@@ -79,8 +83,8 @@ export class ExecRuntime {
     const cfg = readExecConfig(this.env);
     if (typeof input.repo_path !== "string" || !input.repo_path) throw new Error("repo_path is required");
     if (typeof input.task !== "string" || !input.task.trim()) throw new Error("task is required");
-    // 12,000: a real issue whole plus the pointers (at 2,000, 8 of 25 issues reached the agent cut; survey 2026-10-16)
-    if (input.task.length > 12000) throw new Error(`task is ${input.task.length} chars; the limit is 12,000 (objective + NODE lines + claims)`);
+    // a real issue whole plus the pointers and context (at 2,000, 8 of 25 issues reached the agent cut; survey 2026-10-16)
+    if (input.task.length > TASK_CHARS_MAX) throw new Error(`task is ${input.task.length} chars; the limit is ${TASK_CHARS_MAX.toLocaleString("en-US")} (objective + NODE lines + claims)`);
     const nodes = parseNodeLines(input.task);
     let checks = Array.isArray(input.checks) ? input.checks.map(String).filter((c) => c.trim()) : [];
     if (!checks.length) checks = nodes.map((n) => n.check).filter(Boolean);
@@ -337,7 +341,9 @@ export class ExecRuntime {
       // runTag: the bridge counts this attempt's tokens under it (lib/anthropic_bridge.mjs bridgeUsage)
       const runTag = `${run.id}.${tag}`;
       const spec = await adapter.buildCommand({ task: run.input.task, model: a.model, worktree: a.worktree, timeoutS: run.input.timeoutS,
-                                                env, bin: probe.bin || undefined, profile, runTag });
+                                                env, bin: probe.bin || undefined, profile, runTag,
+                                                // an adapter that can, writes each tool call beside the attempt's logs
+                                                transcriptPath: path.join(dir, `${tag}.transcript.jsonl`) });
       if (!spec || !spec.cmd) throw new Error(`adapter "${a.executor}" returned no command`);
       const outLog = redactingLog(path.join(dir, `${tag}.stdout.log`), (s) => this.red(s));
       const errLog = redactingLog(path.join(dir, `${tag}.stderr.log`), (s) => this.red(s));
@@ -379,10 +385,10 @@ export class ExecRuntime {
       if (a.executor === "claude" && profile) {
         const { takeBridgeUsage } = await import("../anthropic_bridge.mjs");
         const u = takeBridgeUsage(runTag);
-        if (u && u.calls) a.tokens = { in: u.in, out: u.out };
+        if (u && u.calls) a.tokens = { in: u.in, out: u.out, cached: u.cached || 0 };
       }
       if (profile && (profile.input_per_mtok || profile.output_per_mtok) && a.tokens?.in !== null && a.tokens?.in !== undefined && a.executor === "claude") {
-        a.costUsd = ((a.tokens.in || 0) * (profile.input_per_mtok || 0) + (a.tokens.out || 0) * (profile.output_per_mtok || 0)) / 1e6;
+        a.costUsd = tokenCost(profile, { input: a.tokens.in, cached: a.tokens.cached, output: a.tokens.out });
       }
       a.stalled = parsed.stalled || null;          // the agent stopped itself: it was going round in circles (lib/agent/stall.mjs)
 

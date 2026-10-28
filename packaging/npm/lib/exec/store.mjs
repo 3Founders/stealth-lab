@@ -84,6 +84,11 @@ export function newRunId(now = new Date()) {
   return `r-${ts}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+// The most a cheap model's task text may hold: the issue whole, where it likely is, the area's history and the repository
+// context. 12,000 (about 3K tokens) left the context 4 KB, the library match 1.5 KB and the facts 2 KB, a few percent of
+// windows of 128K-200K tokens, and dropped this repository's own past fixes of the code; 40,000 is about 10K tokens.
+export const TASK_CHARS_MAX = 40000;
+
 export const RUN_ID_RE = /^r-\d{14}-[0-9a-f]{1,8}$/;
 
 // Line-buffered, redacting log writer: a secret split across two chunks is still seen whole, because

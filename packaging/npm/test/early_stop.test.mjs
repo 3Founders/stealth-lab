@@ -7,7 +7,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { StallDetector, earlyStopEnabled, failurePaths, failureSignature } from "../lib/agent/stall.mjs";
-import { runAgent, worktreeFingerprint } from "../lib/agent/step_agent.mjs";
+import { runAgent, runTool, worktreeFingerprint } from "../lib/agent/step_agent.mjs";
 import stealth from "../lib/executors/stealth.mjs";
 import { normaliseProfile } from "../lib/executors/profile.mjs";
 import { ExecRuntime } from "../lib/exec/runtime.mjs";
@@ -78,8 +78,13 @@ test("rule a: the same check failing the same way twice stops the run when the e
   assert.match(stop.why, /tests\/test_calc\.py::test_add/);
 });
 
-test("rule a: no edit at all between two identical failures stops it; an edit to the file the failure names does NOT", () => {
+test("rule a: once it has changed something, no edit between two identical failures stops it; before any change it is exploring; an edit to the file the failure names does NOT", () => {
+  const explore = new StallDetector();                                                        // nothing changed yet: a probe re-run
+  explore.observe(shell("python -m pytest -q", PYTEST_FAIL));
+  assert.equal(explore.observe(shell("python -m pytest -q", PYTEST_FAIL)), null);
   const none = new StallDetector();
+  none.seed("other.py", "O0");
+  none.observe(edit("other.py", "O1"));
   none.observe(shell("python -m pytest -q", PYTEST_FAIL));
   assert.equal(none.observe(shell("python -m pytest -q", PYTEST_FAIL)).rule, "a");
   const relevant = new StallDetector();
@@ -328,12 +333,20 @@ test("rule d: testing an edit with new commands or new results is not a stall; t
   assert.equal(r?.rule, "d", "the same command, the same result, over and over");
 });
 
-test("rule e: 48 tool calls without any change stop a run that only reads; a change before that leaves it to rule d", () => {
+test("rule e: before the first change only repeats count (24), with a ceiling of 144 calls; a change leaves it to rule d", () => {
   const d = new StallDetector();
   d.start("fp0");
   let r = null;
-  for (let i = 0; i < 48 && !r; i++) r = d.observe({ name: "search", args: { query: `q${i}` }, result: "hits" });
+  for (let i = 0; i < 100 && !r; i++) r = d.observe({ name: "search", args: { query: `q${i}` }, result: "hits" });
+  assert.equal(r, null, "100 searches for new things: still exploring, not stalled (GLM's first edit came at call 69)");
+  for (let i = 100; i < 144 && !r; i++) r = d.observe({ name: "search", args: { query: `q${i}` }, result: "hits" });
+  assert.equal(r?.rule, "e", "the ceiling");
+  const rep = new StallDetector();
+  rep.start("fp0");
+  let k = 0;
+  for (r = null; !r && k < 100; k++) r = rep.observe({ name: "read_file", args: { path: "a.py" }, result: "same" });
   assert.equal(r?.rule, "e");
+  assert.equal(k, 25, "the first read is new; 24 repeats of it stop the run");
   const e = new StallDetector();
   e.start("fp0");
   assert.equal(e.observe({ name: "run_shell", args: { command: "touch x" }, result: "[exit 0]", fingerprint: "fp1" }), null);
@@ -341,4 +354,69 @@ test("rule e: 48 tool calls without any change stop a run that only reads; a cha
   const reads = Array.from({ length: 48 }, (_, i) => `step ${i + 1}: search a.py`);
   assert.equal(replayLog(logOf(...reads)).rule, "e");
   assert.equal(replayLog(logOf("step 1: run_shell", ...reads)).rule, null, "a shell command could have changed the worktree");
+});
+
+// ---- the root-cause method, the history tool and the transcript --------------------------------------------------------------
+
+test("agent: with the root-cause method a finish with no change to the project's files is sent back, then accepted on the 3rd try", async () => {
+  const repo = gitRepo({ "a.py": "x = 1\n" });
+  const steps = [
+    turn(call("1", "write_file", { path: "repro.py", content: "print(1)\n" })),        // a new script: not a project change
+    turn(call("2", "finish", { summary: "done" })),
+    turn(call("3", "edit_file", { path: "a.py", old_text: "x = 1", new_text: "x = 2" })),
+    turn(call("4", "finish", { summary: "fixed" })),
+  ];
+  const p = await provider((n) => steps[n - 1]);
+  const tr = path.join(repo, "..", `${path.basename(repo)}.transcript.jsonl`);
+  try {
+    const out = await run(p, repo, { method: "root_cause", transcript: tr });
+    assert.equal(out.stop, "finished");
+    assert.equal(out.message, "fixed");
+    const lines = fs.readFileSync(tr, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(lines.find((l) => l.step === 2).result.startsWith("not finished"), true);
+    assert.deepEqual(lines.map((l) => l.tool), ["write_file", "finish", "edit_file", "finish"]);
+    assert.match(String(p.seen[0].messages[0].content), /Find the cause, not the symptom/);
+  } finally { p.close(); }
+  // without the method the same first finish ends the run, as before
+  const repo2 = gitRepo({ "a.py": "x = 1\n" });
+  const p2 = await provider((n) => steps[n - 1]);
+  try { assert.equal((await run(p2, repo2)).steps, 2); } finally { p2.close(); }
+});
+
+test("agent: the history tool is offered only when asked for, and answers from the repository's git history", async () => {
+  const repo = gitRepo({ "a.py": "def f():\n    return 1\n" });
+  fs.writeFileSync(path.join(repo, "a.py"), "def f():\n    return 2\n");
+  execFileSync("git", ["-C", repo, "commit", "-qam", "Fix f returning the wrong value"]);
+  const steps = [turn(call("1", "history", { path: "a.py", function: "f" })), turn(call("2", "finish", { summary: "looked" }))];
+  const p = await provider((n) => steps[n - 1]);
+  try {
+    await run(p, repo, { history_tool: true });
+    assert.ok(p.seen[0].tools.some((t) => t.function.name === "history"));
+    const toolMsg = p.seen[1].messages.find((m) => m.role === "tool");
+    assert.match(toolMsg.content, /Fix f returning the wrong value/);
+  } finally { p.close(); }
+  const p2 = await provider(() => turn(call("1", "finish", { summary: "x" })));
+  try { await run(p2, repo); assert.ok(!p2.seen[0].tools.some((t) => t.function.name === "history")); } finally { p2.close(); }
+});
+
+test("search: a grep-style pattern written without regex=true is retried as a regex when the plain text finds nothing", async () => {
+  const repo = gitRepo({ "a.py": "def adapt_typehints():\n    pass\n", "b.py": "def discard_init_args():\n    pass\n" });
+  const out = await runTool("search", { query: "discard_init_args|adapt_typehints" }, { cwd: repo, env: {} });
+  assert.match(out, /^\(no matches as plain text; as a regex:\)/);
+  assert.match(out, /a\.py:1/);
+  assert.match(out, /b\.py:1/);
+  assert.equal(await runTool("search", { query: "nothing|here" }, { cwd: repo, env: {} }), "(no matches, as text or as a regex)");
+  assert.equal(await runTool("search", { query: "plain words" }, { cwd: repo, env: {} }), "(no matches)");
+});
+
+test("agent: an account out of credit fails at once (no retries) and reads as a provider limit, not a verdict on the model", async () => {
+  const { PROVIDER_LIMIT } = await import("../lib/exec/runtime.mjs");
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return { status: 429, headers: { get: () => null },
+    text: async () => '{"error":{"code":"1113","message":"Insufficient balance or no resource package. Please recharge."}}' }; };
+  const repo = gitRepo({ "a.py": "x = 1\n" });
+  await assert.rejects(runAgent({ task: "fix it", base_url: "http://x/v1", model_id: "m" },
+                                { cwd: repo, env: { OPEN_MODEL_API_KEY: KEY }, fetchImpl, sleep: async () => {} }),
+    (err) => PROVIDER_LIMIT.test(err.message) && /out of credit/.test(err.message));
+  assert.equal(calls, 1, "one request, no retries");
 });

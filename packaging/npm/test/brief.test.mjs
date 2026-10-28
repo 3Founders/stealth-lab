@@ -278,10 +278,10 @@ test("conversationPrompt: earlier turns, then the request word for word; the tur
 test("dispatch: a long request still fits the task limit", async () => {
   const { env, repo } = setup();
   const rt = stubRuntime(repo);
-  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(500)}`;
+  const raw = `yes fix it ${"and also keep the old behaviour ".repeat(1400)}`;
   await dispatch({ payload: { cwd: repo, prompt: raw }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt, briefImpl: brief({}) });
   const task = rt.calls[0].task;
-  assert.ok(task.length <= 12000, String(task.length));
+  assert.ok(task.length <= 40000, String(task.length));
   assert.match(task, /yes fix it and also keep/);
 });
 

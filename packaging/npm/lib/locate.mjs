@@ -24,11 +24,15 @@ const STOP = new Set(("the and for with from this that into when then than what 
   "issue issues expected actual example examples python using used use like also only just make makes other some " +
   "result results argument arguments option options parser config").split(" "));
 const TEST_PATH = /(^|\/)(tests?|testing|[\w.-]*_tests?)(\/)|(^|\/)test_[^/]*$|_test\.[a-z]+$|\.(test|spec)\.[a-z]+$/i;
-const SKIP_PATH = /(^|\/)(docs?|examples?|vendor|node_modules|dist|build)\/|\.(md|rst|txt|lock|json|ya?ml|toml|cfg|ini|csv)$|(^|\/)(CHANGELOG|CHANGES|HISTORY|README)/i;
+const SKIP_PATH = /(^|\/)(docs?|sphinx|examples?|vendor|node_modules|dist|build)\/|\.(md|rst|txt|lock|json|ya?ml|toml|cfg|ini|csv)$|(^|\/)(CHANGELOG|CHANGES|HISTORY|README)/i;
 const SOURCE_EXT = /\.(py|pyx|pyi|m?[jt]sx?|cjs|go|rs|java|kt|kts|scala|rb|php|cs|c|cc|cpp|cxx|h|hpp|swift|m|mm|lua|r|jl|ex|exs|erl|clj|dart|sql|vue|svelte)$/i;
 export const isSource = (f) => SOURCE_EXT.test(f) && !TEST_PATH.test(f) && !SKIP_PATH.test(f);
 const DEF_LINE = /^\s*(?:async\s+def|def|class|function|export\s+(?:async\s+)?function|export\s+class|func|fn|pub\s+fn)\s+([A-Za-z_][A-Za-z0-9_]*)/;
 const MAX_TERMS = 20;
+// module names that say nothing about what a task is about
+const GENERIC_STEMS = new Set(("utils util helpers helper common core base main init setup types typing errors error exceptions " +
+  "config settings constants compat models model views tests version index server client options parser")
+  .split(" "));
 const MAX_FILES_PER_TERM = 40;          // a term in more files than this is too common to say where the task is
 const SPOT_LINES = 150;
 
@@ -62,6 +66,79 @@ export function taskTerms(text) {
     for (const v of [camel, term.toUpperCase()]) if (!out.has(v)) { out.set(v, "ident"); more.push([v, "ident"]); }
   }
   return [...base, ...more.slice(0, 10)].map(([term, kind]) => ({ term, kind }));
+}
+
+// Phrases of the error output and messages a task quotes ("Does not validate against any of the Union subtypes"): code
+// writes them as literal text, so the line that builds the message is where the failure is reported -- often the function
+// to fix. jsonargparse-508 and -559 quoted that message from _typehints.py inside a code block, and the search, which only
+// read "double-quoted" messages, ranked _core.py first (cache-full-2, 2026-10-27). Runs of 4+ plain words, from code blocks
+// and from lines that read like an error; the first 5 words of each (a format string's {value} rarely comes that early).
+const ERRORISH = /\b(error|exception|warning|traceback|failed|fails|invalid|cannot|unable|expected|expects|unexpected|not supported|unsupported|must|missing)\b/i;
+export function messagePhrases(text, max = 10) {
+  const t = String(text || "");
+  const spans = [...t.matchAll(/```[\w+-]*([\s\S]*?)```/g)].map((m) => m[1]);     // a task flattened to one line keeps its fences
+  for (const l of t.replace(/```[\s\S]*?```/g, "\n").split(/\r?\n/)) if (ERRORISH.test(l)) spans.push(l);
+  const out = new Set();
+  for (const s of spans) {
+    for (const chunk of s.split(/[\n:"'`()<>[\]{}=|,;!?]|\s-\s|\.(?:\s|$)/)) {
+      let run = [];
+      const flush = () => {
+        if (run.length >= 4) {
+          const p = run.slice(0, 5).join(" ");
+          const code = run.slice(0, 5).some((w) => /^(import|from|def|class|return|lambda|async|await|const|let|var|function)$/.test(w));
+          if (p.length >= 16 && !code && run.filter((w) => /^[a-z]/.test(w)).length >= 2) out.add(p);
+        }
+        run = [];
+      };
+      for (const w of chunk.trim().split(/\s+/)) { if (/^[A-Za-z][a-z']*$/.test(w)) run.push(w); else flush(); }
+      flush();
+      if (out.size >= max) return [...out];
+    }
+  }
+  return [...out];
+}
+
+// The repository files a task's traceback runs through, innermost last: "File "/home/u/.../pkg/_core.py", line 1191, in
+// instantiate_classes" -> {file: "pkg/_core.py", fn} by the longest path suffix that is a tracked file.
+export function tracebackFrames(text, tracked) {
+  const out = [];
+  for (const m of String(text || "").matchAll(/File "([^"\n]+?\.\w{1,5})", line \d+, in ([A-Za-z_<][\w>]*)/g)) {
+    const parts = m[1].replace(/\\/g, "/").split("/");
+    for (let k = 0; k < parts.length; k++) {
+      const f = parts.slice(k).join("/");
+      if (tracked.has(f)) { out.push({ file: f, fn: m[2] }); break; }
+    }
+  }
+  return out;
+}
+
+// How often this repository's bug-fix commits touched each file: files that were fixed often are where fixes go (the
+// defect-prediction result: past fix density predicts the next fix). -> Map(file -> share of the most-fixed file's count)
+const FIX_SUBJECT = /\b(fix(e[sd]|ing)?|bug|regression|crash(es)?|broken|wrong|incorrect)\b|(^|\s)#\d+|\(#\d+\)/i;
+// root -> {at, res}: one git log per repository per 10 minutes, not per call (dispatch asks twice per task, the search and
+// the narrowing; each git process costs ~200 ms on Windows, before the first cheap model starts). The shares barely move
+// from one commit to the next.
+const densityCache = new Map();
+const DENSITY_TTL_MS = 10 * 60 * 1000;
+export function fixDensity(root, { commits = 3000, now = Date.now() } = {}) {
+  const key = `${root}|${commits}`;
+  const hit = densityCache.get(key);
+  if (hit && now - hit.at < DENSITY_TTL_MS) return hit.res;
+  const res = fixDensityOf(root, commits);
+  densityCache.set(key, { at: now, res });
+  return res;
+}
+
+function fixDensityOf(root, commits) {
+  const out = git(root, ["log", "--no-merges", `-n${commits}`, "--format=%x1e%s", "--name-only"], 30000);
+  const counts = new Map();
+  for (const block of out.split("\x1e")) {
+    const [subject, ...files] = block.split(/\r?\n/);
+    if (!FIX_SUBJECT.test(subject || "")) continue;
+    for (const f of files) if (f && isSource(f)) counts.set(f, (counts.get(f) || 0) + 1);
+  }
+  const top = Math.max(0, ...counts.values());
+  return new Map([...counts].map(([f, c]) => [f, top ? c / top : 0]));
 }
 
 function git(root, args, timeout = 15000) {
@@ -186,6 +263,28 @@ export function testFileFor(root, file, testHits = new Map()) {
   return best;
 }
 
+const MODULE_EXT = [".py", "/__init__.py", ".ts", ".js", ".mjs", ".rb", ".go", ".rs", ".java", ".kt", ".scala", ".php"];
+
+// The source files the dotted names in a text refer to: for each name of 2+ parts, the longest prefix that names a file
+// (a.b.c -> a/b.py, a/b/__init__.py, a/b.ts, ...), also under src/ and lib/.
+export function moduleFiles(root, text) {
+  const out = new Set();
+  for (const m of String(text || "").matchAll(/(?<![\w./-])([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+)/g)) {
+    const segs = m[1].split(".");
+    if (/^(py|js|ts|md|txt|com|org|io|html|json|ya?ml)$/i.test(segs[segs.length - 1])) continue;   // a file name or a domain
+    // an exception class's name (sqlglot.errors.ParseError in an error output) says where the class is defined, not where
+    // the failure is: errors.py ranked first on 3 of 12 sqlglot issues (locate benchmark, 2026-10-28)
+    if (/(Error|Exception|Warning)$/.test(segs[segs.length - 1])) continue;
+    for (let k = segs.length; k >= 2; k--) {
+      const base = segs.slice(0, k).join("/");
+      const hit = ["", "src/", "lib/"].flatMap((pre) => MODULE_EXT.map((e) => `${pre}${base}${e}`))
+        .find((f) => { try { return fs.statSync(path.join(root, f)).isFile(); } catch { return false; } });
+      if (hit) { out.add(hit); break; }
+    }
+  }
+  return [...out].filter(isSource);
+}
+
 export function locate({ prompt, root, env = process.env, maxFiles = 3 } = {}) {
   const empty = { spots: [], files: [], testFile: null, terms: [] };
   if (!locateEnabled(env) || !root) return empty;
@@ -194,6 +293,8 @@ export function locate({ prompt, root, env = process.env, maxFiles = 3 } = {}) {
     if (!terms.length) return empty;
     const score = new Map(), hitsOf = new Map(), testHits = new Map();
     const bump = (f, w) => score.set(f, (score.get(f) || 0) + w);
+    // files with strong evidence: a path or module the task names, a message it quotes, a frame of its traceback
+    const strongFiles = new Set();
     for (const t of terms) {
       const hits = grepTerm(root, t);
       const files = [...hits.keys()].filter((f) => !SKIP_PATH.test(f));
@@ -209,24 +310,67 @@ export function locate({ prompt, root, env = process.env, maxFiles = 3 } = {}) {
     }
     for (const t of terms.filter((x) => x.kind === "path")) {
       const f = t.term.replace(/^\.\//, "");
-      if (fs.existsSync(path.join(root, f))) bump(f, 3);
+      if (fs.existsSync(path.join(root, f))) { bump(f, 3); strongFiles.add(f); }
     }
+    // the messages the task quotes, found where the code writes them (messagePhrases): a phrase in one file is a strong
+    // pointer, and its line is a hit for the spot (the function that raises it)
+    for (const phrase of messagePhrases(prompt)) {
+      const hits = grepTerm(root, { term: phrase, kind: "message" });
+      const src = [...hits.keys()].filter((f) => isSource(f));
+      if (!src.length || src.length > 6) continue;
+      const w = 3 / Math.log2(1 + src.length);
+      for (const f of src) {
+        bump(f, w); strongFiles.add(f);
+        hitsOf.set(f, [...(hitsOf.get(f) || []), ...hits.get(f).map((h) => ({ ...h, def: true, w }))]);
+      }
+    }
+    const tracked = git(root, ["ls-files"]).split(/\r?\n/).filter(Boolean);
+    // the repository's own frames of a quoted traceback, the innermost counting most; the frame's function is a hit
+    const frames = tracebackFrames(prompt, new Set(tracked)).filter((x) => isSource(x.file));
+    frames.forEach((fr, i) => {
+      const w = i === frames.length - 1 ? 3 : 1;
+      bump(fr.file, w); strongFiles.add(fr.file);
+      const lines = readLines(path.join(root, fr.file)) || [];
+      const at = lines.findIndex((l) => DEF_LINE.exec(l)?.[1] === fr.fn);
+      if (at >= 0) hitsOf.set(fr.file, [...(hitsOf.get(fr.file) || []), { line: at + 1, def: true, w }]);
+    });
     // a name that IS a source file's name points at that file ("tsql" -> sqlglot/dialects/tsql.py)
     const stems = new Map();
-    for (const f of git(root, ["ls-files"]).split(/\r?\n/)) {
+    for (const f of tracked) {
       if (!f || isTest(f) || SKIP_PATH.test(f) || !/\.(py|m?[jt]sx?|go|rs|java|rb|kt|cs|php)$/.test(f)) continue;
       const s = path.posix.basename(f).replace(/\.[^.]+$/, "").replace(/^_+/, "").toLowerCase();
       if (!stems.has(s)) stems.set(s, []);
       stems.get(s).push(f);
     }
+    const named = new Set();
     for (const t of terms.filter((x) => x.kind === "ident")) {
       const fs_ = stems.get(t.term.toLowerCase());
-      if (fs_ && fs_.length <= 3) for (const f of fs_) bump(f, 3 / fs_.length);
+      if (fs_ && fs_.length <= 3) { named.add(t.term.toLowerCase()); for (const f of fs_) bump(f, 3 / fs_.length); }
     }
+    // a name of the task's prose that a source file is named after ("Snowflake" -> dialects/snowflake.py, "Postgres" ->
+    // postgres.py): the product or system the issue is about has its own module. Capitalised mid-sentence only: lower-case
+    // words ("users", "generator", "status") pulled in same-named modules and cost 4 points of top-1 on 63 issues of 22
+    // other repositories (locate benchmark, 2026-10-28). Weaker than a code name; generic names never count
+    const proper = [...String(prompt).matchAll(/(?<![.!?:#\n]\s*)(?<=\s)[A-Z][A-Za-z]{4,}\b/g)].map((m) => m[0].toLowerCase());
+    for (const w of new Set(proper)) {
+      const fs_ = stems.get(w);
+      if (!fs_ || fs_.length > 2 || named.has(w) || GENERIC_STEMS.has(w)) continue;
+      for (const f of fs_) bump(f, 1.5 / fs_.length);
+    }
+    // a dotted module path the task names ("jsonargparse._util._parse_value_or_config", "pkg.mod.Class") is the file it
+    // names: the longest prefix that is a module file. Scored as a path: an explicit name beats words found everywhere --
+    // jsonargparse-518 named _util._parse_value_or_config and locate still picked _core.py (cache-full-2, 2026-10-27)
+    for (const f of moduleFiles(root, prompt)) { bump(f, 4); strongFiles.add(f); }
     for (const [f, w] of libraryFiles(root, terms)) if (!isTest(f) && fs.existsSync(path.join(root, f))) bump(f, 2 * w);
     for (const [f, w] of claimFiles(root, terms)) if (!isTest(f) && !SKIP_PATH.test(f) && fs.existsSync(path.join(root, f))) bump(f, 0.5 * Math.min(2, w));
     // only source code can be "the place": config files, images, shell/cmd scripts and the like were picked on 5 of 47
     // real issues (.flake8, .pylintrc, icon.svg, *.cmd -- pipeline survey, 2026-10-16)
+    // the files this repository's bug fixes touched most rank a little higher among the matches (never added on their own)
+    const prior = Number(env.STEALTHLAB_LOCATE_FIX_PRIOR ?? 0.5);
+    // (only when there is an order to change: one candidate needs no git log)
+    if (prior > 0 && [...score.keys()].filter(isSource).length > 1) {
+      for (const [f, d] of fixDensity(root)) if (score.has(f)) score.set(f, score.get(f) * (1 + prior * Math.sqrt(d)));
+    }
     const ranked = [...score.entries()].filter(([f]) => isSource(f)).sort((a, b) => b[1] - a[1]);
     if (!ranked.length) return { ...empty, terms: terms.map((t) => t.term) };
     const top = ranked[0][1];
@@ -247,7 +391,7 @@ export function locate({ prompt, root, env = process.env, maxFiles = 3 } = {}) {
       for (const b of blocks.sort((a, z) => z.hits - a.hits).slice(0, 2)) spots.push({ file: f, start: b.start, end: Math.min(b.end, b.start + 200), symbol: b.symbol });
       if (!blocks.length) spots.push({ file: f, start: 1, end: Math.min(lines.length, 80), symbol: null });
     }
-    return { spots, files, testFile: files.length ? testFileFor(root, files[0], testHits) : null, terms: terms.map((t) => t.term) };
+    return { spots, files, strong: strongFiles.has(files[0]), strongFiles: files.filter((f) => strongFiles.has(f)), testFile: files.length ? testFileFor(root, files[0], testHits) : null, terms: terms.map((t) => t.term) };
   } catch {
     return empty;
   }

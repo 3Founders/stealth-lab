@@ -309,12 +309,15 @@ def c_home() -> Path:
     home = LOCAL / "C_home"
     home.mkdir(parents=True, exist_ok=True)
     cfg = json.loads((HERE / "exec.json").read_text(encoding="utf-8"))
-    # ABTEST_CHEAP_AGENT=claude: the same open models, driven by Claude Code (through kell's local bridge) instead
-    # of kell's own minimal agent loop -- only WHO drives the models changes; models, profiles, checks, .kell
-    # and dispatch stay as they are
-    if os.environ.get("ABTEST_CHEAP_AGENT", "stealth").lower() == "claude":
-        models = [m for spec in cfg.get("executors", {}).values() for m in (spec.get("models") or []) if m in cfg.get("profiles", {})]
-        cfg["executors"] = {"claude": {"models": list(dict.fromkeys(models))}}
+    # the open models are driven by kell's own step agent, as the product does by default (same solves as Claude Code
+    # for a third to a quarter of the cost, 2026-10-28). ABTEST_CHEAP_AGENT=claude: Claude Code drives them through kell's
+    # local bridge, as exec.json lists them -- only WHO drives the models changes; models, profiles, checks, .kell and
+    # dispatch stay as they are
+    if os.environ.get("ABTEST_CHEAP_AGENT", "stealth").lower() == "stealth":
+        everything = [m for spec in cfg.get("executors", {}).values() for m in (spec.get("models") or [])]
+        profiles = cfg.get("profiles", {})
+        cfg["executors"] = {"stealth": {"models": list(dict.fromkeys(m for m in everything if m in profiles))},
+                            "claude": {"models": list(dict.fromkeys(m for m in everything if m not in profiles))}}
     (home / "exec.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return home
 
@@ -353,6 +356,10 @@ def arm_env(arm: str, secrets: dict[str, str], task_check: str = "") -> dict[str
         drop = (drop - {"ANTHROPIC_API_KEY"}) | {"CLAUDE_CODE_OAUTH_TOKEN"}
     env = {k: v for k, v in os.environ.items() if not k.startswith("STEALTHLAB_") and k not in drop}
     env["ANTHROPIC_MODEL"] = session_model()
+    # no package index for any arm's agents: the project is installed before the session, and a later release of the
+    # project itself holds the answer (GLM in Claude Code ran `pip download jsonargparse==4.29.0` and copied the fix,
+    # replay-2g, 2026-10-28). The same for every arm, Opus included
+    env.update(NO_PACKAGE_INDEX)
     if os.environ.get("ABTEST_CACHE_BENCH") == "on":
         env["ABTEST_PROXY_ROUTE"] = ROUTER_MODE.get(arm, "off")
     if on_bedrock():
@@ -524,8 +531,17 @@ def _run_claude(cmd: list[str], ws: Path, env: dict[str, str], log_path: Path) -
             "final": text[:400], "text": text[:6000], "session_id": result.get("session_id")}
 
 
+NO_PACKAGE_INDEX = {"PIP_NO_INDEX": "1", "PIP_INDEX_URL": "http://127.0.0.1:9/simple", "UV_OFFLINE": "1",
+                    "UV_INDEX_URL": "http://127.0.0.1:9/simple", "PIP_DISABLE_PIP_VERSION_CHECK": "1"}
+# fetching a release, the repository or its pages from the network: a later version of the project is the reference fix
+FETCHES = re.compile(r"pip3? download|pip3? install [^|;&]*(jsonargparse|sqlglot)|uv pip (download|install)|pypi\.org/(simple|project|pypi)/"
+                     r"|files\.pythonhosted|github\.com/[\w-]+/[\w-]+/(archive|raw|blob|releases|commit|pull)|git (fetch|clone|pull|ls-remote)"
+                     r"|\b(curl|wget)\s")
+
+
 def peeked(log_path: Path) -> list[str]:
-    """Tool calls in the transcript that name a grader or dataset file (the agent's own tool inputs only)."""
+    """Tool calls in the transcript that name a grader or dataset file, or fetch the project from the network (the agent's
+    own tool inputs only)."""
     hits = []
     for line in log_path.read_text(encoding="utf-8").splitlines() if log_path.exists() else []:
         try:
@@ -538,6 +554,8 @@ def peeked(log_path: Path) -> list[str]:
             if c.get("type") == "tool_use":
                 text = json.dumps(c.get("input"))
                 hits += [f for f in FORBIDDEN if f in text]
+                if c.get("name") in ("Bash", "PowerShell") and (m := FETCHES.search(str((c.get("input") or {}).get("command", "")))):
+                    hits.append(f"fetch: {m.group(0).strip()}")
     return sorted(set(hits))
 
 

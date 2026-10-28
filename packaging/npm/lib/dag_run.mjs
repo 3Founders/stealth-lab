@@ -22,11 +22,12 @@ import { diffPiece, readStepExtras, splitDiff, stepsFromDiff } from "./way_extra
 import { loadLibrary } from "./library.mjs";
 import { locate } from "./locate.mjs";
 import { readArea, recordArea } from "./areas.mjs";
+import { TASK_CHARS_MAX } from "./exec/store.mjs";
 import { createWorktree, git, headCommit, removeWorktree, repoTopLevel, workingTreeDiff } from "./exec/worktree.mjs";
 
 export const dagEnabled = (env = process.env) => (env.STEALTHLAB_DISPATCH_DAG || "on").toLowerCase() !== "off";
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled", "error"]);
-const TASK_MAX = 12000;
+const TASK_MAX = TASK_CHARS_MAX;
 const BIG_STEP = 15;                    // added lines in the past piece above which a node goes to the strong rung first
 
 function readSolution(root, entry) {

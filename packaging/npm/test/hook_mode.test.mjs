@@ -52,7 +52,16 @@ test("model detection: transcript, then ANTHROPIC_MODEL, then settings.json", ()
   assert.equal(detectModel({ transcript_path: tr }, { ...env, ANTHROPIC_MODEL: "x" }), "claude-haiku-4-5-20251001");
   assert.equal(detectModel({}, { ...env, ANTHROPIC_MODEL: "claude-sonnet-5" }), "claude-sonnet-5");
   assert.equal(detectModel({}, env), "opus");
-  assert.equal(detectModel({}, { CLAUDE_CONFIG_DIR: path.join(dir, "none") }), null);
+  const none = { CLAUDE_CONFIG_DIR: path.join(dir, "none"), STEALTHLAB_HOME: path.join(dir, "home") };
+  assert.equal(detectModel({}, none, { fallback: false }), null);
+  // nothing tells the model on a session's first prompt: the named one, else Claude Code's default -- never "unknown",
+  // which asked for no plan and dispatched nothing (a fresh install, 2026-10-28)
+  assert.equal(detectModel({}, { ...none, STEALTHLAB_SESSION_MODEL: "claude-sonnet-5-5" }), "claude-sonnet-5-5");
+  fs.mkdirSync(none.STEALTHLAB_HOME, { recursive: true });
+  fs.writeFileSync(path.join(none.STEALTHLAB_HOME, "config.json"), JSON.stringify({ session_model: "claude-sonnet-5-5" }));
+  assert.equal(detectModel({}, none), "claude-sonnet-5-5");
+  fs.rmSync(path.join(none.STEALTHLAB_HOME, "config.json"));
+  assert.equal(detectModel({}, none), "claude-opus-5-5");
 });
 
 test("mode off for a strong model skips the lookup entirely (no network call)", async () => {

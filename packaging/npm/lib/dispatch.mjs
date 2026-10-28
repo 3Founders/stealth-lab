@@ -18,7 +18,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { readExecConfig } from "./exec/store.mjs";
+import { TASK_CHARS_MAX, readExecConfig } from "./exec/store.mjs";
+import { costOf } from "./spend.mjs";
+import { areaHistory, areaHistoryEnabled } from "./area_history.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
 import { runClaudeAsync } from "./claude_call.mjs";
 import { answerEvidence, crossTest, decide, evidenceLine, parseRule, ruleUses } from "./accept.mjs";
@@ -54,7 +56,7 @@ import { cheapWritten } from "./continuity.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
 // the executor's task text: the issue whole plus the pointers; at 2,000 it cut 8 of 25 real issues (survey 2026-10-16)
-const TASK_MAX = 12000;
+const TASK_MAX = TASK_CHARS_MAX;
 
 export function dispatchPolicy(env = process.env) {
   return {
@@ -90,7 +92,9 @@ export function dispatchPolicy(env = process.env) {
     // the time the cheap tries get, together, from their start: past it the session's model takes over. 600 s: 12 of
     // the 14 cheap solves of real repository issues finished within it (pipeline survey R1, 2026-10-16: solve times
     // 46-594 s, then 1053 and 1201). One run gets the same limit (a run cannot outlast the tries it is part of).
-    timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 600)),
+    // 900 since 2026-10-28: at 600 GLM-flash had found the root cause of jsonargparse-560 and ran out one edit short, and
+    // two of the survey's 16 solves took longer (replay-2g); the same for every model and driver
+    timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 900)),
     // at most this many cheap runs at once on one provider: unset, no limit (a provider's rate limit answers 429, which
     // the bridge retries)
     maxParallel: Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL) > 0 ? Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL) : Infinity,
@@ -355,6 +359,14 @@ export function writeBaselineCheckRunner(dir, check) {
 // pytest's short summary -> the failing test ids ("FAILED tests/test_x.py::test_y - msg" -> tests/test_x.py::test_y). A
 // failing subtest ("SUBFAILED[case] tests/test_x.py::T::test_y") fails its test: pytest still lists the test PASSED
 // (sqlglot's dialect tests are all subtests).
+// The tests that fail on the unchanged code and so do not fail an answer: all of them, except a test the task names itself (a
+// failing test for this very bug must still fail the answer) or a whole file's collection error the task names (its id is
+// the file). Naming the file to add a test to ("add a test in jsonargparse_tests/test_util.py") once made every old failure
+// in it count as new, and a right answer was failed for one (a local install, 2026-10-28).
+export function baselineFails(code, out, named) {
+  return (code === 1 ? failingTests(out) : []).filter((id) => !String(named || "").includes(id.split("::").pop().replace(/\[.*$/, "")));
+}
+
 export function failingTests(out) {
   return [...new Set([...String(out || "").matchAll(/^(?:FAILED|ERROR|SUBFAIL(?:ED)?\[.*?\]) (\S+)/gm)].map((m) => m[1]))];
 }
@@ -624,8 +636,7 @@ async function runOpenWriter(profile, env, input, signal, timeoutS = 180) {
     if (!res.ok) return { status: 1, stdout: "", stderr: `HTTP ${res.status}: ${text.slice(0, 200)}` };
     const body = JSON.parse(text);
     const u = body?.usage || {};
-    const cost = (profile.input_per_mtok || profile.output_per_mtok)
-      ? ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 : null;
+    const cost = costOf(profile, u);
     const result = body?.choices?.[0]?.message?.content || "";
     return { status: 0, stdout: JSON.stringify({ result, total_cost_usd: cost, is_error: !result }) };
   } catch (err) {
@@ -710,7 +721,8 @@ export async function withQuota(rungs, env, { min, fetchImpl, log = () => {} } =
   const out = [];
   for (const r of rungs) {
     const prof = profiles[r.model];
-    if (!prof?.openai_base_url || r.executor === "claude") { out.push(r); continue; }
+    // a Claude model has no open-model profile: no provider quota to check (an open model driven by Claude Code has one)
+    if (!prof?.openai_base_url) { out.push(r); continue; }
     if (!byBase.has(prof.openai_base_url)) byBase.set(prof.openai_base_url, await providerQuota(prof, env, fetchImpl));
     const q = byBase.get(prof.openai_base_url);
     if (q && q.day !== null && q.day < min) { log(`dispatch: ${r.model} skipped -- its provider has ${q.day} tokens left today (< ${min})`); continue; }
@@ -780,6 +792,15 @@ export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude
 
 // The check to verify a dispatched run with: the configured one, else the matched library entry's own check, else the
 // one the project itself defines (detectCheck).
+// pytest stops at a test file that cannot even be imported and exits 2, which failed every answer whatever it did: a
+// torch DLL missing on the machine (test_stubs_resolver.py) failed GLM's answer to a one-function task (a local install,
+// 2026-10-28). With --continue-on-collection-errors the broken file is one `ERROR <file>` line, failing on the unchanged
+// code too, so the baseline judges it like any other old failure.
+export function collectionErrorsAsFailures(check) {
+  if (!check || !/\bpytest(?=\s|$)/.test(check) || /--continue-on-collection-errors/.test(check)) return check;
+  return check.replace(/(\bpytest)(?=\s|$)/, "$1 --continue-on-collection-errors");
+}
+
 export function dispatchCheck(policy, reply, root) {
   if (policy.check) return policy.check;
   const match = (reply?.library_matches || []).find((m) => m?.relation === "matches" && m.id);
@@ -886,7 +907,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (!policy.enabled) return null;
   if (!plan || plan.status !== "ok") { log(`dispatch: not dispatched (no model plan${plan?.status ? `: ${plan.status}` : ""})`); return null; }
   if (!root) { log("dispatch: not dispatched (no .kell/ in this project)"); return null; }
-  const check = dispatchCheck(policy, reply, root);
+  const check = collectionErrorsAsFailures(dispatchCheck(policy, reply, root));
   // no test command in the project: the tests written for this task (test-first) can be the whole check -- a weaker one,
   // so it needs the test writer, and an answer is accepted only if those tests exist and pass (STEALTHLAB_DISPATCH_SPEC_ONLY)
   const specOnly = !check && policy.specOnly && policy.testFirst && (runClaude || (pytestAvailable() && testWriterAvailable(env, mine)));
@@ -1041,15 +1062,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     checkRun = `${pythonBin({ env })} "${writeBaselineCheckRunner(bdir, check)}"`;
     const named = String(`${rawPayload.prompt || ""}\n${payload.prompt || ""}`);
     runShellCapture(check, { cwd: payload.cwd || root, timeoutMs: 300000, signal: specAbort.signal }).then(({ code, out }) => {
-      const fails = (code === 1 ? failingTests(out) : []).filter((id) => {
-        const name = id.split("::").pop().replace(/\[.*$/, "");
-        return !named.includes(name) && !named.includes(id.split("::")[0]);
-      });
+      const fails = baselineFails(code, out, named);
       try {
         if (fails.length) fs.writeFileSync(path.join(bdir, "BASE_FAILS"), fails.join("\n") + "\n");
         else fs.writeFileSync(path.join(bdir, "BASE_NONE"), String(code ?? "none"));
       } catch { /* */ }
       if (fails.length) log(`dispatch: ${fails.length} test(s) already fail on the unchanged code: answers are judged on new failures only`);
+      // ... and so is the session's own fix, when the capture hooks decide whether it goes into the library (lib/capture_hook.mjs)
+      import("./capture_hook.mjs").then((c) => c.rememberBaseFails(env, rawPayload.session_id, code === 1 ? fails : [])).catch(() => {});
     });
   }
   let fullCheck = checkRun;
@@ -1086,7 +1106,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
 
   // the repo's own facts and the matched library entries, after the task (lib/task_context.mjs; STEALTHLAB_DISPATCH_CONTEXT=off)
-  const ctx = repoContext({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env });
+  // ... led by this repository's own earlier changes to the located functions (lib/area_history.mjs;
+  // STEALTHLAB_DISPATCH_AREA_HISTORY=on): how this code is usually fixed, which a goal-keyed library lookup cannot match
+  const hist = areaHistoryEnabled(env) ? areaHistory(payload.cwd || root, loc.spots) : "";
+  if (hist) log(`dispatch: area history: ${hist.split("\n").filter((l) => /^\d{4}-\d\d-\d\d /.test(l)).length} past change(s) of the located code`);
+  const ctx = [hist, repoContext({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env, files: loc.files })].filter(Boolean).join("\n\n");
   // the context pack (lib/context_pack.mjs; STEALTHLAB_DISPATCH_CONTEXT_PACK=on): what to read and run first, and the
   // project's conventions, before the "likely place" line
   const pack = contextPackEnabled(env) ? contextPack({ files: loc.files, testFile: loc.testFile }) : "";
@@ -1094,6 +1118,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
   const baseLimitS = policy.timeoutS;
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
+  const runLimitS = () => baseLimitS;
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
   const runRung = async (rung) => {
     let runId = null;
@@ -1106,7 +1131,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
         // one run's limits are the tries' own: it cannot usefully outlast them, and a run that prints nothing for that
         // long has stopped working
-        timeout_s: Math.min(3600, Math.ceil(policy.runTimeoutS || baseLimitS)), hang_s: Math.min(3600, Math.ceil(policy.runTimeoutS || baseLimitS)),
+        timeout_s: Math.min(3600, Math.ceil(policy.runTimeoutS || runLimitS(rung))), hang_s: Math.min(3600, Math.ceil(policy.runTimeoutS || runLimitS(rung))),
         ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
       runId = started.run_id;
       running.set(rung.unit, runId);
@@ -1286,7 +1311,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   const widthOf = new Map();
   for (const r of rungs) {
     const prof = profilesNow[r.model], p = providerOf(r);
-    if (widthOf.has(p) || !prof?.openai_base_url || r.executor === "claude") continue;
+    if (widthOf.has(p) || !prof?.openai_base_url) continue;
     const q = await providerQuota(prof, env, fetchImpl).catch(() => null);
     widthOf.set(p, providerWidth(q?.minute, width));
     if (widthOf.get(p) < width) log(`dispatch: ${widthOf.get(p)} at once on ${p} (its tokens-per-minute quota is ${q.minute})`);
@@ -1295,7 +1320,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the time limit on the cheap tries: past it the session's model takes over (a pass takes ~50 s, p90 ~60 s)
   // ... plus an allowance for the material the task comes with: an agent reads a 20 KB contract many times over
   // the strong model works more slowly (more context, more steps): its run gets extra time
-  let limitS = baseLimitS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
+  const plainS = baseLimitS;
+  let limitS = plainS + (rungs.some((r) => strongSet.has(r.model)) ? policy.strongExtraS : 0);
   let timer;
   let fireDeadline;
   const triesStart = Date.now();
@@ -1306,12 +1332,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the extra time is the strong model's: once it has finished without a pass (failed, stalled, capped), the others get
   // the plain limit again -- on a real issue they waited 240 s more after flash had already stopped (Modal, 2026-10-15)
   const dropStrongExtra = () => {
-    if (limitS === baseLimitS || tierStarted) return;
+    if (limitS === plainS || tierStarted) return;
     const strongLeft = queue.some((r) => strongSet.has(r.model)) || rungs.some((r) => strongSet.has(r.model) && pending.has(r.unit));
     if (strongLeft) return;
-    limitS = baseLimitS;
+    limitS = plainS;
     clearTimeout(timer);
-    timer = setTimeout(() => fireDeadline({ timeout: true }), Math.max(0, baseLimitS * 1000 - (Date.now() - triesStart)));
+    timer = setTimeout(() => fireDeadline({ timeout: true }), Math.max(0, plainS * 1000 - (Date.now() - triesStart)));
   };
   let timedOut = false;
   let handedIn = false;                    // the time was up and the runs still going were told to hand in their change
@@ -1553,7 +1579,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       const { promptTitle } = await import("./capture_hook.mjs");
       diff = diffFromGit(root, "HEAD", { files: applied?.files || files });
       if (diff.trim()) {
-        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff, steps: wayStepsForEntry(diff) }).id;
+        // proven only when a test of the asked behaviour passed on it (a rule with T); accepted on the project's old tests and a
+        // reviewer's word, it is recorded unverified: sqlglot-4067's accepted answer was wrong and went in as a proven way
+        const proven = !evidence || ruleUses(acceptRule, "T");
+        entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", diff, steps: wayStepsForEntry(diff),
+                                 ...(proven ? { observed: true } : { verify: false }) }).id;
         await recordEvidenceFor({ root, entry, check: check || "test-first tests", winner, env, log });
         autoTidy(root, env);                  // an exact duplicate of an earlier entry is dropped, the newer one kept
       }
@@ -1653,13 +1683,12 @@ function pytestRun(cwd, args, timeoutMs = 300000) {
 
 export async function crossCheck({ rt, rung, result, rungs, env, payload, root, check, scope, log = () => {}, onStart = () => {} }) {
   if (!/pytest/.test(check)) return { verdict: "inconclusive", reason: "not a pytest check" };
-  const verifier = rungs.find((r) => r.model !== rung.model && r.executor !== "claude")
+  const verifier = rungs.find((r) => r.model !== rung.model && (r.executor !== "claude" || openModelProfile(r.model, env)))
     || (() => {
       try {
         const cfg = readExecConfig(env);
         for (const [ex, spec] of Object.entries(cfg.executors || {})) {
-          if (ex === "claude") continue;
-          const m = (spec?.models || []).map(String).find((x) => x !== rung.model);
+          const m = (spec?.models || []).map(String).find((x) => x !== rung.model && (ex !== "claude" || (cfg.profiles || {})[x]));
           if (m) return { unit: `${m}|${ex}`, executor: ex, model: m };
         }
       } catch { /* no config */ }
@@ -1753,7 +1782,11 @@ export function selfCommand() {
 // What the cheap tries found that saves the session's model its own search: where the task likely is, and tests written
 // for it that fail on the unchanged code (not when two answers failed them alike: then they may be wrong).
 function handoffNote(d) {
-  const spots = (d.loc?.spots || []).slice(0, 3).map((s) => `${s.file}:${s.start}-${s.end}${s.symbol ? ` (${s.symbol})` : ""}`);
+  // only a pointer with strong evidence behind it (the task's own error message, traceback, file or module path; lib/locate.mjs
+  // `strong`): a word-match guess sent the session's model to the wrong file -- its fallback cost +$0.22 to +$0.35 more than
+  // plain Claude Code's on the 3 issues where it pointed at _core.py, and the same where it did not (cache-full-2, jsonargparse)
+  const strong = new Set(d.loc?.strongFiles || (d.loc?.strong ? [d.loc?.spots?.[0]?.file] : []));
+  const spots = (d.loc?.spots || []).filter((s) => strong.has(s.file)).slice(0, 3).map((s) => `${s.file}:${s.start}-${s.end}${s.symbol ? ` (${s.symbol})` : ""}`);
   const parts = [];
   if (spots.length) parts.push(`Searching this repository for the task's names points at ${spots.join(", ")}; confirm it before relying on it.`);
   if (d.spec?.file && !d.sharedFail && !d.ambiguous) parts.push(`Tests written for this task, which fail on the unchanged code, are at ${d.spec.file}: ` +

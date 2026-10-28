@@ -20,15 +20,19 @@ export const DEFAULT_KEY_ENV = "GENERAL_COMPUTE_API_KEY";
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // The open models that were run end to end (docs: experiments/abtest/exec.json; prices are list prices per million tokens).
-export function execTemplate(keyEnv = DEFAULT_KEY_ENV) {
+// The open models run in kell's own step agent: with fair sampling, reasoning kept across tool calls and no stall cut-offs it
+// solved the same issues as lean Claude Code (through lib/anthropic_bridge.mjs) for a third to a quarter of the cost
+// (GLM-5.3-flash replay on sqlglot 508/518/527, 2026-10-28). claudeCode: true runs them inside Claude Code instead.
+export function execTemplate(keyEnv = DEFAULT_KEY_ENV, { claudeCode = false } = {}) {
   if (!NAME.test(keyEnv)) throw new Error(`--key-env must be an environment variable NAME, not a key (got "${String(keyEnv).slice(0, 12)}...")`);
   const gc = (id, i, o, extra = {}) => ({ model_id: id, key_env: keyEnv, openai_base_url: "https://api.generalcompute.com/v1",
                                           input_per_mtok: i, output_per_mtok: o, ...extra });
   return {
-    executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7"] } },
+    executors: { [claudeCode ? "claude" : "stealth"]: { models: ["gemma-4-31b-it", "minimax-m2-7"] } },
     profiles: {
-      "gemma-4-31b-it": gc("gemma-4-31B-it", 0.09, 0.34, { no_system_role: true }),
-      "minimax-m2-7": gc("minimax-m2.7", 0.21, 0.84),
+      // each at its vendor's sampling (temperature 1.0); General Compute's own default is greedy for gemma
+      "gemma-4-31b-it": gc("gemma-4-31B-it", 0.09, 0.34, { no_system_role: true, temperature: 1.0, top_p: 0.95 }),
+      "minimax-m2-7": gc("minimax-m2.7", 0.21, 0.84, { temperature: 1.0, top_p: 0.95 }),
     },
     max_concurrent_runs: 2,
   };

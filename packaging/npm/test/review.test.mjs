@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { changesSource, parseVerdict, reviewPatch } from "../lib/review.mjs";
+import { changedCode, changesSource, parseVerdict, reviewPatch } from "../lib/review.mjs";
 
 test("parseVerdict: the JSON verdict, inside other text too; anything else is no verdict", () => {
   assert.deepEqual(parseVerdict('ok {"verdict": "fixes", "why": "handles both"}'), { verdict: "fixes", why: "handles both" });
@@ -32,6 +32,24 @@ test("reviewPatch: one call to the review profile with the request and the diff;
   assert.match(sent.body.messages[1].content, /make f handle negatives[\s\S]*\+\+\+ b\/f\.py/);
   assert.equal(await reviewPatch({ prompt: "x", diff: "d", env: { ...env, STEALTHLAB_REVIEW_MODEL: "off" }, fetchImpl }), null);
   assert.equal(await reviewPatch({ prompt: "x", diff: "d", env: { ...env, STEALTHLAB_REVIEW_MODEL: "nope" }, fetchImpl }), null);
+  assert.match(sent.body.messages[0].content, /new meaning the request does not ask for[\s\S]*must give exactly that/, "v2 by default");
+  await reviewPatch({ prompt: "x", diff: "d", env: { ...env, STEALTHLAB_REVIEW_PROMPT: "v1" }, fetchImpl });
+  assert.doesNotMatch(sent.body.messages[0].content, /new meaning/, "v1: the pre-registered prompt");
+});
+
+test("changedCode: the functions a diff changes, read from the worktree after the change; tests left out", () => {
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), "review-wt-"));
+  fs.mkdirSync(path.join(wt, "pkg")); fs.mkdirSync(path.join(wt, "tests"));
+  const filler = Array.from({ length: 30 }, (_, i) => `def f${i}():\n    return ${i}\n`).join("\n");
+  fs.writeFileSync(path.join(wt, "pkg", "m.py"), `${filler}\n\ndef target(x):\n    y = x + 1\n    return y * 2\n`);
+  fs.writeFileSync(path.join(wt, "tests", "test_m.py"), "def test_t():\n    assert True\n");
+  const n = fs.readFileSync(path.join(wt, "pkg", "m.py"), "utf8").split("\n").findIndex((l) => l.includes("y = x + 1")) + 1;
+  const diff = `diff --git a/pkg/m.py b/pkg/m.py\n--- a/pkg/m.py\n+++ b/pkg/m.py\n@@ -${n},1 +${n},1 @@\n-    y = x\n+    y = x + 1\n` +
+    "diff --git a/tests/test_m.py b/tests/test_m.py\n--- a/tests/test_m.py\n+++ b/tests/test_m.py\n@@ -1,1 +1,2 @@\n+x\n";
+  const code = changedCode(wt, diff);
+  assert.match(code, /--- pkg\/m\.py lines \d+-\d+ \(target\), after the change ---[\s\S]*def target\(x\):[\s\S]*return y \* 2/);
+  assert.doesNotMatch(code, /def f3\(\)|test_t/, "the changed function only, no test file");
+  assert.equal(changedCode(null, diff), "");
 });
 
 test("reviewPatch with a Claude model: one lean claude -p call, the verdict from its JSON result", async () => {

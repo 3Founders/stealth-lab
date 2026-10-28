@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
 import { costOf, recordSpend } from "./spend.mjs";
-import { enclosingBlock, isSource } from "./locate.mjs";
+import { enclosingBlock, fixDensity, isSource } from "./locate.mjs";
 
 export const NARROW_SYSTEM = [
   "You find where in a code repository a reported problem must be fixed. You get the report, the repository's source",
@@ -71,7 +71,11 @@ export async function narrowLocation({ prompt, root, loc, env = process.env, fet
     if (!all.length) return loc;
     const known = new Set(all);
     // the file list: whole when it fits, else the candidates' folders first and the rest by depth
-    const cand = (loc?.files || []).slice(0, 6);
+    // the search's candidates, then the files this repository's bug fixes touched most: a fix the issue's words do not lead
+    // to is often in the module where most fixes go (jsonargparse-560: _typehints.py, never matched by the search)
+    const searched = (loc?.files || []).slice(0, 6);
+    const dense = [...fixDensity(root)].filter(([f]) => known.has(f) && !searched.includes(f)).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f]) => f);
+    const cand = [...searched, ...dense];
     let list = all;
     if (all.join("\n").length > 24000) {
       const dirs = new Set(cand.map((f) => path.posix.dirname(f)));
@@ -84,7 +88,8 @@ export async function narrowLocation({ prompt, root, loc, env = process.env, fet
     }
     const outlines = cand.map((f) => outlineOf(root, f)).join("\n\n");
     const user = `The report:\n${String(prompt || "").slice(0, 5000)}\n\nSource files:\n${list.join("\n")}\n\n` +
-      (outlines ? `Outlines of the files a text search matched:\n${outlines}` : "A text search matched no file.");
+      (outlines ? `Outlines of the files a text search matched${dense.length ? ", then of the files this repository's bug fixes changed most" : ""}:\n${outlines}`
+        : "A text search matched no file.");
     const messages = profile.no_system_role ? [{ role: "user", content: `${NARROW_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: NARROW_SYSTEM }, { role: "user", content: user }];
     const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {

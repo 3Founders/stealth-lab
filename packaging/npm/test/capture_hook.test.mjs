@@ -305,3 +305,16 @@ test("Windows: a test run through Claude Code's PowerShell tool is captured like
   assert.equal(onPostToolUse({ ...base, tool_name: "Read", tool_input: { command: "pytest" }, tool_response: {} }, { env }), null);
   assert.equal(CAPTURE_HOOKS.PostToolUse.matcher, "Bash|PowerShell");
 });
+
+test("passedRun: a run whose only failures already failed on the unchanged code passes; a new failure does not", async () => {
+  const { passedRun, failingIds } = await import("../lib/capture_hook.mjs");
+  const out = "FAILED t/test_a.py::test_perm - PermissionError\n2 failed, 40 passed in 3.1s\nFAILED t/test_a.py::test_mode - x\n";
+  const fails = failingIds(out);
+  assert.deepEqual(fails, ["t/test_a.py::test_perm", "t/test_a.py::test_mode"]);
+  const base = { base_fails: ["t/test_a.py::test_perm", "t/test_a.py::test_mode", "t/test_b.py::test_old"] };
+  assert.equal(passedRun({ verdict: false, fails }, base), true);
+  assert.equal(passedRun({ verdict: false, fails: [...fails, "t/test_c.py::test_new"] }, base), false);
+  assert.equal(passedRun({ verdict: false, fails }, {}), false, "no baseline known: a failure is a failure");
+  assert.equal(passedRun({ verdict: true }, {}), true);
+  assert.equal(passedRun({ verdict: null }, base), false);
+});

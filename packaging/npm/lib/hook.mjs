@@ -33,6 +33,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { claudeDir } from "./claude_exec.mjs";
+import { readConfig } from "./config.mjs";
 import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
 import { execConfigPath } from "./exec/store.mjs";
 import { modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
@@ -157,17 +158,27 @@ export function routingArgs(policy, model, scaffold = "claude-code") {
 }
 
 // The session's model, best effort: the transcript's last assistant message (from the 2nd prompt on), else
-// $ANTHROPIC_MODEL, else "model" in Claude Code's settings.json. No hook payload carries it.
-export function detectModel(payload, env = process.env) {
+// $ANTHROPIC_MODEL, else "model" in Claude Code's settings.json, else the one the person named
+// (STEALTHLAB_SESSION_MODEL or config.json session_model), else Claude Code's default. No hook payload carries it.
+// The default matters: with no model known, no plan was asked for and nothing was dispatched -- on the first prompt of
+// every session (and every `claude -p`), which is where most tasks start (a fresh install, 2026-10-28: "not dispatched
+// (no model plan)"; docs/routing_issues.md).
+export const DEFAULT_SESSION_MODEL = "claude-opus-5-5";
+export function detectModel(payload, env = process.env, { fallback = true } = {}) {
   const fromTranscript = payload?.transcript_path ? modelFromTranscript(payload.transcript_path) : null;
   if (fromTranscript) return fromTranscript;
   if (env.ANTHROPIC_MODEL) return env.ANTHROPIC_MODEL;
   try {
     const m = JSON.parse(fs.readFileSync(path.join(claudeDir(env), "settings.json"), "utf8"))?.model;
-    return typeof m === "string" && m ? m : null;
-  } catch {
-    return null;
-  }
+    if (typeof m === "string" && m) return m;
+  } catch { /* no settings: the next source */ }
+  if (!fallback) return null;
+  if (env.STEALTHLAB_SESSION_MODEL) return env.STEALTHLAB_SESSION_MODEL;
+  try {
+    const c = readConfig(env)?.session_model;
+    if (typeof c === "string" && c) return c;
+  } catch { /* no config */ }
+  return DEFAULT_SESSION_MODEL;
 }
 
 // The mode for this prompt: the strong-model override applies only when set and the model is known and matches.

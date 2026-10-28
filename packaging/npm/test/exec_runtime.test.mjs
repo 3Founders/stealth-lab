@@ -206,7 +206,7 @@ test("refuses a repo with an unresolved merge, a missing scope, and an oversized
   const rt = runtime(env, { stub: stubAdapter({ scenario: FIX }) });
   const base = { repo_path: repo, task: "Fix calc.", checks: ["node check.mjs"], scope: ["calc.txt"], executor: "stub" };
   await assert.rejects(rt.achieve({ ...base, scope: [] }), /scope is required/);
-  await assert.rejects(rt.achieve({ ...base, task: "x".repeat(12001) }), /12,000/);
+  await assert.rejects(rt.achieve({ ...base, task: "x".repeat(40001) }), /40,000/);
   await assert.rejects(rt.achieve({ ...base, checks: [] }), /checks are required/);
   await assert.rejects(rt.achieve({ ...base, repo_path: tmpDir() }), /not inside a git work tree/);
   fs.writeFileSync(path.join(repo, ".git", "MERGE_HEAD"), git(repo, "rev-parse", "HEAD"));

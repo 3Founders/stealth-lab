@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
+import { costOf } from "./spend.mjs";
 import { dispatchedTurns } from "./continuity.mjs";
 
 export const KINDS = ["code", "question", "chat"];
@@ -224,10 +225,8 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
     if (!res.ok) { log(`brief: HTTP ${res.status}`); return null; }
     const body = await res.json();
     const u = body?.usage;
-    if (u && (profile.input_per_mtok || profile.output_per_mtok)) {
-      ledger(env, { what: "brief", model: name,
-        cost_usd: ((u.prompt_tokens || 0) * (profile.input_per_mtok || 0) + (u.completion_tokens || 0) * (profile.output_per_mtok || 0)) / 1e6 });
-    }
+    const cost = costOf(profile, u);
+    if (cost !== null) ledger(env, { what: "brief", model: name, cost_usd: cost });
     const brief = parseBrief(body?.choices?.[0]?.message?.content);
     if (!brief) log("brief: the reply was not a brief");
     return brief;

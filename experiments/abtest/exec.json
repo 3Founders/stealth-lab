@@ -1,16 +1,12 @@
 {
-  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: headless Claude Code on Sonnet with the person's own login (a dispatched rung, no in-session delegation). glm-5.3 is not a cheap model here (its profile stays for pricing and as an optional test writer): a failed glm-5.3 try cost about what Opus spends on the whole task (ct-series-v5 sqlglot: $1.31 vs $1.62), so it cannot save money.",
+  "_note": "Arm C's local executor config (copied to .local/C_home/exec.json by the runner). Prices are the router's card list prices (app/routing/data/prior_cards.json, per M tokens), used for cost whatever the free tier charges. gpt-oss-120b: General Compute sometimes cannot parse its tool calls deep in a run (HTTP 400); the step agent retries those with some sampling variation. claude: the open models run inside lean Claude Code through the local bridge (lib/anthropic_bridge.mjs), as the product does when Claude Code is installed (GLM-5.3-flash: 14/24 real issues that way, 8/25 in the step agent; pipeline survey 2026-10-16), and Sonnet with the person's own login (a dispatched rung, no in-session delegation). glm-5.3 is not a cheap model here (its profile stays for pricing and as an optional test writer): a failed glm-5.3 try cost about what Opus spends on the whole task (ct-series-v5 sqlglot: $1.31 vs $1.62), so it cannot save money. cached_input_per_mtok: z.ai bills input served from its cache at a fifth (docs.z.ai pricing, 2026-10-28); General Compute reports no cached tokens. GLM: no reasoning_effort (z.ai read \"high\" as near-minimal thinking: 74 vs 724 reasoning tokens, 2026-10-28); thinking.clear_thinking=false keeps its reasoning across tool calls. Sampling: every cheap model at the vendor's temperature 1.0 (top_p 1.0 gpt-oss, 0.95 minimax/gemma); gpt-oss at reasoning_effort high (474 vs 156 reasoning tokens at General Compute's default); General Compute's own default is greedy for gpt-oss and gemma (2026-10-28).",
   "executors": {
-    "stealth": {
+    "claude": {
       "models": [
         "gemma-4-31b-it",
         "gpt-oss-120b",
         "minimax-m2-7",
-        "glm-5.3-flash"
-      ]
-    },
-    "claude": {
-      "models": [
+        "glm-5.3-flash",
         "claude-sonnet-5-5"
       ]
     }
@@ -22,21 +18,30 @@
       "openai_base_url": "https://api.generalcompute.com/v1",
       "input_per_mtok": 0.09,
       "output_per_mtok": 0.34,
-      "no_system_role": true
+      "no_system_role": true,
+      "temperature": 1.0,
+      "top_p": 0.95
     },
     "minimax-m2-7": {
       "model_id": "minimax-m2.7",
       "key_env": "GENERAL_COMPUTE_API_KEY",
       "openai_base_url": "https://api.generalcompute.com/v1",
       "input_per_mtok": 0.21,
-      "output_per_mtok": 0.84
+      "output_per_mtok": 0.84,
+      "temperature": 1.0,
+      "top_p": 0.95
     },
     "gpt-oss-120b": {
       "model_id": "gpt-oss-120b",
       "key_env": "GENERAL_COMPUTE_API_KEY",
       "openai_base_url": "https://api.generalcompute.com/v1",
       "input_per_mtok": 0.037,
-      "output_per_mtok": 0.17
+      "output_per_mtok": 0.17,
+      "temperature": 1.0,
+      "top_p": 1.0,
+      "request_extras": {
+        "reasoning_effort": "high"
+      }
     },
     "glm-5.3-flash": {
       "model_id": "glm-5.3-flash",
@@ -46,10 +51,14 @@
       "output_per_mtok": 0.5,
       "vision": false,
       "request_extras": {
-        "reasoning_effort": "high"
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": false
+        }
       },
       "strong": true,
-      "first": true
+      "first": true,
+      "cached_input_per_mtok": 0.03
     },
     "glm-5.3": {
       "model_id": "glm-5.3",
@@ -58,9 +67,13 @@
       "input_per_mtok": 1.4,
       "output_per_mtok": 4.4,
       "request_extras": {
-        "reasoning_effort": "high"
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": false
+        }
       },
-      "strong": false
+      "strong": false,
+      "cached_input_per_mtok": 0.26
     }
   }
 }
