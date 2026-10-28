@@ -142,3 +142,38 @@ describe("Models page", () => {
     expect(host!.querySelector('[role="alert"]')!.textContent).toMatch(/https/);
   });
 });
+
+describe("Other ways to add a key", () => {
+  it("imports keys from a pasted .env block: shows names and last 4 only, saves the picked ones, then drops the pasted text", async () => {
+    await mount();
+    const area = host!.querySelector<HTMLTextAreaElement>("#m-env")!;
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => { set.call(area, `OPENAI_API_KEY=sk-oai-IMPORTSECRET-9999\nDATABASE_URL=postgres://u:pw@h/db\nGROQ_API_KEY=gsk_IMPORTSECRET-7777`); area.dispatchEvent(new Event("input", { bubbles: true })); });
+    await click(byText("Find keys"));
+    const shown = host!.textContent ?? "";
+    expect(shown).toContain("OPENAI_API_KEY");
+    expect(shown).toContain("ends in 9999");
+    const withoutTextarea = host!.cloneNode(true) as HTMLElement; // the pasted text lives in the textarea itself; nothing else may show it
+    withoutTextarea.querySelector("#m-env")?.remove();
+    expect(withoutTextarea.innerHTML).not.toContain("IMPORTSECRET");
+    expect(shown).toMatch(/1 other line ignored/);
+    const boxes = host!.querySelectorAll<HTMLInputElement>(".models-found input[type=checkbox]");
+    await act(async () => { boxes[1].click(); }); // untick the second
+    await click(byText("Save selected"));
+    expect(rows.map((r) => r.provider)).toEqual(["openai"]);
+    expect(host!.querySelector<HTMLTextAreaElement>("#m-env")!.value).toBe("");
+  });
+
+  it("'Connect with OpenRouter' sends the person to openrouter.ai with a PKCE challenge", async () => {
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", { configurable: true, value: { ...window.location, assign, origin: "https://site.example", search: "", pathname: "/account/models" } });
+    Object.defineProperty(globalThis, "crypto", { configurable: true, value: (await import("node:crypto")).webcrypto });
+    await mount();
+    await click(byText("Connect with OpenRouter"));
+    expect(assign).toHaveBeenCalledTimes(1);
+    const url = new URL(assign.mock.calls[0][0] as string);
+    expect(url.origin).toBe("https://openrouter.ai");
+    expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(url.searchParams.get("callback_url")).toBe("https://site.example/account/models");
+  });
+});
