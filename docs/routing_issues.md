@@ -149,3 +149,43 @@ end to end in this session.
 The routing store (`store.py`), the bundled priors (`prior_bundle.py`), `detect_check.mjs`, `locate.mjs`, the executor
 runtime under `lib/exec/`, and the real Neon database (over quota during the session). Nothing here was measured on
 more than a handful of tasks.
+
+## Review, 2026-10-28 (AnujB's session): which items are real
+
+Each item above was checked against the code on main and, where possible, against the A/B replays run the same day
+(replay-2/3: gpt-oss-120b and glm-5.3-flash on 6 jsonargparse issues, graded on the hidden tests). **Status** says what
+is true now; "fixed locally" means the change exists in AnujB's working tree, is tested, and is not pushed yet.
+
+| # | Verdict | Evidence / status |
+|---|---------|-------------------|
+| 1 | A local setting, not a product bug | `dispatchCheck` (dispatch.mjs) does prefer `STEALTHLAB_DISPATCH_CHECK` over everything; nothing in the repo sets it. Scoping an override is still worth doing. |
+| 2 | Real (design) | Agreed: no up-front difficulty signal. |
+| 3 | Real | Seen in the series: sqlglot-4067's wrong cheap answer was accepted by the Sonnet reviewer. The reviewer now sees the changed functions and a stricter prompt (fixed locally): wrong accepted 2/7 -> 1/7 on 15 graded answers, right still 7/8 (small sample; recorded as a deviation in docs/acceptance_rules_preregistered_2026-10-16.md). |
+| 4, 5, 7 | Real (design) | Agreed. 5's setting is gone from this repo. |
+| 6 | Real, and confirmed by measurement | cache-full-2, 9 common issues: Opus alone 8/9 for $4.43; kell 7/9 for $5.78. Cheap models solved 1/9. No saving is established yet. Part of kell's extra cost was the Opus fallback following a wrong "likely place" pointer (+$0.22-0.35 on 508/518/531); the hand-off now passes the pointer only when strong evidence backs it (fixed locally). |
+| 8 | Real (code) | `recordLibraryEntry` (capture_hook.mjs) never looks at the triage verdict. Open. |
+| 9 | Real (code) | `diffFromGit` (library.mjs) takes the whole working tree against HEAD plus every untracked file, not the session's edits. Open. |
+| 10, 11 | Real | Open. |
+| 12 | Real | Seen again today on a fresh local install: readiness reports "token MISSING", outcomes are not reported. |
+| 13 | Real (code) | The session hook defaults to `STEALTHLAB_HOOK_MODE=full`, which injects unjudged ("matched by words only") library matches with file lists and diffs. Open. |
+| 14, 15 | Real | Open. |
+| 16 | Real, and now longer | The cheap tries' limit is 900 s by default (raised from 600 s; fixed locally): GLM had found the root cause of jsonargparse-560 and ran out one edit short, and 2 of the survey's 16 cheap solves took longer than 600 s. The prompt waits that long before Opus takes over. Needs a non-blocking design or a visible progress line. |
+| 17 | Real, fixed locally | `PROVIDER_LIMIT` (exec/runtime.mjs) excused only 429 and out-of-credit replies; a 5xx or a provider_error counted as the model failing. It now excuses 5xx and provider_error too. |
+| 18, 19, 21, 22 | Real | Open. |
+| 20 | Real, seen again | Today the local scratch Postgres stopped accepting connections ("could not reserve shared memory region", a Windows Postgres fault after days of uptime) and the MCP server failed to start; nothing told the user. The console page showed "MCP CLOSED (unreachable (Invalid URL))" until a server URL was saved. |
+
+### New problems found the same day
+
+- **Benchmark contamination (harness).** In Claude Code, GLM-5.3-flash ran `pip download jsonargparse==<later version>` on most tries and copied the upstream fix (replay-2g: 11 of 15 Claude Code tries fetched; most of its "solves" were these). The step agent blocks installs; Claude Code did not. The series transcripts (arms A and C) were scanned: none fetched. Fixed in the harness: no package index for any arm's agents, no network for replay agents, and the peek detector flags fetches.
+- **Cost accounting ignored cached tokens.** z.ai bills cached input at a fifth (GLM-5.3-flash $0.15 vs $0.03 per M) and agents resend their whole conversation every turn, so GLM costs were overstated about 3x. Fixed locally (`cached_input_per_mtok`, one `costOf` for every call). General Compute reports no cached tokens.
+- **gpt-oss under Claude Code dies on "Failed to parse tool call from GPT OSS output"** (General Compute, HTTP 400 provider_error, always at the same character). Retrying with sampling variation (fixed locally) did not cure it; still open, under investigation. It is no longer counted against the model (#17).
+- **Early-stop rules cut models short.** Rule e (48 calls with no edit) stopped all 10 of GLM's step-agent tries at 2-6 minutes of 10; the step budget was 80 calls (GLM's first edit came at call 69 on a solved issue). Fixed locally: e counts only repeated calls (24) with a 144-call ceiling, the budget is 200 calls, and the replays now run with no early-stop rules so they can be judged on the transcripts (`experiments/abtest/stall_audit.mjs`).
+- **Throttling measured as model failure.** Six agents on one General Compute key took 12-21 s per call and timed out with no edit. The replay now runs at most 2 per key, as the product does.
+- **Locate pointed at the wrong file on 4 of 6 jsonargparse issues.** On 87 real issues from 24 repositories: top-1 32% -> 38%, top-3 49% -> 59% after matching quoted error messages to where they are raised, traceback frames, and a bug-fix-history prior (fixed locally).
+- **Console/setup gaps.** `console/scripts/start.mjs` starts the MCP with `backend/scripts/start_mcp_local.ps1`, which does not exist; the console page still says prompts are sent "up to 1,500 characters" (now 4,000, see #19).
+
+### Where this leaves routing
+Cheap models do not yet save money on real issues. With the fair settings (20 minutes, no early-stop rules, no network)
+the clean replay so far is: gpt-oss solves 531 and 518 and fails 508 and 527; GLM's step agent solves none of 508, 518 and
+527 in 20 minutes; GLM under Claude Code solves 518. At today's prices the break-even is roughly 45% of issues solved by
+a cheap model. Next: finish the clean replay, then rerun the full series (kell vs Opus) with the settings it picks.
