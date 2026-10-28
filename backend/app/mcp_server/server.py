@@ -911,6 +911,14 @@ from app.mcp_server import billing_routes as _billing_routes  # noqa: E402 -- bu
 
 _billing_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
 
+from app.mcp_server import room_routes as _room_routes  # noqa: E402 -- rooms that follow a person across devices (db/157_rooms.sql)
+
+_room_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+)
+
 
 @server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(request: Request) -> JSONResponse:  # noqa: ARG001
