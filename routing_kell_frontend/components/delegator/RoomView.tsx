@@ -4,11 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/delegator/Composer";
 import { useSpringScroll } from "@/components/delegator/useSpringScroll";
-import { streamChat } from "@/lib/byok/chat";
-import { providerById } from "@/lib/byok/providers";
 import { recordUse, withinCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore } from "@/lib/byok/vault";
 import { ASSISTANT_HANDLE, assistantIdentity, attachAssistant } from "@/lib/delegator/adapters/assistant";
+import { makeResolver } from "@/lib/delegator/adapters/resolve";
 import { agentIdentity, parseCommand, recipientsFor, toMcpPayload } from "@/lib/delegator/adapters/mcp";
 import { attachMockAgent } from "@/lib/delegator/adapters/mock";
 import { Broker } from "@/lib/delegator/relay/broker";
@@ -16,6 +15,7 @@ import { openChannel } from "@/lib/delegator/relay/channel";
 import type { AgentActivity, AgentIdentity, GroupMessage, Room } from "@/lib/delegator/types";
 import { MAX_DEPTH } from "@/lib/delegator/types";
 import { groupMessages, initials } from "@/lib/delegator/ui";
+import { getAccessToken } from "@/lib/session";
 
 const HUMANS: AgentIdentity[] = [
   { handle: "@alice", displayName: "Alice", type: "human", status: "online" },
@@ -28,7 +28,6 @@ const ROOMS: Room[] = [
   { id: "#general-agents", title: "General agents", members: ["@alice", "@bob", "@alice/agent-1", "@bob/agent-2", "@bob/agent-3"] },
 ];
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Processing", delivering: "Delivering via Relay" };
-const SYSTEM = "You are the assistant in a group chat room with several people and agents. Each message is prefixed with its sender's handle. Be concise and helpful.";
 
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string };
 
@@ -126,19 +125,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (!vault || !subject) return;
     const kv = localKv();
     return attachAssistant(broker, {
-      resolve: async () => {
-        const metas = await vault.list();
-        const meta = metas.find((k) => k.model) ?? metas[0];
-        if (!meta) return null;
-        if (!meta.model) throw new Error("Open Models in your account menu and press Test on your key to choose a model.");
-        const provider = providerById(meta.provider);
-        const apiKey = await vault.reveal(meta.id);
-        if (!provider || !apiKey) throw new Error("That key can't be read in this browser any more. Add it again under Models.");
-        return {
-          secrets: [apiKey],
-          stream: (messages, signal) => streamChat({ provider, baseUrl: meta.baseUrl, apiKey }, meta.model, messages, { system: SYSTEM, signal }),
-        };
-      },
+      resolve: makeResolver({ vault, token: getAccessToken, kv, subject }),
       allowed: () => withinCap(kv, subject),
       used: () => void recordUse(kv, subject),
       history: (rid) => (linesRef.current[rid] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])),

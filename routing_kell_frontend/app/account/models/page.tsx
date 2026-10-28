@@ -8,8 +8,8 @@ import { OPENROUTER_BASE_URL, beginConnect, finishConnect } from "@/lib/byok/ope
 import { PROVIDERS, cleanBaseUrl, providerById } from "@/lib/byok/providers";
 import { DEFAULT_DAILY_CAP, readCap, usedToday, writeCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore, type KeyMeta } from "@/lib/byok/vault";
-import { KEL_MODELS_ENABLED } from "@/lib/features";
-import { getSession, onSessionChange, type Session } from "@/lib/session";
+import { KELL_MODEL_IDS, kellModelsAvailable, kellTarget, onlyKellModels, readChoice, writeChoice, type AssistantChoice } from "@/lib/kell-models";
+import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
 
 const kv = (): KeyValue => {
   try { if (window.localStorage) return window.localStorage; } catch { /* blocked */ }
@@ -73,12 +73,20 @@ function Panel({ subject }: { subject: string }) {
   const [envPick, setEnvPick] = useState<Record<string, boolean>>({});
   const [envIgnored, setEnvIgnored] = useState(0);
   const handledCallback = useRef(false);
+  const kellOn = kellModelsAvailable();
+  const [choice, setChoice] = useState<AssistantChoice>({ source: "key" });
+  const [kellModel, setKellModel] = useState<string>(KELL_MODEL_IDS[0]);
+  const [kellAck, setKellAck] = useState(false);
+  const [kellProbe, setKellProbe] = useState<Probe>({ state: "idle" });
 
   const reload = useCallback(() => {
     vault.list().then(setKeys).catch(() => { setKeys([]); setError("This browser would not let us read stored keys."); });
     const store = kv();
     setCap(readCap(store, subject));
     setUsed(usedToday(store, subject));
+    const c = readChoice(store, subject);
+    setChoice(c);
+    if (c.source === "kell") setKellModel(c.model);
   }, [vault, subject]);
   useEffect(reload, [reload]);
 
@@ -146,6 +154,30 @@ function Panel({ subject }: { subject: string }) {
     reload();
   }
 
+  async function testKell() {
+    setKellProbe({ state: "testing" });
+    const token = await getAccessToken();
+    const target = token ? kellTarget(token) : null;
+    if (!target || !token) { setKellProbe({ state: "failed", message: "Sign in again, then try the test." }); return; }
+    try {
+      const models = onlyKellModels(await listModels(target));
+      setKellProbe(models.length ? { state: "ok", models } : { state: "failed", message: "The server answered, but listed none of the keळ models for your account." });
+    } catch (err) {
+      setKellProbe({ state: "failed", message: scrub(err instanceof Error ? err.message : "The test failed.", token) });
+    }
+  }
+
+  function chooseKell() {
+    if (!kellAck) return;
+    writeChoice(kv(), subject, { source: "kell", model: kellModel });
+    reload();
+  }
+
+  function chooseOwnKey() {
+    writeChoice(kv(), subject, { source: "key" });
+    reload();
+  }
+
   async function connectOpenRouter() {
     setError("");
     try {
@@ -191,9 +223,25 @@ function Panel({ subject }: { subject: string }) {
           <li>Public material only. Do not send private code, secrets or personal data.</li>
           <li>Your prompt goes to the model provider (Z.ai or General Compute). We have no data-processing agreement with them yet.</li>
         </ul>
-        {KEL_MODELS_ENABLED
-          ? <p className="small" role="status">Not connected yet.</p>
-          : <p className="small dim" role="status">Not available yet. Your own key, below, is the way to chat today.</p>}
+        {!kellOn ? (
+          <p className="small dim" role="status">Not available yet. Your own key, below, is the way to chat today.</p>
+        ) : (
+          <>
+            <p className="small" role="status">The assistant is using: <b>{choice.source === "kell" ? `keळ models (${choice.model})` : "your own key"}</b>.</p>
+            <label className="small models-ack"><input type="checkbox" checked={kellAck} onChange={(e) => setKellAck(e.target.checked)} /> I understand: public material only, capped, and my prompts go to the model provider.</label>
+            <div className="cluster">
+              <label className="small" htmlFor="m-kell-model">Model</label>
+              <select id="m-kell-model" value={kellModel} onChange={(e) => setKellModel(e.target.value)}>
+                {KELL_MODEL_IDS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <button type="button" className="btn-ink" disabled={!kellAck} onClick={chooseKell}><span>Use keळ models for the assistant</span></button>
+              {choice.source === "kell" && <button type="button" className="btn-line" onClick={chooseOwnKey}>Use my own key instead</button>}
+              <button type="button" className="btn-line" onClick={() => void testKell()} disabled={kellProbe.state === "testing"}>{kellProbe.state === "testing" ? "Testing…" : "Test"}</button>
+            </div>
+            {kellProbe.state === "ok" && <p className="small" role="status">Works. Available to you: {kellProbe.models.join(", ")}.</p>}
+            {kellProbe.state === "failed" && <p className="small" role="alert">{kellProbe.message}</p>}
+          </>
+        )}
       </section>
 
       {note && <p className="small" role="status">{note}</p>}

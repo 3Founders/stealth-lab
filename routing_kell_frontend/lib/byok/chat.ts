@@ -7,7 +7,7 @@ import { readSse } from "@/lib/sse";
 import type { Provider } from "@/lib/byok/providers";
 
 export interface ChatMessage { role: "user" | "assistant"; content: string }
-export interface ProviderTarget { provider: Provider; baseUrl: string; apiKey: string }
+export interface ProviderTarget { provider: Provider; baseUrl: string; apiKey: string; extraHeaders?: Record<string, string> }
 
 export class ProviderError extends Error {}
 
@@ -28,12 +28,14 @@ function headers(t: ProviderTarget): Record<string, string> {
         "anthropic-version": ANTHROPIC_VERSION,
         "anthropic-dangerous-direct-browser-access": "true", // required by Anthropic for browser calls with an API key
       }
-    : { "content-type": "application/json", authorization: `Bearer ${t.apiKey}` };
+    : { "content-type": "application/json", authorization: `Bearer ${t.apiKey}`, ...(t.extraHeaders ?? {}) };
 }
 
 async function fail(res: Response, t: ProviderTarget): Promise<never> {
   let body = "";
   try { body = (await res.text()).slice(0, 600); } catch { /* none */ }
+  // An OpenAI-style error envelope carries a sentence meant for people; show that, not the raw JSON.
+  try { const m = (JSON.parse(body) as { error?: { message?: unknown } })?.error?.message; if (typeof m === "string" && m) body = m; } catch { /* not JSON */ }
   throw new ProviderError(scrub(`The provider answered ${res.status}${body ? `: ${body}` : "."}`, t.apiKey));
 }
 

@@ -631,3 +631,4 @@ main, footer { position: relative; z-index: 1; }
 .profile-visibility legend { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--grey); padding: 0; margin-bottom: 6px; }
 .profile-visibility label { display: flex; gap: 10px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--ink); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.models-ack { display: flex; gap: 10px; align-items: flex-start; }

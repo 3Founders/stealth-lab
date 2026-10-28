@@ -15,6 +15,7 @@ let models: string[] | Error = ["model-a", "model-b"];
 
 vi.mock("@/lib/session", () => ({
   getSession: () => Promise.resolve(session),
+  getAccessToken: () => Promise.resolve("tok.SESSIONTOKEN.sig"),
   onSessionChange: () => () => {},
 }));
 vi.mock("@/components/AnimatedHeading", () => ({ default: ({ children }: { children: React.ReactNode }) => <span>{children}</span> }));
@@ -175,5 +176,38 @@ describe("Other ways to add a key", () => {
     expect(url.origin).toBe("https://openrouter.ai");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("callback_url")).toBe("https://site.example/account/models");
+  });
+});
+
+describe("keळ models (pilot) when the deployment has a hosted server", () => {
+  it("is opt-in: the choice needs the acknowledgement, a Test reports the real status and message, and 'own key' stays the default", async () => {
+    vi.stubEnv("NEXT_PUBLIC_KEL_MCP_URL", "https://mcp.example.org");
+    vi.resetModules();
+    const writes: string[] = [];
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((k, v) => { writes.push(`${k}=${v}`); });
+    const { default: Page } = await import("@/app/account/models/page");
+    host = document.createElement("div"); document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<Page />); });
+    await flush(); await flush();
+    expect(host!.textContent).toContain("The assistant is using: your own key");
+    const use = byText("Use keळ models for the assistant");
+    expect(use.disabled).toBe(true); // not until the person acknowledges
+    await act(async () => { host!.querySelector<HTMLInputElement>(".models-ack input")!.click(); });
+    expect(use.disabled).toBe(false);
+    await act(async () => { use.click(); });
+    expect(writes.join("|")).toContain("kel.assistant.source.u1");
+    expect(writes.join("|")).toContain("glm-5.3-flash");
+    expect(writes.join("|")).not.toMatch(/Bearer|token/i);
+    // Test: a cap hit or refusal is shown as the server's status and sentence (listModels is mocked in this file; the request itself,
+    // its headers and the error text are covered in kell-models.test.ts)
+    models = new Error("The provider answered 403: Daily budget reached.");
+    await click(byText("Test"));
+    expect(host!.querySelector('[role="alert"]')!.textContent).toMatch(/403.*Daily budget reached/);
+    models = ["glm-5.3-flash", "not-offered"];
+    await click(byText("Test"));
+    expect(host!.textContent).toContain("Works. Available to you: glm-5.3-flash.");
+    expect(host!.textContent).not.toContain("not-offered");
+    vi.unstubAllEnvs();
   });
 });
