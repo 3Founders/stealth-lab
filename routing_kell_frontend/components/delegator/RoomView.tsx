@@ -61,7 +61,8 @@ function JumpToLatest({ onJump }: { onJump: () => void }) {
 }
 
 /** The dev sandbox: group chat for people and agents over an in-memory relay. Nothing here leaves this browser. */
-export default function RoomView() {
+/** `brand` is the logo shown at the top of the sidebar (the app supplies it, with its own link if it has one). */
+export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   const world = useRef<ReturnType<typeof makeBroker> | null>(null);
   if (!world.current) world.current = makeBroker();
   const { broker, agents } = world.current;
@@ -142,6 +143,7 @@ export default function RoomView() {
   return (
     <div className="dg-shell" data-paused={paused}>
       <aside className="dg-side" aria-label="Rooms and members">
+        {brand && <div className="dg-brand">{brand}</div>}
         <h2>Rooms</h2>
         <nav>
           {ROOMS.map((r) => (

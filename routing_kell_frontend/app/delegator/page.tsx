@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import RoomView from "@/components/delegator/RoomView";
@@ -33,7 +34,9 @@ export default function DelegatorPage() {
             <p>It is available to signed-in accounts. <Link href="/sign-in?redirect=/delegator" style={{ textDecoration: "underline" }}>Sign in</Link>.</p>
           </div>
         )}
-        {session && <RoomView />}
+        {session && (
+          <RoomView brand={<Link href="/" aria-label="keळ, back to the site"><Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 38, width: "auto" }} /></Link>} />
+        )}
       </section>
     </>
   );

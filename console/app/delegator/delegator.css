@@ -1,13 +1,12 @@
 /* The Delegator sandbox: a chat shell in the console's own palette (paper, ink, yellow, cobalt). Scoped by the dg- prefix. */
 .dg-page { /* spring timing functions and durations (--dg-micro, --dg-smooth, --dg-bouncy, each with -d) are set inline from lib/delegator/spring.ts */
-  --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; height: 100dvh; display: flex; flex-direction: column; padding: 12px var(--pad) 16px; gap: 10px; }
+  --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; height: 100dvh; display: flex; flex-direction: column; }
 /* This page is the chat and the logo: the console's own header, grid lines and footer are not shown here. */
 body:has(.dg-page) .nav-wrap, body:has(.dg-page) .console-foot, body:has(.dg-page) .gridlines, body:has(.dg-page) .skip { display: none; }
-.dg-logo { height: 40px; width: auto; align-self: flex-start; flex: none; }
 
-.dg-shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px 1fr; border: 1px solid var(--rule-strong); border-radius: 10px; overflow: hidden; background: #fff; font-size: 15px; }
-.dg-shell { transition: border-color var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth); }
-.dg-shell[data-paused="true"] { border-color: #b3261e; box-shadow: 0 0 0 3px rgba(179,38,30,.12); }
+.dg-shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px 1fr; border: 0; border-radius: 0; overflow: hidden; background: #fff; font-size: 15px; }
+.dg-shell { transition: box-shadow var(--dg-smooth-d) var(--dg-smooth); }
+.dg-shell[data-paused="true"] { box-shadow: inset 0 3px 0 #b3261e; }
 
 .dg-side { background: var(--paper); border-right: 1px solid var(--rule); padding: 14px 12px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
 .dg-side h2 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); font-weight: 400; margin: 10px 6px 4px; line-height: 1.2; }
@@ -111,3 +110,6 @@ body:has(.dg-page) .nav-wrap, body:has(.dg-page) .console-foot, body:has(.dg-pag
 }
 .dg-viewport { overscroll-behavior: contain; }
 .dg-content { will-change: transform; }
+.dg-brand { padding: 2px 6px 10px; }
+.dg-brand img { height: 38px; width: auto; display: block; }
+.dg-brand a { display: inline-block; }
