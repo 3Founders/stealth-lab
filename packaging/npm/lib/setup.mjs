@@ -25,10 +25,9 @@ export function execTemplate(keyEnv = DEFAULT_KEY_ENV) {
   const gc = (id, i, o, extra = {}) => ({ model_id: id, key_env: keyEnv, openai_base_url: "https://api.generalcompute.com/v1",
                                           input_per_mtok: i, output_per_mtok: o, ...extra });
   return {
-    executors: { stealth: { models: ["gemma-4-31b-it", "gpt-oss-120b", "minimax-m2-7"] } },
+    executors: { stealth: { models: ["gemma-4-31b-it", "minimax-m2-7"] } },
     profiles: {
       "gemma-4-31b-it": gc("gemma-4-31B-it", 0.09, 0.34, { no_system_role: true }),
-      "gpt-oss-120b": gc("gpt-oss-120b", 0.037, 0.17),
       "minimax-m2-7": gc("minimax-m2.7", 0.21, 0.84),
     },
     max_concurrent_runs: 2,

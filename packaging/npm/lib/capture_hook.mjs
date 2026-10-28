@@ -294,14 +294,55 @@ export function recordLocalObs(s, model, { now = new Date() } = {}) {
   return true;
 }
 
+// The files this turn's own Edit / Write / MultiEdit / NotebookEdit calls changed, relative to cwd: the tool calls after
+// the last real user message in the transcript (a tool result is not a new message). [] when the turn edited nothing (a
+// question); null when the transcript cannot be read. Changes made by a script run through Bash are not in it.
+export function promptEdits(transcriptPath, cwd) {
+  if (!transcriptPath || !cwd) return null;
+  let text;
+  try {
+    const st = fs.statSync(transcriptPath);
+    const len = Math.min(st.size, 4 * 1024 * 1024);
+    const fd = fs.openSync(transcriptPath, "r");
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, st.size - len);
+    fs.closeSync(fd);
+    text = buf.toString("utf8");
+  } catch { return null; }
+  let edits = new Set();
+  for (const line of text.split(/\r?\n/)) {
+    if (!line) continue;
+    let o;
+    try { o = JSON.parse(line); } catch { continue; }
+    if (o?.type === "user") {
+      const c = o?.message?.content;
+      const toolResult = Array.isArray(c) && c.length > 0 && c.every((b) => b?.type === "tool_result");
+      if (!toolResult && !o.isMeta) edits = new Set();          // a new prompt starts here
+      continue;
+    }
+    if (o?.type !== "assistant") continue;
+    for (const b of o?.message?.content || []) {
+      if (b?.type !== "tool_use" || !/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(String(b.name))) continue;
+      const f = b.input?.file_path || b.input?.notebook_path;
+      if (!f) continue;
+      const rel = path.isAbsolute(f) ? path.relative(cwd, f) : f;
+      if (rel && !rel.startsWith("..")) edits.add(rel.split(path.sep).join("/"));
+    }
+  }
+  return [...edits];
+}
+
 // The local library half: one new .kell/library.md entry for a turn that ended with its tests passing and a diff.
 // Returns the entry id, or null (nothing to add, or growth switched off). Never throws to the hook.
-export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl } = {}) {
+// `edits`: the files this turn edited (promptEdits). Without any, nothing is added: a question, or a turn that cannot be
+// told from one, is not a solved problem, and the diff of the whole working tree is not this turn's change.
+export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl, edits = null } = {}) {
   if (!libraryAutoEnabled(env) || !s || s.library_added || s.library_match || !s.cwd || !s.title) return null;
   if (!fs.existsSync(path.join(s.cwd, ".kell"))) return null;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last || last.verdict !== true || !last.command) return null;
-  const diff = gitImpl ? diffFromGit(s.cwd, "HEAD", { gitImpl }) : diffFromGit(s.cwd);
+  if (!Array.isArray(edits) || !edits.length) return null;
+  const diff = diffFromGit(s.cwd, "HEAD", { files: edits, ...(gitImpl ? { gitImpl } : {}) });
   if (!diff.trim()) return null;                    // nothing changed: not a solved problem
   // the Way's steps from the diff (lib/way_extract.mjs): the shape a later, similar task is planned in
   const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null, steps: wayStepsForEntry(diff) },
@@ -323,7 +364,7 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
   }
   let added = null;
   try {
-    added = recordLibraryEntry(s, { env });
+    added = recordLibraryEntry(s, { env, edits: promptEdits(payload?.transcript_path, s?.cwd) });
     if (added) { writeSession(file, s); logHook(env, "capture-stop", `library entry ${added} added`); }
   } catch (err) {
     logHook(env, "capture-stop", `library entry not added (${err.message})`);

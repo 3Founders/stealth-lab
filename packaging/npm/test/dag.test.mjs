@@ -233,7 +233,7 @@ test("two fixes of the same kind, described: one general Goal, one Way with {slo
     steps: ["Add the {function} expression class", "Parse {function} into its expression", "Generate SQL for {function}"],
     invariants: ["existing functions unchanged"] }) } }] }) });
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dag-home-"));
-  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gemma-4-31b-it": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
   const env = { STEALTHLAB_HOME: home, K: "k" };
   const second = PAST.replace(/ArrayFilter/g, "ArraySlice").replace(/FILTER/g, "SLICE");
   for (const [diff, fn] of [[PAST, "ARRAY_FILTER"], [second, "ARRAY_SLICE"]]) {

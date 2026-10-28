@@ -69,7 +69,7 @@ export function lastTry(r) {
 // -> {code} (a test that fails on the current code by assertion), {tried, why} (its last test and the check's verdict on
 // it), or null. rt: the exec runtime; root: the project; dir: where the check script is written.
 export async function reproduceTests({ rt, root, prompt, where = "", env = process.env, log = () => {}, signal = null, dir }) {
-  const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_AGENT_MODEL || "gpt-oss-120b").trim();
+  const model = String(env.STEALTHLAB_DISPATCH_TESTFIRST_AGENT_MODEL || "gemma-4-31b-it").trim();
   const executor = String(env.STEALTHLAB_DISPATCH_TESTFIRST_AGENT_EXECUTOR || "stealth").trim();
   const testDir = ["tests", "test", "testing"].find((t) => { try { return fs.statSync(path.join(root, t)).isDirectory(); } catch { return false; } }) || "";
   const check = path.join(dir, "repro_check.py");

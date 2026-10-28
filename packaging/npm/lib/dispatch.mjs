@@ -1251,7 +1251,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       let entry = null, diff = "";
       try {
         const { promptTitle } = await import("./capture_hook.mjs");
-        diff = diffFromGit(root);
+        diff = diffFromGit(root, "HEAD", { files: dagRes.files || [] });
         if (diff.trim()) entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff,
                                                   steps: wayStepsForEntry(diff) }).id;
       } catch (err) { log(`dispatch: library entry not added (${err.message})`); }
@@ -1551,7 +1551,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     let diff = "";
     try {
       const { promptTitle } = await import("./capture_hook.mjs");
-      diff = diffFromGit(root);
+      diff = diffFromGit(root, "HEAD", { files: applied?.files || files });
       if (diff.trim()) {
         entry = addEntry(root, { title: promptTitle(rawPayload.prompt), check: check || "test-first tests", observed: true, diff, steps: wayStepsForEntry(diff) }).id;
         await recordEvidenceFor({ root, entry, check: check || "test-first tests", winner, env, log });

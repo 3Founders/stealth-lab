@@ -1,4 +1,4 @@
-// The task brief: one cheap call (STEALTHLAB_BRIEF_MODEL, an exec.json profile; default gpt-oss-120b) that turns the
+// The task brief: one cheap call (STEALTHLAB_BRIEF_MODEL, an exec.json profile; default gemma-4-31b-it) that turns the
 // last few turns plus the prompt into
 //   { task, files_hinted, acceptance, parts[], clarity, kind, size, search_terms }
 // Dispatch uses only search_terms (names to search the code for: a plain-language issue names nothing the code
@@ -201,7 +201,7 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
                                   readConfig = readExecConfig }) {
   try {
     if (!briefEnabled(env)) return null;
-    const name = String(env.STEALTHLAB_BRIEF_MODEL || "gpt-oss-120b").trim();
+    const name = String(env.STEALTHLAB_BRIEF_MODEL || "gemma-4-31b-it").trim();
     const profile = readConfig(env).profiles?.[name];
     if (!profile?.openai_base_url) { log(`brief: no profile for ${name}`); return null; }
     const turns = transcriptPath ? recentTurns(transcriptPath, { current: prompt }) : [];

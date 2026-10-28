@@ -174,7 +174,7 @@ test("the time-limit line says when an answer did pass but was not accepted", as
 test("the reviewers' cost goes to the spend ledger, so it counts in what kell cost", async () => {
   const { reviewPatch } = await import("../lib/review.mjs");
   const { env } = setup();
-  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": {
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gemma-4-31b-it": {
     openai_base_url: "https://example.test/v1", key_env: "K", input_per_mtok: 1, output_per_mtok: 2 } } }));
   const fetchImpl = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"verdict":"fixes","why":"ok"}' } }],
     usage: { prompt_tokens: 1000000, completion_tokens: 0 } }) });

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  CAPTURE_HOOKS, buildReport, looksLikeTest, lookupIdentity, modelFromTranscript, onPostToolUse, onStop,
+  CAPTURE_HOOKS, buildReport, looksLikeTest, lookupIdentity, modelFromTranscript, onPostToolUse, onStop, promptEdits,
   rememberLookup, runCaptureHook, runCaptureWorker, sessionFile, testVerdict,
 } from "../lib/capture_hook.mjs";
 import { removeClaudeHook, upsertClaudeHook } from "../lib/clients.mjs";
@@ -17,10 +17,13 @@ const tmpEnv = () => ({ STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "
 const RESOLVED = { outcome: "resolved", goal: { goal_id: "g1" }, procedures: [{ procedure_id: "p1", goal_id: "g1", steps: [] }] };
 const SUGGESTED = { outcome: "ambiguous", suggested: { goal_id: "g2", procedure_id: "p2", goal_name: "Near" } };
 
-function transcript(dir, model = "claude-sonnet-5") {
+function transcript(dir, model = "claude-sonnet-5", { edited = [], earlier = [] } = {}) {
   const file = path.join(dir, "t.jsonl");
+  const edit = (f) => JSON.stringify({ type: "assistant", message: { role: "assistant", model, content: [{ type: "tool_use", name: "Edit", input: { file_path: f } }] } });
   fs.writeFileSync(file, [
+    ...earlier.map(edit),
     JSON.stringify({ type: "user", message: { role: "user", content: "fix the parser" } }),
+    ...edited.map(edit),
     JSON.stringify({ type: "assistant", message: { role: "assistant", model, content: [] } }),
   ].join("\n") + "\n");
   return file;
@@ -211,12 +214,13 @@ function stealthRepo() {
   return dir;
 }
 
-function solvedTurn(env, repo, { sid = "auto-1", verdictOut = "3 passed in 0.2s", change = true, reply = RESOLVED } = {}) {
+function solvedTurn(env, repo, { sid = "auto-1", verdictOut = "3 passed in 0.2s", change = true, reply = RESOLVED, edited = change ? ["calc.py"] : [], also = null } = {}) {
   const base = { session_id: sid, prompt_id: "p", cwd: repo, prompt: "Fix add() in calc.py\nit subtracts instead of adding" };
   rememberLookup(base, reply, { env });
   if (change) fs.writeFileSync(path.join(repo, "calc.py"), "def add(a, b):\n    return a + b\n");
+  if (also) fs.writeFileSync(path.join(repo, also), "somebody else's unfinished work\n");
   onPostToolUse({ ...base, tool_name: "Bash", tool_input: { command: "pytest -q tests/test_calc.py" }, tool_response: { stdout: verdictOut } }, { env });
-  return onStop({ ...base, transcript_path: transcript(env.STEALTHLAB_HOME) }, { env, hasToken: false });
+  return onStop({ ...base, transcript_path: transcript(env.STEALTHLAB_HOME, undefined, { edited: edited.map((f) => path.join(repo, f)) }) }, { env, hasToken: false });
 }
 
 test("library auto: a passing turn with a diff adds one verified entry (title, check, solution), once", () => {
@@ -249,6 +253,35 @@ test("library auto: nothing is added for a failing or unknown verdict, no diff, 
   for (const s of ["Fix add", "pytest"]) assert.ok(!text.includes(s), `off: the session file keeps no ${s}`);
 });
 
+test("library auto: a turn that edited no file (a question) adds nothing, even if the tree is dirty and a test passed", () => {
+  const repo = stealthRepo();
+  assert.equal(solvedTurn(tmpEnv(), repo, { change: true, edited: [] }).library_entry, undefined);
+  assert.equal(fs.existsSync(path.join(repo, ".kell", "library.md")), false);
+});
+
+test("library auto: the entry holds the files this turn edited, not the rest of a dirty working tree", () => {
+  const env = tmpEnv();
+  const repo = stealthRepo();
+  const out = solvedTurn(env, repo, { also: "other_lane.txt" });
+  assert.match(out.library_entry, /^L-[0-9a-f]+$/);
+  const diff = fs.readFileSync(path.join(repo, ".kell", "library", "solutions", `${out.library_entry}.diff`), "utf8");
+  assert.match(diff, /calc\.py/);
+  assert.ok(!diff.includes("other_lane.txt") && !diff.includes("unfinished work"), "an untracked file nobody edited this turn is not in it");
+});
+
+test("promptEdits: only the edits after the last real user message count; a tool result is not one", () => {
+  const dir = tmpEnv().STEALTHLAB_HOME;
+  const root = path.join(dir, "repo");
+  const f = transcript(dir, "claude-sonnet-5", { earlier: [path.join(root, "old.py")], edited: [path.join(root, "new.py"), path.join(dir, "outside.py")] });
+  assert.deepEqual(promptEdits(f, root), ["new.py"], "the earlier prompt's edit and the file outside the repo are left out");
+  const lines = fs.readFileSync(f, "utf8").trimEnd().split("\n");
+  lines.splice(2, 0, JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "x", content: "ok" }] } }));
+  fs.writeFileSync(f, lines.join("\n") + "\n");
+  assert.deepEqual(promptEdits(f, root), ["new.py"], "a tool result in the middle does not start a new prompt");
+  assert.equal(promptEdits(path.join(dir, "missing.jsonl"), root), null);
+  assert.deepEqual(promptEdits(transcript(dir), root), [], "a question: no edits");
+});
+
 test("library auto: the worker asks for the new Ways' codes, and a token-less run still adds the entry", async () => {
   const env = tmpEnv();
   const repo = stealthRepo();
@@ -257,7 +290,7 @@ test("library auto: the worker asks for the new Ways' codes, and a token-less ru
   fs.writeFileSync(path.join(repo, "calc.py"), "def add(a, b):\n    return a + b\n");
   onPostToolUse({ ...base, tool_name: "Bash", tool_input: { command: "pytest -q" }, tool_response: { stdout: "1 passed in 0.1s" } }, { env });
   let job = null;
-  const out = onStop({ ...base, transcript_path: transcript(env.STEALTHLAB_HOME) }, { env, hasToken: true, spawnWorker: (f) => { job = f; } });
+  const out = onStop({ ...base, transcript_path: transcript(env.STEALTHLAB_HOME, undefined, { edited: [path.join(repo, "calc.py")] }) }, { env, hasToken: true, spawnWorker: (f) => { job = f; } });
   assert.equal(out.status, "detached");
   assert.ok(out.library_entry);
   assert.equal(JSON.parse(fs.readFileSync(job, "utf8")).code_ways, repo);

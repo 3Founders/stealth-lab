@@ -6,7 +6,7 @@
 // 2026-10-16). A reviewer reads the change against the request instead; whether it helps is measured offline on stage
 // 3's saved answers before any rule uses it. The prompt and the default model are fixed BEFORE that measurement
 // (.scratch/acceptance_rules_preregistered_2026-10-16.md) and are not tuned on it.
-// STEALTHLAB_REVIEW_MODEL names the model (an exec.json profile; default gpt-oss-120b); "off": no review.
+// STEALTHLAB_REVIEW_MODEL names the model (an exec.json profile; default gemma-4-31b-it); "off": no review.
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
 import { recordSpend } from "./spend.mjs";
@@ -39,7 +39,7 @@ export function parseVerdict(text) {
 // runClaude: for tests, a stand-in for lib/claude_call.mjs runClaudeAsync.
 export async function reviewPatch({ prompt, diff, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 90000,
                                     model = null, runClaude = null, signal = null }) {
-  const name = String(model || env.STEALTHLAB_REVIEW_MODEL || "gpt-oss-120b").trim();
+  const name = String(model || env.STEALTHLAB_REVIEW_MODEL || "gemma-4-31b-it").trim();
   if (name.toLowerCase() === "off" || !String(diff || "").trim()) return null;
   const d = String(diff);
   const user = `The request:\n${String(prompt || "").slice(0, 6000)}\n\nThe change:\n` +

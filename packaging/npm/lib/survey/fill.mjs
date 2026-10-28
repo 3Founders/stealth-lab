@@ -2,7 +2,7 @@
 // worklist (.kell/survey/worklist.md) of what only reading the code tells -- build, layout, conventions: which module
 // does what. With only the hooks installed nobody worked that list, so claims.md stayed at the scanner's ~20 facts and
 // never said where things live (Modal, jsonargparse: 19 facts, none about the code's layout). This reads each WORK
-// line's files and asks one cheap model (gpt-oss-120b by default) for facts citing the line that shows them; the
+// line's files and asks one cheap model (gemma-4-31b-it by default) for facts citing the line that shows them; the
 // survey's own validator then keeps only facts whose anchors really are at the cited line (no fact is trusted because a
 // model wrote it). Detached, after the first survey (lib/auto_survey.mjs); STEALTHLAB_SURVEY_FILL=off.
 import fs from "node:fs";
@@ -103,7 +103,7 @@ export async function fillWorklist({ root, env = process.env, fetchImpl = global
   const sdir = path.join(root, ".kell");
   let work;
   try { work = parseWorklist(fs.readFileSync(path.join(sdir, "survey", "worklist.md"), "utf8")).slice(0, MAX_WORK); } catch { return res; }
-  const name = String(env.STEALTHLAB_SURVEY_FILL_MODEL || "gpt-oss-120b").trim();
+  const name = String(env.STEALTHLAB_SURVEY_FILL_MODEL || "gemma-4-31b-it").trim();
   const profile = readExecConfig(env).profiles?.[name];
   if (!profile?.openai_base_url || !work.length) return res;
   for (const w of work) {

@@ -14,7 +14,7 @@
 //   A      another candidate answer changed the same source files
 //   C      it passes another candidate's VALIDATED tests (tests that answer added, failing without its source change and
 //          passing with it) -- the two behave alike (crossTest; the strongest oracle-free signal in the literature)
-//   R/Rno  the cheap reviewer says it fixes / does not fix the request     (STEALTHLAB_REVIEW_MODEL, gpt-oss-120b)
+//   R/Rno  the cheap reviewer says it fixes / does not fix the request     (STEALTHLAB_REVIEW_MODEL, gemma-4-31b-it)
 //   Rs/Rs_no  the strong reviewer says so                                  (STEALTHLAB_REVIEW_STRONG_MODEL, claude-sonnet-5-5)
 // In this mode the cheap agents work against the project's check only, never our written tests: refining code until
 // generated tests pass raises false accepts to ~60% (Ahmed et al., FSE 2026). Our tests and the reviewers judge the
@@ -100,7 +100,7 @@ export async function answerEvidence({ rule, result, spec, specRunner, python = 
   }
   const ask = (model, yes, no) => review({ prompt, diff: patch, env, log, model, fetchImpl, signal })
     .then((v) => { ev[yes] = v?.verdict === "fixes"; ev[no] = v?.verdict === "does_not_fix"; ev[`${yes}_why`] = v?.why || null; ev[`${yes}_model`] = v?.model || null; ev.review_cost = (ev.review_cost || 0) + (v?.cost_usd || 0); });
-  if (ruleUses(rule, "R", "Rno") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_MODEL || "gpt-oss-120b", "R", "Rno"));
+  if (ruleUses(rule, "R", "Rno") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_MODEL || "gemma-4-31b-it", "R", "Rno"));
   if (ruleUses(rule, "Rs", "Rs_no") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5", "Rs", "Rs_no"));
   await Promise.all(jobs);
   return { ...ev, patch };

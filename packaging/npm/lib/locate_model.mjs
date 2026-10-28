@@ -6,7 +6,7 @@
 // Why: on 47 real issues from 47 repositories the search alone put a file of the real fix in its top three for 62%, and
 // found nothing for 17% -- issues written in plain words ("double pipe is not concatenation in SQL Server") give it no
 // names to search for, and the right file is often a sibling of the one the words match (pipeline survey, 2026-10-16).
-// STEALTHLAB_LOCATE_MODEL names the model (an exec.json profile; default gpt-oss-120b); "off" keeps the search alone.
+// STEALTHLAB_LOCATE_MODEL names the model (an exec.json profile; default gemma-4-31b-it); "off" keeps the search alone.
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -62,7 +62,7 @@ export function checkPicks(text, root, known) {
 // -> a location in lib/locate.mjs's shape, the model's picks first, the search's after them; the search's own result when
 //    the model is off, unknown, slow or unusable
 export async function narrowLocation({ prompt, root, loc, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 45000 }) {
-  const name = String(env.STEALTHLAB_LOCATE_MODEL || "gpt-oss-120b").trim();
+  const name = String(env.STEALTHLAB_LOCATE_MODEL || "gemma-4-31b-it").trim();
   if (!root || name.toLowerCase() === "off") return loc;
   try {
     const profile = readExecConfig(env).profiles?.[name];

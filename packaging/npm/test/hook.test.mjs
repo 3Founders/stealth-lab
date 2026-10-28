@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { callFindWays, callTriage, formatKnowledge, hookPolicy, runPromptHook, shouldLookUp, triageUrl } from "../lib/hook.mjs";
 import { removeClaudeHook, upsertClaudeHook } from "../lib/clients.mjs";
@@ -261,6 +262,24 @@ test("callFindWays: sends up to FIND_WAYS_QUERY_MAX characters of the prompt, no
   await callFindWays({ url: "http://x/mcp", userAgent: "t", query: "a".repeat(6000), repoClaims: "", timeoutMs: 5000, fetchImpl });
   assert.equal(sent.length, FIND_WAYS_QUERY_MAX);
   assert.ok(sent.startsWith("aaa"));
+});
+
+test("libraryParts: a match the lookup did not judge is left out unless STEALTHLAB_HOOK_UNJUDGED=on", async () => {
+  const L = await import("../lib/library.mjs");
+  const { libraryParts } = await import("../lib/hook.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "unjudged-"));
+  const git = (...a) => execFileSync("git", ["-C", root, ...a], { stdio: "ignore" });
+  git("init", "-q");
+  fs.writeFileSync(path.join(root, "a.py"), "x = 1\n");
+  git("add", "a.py");
+  git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base");
+  fs.writeFileSync(path.join(root, "a.py"), "x = 2\n");
+  const entry = L.addEntry(root, { title: "Bump x", diff: L.diffFromGit(root, "HEAD"), check: "exit 0" });
+  const word = { library_matches: [{ id: entry.id, relation: "matches", title: entry.title, outcome: "pass", verified_at: "2026-10-28", judged: false }] };
+  const judged = { library_matches: [{ ...word.library_matches[0], judged: true, confidence: 0.9 }] };
+  assert.deepEqual(libraryParts(word, root, "full", 1500, {}), [], "matched by words only: nothing is injected");
+  assert.equal(libraryParts(judged, root, "full", 1500, {}).length, 1, "a judged match is");
+  assert.equal(libraryParts(word, root, "full", 1500, { STEALTHLAB_HOOK_UNJUDGED: "on" }).length, 1, "and the switch brings the old behaviour back");
 });
 
 test("callTriage: sends up to FIND_WAYS_QUERY_MAX characters of the prompt, not 1500", async () => {

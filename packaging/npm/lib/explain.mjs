@@ -4,7 +4,7 @@
 // one cheap call (~$0.0003, 1-3 s), not an Opus turn.
 //
 // STEALTHLAB_EXPLAIN=off: no call; the message carries the cheap agent's own closing summary instead (as short), or
-// nothing. STEALTHLAB_EXPLAIN_MODEL (default gpt-oss-120b, an exec.json profile) and STEALTHLAB_EXPLAIN_TIMEOUT_MS
+// nothing. STEALTHLAB_EXPLAIN_MODEL (default gemma-4-31b-it, an exec.json profile) and STEALTHLAB_EXPLAIN_TIMEOUT_MS
 // (default 6000) tune it. Never throws; a failed or slow call falls back to the agent's summary.
 import fs from "node:fs";
 import path from "node:path";
@@ -43,7 +43,7 @@ export async function explainChange({ request, diff, check, summary = "", env = 
   const fallback = tidy(summary);
   try {
     if (!explainEnabled(env) || !String(diff || "").trim()) return fallback;
-    const name = String(env.STEALTHLAB_EXPLAIN_MODEL || "gpt-oss-120b").trim();
+    const name = String(env.STEALTHLAB_EXPLAIN_MODEL || "gemma-4-31b-it").trim();
     const profile = readConfig(env).profiles?.[name];
     if (!profile?.openai_base_url) { log(`explain: no profile for ${name}`); return fallback; }
     const user = `Request:\n${String(request || "").trim()}\n\nCheck that passed: ${check || "(none)"}\n\n` +

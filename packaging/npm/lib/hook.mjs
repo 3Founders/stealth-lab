@@ -374,10 +374,13 @@ function solution(vs, n) {
 // This repo's own solved problems (find_ways' library_matches), read from the local library: the entry's steps
 // and the diff that solved it. First in the block -- the evidence says they are what helps most (plan §0).
 // mode "lean": only entries the judge called a match.
-export function libraryParts(reply, root, mode, budget) {
+// A match the lookup only found by words ("not judged") is left out: it put a 97-file diff of unrelated work into every
+// prompt. STEALTHLAB_HOOK_UNJUDGED=on brings it back.
+export function libraryParts(reply, root, mode, budget, env = process.env) {
   const out = [];
   if (!root) return out;
-  const matches = (reply.library_matches || []).filter((m) => (mode === "lean" ? m.relation === "matches" : true));
+  const unjudgedOk = (env.STEALTHLAB_HOOK_UNJUDGED || "off").toLowerCase() === "on";
+  const matches = (reply.library_matches || []).filter((m) => (mode === "lean" ? m.relation === "matches" : true) && (m.judged || unjudgedOk));
   for (const m of matches.slice(0, 2)) {
     let entry = null;
     try { entry = readEntry(root, m.id); } catch { /* the library moved or is unreadable: skip it */ }

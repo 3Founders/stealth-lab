@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { explainChange, tidy } from "../lib/explain.mjs";
 
-const PROFILE = { profiles: { "gpt-oss-120b": { openai_base_url: "https://example.test/v1", model_id: "gpt-oss-120b", key_env: "X_KEY",
+const PROFILE = { profiles: { "gemma-4-31b-it": { openai_base_url: "https://example.test/v1", model_id: "gpt-oss-120b", key_env: "X_KEY",
   input_per_mtok: 0.04, output_per_mtok: 0.17 } } };
 const env = () => ({ STEALTHLAB_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "explain-")), X_KEY: "k" });
 const reply = (content, status = 200) => async () => ({ ok: status === 200, status,

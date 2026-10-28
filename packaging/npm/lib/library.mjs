@@ -972,10 +972,15 @@ export function diffPaths(diffText) {
   return out;
 }
 
-export function diffFromGit(root, base = "HEAD", { gitImpl = git } = {}) {
-  let text = gitImpl(root, ["diff", "--no-color", base, "--", ".", ":(exclude).kell"]);
+// `files`: only these paths (relative to root) -- what this session or this run changed. Without it the whole working
+// tree is diffed, other people's uncommitted work and every untracked file included, which is right only for a
+// command the person runs by hand (`kell library add`); an automatic entry must pass the files it changed.
+export function diffFromGit(root, base = "HEAD", { gitImpl = git, files = null } = {}) {
+  const only = Array.isArray(files) ? [...new Set(files.map((f) => String(f).replace(/\\/g, "/")).filter(Boolean))] : null;
+  if (only && !only.length) return "";
+  let text = gitImpl(root, ["diff", "--no-color", base, "--", ...(only || ["."]), ":(exclude).kell"]);
   const untracked = gitImpl(root, ["ls-files", "--others", "--exclude-standard"]).split(/\r?\n/)
-    .filter((f) => f && !f.startsWith(".kell/"));
+    .filter((f) => f && !f.startsWith(".kell/") && (!only || only.includes(f)));
   for (const f of untracked) {
     try {
       text += gitImpl(root, ["diff", "--no-color", "--no-index", "--", "/dev/null", f]);

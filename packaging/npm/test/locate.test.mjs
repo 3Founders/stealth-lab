@@ -214,7 +214,7 @@ test("survey fill: a cheap model's facts about the code are kept only where the 
   const work = parseWorklist(fs.readFileSync(path.join(repo, ".kell", "survey", "worklist.md"), "utf8"));
   assert.ok(work.length >= 1);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "fill-home-"));
-  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gpt-oss-120b": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: { "gemma-4-31b-it": { openai_base_url: "https://example.test/v1", key_env: "K", model_id: "gpt-oss-120b" } } }));
   const lines = fs.readFileSync(path.join(repo, "pkg", "_typehints.py"), "utf8").split("\n");
   const at = lines.findIndex((l) => l.startsWith("def adapt_typehints")) + 1;
   const asked = [];

@@ -20,7 +20,7 @@ test("changesSource: tests, docs and config alone are not a fix", () => {
 test("reviewPatch: one call to the review profile with the request and the diff; off or no profile -> null", async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "review-"));
   fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: {
-    "gpt-oss-120b": { openai_base_url: "https://example.test/v1", key_env: "K", input_per_mtok: 1, output_per_mtok: 2 } } }));
+    "gemma-4-31b-it": { openai_base_url: "https://example.test/v1", key_env: "K", input_per_mtok: 1, output_per_mtok: 2 } } }));
   const env = { STEALTHLAB_HOME: home, K: "k" };
   let sent = null;
   const fetchImpl = async (url, o) => { sent = { url, body: JSON.parse(o.body) };

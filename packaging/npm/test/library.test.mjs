@@ -135,6 +135,19 @@ test("SUMMARY stays under 3 KB for a large monorepo library", () => {
 
 // ------------------------------------------------------------ staleness and write-back (real git)
 
+test("diffFromGit with files: only those paths, tracked or untracked; none given means nothing", { skip: !hasGit }, () => {
+  const root = tmpRepo();
+  fs.writeFileSync(path.join(root, "a.py"), "x = 1\n");
+  execFileSync("git", ["-C", root, "add", "a.py"]);
+  execFileSync("git", ["-C", root, "commit", "-qm", "base"]);
+  fs.writeFileSync(path.join(root, "a.py"), "x = 2\n");
+  fs.writeFileSync(path.join(root, "b.py"), "y = 1\n");
+  fs.writeFileSync(path.join(root, "someone_elses.py"), "z = 1\n");
+  assert.deepEqual(L.diffPaths(L.diffFromGit(root, "HEAD")).sort(), ["a.py", "b.py", "someone_elses.py"], "no files: the whole tree, as before");
+  assert.deepEqual(L.diffPaths(L.diffFromGit(root, "HEAD", { files: ["a.py", "b.py"] })).sort(), ["a.py", "b.py"]);
+  assert.equal(L.diffFromGit(root, "HEAD", { files: [] }), "", "a turn that edited nothing has no change");
+});
+
 test("write-back records touches, refuses a failing check, and staleness marks edited files", { skip: !hasGit }, () => {
   const root = tmpRepo();
   fs.writeFileSync(path.join(root, "a.py"), "x = 1\n");

@@ -1,6 +1,6 @@
 // A solved problem in the global ingestion's shape: a GENERAL Goal ("Support a new SQL function"), a Way whose steps say
 // what to do in general terms with parameters ({function}), the parameters' values in THIS fix, and the invariants the
-// change kept. One cheap call (gpt-oss-120b by default), after lib/way_extract.mjs found the steps from the diff; the
+// change kept. One cheap call (gemma-4-31b-it by default), after lib/way_extract.mjs found the steps from the diff; the
 // files, effects and preconditions (at= / gives= / needs=) stay the diff's, the model only names and generalises.
 //
 // Why general: the same normalised Goal title is one Goal and the same step list one Way (library.mjs), so a second
@@ -48,7 +48,7 @@ export function parseDescription(text, nSteps) {
 export async function describeWay({ task, diff, steps, env = process.env, fetchImpl = globalThis.fetch, log = () => {}, timeoutMs = 20000 }) {
   try {
     if (!describeEnabled(env) || !steps?.length || !String(diff || "").trim()) return null;
-    const name = String(env.STEALTHLAB_WAY_DESCRIBE_MODEL || "gpt-oss-120b").trim();
+    const name = String(env.STEALTHLAB_WAY_DESCRIBE_MODEL || "gemma-4-31b-it").trim();
     const profile = readExecConfig(env).profiles?.[name];
     if (!profile?.openai_base_url) return null;
     const user = `The problem it solved:\n${String(task || "").slice(0, 1500)}\n\nThe steps (one per file):\n` +
