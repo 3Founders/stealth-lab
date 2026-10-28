@@ -2,7 +2,7 @@
 
 Two parts. Part A (lookup) can be tried as soon as sign-in works. Part B (delegating from our site to a Claude chat) needs the relay described in `.scratch/prompts/delegator_pull_brief.md`, which is not built yet; this page says what you will see once it is.
 
-Server: `https://kell-mcp-production.up.railway.app/mcp`
+Server: `https://mcp.kell.org.in/mcp`
 Site: `https://www.kell.org.in` (`/connect` shows the same address and the instruction below)
 
 ## Before you start (check each once)
@@ -15,7 +15,7 @@ Site: `https://www.kell.org.in` (`/connect` shows the same address and the instr
 ## Part A: add kell to claude.ai and use the lookup
 
 1. claude.ai -> Settings -> Connectors -> Add custom connector.
-2. Name: `kell`. Address: `https://kell-mcp-production.up.railway.app/mcp`. Leave client ID and secret empty (the server registers the client itself). Add.
+2. Name: `kell`. Address: `https://mcp.kell.org.in/mcp`. Leave client ID and secret empty (the server registers the client itself). Add.
 3. Choose Connect. A kell page opens: sign in with Google or GitHub, then press Allow.
 4. In a new chat, open the tools menu and turn `kell` on.
 5. Put this in Settings -> Profile preferences (or a Project's instructions), so the model uses it without being asked:

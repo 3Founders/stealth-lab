@@ -2,7 +2,7 @@
 
 The real relay is live on the hosted MCP server. Brief and rules: `.scratch/prompts/delegator_pull_brief.md`. Code: `backend/app/services/delegate.py`, `backend/app/mcp_server/delegate_routes.py`, tools in `backend/app/mcp_server/server.py`, table in `backend/db/155_delegate_relay.sql`, tests in `backend/tests/test_delegate_*`.
 
-Base URL: `https://kell-mcp-production.up.railway.app` (the origin of `NEXT_PUBLIC_KEL_MCP_URL`; local dev `http://127.0.0.1:8765`).
+Base URL: `https://mcp.kell.org.in` (the origin of `NEXT_PUBLIC_KEL_MCP_URL`; local dev `http://127.0.0.1:8765`).
 
 ## Auth (website calls)
 
