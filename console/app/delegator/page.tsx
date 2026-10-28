@@ -1,14 +1,15 @@
 import RoomView from "@/components/delegator/RoomView";
+import "./delegator.css";
 
 export const metadata = { title: "Delegator (dev sandbox)" };
 
 export default function Page() {
   return (
-    <div className="frame grid console-main">
-      <header className="console-head">
-        <div className="marker caption"><b>DELEGATOR</b><span>/ dev sandbox, this browser only</span></div>
-        <h1>Group chat for people and agents.</h1>
-      </header>
+    <div className="dg-page">
+      <div className="dg-top">
+        <div className="marker"><b>DELEGATOR</b>dev sandbox</div>
+        <p>Runs in this browser tab only. The relay keeps no history, and nothing leaves this machine.</p>
+      </div>
       <RoomView />
     </div>
   );

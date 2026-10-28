@@ -1,12 +1,14 @@
 "use client";
+import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/message-scroller";
 import { useEffect, useMemo, useRef, useState } from "react";
-import AgentStatus from "@/components/delegator/AgentStatus";
+import Composer from "@/components/delegator/Composer";
 import { agentIdentity, parseCommand, recipientsFor, toMcpPayload } from "@/lib/delegator/adapters/mcp";
 import { attachMockAgent } from "@/lib/delegator/adapters/mock";
 import { Broker } from "@/lib/delegator/relay/broker";
 import { openChannel } from "@/lib/delegator/relay/channel";
 import type { AgentActivity, AgentIdentity, GroupMessage, Room } from "@/lib/delegator/types";
 import { MAX_DEPTH } from "@/lib/delegator/types";
+import { groupMessages, initials } from "@/lib/delegator/ui";
 
 const HUMANS: AgentIdentity[] = [
   { handle: "@alice", displayName: "Alice", type: "human", status: "online" },
@@ -17,6 +19,7 @@ const ROOMS: Room[] = [
   { id: "#auth-refactor-squad", title: "Auth refactor squad", members: ["@alice", "@bob", "@alice/claude-code", "@bob/opencode"] },
   { id: "#general-agents", title: "General agents", members: ["@alice", "@bob", "@alice/claude-code", "@bob/opencode", "@bob/cursor"] },
 ];
+const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Processing", delivering: "Delivering via Relay" };
 
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string };
 
@@ -26,6 +29,34 @@ function makeBroker(): { broker: Broker; agents: Map<string, AgentIdentity> } {
   const agents = new Map<string, AgentIdentity>();
   SEED_AGENTS.forEach((a) => { agents.set(a.handle, a); attachMockAgent(broker, a); });
   return { broker, agents };
+}
+
+const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+function Avatar({ who }: { who: AgentIdentity }) {
+  return <span className="dg-avatar" data-kind={who.type === "human" ? "human" : "agent"} aria-hidden="true">{initials(who.handle)}</span>;
+}
+
+function Body({ m }: { m: GroupMessage }) {
+  const sp = m.payload.structuredPayload;
+  return (
+    <div className="dg-body">
+      <p>{m.payload.text}</p>
+      {sp && m.sender.type !== "human" && (
+        <details className="dg-payload">
+          <summary><span>{sp.action}</span><code>{sp.protocol}</code><span className="dg-hop">hop {m.depthCounter}</span></summary>
+          <pre>{JSON.stringify(sp, null, 2)}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Only offered when there is more below the viewport. */
+function JumpToLatest() {
+  const { end } = useMessageScrollerScrollable();
+  if (!end) return null;
+  return <MessageScroller.Button direction="end" className="dg-jump">Jump to latest</MessageScroller.Button>;
 }
 
 /** The dev sandbox: group chat for people and agents over an in-memory relay. Nothing here leaves this browser. */
@@ -40,8 +71,6 @@ export default function RoomView() {
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
   const [members, setMembers] = useState<Record<string, string[]>>(Object.fromEntries(ROOMS.map((r) => [r.id, r.members])));
   const [paused, setPaused] = useState(false);
-  const [text, setText] = useState("");
-  const [raw, setRaw] = useState(false);
   const chan = useRef<ReturnType<typeof openChannel> | null>(null);
 
   const push = (rid: string, l: Line) => setLines((p) => {
@@ -66,13 +95,21 @@ export default function RoomView() {
   const roomMembers = members[roomId] ?? [];
   const agentsHere = roomMembers.filter((h) => broker.isAgent(h));
   const view = lines[roomId] ?? [];
+  const working = agentsHere.filter((h) => (activity[h] ?? "idle") !== "idle");
+
+  // Notices split the timeline; messages between them are grouped by sender.
+  const blocks = useMemo(() => {
+    const out: Array<{ kind: "run"; run: ReturnType<typeof groupMessages>[number] } | { kind: "notice"; id: string; text: string }> = [];
+    let buf: GroupMessage[] = [];
+    const flush = () => { for (const run of groupMessages(buf)) out.push({ kind: "run", run }); buf = []; };
+    for (const l of view) { if (l.kind === "msg") buf.push(l.m); else { flush(); out.push(l); } }
+    flush();
+    return out;
+  }, [view]);
 
   const note = (t: string) => push(roomId, { kind: "notice", id: broker.newId(), text: t });
 
-  const submit = async () => {
-    const line = text.trim();
-    if (!line) return;
-    setText("");
+  const submit = async (line: string) => {
     const c = parseCommand(line);
     if (c) {
       if (c.cmd === "error") return note(c.message);
@@ -94,68 +131,83 @@ export default function RoomView() {
     await broker.send(m);
   };
 
-  const token = /(^|\s)(@[\w/.-]*)$/.exec(text)?.[2];
-  const suggestions = useMemo(
-    () => (token === undefined ? [] : roomMembers.filter((h) => h.toLowerCase().startsWith(token.toLowerCase()) && h !== me.handle).slice(0, 6)),
-    [token, roomMembers, me.handle],
-  );
-  const accept = (h: string) => setText((t) => t.replace(/@[\w/.-]*$/, `${h} `));
-
   return (
-    <div className="panel" aria-label="Delegator sandbox">
-      <p className="notice">
-        <b style={{ fontWeight: 400 }}>Delegator (dev sandbox).</b> Group chat for people and agents. The relay lives in this tab&rsquo;s memory, holds no history, and stops waking agents after {MAX_DEPTH} agent-to-agent hops. Nothing leaves this browser.
-      </p>
-
-      <div className="cluster">
-        <label>Room{" "}
-          <select value={roomId} onChange={(e) => setRoomId(e.target.value)}>{ROOMS.map((r) => <option key={r.id} value={r.id}>{r.id}</option>)}</select>
-        </label>
-        <label>Send as{" "}
+    <div className="dg-shell" data-paused={paused}>
+      <aside className="dg-side" aria-label="Rooms and members">
+        <h2>Rooms</h2>
+        <nav>
+          {ROOMS.map((r) => (
+            <button key={r.id} type="button" className="dg-room" aria-current={r.id === roomId ? "page" : undefined} onClick={() => setRoomId(r.id)}>
+              <span aria-hidden="true">#</span>{r.id.slice(1)}
+            </button>
+          ))}
+        </nav>
+        <h2>In this room</h2>
+        <ul className="dg-members">
+          {roomMembers.map((h) => {
+            const isAgent = broker.isAgent(h);
+            const a = activity[h] ?? "idle";
+            return (
+              <li key={h}>
+                <span className="dg-dot" data-a={isAgent ? a : "human"} aria-hidden="true" />
+                <span className="dg-handle">{h}</span>
+                {isAgent && <span className="dg-badge">agent</span>}
+                {isAgent && <span className="dg-state" data-a={a}>{LABEL[a]}</span>}
+              </li>
+            );
+          })}
+        </ul>
+        <label className="dg-as">Send as
           <select value={me.handle} onChange={(e) => setMe(HUMANS.find((h) => h.handle === e.target.value) ?? HUMANS[0])}>
             {HUMANS.map((h) => <option key={h.handle} value={h.handle}>{h.handle}</option>)}
           </select>
         </label>
-        <button type="button" className="btn-line" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>
-          {paused ? "Resume room executions" : "Pause room executions"}
-        </button>
-        <button type="button" className="btn-line" aria-pressed={raw} onClick={() => setRaw((r) => !r)}>{raw ? "Show Markdown" : "Show agent payload"}</button>
-        {paused && <span className="status" data-s="failed" role="status">Paused</span>}
-      </div>
+      </aside>
 
-      <div className="stack" aria-label="Agents in this room">
-        {agentsHere.map((h) => <AgentStatus key={h} handle={h} activity={activity[h] ?? "idle"} />)}
-      </div>
+      <section className="dg-main" aria-label={roomId}>
+        <header className="dg-head">
+          <h1>{roomId}</h1>
+          <span className="dg-limit">Agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
+          <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>
+            <span aria-hidden="true">{paused ? "▶" : "⏸"}</span>{paused ? "Resume agents" : "Pause agents"}
+          </button>
+        </header>
+        {paused && <div className="dg-banner" role="status">Paused. Agents will not be woken until you resume.</div>}
 
-      <div className="stack" role="log" aria-label={`Messages in ${roomId}`} aria-live="polite">
-        {view.length === 0 && <p className="small dim">No messages yet. Try <code>@alice/claude-code look at src/auth.ts</code>.</p>}
-        {view.map((l) => l.kind === "notice"
-          ? <p key={l.id} className="notice" role="status">{l.text}</p>
-          : (
-            <article className="pane" key={l.m.id} style={{ minHeight: 0 }}>
-              <header>
-                <span>{l.m.sender.handle}</span>
-                <span className="dim small">to {l.m.recipients.join(", ")} &middot; hop {l.m.depthCounter} &middot; {new Date(l.m.timestamp).toLocaleTimeString()}</span>
-              </header>
-              <div className="out" style={{ minHeight: 0 }}>
-                {raw ? <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{JSON.stringify(l.m.payload.structuredPayload ?? { text: l.m.payload.text }, null, 2)}</pre> : l.m.payload.text}
-              </div>
-            </article>
-          ))}
-      </div>
+        <MessageScroller.Provider autoScroll defaultScrollPosition="end">
+          <MessageScroller.Root className="dg-scroll">
+            <MessageScroller.Viewport className="dg-viewport" aria-label={`Messages in ${roomId}`}>
+              <MessageScroller.Content className="dg-content">
+                {blocks.length === 0 && <p className="dg-empty">No messages yet. Try <code>@alice/claude-code look at src/auth.ts</code>.</p>}
+                {blocks.map((b) => b.kind === "notice"
+                  ? <MessageScroller.Item key={b.id} className="dg-notice" role="status">{b.text}</MessageScroller.Item>
+                  : (
+                    <MessageScroller.Item key={b.run.key} messageId={b.run.key} className="dg-run" data-agent={b.run.sender.type !== "human"}>
+                      <Avatar who={b.run.sender} />
+                      <div className="dg-col">
+                        <div className="dg-meta">
+                          <b>{b.run.sender.handle}</b>
+                          {b.run.sender.type !== "human" && <span className="dg-badge">agent</span>}
+                          <time>{time(b.run.messages[0].timestamp)}</time>
+                        </div>
+                        {b.run.messages.map((m) => <Body key={m.id} m={m} />)}
+                      </div>
+                    </MessageScroller.Item>
+                  ))}
+              </MessageScroller.Content>
+            </MessageScroller.Viewport>
+            <JumpToLatest />
+          </MessageScroller.Root>
+        </MessageScroller.Provider>
 
-      <form className="stack" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        {suggestions.length > 0 && (
-          <ul role="listbox" aria-label="Handles" className="cluster" style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {suggestions.map((h) => <li key={h} role="option" aria-selected={false}><button type="button" className="btn-line" onClick={() => accept(h)}>{h}</button></li>)}
-          </ul>
-        )}
-        <div className="cluster">
-          <input aria-label="Message" style={{ flex: 1, minWidth: 220 }} value={text} onChange={(e) => setText(e.target.value)}
-                 placeholder="Message, @mention, /add-agent --name=x, /invite @bob/cursor, /stop" />
-          <button type="submit" className="btn-ink" disabled={!text.trim()}>Send</button>
+        <div className="dg-typing" role="status" aria-live="polite">
+          {working.length > 0 && <>
+            <span className="dg-pulse" aria-hidden="true" />
+            {working.map((h) => `${h} ${LABEL[activity[h] ?? "idle"].toLowerCase()}`).join(" · ")}
+          </>}
         </div>
-      </form>
+        <Composer handles={roomMembers.filter((h) => h !== me.handle)} onSend={(t) => void submit(t)} />
+      </section>
     </div>
   );
 }

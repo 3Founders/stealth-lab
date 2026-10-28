@@ -76,3 +76,26 @@ describe("commands", () => {
     expect(recipientsFor("anyone?")).toEqual(["@all"]);
   });
 });
+
+import { applyMention, groupMessages, matchHandles, mentionQuery } from "@/lib/delegator/ui";
+
+describe("composer logic", () => {
+  it("finds the @mention being typed at the caret", () => {
+    expect(mentionQuery("hi @al", 6)).toEqual({ start: 3, query: "al" });
+    expect(mentionQuery("@", 1)).toEqual({ start: 0, query: "" });
+    expect(mentionQuery("mail me@al", 10)).toBeNull(); // an @ inside a word is not a mention
+    expect(mentionQuery("hi @al there", 12)).toBeNull();
+  });
+  it("completes it with the chosen handle", () => {
+    expect(applyMention("hi @al", 6, "@alice/claude-code")).toEqual({ text: "hi @alice/claude-code ", caret: 22 });
+  });
+  it("ranks prefix matches before substring matches", () => {
+    expect(matchHandles(["@bob/opencode", "@alice/claude-code", "@alice"], "al")).toEqual(["@alice/claude-code", "@alice"]);
+    expect(matchHandles(["@bob/opencode", "@alice"], "code")).toEqual(["@bob/opencode"]);
+  });
+  it("groups one sender's quick messages under one header", () => {
+    const mk = (id: string, who: AgentIdentity, t: number, d = 0): GroupMessage => ({ id, roomId: "#r", sender: who, recipients: ["@all"], payload: { text: id }, timestamp: t, depthCounter: d });
+    const runs = groupMessages([mk("a", alice, 0), mk("b", alice, 60_000), mk("c", cc, 61_000), mk("d", alice, 61_000 + 6 * 60_000)]);
+    expect(runs.map((r) => r.messages.map((m) => m.id))).toEqual([["a", "b"], ["c"], ["d"]]);
+  });
+});

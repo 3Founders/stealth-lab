@@ -10,7 +10,8 @@ import { mentionsIn, toMcpPayload } from "./mcp";
 export function attachMockAgent(broker: Broker, me: AgentIdentity, opts: { delayMs?: number; think?: (m: GroupMessage) => string } = {}): () => void {
   const delay = opts.delayMs ?? 700;
   broker.registerAgent(me.handle);
-  const think = opts.think ?? ((m) => `${me.displayName} got: "${m.payload.text.replace(/@\S+/g, "").trim().slice(0, 80)}"`);
+  // A canned acknowledgement, not an echo: quoting the previous reply back would nest a little more at every hop.
+  const think = opts.think ?? ((m) => `${me.displayName} here (hop ${m.depthCounter + 1}). Looking into it.`);
   return broker.attach(me.handle, async ({ message }: TransportPacket) => {
     broker.setActivity(me.handle, "processing");
     await new Promise((r) => setTimeout(r, delay));
