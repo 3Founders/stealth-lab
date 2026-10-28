@@ -153,3 +153,35 @@ body:has(.dg-shell) { overflow: hidden; }
 .dg-remove:hover, .dg-remove:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
 .dg-add:disabled { opacity: .45; cursor: not-allowed; }
 body:has(.dg-shell) { overscroll-behavior: none; }
+/* Rooms, the add forms, and relay tasks. */
+.dg-rooms { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.dg-rooms li { display: flex; align-items: center; gap: 2px; }
+.dg-x { flex: none; background: none; border: 0; color: inherit; opacity: .5; cursor: pointer; font-size: 16px; min-width: 28px; min-height: 28px; border-radius: 6px; }
+.dg-x:hover, .dg-x:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
+.dg-form { display: grid; gap: 6px; margin: 8px 6px 0; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: #fff; font-size: 13.5px; }
+.dg-form fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dg-form legend { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); padding: 0; margin-bottom: 4px; }
+.dg-form fieldset label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.35; }
+.dg-form input[type="text"], .dg-form input:not([type]) { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
+.dg-form-row { display: flex; gap: 8px; margin-top: 4px; }
+.dg-mini-btn { min-height: 36px; padding: 0 14px; }
+.dg-err { font-size: 12.5px; color: #b3261e; margin: 4px 6px 0; }
+.dg-form .dg-err { margin: 0; }
+.dg-connect { background: var(--soft); border-radius: 8px; padding: 10px; margin: 8px 6px 0; }
+.dg-badge[data-kind="tab"] { background: var(--grey); }
+.dg-task { animation: dg-rise var(--dg-smooth-d) var(--dg-smooth) both; border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; background: var(--paper); }
+.dg-status { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: #6b4e00; }
+.dg-status[data-status="done"] { background: #e3f4e9; color: #1b5e3a; }
+.dg-status[data-status="failed"], .dg-status[data-status="cancelled"] { background: #fdecea; color: #7a1812; }
+.dg-status[data-status="claimed"] { background: #e6edf8; color: var(--cobalt); }
+.dg-result { border-top: 1px solid var(--rule); padding-top: 8px; display: grid; gap: 3px; }
+.dg-hint { font-size: 12.5px; color: var(--grey); margin: 0; }
+.dg-task-actions { display: flex; gap: 8px; }
+.dg-mini { font: inherit; font-size: 13px; min-height: 32px; padding: 0 12px; border: 1px solid var(--ink); border-radius: 6px; background: #fff; color: var(--ink); cursor: pointer; }
+.dg-mini:hover { background: var(--yellow); }
+@media (max-width: 760px) {
+  .dg-x { min-width: 44px; min-height: 44px; font-size: 22px; }
+  .dg-form input { font-size: 16px !important; min-height: 44px; }
+  .dg-mini { min-height: 44px; padding: 0 16px; }
+  .dg-mini-btn { min-height: 44px; }
+}
