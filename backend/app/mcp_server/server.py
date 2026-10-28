@@ -900,6 +900,10 @@ _delegate_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
 )
 
+from app.mcp_server import chat_routes as _chat_routes  # noqa: E402 -- the website OpenAI-compatible chat (kell pilot models)
+
+_chat_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
+
 
 @server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(request: Request) -> JSONResponse:  # noqa: ARG001
