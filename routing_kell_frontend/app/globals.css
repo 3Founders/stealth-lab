@@ -572,3 +572,22 @@ main, footer { position: relative; z-index: 1; }
 .cache-row[data-kel="false"] .cache-bar:first-of-type b { background: #e0877f; }
 @media (max-width: 900px) { .cache-copy, .cache-bars { grid-column: 1 / -1; } }
 .results { margin-top: clamp(32px, 4vw, 56px); }
+
+/* Contact page */
+.contact-wrap { grid-column: 1 / span 8; display: grid; gap: 40px; }
+@media (max-width: 900px) { .contact-wrap { grid-column: 1 / -1; } }
+.contact-book { display: grid; gap: 10px; justify-items: start; }
+.contact-form { grid-column: auto; position: relative; }
+
+/* Hero calls to action: a filled primary and an outlined secondary, side by side, stacked and 44px tall on a phone. */
+.btn-line { display: inline-flex; align-items: center; justify-content: center; gap: 12px; background: transparent; color: var(--ink); font-weight: 400; font-size: 16px; padding: 8px 16px; border-radius: 8px; border: 1px solid var(--ink); cursor: pointer; font-family: inherit; transition: background-color .25s var(--ease); }
+.btn-line:hover { background: var(--yellow); }
+.hero-actions { display: flex; flex-wrap: wrap; gap: 12px 14px; align-items: center; margin-top: 4px; }
+.hero-actions .btn-ink, .hero-actions .btn-line { min-height: 44px; }
+@media (max-width: 560px) { .hero-actions { flex-direction: column; align-items: stretch; } .hero-actions .btn-ink, .hero-actions .btn-line { justify-content: space-between; } }
+
+/* The administrator link beside Sign in: small and quiet, not a second button. */
+.admin-link { font-size: 14px; color: #555; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.admin-link:hover { color: var(--ink); }
+.nav-auth { display: flex; align-items: center; gap: 20px; }
+@media (max-width: 900px) { .nav-auth { display: none; } }

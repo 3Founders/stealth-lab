@@ -7,6 +7,7 @@ import { track } from "@/lib/analytics";
 import { getMyProfile } from "@/lib/kel-api";
 import { getSession, onSessionChange } from "@/lib/session";
 import AccountMenu from "@/components/AccountMenu";
+import { adminSignInUrl } from "@/lib/admin-link";
 import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 
 const links = [
@@ -148,7 +149,10 @@ export default function Header() {
           ) : signedIn ? (
             <AccountMenu username={username ?? "Account"} />
           ) : (
-            <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
+            <div className="nav-auth">
+              {adminSignInUrl() && <a href={adminSignInUrl()!} rel="noopener" className="admin-link">Administrator</a>}
+              <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
+            </div>
           )}
           <button className="btn-ink menu-btn" aria-expanded={open} aria-controls="nav-panel" onClick={() => setOpen(!open)}>
             {open ? "Close" : "Menu"}
@@ -163,7 +167,10 @@ export default function Header() {
                   <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>
                 </>
               ) : (
-                <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
+                <>
+                  <Link href="/sign-in" onClick={() => { setOpen(false); track("sign_in_click", { where: "menu" }); }}>Sign in</Link>
+                  {adminSignInUrl() && <a href={adminSignInUrl()!} rel="noopener" onClick={() => setOpen(false)}>Administrator sign in</a>}
+                </>
               )}
             </nav>
           )}

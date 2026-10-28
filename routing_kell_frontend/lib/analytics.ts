@@ -14,6 +14,8 @@ export type EventName =
   | "connector_url_copy"   // visitor copied the connector address on /connect
   | "connector_prompt_copy" // visitor copied the standing instruction on /connect
   | "sign_in_click"      // visitor clicked Sign in
+  | "get_started_click"  // visitor clicked Get started in the hero
+  | "contact_click"      // visitor clicked Talk to a founder in the hero
   | "search_submit"      // visitor ran a search (never the query text)
   | "search_result"      // how many results came back, bucketed
   | "web_vital";         // Core Web Vitals: LCP, CLS, INP, TTFB
