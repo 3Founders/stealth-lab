@@ -17,7 +17,7 @@ export default function AccountPage() {
 function AccountIndex() {
   const items: [string, string, string][] = [
     ["/account/connections", "Connected apps", "Apps and agents you have allowed to act for you."],
-    ["/account/settings", "Settings", "Your username and picture."],
+    ["/account/profile", "Profile", "Your photo, username and a line about you."],
   ];
   return (
     <>

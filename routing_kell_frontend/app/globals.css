@@ -613,3 +613,21 @@ main, footer { position: relative; z-index: 1; }
 .back-btn--inline { position: static; align-self: flex-start; }
 .models-kell { display: grid; gap: 10px; padding: 18px 20px; border: 1px dashed var(--rule-strong); border-radius: 8px; }
 .models-kell-terms { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.models-ways { display: grid; gap: 18px; }
+.models-way { display: grid; gap: 10px; padding: 16px 18px; border: 1px solid var(--rule); border-radius: 8px; justify-items: start; }
+.models-way .cfield { width: 100%; }
+.models-way textarea { font-family: ui-monospace, Consolas, monospace; font-size: 14px; }
+.models-found { display: grid; gap: 8px; width: 100%; }
+.models-found-row { display: flex; align-items: center; gap: 10px; }
+
+/* Profile page (/account/profile) */
+.profile-wrap { grid-column: 1 / span 8; display: grid; gap: 36px; }
+@media (max-width: 900px) { .profile-wrap { grid-column: 1 / -1; } }
+.profile-card { display: grid; gap: 14px; padding: 20px; border: 1px solid var(--rule-strong); border-radius: 8px; background: rgba(255,255,255,.45); }
+.profile-photo { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+.profile-photo img { border-radius: 50%; }
+.profile-form { grid-column: auto; }
+.profile-visibility { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.profile-visibility legend { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--grey); padding: 0; margin-bottom: 6px; }
+.profile-visibility label { display: flex; gap: 10px; align-items: center; text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--ink); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
