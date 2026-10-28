@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import ConnectPanel from "@/components/ConnectPanel";
 import Console from "@/components/Console";
-import { addEvent, summary } from "@/components/ActivityPanel";
+import { addEvent, summary, upsertRun } from "@/components/ActivityPanel";
 import KeyField from "@/components/KeyField";
 import ModelsPanel from "@/components/ModelsPanel";
 import PlaygroundPanel from "@/components/PlaygroundPanel";
@@ -288,5 +288,12 @@ describe("Router activity", () => {
     expect(summary(ev(1, { query: "fix  a failing test", repo_claims: "zzz" }))).toBe("fix a failing test");
     expect(summary(ev(1, { prompt: "p" }))).toBe("p");
     expect(summary(ev(1))).toBe("");
+  });
+  it("shows a run's newest snapshot once, newest run first", () => {
+    const run = (id: string, state: string) => ({ type: "run" as const, run_id: id, created_at: null, state, task: "t", attempts: [] });
+    let l = upsertRun([], run("r-1", "running"));
+    l = upsertRun(l, run("r-2", "running"));
+    l = upsertRun(l, run("r-1", "verified"));
+    expect(l.map((r) => `${r.run_id}:${r.state}`)).toEqual(["r-2:running", "r-1:verified"]);
   });
 });

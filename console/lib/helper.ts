@@ -2,7 +2,7 @@
 // the body of the one PUT that saves it.
 import { readSse } from "@/lib/sse";
 import { HelperError, helperMessage, isLoopbackAddress, scrub, type HelperFailure } from "@/lib/words";
-import type { ActivityEvent, ChatEvent, ChatMessage, ClientId, ClientInfo, InstallResult, KeyInfo, ModelInfo, NewModel, ReadinessItem, TestResult } from "@/lib/types";
+import type { ActivityEvent, RunSnapshot, ChatEvent, ChatMessage, ClientId, ClientInfo, InstallResult, KeyInfo, ModelInfo, NewModel, ReadinessItem, TestResult } from "@/lib/types";
 
 const TOKEN_STORE = "kel.console.token";
 
@@ -143,6 +143,26 @@ export class HelperClient {
     try {
       await readSse(res.body, (e) => {
         if (e && typeof e === "object" && typeof (e as { id?: unknown }).id === "number") onEvent(e as ActivityEvent);
+      });
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
+      throw new HelperError("unreachable", helperMessage("unreachable", null));
+    }
+  }
+
+  /** Streams the runs the hooks and the CLI start, with each model's output as it is written. */
+  async runs(onRun: (r: RunSnapshot) => void, signal: AbortSignal): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.conn.base}/runs/stream`, { signal, cache: "no-store", headers: this.conn.token ? { "x-console-token": this.conn.token } : {} });
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
+      throw new HelperError("unreachable", helperMessage("unreachable", null));
+    }
+    if (!res.ok || !res.body) throw await this.failure(res, []);
+    try {
+      await readSse(res.body, (e) => {
+        if (e && typeof e === "object" && (e as { type?: unknown }).type === "run" && typeof (e as { run_id?: unknown }).run_id === "string") onRun(e as RunSnapshot);
       });
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;

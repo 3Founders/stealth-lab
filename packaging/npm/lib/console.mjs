@@ -23,7 +23,7 @@ import { readConfig, resolveSettings, writeConfig } from "./config.mjs";
 import { clients } from "./clients.mjs";
 import { checklist, keyIsSet, probeServer } from "./setup.mjs";
 import { envFilePath, isKeyName, readEnvFileVar, removeEnvFileVar, writeEnvFileVar } from "./envfile.mjs";
-import { execConfigPath, readExecConfig, readJson, writePrivate } from "./exec/store.mjs";
+import { execConfigPath, readExecConfig, readJson, runsDir, RUN_ID_RE, writePrivate } from "./exec/store.mjs";
 import { isLoopbackUrl, normaliseProfile, profileKey } from "./executors/profile.mjs";
 import { costOf } from "./spend.mjs";
 
@@ -101,7 +101,7 @@ function describeModel(p, env) {
 }
 
 export function createConsole({ env = process.env, token = crypto.randomBytes(18).toString("hex"), uiDir = null, allowOrigins = [],
-                                fetchImpl = globalThis.fetch, cli = runCli } = {}) {
+                                fetchImpl = globalThis.fetch, cli = runCli, runPollMs = 1000 } = {}) {
   let port = 0;
   const hosts = () => new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const origins = () => new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...allowOrigins]);
@@ -142,6 +142,53 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
       for (;;) { const { value, done } = await reader.read(); if (done) break; if (!res.write(value)) await new Promise((r) => res.once("drain", r)); }
     } catch { /* the page closed, or the MCP stopped: either way the stream just ends */ }
     res.end();
+  }
+
+  // The runs the hooks and the CLI start (`kell run`, the prompt hook's cheaper-model attempts). They never pass through
+  // the MCP, so their outputs are on disk: ~/.stealthlab/runs/<id>/. This streams a snapshot of each recent run whenever
+  // its files change. Everything sent was already redacted when it was written; the attempt's diff is NOT sent (it is raw),
+  // only the names of the files it touches.
+  const RUN_KEEP = 20, RUN_OUT = 20000;
+  function tail(file, max) {
+    try {
+      const st = fs.statSync(file);
+      const fd = fs.openSync(file, "r");
+      try { const n = Math.min(st.size, max * 4); const b = Buffer.alloc(n); fs.readSync(fd, b, 0, n, st.size - n); const t = b.toString("utf8"); return t.length > max ? t.slice(-max) : t; }
+      finally { fs.closeSync(fd); }
+    } catch { return ""; }
+  }
+  function runSnapshot(dir, id) {
+    const rec = readJson(path.join(dir, "run.json"), null) || {};
+    const events = [];
+    try { for (const l of fs.readFileSync(path.join(dir, "events.jsonl"), "utf8").split("\n")) if (l) { try { events.push(JSON.parse(l)); } catch { /* a half-written line */ } } } catch { /* none yet */ }
+    const attempts = new Map();
+    for (const e of events) if (e.event === "running" && e.attempt) attempts.set(e.attempt, { n: e.attempt, executor: e.executor, model: e.model, state: "running" });
+    for (const a of rec.attempts || []) attempts.set(a.attempt, { n: a.attempt, executor: a.executor, model: a.model, state: a.state, verified: a.verified, duration_s: a.duration_s,
+      files: (a.diff?.files || []).slice(0, 30), checks: (a.checks || []).slice(0, 8).map((c) => ({ cmd: String(c.cmd).slice(0, 200), exit: c.exit })) });
+    const list = [...attempts.values()].sort((x, y) => x.n - y.n).map((a) => ({ ...a, output: tail(path.join(dir, `a${a.n}.stdout.log`), RUN_OUT) }));
+    const task = String(rec.input?.task || "").trim().split(/\n\s*\n/).pop().replace(/\s+/g, " ").slice(0, 200);
+    return { type: "run", run_id: id, created_at: rec.created_at || null, state: rec.state || events.at(-1)?.event || "queued", task, attempts: list };
+  }
+  function runSignature(dir) {
+    try { return fs.readdirSync(dir).map((f) => { const st = fs.statSync(path.join(dir, f)); return `${f}:${st.size}:${st.mtimeMs}`; }).join("|"); } catch { return ""; }
+  }
+  function runsStream(req, res) {
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+    const seen = new Map();
+    const tick = () => {
+      let ids = [];
+      try { ids = fs.readdirSync(runsDir(env)).filter((d) => RUN_ID_RE.test(d)).sort().slice(-RUN_KEEP); } catch { /* no runs yet */ }
+      for (const id of ids) {
+        const dir = path.join(runsDir(env), id), sig = runSignature(dir);
+        if (!sig || seen.get(id) === sig) continue;
+        seen.set(id, sig);
+        try { res.write(`data: ${JSON.stringify(runSnapshot(dir, id))}\n\n`); } catch { /* closing */ }
+      }
+    };
+    tick();
+    const timer = setInterval(tick, runPollMs);
+    const beat = setInterval(() => { try { res.write(": keep-alive\n\n"); } catch { /* closing */ } }, 15000);
+    res.on("close", () => { clearInterval(timer); clearInterval(beat); });
   }
 
   async function readiness() {
@@ -290,6 +337,7 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
       return send(res, 200, { ok: true, removed: removeEnvFileVar(name, env) });
     }
     if (m === "GET" && p === "/activity/stream") return activity(req, res, url);
+    if (m === "GET" && p === "/runs/stream") return runsStream(req, res);
     if (m === "POST" && p === "/chat") return chat(req, res, await readBody(req));
     if (m === "GET" && uiDir) return serveStatic(res, p);
     if (m === "GET" && p === "/") return send(res, 200, { name: "stealthlab console", ui: false, note: "no --ui-dir given; the API is here" });

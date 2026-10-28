@@ -242,3 +242,36 @@ test("/activity/stream relays the configured MCP's feed, and says why when it ca
   const down = await boot({ fetchImpl: async () => { throw new TypeError("fetch failed"); } });
   try { assert.match((await down.call("GET", "/activity/stream")).json().error, /not running/); } finally { await down.close(); }
 });
+
+test("/runs/stream sends each run's model output as it is written, and never the raw diff", async () => {
+  const id = "r-20261028010101-abc123", NL = String.fromCharCode(10);
+  const t = await boot({ files: {
+    [`runs/${id}/run.json`]: JSON.stringify({ created_at: "t0", state: "running", input: { task: "earlier text" + NL + NL + "fix the login bug" }, attempts: [] }),
+    [`runs/${id}/events.jsonl`]: JSON.stringify({ event: "running", attempt: 1, executor: "stealth", model: "gpt-oss-120b" }) + NL,
+    [`runs/${id}/a1.stdout.log`]: "step 1: asking gpt-oss-120b" + NL,
+    [`runs/${id}/a1.patch`]: "RAW-DIFF-SECRET",
+  } });
+  try {
+    const events = [];
+    await new Promise((resolve, reject) => {
+      const req = http.get({ host: "127.0.0.1", port: t.port, path: "/runs/stream", headers: { "x-console-token": t.c.token } }, (res) => {
+        let buf = "";
+        res.on("data", (d) => {
+          buf += d;
+          for (const m of buf.matchAll(/^data: (.*)$/gm)) events.push(JSON.parse(m[1]));
+          buf = "";
+          if (events.length === 1) fs.appendFileSync(path.join(t.dir, "runs", id, "a1.stdout.log"), "step 2: search" + NL);
+          if (events.length === 2) { req.destroy(); resolve(); }
+        });
+      });
+      req.on("error", (e) => (events.length >= 2 ? resolve() : reject(e)));
+      setTimeout(() => reject(new Error("no second snapshot")), 8000).unref();
+    });
+    assert.equal(events[0].run_id, id);
+    assert.equal(events[0].task, "fix the login bug");
+    assert.equal(events[0].attempts[0].model, "gpt-oss-120b");
+    assert.match(events[0].attempts[0].output, /step 1/);
+    assert.match(events[1].attempts[0].output, /step 2: search/);
+    assert.ok(!JSON.stringify(events).includes("RAW-DIFF-SECRET"));
+  } finally { await t.close(); }
+});

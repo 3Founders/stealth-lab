@@ -86,3 +86,26 @@ export interface ActivityEvent {
   output: string;
   truncated: boolean;
 }
+
+/** One attempt of a run the hooks or the CLI started: which model, and what it printed so far (already redacted). */
+export interface RunAttempt {
+  n: number;
+  executor?: string;
+  model?: string;
+  state: string;
+  verified?: boolean;
+  duration_s?: number;
+  files?: string[];
+  checks?: Array<{ cmd: string; exit: number }>;
+  output: string;
+}
+
+/** A run from ~/.stealthlab/runs, sent whenever its files change. A later snapshot of the same run_id replaces the earlier one. */
+export interface RunSnapshot {
+  type: "run";
+  run_id: string;
+  created_at: string | null;
+  state: string;
+  task: string;
+  attempts: RunAttempt[];
+}
