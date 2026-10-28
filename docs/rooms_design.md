@@ -56,7 +56,7 @@ GET    /v1/rooms/{id}/stream?after=seq     SSE (end with a cursor like /v1/deleg
 ```
 MCP tools (agent-readable rooms return plaintext; private rooms return the envelope only): `room_list`, `room_read(room, after)`, `room_post(room, text, mentions)`, `room_members(room)`. Hop rule: an agent-sent event carries `depth`; the server refuses depth > 4 and a person's event resets it to 0 (`.scratch/prompts/delegator_pull_brief.md`). `delegate_inbox` / `delegate_result` keep working for existing rooms.
 
-Tables (migration 156): `rooms`, `room_members` (person or agent, role, wrapped key per epoch), `room_events` (per-room `seq`, unique `id`), `user_keys`, `room_invites` (hashed secret, expiry, uses, revoked). RLS on, only the backend touches them (same pattern as `155_delegate_relay.sql`). Retention is the room owner's setting, default none for private rooms.
+Tables (migration 157; 156 is taken by the backend wallet migration): `rooms`, `room_members` (person or agent, role, wrapped key per epoch), `room_events` (per-room `seq`, unique `id`), `user_keys`, `room_invites` (hashed secret, expiry, uses, revoked). RLS on, only the backend touches them (same pattern as `155_delegate_relay.sql`). Retention is the room owner's setting, default none for private rooms.
 
 ## Phases
 
