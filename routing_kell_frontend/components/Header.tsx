@@ -13,6 +13,7 @@ import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 const links = [
   { href: "/", label: "Home" },
   { href: "/docs", label: "Docs" },
+  { href: "/connect", label: "Connect" },
   { href: "/#about", label: "About" },
 ];
 

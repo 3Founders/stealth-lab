@@ -43,6 +43,11 @@ describe("Header sign-in state", () => {
     expect(text()).toContain("Sign in");
     expect(host!.querySelector('a[href="/delegator"]')).toBeNull();
   });
+  it("everyone, signed in or not, sees Connect in the nav", async () => {
+    session = null;
+    await mount();
+    expect(host!.querySelector('.nav-links a[href="/connect"]')?.textContent).toBe("Connect");
+  });
   it("signed in but the profile request failed: no Sign in button, an account menu, and the Delegator link", async () => {
     session = { token: "t", subject: "u" };
     profile = { kind: "error" };
