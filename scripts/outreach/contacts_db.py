@@ -71,6 +71,10 @@ class Contacts:
         r = self.db.execute("SELECT status FROM contacts WHERE email=?", (email.strip().lower(),)).fetchone()
         return r["status"] if r else None
 
+    def country(self, email: str) -> str:
+        r = self.db.execute("SELECT country FROM contacts WHERE email=?", (email.strip().lower(),)).fetchone()
+        return (r["country"] if r else "") or ""
+
     def is_blocked(self, email: str) -> bool:
         return self.status(email) in FINAL
 

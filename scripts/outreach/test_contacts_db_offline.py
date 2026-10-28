@@ -126,7 +126,7 @@ def _batch(c, n_sent, n_bounced):
 
 def test_a_high_bounce_rate_pauses_sending_until_the_runbook_is_followed(tmp_path):
     c = cd.Contacts(":memory:")
-    _batch(c, 19, 1)                                    # 1 of 20 = 5%, over the 2% limit
+    _batch(c, 18, 2)                                    # 2 of 20 = 10%, over the 2% limit with the minimum sample reached
     kw = dict(really=True, out=lambda *_: None, connect_fn=lambda s: Fake(), sleep=lambda s: None, log_path=tmp_path / "l.csv",
               suppress_path=tmp_path / "s.txt", contacts=c)
     lines = []
@@ -138,7 +138,7 @@ def test_a_high_bounce_rate_pauses_sending_until_the_runbook_is_followed(tmp_pat
 
 def test_no_pause_when_bounces_are_within_the_limit_or_absent(tmp_path):
     c = cd.Contacts(":memory:")
-    _batch(c, 60, 1)                                    # 1 of 61 = 1.6%
+    _batch(c, 60, 1)                                    # 1 of 61 = 1.6%, and one bounce is below the minimum of two
     r = sm.send_drafts([draft(to="new@corp.com")], S, really=True, out=lambda *_: None, connect_fn=lambda s: Fake(), sleep=lambda s: None,
                        log_path=tmp_path / "l.csv", suppress_path=tmp_path / "s.txt", contacts=c)
     assert r["sent"] == 1

@@ -74,6 +74,10 @@ class SupabaseContacts:
         rows = self._call("GET", "outreach_contacts", {"select": "status", "email": "eq." + email.strip().lower()})
         return rows[0]["status"] if rows else None
 
+    def country(self, email: str) -> str:
+        rows = self._call("GET", "outreach_contacts", {"select": "country", "email": "eq." + email.strip().lower()})
+        return (rows[0]["country"] if rows else "") or ""
+
     def is_blocked(self, email: str) -> bool:
         return self.status(email) in FINAL
 

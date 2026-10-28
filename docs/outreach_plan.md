@@ -117,3 +117,19 @@ we can later see which kind of evidence drew replies.
   Iowa); honest headers and subjects are liability reduction, not etiquette.
 - **Backlog, not blocking:** MTA-STS and TLS-RPT records (inbound security), BIMI never at this stage.
 - **Runbook:** `docs/outreach_blocklist_runbook.md`.
+
+## 12. Unsubscribe link, gates and draft tools (2026-10-28)
+
+- **One-click unsubscribe:** mail carries `List-Unsubscribe` (link + mailto) and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`; the footer has the
+  same link. The link goes to the Supabase Edge Function in `scripts/outreach/supabase_functions/unsubscribe` (POST marks the address unsubscribed;
+  GET shows a page with one button, so link scanners cannot unsubscribe anyone). The token is an HMAC of the address with `UNSUBSCRIBE_SECRET`.
+  Deploy: `supabase functions deploy unsubscribe --no-verify-jwt`; `supabase secrets set UNSUBSCRIBE_SECRET=...`; then put `UNSUBSCRIBE_URL` and the
+  same `UNSUBSCRIBE_SECRET` in `backend/.env`. **Limit:** RFC 8058 wants the DKIM signature to cover both List-Unsubscribe headers; GoDaddy signs our mail and
+  we cannot see which headers it covers, so some mailbox providers may not show their own unsubscribe button. The footer link and reply path still work.
+- **Country allow-list:** `OUTREACH_COUNTRIES` (default `US,UK,IN`); a draft whose country (draft field, else the contact's) is missing or not listed is skipped.
+- **Footer:** every mail says it is a commercial cold introduction, who/where, where the details came from; recipients outside the US and India also get the
+  legal basis, what is held and the right to object (UK GDPR / GDPR Article 14).
+- **DNS check:** `send_mail.py auth-check` (MX, one SPF, DMARC, DKIM if `OUTREACH_DKIM_SELECTOR` is set); `send --really` runs it first.
+- **Bounce pause:** only after 20 addresses mailed and at least 2 bounces, above 2%.
+- **Drafts without a model:** `drafts.py init|make|show|approve` (versioned template + a facts file you fill); `evidence.py find URL --word ...` lists candidate
+  sentences from one public page (robots.txt respected) for you to choose from.

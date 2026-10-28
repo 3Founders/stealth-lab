@@ -13,7 +13,7 @@ S = {"SMTP_HOST": "smtp.example.com", "SMTP_USER": "me", "SMTP_PASSWORD": "hunte
 def draft(**kw):
     d = {"to": "a@corp.com", "subject": "Your repo", "body": "Saw your post about AI coding. Worth a call?", "approved": True,
          "evidence_url": "https://corp.com/blog", "evidence_fact": "a post on AI coding costs",
-         "approved_by": "founder", "template_version": "v1"}
+         "approved_by": "founder", "template_version": "v1", "country": "United States"}
     d.update(kw)
     return d
 
