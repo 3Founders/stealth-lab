@@ -170,6 +170,7 @@ export default function RoomView() {
             {HUMANS.map((h) => <option key={h.handle} value={h.handle}>{h.handle}</option>)}
           </select>
         </label>
+        <p className="dg-note">Runs in this tab only. The relay keeps no history, and nothing leaves this machine.</p>
       </aside>
 
       <section className="dg-main" aria-label={roomId}>

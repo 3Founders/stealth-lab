@@ -7,10 +7,8 @@ export const metadata = { title: "Delegator (dev sandbox)" };
 export default function Page() {
   return (
     <div className="dg-page" style={springVars() as React.CSSProperties}>
-      <div className="dg-top">
-        <div className="marker"><b>DELEGATOR</b>dev sandbox</div>
-        <p>Runs in this browser tab only. The relay keeps no history, and nothing leaves this machine.</p>
-      </div>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="dg-logo" src="/kel-wordmark.png" alt="keळ" width={800} height={440} />
       <RoomView />
     </div>
   );
