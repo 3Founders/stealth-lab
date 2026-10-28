@@ -74,3 +74,15 @@ export type ChatEvent =
   | { model: string; delta: string }
   | { model: string; done: true; ttft_ms: number | null; total_ms: number; tokens_in: number | null; tokens_out: number | null; cost_usd: number | string | null }
   | { model: string; error: string };
+
+/** One call the MCP's router handled (find_ways, call_model, report_result, use_tool), with the text it returned. */
+export interface ActivityEvent {
+  id: number;
+  ts: number; // seconds
+  tool: string;
+  args: Record<string, string>;
+  ok: boolean;
+  ms: number;
+  output: string;
+  truncated: boolean;
+}

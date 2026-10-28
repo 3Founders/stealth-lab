@@ -29,7 +29,7 @@ _ids = itertools.count(1)
 def _short_args(kwargs: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for k, v in kwargs.items():
-        if k == "ctx":
+        if k == "ctx" or v is None:  # unset optional arguments are noise
             continue
         text = v if isinstance(v, str) else json.dumps(v, default=str)
         out[k] = text if len(text) <= MAX_ARG else text[:MAX_ARG] + f"… (+{len(text) - MAX_ARG} chars)"

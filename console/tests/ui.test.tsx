@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import ConnectPanel from "@/components/ConnectPanel";
 import Console from "@/components/Console";
+import { addEvent, summary } from "@/components/ActivityPanel";
 import KeyField from "@/components/KeyField";
 import ModelsPanel from "@/components/ModelsPanel";
 import PlaygroundPanel from "@/components/PlaygroundPanel";
@@ -250,11 +251,11 @@ describe("States", () => {
     await until(() => /no valid token/.test(text()));
   });
 
-  it("with the token: the three tabs, and the token is gone from the address", async () => {
+  it("with the token: the four tabs, and the token is gone from the address", async () => {
     window.history.pushState(null, "", `/?api=${h.base}&t=${h.token}`);
     await mount(<Console />);
     await until(() => !!host!.querySelector('[role="tablist"]'));
-    expect([...host!.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Connect", "Keys & models", "Playground"]);
+    expect([...host!.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).toEqual(["Connect", "Keys & models", "Playground", "Router activity"]);
     expect(window.location.search).not.toContain(h.token);
     expect(window.sessionStorage.getItem("kel.console.token")).toBe(h.token); // the token only, for this tab
   });
@@ -269,5 +270,23 @@ describe("States", () => {
       }
       act(() => root?.unmount()); host?.remove(); root = null; host = null;
     }
+  });
+});
+
+describe("Router activity", () => {
+  const ev = (id: number, args: Record<string, string> = {}) => ({ id, ts: 1, tool: "find_ways", args, ok: true, ms: 5, output: "x", truncated: false });
+  it("keeps newest first, ignores a replayed id, and caps the list", () => {
+    let l = addEvent([], ev(1));
+    l = addEvent(l, ev(2));
+    expect(l.map((e) => e.id)).toEqual([2, 1]);
+    expect(addEvent(l, ev(1))).toBe(l);
+    for (let i = 3; i < 200; i++) l = addEvent(l, ev(i));
+    expect(l).toHaveLength(100);
+    expect(l[0].id).toBe(199);
+  });
+  it("summarises a call by what it asked", () => {
+    expect(summary(ev(1, { query: "fix  a failing test", repo_claims: "zzz" }))).toBe("fix a failing test");
+    expect(summary(ev(1, { prompt: "p" }))).toBe("p");
+    expect(summary(ev(1))).toBe("");
   });
 });

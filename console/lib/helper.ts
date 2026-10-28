@@ -2,7 +2,7 @@
 // the body of the one PUT that saves it.
 import { readSse } from "@/lib/sse";
 import { HelperError, helperMessage, isLoopbackAddress, scrub, type HelperFailure } from "@/lib/words";
-import type { ChatEvent, ChatMessage, ClientId, ClientInfo, InstallResult, KeyInfo, ModelInfo, NewModel, ReadinessItem, TestResult } from "@/lib/types";
+import type { ActivityEvent, ChatEvent, ChatMessage, ClientId, ClientInfo, InstallResult, KeyInfo, ModelInfo, NewModel, ReadinessItem, TestResult } from "@/lib/types";
 
 const TOKEN_STORE = "kel.console.token";
 
@@ -118,6 +118,31 @@ export class HelperClient {
     try {
       await readSse(res.body, (e) => {
         if (e && typeof e === "object" && typeof (e as { model?: unknown }).model === "string") onEvent(e as ChatEvent);
+      });
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
+      throw new HelperError("unreachable", helperMessage("unreachable", null));
+    }
+  }
+
+  /** Streams the router's activity from the MCP (through the helper). `after` skips events already seen; `onOpen` runs once the stream is up. */
+  async activity(after: number, onEvent: (e: ActivityEvent) => void, signal: AbortSignal, onOpen: () => void = () => {}): Promise<void> {
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.conn.base}/activity/stream?after=${Math.max(0, Math.floor(after))}`, {
+        signal,
+        cache: "no-store",
+        headers: this.conn.token ? { "x-console-token": this.conn.token } : {},
+      });
+    } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") return;
+      throw new HelperError("unreachable", helperMessage("unreachable", null));
+    }
+    if (!res.ok || !res.body) throw await this.failure(res, []);
+    onOpen();
+    try {
+      await readSse(res.body, (e) => {
+        if (e && typeof e === "object" && typeof (e as { id?: unknown }).id === "number") onEvent(e as ActivityEvent);
       });
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;

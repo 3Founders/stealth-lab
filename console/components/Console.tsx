@@ -5,6 +5,7 @@ import CopyCommand from "@/components/CopyCommand";
 import ModelsPanel from "@/components/ModelsPanel";
 import StatusBar from "@/components/StatusBar";
 import PlaygroundPanel from "@/components/PlaygroundPanel";
+import ActivityPanel from "@/components/ActivityPanel";
 import { HelperClient, connectFromLocation } from "@/lib/helper";
 import type { ClientInfo } from "@/lib/types";
 import { HelperError } from "@/lib/words";
@@ -19,6 +20,7 @@ const TABS = [
   { id: "connect", label: "Connect" },
   { id: "models", label: "Keys & models" },
   { id: "playground", label: "Playground" },
+  { id: "activity", label: "Router activity" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 const isTab = (v: string): v is TabId => TABS.some((t) => t.id === v);
@@ -119,6 +121,7 @@ export default function Console() {
           {tab === "connect" && <ConnectPanel client={gate.client} initial={gate.clients} />}
           {tab === "models" && <ModelsPanel client={gate.client} />}
           {tab === "playground" && <PlaygroundPanel client={gate.client} />}
+          {tab === "activity" && <ActivityPanel client={gate.client} />}
         </>
       )}
     </div>
