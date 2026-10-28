@@ -1,8 +1,9 @@
 // The hosted MCP address people paste into claude.ai and ChatGPT as a custom connector.
 //
-// Read at build time from NEXT_PUBLIC_KEL_MCP_URL (the server's origin or its /mcp address). Unset means no hosted
-// server exists yet: /connect says so instead of showing an address that goes nowhere.
-export const MCP_ORIGIN = (process.env.NEXT_PUBLIC_KEL_MCP_URL || "").trim().replace(/\/+$/, "");
+// The hosted server is https://mcp.kell.org.in (the old railway address is being retired). NEXT_PUBLIC_KEL_MCP_URL, read at
+// build time, overrides it (for example http://127.0.0.1:8765 for a local server); unset, this address is used.
+export const DEFAULT_MCP_ORIGIN = "https://mcp.kell.org.in";
+export const MCP_ORIGIN = (process.env.NEXT_PUBLIC_KEL_MCP_URL || DEFAULT_MCP_ORIGIN).trim().replace(/\/+$/, "");
 
 // The address to paste. Accepts either "https://host" or "https://host/mcp"; plain http is refused for anything
 // but loopback, the same rule the installer applies (packaging/npm/lib/config.mjs).

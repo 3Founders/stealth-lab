@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { SITES, TASK_PROMPT, connectorUrl } from "@/lib/connector";
+import { DEFAULT_MCP_ORIGIN, SITES, TASK_PROMPT, connectorUrl } from "@/lib/connector";
 
 describe("connectorUrl", () => {
-  it("is null until a server address is configured", () => {
+  it("is null for an empty address", () => {
     expect(connectorUrl("")).toBeNull();
   });
   it("adds /mcp to an origin and keeps it on an address that has it", () => {
@@ -15,6 +15,14 @@ describe("connectorUrl", () => {
     expect(connectorUrl("http://mcp.example.com")).toBeNull();
     expect(connectorUrl("http://127.0.0.1:8765")).toBe("http://127.0.0.1:8765/mcp");
     expect(connectorUrl("not a url")).toBeNull();
+  });
+});
+
+describe("the hosted address", () => {
+  it("is https://mcp.kell.org.in/mcp unless the deployment overrides it", () => {
+    expect(DEFAULT_MCP_ORIGIN).toBe("https://mcp.kell.org.in");
+    expect(connectorUrl(DEFAULT_MCP_ORIGIN)).toBe("https://mcp.kell.org.in/mcp");
+    expect(connectorUrl()).toBe(process.env.NEXT_PUBLIC_KEL_MCP_URL ? connectorUrl(process.env.NEXT_PUBLIC_KEL_MCP_URL) : "https://mcp.kell.org.in/mcp");
   });
 });
 

@@ -57,15 +57,22 @@ const type = async (el: HTMLInputElement, v: string) => {
   await act(async () => { setter.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); });
 };
 const click = async (el: Element) => { await act(async () => { (el as HTMLElement).click(); }); await flush(); };
+const keyButton = (t: string) => [...host!.querySelectorAll(".models-key button")].find((b) => b.textContent?.trim() === t)!; // a saved key's own buttons
 const byText = (t: string) => [...host!.querySelectorAll("button")].find((b) => b.textContent?.trim() === t)!;
 
 afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; rows.length = 0; for (const k of Object.keys(keyOf)) delete keyOf[k]; session = { token: "t", subject: "u1" }; models = ["model-a", "model-b"]; vi.restoreAllMocks(); });
 
 describe("Models page", () => {
-  it("shows the kell-hosted models as a labelled pilot that is not available yet, with the data warning, and makes no network call", async () => {
+  it("with the section switched off, the kell-hosted models show as a labelled pilot that is not available, with the data warning, and make no network call", async () => {
     const f = vi.fn();
     vi.stubGlobal("fetch", f);
-    await mount();
+    vi.stubEnv("NEXT_PUBLIC_KEL_MODELS", "off");
+    vi.resetModules();
+    const { default: Page } = await import("@/app/account/models/page");
+    host = document.createElement("div"); document.body.append(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(<Page />); });
+    await flush(); await flush();
     const text = host!.textContent ?? "";
     expect(text).toMatch(/Pilot/);
     expect(text).toMatch(/Public material only/);
@@ -73,7 +80,7 @@ describe("Models page", () => {
     expect(text).toMatch(/Not available yet/);
     expect(text).toMatch(/never used instead of one/);
     expect(f).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+    vi.unstubAllGlobals(); vi.unstubAllEnvs();
   });
 
   it("signed out: only a sign-in notice that returns here", async () => {
@@ -109,13 +116,13 @@ describe("Models page", () => {
     expect(writes.join("|")).not.toContain(SECRET);
     expect(document.querySelector("#m-key") === null || (document.querySelector<HTMLInputElement>("#m-key")!.value === "")).toBe(true);
 
-    await click(byText("Test"));
+    await click(keyButton("Test"));
     expect(host!.textContent).toMatch(/The key works\. 2 models available/);
     await click(byText("Use this model"));
     expect(rows[0].model).toBe("model-a");
     expect(host!.textContent).toContain("model-a");
 
-    await click(byText("Delete"));
+    await click(keyButton("Delete"));
     expect(rows).toHaveLength(0);
     expect(host!.textContent).toMatch(/No keys yet/);
   });
@@ -126,8 +133,8 @@ describe("Models page", () => {
     await type(host!.querySelector<HTMLInputElement>("#m-key")!, SECRET);
     await act(async () => { host!.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     await flush(); await flush();
-    await click(byText("Test"));
-    expect(host!.querySelector('[role="alert"]')!.textContent).toContain("401");
+    await click(keyButton("Test"));
+    expect(host!.querySelector('.models-key [role="alert"]')!.textContent).toContain("401");
     expect(host!.innerHTML).not.toContain(SECRET);
   });
 
