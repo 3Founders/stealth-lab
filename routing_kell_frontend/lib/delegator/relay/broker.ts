@@ -39,6 +39,18 @@ export class Broker {
     this.emit({ kind: "members", roomId, members: [...r.members] });
   }
 
+  /** Takes a member out of the room. An agent is also forgotten: it is no longer woken and nothing waits for it. */
+  removeMember(roomId: string, handle: string) {
+    const r = this.rooms.get(roomId);
+    if (!r || !r.members.includes(handle)) return;
+    r.members = r.members.filter((h) => h !== handle);
+    this.agents.delete(handle);
+    this.inboxes.delete(handle);
+    this.pending.delete(handle);
+    this.activity.delete(handle);
+    this.emit({ kind: "members", roomId, members: [...r.members] });
+  }
+
   /** Marks a handle as an agent: only agents are held back by the depth guard and the pause. */
   registerAgent(handle: string) { this.agents.add(handle); if (!this.activity.has(handle)) this.activity.set(handle, "idle"); }
   isAgent(handle: string) { return this.agents.has(handle); }

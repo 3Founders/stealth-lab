@@ -136,6 +136,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   const note = (t: string) => push({ kind: "notice", id: broker.newId(), text: t });
 
+  const removeAgent = (handle: string) => {
+    controllers.current.get(handle)?.abort();
+    detachers.current.get(handle)?.();
+    detachers.current.delete(handle);
+    broker.removeMember(ROOM_ID, handle);
+    setAgents((p) => p.filter((h) => h !== handle));
+    setActivity((p) => { const n = { ...p }; delete n[handle]; return n; });
+    note(`${handle} left the room.`);
+  };
+
   const create = (name?: string) => {
     const r = newAgentHandle(agents, name);
     if ("error" in r) return note(r.error);
@@ -188,6 +198,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 {backing && !backing.ready
                   ? <Link className="dg-state dg-addkey" href="/account/models">{backing.text}</Link>
                   : <span className="dg-state" data-a={a}>{a === "idle" ? (backing?.text ?? "") : LABEL[a]}</span>}
+                <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${h} from the room`} title={`Remove ${h}`}>×</button>
               </li>
             );
           })}

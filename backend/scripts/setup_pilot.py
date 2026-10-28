@@ -7,7 +7,7 @@
 Writes, all idempotent:
   * the organization `kell-pilot` (reused if the slug exists);
   * its `org_policies` row: only the providers and models named in deploy/provider_connections.json, only the
-    `call_model` tool, only the data classes below, a per-user daily cap and an organization monthly cap;
+    `call_model` and `chat_completions` tools (the latter is the website chat), only the data classes below, a per-user daily cap and an organization monthly cap;
   * `model_provider_policies` rows for those providers (the platform egress policy a kell-owned key must also pass).
 
 Then set KELL_PILOT_ORG_ID on the server to the printed id: every person who signs in is enrolled as a member
@@ -32,7 +32,7 @@ SLUG = "kell-pilot"
 NAME = "kell pilot"
 PROVIDERS = ("zai", "general_compute")
 MODELS = ("glm-5.3-flash", "gemma-4-31b-it")
-TOOLS = ("call_model",)
+TOOLS = ("call_model", "chat_completions")  # chat_completions: the site Delegator (mcp_server/chat_routes.py) calls under this tool name
 DATA_CLASSES = ("PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE")
 PER_USER_DAILY_USD = "1.00"
 MONTHLY_USD = "30.00"          # $1 a day for a month: a hard stop on the organization's total
