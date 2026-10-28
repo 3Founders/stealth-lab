@@ -262,7 +262,10 @@ class OidcAwareTokenVerifier(TokenVerifier):
             org_ids = tuple(ctx.org_ids)
             # pilot: a first-time sign-in joins the capped pilot organization (no-op unless KELL_PILOT_ORG_ID is set)
             from app.services import pilot_enrol as _pilot
-            if await _pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
+            from app.services import personal_org as _personal
+            if _personal.enabled():
+                org_ids = await _personal.resolve_orgs(pool, user_id=ctx.user_id, org_ids=org_ids)
+            elif await _pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
                 org_ids = (*org_ids, _pilot.pilot_org_id())
             scopes = {"stealthlab:tools", *ctx.scopes, *(f"org:{o}" for o in org_ids)}
         return AccessToken(token=token, client_id=actor.subject, scopes=sorted(scopes), subject=actor.subject)
@@ -903,6 +906,10 @@ _delegate_routes.register(
 from app.mcp_server import chat_routes as _chat_routes  # noqa: E402 -- the website OpenAI-compatible chat (kell pilot models)
 
 _chat_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
+
+from app.mcp_server import billing_routes as _billing_routes  # noqa: E402 -- buying prepaid credits (Razorpay)
+
+_billing_routes.register(server, _TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request)
 
 
 @server.custom_route("/healthz", methods=["GET"], include_in_schema=False)

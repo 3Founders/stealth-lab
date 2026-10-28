@@ -162,7 +162,10 @@ async def resolve_identity(verifier: Any, pool: Any, request: Request, is_local:
         return None, ("this account may not run models", 403)
     org_ids = tuple(ctx.org_ids)
     from app.services import pilot_enrol as pilot
-    if await pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
+    from app.services import personal_org
+    if personal_org.enabled():
+        org_ids = await personal_org.resolve_orgs(pool, user_id=ctx.user_id, org_ids=org_ids)
+    elif await pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
         org_ids = (*org_ids, pilot.pilot_org_id())
     scope = AccessScope.for_org_member(actor.subject, list(org_ids)) if org_ids else AccessScope.for_user(actor.subject)
     return Identity(actor.subject, scope, org_ids), None
@@ -176,6 +179,8 @@ def paying_org(requested: Optional[str], org_ids: tuple[str, ...], pilot_org: Op
         return (req, None) if req in member else (None, "you are not a member of that organization")
     if pilot_org and pilot_org in member:
         return pilot_org, None
+    if len(member) == 1:
+        return next(iter(member)), None
     return None, None
 
 

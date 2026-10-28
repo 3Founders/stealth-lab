@@ -39,7 +39,7 @@ COST_SOURCES = ("provider", "declared", "upper_bound")
 # the reasons a refusal can have; the same list is a CHECK constraint on org_denials (db/139)
 DENIAL_CODES = ("kill_switch", "no_policy", "provider_not_allowed", "model_not_allowed", "tool_not_allowed",
                 "data_class_not_allowed", "unpriced_unit", "monthly_budget_zero", "user_daily_budget_zero",
-                "monthly_budget_exceeded", "user_daily_budget_exceeded")
+                "monthly_budget_exceeded", "user_daily_budget_exceeded", "wallet_empty")
 
 
 class GovernanceError(Exception):
@@ -303,6 +303,16 @@ async def reserve_call(pool: Any, *, org_id: str, actor_subject: str, tool: str,
             raise BudgetExceeded(f"this call could take you past your daily budget of "
                                  f"${policy.per_user_daily_budget_usd} (${Decimal(str(day))} already used or held)",
                                  code="user_daily_budget_exceeded")
+        if row["wallet_required"]:
+            # prepaid: money in minus everything held or settled since the beginning (the ledger is the debit record)
+            bought = await conn.fetchval("SELECT COALESCE(sum(amount_usd), 0) FROM org_wallet_credits WHERE "
+                                         "organization_id = $1::uuid", str(org_id))
+            spent = await conn.fetchval(f"SELECT {held} FROM provider_call_ledger WHERE organization_id = $1::uuid",
+                                        str(org_id))
+            balance = Decimal(str(bought)) - Decimal(str(spent))
+            if balance < worst:
+                raise BudgetExceeded(f"this organization's prepaid balance (${balance:.4f}) is too low for this call; "
+                                     "buy credits to continue", code="wallet_empty")
         ledger_id = str(uuid.uuid4())
         await conn.execute(
             "INSERT INTO provider_call_ledger (id, organization_id, actor_subject, tool, unit, connection_id, provider, "

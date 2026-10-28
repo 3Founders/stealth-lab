@@ -10,7 +10,8 @@ OWN = "aaaaaaaa-0000-0000-0000-000000000001"
 
 def test_an_unnamed_org_is_the_pilot_org_when_the_person_is_in_it():
     assert cr.paying_org(None, (OWN, PILOT), PILOT) == (PILOT, None)
-    assert cr.paying_org(None, (OWN,), PILOT) == (None, None)          # not enrolled: the governed path decides
+    assert cr.paying_org(None, (OWN,), PILOT) == (OWN, None)          # their only organization pays
+    assert cr.paying_org(None, (OWN, "cccccccc-0000-0000-0000-000000000003"), PILOT) == (None, None)   # several: the governed path asks
     assert cr.paying_org(None, (OWN, PILOT), None) == (None, None)     # no pilot configured: nothing guessed
 
 
