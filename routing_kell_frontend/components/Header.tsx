@@ -153,6 +153,7 @@ export default function Header() {
                 <>
                   {PROJECT_SYNC_ENABLED && <Link href="/account" onClick={() => setOpen(false)}>Projects</Link>}
                   <Link href="/account/connections" onClick={() => setOpen(false)}>Connected apps</Link>
+                  <Link href="/delegator" onClick={() => setOpen(false)}>Delegator</Link>
                   <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>
                 </>
               ) : (

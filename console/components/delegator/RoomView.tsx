@@ -185,7 +185,7 @@ export default function RoomView() {
 
         <MessageScroller.Provider autoScroll={false} defaultScrollPosition="end">
           <MessageScroller.Root className="dg-scroll">
-            <MessageScroller.Viewport ref={viewportRef} className="dg-viewport" aria-label={`Messages in ${roomId}`}>
+            <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${roomId}`}>
               <MessageScroller.Content ref={contentRef} key={roomId} className="dg-content">
                 {blocks.length === 0 && <p className="dg-empty">No messages yet. Try <code>@alice/claude-code look at src/auth.ts</code>.</p>}
                 {blocks.map((b) => b.kind === "notice"

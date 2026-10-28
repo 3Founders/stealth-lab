@@ -7,6 +7,8 @@ import { defineConfig } from "vitest/config";
 // leaked identity fields). jsdom only because lib/session.ts touches
 // `window.localStorage`/`atob`.
 export default defineConfig({
+  // Next compiles JSX itself (tsconfig "preserve"); vitest needs the automatic runtime for the few .tsx page tests.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "jsdom",
     include: ["**/*.test.ts", "**/*.test.tsx"],
