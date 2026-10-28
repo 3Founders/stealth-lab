@@ -1,7 +1,7 @@
 export const MAX_DEPTH = 4;
 
 export interface AgentIdentity {
-  handle: string; // e.g. "@alice/claude-code"
+  handle: string; // e.g. "@alice/agent-1"
   displayName: string;
   type: "human" | "local_agent" | "remote_agent";
   status: "online" | "busy" | "offline";
