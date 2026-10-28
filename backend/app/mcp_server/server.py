@@ -259,7 +259,12 @@ class OidcAwareTokenVerifier(TokenVerifier):
                 return None
             except Exception:  # noqa: BLE001 - cannot establish identity state -> no access
                 return None
-            scopes = {"stealthlab:tools", *ctx.scopes, *(f"org:{o}" for o in ctx.org_ids)}
+            org_ids = tuple(ctx.org_ids)
+            # pilot: a first-time sign-in joins the capped pilot organization (no-op unless KELL_PILOT_ORG_ID is set)
+            from app.services import pilot_enrol as _pilot
+            if await _pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
+                org_ids = (*org_ids, _pilot.pilot_org_id())
+            scopes = {"stealthlab:tools", *ctx.scopes, *(f"org:{o}" for o in org_ids)}
         return AccessToken(token=token, client_id=actor.subject, scopes=sorted(scopes), subject=actor.subject)
 
     async def _service_token(self, token: str) -> AccessToken | None:

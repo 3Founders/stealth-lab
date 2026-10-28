@@ -1,0 +1,23 @@
+{"connections": [
+  {"connection_id": "zai-glm",
+   "kind": "openai_compatible",
+   "base_url": "https://api.z.ai/api/paas/v4",
+   "provider": "zai",
+   "credential_ref": "env:Z_AI_KEY",
+   "credential_owner": "platform",
+   "allowed_data_classes": ["PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE"],
+   "no_training": true,
+   "units": [
+     {"model": "glm-5.3-flash", "provider_model": "glm-5.3-flash", "input_per_mtok": 0.15, "output_per_mtok": 0.5}
+   ]},
+  {"connection_id": "general-compute",
+   "kind": "openai_compatible",
+   "base_url": "https://api.generalcompute.com/v1",
+   "provider": "general_compute",
+   "credential_ref": "env:GENERAL_COMPUTE_API_KEY",
+   "credential_owner": "platform",
+   "allowed_data_classes": ["PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE"],
+   "units": [
+     {"model": "gemma-4-31b-it", "provider_model": "gemma-4-31B-it", "input_per_mtok": 1.0, "output_per_mtok": 3.0}
+   ]}
+]}
