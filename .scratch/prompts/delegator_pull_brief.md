@@ -73,6 +73,32 @@ The backend and MCP parts are NOT the frontend lane's paths (`backend/**`, `pack
 7. Sign-in required for everything (already gated); real calls send the Supabase token, and handle 401 by sending the person to `/sign-in?redirect=/delegator`.
 8. Tests: vitest for the client, the status mapping, the approval flow and the offline states, using `FakeRelayClient`; `tsc` and `next build` clean; keep the 17 delegator tests green or update them with reasons.
 
+## 6b. BYOK chat: after signing in, a person adds their own keys and chats with a model right here (added 2026-10-28)
+
+The point: a signed-in person should be able to talk to a model on the site, paid for by their own key, without installing anything. This is separate from delegating to their own agents (sections 3 to 6) and shares the room UI: each room gets a built-in "assistant" member backed by the person's key.
+
+Rules (same legal footing as section 2):
+- The only Anthropic credential accepted is an Anthropic API key (console.anthropic.com) or Bedrock/Vertex credentials. Never a claude.ai login, session token or "Sign in with Claude". Say so on the page, next to the field.
+- Other providers: any OpenAI-compatible host (base URL + key: OpenAI, OpenRouter, Together, Groq, and so on). Offer a short provider list plus "other (OpenAI-compatible)".
+- kell does not pay for, resell or pool anyone's usage. No fallback to a kell key.
+
+Where the key lives (build mode 1 now, mode 2 is a cross-lane request):
+1. Mode 1, browser-only (build this first, no backend needed): the key is encrypted in the browser (reuse the approach in `sync-key-cache.ts`, and `prod_frontend/lib/sync-crypto.ts` if it fits; do not store it in plain `localStorage`) and the browser calls the provider directly. The key never reaches kell servers. Check per provider that browser calls are allowed (Anthropic needs its direct-browser-access header; confirm OpenAI-compatible hosts send CORS headers; where a host blocks it, say "this provider can't be used in browser-only mode").
+2. Mode 2, server-held (later): the key is sent once over TLS, stored encrypted per user through a secret resolver (`user:<subject>`; see `docs/provider_connections.md`, where `credential_owner: customer` means BYOK), and calls go through the governed `/v1/messages` and `/v1/chat/completions` path. The browser never gets the key back, only the provider name and the last 4 characters. Needs backend work: post it as a cross-lane request.
+
+UI:
+- "Models" panel under the signed-in account: add key (provider, optional base URL, key, optional label), "Test" button (one tiny call, show pass/fail and the model it can reach), list with last 4, created date and Delete. Deleting wipes it everywhere in the mode.
+- Show plainly what leaves the browser and where it goes ("your key stays in this browser and is sent only to <provider>" for mode 1).
+- Per-key spend guard: a client-side daily cap the person sets (soft), plus the provider's own limits. State that the provider bills them, not kell.
+- Chat in a room: the assistant answers `@mentions` or any plain line when it is the only agent present; streaming reply; stop button; errors from the provider shown verbatim without the key.
+- Keys must never be put in room messages, logs, analytics events or error reports. Add a test that scans a sent message and a thrown error for the key string.
+- No key yet: the assistant slot shows "Add a key to chat here" and links to the Models panel.
+
+Acceptance for 6b:
+- Add a key, Test passes against a stub provider, chat streams a reply, Delete removes it, a reload keeps it (encrypted) until deleted.
+- A grep of `localStorage`/`sessionStorage` writes shows no plain key; the leak test above passes.
+- The page copy contains no "Sign in with Claude" and no request for a claude.ai credential.
+
 ## 7. Acceptance (numbers, per the repo's rule that exits are numbers)
 
 - With `FakeRelayClient`: send a message mentioning two agents, see two tasks reach `done` with results; the 4-hop guard still stops a chain; revoke removes the agent and its pending tasks.
