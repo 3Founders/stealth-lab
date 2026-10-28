@@ -581,6 +581,17 @@ _V1_RESOURCES = [
      find_ways_guide_resource),
 ]
 
+# Research playbooks (app/mcp_server/playbooks.py): routines for market sizing, competitor scans, due diligence and the like.
+from app.mcp_server import playbooks as _playbooks  # noqa: E402
+
+_V1_RESOURCES += [
+    ("stealth://playbooks", "playbooks", "Research playbooks",
+     "Step-by-step routines for research jobs (market sizing, competitor scan, funding landscape, due diligence, "
+     "literature scan, lead list, news brief, fact check, meeting prep, grant search).", _playbooks.playbooks_index_resource),
+    ("stealth://playbooks/{slug}", "playbook", "Research playbook",
+     "One research playbook: goal, steps, and the check to pass before reporting.", _playbooks.playbook_resource),
+]
+
 def register_resources(server) -> None:
     """Bind the read-only Resource surface to `server`.
 

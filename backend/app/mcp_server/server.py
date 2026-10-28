@@ -2095,7 +2095,8 @@ NO_WAY_NEXT = (
     "same request you were given, to an open-source model -- call_model(prompt=<the request>, context=<the "
     "lines of .kell/goals/<goal id>.md it needs>, model=\"{model}\", data_class=\"PUBLIC_SOURCE\" when nothing in it is private). Check what "
     "comes back before you use it, and say that it was delegated. If the task needs deep multi-step reasoning, or "
-    "holds private material, carry on yourself.")
+    "holds private material, carry on yourself. For a research job (market size, competitors, funding, due diligence, "
+    "literature, leads, news, fact checks, meeting prep, grants) read the routine first: resource stealth://playbooks.")
 
 
 def _no_way_next(reply: str) -> str:
