@@ -2,6 +2,7 @@
 import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/message-scroller";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/delegator/Composer";
+import { useSpringScroll } from "@/components/delegator/useSpringScroll";
 import { agentIdentity, parseCommand, recipientsFor, toMcpPayload } from "@/lib/delegator/adapters/mcp";
 import { attachMockAgent } from "@/lib/delegator/adapters/mock";
 import { Broker } from "@/lib/delegator/relay/broker";
@@ -53,10 +54,10 @@ function Body({ m }: { m: GroupMessage }) {
 }
 
 /** Only offered when there is more below the viewport. */
-function JumpToLatest() {
+function JumpToLatest({ onJump }: { onJump: () => void }) {
   const { end } = useMessageScrollerScrollable();
   if (!end) return null;
-  return <MessageScroller.Button direction="end" className="dg-jump">Jump to latest</MessageScroller.Button>;
+  return <button type="button" className="dg-jump" onClick={onJump}>Jump to latest</button>;
 }
 
 /** The dev sandbox: group chat for people and agents over an in-memory relay. Nothing here leaves this browser. */
@@ -72,6 +73,9 @@ export default function RoomView() {
   const [members, setMembers] = useState<Record<string, string[]>>(Object.fromEntries(ROOMS.map((r) => [r.id, r.members])));
   const [paused, setPaused] = useState(false);
   const chan = useRef<ReturnType<typeof openChannel> | null>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const { scrollToEnd, follow } = useSpringScroll(viewportRef, contentRef, roomId);
 
   const push = (rid: string, l: Line) => setLines((p) => {
     const cur = p[rid] ?? [];
@@ -106,6 +110,10 @@ export default function RoomView() {
     flush();
     return out;
   }, [view]);
+
+  // A new room starts at its latest message; later messages spring into view only if the reader was already there.
+  useEffect(() => { scrollToEnd({ instant: true }); }, [roomId, scrollToEnd]);
+  useEffect(() => { follow(); }, [blocks, follow]);
 
   const note = (t: string) => push(roomId, { kind: "notice", id: broker.newId(), text: t });
 
@@ -174,10 +182,10 @@ export default function RoomView() {
         </header>
         {paused && <div className="dg-banner" role="status">Paused. Agents will not be woken until you resume.</div>}
 
-        <MessageScroller.Provider autoScroll defaultScrollPosition="end">
+        <MessageScroller.Provider autoScroll={false} defaultScrollPosition="end">
           <MessageScroller.Root className="dg-scroll">
-            <MessageScroller.Viewport className="dg-viewport" aria-label={`Messages in ${roomId}`}>
-              <MessageScroller.Content className="dg-content">
+            <MessageScroller.Viewport ref={viewportRef} className="dg-viewport" aria-label={`Messages in ${roomId}`}>
+              <MessageScroller.Content ref={contentRef} key={roomId} className="dg-content">
                 {blocks.length === 0 && <p className="dg-empty">No messages yet. Try <code>@alice/claude-code look at src/auth.ts</code>.</p>}
                 {blocks.map((b) => b.kind === "notice"
                   ? <MessageScroller.Item key={b.id} className="dg-notice" role="status">{b.text}</MessageScroller.Item>
@@ -196,7 +204,7 @@ export default function RoomView() {
                   ))}
               </MessageScroller.Content>
             </MessageScroller.Viewport>
-            <JumpToLatest />
+            <JumpToLatest onJump={() => scrollToEnd()} />
           </MessageScroller.Root>
         </MessageScroller.Provider>
 

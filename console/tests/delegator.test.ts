@@ -99,3 +99,49 @@ describe("composer logic", () => {
     expect(runs.map((r) => r.messages.map((m) => m.id))).toEqual([["a", "b"], ["c"], ["d"]]);
   });
 });
+
+import { SPRINGS, SpringValue, rubberBand, settleTime, springCss, stepSpring } from "@/lib/delegator/spring";
+
+describe("spring motion", () => {
+  it("settles in about the time iOS's presets do (smooth ~0.8s, bouncy ~1s)", () => {
+    expect(settleTime(SPRINGS.smooth)).toBeGreaterThan(0.6);
+    expect(settleTime(SPRINGS.smooth)).toBeLessThan(1.0);
+    expect(settleTime(SPRINGS.bouncy)).toBeGreaterThan(settleTime(SPRINGS.smooth));
+    expect(settleTime(SPRINGS.bouncy)).toBeLessThan(1.4);
+  });
+  it("a critically damped spring never overshoots; a bouncy one does", () => {
+    const peak = (spec: { response: number; damping: number }) => { let s = { x: 0, v: 0 }, m = 0; for (let i = 0; i < 300; i++) { s = stepSpring(s, 1, spec, 1 / 60); m = Math.max(m, s.x); } return m; };
+    expect(peak(SPRINGS.smooth)).toBeLessThanOrEqual(1.0001);
+    expect(peak(SPRINGS.bouncy)).toBeGreaterThan(1.02);
+  });
+  it("is the same motion at 30, 60 and 120 frames per second", () => {
+    const at = (fps: number) => { let s = { x: 0, v: 0 }; for (let i = 0; i < fps * 0.4; i++) s = stepSpring(s, 100, SPRINGS.smooth, 1 / fps); return s.x; };
+    expect(Math.abs(at(30) - at(120))).toBeLessThan(0.5);
+    expect(Math.abs(at(60) - at(120))).toBeLessThan(0.5);
+  });
+  it("keeps its velocity when the target moves mid-flight, instead of restarting from rest", () => {
+    const seen: number[] = [];
+    const v = new SpringValue(0, SPRINGS.smooth, (x) => seen.push(x));
+    (v as unknown as { target: () => number }).target = () => 100;
+    for (let i = 0; i < 12; i++) v.tick(1 / 60);
+    const speedBefore = v.v;
+    expect(speedBefore).toBeGreaterThan(50);
+    (v as unknown as { target: () => number }).target = () => 300; // retarget
+    v.tick(1 / 60);
+    expect(v.v).toBeGreaterThan(speedBefore * 0.9); // it did not stop and start over
+    for (let i = 0; i < 400 && !v.tick(1 / 60); i++);
+    expect(v.x).toBe(300);
+  });
+  it("exports a CSS linear() easing that starts at 0 and ends at 1", () => {
+    const { easing, ms } = springCss(SPRINGS.smooth);
+    expect(easing).toMatch(/^linear\(0, .*, 1\)$/);
+    expect(ms).toBeGreaterThan(500);
+  });
+  it("rubber-bands with the post's curve: starts at slope c, grows more slowly, never passes the view size", () => {
+    expect(rubberBand(0, 844)).toBe(0);
+    expect(rubberBand(1, 844)).toBeCloseTo(0.55, 1);
+    expect(rubberBand(844, 844)).toBeCloseTo(0.55 * 844 * 844 / (844 + 0.55 * 844), 5);
+    expect(rubberBand(1e6, 844)).toBeLessThan(844);
+    expect(rubberBand(200, 844)).toBeLessThan(rubberBand(400, 844));
+  });
+});
