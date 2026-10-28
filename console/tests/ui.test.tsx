@@ -274,7 +274,7 @@ describe("States", () => {
 });
 
 describe("Router activity", () => {
-  const ev = (id: number, args: Record<string, string> = {}) => ({ id, ts: 1, tool: "find_ways", args, ok: true, ms: 5, output: "x", truncated: false });
+  const ev = (id: number, args: Record<string, string> = {}, seq = id) => ({ id, seq, ts: 1, tool: "find_ways", args, pending: false, ok: true as boolean | null, ms: 5, output: "x", truncated: false });
   it("keeps newest first, ignores a replayed id, and caps the list", () => {
     let l = addEvent([], ev(1));
     l = addEvent(l, ev(2));
@@ -283,6 +283,13 @@ describe("Router activity", () => {
     for (let i = 3; i < 200; i++) l = addEvent(l, ev(i));
     expect(l).toHaveLength(100);
     expect(l[0].id).toBe(199);
+  });
+  it("a call is replaced in place when it finishes, and a replay does not undo it", () => {
+    const started = { ...ev(1, {}, 1), pending: true, ok: null, output: "" };
+    let l = addEvent(addEvent([], started), ev(2));
+    l = addEvent(l, ev(1, {}, 3));
+    expect(l.map((e) => `${e.id}:${e.pending}`)).toEqual(["2:false", "1:false"]);
+    expect(addEvent(l, started)).toBe(l);
   });
   it("summarises a call by what it asked", () => {
     expect(summary(ev(1, { query: "fix  a failing test", repo_claims: "zzz" }))).toBe("fix a failing test");

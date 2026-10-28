@@ -8,10 +8,15 @@ import { HelperError } from "@/lib/words";
 const KEEP = 100;
 const RETRY_MS = 3000;
 
-/** Adds one event, newest first, dropping a repeat (a reconnect replays what was already shown) and anything past KEEP. */
+/**
+ * Adds one event, newest first, and anything past KEEP is dropped. A call arrives twice, when it starts and when it
+ * returns: the later one replaces the earlier in place, and a replay of what is already shown changes nothing.
+ */
 export function addEvent(list: ActivityEvent[], e: ActivityEvent): ActivityEvent[] {
-  if (list.some((x) => x.id === e.id)) return list;
-  return [e, ...list].slice(0, KEEP);
+  const i = list.findIndex((x) => x.id === e.id);
+  if (i < 0) return [e, ...list].slice(0, KEEP);
+  if (e.seq <= list[i].seq) return list;
+  return list.map((x, j) => (j === i ? e : x));
 }
 
 /** The one-line summary of a call: the arguments that say what it was about. */
@@ -46,7 +51,7 @@ export default function ActivityPanel({ client, retryMs = RETRY_MS }: { client: 
     const run = async () => {
       setLink({ state: "connecting" });
       try {
-        await client.activity(last.current, (e) => { last.current = Math.max(last.current, e.id); setEvents((p) => addEvent(p, e)); }, ac.signal, () => setLink({ state: "live" }));
+        await client.activity(last.current, (e) => { last.current = Math.max(last.current, e.seq); setEvents((p) => addEvent(p, e)); }, ac.signal, () => setLink({ state: "live" }));
         if (!ac.signal.aborted) setLink({ state: "down", message: "The link to the MCP closed." });
       } catch (err) {
         if (!ac.signal.aborted) setLink({ state: "down", message: err instanceof HelperError ? err.message : "The feed could not be read." });
@@ -106,17 +111,17 @@ export default function ActivityPanel({ client, retryMs = RETRY_MS }: { client: 
       ) : (
         <div className="stack" aria-label="Calls, newest first">
           {events.map((e) => (
-            <article className="pane" key={e.id} data-status={e.ok ? "done" : "error"}>
+            <article className="pane" key={e.id} data-status={e.pending ? "running" : e.ok ? "done" : "error"}>
               <header>
                 <span>{e.tool}</span>
-                <span className="status" data-s={e.ok ? "executed" : "failed"}>{e.ok ? "returned" : "failed"}</span>
+                <span className="status" data-s={e.pending ? "executed" : e.ok ? "successful" : "failed"}>{e.pending ? "running" : e.ok ? "returned" : "failed"}</span>
               </header>
               <p className="small dim" style={{ margin: "0 0 8px" }}>{summary(e) || "(no arguments)"}</p>
-              <details>
+              <details open={e.pending}>
                 <summary>Output{e.truncated ? " (cut short)" : ""}</summary>
-                <div className="out" role="log" aria-label={`Output of ${e.tool}`}>{e.output || "(empty)"}</div>
+                <div className="out" role="log" aria-label={`Output of ${e.tool}`}>{e.pending ? "(waiting for the result)" : e.output || "(empty)"}</div>
               </details>
-              <footer><span className="dim">{new Date(e.ts * 1000).toLocaleTimeString()}</span><span>{formatMs(e.ms)}</span></footer>
+              <footer><span className="dim">{new Date(e.ts * 1000).toLocaleTimeString()}</span><span>{e.pending ? "…" : formatMs(e.ms)}</span></footer>
             </article>
           ))}
         </div>

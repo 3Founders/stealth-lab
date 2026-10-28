@@ -77,11 +77,13 @@ export type ChatEvent =
 
 /** One call the MCP's router handled (find_ways, call_model, report_result, use_tool), with the text it returned. */
 export interface ActivityEvent {
-  id: number;
+  id: number; // the call; it stays the same when the call finishes
+  seq: number; // moves on at every change to the call; the feed resumes from it
   ts: number; // seconds
   tool: string;
   args: Record<string, string>;
-  ok: boolean;
+  pending: boolean; // true from the moment the call starts until it returns
+  ok: boolean | null;
   ms: number;
   output: string;
   truncated: boolean;

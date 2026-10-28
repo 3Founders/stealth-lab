@@ -69,3 +69,34 @@ def test_stream_replays_then_delivers_live():
     assert json.loads(a.split("data: ", 1)[1])["output"] == "old"
     assert json.loads(b.split("data: ", 1)[1])["output"] == "new"
     assert not activity._subscribers
+
+
+def test_a_call_shows_as_pending_while_it_runs_then_completes_in_place():
+    _reset()
+    gate = asyncio.Event()
+
+    @activity.traced
+    async def find_ways(query: str) -> str:
+        await gate.wait()
+        return "done"
+
+    async def go():
+        task = asyncio.ensure_future(find_ways(query="q"))
+        await asyncio.sleep(0.01)
+        mid = [dict(e) for e in activity.recent()]
+        agen = activity.stream(0, heartbeat_s=0.05)
+        replay = json.loads((await agen.__anext__()).split("data: ", 1)[1])
+        nxt = asyncio.ensure_future(agen.__anext__())
+        await asyncio.sleep(0.01)
+        gate.set()
+        await task
+        final = json.loads((await nxt).split("data: ", 1)[1])
+        await agen.aclose()
+        return mid, replay, final
+
+    mid, replay, final = asyncio.run(go())
+    assert len(mid) == 1 and mid[0]["pending"] and mid[0]["ok"] is None and mid[0]["output"] == ""
+    assert replay["pending"] and replay["id"] == final["id"]
+    assert not final["pending"] and final["ok"] and final["output"] == "done" and final["seq"] > replay["seq"]
+    assert len(activity.recent()) == 1
+    assert activity.recent(after=final["seq"]) == []  # a viewer that already has the final state is not sent it again

@@ -24,6 +24,7 @@ MAX_ARG = 300
 _events: deque[dict[str, Any]] = deque(maxlen=MAX_EVENTS)
 _subscribers: set[asyncio.Queue] = set()
 _ids = itertools.count(1)
+_seqs = itertools.count(1)  # moves on at every change, so a call is sent again when it finishes
 
 
 def _short_args(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -36,17 +37,33 @@ def _short_args(kwargs: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def record(tool: str, args: dict[str, Any], output: str, ms: int, ok: bool) -> dict[str, Any]:
-    truncated = len(output) > MAX_OUTPUT
-    ev = {"id": next(_ids), "ts": time.time(), "tool": tool, "args": _short_args(args), "ok": ok, "ms": ms,
-          "output": output[:MAX_OUTPUT], "truncated": truncated}
-    _events.append(ev)
+def _publish(ev: dict[str, Any]) -> None:
+    ev["seq"] = next(_seqs)
     for q in list(_subscribers):
         try:
             q.put_nowait(ev)
         except asyncio.QueueFull:  # a stalled viewer loses events, never slows a tool call
             pass
+
+
+def start(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """A call has begun: it shows at once as pending, so a slow or hung call is visible while it runs."""
+    ev = {"id": next(_ids), "seq": 0, "ts": time.time(), "tool": tool, "args": _short_args(args), "pending": True,
+          "ok": None, "ms": 0, "output": "", "truncated": False}
+    _events.append(ev)
+    _publish(ev)
     return ev
+
+
+def finish(ev: dict[str, Any], output: str, ms: int, ok: bool) -> dict[str, Any]:
+    """The same call, completed: ``id`` stays, ``seq`` moves on so a viewer that reconnects gets the final state."""
+    ev.update(pending=False, ok=ok, ms=ms, output=output[:MAX_OUTPUT], truncated=len(output) > MAX_OUTPUT)
+    _publish(ev)
+    return ev
+
+
+def record(tool: str, args: dict[str, Any], output: str, ms: int, ok: bool) -> dict[str, Any]:
+    return finish(start(tool, args), output, ms, ok)
 
 
 def traced(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
@@ -55,19 +72,20 @@ def traced(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
     @functools.wraps(fn)
     async def wrapper(*a: Any, **kw: Any) -> Any:
         t0 = time.monotonic()
+        ev = start(fn.__name__, kw)
         try:
             result = await fn(*a, **kw)
-        except Exception as exc:
-            record(fn.__name__, kw, f"{type(exc).__name__}: {exc}", int((time.monotonic() - t0) * 1000), False)
+        except BaseException as exc:  # a cancelled call (the caller hung up) is recorded too, then propagates
+            finish(ev, f"{type(exc).__name__}: {exc}", int((time.monotonic() - t0) * 1000), False)
             raise
-        record(fn.__name__, kw, result if isinstance(result, str) else json.dumps(result, default=str),
+        finish(ev, result if isinstance(result, str) else json.dumps(result, default=str),
                int((time.monotonic() - t0) * 1000), True)
         return result
     return wrapper
 
 
 def recent(after: int = 0) -> list[dict[str, Any]]:
-    return [e for e in _events if e["id"] > after]
+    return [e for e in _events if e["seq"] > after]
 
 
 async def stream(after: int = 0, heartbeat_s: float = 15.0) -> AsyncIterator[str]:
@@ -76,17 +94,17 @@ async def stream(after: int = 0, heartbeat_s: float = 15.0) -> AsyncIterator[str
     _subscribers.add(q)
     try:
         last = after
-        for ev in recent(after):
-            last = ev["id"]
-            yield f"id: {ev['id']}\ndata: {json.dumps(ev)}\n\n"
+        for ev in sorted(recent(after), key=lambda e: e["seq"]):
+            last = max(last, ev["seq"])
+            yield f"id: {ev['seq']}\ndata: {json.dumps(ev)}\n\n"
         while True:
             try:
                 ev = await asyncio.wait_for(q.get(), timeout=heartbeat_s)
             except asyncio.TimeoutError:
                 yield ": keep-alive\n\n"
                 continue
-            if ev["id"] > last:
-                last = ev["id"]
-                yield f"id: {ev['id']}\ndata: {json.dumps(ev)}\n\n"
+            if ev["seq"] > last:
+                last = ev["seq"]
+                yield f"id: {ev['seq']}\ndata: {json.dumps(ev)}\n\n"
     finally:
         _subscribers.discard(q)
