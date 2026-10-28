@@ -200,11 +200,13 @@ function Panel({ subject }: { subject: string }) {
           <>
             <p className="small" role="status">The assistant is using: <b>{choice.source === "kell" ? `keळ models (${choice.model})` : "your own key"}</b>.</p>
             <label className="small models-ack"><input type="checkbox" checked={kellAck} onChange={(e) => setKellAck(e.target.checked)} /> I understand: public material only, capped, and my prompts go to the model provider.</label>
-            <div className="cluster">
-              <label className="small" htmlFor="m-kell-model">Model</label>
-              <select id="m-kell-model" value={kellModel} onChange={(e) => setKellModel(e.target.value)}>
-                {KELL_MODEL_IDS.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
+            <div className="models-kell-controls">
+              <div className="models-select">
+                <label className="small" htmlFor="m-kell-model">Model</label>
+                <select id="m-kell-model" value={kellModel} onChange={(e) => setKellModel(e.target.value)}>
+                  {KELL_MODEL_IDS.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
               <button type="button" className="btn-ink" disabled={!kellAck} onClick={chooseKell}><span>Use keळ models for the assistant</span></button>
               {choice.source === "kell" && <button type="button" className="btn-line" onClick={chooseOwnKey}>Use my own key instead</button>}
               <button type="button" className="btn-line" onClick={() => void testKell()} disabled={kellProbe.state === "testing"}>{kellProbe.state === "testing" ? "Testing…" : "Test"}</button>
@@ -287,10 +289,12 @@ function Panel({ subject }: { subject: string }) {
                 {pr.state === "ok" && (
                   <div className="cluster" role="status">
                     <span className="small">The key works. {pr.models.length} model{pr.models.length === 1 ? "" : "s"} available.</span>
-                    <label className="small" htmlFor={`m-model-${k.id}`}>Use</label>
-                    <select id={`m-model-${k.id}`} value={chosen[k.id] ?? ""} onChange={(e) => setChosen((c) => ({ ...c, [k.id]: e.target.value }))}>
-                      {pr.models.map((m) => <option key={m} value={m}>{m}</option>)}
-                    </select>
+                    <div className="models-select">
+                      <label className="small" htmlFor={`m-model-${k.id}`}>Use</label>
+                      <select id={`m-model-${k.id}`} value={chosen[k.id] ?? ""} onChange={(e) => setChosen((c) => ({ ...c, [k.id]: e.target.value }))}>
+                        {pr.models.map((m) => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
                     <button type="button" className="btn-ink" onClick={() => void useModel(k)}><span>Use this model</span></button>
                   </div>
                 )}
