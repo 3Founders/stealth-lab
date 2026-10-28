@@ -8,6 +8,14 @@ A signed-in person opens Delegator on the site and sends work to the agents THEY
 
 Today Delegator (`routing_kell_frontend/app/delegator`, copy in `console/`) is a sandbox: an in-memory relay in the tab and mock agents that answer with a canned line. No network calls. This brief replaces the mock with a real relay and a real "connect an agent" flow.
 
+## 1b. No fake server (decision, 2026-10-28)
+
+The founder wants this built against a REAL server, not a fake one. So:
+- The relay is a real service with real storage, built in this same push (section 5a). It is not a mock the UI waits on.
+- The UI is written against that real API from day one. The in-tab Broker and mock agents are removed from the shipped path. A small in-memory test double is allowed ONLY inside unit tests, never as a dev mode, a fallback or a demo.
+- Every acceptance check in sections 7 and 6b runs against a real running relay and, for BYOK, a real provider with a real key.
+- If a backend piece is not ready yet, the Frontend work waits on it or is built behind a feature flag that is off. It does not ship a pretend version.
+
 ## 2. Rules that shape the design (do not break these)
 
 Source: Anthropic's Claude Code legal page (re-read 2026-10-28) and the product model-access decision.
@@ -60,11 +68,17 @@ Agent side (connector or MCP tools):
 
 Server rules: verify the token on every call (the page gate protects nothing); a user only sees their own rooms and agents; an agent token cannot read rooms; rate-limit sends; keep the depth limit of 4 for agent-to-agent hops and the "a human message resets to 0" rule; redact secrets in task text and results with the existing redaction chokepoint; keep an audit trail of who sent what; delete task bodies after a retention window (state it in the UI).
 
-The backend and MCP parts are NOT the frontend lane's paths (`backend/**`, `packaging/npm/**`). Post a cross-lane request on the build board with this brief attached; do not edit them yourself. Build against a typed client and a fake server (below) so the UI does not wait.
+The backend and MCP parts are NOT the frontend lane's paths (`backend/**`, `packaging/npm/**`). Post a cross-lane request on the build board with this brief attached; do not edit them yourself.
+
+### 5a. Where the real relay lives (proposal)
+
+Put the relay routes on the hosted kell MCP server (`backend/app/mcp_server/server.py`, as custom routes next to `/triage`), not on the separate `app.main` API. Reasons: it is already deployed (Railway, `https://kell-mcp-production.up.railway.app`), it already verifies Supabase tokens, and the two MCP tools `delegate_inbox` and `delegate_result` live in the same process, so one store serves the site and the agents. Storage: new migration tables in the existing Neon database (agents, rooms, tasks, results), written through the repo's `tenant_transaction` / `scope_predicates` rules, with the redaction chokepoint on every free-text column. Realtime to the browser: Server-Sent Events from the same service (single worker is fine to start; the number of connections per worker is bounded).
+
+The hosted URL for the site is `NEXT_PUBLIC_KEL_MCP_URL`'s origin; the Frontend client builds `/v1/delegate/...` from it. Local dev points at the local server (`http://127.0.0.1:8765`).
 
 ## 6. Frontend work (your lane: `routing_kell_frontend/**`, then keep `console/**` in step)
 
-1. A `RelayClient` interface with two implementations: `FakeRelayClient` (today's in-tab Broker, kept for tests and dev) and `HttpRelayClient` (the sketch above, behind `NEXT_PUBLIC_KEL_API_URL`). `RoomView` talks only to the interface.
+1. A `RelayClient` over the real relay API (section 5), pointed at the MCP server origin (`NEXT_PUBLIC_KEL_MCP_URL`; local dev: `http://127.0.0.1:8765`). `RoomView` talks only to this client. Remove the in-tab Broker and mock agents from the shipped path (section 1b); a test double may exist inside unit tests only.
 2. "Connect an agent" panel: name your agent, get the pairing code with a copy button and the exact command to run on your machine (`kell agent pair <code>` once phase 2 exists; for phase 1, the sentence to say to your agent plus the MCP connector address from `/connect`). Show status (online/offline, last seen), a Revoke button, and an empty state.
 3. Room view: task chips with status (queued, waiting for approval, working, done, failed), result cards with the check outcome, a cancel action on queued tasks, offline-agent notice ("this agent isn't connected; the task will wait until it checks in").
 4. Approvals: if the owner turns on approvals, tasks wait in a "needs your OK" list before they can be claimed. Default on.
@@ -95,21 +109,21 @@ UI:
 - No key yet: the assistant slot shows "Add a key to chat here" and links to the Models panel.
 
 Acceptance for 6b:
-- Add a key, Test passes against a stub provider, chat streams a reply, Delete removes it, a reload keeps it (encrypted) until deleted.
+- Add a real key, Test passes against the real provider, chat streams a real reply, Delete removes it, a reload keeps it (encrypted) until deleted. (A stub provider is allowed only in unit tests.)
 - A grep of `localStorage`/`sessionStorage` writes shows no plain key; the leak test above passes.
 - The page copy contains no "Sign in with Claude" and no request for a claude.ai credential.
 
 ## 7. Acceptance (numbers, per the repo's rule that exits are numbers)
 
-- With `FakeRelayClient`: send a message mentioning two agents, see two tasks reach `done` with results; the 4-hop guard still stops a chain; revoke removes the agent and its pending tasks.
-- With a stub `HttpRelayClient` against a mock HTTP server: same scenarios pass; a 401 redirects to sign-in; an SSE drop reconnects and does not duplicate messages.
+- Against the real relay running locally and then on the hosted server: a signed-in test account registers two agents, sends a message mentioning both, and the two tasks reach `done` with results posted by the agents through `delegate_inbox` / `delegate_result`; the 4-hop guard still stops a chain; revoking an agent removes it and its pending tasks.
+- A request with no token or someone else's token gets 401/403 and sees none of the owner's rooms; a 401 in the UI redirects to sign-in; an SSE drop reconnects without duplicating messages. Show the real HTTP evidence (status codes), not a mocked run.
 - The connect panel shows a pairing code that expires after 10 minutes and an agent that goes offline 60 s after its last poll.
 - No string "Claude", "Codex" or "GPT" in any handle or product label we generate; grep proves it.
 - vitest all green, `tsc --noEmit` clean, `next build` ok. Report the counts in the commit message.
 
 ## 8. Phases
 
-1. Phase 1 (this brief): UI + client + fake server; backend tables, relay API and the two MCP tools requested from their lanes. Agents connect through the MCP connector in their own session.
+1. Phase 1 (this brief): the real relay (tables, routes, SSE, auth) and the two MCP tools from the backend lane, built first or in parallel, plus the UI and client from the Frontend lane against it. No fake server. Agents connect through the MCP connector in their own session. BYOK mode 1 needs no relay and can start immediately.
 2. Phase 2: `kell agent pair` helper with terminal approvals, in `packaging/npm`.
 3. Phase 3: unattended runs, API key or cloud credentials only, with spend caps. Not for subscription logins.
 
