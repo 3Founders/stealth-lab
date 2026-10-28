@@ -12,7 +12,9 @@ import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/del
 import { describeBacking, makeResolver, type Backing } from "@/lib/delegator/adapters/resolve";
 import { Broker } from "@/lib/delegator/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, validAgentName, type RelayAgent, type RelayTask } from "@/lib/delegator/relay-client";
-import { newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/delegator/rooms";
+import { DEFAULT_ROOM, newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/delegator/rooms";
+import { roomsApi, type RoomMember } from "@/lib/delegator/rooms-api";
+import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/delegator/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/delegator/store";
 import type { AgentActivity, AgentIdentity, GroupMessage } from "@/lib/delegator/types";
 import { MAX_DEPTH } from "@/lib/delegator/types";
@@ -68,11 +70,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const api = useMemo(() => relay({ token: getAccessToken }), []);
   const history = useMemo(() => new HistoryStore(idbStore(HISTORY_DB), subject), [subject]);
   const historyWarned = useRef(false);
+  const rapi = useMemo(() => roomsApi({ token: getAccessToken }), []);
+  const engineRef = useRef<SyncEngine | null>(null);
+  const [sync, setSync] = useState<SyncState>({ status: "idle", pending: 0, lastSyncAt: null, error: null });
+  const [info, setInfo] = useState<RoomsChange["info"]>({});
+  const [members, setMembers] = useState<RoomMember[]>([]);
+  const [invite, setInvite] = useState<{ url: string; days: number; uses: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [peopleError, setPeopleError] = useState("");
 
   const [roomList, setRoomList] = useState<RoomList>(() => readRooms(kv, subject));
   const room = roomList.current;
   const roomRef = useRef(room);
   roomRef.current = room;
+  const roomListRef = useRef(roomList);
+  roomListRef.current = roomList;
 
   const [agents, setAgents] = useState<string[]>([]); // agents that run in this tab
   const agentsRef = useRef<string[]>([]);
@@ -80,6 +92,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const lineStore = useRef<Record<string, Line[]>>({});
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
   const [streaming, setStreaming] = useState<Record<string, { room: string; text: string }>>({});
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
   const [paused, setPaused] = useState(false);
   const [backing, setBacking] = useState<Backing | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false); // phones: the sidebar is a drawer
@@ -110,12 +124,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     push(roomRef.current, { kind: "notice", id: "history-warn", text: "This browser won't let keळ save your history, so it will be gone when you close the page.", t: Date.now() });
   };
 
-  const push = useCallback((r: string, l: Line) => {
+  const push = useCallback((r: string, l: Line, remote = false) => {
     const cur = lineStore.current[r] ?? [];
     if (l.kind === "msg" && cur.some((x) => x.kind === "msg" && x.m.id === l.m.id)) return;
     lineStore.current = { ...lineStore.current, [r]: [...cur, l] }; // read straight away by the agents' history, before any re-render
     bump((n) => n + 1);
-    if (l.kind === "msg") history.appendMessage(l.m).catch(() => warnHistory());
+    if (l.kind === "msg") {
+      history.appendMessage(l.m).catch(() => warnHistory());
+      if (!remote) void engineRef.current?.enqueue(r, l.m); // typed or produced on this device: it goes to your account
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history]);
   const note = useCallback((text: string, r: string = roomRef.current) => push(r, { kind: "notice", id: broker.newId(), text, t: Date.now() }), [broker, push]);
@@ -180,6 +197,43 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     describeBacking({ vault, kv, subject }).then((b) => { if (live) setBacking(b); }).catch(() => { if (live) setBacking({ ready: false, text: "Add a key to chat here" }); });
     return () => { live = false; };
   }, [vault, kv, subject]);
+
+  // Keep your rooms the same on every device: push what was sent here, pull what was sent elsewhere.
+  useEffect(() => {
+    const engine = new SyncEngine({
+      api: rapi, history, labels: () => roomListRef.current.rooms,
+      busy: () => Object.keys(streamingRef.current).length > 0 || (tasksRef.current[roomRef.current] ?? []).some((t) => !isFinished(t)),
+      hidden: () => document.visibilityState === "hidden",
+      hooks: {
+        onMessages: (label, ms) => { for (const m of ms) push(label, { kind: "msg", m }, true); },
+        onRooms: (c) => {
+          if (c.added.length || c.removed.length) {
+            setRoomList((l) => {
+              let rooms = l.rooms.filter((r) => !c.removed.includes(r));
+              for (const a of c.added) if (!rooms.includes(a.label)) rooms = [...rooms, a.label];
+              if (!rooms.length) rooms = [DEFAULT_ROOM];
+              return { rooms, current: rooms.includes(l.current) ? l.current : rooms[0] };
+            });
+            for (const r of c.removed) {
+              const { [r]: _gone, ...rest } = lineStore.current; // eslint-disable-line @typescript-eslint/no-unused-vars
+              lineStore.current = rest;
+              void history.clearRoom(r).catch(() => {});
+              push(roomRef.current, { kind: "notice", id: crypto.randomUUID(), text: `${r} is no longer on your account (it was deleted, or you left it), so it was removed here.`, t: Date.now() });
+            }
+          }
+          setInfo((p) => ({ ...p, ...c.info }));
+        },
+        onNotice: (label, text) => push(label ?? roomRef.current, { kind: "notice", id: crypto.randomUUID(), text, t: Date.now() }),
+        onState: setSync,
+      },
+    });
+    engineRef.current = engine;
+    engine.start();
+    const wake = () => engine.kick();
+    window.addEventListener("online", wake);
+    document.addEventListener("visibilitychange", wake);
+    return () => { engine.stop(); window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); engineRef.current = null; };
+  }, [rapi, history, push]);
 
   // Bring this room's saved history back from this device (what is already on screen wins on a clash).
   const hydrate = useCallback(async (r: string) => {
@@ -314,6 +368,41 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const itemKeys = items.map((i) => i.key).join("|");
   useEffect(() => { follow(); }, [itemKeys, tasks, liveText, follow]);
 
+  // Tell your account how far you have read here, so unread counts follow you to your other devices.
+  useEffect(() => {
+    const t = setTimeout(() => void engineRef.current?.markRead(room), 1200);
+    return () => clearTimeout(t);
+  }, [room, itemKeys]);
+
+  // Who is in this room (once it exists on your account), and an invite link for it.
+  const synced = info[room] !== undefined;
+  useEffect(() => {
+    setInvite(null); setCopied(false); setPeopleError("");
+    const sid = engineRef.current?.roomId(room);
+    if (!sid) { setMembers([]); return; }
+    let live = true;
+    rapi.members(sid).then((m) => { if (live) setMembers(m); }).catch(() => { if (live) setMembers([]); });
+    return () => { live = false; };
+  }, [room, synced, rapi]);
+  const iAmOwner = (info[room]?.role ?? "owner") !== "member";
+  const makeInvite = async () => {
+    const sid = engineRef.current?.roomId(room);
+    if (!sid) return;
+    setPeopleError("");
+    try {
+      const inv = await rapi.createInvite(sid, 7, 20);
+      setInvite({ url: `${window.location.origin}/room/join?code=${encodeURIComponent(inv.code)}`, days: 7, uses: inv.max_uses });
+      setCopied(false);
+    } catch (err) { setPeopleError(err instanceof Error ? err.message : "That didn't work."); }
+  };
+  const copyInvite = async () => { try { await navigator.clipboard.writeText(invite?.url ?? ""); setCopied(true); } catch { setCopied(false); } };
+  const removePerson = async (m: RoomMember) => {
+    const sid = engineRef.current?.roomId(room);
+    if (!sid || !m.sub) return;
+    try { await rapi.removeMember(sid, m.sub); setMembers((p) => p.filter((x) => x.sub !== m.sub)); }
+    catch (err) { setPeopleError(err instanceof Error ? err.message : "That didn't work."); }
+  };
+
   // The shell is as tall as what is actually visible (a phone's on-screen keyboard covers part of the layout viewport).
   useEffect(() => {
     const vv = window.visualViewport;
@@ -340,11 +429,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setFormError(""); setNewRoom(null);
     setRoomList({ rooms: [...roomList.rooms, r.name], current: r.name });
   };
-  const deleteRoom = (r: string) => {
+  const deleteRoom = async (r: string) => {
     const next = withoutRoom(roomList, r);
     if (next === roomList) return;
     const has = (lineStore.current[r] ?? []).some((l) => l.kind === "msg") || (tasksRef.current[r] ?? []).length > 0;
-    if (has && !window.confirm(`Remove ${r}? Its saved history on this device is deleted too.`)) return;
+    const sid = engineRef.current?.roomId(r);
+    const owner = (info[r]?.role ?? "owner") !== "member";
+    const ask = sid
+      ? owner ? `Delete ${r} for everyone? Its history is removed from your account and from everyone you invited. This can't be undone.` : `Leave ${r}? It is removed from your account.`
+      : `Remove ${r}? Its saved history on this device is deleted too.`;
+    if ((has || sid) && !window.confirm(ask)) return;
+    if (sid) {
+      try { if (owner) await rapi.deleteRoom(sid); else await rapi.removeMember(sid, subject); }
+      catch (err) { note(err instanceof Error ? err.message : "That didn't work."); return; }
+      await engineRef.current?.forget(r);
+    }
     void history.clearRoom(r).catch(() => {});
     const { [r]: _l, ...rest } = lineStore.current; // eslint-disable-line @typescript-eslint/no-unused-vars
     lineStore.current = rest;
@@ -375,7 +474,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     } catch (err) { note(err instanceof Error ? err.message : "Couldn't import that file."); }
   };
   const wipe = async () => {
-    if (!window.confirm("Delete all saved rooms history on this device? Your rooms and agents stay. This can't be undone.")) return;
+    if (!window.confirm("Clear this device's copy of your rooms? Your rooms stay on your account, so they download again. To remove a room for good, remove the room.")) return;
     await history.clearAll().catch(() => {});
     lineStore.current = {};
     setTasksByRoom({});
@@ -463,8 +562,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
             <li key={r}>
-              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{r.slice(1)}</button>
-              {roomList.rooms.length > 1 && <button type="button" className="dg-x" onClick={() => deleteRoom(r)} aria-label={`Remove room ${r}`} title={`Remove ${r}`}>×</button>}
+              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{r.slice(1)}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
+              {roomList.rooms.length > 1 && <button type="button" className="dg-x" onClick={() => void deleteRoom(r)} aria-label={`Remove room ${r}`} title={`Remove ${r}`}>×</button>}
             </li>
           ))}
         </ul>
@@ -478,6 +577,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               <div className="dg-form-row"><button type="submit" className="btn-ink dg-mini-btn"><span>Create</span></button><button type="button" className="btn-line dg-mini-btn" onClick={() => { setNewRoom(null); setFormError(""); }}>Cancel</button></div>
             </form>
           )}
+
+        <p className="dg-note">Rooms are open: they follow you to your other devices, Claude, ChatGPT and other connectors can join them, and keळ can read them. They are not end-to-end encrypted.</p>
 
         <h2>Agents</h2>
         <ul className="dg-members">
@@ -511,6 +612,32 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         </ul>
         {relayError && <p className="dg-err" role="status">{relayError}</p>}
 
+        {synced && (
+          <>
+            <h2>People in {room}</h2>
+            <ul className="dg-members">
+              {members.filter((m) => m.kind === "person").map((m) => (
+                <li key={m.sub ?? m.agent_id}>
+                  <span className="dg-dot" data-a="human" aria-hidden="true" />
+                  <span className="dg-handle">{m.me ? "You" : m.name ?? "Member"}</span>
+                  <span className="dg-badge" data-kind="tab">{m.role}</span>
+                  {iAmOwner && !m.me && m.role !== "owner" && <button type="button" className="dg-remove" onClick={() => void removePerson(m)} aria-label={`Remove ${m.name ?? "this person"} from ${room}`} title="Remove from room">×</button>}
+                </li>
+              ))}
+            </ul>
+            {iAmOwner && !invite && <button type="button" className="btn-line dg-add" onClick={() => void makeInvite()}>Invite someone</button>}
+            {invite && (
+              <div className="dg-form" role="status">
+                <label htmlFor="dg-invite-link">Invite link</label>
+                <input id="dg-invite-link" readOnly value={invite.url} onFocus={(e) => e.currentTarget.select()} />
+                <p className="dg-note" style={{ padding: 0 }}>Anyone with a keळ account who opens this link can join {room}. It works {invite.uses} times and expires in {invite.days} days. Share it only with people you want here.</p>
+                <div className="dg-form-row"><button type="button" className="btn-ink dg-mini-btn" onClick={() => void copyInvite()}><span>{copied ? "Copied" : "Copy link"}</span></button><button type="button" className="btn-line dg-mini-btn" onClick={() => setInvite(null)}>Done</button></div>
+              </div>
+            )}
+            {peopleError && <p className="dg-err" role="alert">{peopleError}</p>}
+          </>
+        )}
+
         {!adding
           ? <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
           : (
@@ -532,7 +659,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           </p>
         )}
         <h2>Your data</h2>
-        <p className="dg-note">Rooms and chats are saved in this browser, encrypted, and are yours. They don&rsquo;t leave your device and don&rsquo;t follow you to another one yet.</p>
+        <p className="dg-note">Your rooms and chats are saved in this browser, encrypted, and synced to your account so they follow you to your other devices. Download keeps a copy of your own.</p>
         <div className="dg-data">
           <button type="button" className="btn-line dg-mini-btn" onClick={() => void download()}>Download</button>
           <button type="button" className="btn-line dg-mini-btn" onClick={() => importFile.current?.click()}>Import</button>
@@ -550,6 +677,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span aria-hidden="true">☰</span> <span>{count} agent{count === 1 ? "" : "s"}</span>
           </button>
           <h1>{room}</h1>
+          <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>
+            {sync.status === "syncing" ? "Syncing…" : sync.status === "offline" ? `Offline${sync.pending ? ` · ${sync.pending} waiting` : ""}` : sync.status === "error" ? "Not syncing" : sync.pending ? `${sync.pending} sending` : "Synced"}
+          </span>
           <span className="dg-limit">In-tab agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
           <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>
             <span aria-hidden="true">{paused ? "▶" : "⏸"}</span>{paused ? "Resume agents" : "Pause agents"}

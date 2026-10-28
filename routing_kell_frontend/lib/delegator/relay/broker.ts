@@ -22,7 +22,8 @@ export class Broker {
   paused = false;
   private seq = 0;
 
-  newId(): string { return `m${Date.now().toString(36)}${(this.seq++).toString(36)}`; }
+  /** A UUID: a message's id is also its event id on the server, so a retried or echoed message is never a second one. */
+  newId(): string { return typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `m${Date.now().toString(36)}${(this.seq++).toString(36)}`; }
 
   on(l: Listener): () => void { this.listeners.add(l); return () => this.listeners.delete(l); }
   private emit(e: RelayEvent) { for (const l of [...this.listeners]) l(e); }

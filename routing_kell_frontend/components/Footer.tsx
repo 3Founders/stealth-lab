@@ -1,6 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { adminSignInUrl } from "@/lib/admin-link";
+import { companyLinks } from "@/lib/social-links";
 
 // Only routes and anchors that exist in this build.
 const cols: Array<{ h: string; items: string[][] }> = [
@@ -15,9 +16,15 @@ const cols: Array<{ h: string; items: string[][] }> = [
   { h: "About", items: [["About keळ", "/#about"]] },
 ];
 
+/** Outside addresses open in a new tab and never hand the new page a reference to this one. */
+const isOutside = (href: string) => href.startsWith("http");
+
 export default function Footer() {
   const admin = adminSignInUrl();
-  const columns = cols.map((c) => (c.h === "Account" && admin ? { ...c, items: [...c.items, ["Administrator sign in", admin]] } : c));
+  const columns = [
+    ...cols.map((c) => (c.h === "Account" && admin ? { ...c, items: [...c.items, ["Administrator sign in", admin]] } : c)),
+    { h: "Company", items: companyLinks().map((l) => [l.label, l.href]) },
+  ];
   return (
     <footer className="footer">
       <div className="frame grid">
@@ -31,7 +38,7 @@ export default function Footer() {
             <ul>
               {c.items.map(([label, href]) => (
                 <li key={label}>
-                  {href.startsWith("http") ? <a href={href} rel="noopener">{label}</a> : <Link href={href}>{label}</Link>}
+                  {isOutside(href) ? <a href={href} target="_blank" rel="noopener noreferrer">{label}</a> : <Link href={href}>{label}</Link>}
                 </li>
               ))}
             </ul>

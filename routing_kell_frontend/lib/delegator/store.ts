@@ -14,6 +14,7 @@
  * your local copy does not.
  */
 import type { KvStore } from "@/lib/byok/vault";
+import type { EventIn } from "./rooms-api";
 import type { RelayTask } from "./relay-client";
 import type { GroupMessage } from "./types";
 
@@ -23,7 +24,10 @@ const DEVICE_KEY = "device-key";
 
 export type HistoryLine = { kind: "msg"; m: GroupMessage };
 
-interface Sealed { v: 1; kind: "msg" | "task"; room: string; id: string; t: number; iv: string; cipher: string }
+/** A message waiting to be sent to the server (kept encrypted until it is accepted, so it survives a reload while offline). */
+export interface OutboxItem { id: string; room: string; event: EventIn; at: number }
+
+interface Sealed { v: 1; kind: "msg" | "task" | "meta" | "out"; room: string; id: string; t: number; iv: string; cipher: string }
 
 export interface HistoryExport {
   version: 1;
@@ -44,6 +48,9 @@ export class HistoryStore {
 
   private evKey = (room: string, t: number, id: string) => `ev:${this.subject}:${room}:${pad(t)}:${id}`;
   private evPrefix = (room?: string) => `ev:${this.subject}:${room ?? ""}`;
+  private idxKey = (room: string, id: string) => `idx:${this.subject}:${room}:${id}`;
+  private metaKey = (name: string) => `meta:${this.subject}:${name}`;
+  private outKey = (id: string) => `out:${this.subject}:${id}`;
   private taskKey = (room: string, id: string) => `task:${this.subject}:${room}:${id}`;
   private taskPrefix = (room?: string) => `task:${this.subject}:${room ?? ""}`;
 
@@ -57,7 +64,7 @@ export class HistoryStore {
 
   private aad = (kind: string, room: string, id: string) => te.encode(`${this.subject}|${kind}|${room}|${id}`);
 
-  private async seal(kind: "msg" | "task", room: string, id: string, t: number, value: unknown): Promise<Sealed> {
+  private async seal(kind: "msg" | "task" | "meta" | "out", room: string, id: string, t: number, value: unknown): Promise<Sealed> {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: this.aad(kind, room, id) }, await this.deviceKey(), te.encode(JSON.stringify(value)));
     return { v: 1, kind, room, id, t, iv: b64(iv), cipher: b64(new Uint8Array(cipher)) };
@@ -72,9 +79,58 @@ export class HistoryStore {
 
   /** Keeps a message. Writing the same id again is a no-op. */
   async appendMessage(m: GroupMessage): Promise<void> {
-    const key = this.evKey(m.roomId, m.timestamp, m.id);
-    if ((await this.store.get(key)) !== undefined) return;
-    await this.store.set(key, await this.seal("msg", m.roomId, m.id, m.timestamp, m));
+    if ((await this.store.get(this.idxKey(m.roomId, m.id))) !== undefined) return; // the same message arriving again, even with another timestamp
+    await this.store.set(this.evKey(m.roomId, m.timestamp, m.id), await this.seal("msg", m.roomId, m.id, m.timestamp, m));
+    await this.store.set(this.idxKey(m.roomId, m.id), m.timestamp);
+  }
+
+  /** Is this message already saved? */
+  async hasMessage(room: string, id: string): Promise<boolean> {
+    return (await this.store.get(this.idxKey(room, id))) !== undefined;
+  }
+
+  // ---- small encrypted records the sync engine keeps: per-room cursors, this device's id, the send queue
+  async getMeta<T>(name: string): Promise<T | null> {
+    const s = (await this.store.get(this.metaKey(name))) as Sealed | undefined;
+    return s ? this.open<T>(s) : null;
+  }
+
+  async setMeta(name: string, value: unknown): Promise<void> {
+    await this.store.set(this.metaKey(name), await this.seal("meta", "", name, 0, value));
+  }
+
+  /** An id for this browser, so a device can tell its own messages from another device's. */
+  async deviceId(): Promise<string> {
+    const have = await this.getMeta<string>("device");
+    if (have) return have;
+    const id = crypto.randomUUID();
+    await this.setMeta("device", id);
+    return id;
+  }
+
+  async putOutbox(item: OutboxItem): Promise<void> {
+    await this.store.set(this.outKey(item.id), await this.seal("out", item.room, item.id, item.at, item));
+  }
+
+  async outbox(): Promise<OutboxItem[]> {
+    const out: OutboxItem[] = [];
+    const p = `out:${this.subject}:`;
+    for (const k of (await this.store.keys()).filter((x) => x.startsWith(p))) {
+      const s = (await this.store.get(k)) as Sealed | undefined;
+      const v = s ? await this.open<OutboxItem>(s) : null;
+      if (v) out.push(v);
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }
+
+  /** Ids waiting to be sent, and how many: read from the keys, so no record is decrypted. */
+  async outboxIds(): Promise<string[]> {
+    const p = `out:${this.subject}:`;
+    return (await this.store.keys()).filter((x) => x.startsWith(p)).map((x) => x.slice(p.length));
+  }
+
+  async delOutbox(id: string): Promise<void> {
+    await this.store.delete(this.outKey(id));
   }
 
   /** Keeps the latest state of a relay task (replaces the earlier copy). */
@@ -118,17 +174,25 @@ export class HistoryStore {
     const p = `${this.evPrefix(room)}:`;
     const mine = (await this.store.keys()).filter((k) => k.startsWith(p)).sort();
     const drop = mine.slice(0, Math.max(0, mine.length - keep));
-    for (const k of drop) await this.store.delete(k);
+    for (const k of drop) {
+      await this.store.delete(k);
+      await this.store.delete(this.idxKey(room, k.slice(k.lastIndexOf(":") + 1)));
+    }
     return drop.length;
   }
 
   async clearRoom(room: string): Promise<void> {
-    for (const k of await this.store.keys()) if (k.startsWith(`${this.evPrefix(room)}:`) || k.startsWith(`${this.taskPrefix(room)}:`)) await this.store.delete(k);
+    for (const k of await this.store.keys()) {
+      if (k.startsWith(`${this.evPrefix(room)}:`) || k.startsWith(`${this.taskPrefix(room)}:`) || k.startsWith(`idx:${this.subject}:${room}:`)) await this.store.delete(k);
+    }
   }
 
   /** Everything this account has saved on this device. Not the device key. */
   async clearAll(): Promise<void> {
-    for (const k of await this.store.keys()) if (k.startsWith(`ev:${this.subject}:`) || k.startsWith(`task:${this.subject}:`)) await this.store.delete(k);
+    for (const k of await this.store.keys()) {
+      if (k.startsWith(`ev:${this.subject}:`) || k.startsWith(`task:${this.subject}:`) || k.startsWith(`idx:${this.subject}:`)) await this.store.delete(k);
+    }
+    await this.setMeta("cursors", {}); // the next sync downloads everything again from your account
   }
 
   /** A readable copy of everything, for you to keep. */

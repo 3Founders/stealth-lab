@@ -1,6 +1,6 @@
 # Rooms: persistent, local-first chat for people and agents (design, rev 2, 2026-10-28)
 
-Status: P1 (history kept on the device) is built in `routing_kell_frontend/lib/delegator/store.ts`. The rest is the contract for the next phases. The frontend session owns the web side; the backend lane owns `backend/`.
+Status: P1 (history on the device), P3 (rooms API) and P4 (sync) are built; see the phase table. The rest is the contract for the next phases. The frontend session owns the web side; the backend lane owns `backend/`.
 
 **Rev 2 changes the default.** The founder's rule: people who use rooms assume that Claude, ChatGPT and other connectors work in them. So the default room is an **open room**: connectors can read and post, and keळ's server can read it. End-to-end encryption is an opt-in **private room**, built on a vetted standard (MLS) and not on code we wrote. Rev 1 had this the other way round.
 
@@ -75,8 +75,8 @@ Private rooms (a later version) add `mode: "private"`, `user_keys` and per-membe
 |---|---|---|
 | P1 | History kept on the device: encrypted IndexedDB, export, import, delete | built |
 | P2 | (rev 1 crypto library) | retired; see above |
-| P3 | Open-room API and tables (backend lane, migration 157) | requested |
-| P4 | Sync engine against it (outbox, merge, SSE with poll fallback, multi-device), people, invite links, member list | next, frontend |
+| P3 | Open-room API and tables (migration 157, `/v1/rooms`) | built, 13 e2e tests on a real Postgres |
+| P4 | Sync engine (`lib/delegator/sync.ts`): local outbox, poll-based pull, multi-device, invite links, member list, unread counts | built, verified with two browser contexts against a local server. Not built: SSE (it polls every 2.5-5 s), edits/deletes/reactions in the UI, typing and presence, push notifications |
 | P5 | MCP room tools so connectors are real participants; hop rules | backend |
 | P6 | keळ-hosted agents that call MCP tools (open rooms only; call_model under org policy and budgets; tool calls that need approval reuse `needs_approval`) | backend |
 | P7 | Private rooms on ts-mls, with an independent review before they are called secure | later |
