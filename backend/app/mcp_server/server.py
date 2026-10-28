@@ -73,6 +73,7 @@ else:
           "come from the environment, or retrieval and the search drain cannot reach them", file=sys.stderr)
 
 from mcp.server import MCPServer
+from mcp.types import Icon as _McpIcon
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
@@ -509,7 +510,15 @@ _V1_INSTRUCTIONS = (
 
 server = MCPServer(
     name="stealthlab",
+    title="kell",
     version="1.0.0",
+    website_url="https://www.kell.org.in",
+    # What a client shows next to the server (MCP serverInfo.icons). Served by the routes below; without them a client
+    # falls back to the host's favicon, which on a *.up.railway.app address is the hosting provider's logo.
+    icons=[
+        _McpIcon(src=f"{_ISSUER_URL}/icon.png", mime_type="image/png", sizes=["256x256"]),
+        _McpIcon(src=f"{_ISSUER_URL}/icon-64.png", mime_type="image/png", sizes=["64x64"]),
+    ],
     instructions=_V1_INSTRUCTIONS,
     lifespan=lifespan,
     # Authorization applies to HTTP transports only -- stdio (the `mcp dev`
@@ -841,6 +850,35 @@ async def root_health(request: Request) -> JSONResponse:  # noqa: ARG001
         "status": "ok",
         "mcp_endpoint": "/mcp",
     })
+
+
+_ASSET_DIR = Path(__file__).resolve().parent / "assets"
+_ASSETS = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/icon.png": ("kel-icon-256.png", "image/png"),
+    "/icon-64.png": ("kel-icon-64.png", "image/png"),
+}
+
+
+def _asset_response(route: str) -> Response:
+    name, media = _ASSETS[route]
+    return Response((_ASSET_DIR / name).read_bytes(), media_type=media,
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@server.custom_route("/favicon.ico", methods=["GET"], include_in_schema=False)
+async def favicon(request: Request) -> Response:  # noqa: ARG001
+    return _asset_response("/favicon.ico")
+
+
+@server.custom_route("/icon.png", methods=["GET"], include_in_schema=False)
+async def icon_256(request: Request) -> Response:  # noqa: ARG001
+    return _asset_response("/icon.png")
+
+
+@server.custom_route("/icon-64.png", methods=["GET"], include_in_schema=False)
+async def icon_64(request: Request) -> Response:  # noqa: ARG001
+    return _asset_response("/icon-64.png")
 
 
 @server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
