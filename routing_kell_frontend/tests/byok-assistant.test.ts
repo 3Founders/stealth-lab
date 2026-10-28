@@ -33,7 +33,7 @@ function deps(over: Partial<AssistantDeps> = {}): AssistantDeps & { started: str
     used() { d.usedCount++; },
     history: () => [] as GroupMessage[],
     onStart(r: string) { d.started.push(r); },
-    onDelta(_r: string, t: string) { d.deltas.push(t); },
+    onDelta(_r: string, _h: string, t: string) { d.deltas.push(t); },
     onEnd(r: string) { d.ended.push(r); },
   };
   return Object.assign(d, over) as never;
@@ -89,7 +89,7 @@ describe("assistant", () => {
     attachAssistant(b, d);
     await b.send(say(b, "@assistant hi"));
     await new Promise((r) => setTimeout(r, 10));
-    expect(texts(events).some((t) => /limit for your key is reached/.test(t))).toBe(true);
+    expect(texts(events).some((t) => /reply limit is reached/.test(t))).toBe(true);
     expect(d.started).toEqual([]);
   });
 
@@ -97,7 +97,7 @@ describe("assistant", () => {
     const { b, events } = world();
     const d = deps({
       resolve: async () => ({ secrets: [SECRET], stream: async function* (_m: unknown, signal: AbortSignal) { yield "part"; await new Promise<void>((r) => signal.addEventListener("abort", () => r())); throw Object.assign(new Error("aborted"), { name: "AbortError" }); } }),
-      onStart: (_r, c) => { setTimeout(() => c.abort(), 10); },
+      onStart: (_r, _h, c) => { setTimeout(() => c.abort(), 10); },
     });
     attachAssistant(b, d);
     await b.send(say(b, "@assistant go"));
@@ -124,6 +124,28 @@ describe("assistant", () => {
     await b.send(say(b, "@assistant hi"));
     await new Promise((r) => setTimeout(r, 10));
     expect(texts(events).some((t) => /can't be read/.test(t))).toBe(true);
+  });
+});
+
+describe("several agents", () => {
+  it("a second agent is its own instance: only the mentioned one answers, as itself, and it sees the other as a user turn", async () => {
+    const { b, events } = world(["@alice", "@assistant-1", "@assistant-2"]);
+    const heard: string[] = [];
+    const msg = say(b, "@assistant-2 hello", ["@assistant-2"]);
+    const mk = (name: string) => deps({ history: () => [msg], resolve: async () => ({ secrets: [SECRET], stream: async function* (messages: { role: string; content: string }[]) { heard.push(`${name}:${messages.map((m) => m.role).join(",")}`); yield `hi from ${name}`; } }) });
+    attachAssistant(b, mk("one"), "@assistant-1");
+    attachAssistant(b, mk("two"), "@assistant-2");
+    await b.send(msg);
+    await new Promise((r) => setTimeout(r, 20));
+    const replies = events.flatMap((e) => (e.kind === "message" && e.message.sender.handle.startsWith("@assistant") ? [[e.message.sender.handle, e.message.payload.text]] : []));
+    expect(replies).toEqual([["@assistant-2", "hi from two"]]);
+    expect(heard).toEqual(["two:user"]);
+  });
+  it("history turns are labelled from each agent's own point of view", () => {
+    const m = (who: string, text: string): GroupMessage => ({ id: text, roomId: "#r", sender: { ...alice, handle: who }, recipients: ["@all"], payload: { text }, timestamp: 0, depthCounter: 0 });
+    const history = [m("@alice", "q"), m("@assistant-1", "a1"), m("@assistant-2", "a2")];
+    expect(toChatTurns(history, "@assistant-1").map((t) => `${t.role}:${t.content}`)).toEqual(["user:@alice: q", "assistant:a1", "user:@assistant-2: a2"]);
+    expect(toChatTurns(history, "@assistant-2").map((t) => t.role)).toEqual(["user", "assistant"]);
   });
 });
 

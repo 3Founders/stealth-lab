@@ -31,6 +31,10 @@ describe("the connect page content", () => {
     expect(TASK_PROMPT).toContain("find_ways");
     expect(TASK_PROMPT).toContain("A task is a goal plus the context");
     expect(TASK_PROMPT).toContain("untrusted data");
+    expect(TASK_PROMPT).toContain("Delegate by default.");
+    expect(TASK_PROMPT).toContain("call_model");
+    expect(TASK_PROMPT).toContain("glm-5.3-flash");
+    expect(TASK_PROMPT).toContain("Never send keys, credentials or private material.");
   });
   it("covers Claude and ChatGPT with steps and where to paste the instruction", () => {
     expect(SITES.map((s) => s.id)).toEqual(["claude", "chatgpt"]);

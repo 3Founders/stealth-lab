@@ -62,6 +62,25 @@ describe("streaming", () => {
   });
 });
 
+describe("a reply never ends in silence", () => {
+  it("reads a plain JSON reply sent in answer to a streaming request", async () => {
+    const f = async () => new Response(JSON.stringify({ choices: [{ message: { content: "whole reply" } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    expect(await collect(streamChat(openai, "m", [], { fetchImpl: f as unknown as typeof fetch }))).toBe("whole reply");
+  });
+  it("a stream that carries no text (for example the model used up its tokens thinking) is an explained error, not nothing", async () => {
+    const f = async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"reasoning_content":"hmm"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n')); c.close(); } }), { status: 200, headers: { "content-type": "text/event-stream" } });
+    const err = (await collect(streamChat(openai, "m", [], { fetchImpl: f as unknown as typeof fetch })).catch((e) => e)) as Error;
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.message).toMatch(/returned no text.*length/);
+  });
+  it("an error event inside the stream is shown, without the key", async () => {
+    const f = async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`data: {"error":{"message":"bad key ${KEY}"}}\n\n`)); c.close(); } }), { status: 200, headers: { "content-type": "text/event-stream" } });
+    const err = (await collect(streamChat(openai, "m", [], { fetchImpl: f as unknown as typeof fetch })).catch((e) => e)) as Error;
+    expect(err.message).toContain("bad key");
+    expect(err.message).not.toContain("SECRET");
+  });
+});
+
 describe("a key never leaks", () => {
   it("scrub removes the key and anything key-shaped", () => {
     expect(scrub(`bad key ${KEY} and Bearer abcdefghijklmnop`, KEY)).not.toContain("SECRET");

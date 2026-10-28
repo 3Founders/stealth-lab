@@ -20,6 +20,9 @@ export function scrub(text: string, ...secrets: string[]): string {
 
 const ANTHROPIC_VERSION = "2023-06-01";
 
+const emptyReply = (finish: unknown) =>
+  `The model returned no text${finish ? ` (it stopped because: ${String(finish)})` : ""}. Try again, or choose another model under Models.`;
+
 function headers(t: ProviderTarget): Record<string, string> {
   return t.provider.kind === "anthropic"
     ? {
@@ -63,7 +66,7 @@ export async function* streamChat(
   t: ProviderTarget, model: string, messages: ChatMessage[], opts: { system?: string; maxTokens?: number; signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
 ): AsyncGenerator<string> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const maxTokens = opts.maxTokens ?? 1024;
+  const maxTokens = opts.maxTokens ?? 2048; // room for a reasoning model to think and still answer
   const anthropic = t.provider.kind === "anthropic";
   const body = anthropic
     ? { model, max_tokens: maxTokens, stream: true, ...(opts.system ? { system: opts.system } : {}), messages }
@@ -71,7 +74,19 @@ export async function* streamChat(
   const res = await send(t, anthropic ? "/v1/messages" : "/chat/completions", { method: "POST", body: JSON.stringify(body), signal: opts.signal }, fetchImpl);
   if (!res.ok || !res.body) await fail(res, t);
 
+  // Some servers answer a streaming request with one plain JSON reply. Read that too, instead of showing nothing.
+  if (!anthropic && (res.headers.get("content-type") ?? "").includes("application/json")) {
+    let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>; error?: { message?: unknown } } = {};
+    try { json = await res.json(); } catch { throw new ProviderError("The provider's reply could not be read."); }
+    if (json.error) throw new ProviderError(scrub(String(json.error.message ?? "The provider returned an error."), t.apiKey));
+    const text = json.choices?.[0]?.message?.content;
+    if (typeof text === "string" && text) { yield text; return; }
+    throw new ProviderError(emptyReply(json.choices?.[0]?.finish_reason));
+  }
+
   const queue: string[] = [];
+  let finish: unknown = null;
+  let produced = false;
   let wake: (() => void) | null = null;
   let done = false;
   let error: unknown = null;
@@ -80,8 +95,9 @@ export async function* streamChat(
     const piece = anthropic
       ? (ev.type === "content_block_delta" ? ev.delta?.text : undefined)
       : ev.choices?.[0]?.delta?.content;
-    if (anthropic && ev.type === "error") error = new ProviderError(scrub(String(ev.error?.message ?? "The provider reported an error."), t.apiKey));
-    if (typeof piece === "string" && piece) { queue.push(piece); wake?.(); }
+    if (ev.type === "error" || (!anthropic && ev.error)) error = new ProviderError(scrub(String(ev.error?.message ?? "The provider reported an error."), t.apiKey));
+    if (!anthropic && ev.choices?.[0]?.finish_reason) finish = ev.choices[0].finish_reason;
+    if (typeof piece === "string" && piece) { produced = true; queue.push(piece); wake?.(); }
   }).catch((err) => { error = err; }).finally(() => { done = true; wake?.(); });
 
   while (true) {
@@ -92,4 +108,5 @@ export async function* streamChat(
     wake = null;
   }
   await reading;
+  if (!produced) throw new ProviderError(emptyReply(finish)); // never end a reply in silence
 }

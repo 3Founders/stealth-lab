@@ -66,9 +66,9 @@ describe("relay", () => {
 describe("commands", () => {
   it("parses the room commands", () => {
     expect(parseCommand("/stop")).toEqual({ cmd: "stop" });
-    expect(parseCommand('/add-agent --name="agent-2" --type="cli"')).toEqual({ cmd: "add-agent", name: "agent-2", type: "cli" });
-    expect(parseCommand("/invite @bob/cursor")).toEqual({ cmd: "invite", handle: "@bob/cursor" });
-    expect(parseCommand("/invite bob")).toMatchObject({ cmd: "error" });
+    expect(parseCommand('/add-agent --name="reviewer"')).toEqual({ cmd: "add-agent", name: "reviewer" });
+    expect(parseCommand("/add-agent")).toEqual({ cmd: "add-agent", name: undefined });
+    expect(parseCommand("/invite @bob/cursor")).toMatchObject({ cmd: "error" }); // someone else's agent: not available yet
     expect(parseCommand("hello")).toBeNull();
   });
   it("addresses a message to its mentions, or to the room", () => {

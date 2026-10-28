@@ -22,8 +22,7 @@ export function toMcpPayload(text: string, action = "message", locators?: Array<
 
 export type Command =
   | { cmd: "stop" }
-  | { cmd: "add-agent"; name: string; type: string }
-  | { cmd: "invite"; handle: string }
+  | { cmd: "add-agent"; name?: string }
   | { cmd: "error"; message: string };
 
 /** Slash commands typed into the room. Anything that is not one returns null and is sent as an ordinary message. */
@@ -32,16 +31,10 @@ export function parseCommand(line: string): Command | null {
   if (!t.startsWith("/")) return null;
   const [word, ...rest] = t.split(/\s+/);
   if (word === "/stop") return { cmd: "stop" };
-  if (word === "/invite") {
-    const h = rest[0] ?? "";
-    return isHandle(h) ? { cmd: "invite", handle: h } : { cmd: "error", message: "Usage: /invite @owner/agent" };
-  }
+  if (word === "/invite") return { cmd: "error", message: "Inviting someone else's agent isn't available yet. Use /add-agent to add another assistant." };
   if (word === "/add-agent") {
-    const arg = (k: string) => new RegExp(`--${k}=(?:"([^"]*)"|(\\S+))`).exec(t);
-    const n = arg("name"), ty = arg("type");
-    const name = n?.[1] ?? n?.[2];
-    if (!name || !/^[a-z0-9][a-z0-9_.-]*$/i.test(name)) return { cmd: "error", message: 'Usage: /add-agent --name="opencode" --type="cli"' };
-    return { cmd: "add-agent", name, type: ty?.[1] ?? ty?.[2] ?? "cli" };
+    const m = /--name=(?:"([^"]*)"|(\S+))/.exec(t);
+    return { cmd: "add-agent", name: m ? (m[1] ?? m[2]) : undefined };
   }
   return { cmd: "error", message: `Unknown command ${word}.` };
 }

@@ -3,7 +3,7 @@ import { providerById } from "@/lib/byok/providers";
 import type { KeyValue } from "@/lib/byok/spend";
 import type { KeyMeta } from "@/lib/byok/vault";
 import { MCP_ORIGIN } from "@/lib/connector";
-import { kellTarget, readChoice } from "@/lib/kell-models";
+import { kellModelsAvailable, kellTarget, readChoice } from "@/lib/kell-models";
 import type { AssistantDeps } from "./assistant";
 
 export const ASSISTANT_SYSTEM = "You are the assistant in a group chat room with several people and agents. Each message is prefixed with its sender's handle. Be concise and helpful.";
@@ -48,4 +48,19 @@ export function makeResolver(d: ResolverDeps): AssistantDeps["resolve"] {
       stream: (messages: ChatMessage[], signal: AbortSignal) => streamChat({ provider, baseUrl: meta.baseUrl, apiKey }, meta.model, messages, { system: ASSISTANT_SYSTEM, signal }),
     };
   };
+}
+
+export interface Backing { ready: boolean; text: string }
+
+/** What the room's agents are backed by right now, in words, for the sidebar. Reads no key and makes no request. */
+export async function describeBacking(d: Pick<ResolverDeps, "vault" | "kv" | "subject">, origin?: string): Promise<Backing> {
+  const choice = readChoice(d.kv, d.subject);
+  if (choice.source === "kell") {
+    return kellModelsAvailable(origin ?? MCP_ORIGIN) ? { ready: true, text: `keळ models · ${choice.model}` } : { ready: false, text: "keळ models aren't available here" };
+  }
+  const metas = await d.vault.list();
+  const meta = metas.find((k) => k.model) ?? metas[0];
+  if (!meta) return { ready: false, text: "Add a key to chat here" };
+  if (!meta.model) return { ready: false, text: "Press Test on your key to choose a model" };
+  return { ready: true, text: `${providerById(meta.provider)?.label ?? meta.provider} · ${meta.model}` };
 }

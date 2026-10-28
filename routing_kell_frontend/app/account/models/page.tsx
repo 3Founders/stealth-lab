@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import { listModels, scrub } from "@/lib/byok/chat";
@@ -54,6 +55,7 @@ export default function ModelsPage() {
 }
 
 function Panel({ subject }: { subject: string }) {
+  const router = useRouter();
   const vault = useMemo(() => new Vault(idbStore(), subject), [subject]);
   const [keys, setKeys] = useState<KeyMeta[] | undefined>(undefined);
   const [probe, setProbe] = useState<Record<string, Probe>>({});
@@ -148,7 +150,7 @@ function Panel({ subject }: { subject: string }) {
   function chooseKell() {
     if (!kellAck) return;
     writeChoice(kv(), subject, { source: "kell", model: kellModel });
-    reload();
+    router.push("/delegator"); // the choice is for the Delegator's agents: go back and use it
   }
 
   function chooseOwnKey() {

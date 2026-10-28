@@ -20,6 +20,8 @@ vi.mock("@/lib/session", () => ({
 }));
 vi.mock("@/components/AnimatedHeading", () => ({ default: ({ children }: { children: React.ReactNode }) => <span>{children}</span> }));
 vi.mock("next/link", () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a> }));
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 vi.mock("@/lib/byok/vault", () => ({
   idbStore: () => ({}),
   Vault: class {
@@ -190,6 +192,7 @@ describe("keळ models (pilot) when the deployment has a hosted server", () => {
     await act(async () => { host!.querySelector<HTMLInputElement>(".models-ack input")!.click(); });
     expect(use.disabled).toBe(false);
     await act(async () => { use.click(); });
+    expect(push).toHaveBeenCalledWith("/delegator"); // choosing keL models takes you back to the Delegator
     expect(writes.join("|")).toContain("kel.assistant.source.u1");
     expect(writes.join("|")).toContain("glm-5.3-flash");
     expect(writes.join("|")).not.toMatch(/Bearer|token/i);
