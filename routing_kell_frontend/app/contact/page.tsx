@@ -41,15 +41,24 @@ export default function ContactPage() {
       </section>
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <div className="contact-wrap">
-          {booking && (
-            <div className="contact-book">
-              <h2 className="h3">Prefer to talk?</h2>
-              <p className="dim">Pick a time that suits you.</p>
-              <a className="btn-ink" href={booking} target="_blank" rel="noopener noreferrer">
-                <span>Book a call</span><span className="sq" aria-hidden="true">↗</span>
-              </a>
-            </div>
-          )}
+          {/* The booking slot is always here. Set NEXT_PUBLIC_BOOKING_URL to a Calendly (or any https booking) link and it becomes live;
+              until then it says so, rather than linking nowhere. */}
+          <div className="contact-book">
+            <h2 className="h3">Prefer to talk?</h2>
+            {booking ? (
+              <>
+                <p className="dim">Pick a time that suits you.</p>
+                <a className="btn-ink" href={booking} target="_blank" rel="noopener noreferrer">
+                  <span>Book a call</span><span className="sq" aria-hidden="true">↗</span>
+                </a>
+              </>
+            ) : (
+              <>
+                <p className="dim">Booking a call opens soon. For now, write to us below.</p>
+                <button type="button" className="btn-ink" disabled aria-disabled="true"><span>Book a call</span></button>
+              </>
+            )}
+          </div>
 
           {status === "sent" ? (
             <div className="signin" role="status">
@@ -58,7 +67,7 @@ export default function ContactPage() {
             </div>
           ) : (
             <form className="cform contact-form" onSubmit={submit} noValidate={false}>
-              <h2 className="h3">{booking ? "Or write to us" : "Write to us"}</h2>
+              <h2 className="h3">Or write to us</h2>
               <p className="small dim">Tell us what you&rsquo;re trying to do. We&rsquo;ll answer by email.</p>
               <div className="cfield"><label htmlFor="c-name">Your name</label>
                 <input id="c-name" name="name" type="text" autoComplete="name" required maxLength={120} value={form.name} onChange={set("name")} /></div>

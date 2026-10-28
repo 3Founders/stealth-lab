@@ -69,7 +69,7 @@ async function mountPage() {
 }
 
 describe("Contact page", () => {
-  it("has a labelled form, a honeypot hidden from people and assistive tech, and no booking button when none is configured", async () => {
+  it("has a labelled form, a honeypot hidden from people and assistive tech, and a disabled booking slot when none is configured", async () => {
     await mountPage();
     expect(host!.textContent).toContain("Talk to a founder");
     for (const el of host!.querySelectorAll<HTMLInputElement>("input, select, textarea")) {
@@ -78,7 +78,10 @@ describe("Contact page", () => {
     const trap = host!.querySelector<HTMLInputElement>('input[name="website"]')!;
     expect(trap.closest("[aria-hidden='true']")).not.toBeNull();
     expect(trap.tabIndex).toBe(-1);
-    expect(host!.textContent).not.toContain("Book a call");
+    // No booking link configured: the slot is there, honestly disabled, and links nowhere.
+    const slot = [...host!.querySelectorAll("button")].find((b) => b.textContent === "Book a call")!;
+    expect(slot.disabled).toBe(true);
+    expect(host!.querySelector('a[href*="calendly"], a[target="_blank"]')).toBeNull();
   });
   it("offers a booking button and an email address when the deployment sets them", async () => {
     vi.stubEnv("NEXT_PUBLIC_BOOKING_URL", "https://cal.com/founders/intro");
