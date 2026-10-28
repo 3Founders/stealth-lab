@@ -46,7 +46,7 @@ def test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts():
     # (tests/test_mcp_progressive_discovery_offline.py)
     assert s["tools"] == ["call_model", "delegate_inbox", "delegate_result", "discover_tools", "find_ways",
                          "recommend_models", "report_audit", "report_check_evidence", "report_discovery",
-                         "report_model_run", "report_result", "submit_way", "use_tool"]
+                         "report_model_run", "report_result", "submit", "submit_way", "use_tool"]
     assert s["resources"] == [
         "stealth://claims/{claim_id}",
         "stealth://goals/{goal_id}/claims",

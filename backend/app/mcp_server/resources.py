@@ -442,12 +442,12 @@ FIND_WAYS_GUIDE = (
     '(the planner agent) compile the plan and write `.kell/` yourself --\n'
     'the `plan_and_run` prompt has the format.\n'
     '\n'
-    'The unit is a TASK, not a message: a goal plus the context needed to do\n'
-    'it. Call it at the start of every new task, before writing code (a bug\n'
+    'The unit is a GOAL, not a message: what is to be done, how success is\n'
+    'checked, and the context that decides how. Call it at the start of every new goal, before writing code (a bug\n'
     'fix, a feature, a data transformation, a config change), and again when\n'
-    "the task changes. One user message can hold several tasks (one call each);\n"
-    "a follow-up on the same task needs no new call. Don't call it for a\n"
-    "one-line edit, a question about this repo's own code, or the same task\n"
+    "the goal changes. One user message can hold several goals (one call each);\n"
+    "a follow-up on the same goal needs no new call. Don't call it for a\n"
+    "one-line edit, a question about this repo's own code, or the same goal\n"
     'twice -- repeats are served from cache and then refused.\n'
     '\n'
     'query: the task as a self-contained statement -- the goal first, then the\n'

@@ -62,7 +62,7 @@ def test_all_lists_every_tool_without_the_discovery_pair(monkeypatch):
     monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "all")
     assert _listed() == ["call_model", "delegate_inbox", "delegate_result", "find_ways", "recommend_models",
                          "report_audit", "report_check_evidence", "report_discovery", "report_model_run", "report_result",
-                         "submit_way"]
+                         "submit", "submit_way"]
 
 
 def test_hidden_tools_stay_registered_so_direct_callers_keep_working():
@@ -74,7 +74,7 @@ def test_the_catalog_is_short_and_points_at_the_next_step():
     body = json.loads(run(srv.discover_tools(None)))
     names = {t["name"] for t in body["tools"]}
     assert names == {"call_model", "delegate_inbox", "delegate_result", "recommend_models", "report_check_evidence",
-                     "report_discovery", "report_model_run", "report_result", "submit_way"}
+                     "report_discovery", "report_model_run", "report_result", "submit", "submit_way"}
     assert all("arguments" not in t for t in body["tools"])                 # names and summaries only
     assert "use_tool" in body["next"]
 

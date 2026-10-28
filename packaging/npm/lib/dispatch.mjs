@@ -18,7 +18,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { TASK_CHARS_MAX, readExecConfig } from "./exec/store.mjs";
+import { TASK_CHARS_MAX, readExecConfig, runDir } from "./exec/store.mjs";
+import { followRun } from "./run_events.mjs";
+import { resolveSettings } from "./config.mjs";
 import { costOf } from "./spend.mjs";
 import { areaHistory, areaHistoryEnabled } from "./area_history.mjs";
 import { claudeChildEnv, launchOrThrow, scrubEnv } from "./executors/common.mjs";
@@ -49,7 +51,8 @@ async function recordEvidenceFor({ root, entry, check, winner, env, log }) {
 import { profileKey } from "./executors/profile.mjs";
 import { capFloorS, capMult, fastestFirstEnabled, modelCapEnabled, modelCapS, modelSpeeds, modelWins, orderFastestFirst, recordModelWin } from "./model_speed.mjs";
 import { detectCheck, pythonBin } from "./detect_check.mjs";
-import { repoContext } from "./task_context.mjs";
+import { repoContext, repoContextSources } from "./task_context.mjs";
+import { goalFileEnabled, goalIdFor, pointerLine, writeGoalFile } from "./goal_file.mjs";
 import { repoTopLevel } from "./exec/worktree.mjs";
 import { createUndoPoint, discardUndoPoint, finishUndoPoint, undoEnabled } from "./undo.mjs";
 import { cheapWritten } from "./continuity.mjs";
@@ -1114,7 +1117,19 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // the context pack (lib/context_pack.mjs; STEALTHLAB_DISPATCH_CONTEXT_PACK=on): what to read and run first, and the
   // project's conventions, before the "likely place" line
   const pack = contextPackEnabled(env) ? contextPack({ files: loc.files, testFile: loc.testFile }) : "";
-  const taskWithContext = fitTask(withWhere(taskText(payload.prompt), [pack, where].filter(Boolean).join("\n\n")), ctx);
+  // the context goes to a goal file the executor reads in its worktree (lib/goal_file.mjs), not into the task text: the task
+  // carries the request, the location and one pointer. No file written (off, no .kell/ to write to): the context is inlined as before.
+  let goalRel = null;
+  if (goalFileEnabled(env)) {
+    const src = repoContextSources({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env, files: loc.files });
+    goalRel = writeGoalFile({ root, goalId: goalIdFor(plan.goal_id, rawPayload.prompt), title: plan.goal_title || plan.goal_name,
+      prompt: rawPayload.prompt || payload.prompt, check, testFile: loc.testFile, spots: loc.spots,
+      claims: src.claims, library: [hist, src.library].filter(Boolean).join("\n\n") });
+    if (goalRel) log(`dispatch: goal file ${goalRel}`);
+  }
+  const taskWithContext = goalRel
+    ? withWhere(taskText(payload.prompt), [pack, where, pointerLine(goalRel)].filter(Boolean).join("\n\n"))
+    : fitTask(withWhere(taskText(payload.prompt), [pack, where].filter(Boolean).join("\n\n")), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
   const baseLimitS = policy.timeoutS;
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
@@ -1126,6 +1141,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     let capS = null;
     let capped = false;
     let capTimer = null;
+    let stopRoom = null;
     try {
       const started = await rt.achieve({ repo_path: payload.cwd || root, task: taskWithContext, checks: [fullCheck],
         scope: policy.scope, executor: rung.executor, model: rung.model, base: "working-tree",
@@ -1136,6 +1152,21 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       runId = started.run_id;
       running.set(rung.unit, runId);
       startedAt = Date.now();
+      // KELL_ROOM=<room id>: the run's steps are posted to that room as they happen (lib/run_events.mjs), and are in the console
+      // either way.
+      if (env.KELL_ROOM) {
+        try {
+          const st = resolveSettings({}, env);
+          const roomToken = env.KELL_ROOM_TOKEN || st.token;     // the route wants a website-session token (lib/run_events.mjs)
+          if (st.url && roomToken) {
+            stopRoom = followRun({ dir: runDir(env, runId), baseUrl: new URL(st.url).origin, token: roomToken, roomId: env.KELL_ROOM, fetchImpl,
+              onResult: (r) => {
+                if (r.unavailable) log("dispatch: the server has no rooms route: the run's steps are in the console only");
+                if (r.unauthorized) log("dispatch: the rooms route refused the token (it takes a website-session token, KELL_ROOM_TOKEN, and a member of the room): the run's steps are in the console only");
+              } });
+          }
+        } catch { /* never affects the run */ }
+      }
       // this MODEL's own cap (from its wins in this repo): past it the run hands in its change, which is checked and judged
       // like any other (the time limit's rule); a runtime without hand-in cancels it, which is no verdict on the model
       const cap = policy.modelCap ? modelCapS(modelWins(root, rung.model, rung.executor)?.wins, { baseS: baseLimitS, mult: policy.capMult, floorS: policy.capFloorS }) : null;
@@ -1157,6 +1188,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       return { rung, run_id: runId, error: err, startedAt, capped, capS };
     } finally {
       clearTimeout(capTimer);
+      if (stopRoom) await stopRoom().catch(() => {});
     }
   };
   // a finished rung -> true when its answer is accepted

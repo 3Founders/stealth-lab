@@ -36,19 +36,27 @@ export function relevantFirst(claims, { files = [], prompt = "" } = {}) {
   return [...head, ...facts].join("\n");
 }
 
-// -> "" when the repo has no facts and no library match (the task text then goes out unchanged). files: the located files.
-export function repoContext({ reply, root, cwd, prompt, env = process.env, files = [] }) {
-  if (!contextEnabled(env) || !root) return "";
-  const parts = [];
+// The two sources, apart: the survey's claim lines (those about the located files first) and the judged library matches.
+// The goal file (lib/goal_file.mjs) stores them as lines; repoContext() below joins them into task text.
+export function repoContextSources({ reply, root, cwd, prompt, env = process.env, files = [] }) {
+  const out = { claims: "", library: "" };
+  if (!contextEnabled(env) || !root) return out;
   try {
-    const claims = relevantFirst(readClaims(cwd || root, prompt), { files, prompt }).trim();
-    if (claims) parts.push(`Facts about this repository (from its survey; each cites a file):\n${cut(claims, CLAIMS_SHARE)}`);
+    out.claims = relevantFirst(readClaims(cwd || root, prompt), { files, prompt }).trim();
   } catch { /* no survey: no facts */ }
   try {
     // the matches the lookup judged to be this task, with the steps and the diff that solved it
-    const lib = libraryParts(reply || {}, root, "lean", LIBRARY_DIFF_MAX);
-    if (lib.length) parts.push(lib.join("\n\n"));
+    out.library = libraryParts(reply || {}, root, "lean", LIBRARY_DIFF_MAX).join("\n\n");
   } catch { /* no library: no matches */ }
+  return out;
+}
+
+// -> "" when the repo has no facts and no library match (the task text then goes out unchanged). files: the located files.
+export function repoContext({ reply, root, cwd, prompt, env = process.env, files = [] }) {
+  const { claims, library } = repoContextSources({ reply, root, cwd, prompt, env, files });
+  const parts = [];
+  if (claims) parts.push(`Facts about this repository (from its survey; each cites a file):\n${cut(claims, CLAIMS_SHARE)}`);
+  if (library) parts.push(library);
   if (!parts.length) return "";
   return cut(`Context from this repository (use what applies to the task above; it is not part of the request):\n\n${parts.join("\n\n")}`, CONTEXT_MAX);
 }

@@ -20,6 +20,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { readConfig, resolveSettings, writeConfig } from "./config.mjs";
+import { readRunEvents } from "./run_events.mjs";
 import { clients } from "./clients.mjs";
 import { checklist, keyIsSet, probeServer } from "./setup.mjs";
 import { envFilePath, isKeyName, readEnvFileVar, removeEnvFileVar, writeEnvFileVar } from "./envfile.mjs";
@@ -167,7 +168,10 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
       files: (a.diff?.files || []).slice(0, 30), checks: (a.checks || []).slice(0, 8).map((c) => ({ cmd: String(c.cmd).slice(0, 200), exit: c.exit })) });
     const list = [...attempts.values()].sort((x, y) => x.n - y.n).map((a) => ({ ...a, output: tail(path.join(dir, `a${a.n}.stdout.log`), RUN_OUT) }));
     const task = String(rec.input?.task || "").trim().split(/\n\s*\n/).pop().replace(/\s+/g, " ").slice(0, 200);
-    return { type: "run", run_id: id, created_at: rec.created_at || null, state: rec.state || events.at(-1)?.event || "queued", task, attempts: list };
+    // the same ordered events a room follows (lib/run_events.mjs): tool steps with the paths they touched, then each attempt's end
+    let feed = [];
+    try { feed = readRunEvents(dir).slice(-200); } catch { /* the snapshot never fails for the feed */ }
+    return { type: "run", run_id: id, created_at: rec.created_at || null, state: rec.state || events.at(-1)?.event || "queued", task, attempts: list, events: feed };
   }
   function runSignature(dir) {
     try { return fs.readdirSync(dir).map((f) => { const st = fs.statSync(path.join(dir, f)); return `${f}:${st.size}:${st.mtimeMs}`; }).join("|"); } catch { return ""; }

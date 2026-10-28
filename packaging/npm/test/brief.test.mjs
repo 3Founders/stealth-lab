@@ -145,7 +145,7 @@ function setup(extra = {}) {
   fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
   g("add", "-A"); g("commit", "-q", "-m", "init");
   return { env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off",
-                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_DISPATCH_LOCATE: "off", STEALTHLAB_BRIEF: "on", ...extra }, repo };
+                  STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_DISPATCH_LOCATE: "off", STEALTHLAB_BRIEF: "on", STEALTHLAB_DISPATCH_GOALFILE: "off", ...extra }, repo };
 }
 function stubRuntime(repo) {
   const calls = [];

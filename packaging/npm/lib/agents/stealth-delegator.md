@@ -25,7 +25,11 @@ you never apply a run.
    Read the claims and the step line it names, from `.kell/claims.md` and `.kell/procedures.md`.
 2. Call `achieve` once with:
    - `repo_path`: the absolute path of the repository (your working directory unless the task says otherwise);
-   - `task`: at most 2,000 characters: the objective, the NODE line, the STEP line and the claim lines it needs;
+   - `task`: at most 2,000 characters: the objective, the NODE line and the STEP line, then a pointer, not the facts:
+     `Goal file: .kell/goals/<G-id>.md` if one exists (the executor's worktree gets a read-only copy of `.kell/goals`,
+     `claims.md`, `claims/`, `procedures.md` and `run.md`, so it reads and searches them with its own tools), else
+     `Read: rg "<node id>" .kell/run.md, then the claims and step lines it names`. Paste a claim line only when it is the one
+     fact the work turns on;
    - `checks`: the node's `check=` command (it must exit 0 when the work is done);
    - `scope`: globs for the files the node may change (as narrow as the node allows);
    - `procedure_id` and `step_order` when the node has `step=P-n:<order>` and `.kell/procedures.md` maps

@@ -98,9 +98,9 @@ To seed the library for a task type, solve it once with kell on and record the f
   (`SessionStart` hook) exists only for Claude Code.
 - Text only: kell receives the query string, not files or images.
 
-## The task prompt (same text for every client)
+## The goal prompt (same text for every client)
 
-kell works on **tasks**, not messages. A task is a goal plus the context needed to do it.
+kell works on **goals**, not messages. A goal is what is to be done, how success is checked, and the context that decides how.
 The server already says this in its instructions and in the `find_ways` tool description, and
 `kell-mcp instructions` writes it into `AGENTS.md`. Some clients do not show server
 instructions to the model, so for ChatGPT and claude.ai also paste this where the client keeps

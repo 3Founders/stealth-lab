@@ -165,7 +165,7 @@ function surveyedRepo() {
   write(repo, "calc.py", "x = 1\n");
   g(repo, "add", "-A"); g(repo, "commit", "-q", "-m", "init");
   fs.mkdirSync(path.join(repo, ".kell"));
-  write(repo, ".kell/claims.md", "# Claims\n- Tests run with `python -m pytest -q` from the repo root (pyproject.toml:12)\n- calc.py owns every constant (calc.py:1)\n");
+  write(repo, ".kell/claims.md", "# Claims\n- Tests run with `python -m pytest -q` from the repo root (pyproject.toml:12)\n- calc.py owns every constant (calc.py:1)\nCLAIM|R-009|current|code|repository|calc.py owns every constant|source=calc.py:1#sha=abc|version=1|by=agent|key=calc\n");
   return repo;
 }
 
@@ -190,21 +190,30 @@ test("B1: the context holds the survey's facts and the judged library match with
   assert.ok(repoContext({ reply: {}, root: huge, cwd: huge, prompt: "x", env: {} }).length <= CONTEXT_MAX);
 });
 
-test("B1 through dispatch: the executor's task is the prompt then the context; with the switch off it is the prompt alone", async () => {
+test("B1 through dispatch: the goal file holds the context and the task points to it; inline it is the prompt then the context; with both off it is the prompt alone", async () => {
   const PLAN = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "claude-opus-5-5|claude-code"] };
-  for (const off of [false, true]) {
+  for (const mode of ["goalfile", "inline", "none"]) {
     const repo = surveyedRepo();
     const home = tmpDir("ctx-home-");
     fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: { stealth: { models: ["gemma-4-31b-it"] } } }));
     const seen = [];
     const rt = { async achieve(i) { seen.push(i.task); return { run_id: "r-1" }; },
       async runResult() { return { state: "failed", cost_usd: 0.001, checks: [{ tail: "no" }] }; }, async cancelRun() { return {}; } };
+    const extra = mode === "goalfile" ? {} : mode === "inline" ? { STEALTHLAB_DISPATCH_GOALFILE: "off" }
+      : { STEALTHLAB_DISPATCH_GOALFILE: "off", STEALTHLAB_DISPATCH_CONTEXT: "off" };
     await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
       env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
-             STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...(off ? { STEALTHLAB_DISPATCH_CONTEXT: "off" } : {}) }, runtime: rt });
+             STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...extra }, runtime: rt });
     assert.ok(seen[0].startsWith("Fix calc.py so x is 2"));
-    if (off) assert.equal(seen[0], "Fix calc.py so x is 2");
-    else assert.match(seen[0], /\n\nContext from this repository[\s\S]*calc\.py owns every constant/);
+    if (mode === "none") assert.equal(seen[0], "Fix calc.py so x is 2");
+    else if (mode === "inline") assert.match(seen[0], /\n\nContext from this repository[\s\S]*calc\.py owns every constant/);
+    else {
+      assert.match(seen[0], /Goal file: \.kell\/goals\/g1\.md/);
+      assert.doesNotMatch(seen[0], /owns every constant/, "the facts are in the file, not the prompt");
+      const file = fs.readFileSync(path.join(repo, ".kell", "goals", "g1.md"), "utf8");
+      assert.match(file, /^CLAIM\|.*calc\.py owns every constant/m);
+      assert.match(file, /^DONE_WHEN\|python -m pytest( --continue-on-collection-errors)? -q$/m);
+    }
   }
 });
 
