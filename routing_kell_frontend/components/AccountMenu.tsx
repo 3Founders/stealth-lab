@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Avatar from "@/components/Avatar";
-import { signOut } from "@/lib/session";
+import DevicePhoto, { useDevicePhoto } from "@/components/DevicePhoto";
+import { getSession, signOut } from "@/lib/session";
 import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 
 /**
@@ -17,6 +18,9 @@ export default function AccountMenu({ username }: { username: string }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const firstItemRef = useRef<HTMLAnchorElement>(null);
   const router = useRouter();
+  const [subject, setSubject] = useState<string | null>(null);
+  useEffect(() => { let live = true; getSession().then((x) => { if (live) setSubject(x?.subject ?? null); }); return () => { live = false; }; }, []);
+  const devicePhoto = useDevicePhoto(subject);
 
   useEffect(() => {
     if (!open) return;
@@ -56,7 +60,7 @@ export default function AccountMenu({ username }: { username: string }) {
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <Avatar username={username} size={26} authenticated />
+        {devicePhoto ? <DevicePhoto url={devicePhoto} size={26} /> : <Avatar username={username} size={26} authenticated />}
         <span className="account-name">{username}</span>
         <span className="caret" aria-hidden="true">▾</span>
       </button>

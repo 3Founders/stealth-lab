@@ -1,7 +1,7 @@
 /* The Delegator sandbox: a chat shell in the console's own palette (paper, ink, yellow, cobalt). Scoped by the dg- prefix. */
 .dg-page { /* spring timing functions and durations (--dg-micro, --dg-smooth, --dg-bouncy, each with -d) are set inline from lib/delegator/spring.ts */
   --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; /* the chat takes the window: the site nav floats above, the page has no heading of its own */ padding: 24px var(--pad); }
-.dg-shell { height: 100dvh; min-height: 0; display: grid; grid-template-columns: 260px 1fr; border: 0; border-radius: 0; overflow: hidden; background: #fff; font-size: 15px; }
+.dg-shell { min-height: 0; display: grid; grid-template-columns: 260px 1fr; border: 0; border-radius: 0; overflow: hidden; background: #fff; font-size: 15px; }
 .dg-shell { transition: box-shadow var(--dg-smooth-d) var(--dg-smooth); }
 .dg-shell[data-paused="true"] { box-shadow: inset 0 3px 0 #b3261e; }
 
@@ -82,10 +82,38 @@
 .dg-mentions li { transition: background-color var(--dg-micro-d) var(--dg-micro); padding: 6px 10px; border-radius: 5px; cursor: pointer; }
 .dg-mentions li[data-active="true"] { background: var(--yellow); }
 
+.dg-menu, .dg-close, .dg-scrim { display: none; }
+.dg-shell { height: var(--dg-h, 100dvh); }
+/* Phones: the chat takes the whole screen. The room list is a drawer that slides over it; inputs are 16px so iOS does not zoom
+   in on focus; every control is at least 44px; the composer clears the home indicator. */
 @media (max-width: 760px) {
-  .dg-shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .dg-side { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 38dvh; }
+  .dg-shell { grid-template-columns: 1fr; grid-template-rows: 1fr; font-size: 16px; }
+  .dg-side { position: fixed; inset: 0 auto 0 0; width: min(88vw, 340px); z-index: 40; border-right: 1px solid var(--rule-strong); padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); transform: translateX(-102%); visibility: hidden; transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d); box-shadow: 0 0 30px rgba(0,0,0,.25); }
+  .dg-shell[data-menu="open"] .dg-side { transform: none; visibility: visible; transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s; }
+  .dg-scrim { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.4); opacity: 0; pointer-events: none; transition: opacity var(--dg-smooth-d) var(--dg-smooth); }
+  .dg-shell[data-menu="open"] .dg-scrim { opacity: 1; pointer-events: auto; }
+  .dg-close { display: grid; place-items: center; position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; font-size: 26px; line-height: 1; background: none; border: 0; color: var(--ink); cursor: pointer; border-radius: 8px; }
+  .dg-menu { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; font: inherit; font-size: 15px; background: #fff; color: var(--ink); border: 1px solid var(--rule-strong); border-radius: 8px; cursor: pointer; }
+  .dg-head { gap: 8px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; flex-wrap: nowrap; }
+  .dg-head h1 { font-size: 16px; margin-right: auto; }
   .dg-limit { display: none; }
+  .dg-breaker { min-height: 44px; padding: 0 12px; font-size: 15px; white-space: nowrap; }
+  .dg-banner { padding: 7px 12px; }
+  .dg-viewport { padding: 12px 12px 6px; -webkit-overflow-scrolling: touch; }
+  .dg-run { grid-template-columns: 30px 1fr; gap: 10px; }
+  .dg-avatar { width: 30px; height: 30px; font-size: 12px; }
+  .dg-typing { padding: 2px 12px 0; }
+  .dg-stop { min-height: 36px; padding: 0 16px; }
+  .dg-composer { padding: 6px 12px calc(10px + env(safe-area-inset-bottom)); gap: 8px; }
+  .dg-composer textarea { font-size: 16px; }
+  .dg-composer button { min-width: 64px; }
+  .dg-mentions { left: 12px; right: 12px; min-width: 0; }
+  .dg-mentions li { padding: 12px 10px; }
+  .dg-add { min-height: 44px; }
+  .dg-members li:has(.dg-remove) { padding-right: 48px; }
+  .dg-remove { top: 2px; right: 2px; min-width: 44px; min-height: 44px; font-size: 22px; opacity: .8; }
+  .dg-room { min-height: 44px; align-items: center; }
+  .dg-jump { bottom: 12px; min-height: 40px; }
 }
 @keyframes dg-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dg-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -120,6 +148,8 @@ body:has(.dg-shell) { overflow: hidden; }
 .dg-backrow { padding: 0 6px 12px; }
 .dg-add { align-self: flex-start; margin: 8px 6px 0; min-height: 40px; }
 .dg-members li { position: relative; }
+.dg-members li:has(.dg-remove) { padding-right: 34px; }
 .dg-remove { position: absolute; top: 4px; right: 4px; background: none; border: 0; color: inherit; opacity: .55; cursor: pointer; font-size: 16px; line-height: 1; min-width: 28px; min-height: 28px; border-radius: 6px; transition: opacity var(--dg-micro-d) var(--dg-micro), background-color var(--dg-micro-d) var(--dg-micro); }
 .dg-remove:hover, .dg-remove:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
 .dg-add:disabled { opacity: .45; cursor: not-allowed; }
+body:has(.dg-shell) { overscroll-behavior: none; }

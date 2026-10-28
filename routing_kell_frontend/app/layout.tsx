@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "@fontsource/barlow/300.css";
 import "@fontsource/barlow/400.css";
 import "@fontsource/barlow/500.css";
@@ -16,6 +16,9 @@ export const metadata: Metadata = {
     "keळ gives your coding agent a memory of your repo, reuses what's already been solved, and hands each task to the cheapest model that can do it. Nothing reaches your code until your own tests pass.",
   icons: { icon: "/kel-mark.png" },
 };
+
+// On Android the on-screen keyboard resizes the page (the Delegator composer stays visible); iOS is handled by the Delegator itself.
+export const viewport: Viewport = { width: "device-width", initialScale: 1, interactiveWidget: "resizes-content" };
 
 // Motion is opt-in: only pages whose visitor has not asked for reduced motion get the reveal classes.
 const motionGate = `try{if(!matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.classList.add('motion')}catch(e){}`;

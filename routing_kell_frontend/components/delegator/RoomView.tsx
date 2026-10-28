@@ -58,6 +58,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
   const [streaming, setStreaming] = useState<Record<string, string>>({});
   const [paused, setPaused] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // phones: the sidebar is a drawer
   const [backing, setBacking] = useState<Backing | undefined>(undefined);
   const controllers = useRef(new Map<string, AbortController>());
   const detachers = useRef(new Map<string, () => void>());
@@ -103,6 +104,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, [broker]);
 
   // The room starts with one agent. (A ref guards the development double-run of effects.)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const fit = () => { document.documentElement.style.setProperty("--dg-h", `${Math.round(vv.height)}px`); if (vv.offsetTop) window.scrollTo(0, 0); };
+    fit();
+    vv.addEventListener("resize", fit);
+    vv.addEventListener("scroll", fit);
+    return () => { vv.removeEventListener("resize", fit); vv.removeEventListener("scroll", fit); document.documentElement.style.removeProperty("--dg-h"); };
+  }, []);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
+
   const started = useRef(false);
   useEffect(() => {
     if (!started.current) { started.current = true; addAgent("@assistant-1"); }
@@ -174,8 +191,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const streamingHandles = Object.keys(streaming);
 
   return (
-    <div className="dg-shell" data-paused={paused}>
-      <aside className="dg-side" aria-label="Your room and its agents">
+    <div className="dg-shell" data-paused={paused} data-menu={menuOpen ? "open" : "closed"}>
+      <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
+      <aside id="dg-side" className="dg-side" aria-label="Your room and its agents">
+        <button type="button" className="dg-close" onClick={() => setMenuOpen(false)} aria-label="Close the room list">×</button>
         {brand && <div className="dg-brand">{brand}</div>}
         {back && <div className="dg-backrow">{back}</div>}
         <h2>Room</h2>
@@ -212,6 +231,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
       <section className="dg-main" aria-label="Your room">
         <header className="dg-head">
+          <button type="button" className="dg-menu" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open the room list">
+            <span aria-hidden="true">☰</span> <span>{agents.length} agent{agents.length === 1 ? "" : "s"}</span>
+          </button>
           <h1>{ROOM_ID}</h1>
           <span className="dg-limit">Agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
           <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import Avatar from "@/components/Avatar";
+import DevicePhoto, { useDevicePhoto } from "@/components/DevicePhoto";
+import { ABOUT_MAX, NAME_MAX, loadDeviceProfile, removeDevicePhoto, saveDeviceProfile, setDevicePhoto, type DeviceProfile } from "@/lib/device-profile";
 import { getMyProfile, removeAvatar, updateMyProfile, uploadAvatar, type MyProfileResult } from "@/lib/kel-api";
 import type { ApiState } from "@/lib/api";
 import { AVATAR_MAX_BYTES, AVATAR_TYPES, TAGLINE_MAX, avatarProblem, profileChanges } from "@/lib/profile-form";
@@ -68,9 +70,9 @@ function Editor() {
   useEffect(load, [load]);
 
   if (profile.kind === "loading") return <p className="small dim" role="status">Loading your profile…</p>;
+  if (profile.kind === "unconfigured") return <DeviceEditor />;
   if (profile.kind !== "ok") {
-    const text = profile.kind === "unconfigured" ? "This site isn't connected to a profile server."
-      : profile.kind === "unauthenticated" ? "Please sign in again."
+    const text = profile.kind === "unauthenticated" ? "Please sign in again."
       : profile.kind === "forbidden" ? profile.message
       : profile.kind === "error" ? profile.message : "Couldn't load your profile.";
     return (
@@ -155,6 +157,82 @@ function Editor() {
         </fieldset>
         <div className="cform-submit">
           <button className="btn-ink" type="submit" disabled={!changes || status === "saving"}>
+            <span>{status === "saving" ? "Saving…" : "Save changes"}</span><span className="sq" aria-hidden="true">→</span>
+          </button>
+          {status === "saved" && <span className="small" role="status">Saved.</span>}
+          {status === "error" && <span className="small" role="alert">{message}</span>}
+        </div>
+      </form>
+    </>
+  );
+}
+
+/** No profile server on this site: name and about line on the account, photo in this browser. See lib/device-profile.ts. */
+function DeviceEditor() {
+  const [p, setP] = useState<DeviceProfile | null | undefined>(undefined);
+  const [name, setName] = useState("");
+  const [about, setAbout] = useState("");
+  const [status, setStatus] = useState<Status>("idle");
+  const [message, setMessage] = useState("");
+  const [photoError, setPhotoError] = useState("");
+  const file = useRef<HTMLInputElement>(null);
+  const photo = useDevicePhoto(p?.subject);
+
+  useEffect(() => {
+    let live = true;
+    loadDeviceProfile().then((r) => { if (!live) return; setP(r); if (r) { setName(r.name); setAbout(r.about); } });
+    return () => { live = false; };
+  }, []);
+
+  if (p === undefined) return <p className="small dim" role="status">Loading your profile…</p>;
+  if (p === null) return <div className="empty" role="alert"><b>Couldn&rsquo;t load your profile.</b><p>Please sign in again.</p><div className="cluster"><Link className="btn-line" href="/sign-in?redirect=/account/profile">Sign in</Link></div></div>;
+
+  const changed = name.trim() !== p.name.trim() || about.trim() !== p.about.trim();
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (file.current) file.current.value = "";
+    if (!f || !p) return;
+    const problem = avatarProblem(f);
+    if (problem) { setPhotoError(problem); return; }
+    setPhotoError(await setDevicePhoto(p.subject, f) ?? "");
+  }
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!changed) return;
+    setStatus("saving"); setMessage("");
+    const err = await saveDeviceProfile({ name, about });
+    if (err) { setStatus("error"); setMessage(err); return; }
+    setP({ ...p!, name: name.trim(), about: about.trim() }); setStatus("saved");
+  }
+
+  return (
+    <>
+      <div className="profile-card">
+        <h2 className="h3">Photo</h2>
+        <div className="profile-photo">
+          {photo ? <DevicePhoto url={photo} size={96} alt="Your profile photo" /> : <span className="avatar" aria-hidden="true" style={{ width: 96, height: 96, display: "grid", placeItems: "center", fontSize: 32 }}>{(name || p.email || "?").trim().charAt(0).toUpperCase()}</span>}
+          <div className="stack">
+            <input ref={file} id="p-photo" type="file" accept={AVATAR_TYPES.join(",")} onChange={pick} className="visually-hidden" aria-label="Choose a profile photo" />
+            <div className="cluster">
+              <button type="button" className="btn-ink" onClick={() => file.current?.click()}><span>{photo ? "Change photo" : "Add a photo"}</span></button>
+              {photo && <button type="button" className="btn-line" onClick={() => removeDevicePhoto(p.subject)}>Remove</button>}
+            </div>
+            <p className="small dim">PNG, JPEG or WebP. It is shrunk and kept only in this browser; it is not uploaded and will not follow you to another device.</p>
+            {photoError && <p className="small" role="alert">{photoError}</p>}
+          </div>
+        </div>
+      </div>
+      <form className="cform profile-form" onSubmit={save}>
+        <h2 className="h3">About you</h2>
+        {p.email && <p className="small dim">Signed in as {p.email}</p>}
+        <div className="cfield"><label htmlFor="p-name">Name</label>
+          <input id="p-name" type="text" maxLength={NAME_MAX} autoComplete="name" value={name} onChange={(e) => { setName(e.target.value); setStatus("idle"); }} />
+          <span className="hint">Saved on your keळ account.</span></div>
+        <div className="cfield"><label htmlFor="p-about">About you <span className="dim">(optional)</span></label>
+          <textarea id="p-about" rows={3} maxLength={ABOUT_MAX} value={about} onChange={(e) => { setAbout(e.target.value); setStatus("idle"); }} />
+          <span className="hint">{about.length}/{ABOUT_MAX}. A line or two about what you work on. Only you see it.</span></div>
+        <div className="cform-submit">
+          <button className="btn-ink" type="submit" disabled={!changed || status === "saving"}>
             <span>{status === "saving" ? "Saving…" : "Save changes"}</span><span className="sq" aria-hidden="true">→</span>
           </button>
           {status === "saved" && <span className="small" role="status">Saved.</span>}
