@@ -4,3 +4,8 @@
 // off since 2026-10-08. The local half never registers projects, so the list was always empty. Turn it back on
 // with NEXT_PUBLIC_PROJECT_SYNC=on here AND PROJECT_SYNC_ENABLED=true on the API.
 export const PROJECT_SYNC_ENABLED = (process.env.NEXT_PUBLIC_PROJECT_SYNC || "").trim().toLowerCase() === "on";
+
+// kell-hosted models for signed-in people (a capped pilot: two models on kell's own provider accounts, public data only).
+// OFF until the hosted server exposes the chat endpoint and its contract is published; the Models page then shows the opt-in.
+// Read at build time. This is never an automatic fallback for a missing key: it is a separate choice the person makes.
+export const KEL_MODELS_ENABLED = (process.env.NEXT_PUBLIC_KEL_MODELS || "").trim().toLowerCase() === "on";

@@ -61,6 +61,20 @@ const byText = (t: string) => [...host!.querySelectorAll("button")].find((b) => 
 afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; rows.length = 0; for (const k of Object.keys(keyOf)) delete keyOf[k]; session = { token: "t", subject: "u1" }; models = ["model-a", "model-b"]; vi.restoreAllMocks(); });
 
 describe("Models page", () => {
+  it("shows the kell-hosted models as a labelled pilot that is not available yet, with the data warning, and makes no network call", async () => {
+    const f = vi.fn();
+    vi.stubGlobal("fetch", f);
+    await mount();
+    const text = host!.textContent ?? "";
+    expect(text).toMatch(/Pilot/);
+    expect(text).toMatch(/Public material only/);
+    expect(text).toMatch(/no data-processing agreement/);
+    expect(text).toMatch(/Not available yet/);
+    expect(text).toMatch(/never used instead of one/);
+    expect(f).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("signed out: only a sign-in notice that returns here", async () => {
     session = null;
     await mount();

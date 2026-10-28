@@ -6,6 +6,7 @@ import { listModels, scrub } from "@/lib/byok/chat";
 import { PROVIDERS, cleanBaseUrl, providerById } from "@/lib/byok/providers";
 import { DEFAULT_DAILY_CAP, readCap, usedToday, writeCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore, type KeyMeta } from "@/lib/byok/vault";
+import { KEL_MODELS_ENABLED } from "@/lib/features";
 import { getSession, onSessionChange, type Session } from "@/lib/session";
 
 const kv = (): KeyValue => {
@@ -123,6 +124,19 @@ function Panel({ subject }: { subject: string }) {
         <p><b>Where your key goes.</b> It is encrypted in this browser and sent only to the provider you choose below. keळ never sees it, never pays for your usage and never uses a key of its own. Your provider bills you.</p>
         <p className="small dim">Keys are kept per browser. Clearing this site&rsquo;s data, or using another browser, removes them; add the key again there. A script running on this site could in principle use your stored key, so use keys with a spending limit set at the provider.</p>
       </div>
+
+      <section className="models-kell" aria-labelledby="kell-models">
+        <h2 className="h3" id="kell-models">keळ models <span className="status" data-s="unknown">Pilot</span></h2>
+        <p className="small">Two small models on keळ&rsquo;s own provider accounts, for trying the assistant without a key of your own. It is separate from your keys and is never used instead of one.</p>
+        <ul className="small models-kell-terms">
+          <li>Capped: a small daily allowance per person, enforced by the server.</li>
+          <li>Public material only. Do not send private code, secrets or personal data.</li>
+          <li>Your prompt goes to the model provider (Z.ai or General Compute). We have no data-processing agreement with them yet.</li>
+        </ul>
+        {KEL_MODELS_ENABLED
+          ? <p className="small" role="status">Not connected yet.</p>
+          : <p className="small dim" role="status">Not available yet. Your own key, below, is the way to chat today.</p>}
+      </section>
 
       <form className="cform models-form" onSubmit={add}>
         <h2 className="h3">Add a key</h2>
