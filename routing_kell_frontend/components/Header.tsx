@@ -30,15 +30,19 @@ export default function Header() {
   // than a display convenience: every gated page still gates on the
   // real server response, not on this alone.
   const [username, setUsername] = useState<string | null | undefined>(undefined); // undefined = not resolved yet
+  // Having a session is what "signed in" means here. The profile (for the name) is a second, separate request that can fail
+  // (backend down, no profile yet); that must never turn a signed-in visitor back into a "Sign in" button.
+  const [signedIn, setSignedIn] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const session = await getSession();
       if (!session) {
-        if (!cancelled) setUsername(null);
+        if (!cancelled) { setSignedIn(false); setUsername(null); }
         return;
       }
+      if (!cancelled) setSignedIn(true);
       const profile = await getMyProfile();
       if (cancelled) return;
       setUsername(profile.kind === "ok" ? profile.data.profile.username : null);
@@ -48,8 +52,8 @@ export default function Header() {
 
   // Sign-out (or an OAuth return that lands on the same path) changes the session without changing pathname.
   useEffect(() => onSessionChange((s) => {
-    if (!s) setUsername(null);
-    else getMyProfile().then((p) => setUsername(p.kind === "ok" ? p.data.profile.username : null));
+    if (!s) { setSignedIn(false); setUsername(null); }
+    else { setSignedIn(true); getMyProfile().then((p) => setUsername(p.kind === "ok" ? p.data.profile.username : null)); }
   }), []);
 
   // About is the last nav-highlightable section on the page, so "in view" here means
@@ -102,6 +106,9 @@ export default function Header() {
     }
   };
 
+  // Delegator (group chat for people and agents) is for signed-in accounts, so its link appears only then.
+  const navLinks = signedIn ? [...links, { href: "/delegator", label: "Delegator" }] : links;
+
   const item = (l: (typeof links)[number]) => {
     const isHome = l.href === "/";
     const isAbout = l.href === "/#about";
@@ -129,8 +136,8 @@ export default function Header() {
           <Link href="/" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
             <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
           </Link>
-          <nav aria-label="Primary" className="nav-links">{links.map(item)}</nav>
-          {username === undefined ? (
+          <nav aria-label="Primary" className="nav-links">{navLinks.map(item)}</nav>
+          {signedIn === undefined || (signedIn && username === undefined) ? (
             // Session resolution is async (Supabase's own session read, then a
             // real network round trip to fetch the profile that decides
             // between this and AccountMenu) -- rendering "Sign in" here while
@@ -138,8 +145,8 @@ export default function Header() {
             // visitor who's actually signed in, right before flipping to
             // AccountMenu. An invisible placeholder holds the layout instead.
             <span className="btn-ink desk" aria-hidden="true" style={{ visibility: "hidden" }}>Sign in <Arrow /></span>
-          ) : username ? (
-            <AccountMenu username={username} />
+          ) : signedIn ? (
+            <AccountMenu username={username ?? "Account"} />
           ) : (
             <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
           )}
@@ -148,12 +155,11 @@ export default function Header() {
           </button>
           {open && (
             <nav id="nav-panel" aria-label="Mobile" className="nav-panel">
-              {links.map(item)}
-              {username ? (
+              {navLinks.map(item)}
+              {signedIn ? (
                 <>
                   {PROJECT_SYNC_ENABLED && <Link href="/account" onClick={() => setOpen(false)}>Projects</Link>}
                   <Link href="/account/connections" onClick={() => setOpen(false)}>Connected apps</Link>
-                  <Link href="/delegator" onClick={() => setOpen(false)}>Delegator</Link>
                   <Link href="/account/settings" onClick={() => setOpen(false)}>Settings</Link>
                 </>
               ) : (
