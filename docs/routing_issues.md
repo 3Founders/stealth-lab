@@ -253,3 +253,50 @@ Cheap models do not yet save money on real issues. With the fair settings (20 mi
 the clean replay so far is: gpt-oss solves 531 and 518 and fails 508 and 527; GLM's step agent solves none of 508, 518 and
 527 in 20 minutes; GLM under Claude Code solves 518. At today's prices the break-even is roughly 45% of issues solved by
 a cheap model. Next: finish the clean replay, then rerun the full series (kell vs Opus) with the settings it picks.
+
+## Reported by other sessions
+
+### 34. `find_ways` hung when called on a local MCP at :8766 (Observed by the Frontend session; not investigated)
+It never returned in 25 to 90 seconds. Port 8766 is where CLAUDE.md puts the status page, so this may not have been the
+MCP server. On :8765 the lookups on 2026-10-28 returned in about 3 to 5 seconds. Needs a reproduction: which process was
+listening on :8766, and whether `find_ways` or the connection was what stalled. The "Router activity" tab now shows a
+call as pending the moment it starts, so a hang is visible there.
+
+## Who does what next (2026-10-28)
+
+These are proposals. AnujB's session has not confirmed them. Items marked "from AnujB's note" come from the message
+AnujB's session sent about this doc.
+
+### AnujB's session (Claude)
+1. **Finish the clean replays, then rerun the full series** (kell against Opus) with the settings the replays pick.
+   Report cost per solved issue, not only solves; the note puts break-even at about 45% of issues solved by a cheap
+   model, and the last series was Opus 8/9 for $4.43 against kell 7/9 for $5.78.
+2. **Push the held batch after the replays**, once the overlap with other work is checked: the first-prompt model fix,
+   locate, the reviewer, cost accounting (cached tokens), the bridge, the stall rules, and the #17 fix (a 5xx or
+   `provider_error` no longer counts as the model failing). From AnujB's note.
+3. **Check the first-prompt fix against a short model name.** `detectModel` falls back to `model` in Claude Code's
+   settings.json, and on the machine this doc was written on that value is `"sonnet"`, not a full id. Confirm the plan
+   is built for a known unit when the name is an alias.
+4. **Do not push the 900 s limit on the cheap tries.** It was raised from 600 to 900 s in the local tree. The decision
+   on 2026-10-28 is that the person should wait seconds, not minutes (a target of 5 to 10 s), and a 10 s default is
+   ready as a separate patch. Hold the 900 s change until that is settled, so the two do not conflict in
+   `dispatch.mjs`.
+5. **gpt-oss under Claude Code**: "Failed to parse tool call from GPT OSS output" (General Compute, HTTP 400, always at
+   the same character) is still open. From AnujB's note.
+6. **Console gaps** (from AnujB's note): `console/scripts/start.mjs` starts `backend/scripts/start_mcp_local.ps1`, which
+   was missing in AnujB's checkout (it exists on main); the page text says prompts are sent "up to 1,500 characters",
+   now 4,000; and the page shows "MCP CLOSED (Invalid URL)" until a server address is saved.
+7. **Keep the harness fixes**: no package index, no network, and the peek detector that flags fetches, so a model
+   cannot copy an upstream fix. From AnujB's note.
+
+### The other session (Model Calling)
+1. **Fix the three confirmed recording bugs**, #8, #9 and #13: record a library entry only for change prompts (use the
+   triage verdict in `recordLibraryEntry`), build its diff from the files this session edited and not the whole tree
+   (`diffFromGit`), and inject only library matches that were judged relevant (the hook's default mode is `full`).
+   AnujB's note asked for these to be picked up.
+2. **Build the brief per Goal** (`.kell/goals/<G-id>.md`) once those are in. The design is a draft, not pushed.
+3. **Reproduce #34** and the Neon start-up failure (#20) so that a down server is visible to the user.
+
+### Not assigned
+- A difficulty signal for tasks (#2, #24), per-decision records (#33) and a measured check-strength signal (#25).
+- Wording: the shipped instructions say "the unit is a TASK"; if the Goal is the primitive they need rewording.
