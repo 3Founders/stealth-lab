@@ -35,8 +35,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <Telemetry />
         <OnboardingGate />
         <Header />
+        <BackButton />
         <main id="main">
-          <BackButton />
           {children}
         </main>
         <Footer />

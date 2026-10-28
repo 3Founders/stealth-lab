@@ -90,12 +90,13 @@ main, footer { position: relative; z-index: 1; }
   font: inherit; font-size: 15px; font-weight: 400; color: var(--ink); background: var(--paper);
   border: 1px solid var(--rule-strong); border-radius: 999px; cursor: pointer;
   transition: background-color .2s var(--ease), transform .2s var(--ease);
+  text-decoration: none; scroll-margin-top: 96px; /* a focused Back is never hidden under the sticky nav (WCAG 2.4.11) */
 }
 .back-btn svg { transition: transform .25s var(--ease); }
 .back-btn:hover { background: var(--yellow); }
 .back-btn:hover svg { transform: translateX(-3px); }
 .back-btn:active { transform: scale(.97); }
-.back-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.back-btn:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; } /* 2px, 3:1 against the page */
 
 /* nav */
 .nav-wrap { position: sticky; top: 14px; z-index: 50; margin-top: 14px; height: 0; }
