@@ -63,7 +63,10 @@ export function attachAssistant(broker: Broker, deps: AssistantDeps, handle: str
     deps.used();
     let text = "";
     try {
-      for await (const piece of target.stream(toChatTurns(deps.history(roomId), handle), controller.signal)) {
+      // The message that woke the agent is always part of what it is sent, even if the page's history has not caught up with it.
+      const history = deps.history(roomId);
+      const turns = toChatTurns(history.some((m) => m.id === message.id) ? history : [...history, message], handle);
+      for await (const piece of target.stream(turns, controller.signal)) {
         text += piece;
         deps.onDelta(roomId, handle, text);
       }

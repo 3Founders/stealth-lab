@@ -55,6 +55,16 @@ describe("assistant", () => {
     expect(reply && reply.kind === "message" && reply.message.payload.text).toBe("Hello");
   });
 
+  it("the message that woke it is always sent, even when the page's history has not caught up yet", async () => {
+    const { b } = world();
+    const seen: string[][] = [];
+    const d = deps({ history: () => [], resolve: async () => ({ secrets: [SECRET], stream: async function* (messages: { role: string; content: string }[]) { seen.push(messages.map((m) => `${m.role}:${m.content}`)); yield "ok"; } }) });
+    attachAssistant(b, d);
+    await b.send(say(b, "@assistant hello there"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(seen).toEqual([["user:@alice: @assistant hello there"]]);
+  });
+
   it("with no key it says so in the room and makes no request", async () => {
     const { b, events } = world();
     const d = deps({ resolve: async () => null });

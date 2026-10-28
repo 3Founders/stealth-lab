@@ -61,8 +61,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [backing, setBacking] = useState<Backing | undefined>(undefined);
   const controllers = useRef(new Map<string, AbortController>());
   const detachers = useRef(new Map<string, () => void>());
-  const linesRef = useRef(lines);
-  linesRef.current = lines;
+  // The history an agent reads is kept here, updated the moment a line arrives: React state lags a render behind, and an agent that
+  // starts first would send the model a request with no message from the person in it.
+  const linesRef = useRef<Line[]>(lines);
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const { scrollToEnd, follow } = useSpringScroll(viewportRef, contentRef, ROOM_ID);
@@ -77,7 +78,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     onEnd: (_r, handle) => { controllers.current.delete(handle); setStreaming((p) => { const n = { ...p }; delete n[handle]; return n; }); },
   }), [vault, kv, subject]);
 
-  const push = (l: Line) => setLines((p) => (l.kind === "msg" && p.some((x) => x.kind === "msg" && x.m.id === l.m.id) ? p : [...p, l]));
+  const push = (l: Line) => {
+    const p = linesRef.current;
+    if (l.kind === "msg" && p.some((x) => x.kind === "msg" && x.m.id === l.m.id)) return;
+    linesRef.current = [...p, l];
+    setLines(linesRef.current);
+  };
 
   const addAgent = (handle: string) => {
     broker.addMember(ROOM_ID, handle);
