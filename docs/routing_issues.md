@@ -145,6 +145,70 @@ The plan there uses public priors only, nothing can be checked, and a cheaper mo
 `call_model` with the deployment's keys. Cheap-first with verification does not carry over. The Python path was not run
 end to end in this session.
 
+## F. What keeps it from being a near-perfect router
+
+The items above are why routing misbehaves today. These are why it could not be near-perfect even after they are fixed.
+
+### 23. The router only sees the ladder it ran (Read; Inferred)
+If a cheap model passes the check, nothing says whether an even cheaper one would have; if it fails, the only lesson
+is "this one failed here". The data is censored by the choices made. A near-perfect router needs to know, for each task,
+the cheapest model that would have passed. That takes deliberate counterfactual runs (for example shadow runs on a
+sample), with a stated cost and a measured regret. No replay of real traffic against a labelled "best model" exists in
+what I read.
+
+### 24. No features of the task itself (Observed)
+`taskFeatures(root)` in `library.mjs` sends medians over past diffs for the whole repo or for a way. Nothing describes
+the current prompt: how many files the located region spans, which languages, how large the edit is likely to be, how
+well specified it is, whether tests cover that code. Without a per-task feature vector, probabilities cannot differ
+between a rename and a redesign (see item 2), however much data arrives.
+
+### 25. The check's strength is assumed, not measured per task (Read)
+Routing uses one prior per check kind (`tests`: about 20% false accept). The real strength depends on whether any test
+executes the changed lines. A pass from a suite that never touches the edited code is close to no evidence, but is
+modelled the same as a pass from a covering test. Near-perfect needs a per-task coverage or impact signal, and a
+stronger acceptance route (independent review, extra tests) when coverage is thin.
+
+### 26. The reviewer is the session's own model family (Observed)
+Accepted answers carry "strong review" from `claude-sonnet-5-5` (`dispatch: ... accepted by the rule (E Rs)`). A reviewer
+from the same family as the model being replaced shares its blind spots, and every accepted answer costs a Sonnet call.
+Independence and cost both argue against it as the main safety net.
+
+### 27. Wall-clock time is not in the objective (Read; Inferred)
+The ladder optimises success, wrong-delivery and dollar cost. Dispatch has a 600 s limit for all cheap tries together,
+and tries run before the session model starts. A ladder that saves cents and costs minutes on every failure is a loss
+for the person waiting. There is no latency budget in the plan, and no measure of time-to-correct-answer by route.
+
+### 28. Hand-off loses context (Read)
+The session model sees the whole conversation. A cheap model gets the prompt, up to 12000 characters, plus about 4 KB of
+repository context and some earlier turns (`brief.mjs`, `task_context.mjs`). Prompts that lean on earlier decisions or
+on files nobody named will fail for lack of context, not capability. I did not read what the session model is told
+about a cheap attempt that failed, so I do not know if escalation starts from scratch.
+
+### 29. Decisions are made once per prompt (Read)
+The hook decides at the start of a prompt. `ladder.py` supports step-level routing, but the hook uses the task-level
+plan. A long task whose first half is easy and second half is hard cannot be re-routed part-way, and follow-up prompts
+on the same task each start a new decision with partial state.
+
+### 30. Cheap executors may lack what the task needs (Inferred)
+Triage says `work=change`, not what the change needs. A task that needs a running service, network access, a browser or
+a database cannot be done in an isolated worktree. Nothing screens for that before a cheap attempt is spent.
+
+### 31. Knowledge from outside can steer the models (Read)
+Library entries and the ways pulled from the shared commons are injected into prompts. `submit_way` entries are screened
+by an automated check and "never verified on submission". Local library entries are also injected as text. Both reach
+the session model and the cheap executors, which can write files. CLAUDE.md already says to treat this as untrusted
+data, but nothing in the injected text separates instructions from facts.
+
+### 32. Several sessions share one set of files (Observed)
+On 2026-10-28 other sessions' lines interleaved with mine in `~/.stealthlab/hooks.log`. `.kell/routing.md`,
+`.kell/library.md` and `provider_quota.json` are shared by every session on the machine. Concurrent writers can lose
+counts or show a quota another session already spent.
+
+### 33. No per-decision record (Observed)
+`hooks.log` is free text, and `dispatch_costs.jsonl` held only review costs. There is no row per prompt tying together
+triage verdict, plan, ladder, what ran, check result, cost, time and the final outcome. Without it, the router's precision
+(how often cheap-first was right), regret and savings cannot be computed, so "near-perfect" cannot be demonstrated.
+
 ## What was not examined
 The routing store (`store.py`), the bundled priors (`prior_bundle.py`), `detect_check.mjs`, `locate.mjs`, the executor
 runtime under `lib/exec/`, and the real Neon database (over quota during the session). Nothing here was measured on
