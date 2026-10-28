@@ -39,3 +39,20 @@ export function withoutRoom(list: RoomList, room: string): RoomList {
   const rooms = list.rooms.filter((r) => r !== room);
   return { rooms, current: list.current === room ? rooms[0] : list.current };
 }
+
+// The in-tab agents you have added (their handles; they are not secret), so a reload brings the same agents back.
+const agentsKey = (subject: string) => `kel.delegator.agents.${subject}`;
+const AGENT = /^@[a-z0-9][a-z0-9_-]{0,23}$/i;
+export const DEFAULT_AGENTS = ["@assistant-1"];
+
+export function readAgents(kv: KeyValue, subject: string, max = 5): string[] {
+  try {
+    const v = JSON.parse(kv.getItem(agentsKey(subject)) ?? "null") as unknown;
+    if (Array.isArray(v)) return [...new Set(v.filter((h): h is string => typeof h === "string" && AGENT.test(h)))].slice(0, max);
+  } catch { /* fall through */ }
+  return [...DEFAULT_AGENTS];
+}
+
+export function writeAgents(kv: KeyValue, subject: string, agents: string[]): void {
+  try { kv.setItem(agentsKey(subject), JSON.stringify(agents)); } catch { /* storage blocked */ }
+}

@@ -12,7 +12,8 @@ import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/del
 import { describeBacking, makeResolver, type Backing } from "@/lib/delegator/adapters/resolve";
 import { Broker } from "@/lib/delegator/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, validAgentName, type RelayAgent, type RelayTask } from "@/lib/delegator/relay-client";
-import { newRoomName, readRooms, withoutRoom, writeRooms, type RoomList } from "@/lib/delegator/rooms";
+import { newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/delegator/rooms";
+import { HISTORY_DB, HistoryStore } from "@/lib/delegator/store";
 import type { AgentActivity, AgentIdentity, GroupMessage } from "@/lib/delegator/types";
 import { MAX_DEPTH } from "@/lib/delegator/types";
 import { groupMessages, initials } from "@/lib/delegator/ui";
@@ -50,6 +51,8 @@ function localKv(): KeyValue {
 
 type Item = { t: number; key: string; node: React.ReactNode };
 
+const lineTime = (l: Line) => (l.kind === "msg" ? l.m.timestamp : l.t);
+
 /**
  * Your rooms and agents. Two kinds of agent, both real:
  *  - an agent that runs in this tab: a model call with the key or keळ models you chose under Models. It works only while this
@@ -63,6 +66,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const vault = useMemo(() => new Vault(idbStore(), subject), [subject]);
   const kv = useMemo(localKv, []);
   const api = useMemo(() => relay({ token: getAccessToken }), []);
+  const history = useMemo(() => new HistoryStore(idbStore(HISTORY_DB), subject), [subject]);
+  const historyWarned = useRef(false);
 
   const [roomList, setRoomList] = useState<RoomList>(() => readRooms(kv, subject));
   const room = roomList.current;
@@ -99,12 +104,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [formError, setFormError] = useState("");
   const [justAdded, setJustAdded] = useState("");
 
+  const warnHistory = () => {
+    if (historyWarned.current) return;
+    historyWarned.current = true;
+    push(roomRef.current, { kind: "notice", id: "history-warn", text: "This browser won't let keळ save your history, so it will be gone when you close the page.", t: Date.now() });
+  };
+
   const push = useCallback((r: string, l: Line) => {
     const cur = lineStore.current[r] ?? [];
     if (l.kind === "msg" && cur.some((x) => x.kind === "msg" && x.m.id === l.m.id)) return;
     lineStore.current = { ...lineStore.current, [r]: [...cur, l] }; // read straight away by the agents' history, before any re-render
     bump((n) => n + 1);
-  }, []);
+    if (l.kind === "msg") history.appendMessage(l.m).catch(() => warnHistory());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history]);
   const note = useCallback((text: string, r: string = roomRef.current) => push(r, { kind: "notice", id: broker.newId(), text, t: Date.now() }), [broker, push]);
 
   const deps = useMemo<AssistantDeps>(() => ({
@@ -128,6 +141,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     detachers.current.set(handle, attachAssistant(broker, deps, handle));
     agentsRef.current = [...agentsRef.current, handle];
     setAgents(agentsRef.current);
+    writeAgents(kv, subject, agentsRef.current);
   };
 
   const removeAgent = (handle: string) => {
@@ -137,6 +151,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const r of roomList.rooms) broker.removeMember(r, handle);
     agentsRef.current = agentsRef.current.filter((h) => h !== handle);
     setAgents(agentsRef.current);
+    writeAgents(kv, subject, agentsRef.current);
     setActivity((p) => { const n = { ...p }; delete n[handle]; return n; });
     note(`${handle} left the room.`);
   };
@@ -154,7 +169,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // The room starts with one in-tab agent. (A ref guards the development double-run of effects.)
   const started = useRef(false);
   useEffect(() => {
-    if (!started.current) { started.current = true; addAgent("@assistant-1"); }
+    if (!started.current) { started.current = true; for (const h of readAgents(kv, subject, MAX_AGENTS)) addAgent(h); }
     const all = detachers.current;
     return () => { all.forEach((d) => d()); all.clear(); started.current = false; agentsRef.current = []; setAgents([]); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -165,6 +180,33 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     describeBacking({ vault, kv, subject }).then((b) => { if (live) setBacking(b); }).catch(() => { if (live) setBacking({ ready: false, text: "Add a key to chat here" }); });
     return () => { live = false; };
   }, [vault, kv, subject]);
+
+  // Bring this room's saved history back from this device (what is already on screen wins on a clash).
+  const hydrate = useCallback(async (r: string) => {
+    try {
+      const saved = await history.load(r);
+      const cur = lineStore.current[r] ?? [];
+      const have = new Set(cur.flatMap((l) => (l.kind === "msg" ? [l.m.id] : [])));
+      const add: Line[] = saved.messages.filter((m) => !have.has(m.id)).map((m) => ({ kind: "msg", m }));
+      if (add.length) { lineStore.current = { ...lineStore.current, [r]: [...add, ...cur].sort((a, b) => lineTime(a) - lineTime(b)) }; bump((n) => n + 1); }
+      if (saved.tasks.length) setTasksByRoom((p) => ({ ...p, [r]: mergeTasks(saved.tasks, p[r] ?? []) }));
+    } catch { /* nothing saved, or storage blocked: the room simply starts empty */ }
+  }, [history]);
+  useEffect(() => { void hydrate(room); }, [hydrate, room]);
+
+  // Keep each relay task's latest state on this device, so it outlives the server's 7 days.
+  const savedTasks = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const list of Object.values(tasksByRoom)) {
+      for (const t of list) {
+        const sig = `${t.status}|${t.claimed_at}|${t.finished_at}|${t.result?.length ?? 0}`;
+        if (savedTasks.current.get(t.id) === sig) continue;
+        savedTasks.current.set(t.id, sig);
+        history.saveTask(t).catch(() => warnHistory());
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasksByRoom, history]);
 
   // The relay: your agents and this room's tasks, fetched now and again every few seconds while the page is visible.
   useEffect(() => {
@@ -300,7 +342,45 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   };
   const deleteRoom = (r: string) => {
     const next = withoutRoom(roomList, r);
-    if (next !== roomList) setRoomList(next);
+    if (next === roomList) return;
+    const has = (lineStore.current[r] ?? []).some((l) => l.kind === "msg") || (tasksRef.current[r] ?? []).length > 0;
+    if (has && !window.confirm(`Remove ${r}? Its saved history on this device is deleted too.`)) return;
+    void history.clearRoom(r).catch(() => {});
+    const { [r]: _l, ...rest } = lineStore.current; // eslint-disable-line @typescript-eslint/no-unused-vars
+    lineStore.current = rest;
+    setTasksByRoom((p) => { const { [r]: _t, ...others } = p; return others; }); // eslint-disable-line @typescript-eslint/no-unused-vars
+    setRoomList(next);
+  };
+
+  // ---- your data
+  const importFile = useRef<HTMLInputElement>(null);
+  const download = async () => {
+    try {
+      const blob = new Blob([JSON.stringify(await history.exportAll(), null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `kel-rooms-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch { note("Couldn't read your saved history."); }
+  };
+  const importHistory = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (importFile.current) importFile.current.value = "";
+    if (!f) return;
+    try {
+      const r = await history.importAll(JSON.parse(await f.text()));
+      await hydrate(room);
+      note(`Imported ${r.messages} message${r.messages === 1 ? "" : "s"} and ${r.tasks} task${r.tasks === 1 ? "" : "s"}.`);
+    } catch (err) { note(err instanceof Error ? err.message : "Couldn't import that file."); }
+  };
+  const wipe = async () => {
+    if (!window.confirm("Delete all saved rooms history on this device? Your rooms and agents stay. This can't be undone.")) return;
+    await history.clearAll().catch(() => {});
+    lineStore.current = {};
+    setTasksByRoom({});
+    savedTasks.current.clear();
+    bump((n) => n + 1);
   };
 
   // ---- agents
@@ -451,6 +531,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <b>@{justAdded} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
           </p>
         )}
+        <h2>Your data</h2>
+        <p className="dg-note">Rooms and chats are saved in this browser, encrypted, and are yours. They don&rsquo;t leave your device and don&rsquo;t follow you to another one yet.</p>
+        <div className="dg-data">
+          <button type="button" className="btn-line dg-mini-btn" onClick={() => void download()}>Download</button>
+          <button type="button" className="btn-line dg-mini-btn" onClick={() => importFile.current?.click()}>Import</button>
+          <button type="button" className="btn-line dg-mini-btn" onClick={() => void wipe()}>Delete history</button>
+          <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
+        </div>
         <p className="dg-note">
           Agents on the relay stay on your account and keep working with this page closed. Agents in this tab use the model you chose under <Link href="/account/models" style={{ textDecoration: "underline" }}>Models</Link>{backing?.text.startsWith("keळ") ? " (public material only)" : " with your own key"}.
         </p>

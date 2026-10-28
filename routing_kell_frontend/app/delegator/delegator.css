@@ -185,3 +185,4 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   .dg-mini { min-height: 44px; padding: 0 16px; }
   .dg-mini-btn { min-height: 44px; }
 }
+.dg-data { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 6px; }
