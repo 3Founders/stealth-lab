@@ -1,4 +1,9 @@
 /**
+ * NOT FOR USE. Retired by docs/rooms_design.md (rev 2): hand-written group key handling must not ship without review. Private rooms
+ * will use MLS (RFC 9420) through ts-mls instead. This file stays, tested but unused, until it is deleted or replaced; do not import it
+ * from product code.
+ */
+/**
  * Invite links for rooms. The link is `/room/join?id=<inviteId>#<fragment>`; the fragment carries the room key for one epoch and
  * is never sent to a server (browsers don't send the part after #). Whoever holds the link can read the room from that epoch on,
  * so it is a bearer secret: revoke it (which starts a new epoch) if it leaks. Link previews and browser history can leak it.

@@ -1,4 +1,9 @@
 /**
+ * NOT FOR USE. Retired by docs/rooms_design.md (rev 2): hand-written group key handling must not ship without review. Private rooms
+ * will use MLS (RFC 9420) through ts-mls instead. This file stays, tested but unused, until it is deleted or replaced; do not import it
+ * from product code.
+ */
+/**
  * End-to-end encryption for rooms (phase 2 of docs/rooms_design.md). WebCrypto only; no new dependency; nothing here touches a
  * network or a server.
  *
