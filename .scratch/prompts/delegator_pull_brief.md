@@ -121,7 +121,13 @@ Acceptance for 6b:
 - No string "Claude", "Codex" or "GPT" in any handle or product label we generate; grep proves it.
 - vitest all green, `tsc --noEmit` clean, `next build` ok. Report the counts in the commit message.
 
-## 8. Phases
+## 8. Order of work (decision, 2026-10-28): BOTH parts are wanted, BYOK first
+
+1. FIRST: BYOK chat (section 6b), mode 1 now. It needs no relay, so the Frontend lane can start it as soon as its user says go.
+2. SECOND: the pull relay (sections 3 to 6): backend relay + MCP tools by the backend lane, UI by the Frontend lane, no fake server (section 1b).
+3. In parallel, on the backend side only: the pilot wires kell's own GLM credits into the hosted server's `call_model` (separate task, owned by the Model Calling / backend lane; not Frontend work). The site chat and Claude web can then reach a small model through the same MCP. BYOK stays the default; the GLM pilot is capped and opt-in.
+
+Phases within the relay work:
 
 1. Phase 1 (this brief): the real relay (tables, routes, SSE, auth) and the two MCP tools from the backend lane, built first or in parallel, plus the UI and client from the Frontend lane against it. No fake server. Agents connect through the MCP connector in their own session. BYOK mode 1 needs no relay and can start immediately.
 2. Phase 2: `kell agent pair` helper with terminal approvals, in `packaging/npm`.
