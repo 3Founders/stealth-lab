@@ -89,7 +89,7 @@ describe("a key never leaks", () => {
 
 describe("providers", () => {
   it("offers the named providers and an OpenAI-compatible 'other'", () => {
-    expect(PROVIDERS.map((p) => p.id)).toEqual(["anthropic", "openai", "openrouter", "together", "groq", "other"]);
+    expect(PROVIDERS.map((p) => p.id)).toEqual(["anthropic", "openai", "together", "groq", "other"]);
     expect(providerById("other")!.baseUrl).toBe("");
   });
   it("no provider label carries another company's product name as a feature name we mint", () => {

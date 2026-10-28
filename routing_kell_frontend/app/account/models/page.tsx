@@ -1,10 +1,9 @@
 "use client";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import { listModels, scrub } from "@/lib/byok/chat";
 import { parseEnvBlock, type FoundKey } from "@/lib/byok/envimport";
-import { OPENROUTER_BASE_URL, beginConnect, finishConnect } from "@/lib/byok/openrouter";
 import { PROVIDERS, cleanBaseUrl, providerById } from "@/lib/byok/providers";
 import { DEFAULT_DAILY_CAP, readCap, usedToday, writeCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore, type KeyMeta } from "@/lib/byok/vault";
@@ -72,7 +71,6 @@ function Panel({ subject }: { subject: string }) {
   const [envFound, setEnvFound] = useState<FoundKey[] | null>(null);
   const [envPick, setEnvPick] = useState<Record<string, boolean>>({});
   const [envIgnored, setEnvIgnored] = useState(0);
-  const handledCallback = useRef(false);
   const kellOn = kellModelsAvailable();
   const [choice, setChoice] = useState<AssistantChoice>({ source: "key" });
   const [kellModel, setKellModel] = useState<string>(KELL_MODEL_IDS[0]);
@@ -89,26 +87,6 @@ function Panel({ subject }: { subject: string }) {
     if (c.source === "kell") setKellModel(c.model);
   }, [vault, subject]);
   useEffect(reload, [reload]);
-
-  // Returning from openrouter.ai with ?code and ?state: take them out of the address bar at once, check them, and store the key.
-  // Run once (a ref, not a cleanup flag), so a development double-run cannot drop the result.
-  useEffect(() => {
-    if (handledCallback.current) return;
-    const q = new URLSearchParams(window.location.search);
-    const code = q.get("code"), state = q.get("state");
-    if (!code && !state) return;
-    handledCallback.current = true;
-    window.history.replaceState(null, "", window.location.pathname);
-    void (async () => {
-      const r = await finishConnect(code ?? "", state ?? "", window.sessionStorage);
-      if (!r.ok) { setError(r.message); return; }
-      try {
-        await vault.add({ provider: "openrouter", baseUrl: OPENROUTER_BASE_URL, label: "OpenRouter (connected)", apiKey: r.key });
-        setNote("Connected to OpenRouter. Press Test on the new key to choose a model.");
-        reload();
-      } catch { setError("We could not store that key in this browser."); }
-    })();
-  }, [vault, reload]);
 
   const def = providerById(provider)!;
 
@@ -178,13 +156,6 @@ function Panel({ subject }: { subject: string }) {
     reload();
   }
 
-  async function connectOpenRouter() {
-    setError("");
-    try {
-      window.location.assign(await beginConnect(`${window.location.origin}/account/models`, window.sessionStorage));
-    } catch { setError("This browser could not start the connection."); }
-  }
-
   function findKeys() {
     const p = parseEnvBlock(envText);
     setEnvFound(p.found);
@@ -247,12 +218,7 @@ function Panel({ subject }: { subject: string }) {
       {note && <p className="small" role="status">{note}</p>}
 
       <section className="models-ways" aria-labelledby="other-ways">
-        <h2 className="h3" id="other-ways">Other ways to add a key</h2>
-        <div className="models-way">
-          <h3 className="small"><b>Connect with OpenRouter</b></h3>
-          <p className="small dim">Approve on openrouter.ai and we receive a key that you can revoke there. Nothing to copy or paste.</p>
-          <button type="button" className="btn-line" onClick={() => void connectOpenRouter()}>Connect with OpenRouter</button>
-        </div>
+        <h2 className="h3" id="other-ways">Add several keys at once</h2>
         <div className="models-way">
           <h3 className="small"><b>Import from a .env block</b></h3>
           <p className="small dim">Paste the lines from a .env file. Only the standard provider key names are read; everything else is ignored. The text stays in this browser.</p>

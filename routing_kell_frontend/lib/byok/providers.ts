@@ -3,7 +3,7 @@
  * (CORS). Preflight answers checked 2026-10-28 with a plain OPTIONS request from a foreign origin:
  *   Anthropic   allows the request headers incl. anthropic-dangerous-direct-browser-access, origin *
  *   OpenAI      allows authorization + content-type, echoes the origin
- *   OpenRouter, Together, Groq   allow authorization + content-type, origin *
+ *   Together, Groq   allow authorization + content-type, origin *
  * An "other" host is tried at run time: if the browser blocks it, the Test button says this provider cannot be used in
  * browser-only mode.
  *
@@ -23,7 +23,6 @@ export interface Provider {
 export const PROVIDERS: Provider[] = [
   { id: "anthropic", label: "Anthropic", kind: "anthropic", baseUrl: "https://api.anthropic.com", keyHint: "An API key from console.anthropic.com" },
   { id: "openai", label: "OpenAI", kind: "openai-compatible", baseUrl: "https://api.openai.com/v1", keyHint: "An API key from platform.openai.com" },
-  { id: "openrouter", label: "OpenRouter", kind: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1", keyHint: "An OpenRouter API key" },
   { id: "together", label: "Together", kind: "openai-compatible", baseUrl: "https://api.together.xyz/v1", keyHint: "A Together API key" },
   { id: "groq", label: "Groq", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai/v1", keyHint: "A Groq API key" },
   { id: "other", label: "Other (OpenAI-compatible)", kind: "openai-compatible", baseUrl: "", keyHint: "A key for that host" },

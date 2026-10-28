@@ -9,7 +9,6 @@ export interface FoundKey { varName: string; provider: string; apiKey: string }
 export const ENV_VARS: Record<string, string> = {
   ANTHROPIC_API_KEY: "anthropic",
   OPENAI_API_KEY: "openai",
-  OPENROUTER_API_KEY: "openrouter",
   GROQ_API_KEY: "groq",
   TOGETHER_API_KEY: "together",
 };
