@@ -39,4 +39,4 @@ Design: the site never starts or controls your Claude. Your Claude chat pulls ta
 
 What you will not see: the site pushing work into Claude on its own. A claude.ai chat acts only when you send it a message. That is also why this stays within Anthropic's terms: it is you, using Claude normally.
 
-Status: steps 1 to 4 need the backend relay (routes, tables, the `delegate_inbox` and `delegate_result` tools) and the Delegator UI against it. Neither exists yet.
+Status (2026-10-28): the relay and the two tools are BUILT and live on the hosted server (`docs/delegate_relay_api.md`). `delegate_inbox` was checked through a signed-in claude.ai connector. What is still missing is the Delegator UI against the relay (steps 1 and 2 on the site), which is the Frontend session's work. Until it exists, a task can be sent with a website-session token by calling `POST /v1/delegate/agents` and `POST /v1/delegate/messages` directly (see the API page).
