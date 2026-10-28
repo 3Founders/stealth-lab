@@ -98,8 +98,9 @@ from app.config import settings
 
 from openai import OpenAI
 
+from app.mcp_server import activity as _activity
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from app.mcp_server import oauth_resource as _oauth
 from app.mcp_server.anonymous_read import _ANONYMOUS_READ_TOKEN
@@ -714,6 +715,20 @@ async def _route_gate(request: Request) -> Optional[JSONResponse]:
         return None
     return JSONResponse({"error": "authentication required"}, status_code=401,
                         headers={"WWW-Authenticate": _oauth.www_authenticate(_ISSUER_URL, error="invalid_token")})
+
+
+@server.custom_route("/activity", methods=["GET"], include_in_schema=False)
+async def activity_feed(request: Request) -> Response:
+    """Server-sent events: the routing tools' calls and outputs, past then live (see activity.py). Loopback,
+    single-user mode only -- it carries tool output, so a shared or proxied server answers 403."""
+    if not _is_local_request(request):
+        return JSONResponse({"error": "the activity feed is only served to a local caller"}, status_code=403)
+    try:
+        after = int(request.query_params.get("after", "0"))
+    except ValueError:
+        after = 0
+    return StreamingResponse(_activity.stream(after), media_type="text/event-stream",
+                             headers={"cache-control": "no-store", "x-accel-buffering": "no"})
 
 
 @server.custom_route("/claim-graph", methods=["GET"], include_in_schema=False)
@@ -1537,6 +1552,7 @@ async def report_model_run(ctx: Context, model: str, scaffold: str, accepted: bo
 
 
 @server.tool()
+@_activity.traced
 async def report_result(ctx: Context, instance_key: str, accepted: bool, model: str | None = None,
                         scaffold: str | None = None, check_kind: str | None = None,
                         tokens_in: int | None = None, tokens_out: int | None = None,
@@ -1682,6 +1698,7 @@ async def report_audit(ctx: Context, instance_key: str, correct: bool) -> str:
 
 
 @server.tool()
+@_activity.traced
 async def call_model(ctx: Context, prompt: str, model: str = "auto", scaffold: str | None = None,
                      instance_key: str | None = None, system: str | None = None, max_tokens: int = 1024,
                      temperature: float | None = None, data_class: str = "USER_PRIVATE",
@@ -1801,6 +1818,7 @@ _routing_plan.register_candidate_provider(_routing_plan.PublicCatalogCandidates(
 
 
 @server.tool()
+@_activity.traced
 async def find_ways(
     query: str, ctx: Context,
     repo_claims: str = "",
@@ -2171,6 +2189,7 @@ async def discover_tools(ctx: Context, need: str = "", names: list[str] | None =
 
 
 @server.tool()
+@_activity.traced
 async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = None) -> str:
     """
     Run a tool you found with discover_tools: use_tool(name, arguments) -- arguments exactly as discover_tools

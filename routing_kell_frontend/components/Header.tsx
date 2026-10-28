@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 import { getMyProfile } from "@/lib/kel-api";
-import { getSession } from "@/lib/session";
+import { getSession, onSessionChange } from "@/lib/session";
 import AccountMenu from "@/components/AccountMenu";
 import { PROJECT_SYNC_ENABLED } from "@/lib/features";
 
@@ -45,6 +45,12 @@ export default function Header() {
     })();
     return () => { cancelled = true; };
   }, [pathname]);
+
+  // Sign-out (or an OAuth return that lands on the same path) changes the session without changing pathname.
+  useEffect(() => onSessionChange((s) => {
+    if (!s) setUsername(null);
+    else getMyProfile().then((p) => setUsername(p.kind === "ok" ? p.data.profile.username : null));
+  }), []);
 
   // About is the last nav-highlightable section on the page, so "in view" here means
   // "scrolled past the About threshold", not "About is currently on screen" -- an

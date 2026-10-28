@@ -118,6 +118,32 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
     req.on("error", reject);
   });
 
+  // The router's own feed: what find_ways (and call_model, report_result, use_tool) returned, as the MCP records it.
+  // The page asks the helper, never the MCP, so the page needs no CORS and no MCP address; the MCP only serves it to
+  // a loopback caller.
+  async function activity(req, res, url) {
+    const { url: mcp } = resolveSettings({}, env);
+    const fail = (status, error) => send(res, status, { error });
+    if (!mcp) return fail(424, "no MCP address is set");
+    const feed = new URL(mcp); feed.pathname = "/activity"; feed.search = "";
+    const after = Number(url.searchParams.get("after")) || 0;
+    if (after > 0) feed.searchParams.set("after", String(after));
+    const ac = new AbortController();
+    res.on("close", () => ac.abort());
+    let up;
+    try { up = await fetchImpl(feed, { redirect: "error", signal: ac.signal, headers: { accept: "text/event-stream" } }); }
+    catch (err) { return ac.signal.aborted ? undefined : fail(424, /fetch failed|ECONNREFUSED/.test(String(err?.message)) ? "The MCP is not running at its address." : "The MCP could not be reached."); }
+    if (up.status === 403) return fail(424, "The MCP only shows this feed to a local caller.");
+    if (up.status === 404) return fail(424, "This MCP is older than the activity feed. Restart it from this checkout.");
+    if (!up.ok || !up.body) return fail(424, `The MCP answered ${up.status}.`);
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+    try {
+      const reader = up.body.getReader();
+      for (;;) { const { value, done } = await reader.read(); if (done) break; if (!res.write(value)) await new Promise((r) => res.once("drain", r)); }
+    } catch { /* the page closed, or the MCP stopped: either way the stream just ends */ }
+    res.end();
+  }
+
   async function readiness() {
     const settings = resolveSettings({}, env);
     const server = await probeServer(settings.url, settings.token).catch((e) => ({ ok: false, detail: e.message }));
@@ -263,6 +289,7 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
       }
       return send(res, 200, { ok: true, removed: removeEnvFileVar(name, env) });
     }
+    if (m === "GET" && p === "/activity/stream") return activity(req, res, url);
     if (m === "POST" && p === "/chat") return chat(req, res, await readBody(req));
     if (m === "GET" && uiDir) return serveStatic(res, p);
     if (m === "GET" && p === "/") return send(res, 200, { name: "stealthlab console", ui: false, note: "no --ui-dir given; the API is here" });

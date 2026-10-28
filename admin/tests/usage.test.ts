@@ -81,3 +81,17 @@ describe("projectMonth", () => {
     expect(p.projected).toBe(toMicros("90")); // 30 / 10 days × 30
   });
 });
+
+import { savings } from "@/lib/savings";
+describe("savings vs Opus 5.5", () => {
+  it("prices the same tokens at $4 in / $20 out and subtracts the ledger total", () => {
+    const t = sumAll([row({ tokens_input_fresh: 1_000_000, tokens_output: 1_000_000, tokens_cache_read: 1_000_000, cost_usd: "1.000000" })]);
+    const s = savings(t);
+    expect(formatUsd(s.baseline)).toBe("$24.20");
+    expect(formatUsd(s.saved)).toBe("$23.20");
+    expect(s.pct).toBeCloseTo(95.87, 1);
+  });
+  it("has no percentage with no tokens", () => {
+    expect(savings(sumAll([row({ tokens_input_fresh: 0, tokens_output: 0, cost_usd: "0" })])).pct).toBeNull();
+  });
+});

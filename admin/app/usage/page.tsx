@@ -10,6 +10,7 @@ import { loadThresholds } from "@/lib/thresholds";
 import { formatUsd, percent, perMillionTokens, toMicros, type Micros } from "@/lib/money";
 import { getPolicy, getUsage, type ApiState, type Org, type OrgPolicy, type UsageRow } from "@/lib/org-api";
 import { isRange, previousRange } from "@/lib/range";
+import { BASELINE, savings } from "@/lib/savings";
 import { dayOf, groupBy, monthStartOf, processing, projectMonth, sumAll, tokensProcessing, type Totals } from "@/lib/usage";
 
 const compact = (n: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(n);
@@ -121,6 +122,7 @@ function UsagePanel({ org }: { org: Org }) {
   }, [byDay]);
   const burnMax = burn.reduce((m, p) => (p.cum > m ? p.cum : m), budget ?? 0n);
 
+  const sv = savings(total);
   const b = buckets(total);
   const keys = Object.keys(LABELS) as (keyof typeof LABELS)[];
   const maxDay = byDay.reduce((m, t) => (t.total > m ? t.total : m), 0n);
@@ -173,6 +175,16 @@ function UsagePanel({ org }: { org: Org }) {
             <Stat label="Total" value={formatUsd(total.total)} note={<>{total.calls} calls · {total.failed} failed<br />{d(total.total, prevTotal?.total)}</>} />
           </div>
           {prev.kind === "ok" && prevTotal && <p className="small dim" style={{ gridColumn: "1 / span 12" }}>Changes compare against the previous {byDay.length > 0 ? "period of equal length" : "period"} ({previousRange(range).since} → {previousRange(range).until}); {prevTotal.calls} calls then.</p>}
+
+          <div className="panel">
+            <h2 className="h3">Token savings vs {BASELINE.model}</h2>
+            <div className="stats">
+              <Stat label="Saved" value={formatUsd(sv.saved)} note={sv.pct == null ? "No tokens in range" : `${sv.pct.toFixed(1)}% less than ${BASELINE.model}`} bad={sv.saved < 0n} />
+              <Stat label={`Same tokens at ${BASELINE.model}`} value={formatUsd(sv.baseline)} note={`$${BASELINE.input} in · $${BASELINE.output} out · $0.20 cached, per 1M tokens`} />
+              <Stat label="Actually paid" value={formatUsd(sv.actual)} note={`${compact(total.tokensInput + total.tokensOutput + tokensProcessing(total))} tokens`} />
+            </div>
+            <p className="small dim">List-price arithmetic only: this range&rsquo;s token counts priced at {BASELINE.model} (cache writes at 1.25× input) against the ledger total. It does not say Opus would have done the work as well.</p>
+          </div>
 
           <div className="panel">
             <h2 className="h3">Month to date</h2>

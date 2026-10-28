@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useOrg } from "@/components/OrgContext";
 import { canSeePerPerson, isAdminRole, isOwnerRole } from "@/lib/org-api";
-import { getSession } from "@/lib/session";
+import { getSession, onSessionChange } from "@/lib/session";
 import { getSupabase } from "@/lib/supabase";
 
 // Operator tools that act on the whole platform (the backend's admin scope decides who may use them).
@@ -47,6 +47,8 @@ export default function AdminHeader() {
     getSession().then((s) => { if (!cancelled) setSignedIn(!!s); });
     return () => { cancelled = true; };
   }, [pathname]);
+
+  useEffect(() => onSessionChange((s) => setSignedIn(!!s)), []);
 
   async function signOut() {
     await getSupabase()?.auth.signOut();

@@ -226,3 +226,19 @@ test("static files come only from the ui dir, and never above it", async () => {
     assert.notEqual((await get("/../secret.txt")).t, "nope");
   } finally { await c.close(); }
 });
+
+test("/activity/stream relays the configured MCP's feed, and says why when it cannot", async () => {
+  const seen = [];
+  const feed = "id: 1" + String.fromCharCode(10) + 'data: {"tool":"find_ways","output":"hi"}' + String.fromCharCode(10, 10);
+  const t = await boot({ fetchImpl: async (u) => { seen.push(String(u)); return new Response(feed, { status: 200 }); } });
+  try {
+    const r = await t.call("GET", "/activity/stream?after=7");
+    assert.equal(r.status, 200);
+    assert.equal(r.text, feed);
+    assert.deepEqual(seen, ["http://127.0.0.1:1/activity?after=7"]);
+  } finally { await t.close(); }
+  const old = await boot({ fetchImpl: async () => new Response("", { status: 404 }) });
+  try { const r = await old.call("GET", "/activity/stream"); assert.equal(r.status, 424); assert.match(r.json().error, /older than the activity feed/); } finally { await old.close(); }
+  const down = await boot({ fetchImpl: async () => { throw new TypeError("fetch failed"); } });
+  try { assert.match((await down.call("GET", "/activity/stream")).json().error, /not running/); } finally { await down.close(); }
+});

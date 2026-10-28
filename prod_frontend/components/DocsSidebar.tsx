@@ -3,14 +3,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { LegalDoc } from "@/lib/legal";
 import InstallCommand from "@/components/InstallCommand";
+import { COMMONS_ENABLED } from "@/lib/features";
 
-const SECTIONS = [
+const ALL_SECTIONS = [
   { id: "getting-started", label: "Getting started" },
   { id: "how-to-use", label: "How to use" },
   { id: "contribution-rewards", label: "Contribution & rewards" },
   { id: "legal", label: "Legal" },
 ] as const;
-type SectionId = (typeof SECTIONS)[number]["id"];
+type SectionId = (typeof ALL_SECTIONS)[number]["id"];
+// The contribution chapter belongs to the public commons, which is off unless NEXT_PUBLIC_COMMONS=on.
+const SECTIONS = ALL_SECTIONS.filter((s) => COMMONS_ENABLED || s.id !== "contribution-rewards");
 const isSectionId = (v: string): v is SectionId => SECTIONS.some((s) => s.id === v);
 
 export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
@@ -82,6 +85,8 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
               <li>record what happened</li>
             </ul>
 
+            {COMMONS_ENABLED && (
+              <>
             <h3>Navigate the website</h3>
             <table><tbody>
               <tr><td><Link href="/goals" style={{ textDecoration: "underline" }}>Goals</Link></td><td>Start from a Goal and see the available ways, evidence, benchmarks, and contributor activity.</td></tr>
@@ -102,6 +107,8 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
             <p>You can add a goal, contribute a way, improve a way, add a benchmark, record evidence, or report a failure.</p>
             <p>Useful accepted contributions and verified independent reuse can earn Credits.</p>
             <p><a href="#contribution-rewards" style={{ textDecoration: "underline" }} onClick={(e) => { e.preventDefault(); go("contribution-rewards"); }}>Read the full contribution &amp; reward system →</a></p>
+              </>
+            )}
           </section>
         )}
 

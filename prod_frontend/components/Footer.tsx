@@ -1,16 +1,16 @@
 import Link from "next/link";
 import Image from "next/image";
+import { COMMONS_ENABLED } from "@/lib/features";
 
 // Only routes and anchors that exist in this build.
 const cols = [
-  { h: "Product", items: [["Goals", "/goals"], ["Search", "/search"], ["Docs", "/docs"]] },
-  {
-    h: "How to use",
-    items: [
-      ["Getting started", "/docs#getting-started"], ["How to use", "/docs#how-to-use"], ["Contribution & rewards", "/docs#contribution-rewards"],
-    ],
-  },
-  { h: "Account", items: [["Sign in", "/sign-in"], ["Credits", "/account/credits"]] },
+  { h: "Product", items: [["Evidence", "/evidence"], ["Data & trust", "/trust"], ["How a pilot starts", "/pilot"], ["Docs", "/docs"]] },
+  ...(COMMONS_ENABLED
+    ? [
+        { h: "Commons", items: [["Goals", "/goals"], ["Search", "/search"], ["Contribution & rewards", "/docs#contribution-rewards"]] },
+      ]
+    : []),
+  { h: "Account", items: [["Sign in", "/sign-in"], ...(COMMONS_ENABLED ? [["Credits", "/account/credits"]] : [])] },
   { h: "About", items: [["About keळ", "/#about"]] },
 ];
 
@@ -20,7 +20,7 @@ export default function Footer() {
       <div className="frame grid">
         <div className="footer-mark">
           <span className="footer-logo"><Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} /></span>
-          <p>Find ways to do anything. Make them better.</p>
+          <p>Routine work on cheaper models, checked before you see it.</p>
         </div>
         {cols.map((c) => (
           <nav key={c.h} className="footer-col" aria-label={c.h}>
