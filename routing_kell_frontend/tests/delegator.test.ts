@@ -5,8 +5,8 @@ import { Broker } from "@/lib/delegator/relay/broker";
 import { MAX_DEPTH, type AgentIdentity, type GroupMessage } from "@/lib/delegator/types";
 
 const alice: AgentIdentity = { handle: "@alice", displayName: "Alice", type: "human", status: "online" };
-const cc = agentIdentity("@alice", "claude-code");
-const oc = agentIdentity("@bob", "opencode");
+const cc = agentIdentity("@alice", "agent-1");
+const oc = agentIdentity("@bob", "agent-2");
 const msg = (b: Broker, o: Partial<GroupMessage> = {}): GroupMessage => ({
   id: b.newId(), roomId: "#r", sender: alice, recipients: ["@all"], payload: { text: "hi" }, timestamp: 0, depthCounter: 0, ...o,
 });
@@ -66,13 +66,13 @@ describe("relay", () => {
 describe("commands", () => {
   it("parses the room commands", () => {
     expect(parseCommand("/stop")).toEqual({ cmd: "stop" });
-    expect(parseCommand('/add-agent --name="opencode" --type="cli"')).toEqual({ cmd: "add-agent", name: "opencode", type: "cli" });
+    expect(parseCommand('/add-agent --name="agent-2" --type="cli"')).toEqual({ cmd: "add-agent", name: "agent-2", type: "cli" });
     expect(parseCommand("/invite @bob/cursor")).toEqual({ cmd: "invite", handle: "@bob/cursor" });
     expect(parseCommand("/invite bob")).toMatchObject({ cmd: "error" });
     expect(parseCommand("hello")).toBeNull();
   });
   it("addresses a message to its mentions, or to the room", () => {
-    expect(recipientsFor("@alice/claude-code do it")).toEqual(["@alice/claude-code"]);
+    expect(recipientsFor("@alice/agent-1 do it")).toEqual(["@alice/agent-1"]);
     expect(recipientsFor("anyone?")).toEqual(["@all"]);
   });
 });
@@ -87,11 +87,11 @@ describe("composer logic", () => {
     expect(mentionQuery("hi @al there", 12)).toBeNull();
   });
   it("completes it with the chosen handle", () => {
-    expect(applyMention("hi @al", 6, "@alice/claude-code")).toEqual({ text: "hi @alice/claude-code ", caret: 22 });
+    expect(applyMention("hi @al", 6, "@alice/agent-1")).toEqual({ text: "hi @alice/agent-1 ", caret: 18 });
   });
   it("ranks prefix matches before substring matches", () => {
-    expect(matchHandles(["@bob/opencode", "@alice/claude-code", "@alice"], "al")).toEqual(["@alice/claude-code", "@alice"]);
-    expect(matchHandles(["@bob/opencode", "@alice"], "code")).toEqual(["@bob/opencode"]);
+    expect(matchHandles(["@bob/agent-2", "@alice/agent-1", "@alice"], "al")).toEqual(["@alice/agent-1", "@alice"]);
+    expect(matchHandles(["@bob/agent-2", "@alice"], "gent")).toEqual(["@bob/agent-2"]);
   });
   it("groups one sender's quick messages under one header", () => {
     const mk = (id: string, who: AgentIdentity, t: number, d = 0): GroupMessage => ({ id, roomId: "#r", sender: who, recipients: ["@all"], payload: { text: id }, timestamp: t, depthCounter: d });

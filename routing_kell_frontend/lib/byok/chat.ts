@@ -1,0 +1,93 @@
+/**
+ * Talking to a provider straight from the browser with the person's own key. Nothing here goes through kell.
+ * Every error that can reach the page passes through `scrub`, so a key (or anything shaped like one) is never shown, logged,
+ * sent in a room message or reported.
+ */
+import { readSse } from "@/lib/sse";
+import type { Provider } from "@/lib/byok/providers";
+
+export interface ChatMessage { role: "user" | "assistant"; content: string }
+export interface ProviderTarget { provider: Provider; baseUrl: string; apiKey: string }
+
+export class ProviderError extends Error {}
+
+/** Removes the key itself, and anything key-shaped, from text before it is shown anywhere. */
+export function scrub(text: string, ...secrets: string[]): string {
+  let out = String(text ?? "");
+  for (const s of secrets) if (s && s.length >= 4) out = out.split(s).join("[key removed]");
+  return out.replace(/\b(sk|rk|gsk|pk)[-_][A-Za-z0-9_-]{8,}/g, "[key removed]").replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [key removed]");
+}
+
+const ANTHROPIC_VERSION = "2023-06-01";
+
+function headers(t: ProviderTarget): Record<string, string> {
+  return t.provider.kind === "anthropic"
+    ? {
+        "content-type": "application/json",
+        "x-api-key": t.apiKey,
+        "anthropic-version": ANTHROPIC_VERSION,
+        "anthropic-dangerous-direct-browser-access": "true", // required by Anthropic for browser calls with an API key
+      }
+    : { "content-type": "application/json", authorization: `Bearer ${t.apiKey}` };
+}
+
+async function fail(res: Response, t: ProviderTarget): Promise<never> {
+  let body = "";
+  try { body = (await res.text()).slice(0, 600); } catch { /* none */ }
+  throw new ProviderError(scrub(`The provider answered ${res.status}${body ? `: ${body}` : "."}`, t.apiKey));
+}
+
+async function send(t: ProviderTarget, path: string, init: RequestInit, fetchImpl: typeof fetch): Promise<Response> {
+  try {
+    return await fetchImpl(`${t.baseUrl}${path}`, { ...init, headers: headers(t), cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer" });
+  } catch (err) {
+    if ((err as { name?: string })?.name === "AbortError") throw err;
+    // A browser reports a blocked request, a dropped connection and (for some providers) a rejected key all as the same
+    // opaque failure, because the provider's error reply may carry no browser-access headers. Say all of it.
+    throw new ProviderError("The browser could not complete the request. You may be offline, the provider may have rejected the key (some providers send no browser headers on a rejection), or it may not allow requests from a web page, so it can't be used in browser-only mode.");
+  }
+}
+
+/** The models this key can reach (also the "Test": it proves the key and the address work). */
+export async function listModels(t: ProviderTarget, fetchImpl: typeof fetch = fetch, signal?: AbortSignal): Promise<string[]> {
+  const res = await send(t, t.provider.kind === "anthropic" ? "/v1/models" : "/models", { method: "GET", signal }, fetchImpl);
+  if (!res.ok) await fail(res, t);
+  const json = (await res.json()) as { data?: Array<{ id?: unknown }> };
+  return (json.data ?? []).map((m) => String(m.id ?? "")).filter(Boolean);
+}
+
+/** Streams a reply as text pieces. Aborting `signal` stops it. */
+export async function* streamChat(
+  t: ProviderTarget, model: string, messages: ChatMessage[], opts: { system?: string; maxTokens?: number; signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
+): AsyncGenerator<string> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const maxTokens = opts.maxTokens ?? 1024;
+  const anthropic = t.provider.kind === "anthropic";
+  const body = anthropic
+    ? { model, max_tokens: maxTokens, stream: true, ...(opts.system ? { system: opts.system } : {}), messages }
+    : { model, max_tokens: maxTokens, stream: true, messages: [...(opts.system ? [{ role: "system", content: opts.system }] : []), ...messages] };
+  const res = await send(t, anthropic ? "/v1/messages" : "/chat/completions", { method: "POST", body: JSON.stringify(body), signal: opts.signal }, fetchImpl);
+  if (!res.ok || !res.body) await fail(res, t);
+
+  const queue: string[] = [];
+  let wake: (() => void) | null = null;
+  let done = false;
+  let error: unknown = null;
+  const reading = readSse(res.body!, (e) => {
+    const ev = e as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const piece = anthropic
+      ? (ev.type === "content_block_delta" ? ev.delta?.text : undefined)
+      : ev.choices?.[0]?.delta?.content;
+    if (anthropic && ev.type === "error") error = new ProviderError(scrub(String(ev.error?.message ?? "The provider reported an error."), t.apiKey));
+    if (typeof piece === "string" && piece) { queue.push(piece); wake?.(); }
+  }).catch((err) => { error = err; }).finally(() => { done = true; wake?.(); });
+
+  while (true) {
+    if (queue.length) { yield queue.shift()!; continue; }
+    if (error) throw error instanceof ProviderError || (error as { name?: string })?.name === "AbortError" ? error : new ProviderError("The reply stream broke.");
+    if (done) break;
+    await new Promise<void>((r) => { wake = r; });
+    wake = null;
+  }
+  await reading;
+}

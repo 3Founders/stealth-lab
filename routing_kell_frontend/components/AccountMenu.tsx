@@ -65,6 +65,7 @@ export default function AccountMenu({ username }: { username: string }) {
           {PROJECT_SYNC_ENABLED && <Link href="/account" role="menuitem" onClick={() => setOpen(false)}>Projects</Link>}
           <Link ref={firstItemRef} href="/account/connections" role="menuitem" onClick={() => setOpen(false)}>Connected apps</Link>
           <Link href="/delegator" role="menuitem" onClick={() => setOpen(false)}>Delegator</Link>
+          <Link href="/account/models" role="menuitem" onClick={() => setOpen(false)}>Models</Link>
           <Link href="/account/settings" role="menuitem" onClick={() => setOpen(false)}>Settings</Link>
           <hr />
           <button type="button" role="menuitem" onClick={handleSignOut}>Sign out</button>

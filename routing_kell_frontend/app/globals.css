@@ -598,3 +598,13 @@ main, footer { position: relative; z-index: 1; }
 .admin-link:hover { color: var(--ink); }
 .nav-auth { display: flex; align-items: center; gap: 20px; }
 @media (max-width: 900px) { .nav-auth { display: none; } }
+
+/* Models page (/account/models) */
+.models-wrap { grid-column: 1 / span 8; display: grid; gap: 40px; }
+@media (max-width: 900px) { .models-wrap { grid-column: 1 / -1; } }
+.models-note { display: grid; gap: 10px; padding: 18px 20px; border: 1px solid var(--rule-strong); border-radius: 8px; background: rgba(255,255,255,.45); }
+.models-form { grid-column: auto; }
+.models-list { display: grid; gap: 14px; }
+.models-key { min-height: 0; }
+.models-key-body { padding: 12px 14px 16px; display: grid; gap: 12px; }
+.models-cap { display: grid; gap: 10px; }

@@ -114,3 +114,6 @@
 body:has(.dg-shell) .nav-wrap, body:has(.dg-shell) .footer, body:has(.dg-shell) .gridlines, body:has(.dg-shell) .skip { display: none; }
 body:has(.dg-shell) .dg-page { width: 100%; max-width: none; margin: 0; padding: 0; }
 body:has(.dg-shell) { overflow: hidden; }
+.dg-addkey { color: var(--cobalt); text-decoration: underline; text-underline-offset: 2px; }
+.dg-stop { margin-left: auto; font: inherit; font-size: 12.5px; padding: 2px 12px; border: 1px solid var(--ink); border-radius: 999px; background: #fff; color: var(--ink); cursor: pointer; }
+.dg-stop:hover { background: var(--yellow); }

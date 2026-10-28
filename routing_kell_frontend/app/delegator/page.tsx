@@ -35,7 +35,7 @@ export default function DelegatorPage() {
           </div>
         )}
         {session && (
-          <RoomView brand={<Link href="/" aria-label="keळ, back to the site"><Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 38, width: "auto" }} /></Link>} />
+          <RoomView subject={session.subject} brand={<Link href="/" aria-label="keळ, back to the site"><Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 38, width: "auto" }} /></Link>} />
         )}
       </section>
     </>

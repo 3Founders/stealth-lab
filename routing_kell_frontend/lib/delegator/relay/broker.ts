@@ -27,6 +27,9 @@ export class Broker {
   on(l: Listener): () => void { this.listeners.add(l); return () => this.listeners.delete(l); }
   private emit(e: RelayEvent) { for (const l of [...this.listeners]) l(e); }
 
+  /** A line from the room itself (not from anyone): why something did not happen. */
+  notice(roomId: string, text: string) { this.emit({ kind: "notice", roomId, text }); }
+
   addRoom(room: Room) { this.rooms.set(room.id, { ...room, members: [...room.members] }); }
   room(id: string): Room | undefined { return this.rooms.get(id); }
   addMember(roomId: string, handle: string) {
