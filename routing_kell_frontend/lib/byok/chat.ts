@@ -21,7 +21,9 @@ export function scrub(text: string, ...secrets: string[]): string {
 const ANTHROPIC_VERSION = "2023-06-01";
 
 const emptyReply = (finish: unknown) =>
-  `The model returned no text${finish ? ` (it stopped because: ${String(finish)})` : ""}. Try again, or choose another model under Models.`;
+  finish === "length"
+    ? "The model ran out of tokens before it wrote an answer (some models think first). Try again, or choose another model under Models."
+    : `The model returned no text${finish ? ` (it stopped because: ${String(finish)})` : ""}. Try again, or choose another model under Models.`;
 
 function headers(t: ProviderTarget): Record<string, string> {
   return t.provider.kind === "anthropic"
@@ -66,7 +68,7 @@ export async function* streamChat(
   t: ProviderTarget, model: string, messages: ChatMessage[], opts: { system?: string; maxTokens?: number; signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
 ): AsyncGenerator<string> {
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const maxTokens = opts.maxTokens ?? 2048; // room for a reasoning model to think and still answer
+  const maxTokens = opts.maxTokens ?? 4096; // never small: a reasoning model (glm-5.3-flash) thinks first and a small limit is spent before any answer appears
   const anthropic = t.provider.kind === "anthropic";
   const body = anthropic
     ? { model, max_tokens: maxTokens, stream: true, ...(opts.system ? { system: opts.system } : {}), messages }

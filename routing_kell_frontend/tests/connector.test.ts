@@ -34,6 +34,8 @@ describe("the connect page content", () => {
     expect(TASK_PROMPT).toContain("Delegate by default.");
     expect(TASK_PROMPT).toContain("call_model");
     expect(TASK_PROMPT).toContain("glm-5.3-flash");
+    expect(TASK_PROMPT).toContain("max_tokens 2000 or more");
+    expect(TASK_PROMPT).not.toContain("as small as the answer allows");
     expect(TASK_PROMPT).toContain("Never send keys, credentials or private material.");
   });
   it("covers Claude and ChatGPT with steps and where to paste the instruction", () => {

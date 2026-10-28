@@ -71,7 +71,7 @@ describe("a reply never ends in silence", () => {
     const f = async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"reasoning_content":"hmm"},"finish_reason":"length"}]}\n\ndata: [DONE]\n\n')); c.close(); } }), { status: 200, headers: { "content-type": "text/event-stream" } });
     const err = (await collect(streamChat(openai, "m", [], { fetchImpl: f as unknown as typeof fetch })).catch((e) => e)) as Error;
     expect(err).toBeInstanceOf(ProviderError);
-    expect(err.message).toMatch(/returned no text.*length/);
+    expect(err.message).toMatch(/ran out of tokens/);
   });
   it("an error event inside the stream is shown, without the key", async () => {
     const f = async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`data: {"error":{"message":"bad key ${KEY}"}}\n\n`)); c.close(); } }), { status: 200, headers: { "content-type": "text/event-stream" } });

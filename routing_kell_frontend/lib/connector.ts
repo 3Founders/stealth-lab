@@ -30,7 +30,7 @@ export const TASK_PROMPT =
   "explaining text or code, extracting or reformatting data, drafting boilerplate, first-pass tests or docs, search " +
   "or comparison of public material, a second opinion. If yes, do it with the kell tool call_model: model " +
   "\"glm-5.3-flash\" (or \"gemma-4-31b-it\"), data_class \"PUBLIC_SOURCE\", prompt = a self-contained instruction " +
-  "with everything the model needs, max_tokens as small as the answer allows. If find_ways finds no stored way, do " +
+  "with everything the model needs, max_tokens 2000 or more (glm-5.3-flash thinks first, and a small limit is used up before any answer appears). If find_ways finds no stored way, do " +
   "not stop or do it all yourself: send the same task to call_model the same way. Then check the answer yourself " +
   "before using it and say in one line that it was delegated. Do it yourself only for deep multi-step reasoning, " +
   "anything touching private, secret or personal data (those models are not approved for it and the call is " +
