@@ -205,7 +205,7 @@ test("B1 through dispatch: the goal file holds the context and the task points t
       env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
              STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...extra }, runtime: rt });
     assert.ok(seen[0].startsWith("Fix calc.py so x is 2"));
-    if (mode === "none") assert.equal(seen[0], "Fix calc.py so x is 2");
+    if (mode === "none") assert.equal(String(seen[0]).replace(/\n\nTesting: [^\n]*$/, ""), "Fix calc.py so x is 2", "the prompt, then only the testing guidance");
     else if (mode === "inline") assert.match(seen[0], /\n\nContext from this repository[\s\S]*calc\.py owns every constant/);
     else {
       assert.match(seen[0], /Goal file: \.kell\/goals\/g1\.md/);

@@ -98,6 +98,13 @@ export function dispatchPolicy(env = process.env) {
     // 900 since 2026-10-28: at 600 GLM-flash had found the root cause of jsonargparse-560 and ran out one edit short, and
     // two of the survey's 16 solves took longer (replay-2g); the same for every model and driver
     timeoutS: Math.max(10, Number(env.STEALTHLAB_DISPATCH_TIMEOUT_S || 900)),
+    // the whole dispatch -- brief, baseline, the tries, handing in, the checks and the review -- must end before Claude
+    // Code kills the prompt hook (its timeout, STEALTHLAB_PROMPT_HOOK_TIMEOUT_S, 1200 s by default), or all of it is
+    // thrown away: on a slow repo (a 2.5-minute suite) the 900 s of tries plus the hand-in and checks ran past 1200 s and
+    // the session's model redid the task (kell-try, 2026-10-29). The tries get what is left after checkReserveS.
+    totalS: Math.max(120, Number(env.STEALTHLAB_DISPATCH_TOTAL_S
+      || (Number(env.STEALTHLAB_PROMPT_HOOK_TIMEOUT_S) > 0 ? Number(env.STEALTHLAB_PROMPT_HOOK_TIMEOUT_S) : 1200) - 90)),
+    checkReserveS: Math.max(30, Number(env.STEALTHLAB_DISPATCH_CHECK_RESERVE_S ?? 300)),
     // at most this many cheap runs at once on one provider: unset, no limit (a provider's rate limit answers 429, which
     // the bridge retries)
     maxParallel: Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL) > 0 ? Number(env.STEALTHLAB_DISPATCH_MAX_PARALLEL) : Infinity,
@@ -790,7 +797,11 @@ export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude
       }
     }
   } catch { /* no config: the plan's rungs only */ }
-  return out.slice(0, max);
+  // one try per model: the plan can name a model the way the server runs it ("glm-5.3-flash|direct") while exec.json
+  // runs it another way ("glm-5.3-flash|stealth"); both took the two parallel slots and gemma and minimax never ran
+  // (kell-try, 2026-10-29). The first one (the plan's order) is kept.
+  const seen = new Set();
+  return out.filter((r) => !seen.has(r.model) && seen.add(r.model)).slice(0, max);
 }
 
 // The check to verify a dispatched run with: the configured one, else the matched library entry's own check, else the
@@ -799,6 +810,20 @@ export function cheapCandidates(plan, mine, env = process.env, { max = 3, claude
 // torch DLL missing on the machine (test_stubs_resolver.py) failed GLM's answer to a one-function task (a local install,
 // 2026-10-28). With --continue-on-collection-errors the broken file is one `ERROR <file>` line, failing on the unchanged
 // code too, so the baseline judges it like any other old failure.
+// How the agent should test (every executor, every model). The project's own check is run by kell after the agent
+// finishes, against the unchanged code too, and only NEW failures count -- the agent does not need to run it. Agents
+// that saw old failures (417 on an environment missing optional packages) took them for their own, stashed their change
+// and re-ran a 2.5-minute suite 12-13 times until the 900 s were up (kell-try, 2026-10-29).
+export function testingNote(check, testFile) {
+  if (!check) return "";
+  const near = testFile ? `\`${testFile}\`` : "the tests of the module you change";
+  const whole = String(check).replace(/\s+/g, " ").trim();
+  return `Testing: run ${near} (and any test you add) to check your change. Do not run the whole suite `
+    + `(\`${whole.length > 120 ? `${whole.slice(0, 117)}...` : whole}\`): kell runs it after you finish, on the unchanged `
+    + "code as well, and judges only failures your change adds. Some tests may already fail on code you did not touch "
+    + "(a missing optional package, the environment): that is not yours to fix.";
+}
+
 export function collectionErrorsAsFailures(check) {
   if (!check || !/\bpytest(?=\s|$)/.test(check) || /--continue-on-collection-errors/.test(check)) return check;
   return check.replace(/(\bpytest)(?=\s|$)/, "$1 --continue-on-collection-errors");
@@ -1127,11 +1152,14 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       claims: src.claims, library: [hist, src.library].filter(Boolean).join("\n\n") });
     if (goalRel) log(`dispatch: goal file ${goalRel}`);
   }
+  const testing = testingNote(check, loc.testFile);
   const taskWithContext = goalRel
-    ? withWhere(taskText(payload.prompt), [pack, where, pointerLine(goalRel)].filter(Boolean).join("\n\n"))
-    : fitTask(withWhere(taskText(payload.prompt), [pack, where].filter(Boolean).join("\n\n")), ctx);
+    ? withWhere(taskText(payload.prompt), [pack, where, testing, pointerLine(goalRel)].filter(Boolean).join("\n\n"))
+    : fitTask(withWhere(taskText(payload.prompt), [pack, where, testing].filter(Boolean).join("\n\n")), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
-  const baseLimitS = policy.timeoutS;
+  const totalLeftS = () => policy.totalS - (Date.now() - dispatchStart) / 1000;
+  const baseLimitS = Math.min(policy.timeoutS, Math.max(60, Math.floor(totalLeftS() - policy.checkReserveS)));
+  if (baseLimitS < policy.timeoutS) log(`dispatch: the tries get ${baseLimitS} s (the whole dispatch must end within ${policy.totalS} s, ${policy.checkReserveS} s kept for checking)`);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   const runLimitS = () => baseLimitS;
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
@@ -1361,6 +1389,11 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // (unref'd, a dispatch whose runs were stuck in pure waits let the process exit with nothing delivered); every one is
   // cleared when the tries end
   let deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), limitS * 1000); });
+  // the whole dispatch's end (policy.totalS): past it nothing more is judged and the session's model takes over, before
+  // Claude Code kills the hook
+  let totalTimer;
+  const totalDeadline = new Promise((resolve) => { totalTimer = setTimeout(() => resolve({ timeout: true, total: true }),
+    Math.max(0, totalLeftS() - 10) * 1000); });
   // the extra time is the strong model's: once it has finished without a pass (failed, stalled, capped), the others get
   // the plain limit again -- on a real issue they waited 240 s more after flash had already stopped (Modal, 2026-10-15)
   const dropStrongExtra = () => {
@@ -1395,7 +1428,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // a middle model waits for every cheaper one to finish (queued or running)
       const t = tierOf(queue[i].model);
       const holdTier = t > 1 && [...queue, ...rungs.filter((r) => pending.has(r.unit))].some((r) => tierOf(r.model) < t);
-      if (!holdLast && !holdTier && pending.size < runCap && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < (widthOf.get(p) ?? width)) {
+      // a model started this late could not be checked in time: it is not started (skipped below)
+      const lateStart = totalLeftS() < policy.checkReserveS;
+      if (!holdLast && !holdTier && !lateStart && pending.size < runCap && [...pending.keys()].filter((u) => providerOf(rungs.find((r) => r.unit === u) || {}) === p).length < (widthOf.get(p) ?? width)) {
         const rung = queue.splice(i, 1)[0];
         if (t > 1 && !tierStarted) {
           // the middle model's own time from now: the cheap models' limit has been used up by them
@@ -1409,8 +1444,15 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         pending.set(rung.unit, runRung(rung));
       } else i++;
     }
+    if (!pending.size && queue.length && totalLeftS() < policy.checkReserveS) {
+      for (const r of queue) tried.push({ unit: r.unit, state: "skipped (no time left to check it)" });
+      log(`dispatch: ${queue.map((r) => r.unit).join(", ")} not started: too little of the dispatch's ${policy.totalS} s is left to check another answer`);
+      queue.length = 0;
+      break;
+    }
     // the test writer's ambiguity flag (~20 s in) ends the cheap tries at once, not when the first one finishes
-    const done = await Promise.race([...pending.values(), deadline, ambiguityKnown]);
+    const done = await Promise.race([...pending.values(), deadline, ambiguityKnown, totalDeadline]);
+    if (done.total) { timedOut = true; log(`dispatch: the dispatch's ${policy.totalS} s are up; the session's model takes over`); break; }
     if (done.ambiguityFlag) { ambiguous = done.ambiguityFlag; break; }
     if (done.noSpec) { noSpec = true; break; }
     if (done.timeout && !tierStarted && queue.some((r) => tierOf(r.model) > 1)) {
@@ -1442,7 +1484,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         if (id) try { await rt.finishRun(id); } catch { /* best effort */ }
       }
       clearTimeout(timer);
-      deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), policy.handInS * 1000); });
+      const handInS = Math.max(30, Math.min(policy.handInS, Math.floor(totalLeftS() - 20)));
+      deadline = new Promise((resolve) => { fireDeadline = resolve; timer = setTimeout(() => resolve({ timeout: true }), handInS * 1000); });
       continue;
     }
     if (done.timeout) { timedOut = true; break; }
@@ -1450,7 +1493,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     running.delete(done.rung.unit);
     // the judging (waiting for the advance tests, a cross-check run) counts against the same time limit: a cross-check
     // stuck in a model call held a task for 18 minutes past a 394 s limit (2026-10-15)
-    const verdict = await Promise.race([judge(done), deadline]);
+    const verdict = await Promise.race([judge(done), deadline, totalDeadline]);
     if (verdict?.timeout) {
       timedOut = true;
       tried.push({ unit: done.rung.unit, state: "timed out while being checked", run_id: done.run_id ?? null, cost_usd: done.result?.cost_usd ?? null });
@@ -1515,6 +1558,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     if (fails) seenFails.push(fails);
   }
   clearTimeout(timer);
+  clearTimeout(totalTimer);
   if (sharedFail || ambiguous || noSpec) {
     log(noSpec ? "dispatch: no reproduction test could be written for this task (none that fails on the unchanged code); the session's model takes over"
       : ambiguous ? `dispatch: the task reads two ways (${ambiguous}); the session's model takes over`

@@ -9,6 +9,9 @@ import { dispatch } from "../lib/dispatch.mjs";
 import { runPromptHook } from "../lib/hook.mjs";
 import { LEGACY_POLICY } from "./helpers/legacy_policy.mjs";
 
+// the cheap model's task ends with the testing guidance (dispatch.testingNote); these tests compare what comes before it
+const withoutTesting = (t) => String(t).replace(/\n\nTesting: [^\n]*$/, "");
+
 // fetch stubs open no socket, and a request's timeout (AbortSignal.timeout) does not keep the event loop alive by
 // design: without this, node ends the file at the first stub that waits for its timeout and cancels every test after
 // it (19 tests never ran). A real request's socket keeps the loop alive, so the product needs nothing of this.
@@ -163,7 +166,7 @@ test("dispatch: a clear code task runs, and the cheap model is told the conversa
   const d = await dispatch({ payload: { cwd: repo, prompt: "yes fix it", transcript_path: tr }, reply: { model_plan: PLAN }, root: repo, mine: MINE, env, runtime: rt,
                              briefImpl: brief({ task: "ALWAYS do something the user never said" }) });
   assert.equal(d.handled, true);
-  assert.equal(rt.calls[0].task, "Earlier in this conversation:\nDeveloper: calc.py has a bug: x should be 2\n\nAssistant: I see it.\n\nThe request:\nyes fix it");
+  assert.equal(withoutTesting(rt.calls[0].task), "Earlier in this conversation:\nDeveloper: calc.py has a bug: x should be 2\n\nAssistant: I see it.\n\nThe request:\nyes fix it");
   assert.doesNotMatch(rt.calls[0].task, /ALWAYS/);
   assert.match(fs.readFileSync(path.join(repo, ".kell", "library.md"), "utf8"), /yes fix it/, "the library title stays the user's own words");
 });
@@ -196,7 +199,8 @@ test("dispatch: !cheap (force) skips the gate; STEALTHLAB_BRIEF=off is the old b
   const off = await dispatch({ payload: { cwd: b.repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: b.repo, mine: MINE, env: b.env, runtime: rtB,
                               briefImpl: async () => assert.fail("no brief when it is off") });
   assert.equal(off.handled, true);
-  assert.equal(rtB.calls[0].task, "Fix calc.py so x is 2");
+  assert.equal(withoutTesting(rtB.calls[0].task), "Fix calc.py so x is 2");
+  assert.match(rtB.calls[0].task, /\n\nTesting: run /, "the testing guidance follows the request");
 });
 
 test("dispatch: !cheap tries the cheap models even when the plan puts the session's model first", async () => {

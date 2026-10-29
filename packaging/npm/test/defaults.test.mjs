@@ -141,7 +141,10 @@ test("every configured model starts at once, with the budget as each run's own l
     env: s.env, runtime: s.rt, runClaude: writer(SPEC), triage: CHANGE, fetchImpl: reviewer("fixes") });
   assert.equal(d.handled, true);
   assert.equal(started, 3);
-  assert.ok(s.rt.calls.every((c) => c.timeout_s === 900 && c.hang_s === 900), JSON.stringify(s.rt.calls.map((c) => [c.timeout_s, c.hang_s])));
+  // 900 s, cut to what the whole dispatch's 1110 s leave after 300 s kept for checking (dispatchPolicy totalS)
+  const lim = s.rt.calls[0].timeout_s;
+  assert.ok(lim >= 780 && lim <= 900, String(lim));
+  assert.ok(s.rt.calls.every((c) => c.timeout_s === lim && c.hang_s === lim), JSON.stringify(s.rt.calls.map((c) => [c.timeout_s, c.hang_s])));
 });
 
 test("at the time limit the runs still going hand in their change; a handed-in answer that passes is delivered", { skip: !hasPytest }, async () => {
