@@ -288,7 +288,7 @@ async function cmdSetup(v) {
   const settings = resolveSettings(v);
   // the server probe (network) and the key lookup (a child process on Windows) wait on different things: run them together
   const keyNameFirst = (() => { try { return Object.values(readExecConfig().profiles)[0]?.key_env || keyEnv; } catch { return keyEnv; } })();
-  const [server, key] = await Promise.all([probeServer(settings.url, settings.token), keyIsSetAsync(keyNameFirst)]);
+  const [server, key] = await Promise.all([renewToken(settings).then((t) => probeServer(settings.url, t)), keyIsSetAsync(keyNameFirst)]);
   let execOk = true, execDetail = "", models = [];
   if (dispatch) {
     try {

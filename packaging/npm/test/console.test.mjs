@@ -112,6 +112,24 @@ test("keys: saved once, listed by last four characters only, never returned or e
   } finally { await t.close(); }
 });
 
+test("readiness refreshes an expired sign-in before asking the server, as the hooks do", async () => {
+  // 2026-10-29: the console read an hour-old Supabase token as "the server refused the token (HTTP 401)"
+  const config = JSON.stringify({ url: "https://mcp.example.test/mcp", token: "old", refresh_token: "r1", expires_at: 1,
+                                  oauth: { token_endpoint: "https://auth.example.test/token", client_id: "c1" } });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://auth.example.test/")) {
+      return new Response(JSON.stringify({ access_token: "new", refresh_token: "r2", expires_in: 3600 }), { status: 200 });
+    }
+    return new Response("{}", { status: init.headers?.authorization === "Bearer new" ? 200 : 401 });
+  };
+  const t = await boot({ fetchImpl, files: { "config.json": config } });
+  try {
+    const server = (await t.call("GET", "/readiness")).json().find((i) => i.name === "server");
+    assert.equal(server.ok, true, server.detail);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(t.dir, "config.json"), "utf8")).token, "new");
+  } finally { t.close(); }
+});
+
 test("the env file writer replaces one variable and keeps every other line", () => {
   const dir = mk();
   const env = { STEALTHLAB_HOME: dir };

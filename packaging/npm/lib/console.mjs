@@ -197,7 +197,10 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
 
   async function readiness() {
     const settings = resolveSettings({}, env);
-    const server = await probeServer(settings.url, settings.token).catch((e) => ({ ok: false, detail: e.message }));
+    // a signed-in token lasts an hour: refreshed first, as the hooks do, or a working sign-in reads as "refused (HTTP 401)"
+    const { freshToken } = await import("./oauth.mjs");
+    const token = await freshToken(settings, { env, fetchImpl });
+    const server = await probeServer(settings.url, token, { fetchImpl }).catch((e) => ({ ok: false, detail: e.message }));
     let models = [], execOk = true, execDetail = "", profiles = {};
     try { const cfg = readExecConfig(env); profiles = cfg.profiles; models = Object.values(cfg.executors).flatMap((e) => (Array.isArray(e?.models) ? e.models : []).map(String)); if (!models.length) { execOk = false; execDetail = "no models listed"; } }
     catch (err) { execOk = false; execDetail = err.message; }
