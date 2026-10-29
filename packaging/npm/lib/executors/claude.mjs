@@ -176,7 +176,7 @@ const adapter = {
     void worktree; void timeoutS; // cwd = worktree is set by the runtime; no timeout flag
     // With a profile the overlay both adds the open-model variables and blanks (undefined) the user's own vendor
     // credentials; the runtime's childEnv applies an overlay entry of undefined as a delete.
-    return { cmd: launch.cmd, args, env: profile ? { ...scrubEnv(env), ...openModelEnv(profile, env, { configDir }) } : claudeChildEnv(env), stdinText: undefined };
+    return { cmd: launch.cmd, args, env: profile ? { ...scrubEnv(env), ...openModelEnv(profile, env, { configDir }), STEALTHLAB_INNER_CLAUDE: "1" } : claudeChildEnv(env), stdinText: undefined };
   },
 
   parseOutput({ stdout = "", stderr = "" } = {}) {

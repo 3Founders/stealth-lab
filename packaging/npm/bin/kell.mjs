@@ -596,6 +596,7 @@ Ctrl+C to stop.`);
       (await lazy.oauth()).logoutConfig();
       return out("signed out: token and refresh token removed");
     case "hook-prompt": {
+      if (process.env.STEALTHLAB_INNER_CLAUDE) return;   // a Claude Code kell itself started: no lookup, no dispatch
       const chunks = [];
       for await (const c of process.stdin) chunks.push(c);
       const settings = resolveSettings(v);
@@ -622,6 +623,11 @@ Ctrl+C to stop.`);
     }
     case "hook": {
       // Always exit 0: a non-zero exit shows as an error in Claude Code, and 2 would block the subagent.
+      // In a Claude Code kell itself started (lib/executors/common.mjs INNER_CLAUDE), every kell hook does nothing.
+      if (process.env.STEALTHLAB_INNER_CLAUDE) {
+        if (sub?.startsWith("cursor-")) process.stdout.write("{}\n");
+        return;
+      }
       try {
         if (sub?.startsWith("cursor-")) {
           // Cursor reads one JSON object from stdout. The lookup worker is detached and prints nothing.

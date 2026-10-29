@@ -193,8 +193,14 @@ export function scrubEnv(env = process.env) {
 // logged in", no test-first tests, every cheap answer rejected (Modal run, 2026-10-15). The same token under
 // STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN, which Claude Code leaves alone, is handed to that child only, under its own name, and
 // only when the child would otherwise have no credentials. A login stored in ~/.claude is used as before.
+// INNER_CLAUDE: the Claude Code kell itself starts (the reviewer, the test writer, a dispatched rung) loads the user's
+// settings, kell's hooks with them. Marked, those hooks do nothing in it: a reviewer's prompt that reads like a bug
+// report was being dispatched again, and its review never finished (kell-try, 2026-10-29).
+export const INNER_CLAUDE = "STEALTHLAB_INNER_CLAUDE";
+
 export function claudeChildEnv(env = process.env) {
   const out = scrubEnv(env);
+  out[INNER_CLAUDE] = "1";
   const token = env.STEALTHLAB_CLAUDE_CODE_OAUTH_TOKEN;
   if (token && !out.CLAUDE_CODE_OAUTH_TOKEN && !out.ANTHROPIC_API_KEY && !out.ANTHROPIC_AUTH_TOKEN) out.CLAUDE_CODE_OAUTH_TOKEN = token;
   return out;
