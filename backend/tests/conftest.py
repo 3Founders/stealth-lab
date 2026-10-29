@@ -52,6 +52,9 @@ import dotenv
 #
 # This is deliberately NOT an app.config setting: production code must never
 # read a "test" database URL.
+# Routing never fetches OpenRouter's live catalogue in a test (app/routing/catalog.py); its own tests pass a fetcher.
+os.environ.setdefault("STEALTH_ROUTING_CATALOG", "off")
+
 if "DATABASE_URL" not in os.environ and os.environ.get("TEST_DATABASE_URL"):
     os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 

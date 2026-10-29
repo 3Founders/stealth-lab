@@ -150,8 +150,30 @@ Details and every table: [results_2026-10-29.md](results_2026-10-29.md).
 | H7 | Contamination | An earlier replay was invalid: the agent downloaded the upstream fix. The replay has no network now, and a fetch that went through counts as not solved | Fixed |
 | H8 | LLMRouterBench as a prior for untested models | The card prior's order on held-out models went from -0.07 to 0.60, but the full fit flattened it (Haiku would rank above Opus), so it is not shipped as the prior | Measured; not shipped |
 | H9 | LiveCodeBench probe (100 problems, 37 anchors) | Lines up poorly with the fitted ranking (r = 0.55 on 5 anchors, 0.21 on 37): puzzles are not repo work | Measured; kept for the "script" category |
-| H10 | **Per-category ranking via the triage judge (JEV)** | 12 categories; live, a bug report came back as repo_change and a SQL request as sql, in about 340 ms | Built; the per-category fit is being validated |
+| H10 | **Per-category ranking via the triage judge (JEV)** | 12 categories; live, a bug report came back as repo_change and a SQL request as sql, in about 340 ms | Built. The fit with LLMRouterBench failed a safety test (after bad audits, Opus went first only 43% of the time; the test needs 60%), so it is not shipped; rebuilding without it |
 | H11 | A model added later | It is ranked from OpenRouter's live catalogue or the prices kell sends; before, it was dropped. Removing a model moves no other model | Built and tested |
+
+## I. Prompt caching: routing per request vs per task (2026-10-27, `cache-full-2`)
+
+Arms on the same 9 real issues (jsonargparse 502-560, sqlglot 4051/4067), one run each. Cost is priced per request at
+the model that answered (`experiments/abtest/cache_bench_report.py`; the proxy is `cache_proxy.py`). kell here is
+the version **before** the 2026-10-28 fixes (section H).
+
+| Arm | How it picks the model | Solved | Cost | vs Opus alone |
+|---|---|---|---|---|
+| A | Opus always | 8/9 | $4.43 | - |
+| RC | cache-aware router: switches only when worth losing the prompt cache | 8/9 | $4.39 | **-1%** |
+| R | naive router: routine steps to glm, request by request | 8/9 | $4.86 | **+10%** |
+| kell (before the fixes) | cheap models try the whole task, Opus if they fail | 7/9 | $5.78 | **+30%**, one fewer solved |
+
+| # | Result |
+|---|---|
+| I1 | **Switching models mid-session throws the cache away.** R's 188 switches to glm re-read about 622K tokens uncached; on jsonargparse 518 it cost $1.42 against A's $0.60. |
+| I2 | R is slower too: about 3.9 s to the first token, against about 1.5 s for Opus with its cache. |
+| I3 | RC almost never finds a switch worth making, so it ends up about the same as A. |
+| I4 | **So route the whole task, not the step.** That is how kell routes: the cheap model starts the task, so there is no cache to lose. |
+| I5 | kell lost here because its cheap models had only one right answer accepted (502: $0.08 vs $0.39) and one wrong one (4067), and its Opus fallback was heavier than plain Opus (29-32 requests vs 20-22). Those are what section H's fixes target. |
+| I6 | Not yet re-run with the fixes. |
 
 ---
 

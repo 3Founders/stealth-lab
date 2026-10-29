@@ -109,7 +109,8 @@ def procedure_prior_draws(g: Globals, rng: np.random.Generator) -> np.ndarray:
 def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mapping[str, Optional[str]],
                now: datetime, rng: np.random.Generator,
                cards: Optional[Mapping[str, Any]] = None,
-               updates: Optional[Mapping[str, np.ndarray]] = None) -> tuple[np.ndarray, np.ndarray]:
+               updates: Optional[Mapping[str, np.ndarray]] = None,
+               probes: Optional[Mapping[str, Mapping[str, Any]]] = None) -> tuple[np.ndarray, np.ndarray]:
     """(base (S, U), z (S, U, K)) with base = theta[m, now] + gamma[s] + delta[m, s].
 
     Known model: its ability at its last fitted week plus the random-walk drift since -- the drift's
@@ -117,8 +118,15 @@ def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mappi
     its prior.
     Unknown model: from its nearest known predecessor (N(theta_pred, 0.5^2), skills
     N(z_pred, 0.3^2)); without one, from its model card's regression (cards.prior_mean),
-    which is the population prior when there is no card or the fit predates cards."""
-    from app.routing.cards import prior_mean, resolve
+    which is the population prior when there is no card or the fit predates cards. A model a probe has measured
+    (probe.py; `probes`, default the bundled results) takes its theta from the probe instead of the card."""
+    from app.routing import probe
+    from app.routing.cards import canonical_key, prior_mean, resolve
+
+    probe_results = probe.results() if probes is None else probes
+
+    def probed(key: str) -> Optional[Mapping[str, Any]]:
+        return probe_results.get(key) or probe_results.get(canonical_key(key))
 
     arr, s_count = g.arrays, g.draws
     model_ix = {m: i for i, m in enumerate(g.models)}
@@ -145,8 +153,13 @@ def unit_terms(g: Globals, units: Sequence[tuple[str, str]], predecessors: Mappi
                 theta = theta_p + SIGMA_NEW_VERSION * rng.standard_normal(s_count)
                 z = z_p + SUCCESSOR_Z_SD * rng.standard_normal((s_count, g.k))
             else:
-                mu_theta, mu_z = prior_mean(arr, g.meta, resolve(model_key, cards or {}), rng)
-                theta = mu_theta + arr["sigma_theta"] * rng.standard_normal(s_count)
+                card = resolve(model_key, cards or {})
+                mu_theta, mu_z = prior_mean(arr, g.meta, card, rng)
+                measured = probed(card.model_key if card is not None else model_key)
+                # a probe measured it (probe.py): its theta from the probe, its skills still from the card
+                theta = (probe.theta_draws(g, measured, rng) if measured is not None else None)
+                if theta is None:
+                    theta = mu_theta + arr["sigma_theta"] * rng.standard_normal(s_count)
                 z = mu_z + rng.standard_normal((s_count, g.k))
         theta_cache[model_key] = (theta, z)
         return theta, z

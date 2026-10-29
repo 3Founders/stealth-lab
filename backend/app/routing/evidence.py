@@ -51,6 +51,18 @@ def assemble(items: Iterable[Mapping[str, Any]], aggregates: Sequence[Mapping[st
     def node(gid: str) -> None:
         meta.setdefault(gid, {"visibility": "public", "embedding": None, "owner_id": None, "synthetic": True})
 
+    def bench_top(bench: str) -> str:
+        """The benchmark's node, under the node of the category of work it measures (task_categories.py)."""
+        from app.routing.task_categories import category_node, category_of
+
+        top = benchmark_node(bench)
+        node(top)
+        cat = category_of(bench)
+        if cat is not None and top not in parents:
+            node(category_node(cat))
+            parents[top] = [category_node(cat)]
+        return top
+
     for it in items:
         gid = str(it["goal_id"])
         if it.get("is_goal") or gid in known:
@@ -58,8 +70,7 @@ def assemble(items: Iterable[Mapping[str, Any]], aggregates: Sequence[Mapping[st
                 meta.setdefault(gid, {})["features"] = dict(it["features"])
             continue
         bench, repo = str(it["benchmark"]), it.get("repo")
-        top = benchmark_node(bench)
-        node(top)
+        top = bench_top(bench)
         if repo:
             mid = repo_node(bench, str(repo))
             node(mid)
@@ -71,8 +82,7 @@ def assemble(items: Iterable[Mapping[str, Any]], aggregates: Sequence[Mapping[st
                      "features": dict(it.get("features") or {})}
     out_aggs = []
     for a in aggregates:
-        top = benchmark_node(str(a["benchmark"]))
-        node(top)
+        top = bench_top(str(a["benchmark"]))
         out_aggs.append({**a, "goal_id": top})
     return meta, parents, out_aggs
 

@@ -33,7 +33,7 @@ sys.path.insert(0, HERE)
 import numpy as np  # noqa: E402
 
 import routing_priors_eval as ev  # noqa: E402
-from app.routing import evidence, import_public, prior_bundle, semantic_codes, token_calibration  # noqa: E402
+from app.routing import evidence, import_public, prior_bundle, semantic_codes, task_categories, token_calibration  # noqa: E402
 from app.routing import fit as fitlib  # noqa: E402
 from app.routing import cards as cardlib  # noqa: E402
 from app.routing.config import CHECK_PRIORS  # noqa: E402
@@ -63,6 +63,9 @@ def main() -> int:
     ap.add_argument("--codes", help="procedure_vectors.npz: build the codebook and fit with code parents")
     ap.add_argument("--k1", type=int, default=24, help="coarse code groups")
     ap.add_argument("--k2", type=int, default=8, help="sub-codes per group")
+    ap.add_argument("--sources", default=",".join(import_public.SOURCES),
+                    help="with --codes: the public sources to fit on (default: all; llmrouterbench flattens the card "
+                         "prior, see docs/results_index.md H8)")
     ap.add_argument("--tokens-only", action="store_true",
                     help="keep the fitted draws; refresh only the cards and the token calibration (seconds)")
     args = ap.parse_args()
@@ -132,7 +135,7 @@ def build_with_codes(args) -> int:
     print(f"codebook {version}: {semantic_codes.describe(cb)}; {len(goal_code)} goals coded "
           f"({time.time() - t0:.0f}s)", flush=True)
 
-    collected = import_public.collect(args.data, import_public.SOURCES, task_goal)
+    collected = import_public.collect(args.data, tuple(x.strip() for x in args.sources.split(",") if x.strip()), task_goal)
     obs = [{**o, "occurred_at": o.get("occurred_at") or ev.STAMP} for o in collected["observations"]]
     cards = {c.model_key: c for c in collected["cards"]}
     items = [dict(it, is_goal=False) for it in collected["items"].values()]   # every task is evidence here
@@ -159,6 +162,11 @@ def build_with_codes(args) -> int:
     code_list = sorted((name, node) for node, name in nodes.items() if node in index)
     arrays["code_x"] = np.stack([samples["goal_x"][:, index[node], :] for _, node in code_list], axis=1) \
         if code_list else np.zeros((samples["goal_x"].shape[0], 0, samples["goal_x"].shape[2]))
+    # category nodes (task_categories.py): the plan draws a request's prior under the one its triage names
+    cat_list = [(c, task_categories.category_node(c)) for c in task_categories.CATEGORIES
+                if task_categories.category_node(c) in index]
+    if cat_list:
+        arrays["category_x"] = np.stack([samples["goal_x"][:, index[node], :] for _, node in cat_list], axis=1)
     resolve = lambda m: cardlib.resolve(m, cards)                       # noqa: E731
     tokens = token_calibration.calibrate(obs, resolve)
     out_meta = {**fitlib.public_meta(meta), "fitted_at": datetime.now(timezone.utc).isoformat(), "method": used,
@@ -166,7 +174,8 @@ def build_with_codes(args) -> int:
                           "RouterBench, OpenRouter cards; Way codes as parents",
                 "n_observations": len(obs), "diagnostics": diag, "tokens": tokens,
                 "check_priors": {k: list(map(list, v)) for k, v in CHECK_PRIORS.items()},
-                "codebook_version": version, "code_nodes": [name for name, _ in code_list]}
+                "codebook_version": version, "code_nodes": [name for name, _ in code_list],
+                "category_nodes": [c for c, _ in cat_list]}
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, prior_bundle.ARRAYS), "wb") as fh:
         fh.write(pack(refresh_check_rates(arrays, out_meta["check_kinds"])))

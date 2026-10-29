@@ -18,7 +18,7 @@ from typing import Any, Sequence
 
 from app.routing import public_evidence as pe
 
-SOURCES = ("openrouter", "swebench", "rebench", "swe-agent", "routerbench")
+SOURCES = ("openrouter", "swebench", "rebench", "swe-agent", "routerbench", "llmrouterbench")
 SWEBENCH_SPLITS = {"verified": "verified.parquet", "lite": "lite.parquet", "multilingual": "multilingual.parquet"}
 BENCH = "swe-bench"
 
@@ -82,6 +82,15 @@ def collect(data_dir: str, sources: Sequence[str], goal_ids: dict[str, str]) -> 
             out["aggregates"] += pe.routerbench(p)
         else:
             out["skipped"].append("routerbench: routerbench/routerbench_0shot.pkl not found")
+    if "llmrouterbench" in sources:
+        p = path("llmrouterbench", "summary.jsonl")
+        if os.path.isfile(p):
+            lrb = pe.llmrouterbench(p)
+            out["aggregates"] += lrb
+            card_sources.append(pe.name_cards(a["model_key"] for a in lrb))
+        else:
+            out["skipped"].append("llmrouterbench: llmrouterbench/summary.jsonl not found "
+                                  "(scripts/llmrouterbench_summary.py)")
     out["cards"] = list(pe.merge_cards(*card_sources).values()) if card_sources else []
     return out
 

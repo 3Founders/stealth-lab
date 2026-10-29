@@ -12,6 +12,7 @@ over files already downloaded to a local folder: nothing here calls the network 
     swe_agent_trajectories(parquets)             nebius/SWE-agent-trajectories: per-instance resolved
     openhands_trajectories(parquet)              nebius/SWE-rebench-openhands-trajectories
     routerbench(pkl)                             RouterBench: per-(dataset, model) aggregates
+    llmrouterbench(summary.jsonl)                LLMRouterBench (2026): per-(dataset, model) aggregates
 
 Every observation carries a `dedupe_key` (source-independent: benchmark item, model, scaffold, attempt),
 so the same result published twice is counted once.
@@ -72,7 +73,11 @@ def _family(model_id: str) -> Optional[str]:
 
 def openrouter_cards(path: str) -> list[cardlib.ModelCard]:
     with open(path, encoding="utf-8") as fh:
-        models = json.load(fh)["data"]
+        return openrouter_cards_from(json.load(fh)["data"])
+
+
+def openrouter_cards_from(models: Sequence[dict]) -> list[cardlib.ModelCard]:
+    """The cards of an OpenRouter catalogue (`/api/v1/models` -> data), from a file or fetched live (catalog.py)."""
     out = []
     for m in models:
         mid = m["id"]
@@ -101,6 +106,19 @@ def openrouter_cards(path: str) -> list[cardlib.ModelCard]:
             price_in=per_mtok("prompt"), price_out=per_mtok("completion"),
             price_cached=per_mtok("input_cache_read"),
             aliases=tuple(sorted({mid, m.get("canonical_slug") or mid, m.get("name") or mid})), source="openrouter"))
+    return out
+
+
+def name_cards(model_keys: Iterable[str]) -> list[cardlib.ModelCard]:
+    """Minimal cards for results whose model no catalogue lists (a 7B research checkpoint, say): the size read off
+    the name, open weights when a size is in it (such names are Hugging Face checkpoints), and the family. Merged
+    after the catalogues, so they only fill what nothing else knows; without them those models teach the card
+    regression nothing."""
+    out = []
+    for mk in sorted(set(model_keys)):
+        total, active = cardlib.params_from_name(mk)
+        out.append(cardlib.ModelCard(model_key=mk, family=_family(mk), params_b=total, active_params_b=active,
+                                     open_weights=True if total is not None else None, source="name"))
     return out
 
 
@@ -336,6 +354,44 @@ def routerbench(path: str, *, when: date = date(2024, 3, 1)) -> list[dict]:
             out.append({"source": "routerbench", "benchmark": f"routerbench:{dataset}", "model_key": mk,
                         "scaffold": "direct", "n": int(len(vals)), "k": k, "occurred_at": stamp,
                         "dedupe_key": f"routerbench:{dataset}|{mk}|direct|0shot"})
+    return out
+
+
+# LLMRouterBench (Li et al., ACL Findings 2026; HF NPULH/LLMRouterBench, MIT). A subset run is counted only where the
+# model has no run on the full set (hle-subset_500 is drawn from hle-test).
+_LRB_SUBSET_OF = {"hle-subset-500": "hle-test", "simpleqa-subset-500": "simpleqa-test", "mmlupro-test-3000": "mmlupro-test",
+                  "verified": "swe-bench-verified"}
+_LRB_AGENTIC = {"swe-bench-verified", "tau2-test"}            # run in an agent loop, not answered in one call
+_LRB_SKIP_MODELS = {"openrouter"}                              # OpenRouter's own router: not one model
+
+
+def llmrouterbench(path: str) -> list[dict]:
+    """LLMRouterBench's results (scripts/llmrouterbench_summary.py output): per-(dataset, model) k of n. Its items
+    are not coding Goals, so like RouterBench they enter as aggregates on one benchmark node per dataset; its
+    graded datasets (ArenaHard: a judge's 0..1 score) count a score >= 0.5 as correct."""
+    best: dict[tuple[str, str], dict] = {}
+    for row in iter_jsonl(path):
+        model = str(row.get("model") or "")
+        if not model or model.lower() in _LRB_SKIP_MODELS or not row.get("n"):
+            continue
+        name = str(row.get("dataset") or "").lower().replace("_", "-")
+        base = _LRB_SUBSET_OF.get(name, name)
+        mk = cardlib.canonical_key(model)
+        have = best.get((base, mk))
+        if have is None or (have["name"] != base and (name == base or row["n"] > have["row"]["n"])):
+            best[(base, mk)] = {"name": name, "row": row}
+    out = []
+    for (base, mk), pick in sorted(best.items()):
+        row = pick["row"]
+        stamp_text = str(row.get("run") or "")[-15:]
+        try:
+            stamp = datetime.strptime(stamp_text, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            stamp = datetime(2025, 11, 1, tzinfo=timezone.utc)
+        scaffold = "llmrouterbench-agent" if base in _LRB_AGENTIC else "direct"
+        out.append({"source": "llmrouterbench", "benchmark": f"llmrouterbench:{base}", "model_key": mk,
+                    "scaffold": scaffold, "n": int(row["n"]), "k": min(int(row["n"]), int(row.get("k") or 0)),
+                    "occurred_at": stamp, "dedupe_key": f"llmrouterbench:{base}|{mk}|{scaffold}|{row.get('run')}"})
     return out
 
 

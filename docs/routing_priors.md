@@ -32,6 +32,7 @@ yet: the new reads return nothing.
    | `swe_rebench/*.parquet` | HF `nebius/SWE-rebench` (test split) |
    | `swe_agent_traj/*.parquet` | HF `nebius/SWE-agent-trajectories` |
    | `routerbench/routerbench_0shot.pkl` | HF `withmartian/routerbench` |
+   | `llmrouterbench/summary.jsonl` | HF `NPULH/LLMRouterBench` (`bench-release.tar.gz`, 1.3 GB, MIT), summarised by `python scripts/llmrouterbench_summary.py bench-release.tar.gz > llmrouterbench/summary.jsonl` |
 
 3. Run the import as a dry run first. It reads only those files plus `ingest_task_goals` (one query), and writes nothing:
 
@@ -51,6 +52,93 @@ yet: the new reads return nothing.
 
    Re-running is safe: cards and items are upserted, and observations and aggregates carry a dedupe key.
    The OpenHands trajectories are **not** imported here. The ingestion pipeline already records them.
+
+## LLMRouterBench (2026-10-28)
+
+[LLMRouterBench](https://arxiv.org/abs/2601.07206) (Li et al., ACL Findings 2026) graded 40 models on 31 datasets, with
+548,059 answers in all. It covers maths, code (HumanEval, MBPP, LiveCodeBench, SWE-bench Verified), logic, knowledge,
+medicine and finance, emotion and tool use. Its models include:
+
+- GPT-5, Claude Opus 4.1, Gemini 2.5, GLM-4.6, Kimi K2, DeepSeek and Qwen3;
+- about 20 open 7-9B checkpoints.
+
+**How it enters:** like RouterBench, as one aggregate (k of n) per (dataset, model) on a benchmark node
+`llmrouterbench:<dataset>` (`public_evidence.llmrouterbench`). Three rules apply:
+
+- a subset run (`hle-subset_500`) counts only where the model has no run on the full set;
+- OpenRouter's own router is skipped, because it is not one model;
+- SWE-bench and τ²-bench are marked `llmrouterbench-agent` (run in an agent loop) and the rest `direct`.
+
+**Cards for models no catalogue lists:** a model without an OpenRouter card gets one read off its name
+(`public_evidence.name_cards`): size, open weights and family. Without that, the card regression would learn
+nothing from those models.
+
+## A model added or removed later (2026-10-28)
+
+A candidate's starting ability is its card's regression plus its family effect (`cards.prior_mean`), learned across
+every model with public results. For each candidate that neither the bundle nor the database has a card for,
+`recommend()` now tries two sources in order (`app/routing/catalog.py`):
+
+1. **OpenRouter's live catalogue**, fetched at most once a day per process and retried after an hour if the fetch
+   fails. It gives the release date, prices, context, reasoning and open weights.
+2. **What kell sends about it:** `model_constraints.cards`, built from its exec.json profile (the prices it pays). The
+   size comes from the name. A family named without its provider (`glm-flash`) matches the one fitted family with
+   that name (`z-ai/glm-flash`), so `glm-6-flash` starts near the GLM flash models.
+
+Either way, the plan's `evidence.new_cards` says where the card came from.
+
+Before this, such a model had no list price and was **excluded** from the plan. Dispatch still tried it, but last
+and unranked.
+
+**Removing a model** needs nothing: it stops being a candidate. Each model's terms are its own, so no other model's
+estimate moves (test: `tests/test_routing_catalog_offline.py`).
+
+`STEALTH_ROUTING_CATALOG=off` turns the live lookup off; tests run with it off.
+
+## One ranking per kind of work (2026-10-29)
+
+Every benchmark sits under the category of work it measures (`app/routing/task_categories.py`):
+category, then benchmark, then repo, then task. Each category node learns where its tasks lie in skill space, so a
+model's chance on a category is its ability plus its skills along that node.
+
+**At query time:**
+1. The triage judge (JEV, `find_ways_triage@v2`) names one of 12 categories.
+2. The hook sends it as `model_constraints.category`.
+3. The plan's prior is drawn under that node (`service._category_parent`).
+
+| Category | Fed by now |
+|---|---|
+| repo_change | SWE-bench Verified, Lite and Multilingual; SWE-rebench; SWE-agent; LLMRouterBench SWE-bench |
+| script | LiveCodeBench, HumanEval, MBPP, ArenaHard coding |
+| agent_tools | tau2-bench |
+| math | AIME, MATH500, LiveMathBench, MathBench, GSM8K, the MMLU maths subjects |
+| knowledge | MMLU-Pro, GPQA, SimpleQA, HLE, MedQA, FinQA, ARC, RouterBench MMLU |
+| reasoning | BBH, KOR-Bench, Knights and Knaves, ARC-AGI, Winogrande, HellaSwag |
+| writing | ArenaHard, MT-Bench, the dialogue and summarising sets |
+| frontend, sql, data_science, terminal | no public data yet (Design2Code/WebSight, BIRD, DS-1000, Terminal-Bench to import): the population prior |
+| code_question | none: an answer has no check, so these stay with the session's model |
+
+Ranking stays cost-aware (ladder.py): the plan is the cheapest sequence of tries that is as reliable as the session's
+own model. That is LLMRouterBench's CostSave point, with the session's model in place of its best single model.
+
+**Not active yet.** The shipped bundle (the 2026-10-08 fit, with the cards refreshed 2026-10-29) has no category
+nodes, so a named category falls back cleanly to the generic prior. A fit with LLMRouterBench had them, but its
+flattened card prior failed `test_routing_check_calibration` (Opus first after bad audits: 43%, needs 60%). A rebuild
+without LLMRouterBench is next.
+
+**Only the bundle has category nodes, so far.** A database refit stores no draws for the synthetic nodes, so a
+deployment with its own fit routes as before until that is added. The same holds for the Way codes.
+
+## Probes: measuring a model instead of guessing (2026-10-29)
+
+`app/routing/probe.py` places a probed model in the ranking from its score on a fixed problem set that anchor models
+were graded on. `scripts/routing_probe_modal.py` runs a model there on Modal, grading with LiveCodeBench's own grader
+(`scripts/lcb_grader`, vendored, MIT).
+
+**Not shipped as data:** the LiveCodeBench probe (100 problems, 37 anchors) lines up poorly with the fitted
+repo-work ranking (r = 0.55 on the 5 anchors the shipped fit knows). Without `data/probe_lcb.json` and
+`data/probe_results.json`, the code does nothing. The planned probe for `repo_change` runs about 15 SWE-bench
+Verified tasks through kell's step agent, so the results land as ordinary observations.
 
 ## Fitting at this size
 

@@ -11,7 +11,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 
-from app.routing import costs, ladder, predict, store
+from app.routing import catalog, costs, ladder, predict, store
 from app.routing.config import CHECK_KINDS, DEFAULTS, RoutingDefaults, split_unit, unit_id
 from app.services.access import AccessScope
 
@@ -89,6 +89,8 @@ def fill_twin_prices(rows: list[dict]) -> list[dict]:
 # for that case (prior_draws_for_case). Its decisions and attempts are logged under that key like any Goal's, so
 # report_result, the repository's routing.md counts and later fits all work the same way.
 VIRTUAL_KEY = "_virtual"
+CATEGORY_KEY = "category"         # model_constraints.category: the triage's task category (task_categories.py)
+CARD_HINTS_KEY = "cards"           # model_constraints.cards: {model: {price_in, price_out, ...}} (catalog.hint_card)
 VIRTUAL_KINDS = ("library", "repo", "generic", "code")
 
 
@@ -109,6 +111,9 @@ async def prior_draws_for_case(pool: Any, g: predict.Globals, virtual: Mapping[s
     from app.routing.fit import aligned_goal_draws
 
     parents = []
+    cat_draws = _category_parent(g, virtual.get("category"))
+    if cat_draws is not None:           # the kind of work the triage named (task_categories.py)
+        parents.append((cat_draws, g.phi1(None, None)))
     code_draws = _code_parent(g, virtual.get("code"))
     if code_draws is not None:          # the Ways like this one (same semantic code) -- semantic_codes.py
         parents.append((code_draws, g.phi1(None, None)))
@@ -170,7 +175,11 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     `local_obs` ([{unit, n, ok}], the caller's `.kell/routing.md` OBS counts) are earlier
     instances of this Goal in the caller's own repository: see `local_obs_loglik`."""
     constraints = dict(constraints or {})
+    card_hints = constraints.pop(CARD_HINTS_KEY, None)     # the caller's own model descriptions (catalog.py)
+    category = constraints.pop(CATEGORY_KEY, None)          # the triage's kind of work (task_categories.py)
     virtual = virtual or constraints.pop(VIRTUAL_KEY, None)
+    if virtual is not None and isinstance(category, str):
+        virtual = {**virtual, "category": category}
     if virtual is not None:
         if virtual.get("kind") not in VIRTUAL_KINDS:
             raise RoutingError(f"virtual goal kind must be one of {VIRTUAL_KINDS}")
@@ -232,6 +241,8 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
     from app.routing.cards import load_cards, resolve
 
     cards = load_cards(await _card_rows(pool))
+    cards, new_cards = await catalog.fill_missing([m for m, _ in units], cards,
+                                                  card_hints if isinstance(card_hints, Mapping) else None)
     prices = await store.current_prices(pool, [m for m, _ in units])
     list_priced = []
     for m, _s in units:                  # no contracted price yet: the card's public list price
@@ -471,6 +482,7 @@ async def _recommend(pool: Any, *, goal_id: str, candidates: Sequence[Any], acce
                      **({"prior": "bundled public prior"} if g.meta.get("bundled") else {}),
                      "models": {unit_id(m, s): _model_basis(g, m, registry, cards) for m, s in usable},
                      **({"list_priced": list_priced} if list_priced else {}),
+                     **({"new_cards": new_cards} if new_cards else {}),
                      **({"local": local_evidence} if local_evidence else {})},
         "how_to_report": "after each rung, call report_model_run(model, scaffold, accepted, instance_key, "
                          "goal_id or procedure_id, check_kind, tokens..., recommendation_id, attempt_index"
@@ -524,6 +536,15 @@ def calibrated_check_rates(g: predict.Globals, check_kind: str, cfg: RoutingDefa
     if base > 0 and abs(target - base) > 1e-9:
         alpha = np.clip(alpha * (target / base), 1e-4, 0.95)
     return alpha, beta
+
+
+def _category_parent(g: predict.Globals, category: Any) -> Optional[np.ndarray]:
+    """(S, D) draws of a task category's node (task_categories.py), or None when the fit has none (a fit built
+    before categories, or a category without evidence)."""
+    names = list(g.meta.get("category_nodes") or [])
+    if not isinstance(category, str) or category not in names or "category_x" not in g.arrays:
+        return None
+    return g.arrays["category_x"][:, names.index(category), :]
 
 
 def _code_parent(g: predict.Globals, code: Any) -> Optional[np.ndarray]:
@@ -671,7 +692,8 @@ def _weighted_quantiles(values: np.ndarray, weights: np.ndarray, qs: Sequence[fl
 def _model_basis(g: predict.Globals, model_key: str, registry: Mapping[str, Mapping[str, Any]],
                  cards: Mapping[str, Any]) -> str:
     """Where a model's ability estimate comes from: 'fitted' (it has data), 'predecessor' (a fitted
-    earlier version), 'card' (its public metadata) or 'population' (nothing known about it)."""
+    earlier version), 'probe' (measured on the coding probe, probe.py), 'card' (its public metadata) or
+    'population' (nothing known about it)."""
     from app.routing.cards import resolve
 
     if model_key in g.models:
@@ -681,6 +703,11 @@ def _model_basis(g: predict.Globals, model_key: str, registry: Mapping[str, Mapp
         if pred in g.models:
             return "predecessor"
         pred, hops = registry.get(pred, {}).get("predecessor"), hops + 1
+    from app.routing import probe
+    from app.routing.cards import canonical_key
+
+    if canonical_key(model_key) in probe.results():
+        return "probe"
     return "card" if resolve(model_key, cards) is not None and "card_beta" in g.arrays else "population"
 
 

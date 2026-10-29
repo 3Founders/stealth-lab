@@ -112,7 +112,7 @@ async function cursorDispatchBody(payload, { env = process.env, settings, userAg
   let extra = {};
   try { extra = requestPayload(root, { env }); } catch { /* no library rows: a plain lookup */ }
   // the plan is over this machine's open models; Cursor's own model is the baseline and the last rung
-  extra = { ...extra, ...routingArgs({ ...policy, candidates: execCandidates(env) }, model, "cursor") };
+  extra = { ...extra, ...routingArgs({ ...policy, candidates: execCandidates(env) }, model, "cursor", { category: verdict?.category }) };
   timer.set("stealth_root", true);
   timer.mark("find_ways_start");
   let reply = await callFindWays({ url: settings.url, token: settings.token, userAgent, query: prompt,

@@ -43,7 +43,7 @@ def add_parsers(sub: Any) -> None:
     p.add_argument("file")
     p = sub.add_parser("routing-import-public")
     p.add_argument("data_dir", help="folder with the downloaded public files (docs/routing_priors.md)")
-    p.add_argument("--sources", default="openrouter,swebench,rebench,swe-agent,routerbench")
+    p.add_argument("--sources", default="openrouter,swebench,rebench,swe-agent,routerbench,llmrouterbench")
     p.add_argument("--apply", action="store_true", help="write (default: report what would be written)")
     p = sub.add_parser("routing-audit")
     p.add_argument("observation_id")

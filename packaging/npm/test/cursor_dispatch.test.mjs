@@ -183,7 +183,7 @@ test("end to end with the real dispatch(): a stub executor's verified change is 
   assert.match(out.user_message, /calc\.py/);
   assert.equal(fs.readFileSync(path.join(ws, "calc.py"), "utf8"), "x = 2\n");
   assert.equal(calls[0].repo_path, ws);
-  assert.deepEqual(calls[0].checks, ["python -m pytest -q"]);
+  assert.deepEqual(calls[0].checks, ["python -m pytest --continue-on-collection-errors -q"]);
 });
 
 // ---- the install, through the real CLI ---------------------------------------------------------------------------

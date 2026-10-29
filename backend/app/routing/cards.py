@@ -197,9 +197,17 @@ class Design:
         return out
 
     def family_index(self, card: Optional[ModelCard]) -> int:
-        if card is None or not card.family or card.family not in self.families:
+        """The card's family in the fit, -1 if none. A family named without its provider ("glm-flash", from a
+        caller's own description) matches the one fitted family with that name ("z-ai/glm-flash")."""
+        if card is None or not card.family:
             return -1
-        return self.families.index(card.family)
+        if card.family in self.families:
+            return self.families.index(card.family)
+        if "/" not in card.family:
+            same = [i for i, f in enumerate(self.families) if f.split("/")[-1] == card.family]
+            if len(same) == 1:
+                return same[0]
+        return -1
 
 
 def design_for(cards: Sequence[Optional[ModelCard]]) -> Design:

@@ -64,6 +64,7 @@ export function hookPolicy(env = process.env) {
     triageTimeoutMs: Number(env.STEALTHLAB_HOOK_TRIAGE_TIMEOUT_MS || 30000),
     routing: (env.STEALTHLAB_HOOK_ROUTING || "on").toLowerCase() !== "off",
     candidates: parseCandidates(env.STEALTHLAB_HOOK_CANDIDATES, env),
+    execEnv: env,                                     // where candidateCards reads exec.json from
     // how sure a plan must be before it trusts a cheaper model (server defaults: 0.90 / 0.90). Lower = cheaper
     // first rungs, more escalations; the local-only experiment varies it.
     reliability: num01(env.STEALTHLAB_HOOK_RELIABILITY),
@@ -134,8 +135,27 @@ export function execCandidates(env = process.env) {
   }
 }
 
+// What this machine knows of the open models it runs (exec.json profiles: the prices it pays per million tokens), sent as
+// model_constraints.cards so the server can rank a model it has no card for -- one added to exec.json after the
+// server's last import (backend app/routing/catalog.py). The server's own card wins for a model it knows.
+export function candidateCards(units, env = process.env) {
+  let profiles = {};
+  try { profiles = JSON.parse(fs.readFileSync(execConfigPath(env), "utf8"))?.profiles || {}; } catch { return {}; }
+  const out = {};
+  for (const u of units) {
+    const model = String(u).split("|")[0];
+    const p = profiles[model];
+    if (!p || typeof p.input_per_mtok !== "number" || typeof p.output_per_mtok !== "number") continue;
+    out[model] = { price_in: p.input_per_mtok, price_out: p.output_per_mtok,
+                   ...(typeof p.cached_input_per_mtok === "number" ? { price_cached: p.cached_input_per_mtok } : {}),
+                   ...(p.model_id ? { model_id: String(p.model_id) } : {}) };
+  }
+  return out;
+}
+
 // The find_ways arguments that ask for a model plan, or {} when routing is off or the model is unknown.
-export function routingArgs(policy, model, scaffold = "claude-code") {
+// `category`: the triage's kind of work (backend app/routing/task_categories.py), so the plan ranks models for it.
+export function routingArgs(policy, model, scaffold = "claude-code", { category = null } = {}) {
   if (!policy.routing || !model) return {};
   const mine = `${model}|${scaffold}`;
   // With open models to dispatch to, other Claude models are candidates only when dispatch runs them too
@@ -144,7 +164,10 @@ export function routingArgs(policy, model, scaffold = "claude-code") {
   const open = policy.candidates.some((c) => !String(c).startsWith("claude-"));
   const claudeToo = !open || (process.env.STEALTHLAB_DISPATCH_CLAUDE || "off").toLowerCase() === "on";
   const others = policy.candidates.filter((c) => c !== mine && (claudeToo || !String(c).startsWith("claude-")));
+  const cards = candidateCards(others, policy.execEnv || process.env);
   const constraints = {
+    ...(Object.keys(cards).length ? { cards } : {}),
+    ...(typeof category === "string" && category ? { category } : {}),
     ...(policy.reliability !== null && policy.reliability !== undefined ? { reliability_target: policy.reliability } : {}),
     ...(policy.reliabilityMatch && (policy.reliability === null || policy.reliability === undefined)
       ? { reliability_baseline: mine,
@@ -624,7 +647,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     if (!root && dispatchInstalled(env)) root = await ensureDispatchRoot(payload.cwd || process.cwd());
     let extra = {};
     try { if (root) extra = requestPayload(root, { env }); } catch { /* no library: plain lookup */ }
-    extra = { ...extra, ...routingArgs(policy, model) };
+    extra = { ...extra, ...routingArgs(policy, model, "claude-code", { category: verdict?.category }) };
     timer.set("stealth_root", !!root);
     timer.mark("find_ways_start");
     let reply = await callFindWays({

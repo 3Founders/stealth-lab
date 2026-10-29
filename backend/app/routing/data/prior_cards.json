@@ -165,6 +165,27 @@
 "source": "openrouter"
 },
 {
+"model_key": "beam-1-0-501b-a23b",
+"family": "reflection/beam",
+"provider": "reflection",
+"release_date": "2026-10-16",
+"training_cutoff": "2026-06-30",
+"open_weights": true,
+"params_b": 501.0,
+"active_params_b": 23.0,
+"reasoning": 1.0,
+"context_k": 1048.576,
+"price_in": 0.25,
+"price_out": 1.0,
+"price_cached": 0.049999999999999996,
+"aliases": [
+"Reflection: Beam 1.0 501B A23B",
+"reflection/beam-1.0-501b-a23b",
+"reflection/beam-1.0-501b-a23b-20261016"
+],
+"source": "openrouter"
+},
+{
 "model_key": "bodybuilder",
 "family": "openrouter/bodybuilder",
 "provider": "openrouter",
@@ -279,10 +300,10 @@
 "params_b": null,
 "active_params_b": null,
 "reasoning": 0.67,
-"context_k": 200.0,
-"price_in": 1.0,
-"price_out": 5.0,
-"price_cached": 0.09999999999999999,
+"context_k": 1000.0,
+"price_in": 0.09999999999999999,
+"price_out": 0.5,
+"price_cached": 0.01,
 "aliases": [
 "Anthropic: Claude Haiku Latest",
 "~anthropic/claude-haiku-latest"
@@ -310,6 +331,29 @@
 "Anthropic: Claude Haiku 4.5 (batch)",
 "anthropic/claude-haiku-4.5:batch",
 "Claude 4.5 Haiku"
+],
+"source": "openrouter"
+},
+{
+"model_key": "claude-haiku-5-5",
+"family": "anthropic/claude-haiku",
+"provider": "anthropic",
+"release_date": "2026-10-07",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1000.0,
+"price_in": 0.09999999999999999,
+"price_out": 0.5,
+"price_cached": 0.01,
+"aliases": [
+"Anthropic: Claude Haiku 5.5",
+"anthropic/claude-haiku-5.5",
+"anthropic/claude-haiku-5.5-20261007",
+"Anthropic: Claude Haiku 5.5 (batch)",
+"anthropic/claude-haiku-5.5:batch"
 ],
 "source": "openrouter"
 },
@@ -547,7 +591,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 10.0,
-"price_cached": 0.19999999999999998,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Anthropic: Claude Sonnet Latest",
 "~anthropic/claude-sonnet-latest"
@@ -594,25 +638,22 @@
 },
 {
 "model_key": "claude-sonnet-4",
-"family": "anthropic/claude-sonnet",
-"provider": "anthropic",
-"release_date": "2025-05-22",
-"training_cutoff": "2025-01-31",
+"family": "claude-sonnet",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
 "open_weights": false,
 "params_b": null,
 "active_params_b": null,
-"reasoning": 0.67,
-"context_k": 200.0,
-"price_in": 3.0,
-"price_out": 15.0,
-"price_cached": 0.3,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
 "aliases": [
-"Anthropic: Claude Sonnet 4",
-"anthropic/claude-4-sonnet-20250522",
-"anthropic/claude-sonnet-4",
 "Claude 4 Sonnet"
 ],
-"source": "openrouter"
+"source": "swe-bench-experiments"
 },
 {
 "model_key": "claude-sonnet-4-5",
@@ -697,7 +738,7 @@
 "context_k": 1000.0,
 "price_in": 2.0,
 "price_out": 10.0,
-"price_cached": 0.19999999999999998,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Anthropic: Claude Sonnet 5.5",
 "anthropic/claude-sonnet-5.5",
@@ -723,11 +764,26 @@
 "price_cached": 0.03,
 "aliases": [
 "Mistral: Codestral 2508",
-"mistralai/codestral-2508",
-"Mistral: Codestral 2508 (batch)",
-"mistralai/codestral-2508:batch"
+"mistralai/codestral-2508"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "cogito-v1-preview-llama-8b",
+"family": "cogito-llama",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "command-a",
@@ -852,6 +908,23 @@
 "source": "openrouter"
 },
 {
+"model_key": "deephermes-3-llama-3-8b",
+"family": "deephermes-llama",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "deepseek-chat",
 "family": "deepseek/deepseek",
 "provider": "deepseek",
@@ -924,9 +997,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.045,
-"price_out": 0.3,
-"price_cached": 0.015,
+"price_in": 0.0115,
+"price_out": 1.7999999999999998,
+"price_cached": 0.011399999999999999,
 "aliases": [
 "DeepSeek: DeepSeek Flash Latest",
 "~deepseek/deepseek-flash-latest"
@@ -944,32 +1017,12 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.2514,
-"price_out": 4.199999999999999,
-"price_cached": 0.25,
+"price_in": 0.16390000000000002,
+"price_out": 8.0,
+"price_cached": 0.16,
 "aliases": [
 "DeepSeek: DeepSeek Pro Latest",
 "~deepseek/deepseek-pro-latest"
-],
-"source": "openrouter"
-},
-{
-"model_key": "deepseek-r1",
-"family": "deepseek/deepseek-r",
-"provider": "deepseek",
-"release_date": "2025-01-20",
-"training_cutoff": "2024-07-31",
-"open_weights": true,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.67,
-"context_k": 64.0,
-"price_in": 0.7,
-"price_out": 2.5,
-"price_cached": null,
-"aliases": [
-"DeepSeek: R1",
-"deepseek/deepseek-r1"
 ],
 "source": "openrouter"
 },
@@ -992,6 +1045,57 @@
 "deepseek/deepseek-r1-0528"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "deepseek-r1-0528-qwen3-8b",
+"family": "deepseek-r",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "deepseek-r1-distill-qwen-7b",
+"family": "deepseek-r",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 7.0,
+"active_params_b": 7.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "deepseek-v3-0324",
+"family": "deepseek",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "deepseek-v3-1-terminus",
@@ -1057,20 +1161,24 @@
 "source": "swe-bench-experiments"
 },
 {
-"model_key": "deepseek-v4-1-flash",
+"model_key": "deepseek-v4-1-flash-1017",
 "family": "deepseek/deepseek-flash",
 "provider": "deepseek",
-"release_date": "2026-09-10",
+"release_date": "2026-10-17",
 "training_cutoff": null,
 "open_weights": true,
 "params_b": null,
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.3,
-"price_out": 1.2,
-"price_cached": 0.006,
+"price_in": 0.15,
+"price_out": 0.6,
+"price_cached": 0.003,
 "aliases": [
+"DeepSeek: DeepSeek V4.1 Flash 1017",
+"deepseek/deepseek-v4.1-flash-1017",
+"deepseek/deepseek-v4.1-flash-20261017",
+"deepseek-v4-1-flash",
 "DeepSeek: DeepSeek V4.1 Flash",
 "deepseek/deepseek-v4.1-flash",
 "deepseek/deepseek-v4.1-flash-20260910",
@@ -1090,9 +1198,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.012299999999999998,
-"price_out": 1.28,
-"price_cached": 0.012299999999999998,
+"price_in": 0.0422,
+"price_out": 0.1694,
+"price_cached": 0.028,
 "aliases": [
 "DeepSeek: DeepSeek V4 Flash Latest",
 "~deepseek/deepseek-v4-flash-latest",
@@ -1113,9 +1221,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.012299999999999998,
-"price_out": 1.28,
-"price_cached": 0.012299999999999998,
+"price_in": 0.119,
+"price_out": 0.238,
+"price_cached": 0.0238,
 "aliases": [
 "DeepSeek: DeepSeek V4 Flash 0731",
 "deepseek/deepseek-v4-flash-0731",
@@ -1309,24 +1417,42 @@
 "source": "openrouter"
 },
 {
-"model_key": "ernie-4-5-vl-424b-a47b",
-"family": "baidu/ernie-vl",
-"provider": "baidu",
-"release_date": "2025-06-30",
-"training_cutoff": "2025-03-31",
-"open_weights": true,
-"params_b": 424.0,
-"active_params_b": 47.0,
-"reasoning": 0.67,
-"context_k": 123.0,
-"price_in": 0.42,
-"price_out": 1.25,
+"model_key": "extract",
+"family": "scaledown/extract",
+"provider": "scaledown",
+"release_date": "2026-10-13",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.0,
+"context_k": 1000.0,
+"price_in": 0.04,
+"price_out": 0.0,
 "price_cached": null,
 "aliases": [
-"Baidu: ERNIE 4.5 VL 424B A47B ",
-"baidu/ernie-4.5-vl-424b-a47b"
+"ScaleDown: Extract",
+"scaledown/extract",
+"scaledown/extract-20260928"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "fin-r1",
+"family": "fin-r",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "free",
@@ -1485,9 +1611,7 @@
 "price_cached": 0.03,
 "aliases": [
 "Google: Gemini 2.5 Flash",
-"google/gemini-2.5-flash",
-"Google: Gemini 2.5 Flash (batch)",
-"google/gemini-2.5-flash:batch"
+"google/gemini-2.5-flash"
 ],
 "source": "openrouter"
 },
@@ -1527,9 +1651,7 @@
 "price_cached": 0.01,
 "aliases": [
 "Google: Gemini 2.5 Flash Lite",
-"google/gemini-2.5-flash-lite",
-"Google: Gemini 2.5 Flash Lite (batch)",
-"google/gemini-2.5-flash-lite:batch"
+"google/gemini-2.5-flash-lite"
 ],
 "source": "openrouter"
 },
@@ -1550,8 +1672,6 @@
 "aliases": [
 "Google: Gemini 2.5 Pro",
 "google/gemini-2.5-pro",
-"Google: Gemini 2.5 Pro (batch)",
-"google/gemini-2.5-pro:batch",
 "Google: Gemini 2.5 Pro Preview 06-05",
 "google/gemini-2.5-pro-preview",
 "google/gemini-2.5-pro-preview-06-05",
@@ -1778,9 +1898,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 1048.576,
-"price_in": 0.75,
-"price_out": 3.75,
-"price_cached": 0.075,
+"price_in": 0.8250000000000001,
+"price_out": 4.125,
+"price_cached": 0.0825,
 "aliases": [
 "Google: Gemini 3.8 Flash",
 "google/gemini-3.8-flash",
@@ -1858,6 +1978,29 @@
 "source": "openrouter"
 },
 {
+"model_key": "gemini-4-argon",
+"family": "google/gemini-argon",
+"provider": "google",
+"release_date": "2026-10-13",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1048.576,
+"price_in": 2.0,
+"price_out": 10.0,
+"price_cached": 0.09999999999999999,
+"aliases": [
+"Google: Gemini 4 Argon",
+"google/gemini-4-argon",
+"google/gemini-4-argon-20261013",
+"Google: Gemini 4 Argon (batch)",
+"google/gemini-4-argon:batch"
+],
+"source": "openrouter"
+},
+{
 "model_key": "gemini-flash",
 "family": "~google/gemini-flash",
 "provider": "~google",
@@ -1910,8 +2053,8 @@
 "reasoning": 0.67,
 "context_k": 1048.576,
 "price_in": 2.0,
-"price_out": 12.0,
-"price_cached": 0.19999999999999998,
+"price_out": 10.0,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Google: Gemini Pro Latest",
 "~google/gemini-pro-latest"
@@ -1937,6 +2080,23 @@
 "google/gemma-2-27b-it"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "gemma-2-9b-it",
+"family": "gemma",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 9.0,
+"active_params_b": 9.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "gemma-3-12b-it",
@@ -1970,7 +2130,7 @@
 "reasoning": 0.0,
 "context_k": 131.072,
 "price_in": 0.08,
-"price_out": 0.44999999999999996,
+"price_out": 0.35,
 "price_cached": 0.04,
 "aliases": [
 "Google: Gemma 3 27B",
@@ -2009,9 +2169,9 @@
 "active_params_b": 4.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.0765,
-"price_out": 0.255,
-"price_cached": 0.042499999999999996,
+"price_in": 0.09,
+"price_out": 0.3,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Google: Gemma 4 26B A4B ",
 "google/gemma-4-26b-a4b-it",
@@ -2030,13 +2190,34 @@
 "active_params_b": 31.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.09,
-"price_out": 0.33999999999999997,
-"price_cached": 0.049999999999999996,
+"price_in": 0.19999999999999998,
+"price_out": 0.39999999999999997,
+"price_cached": null,
 "aliases": [
 "Google: Gemma 4 31B",
 "google/gemma-4-31b-it",
 "google/gemma-4-31b-it-20260402"
+],
+"source": "openrouter"
+},
+{
+"model_key": "glimpse",
+"family": "elorian/glimpse",
+"provider": "elorian",
+"release_date": "2026-10-17",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 262.144,
+"price_in": 0.6,
+"price_out": 3.0,
+"price_cached": 0.06,
+"aliases": [
+"Elorian: Glimpse",
+"elorian/glimpse",
+"elorian/glimpse-20261016"
 ],
 "source": "openrouter"
 },
@@ -2051,9 +2232,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.03,
-"price_out": 12.0,
-"price_cached": 0.03,
+"price_in": 0.0699,
+"price_out": 1.4,
+"price_cached": 0.0689,
 "aliases": [
 "Z.ai: GLM Latest",
 "~z-ai/glm-latest"
@@ -2122,6 +2303,23 @@
 "source": "openrouter"
 },
 {
+"model_key": "glm-4-6-3888",
+"family": "glm",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "glm-4-6v",
 "family": "z-ai/glm",
 "provider": "z-ai",
@@ -2157,9 +2355,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 204.8,
-"price_in": 0.6,
-"price_out": 2.2,
-"price_cached": 0.11,
+"price_in": 0.54,
+"price_out": 1.9800000000000002,
+"price_cached": 0.099,
 "aliases": [
 "Z.ai: GLM 4.7",
 "z-ai/glm-4.7",
@@ -2189,6 +2387,23 @@
 "source": "openrouter"
 },
 {
+"model_key": "glm-4-9b-chat",
+"family": "glm",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 9.0,
+"active_params_b": 9.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "glm-5",
 "family": "z-ai/glm",
 "provider": "z-ai",
@@ -2199,9 +2414,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 204.8,
-"price_in": 0.6,
-"price_out": 1.92,
-"price_cached": 0.12,
+"price_in": 1.0,
+"price_out": 3.1999999999999997,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Z.ai: GLM 5",
 "z-ai/glm-5",
@@ -2242,9 +2457,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.15200000000000002,
-"price_out": 12.0,
-"price_cached": 0.15,
+"price_in": 0.014,
+"price_out": 7.0,
+"price_cached": 0.013000000000000001,
 "aliases": [
 "Z.ai: GLM 5.2",
 "z-ai/glm-5.2",
@@ -2263,9 +2478,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.07,
-"price_out": 7.0,
-"price_cached": 0.065,
+"price_in": 0.0699,
+"price_out": 1.4,
+"price_cached": 0.0689,
 "aliases": [
 "Z.ai: GLM 5.3",
 "z-ai/glm-5.3",
@@ -2393,9 +2608,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.03058,
-"price_out": 0.6875,
-"price_cached": 0.02013,
+"price_in": 0.0259,
+"price_out": 0.1042,
+"price_cached": 0.0259,
 "aliases": [
 "Z.ai: GLM Flash Latest",
 "~z-ai/glm-flash-latest"
@@ -2403,28 +2618,21 @@
 "source": "openrouter"
 },
 {
-"model_key": "gpt-3-5-turbo",
-"family": "openai/gpt",
-"provider": "openai",
-"release_date": "2023-09-28",
-"training_cutoff": "2021-09-30",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.0,
-"context_k": 4.095,
-"price_in": 1.5,
-"price_out": 2.0,
+"model_key": "glm-z1-9b-0414",
+"family": "glm-z",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 9.0,
+"active_params_b": 9.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
 "price_cached": null,
-"aliases": [
-"OpenAI: GPT-3.5 Turbo Instruct",
-"openai/gpt-3.5-turbo-instruct",
-"OpenAI: GPT-3.5 Turbo",
-"openai/gpt-3.5-turbo",
-"OpenAI: GPT-3.5 Turbo (batch)",
-"openai/gpt-3.5-turbo:batch"
-],
-"source": "openrouter"
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "gpt-3-5-turbo-0613",
@@ -2583,7 +2791,7 @@
 "context_k": 1047.576,
 "price_in": 0.09999999999999999,
 "price_out": 0.39999999999999997,
-"price_cached": 0.024999999999999998,
+"price_cached": 0.03,
 "aliases": [
 "OpenAI: GPT-4.1 Nano",
 "openai/gpt-4.1-nano",
@@ -2623,13 +2831,12 @@
 "active_params_b": null,
 "reasoning": 0.0,
 "context_k": 128.0,
-"price_in": 10.0,
-"price_out": 30.0,
+"price_in": 5.0,
+"price_out": 15.0,
 "price_cached": null,
 "aliases": [
-"OpenAI: GPT-4 Turbo",
-"openai/gpt-4-turbo",
 "OpenAI: GPT-4 Turbo (batch)",
+"openai/gpt-4-turbo",
 "openai/gpt-4-turbo:batch"
 ],
 "source": "openrouter"
@@ -2720,7 +2927,7 @@
 "open_weights": false,
 "params_b": null,
 "active_params_b": null,
-"reasoning": 0.0,
+"reasoning": 0.67,
 "context_k": 400.0,
 "price_in": 1.25,
 "price_out": 10.0,
@@ -3126,9 +3333,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 1050.0,
-"price_in": 2.0,
-"price_out": 10.0,
-"price_cached": 0.19999999999999998,
+"price_in": 4.0,
+"price_out": 20.0,
+"price_cached": 0.39999999999999997,
 "aliases": [
 "OpenAI: GPT-5.6 Sol",
 "openai/gpt-5.6-sol",
@@ -3149,9 +3356,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 1050.0,
-"price_in": 2.0,
-"price_out": 10.0,
-"price_cached": 0.19999999999999998,
+"price_in": 4.0,
+"price_out": 20.0,
+"price_cached": 0.39999999999999997,
 "aliases": [
 "OpenAI: GPT-5.6 Sol Pro",
 "openai/gpt-5.6-sol-pro",
@@ -3206,6 +3413,23 @@
 "openai/gpt-5.6-terra-pro:batch"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "gpt-5-chat",
+"family": "gpt",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "gpt-5-image",
@@ -3335,7 +3559,9 @@
 "aliases": [
 "OpenAI: GPT-6.1 Sol",
 "openai/gpt-6.1-sol",
-"openai/gpt-6.1-sol-20260929"
+"openai/gpt-6.1-sol-20260929",
+"OpenAI: GPT-6.1 Sol (batch)",
+"openai/gpt-6.1-sol:batch"
 ],
 "source": "openrouter"
 },
@@ -3356,7 +3582,55 @@
 "aliases": [
 "OpenAI: GPT-6.1 Sol Pro",
 "openai/gpt-6.1-sol-pro",
-"openai/gpt-6.1-sol-pro-20260929"
+"openai/gpt-6.1-sol-pro-20260929",
+"OpenAI: GPT-6.1 Sol Pro (batch)",
+"openai/gpt-6.1-sol-pro:batch"
+],
+"source": "openrouter"
+},
+{
+"model_key": "gpt-6-1-terra",
+"family": "openai/gpt-terra",
+"provider": "openai",
+"release_date": "2026-10-26",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1050.0,
+"price_in": 1.0,
+"price_out": 5.0,
+"price_cached": 0.049999999999999996,
+"aliases": [
+"OpenAI: GPT-6.1 Terra",
+"openai/gpt-6.1-terra",
+"openai/gpt-6.1-terra-20261026",
+"OpenAI: GPT-6.1 Terra (batch)",
+"openai/gpt-6.1-terra:batch"
+],
+"source": "openrouter"
+},
+{
+"model_key": "gpt-6-1-terra-pro",
+"family": "openai/gpt-terra",
+"provider": "openai",
+"release_date": "2026-10-26",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1050.0,
+"price_in": 1.0,
+"price_out": 5.0,
+"price_cached": 0.049999999999999996,
+"aliases": [
+"OpenAI: GPT-6.1 Terra Pro",
+"openai/gpt-6.1-terra-pro",
+"openai/gpt-6.1-terra-pro-20261026",
+"OpenAI: GPT-6.1 Terra Pro (batch)",
+"openai/gpt-6.1-terra-pro:batch"
 ],
 "source": "openrouter"
 },
@@ -3630,9 +3904,9 @@
 "active_params_b": 120.0,
 "reasoning": 0.67,
 "context_k": 131.072,
-"price_in": 0.037,
-"price_out": 0.16999999999999998,
-"price_cached": null,
+"price_in": 0.15,
+"price_out": 0.6,
+"price_cached": 0.075,
 "aliases": [
 "OpenAI: gpt-oss-120b",
 "openai/gpt-oss-120b",
@@ -3708,15 +3982,15 @@
 "family": "~openai/gpt-terra",
 "provider": "~openai",
 "release_date": "2026-09-11",
-"training_cutoff": "2026-02-16",
+"training_cutoff": null,
 "open_weights": null,
 "params_b": null,
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 1050.0,
-"price_in": 2.0,
-"price_out": 12.0,
-"price_cached": 0.19999999999999998,
+"price_in": 1.0,
+"price_out": 5.0,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "OpenAI: GPT Terra Latest",
 "~openai/gpt-terra-latest"
@@ -3724,24 +3998,21 @@
 "source": "openrouter"
 },
 {
-"model_key": "granite-4-0-h-micro",
-"family": "ibm-granite/granite-h",
-"provider": "ibm-granite",
-"release_date": "2025-10-20",
+"model_key": "granite-3-3-8b",
+"family": "granite",
+"provider": null,
+"release_date": null,
 "training_cutoff": null,
 "open_weights": true,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.0,
-"context_k": 131.0,
-"price_in": 0.017,
-"price_out": 0.112,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
 "price_cached": null,
-"aliases": [
-"IBM: Granite 4.0 Micro",
-"ibm-granite/granite-4.0-h-micro"
-],
-"source": "openrouter"
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "granite-4-2-8b",
@@ -3986,7 +4257,7 @@
 "context_k": 131.072,
 "price_in": 1.0,
 "price_out": 3.0,
-"price_cached": null,
+"price_cached": 0.19999999999999998,
 "aliases": [
 "Nous: Hermes 4 405B",
 "nousresearch/hermes-4-405b"
@@ -4132,9 +4403,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 524.288,
-"price_in": 0.95,
+"price_in": 1.0,
 "price_out": 4.05,
-"price_cached": 0.16,
+"price_cached": 0.16999999999999998,
 "aliases": [
 "Thinking Machines: Inkling",
 "thinkingmachines/inkling",
@@ -4164,6 +4435,74 @@
 "source": "openrouter"
 },
 {
+"model_key": "intern-s1",
+"family": "intern-s",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "intern-s1-mini",
+"family": "intern-s",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "intern-s1-new",
+"family": "intern-s",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "internlm3-8b",
+"family": "internlm",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "jev-router",
 "family": "typesafe/jev-router",
 "provider": "typesafe",
@@ -4184,27 +4523,6 @@
 "source": "openrouter"
 },
 {
-"model_key": "kat-coder-pro-v2-5",
-"family": "kwaipilot/kat-coder",
-"provider": "kwaipilot",
-"release_date": "2026-07-10",
-"training_cutoff": null,
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.0,
-"context_k": 262.144,
-"price_in": 0.74,
-"price_out": 2.96,
-"price_cached": 0.15,
-"aliases": [
-"Kwaipilot: KAT-Coder-Pro V2.5",
-"kwaipilot/kat-coder-pro-v2.5",
-"kwaipilot/kat-coder-pro-v2.5-20260710"
-],
-"source": "openrouter"
-},
-{
 "model_key": "kimi",
 "family": "~moonshotai/kimi",
 "provider": "~moonshotai",
@@ -4215,9 +4533,9 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.69,
-"price_out": 15.0,
-"price_cached": 0.22999999999999998,
+"price_in": 0.2185,
+"price_out": 8.099,
+"price_cached": 0.21,
 "aliases": [
 "MoonshotAI: Kimi Latest",
 "~moonshotai/kimi-latest"
@@ -4296,9 +4614,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.44999999999999996,
-"price_out": 2.25,
-"price_cached": 0.07,
+"price_in": 0.5,
+"price_out": 2.5,
+"price_cached": 0.15,
 "aliases": [
 "MoonshotAI: Kimi K2.5",
 "moonshotai/kimi-k2.5",
@@ -4318,9 +4636,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.95,
-"price_out": 4.0,
-"price_cached": 0.16,
+"price_in": 0.65,
+"price_out": 3.41,
+"price_cached": 0.15,
 "aliases": [
 "MoonshotAI: Kimi K2.6",
 "moonshotai/kimi-k2.6",
@@ -4339,9 +4657,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.6712,
-"price_out": 3.35,
-"price_cached": 0.18,
+"price_in": 0.56,
+"price_out": 3.1,
+"price_cached": 0.15,
 "aliases": [
 "MoonshotAI: Kimi K2.7 Code",
 "moonshotai/kimi-k2.7-code",
@@ -4362,7 +4680,7 @@
 "context_k": 262.144,
 "price_in": 0.6,
 "price_out": 2.5,
-"price_cached": null,
+"price_cached": 0.15,
 "aliases": [
 "MoonshotAI: Kimi K2 Thinking",
 "moonshotai/kimi-k2-thinking",
@@ -4382,15 +4700,36 @@
 "active_params_b": null,
 "reasoning": 1.0,
 "context_k": 1048.576,
-"price_in": 0.69,
-"price_out": 15.0,
-"price_cached": 0.22999999999999998,
+"price_in": 0.23099999999999998,
+"price_out": 20.0,
+"price_cached": 0.221,
 "aliases": [
 "MoonshotAI: Kimi K3",
 "moonshotai/kimi-k3",
 "moonshotai/kimi-k3-20260715",
 "MoonshotAI: Kimi K3 (batch)",
 "moonshotai/kimi-k3:batch"
+],
+"source": "openrouter"
+},
+{
+"model_key": "kimi-k3-1-pro",
+"family": "moonshotai/kimi-k",
+"provider": "moonshotai",
+"release_date": "2026-10-23",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 1.0,
+"context_k": 1048.576,
+"price_in": 2.0,
+"price_out": 10.0,
+"price_cached": 0.19999999999999998,
+"aliases": [
+"MoonshotAI: Kimi K3.1 Pro",
+"moonshotai/kimi-k3.1-pro",
+"moonshotai/kimi-k3.1-pro-20261023"
 ],
 "source": "openrouter"
 },
@@ -4411,27 +4750,6 @@
 "aliases": [
 "Sao10K: Llama 3.1 Euryale 70B v2.2",
 "sao10k/l3.1-euryale-70b"
-],
-"source": "openrouter"
-},
-{
-"model_key": "l3-3-euryale-70b",
-"family": "sao10k/l3-euryale",
-"provider": "sao10k",
-"release_date": "2024-12-18",
-"training_cutoff": "2023-12-31",
-"open_weights": true,
-"params_b": 70.0,
-"active_params_b": 70.0,
-"reasoning": 0.0,
-"context_k": 131.072,
-"price_in": 0.65,
-"price_out": 0.75,
-"price_cached": null,
-"aliases": [
-"Sao10K: Llama 3.3 Euryale 70B",
-"sao10k/l3.3-euryale-70b",
-"sao10k/l3.3-euryale-70b-v2.3"
 ],
 "source": "openrouter"
 },
@@ -4498,6 +4816,48 @@
 "source": "openrouter"
 },
 {
+"model_key": "lfm-2-5-2-6b",
+"family": "liquid/lfm",
+"provider": "liquid",
+"release_date": "2026-08-11",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 2.6,
+"active_params_b": 2.6,
+"reasoning": 0.67,
+"context_k": 128.0,
+"price_in": 0.35,
+"price_out": 0.5,
+"price_cached": 0.04,
+"aliases": [
+"LiquidAI: LFM2.5-2.6B",
+"liquid/lfm-2.5-2.6b",
+"liquid/lfm-2.5-2.6b-20260811"
+],
+"source": "openrouter"
+},
+{
+"model_key": "lfm-2-5-24b-a2b",
+"family": "liquid/lfm",
+"provider": "liquid",
+"release_date": "2026-10-13",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 24.0,
+"active_params_b": 2.0,
+"reasoning": 0.67,
+"context_k": 128.0,
+"price_in": 0.049999999999999996,
+"price_out": 0.7,
+"price_cached": 0.024999999999999998,
+"aliases": [
+"LiquidAI: LFM2.5-24B-A2B",
+"liquid/lfm-2.5-24b-a2b",
+"liquid/lfm-2.5-24b-a2b-20261012"
+],
+"source": "openrouter"
+},
+{
 "model_key": "ling-3-0-flash",
 "family": "inclusionai/ling-flash",
 "provider": "inclusionai",
@@ -4519,27 +4879,6 @@
 "source": "openrouter"
 },
 {
-"model_key": "ling-3-0-flash-fin",
-"family": "inclusionai/ling-flash",
-"provider": "inclusionai",
-"release_date": "2026-08-27",
-"training_cutoff": null,
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.67,
-"context_k": 262.144,
-"price_in": 0.041999999999999996,
-"price_out": 0.12319999999999999,
-"price_cached": 0.008400000000000001,
-"aliases": [
-"inclusionAI: Ling 3.0 Flash Fin",
-"inclusionai/ling-3.0-flash-fin",
-"inclusionai/ling-3.0-flash-fin-20260827"
-],
-"source": "openrouter"
-},
-{
 "model_key": "ling-3-0-flash-vl",
 "family": "inclusionai/ling-flash",
 "provider": "inclusionai",
@@ -4549,10 +4888,10 @@
 "params_b": null,
 "active_params_b": null,
 "reasoning": 0.67,
-"context_k": 262.144,
-"price_in": 0.020999999999999998,
-"price_out": 0.061599999999999995,
-"price_cached": 0.004200000000000001,
+"context_k": 131.072,
+"price_in": 0.06,
+"price_out": 0.18,
+"price_cached": 0.012,
 "aliases": [
 "inclusionAI: Ling 3.0 Flash VL",
 "inclusionai/ling-3.0-flash-vl",
@@ -4570,10 +4909,10 @@
 "params_b": null,
 "active_params_b": null,
 "reasoning": 0.67,
-"context_k": 262.144,
-"price_in": 0.0,
-"price_out": 0.0,
-"price_cached": null,
+"context_k": 1000.0,
+"price_in": 0.075,
+"price_out": 0.22499999999999998,
+"price_cached": 0.015,
 "aliases": [
 "inclusionAI: Ling 3.1 Flash",
 "inclusionai/ling-3.1-flash",
@@ -4620,6 +4959,40 @@
 "meta-llama/llama-3.1-8b-instruct"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "llama-3-1-8b-ultramedical",
+"family": "llama-ultramedical",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "llama-3-1-nemotron-nano-8b-v1",
+"family": "llama-nemotron",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "llama-3-2-1b",
@@ -4672,9 +5045,9 @@
 "active_params_b": 70.0,
 "reasoning": 0.0,
 "context_k": 131.072,
-"price_in": 0.22,
-"price_out": 0.5,
-"price_cached": 0.11,
+"price_in": 0.09999999999999999,
+"price_out": 0.32,
+"price_cached": null,
 "aliases": [
 "Meta: Llama 3.3 70B Instruct",
 "meta-llama/llama-3.3-70b-instruct"
@@ -4691,7 +5064,7 @@
 "params_b": null,
 "active_params_b": null,
 "reasoning": 0.0,
-"context_k": 1048.576,
+"context_k": 524.288,
 "price_in": 0.1875,
 "price_out": 0.6525,
 "price_cached": 0.049999999999999996,
@@ -4889,6 +5262,44 @@
 "source": "openrouter"
 },
 {
+"model_key": "mercury-3",
+"family": "inception/mercury",
+"provider": "inception",
+"release_date": "2026-10-16",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1000.0,
+"price_in": 0.09999999999999999,
+"price_out": 0.35,
+"price_cached": 0.01,
+"aliases": [
+"Inception: Mercury 3",
+"inception/mercury-3",
+"inception/mercury-3-20261019"
+],
+"source": "openrouter"
+},
+{
+"model_key": "mimo-7b-rl-0530",
+"family": "mimo-rl",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 7.0,
+"active_params_b": 7.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "mimo-v2-5",
 "family": "xiaomi/mimo",
 "provider": "xiaomi",
@@ -4899,9 +5310,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 1050.0,
-"price_in": 0.14,
-"price_out": 0.28,
-"price_cached": 0.0028,
+"price_in": 0.39999999999999997,
+"price_out": 2.0,
+"price_cached": 0.08,
 "aliases": [
 "Xiaomi: MiMo-V2.5",
 "xiaomi/mimo-v2.5",
@@ -4920,9 +5331,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 1050.0,
-"price_in": 0.435,
-"price_out": 0.87,
-"price_cached": 0.0036,
+"price_in": 0.48,
+"price_out": 1.7999999999999998,
+"price_cached": 0.096,
 "aliases": [
 "Xiaomi: MiMo-V2.5-Pro",
 "xiaomi/mimo-v2.5-pro",
@@ -4994,6 +5405,23 @@
 "source": "openrouter"
 },
 {
+"model_key": "minicpm4-1-8b",
+"family": "minicpm",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 8.0,
+"active_params_b": 8.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "minimax-01",
 "family": "minimax/minimax",
 "provider": "minimax",
@@ -5063,8 +5491,8 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 204.8,
-"price_in": 0.3,
-"price_out": 1.2,
+"price_in": 0.255,
+"price_out": 1.02,
 "price_cached": null,
 "aliases": [
 "MiniMax: MiniMax M2",
@@ -5104,9 +5532,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 204.8,
-"price_in": 0.27,
-"price_out": 1.08,
-"price_cached": 0.027,
+"price_in": 0.3,
+"price_out": 1.2,
+"price_cached": 0.03,
 "aliases": [
 "MiniMax: MiniMax M2.5",
 "minimax/minimax-m2.5",
@@ -5126,9 +5554,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 204.8,
-"price_in": 0.21,
-"price_out": 0.84,
-"price_cached": 0.041999999999999996,
+"price_in": 0.3,
+"price_out": 1.2,
+"price_cached": 0.06,
 "aliases": [
 "MiniMax: MiniMax M2.7",
 "minimax/minimax-m2.7",
@@ -5175,6 +5603,27 @@
 "MiniMax: MiniMax M3",
 "minimax/minimax-m3",
 "minimax/minimax-m3-20260531"
+],
+"source": "openrouter"
+},
+{
+"model_key": "minimax-m3-1-flash",
+"family": "minimax/minimax-m",
+"provider": "minimax",
+"release_date": "2026-10-19",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 1.0,
+"context_k": 1048.576,
+"price_in": 0.15,
+"price_out": 0.6,
+"price_cached": 0.015,
+"aliases": [
+"MiniMax: MiniMax M3.1 Flash",
+"minimax/minimax-m3.1-flash",
+"minimax/minimax-m3.1-flash-20261019"
 ],
 "source": "openrouter"
 },
@@ -5234,9 +5683,7 @@
 "price_cached": 0.015,
 "aliases": [
 "Mistral: Ministral 3 8B 2512",
-"mistralai/ministral-8b-2512",
-"Mistral: Ministral 3 8B 2512 (batch)",
-"mistralai/ministral-8b-2512:batch"
+"mistralai/ministral-8b-2512"
 ],
 "source": "openrouter"
 },
@@ -5296,9 +5743,7 @@
 "price_cached": 0.049999999999999996,
 "aliases": [
 "Mistral: Mistral Large 3 2512",
-"mistralai/mistral-large-2512",
-"Mistral: Mistral Large 3 2512 (batch)",
-"mistralai/mistral-large-2512:batch"
+"mistralai/mistral-large-2512"
 ],
 "source": "openrouter"
 },
@@ -5312,10 +5757,10 @@
 "params_b": null,
 "active_params_b": null,
 "reasoning": 1.0,
-"context_k": 524.288,
-"price_in": 0.6799999999999999,
-"price_out": 2.09,
-"price_cached": 0.07,
+"context_k": 1048.576,
+"price_in": 1.3599999999999999,
+"price_out": 4.18,
+"price_cached": 0.14,
 "aliases": [
 "Mistral: Mistral Large 4",
 "mistralai/mistral-large-4-0",
@@ -5359,9 +5804,7 @@
 "price_cached": 0.04,
 "aliases": [
 "Mistral: Mistral Medium 3.1",
-"mistralai/mistral-medium-3.1",
-"Mistral: Mistral Medium 3.1 (batch)",
-"mistralai/mistral-medium-3.1:batch"
+"mistralai/mistral-medium-3.1"
 ],
 "source": "openrouter"
 },
@@ -5399,7 +5842,7 @@
 "active_params_b": null,
 "reasoning": 0.0,
 "context_k": 131.072,
-"price_in": 0.019000000000000003,
+"price_in": 0.029,
 "price_out": 0.03,
 "price_cached": null,
 "aliases": [
@@ -5465,9 +5908,7 @@
 "price_cached": 0.015,
 "aliases": [
 "Mistral: Mistral Small 4",
-"mistralai/mistral-small-2603",
-"Mistral: Mistral Small 4 (batch)",
-"mistralai/mistral-small-2603:batch"
+"mistralai/mistral-small-2603"
 ],
 "source": "openrouter"
 },
@@ -5503,8 +5944,8 @@
 "active_params_b": 24.0,
 "reasoning": 0.0,
 "context_k": 256.0,
-"price_in": 0.09375,
-"price_out": 0.25,
+"price_in": 0.075,
+"price_out": 0.19999999999999998,
 "price_cached": null,
 "aliases": [
 "Mistral: Mistral Small 3.2 24B",
@@ -5534,6 +5975,48 @@
 "source": "openrouter"
 },
 {
+"model_key": "moondream3",
+"family": "moondream/moondream",
+"provider": "moondream",
+"release_date": "2026-10-15",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 32.0,
+"price_in": 0.3,
+"price_out": 2.5,
+"price_cached": null,
+"aliases": [
+"Moondream: Moondream 3 Preview",
+"moondream/moondream3-preview",
+"moondream/moondream3-preview-20261013"
+],
+"source": "openrouter"
+},
+{
+"model_key": "moondream3-1-9b-a2b",
+"family": "moondream/moondream",
+"provider": "moondream",
+"release_date": "2026-10-15",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 9.0,
+"active_params_b": 2.0,
+"reasoning": 0.67,
+"context_k": 32.0,
+"price_in": 0.3,
+"price_out": 2.5,
+"price_cached": null,
+"aliases": [
+"Moondream: Moondream 3.1",
+"moondream/moondream3.1-9b-a2b",
+"moondream/moondream3.1-9b-a2b-20261013"
+],
+"source": "openrouter"
+},
+{
 "model_key": "morph-v3-fast",
 "family": "morph/morph-fast",
 "provider": "morph",
@@ -5543,7 +6026,7 @@
 "params_b": null,
 "active_params_b": null,
 "reasoning": 0.0,
-"context_k": 81.92,
+"context_k": 262.144,
 "price_in": 0.7999999999999999,
 "price_out": 1.2,
 "price_cached": null,
@@ -5700,6 +6183,48 @@
 "source": "openrouter"
 },
 {
+"model_key": "muse-spark-open",
+"family": "meta/muse-spark",
+"provider": "meta",
+"release_date": "2026-10-15",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1048.576,
+"price_in": 1.25,
+"price_out": 4.25,
+"price_cached": 0.15,
+"aliases": [
+"Meta: Muse Spark Open",
+"meta/muse-spark-open",
+"meta/muse-spark-open-20261015"
+],
+"source": "openrouter"
+},
+{
+"model_key": "muse-wonder",
+"family": "meta/muse-wonder",
+"provider": "meta",
+"release_date": "2026-10-12",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1048.576,
+"price_in": 4.0,
+"price_out": 20.0,
+"price_cached": 0.19999999999999998,
+"aliases": [
+"Meta: Muse Wonder",
+"meta/muse-wonder",
+"meta/muse-wonder-20261012"
+],
+"source": "openrouter"
+},
+{
 "model_key": "mythomax-l2-13b",
 "family": "gryphe/mythomax-l",
 "provider": "gryphe",
@@ -5751,13 +6276,34 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.06,
-"price_out": 0.16,
-"price_cached": 0.03,
+"price_in": 0.07,
+"price_out": 0.19999999999999998,
+"price_cached": 0.04,
 "aliases": [
 "NVIDIA: Nemotron 3.5 Lightning",
 "nvidia/nemotron-3.5-lightning",
 "nvidia/nemotron-3.5-lightning-20260807"
+],
+"source": "openrouter"
+},
+{
+"model_key": "nemotron-3-5-super-vl",
+"family": "nvidia/nemotron-super",
+"provider": "nvidia",
+"release_date": "2026-10-15",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1048.576,
+"price_in": 0.15,
+"price_out": 0.5,
+"price_cached": 0.02,
+"aliases": [
+"NVIDIA: Nemotron 3.5 Super VL",
+"nvidia/nemotron-3.5-super-vl",
+"nvidia/nemotron-3.5-super-vl-20261015"
 ],
 "source": "openrouter"
 },
@@ -5772,9 +6318,9 @@
 "active_params_b": 3.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.049999999999999996,
-"price_out": 0.19999999999999998,
-"price_cached": 0.03,
+"price_in": 0.06,
+"price_out": 0.24,
+"price_cached": 0.012,
 "aliases": [
 "NVIDIA: Nemotron 3 Nano 30B A3B",
 "nvidia/nemotron-3-nano-30b-a3b"
@@ -5792,9 +6338,9 @@
 "active_params_b": 12.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.08,
-"price_out": 0.44999999999999996,
-"price_cached": null,
+"price_in": 0.3,
+"price_out": 2.4,
+"price_cached": 0.15,
 "aliases": [
 "NVIDIA: Nemotron 3 Super",
 "nvidia/nemotron-3-super-120b-a12b",
@@ -5813,9 +6359,9 @@
 "active_params_b": 55.0,
 "reasoning": 1.0,
 "context_k": 262.144,
-"price_in": 0.5,
-"price_out": 2.2,
-"price_cached": 0.09999999999999999,
+"price_in": 0.6,
+"price_out": 2.4,
+"price_cached": 0.12,
 "aliases": [
 "NVIDIA: Nemotron 3 Ultra",
 "nvidia/nemotron-3-ultra-550b-a55b",
@@ -5966,45 +6512,21 @@
 "source": "openrouter"
 },
 {
-"model_key": "o1",
-"family": "openai/o",
-"provider": "openai",
-"release_date": "2024-12-17",
-"training_cutoff": "2023-10-31",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.67,
-"context_k": 200.0,
-"price_in": 15.0,
-"price_out": 60.0,
-"price_cached": 7.5,
-"aliases": [
-"OpenAI: o1",
-"openai/o1",
-"openai/o1-2024-12-17"
-],
-"source": "openrouter"
-},
-{
-"model_key": "o1-pro",
-"family": "openai/o1-pro",
-"provider": "openai",
-"release_date": "2025-03-19",
-"training_cutoff": "2023-10-31",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.67,
-"context_k": 200.0,
-"price_in": 150.0,
-"price_out": 600.0,
+"model_key": "nvidia-nemotron-nano-9b-v2",
+"family": "nvidia-nemotron",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 9.0,
+"active_params_b": 9.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
 "price_cached": null,
-"aliases": [
-"OpenAI: o1-pro",
-"openai/o1-pro"
-],
-"source": "openrouter"
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "o3",
@@ -6040,37 +6562,14 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 200.0,
-"price_in": 1.1,
-"price_out": 4.4,
-"price_cached": 0.55,
+"price_in": 0.55,
+"price_out": 2.2,
+"price_cached": 0.275,
 "aliases": [
-"OpenAI: o3 Mini",
-"openai/o3-mini",
-"openai/o3-mini-2025-01-31",
 "OpenAI: o3 Mini (batch)",
+"openai/o3-mini-2025-01-31",
 "openai/o3-mini:batch",
 "o3-mini_1.0"
-],
-"source": "openrouter"
-},
-{
-"model_key": "o3-mini-high",
-"family": "openai/o3-mini",
-"provider": "openai",
-"release_date": "2025-02-12",
-"training_cutoff": "2023-10-31",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 1.0,
-"context_k": 200.0,
-"price_in": 1.1,
-"price_out": 4.4,
-"price_cached": 0.55,
-"aliases": [
-"OpenAI: o3 Mini High",
-"openai/o3-mini-high",
-"openai/o3-mini-high-2025-01-31"
 ],
 "source": "openrouter"
 },
@@ -6106,38 +6605,32 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 200.0,
-"price_in": 1.1,
-"price_out": 4.4,
-"price_cached": 0.275,
+"price_in": 0.55,
+"price_out": 2.2,
+"price_cached": 0.1375,
 "aliases": [
-"OpenAI: o4 Mini",
-"openai/o4-mini",
-"openai/o4-mini-2025-04-16",
 "OpenAI: o4 Mini (batch)",
+"openai/o4-mini-2025-04-16",
 "openai/o4-mini:batch"
 ],
 "source": "openrouter"
 },
 {
-"model_key": "o4-mini-high",
-"family": "openai/o4-mini",
-"provider": "openai",
-"release_date": "2025-04-16",
-"training_cutoff": "2024-06-30",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 1.0,
-"context_k": 200.0,
-"price_in": 1.1,
-"price_out": 4.4,
-"price_cached": 0.275,
-"aliases": [
-"OpenAI: o4 Mini High",
-"openai/o4-mini-high",
-"openai/o4-mini-high-2025-04-16"
-],
-"source": "openrouter"
+"model_key": "openthinker3-7b",
+"family": "openthinker",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 7.0,
+"active_params_b": 7.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "palmyra-x5",
@@ -6162,30 +6655,9 @@
 },
 {
 "model_key": "pareto",
-"family": "unbiased/pareto",
-"provider": "unbiased",
-"release_date": "2026-09-17",
-"training_cutoff": null,
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.0,
-"context_k": 262.144,
-"price_in": 2.5,
-"price_out": 7.5,
-"price_cached": 0.25,
-"aliases": [
-"Pareto",
-"unbiased/pareto",
-"unbiased/pareto-20260917"
-],
-"source": "openrouter"
-},
-{
-"model_key": "pareto-26-10",
-"family": "unbiased/pareto",
-"provider": "unbiased",
-"release_date": "2026-10-01",
+"family": "~unbiased/pareto",
+"provider": "~unbiased",
+"release_date": "2026-10-13",
 "training_cutoff": null,
 "open_weights": null,
 "params_b": null,
@@ -6196,9 +6668,50 @@
 "price_out": 3.1999999999999997,
 "price_cached": 0.03,
 "aliases": [
-"Pareto 26.10 Preview",
-"unbiased/pareto-26.10-preview",
-"unbiased/pareto-26.10-preview-20260929"
+"Pareto Latest",
+"~unbiased/pareto-latest"
+],
+"source": "openrouter"
+},
+{
+"model_key": "pareto-26-10",
+"family": "unbiased/pareto",
+"provider": "unbiased",
+"release_date": "2026-10-15",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.0,
+"context_k": 1048.576,
+"price_in": 0.7999999999999999,
+"price_out": 3.1999999999999997,
+"price_cached": 0.03,
+"aliases": [
+"Pareto 26.10",
+"unbiased/pareto-26.10",
+"unbiased/pareto-26.10-20261015"
+],
+"source": "openrouter"
+},
+{
+"model_key": "pareto-26-9",
+"family": "unbiased/pareto",
+"provider": "unbiased",
+"release_date": "2026-10-13",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.0,
+"context_k": 262.144,
+"price_in": 2.5,
+"price_out": 7.5,
+"price_cached": 0.25,
+"aliases": [
+"Pareto 26.9",
+"unbiased/pareto-26.9",
+"unbiased/pareto-26.9-20260917"
 ],
 "source": "openrouter"
 },
@@ -6211,7 +6724,7 @@
 "open_weights": null,
 "params_b": null,
 "active_params_b": null,
-"reasoning": 0.0,
+"reasoning": 0.67,
 "context_k": 2000.0,
 "price_in": null,
 "price_out": null,
@@ -6369,7 +6882,7 @@
 "model_key": "qwen-plus",
 "family": "qwen/qwen-plus",
 "provider": "qwen",
-"release_date": "2025-09-08",
+"release_date": "2025-02-01",
 "training_cutoff": "2025-03-31",
 "open_weights": null,
 "params_b": null,
@@ -6380,13 +6893,28 @@
 "price_out": 0.78,
 "price_cached": 0.052000000000000005,
 "aliases": [
-"Qwen: Qwen Plus 0728",
-"qwen/qwen-plus-2025-07-28",
 "Qwen: Qwen-Plus",
 "qwen/qwen-plus",
 "qwen/qwen-plus-2025-01-25"
 ],
 "source": "openrouter"
+},
+{
+"model_key": "qwen2-5-coder-7b",
+"family": "qwen2-coder",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 7.0,
+"active_params_b": 7.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "qwen2-5-vl-72b",
@@ -6418,7 +6946,7 @@
 "params_b": 14.0,
 "active_params_b": 14.0,
 "reasoning": 0.67,
-"context_k": 131.072,
+"context_k": 40.96,
 "price_in": 0.12,
 "price_out": 0.24,
 "price_cached": null,
@@ -6426,27 +6954,6 @@
 "Qwen: Qwen3 14B",
 "qwen/qwen3-14b",
 "qwen/qwen3-14b-04-28"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-235b-a22b",
-"family": "qwen/qwen",
-"provider": "qwen",
-"release_date": "2025-04-28",
-"training_cutoff": "2025-03-31",
-"open_weights": true,
-"params_b": 235.0,
-"active_params_b": 22.0,
-"reasoning": 0.67,
-"context_k": 131.072,
-"price_in": 0.45499999999999996,
-"price_out": 1.8199999999999998,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 235B A22B",
-"qwen/qwen3-235b-a22b",
-"qwen/qwen3-235b-a22b-04-28"
 ],
 "source": "openrouter"
 },
@@ -6472,6 +6979,40 @@
 "source": "openrouter"
 },
 {
+"model_key": "qwen3-235b-a22b-no-thinking",
+"family": "qwen3-no",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 235.0,
+"active_params_b": 22.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
+"model_key": "qwen3-235b-a22b-thinking",
+"family": "qwen3-thinking",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
+"open_weights": true,
+"params_b": 235.0,
+"active_params_b": 22.0,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
+"price_cached": null,
+"aliases": [],
+"source": "name"
+},
+{
 "model_key": "qwen3-235b-a22b-thinking-2507",
 "family": "qwen/qwen3-thinking",
 "provider": "qwen",
@@ -6481,9 +7022,9 @@
 "params_b": 235.0,
 "active_params_b": 22.0,
 "reasoning": 0.67,
-"context_k": 131.072,
-"price_in": 0.22999999999999998,
-"price_out": 2.3,
+"context_k": 128.0,
+"price_in": 0.44999999999999996,
+"price_out": 3.5,
 "price_cached": null,
 "aliases": [
 "Qwen: Qwen3 235B A22B Thinking 2507",
@@ -6501,7 +7042,7 @@
 "params_b": 30.0,
 "active_params_b": 3.0,
 "reasoning": 0.67,
-"context_k": 131.072,
+"context_k": 40.96,
 "price_in": 0.12,
 "price_out": 0.5,
 "price_cached": null,
@@ -6525,30 +7066,10 @@
 "context_k": 262.144,
 "price_in": 0.09999999999999999,
 "price_out": 0.3,
-"price_cached": null,
+"price_cached": 0.09999999999999999,
 "aliases": [
 "Qwen: Qwen3 30B A3B Instruct 2507",
 "qwen/qwen3-30b-a3b-instruct-2507"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-30b-a3b-thinking-2507",
-"family": "qwen/qwen3-thinking",
-"provider": "qwen",
-"release_date": "2025-08-28",
-"training_cutoff": "2025-06-30",
-"open_weights": true,
-"params_b": 30.0,
-"active_params_b": 3.0,
-"reasoning": 0.67,
-"context_k": 81.92,
-"price_in": 0.19999999999999998,
-"price_out": 2.4,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 30B A3B Thinking 2507",
-"qwen/qwen3-30b-a3b-thinking-2507"
 ],
 "source": "openrouter"
 },
@@ -6605,8 +7126,8 @@
 "active_params_b": 27.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.195,
-"price_out": 1.56,
+"price_in": 0.26,
+"price_out": 2.6,
 "price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5-27B",
@@ -6626,9 +7147,9 @@
 "active_params_b": 3.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.08,
-"price_out": 0.75,
-"price_cached": 0.04,
+"price_in": 0.14,
+"price_out": 1.0,
+"price_cached": 0.049999999999999996,
 "aliases": [
 "Qwen: Qwen3.5-35B-A3B",
 "qwen/qwen3.5-35b-a3b",
@@ -6647,9 +7168,9 @@
 "active_params_b": 17.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.44999999999999996,
-"price_out": 3.0,
-"price_cached": 0.22,
+"price_in": 0.5,
+"price_out": 3.5999999999999996,
+"price_cached": 0.3,
 "aliases": [
 "Qwen: Qwen3.5 397B A17B",
 "qwen/qwen3.5-397b-a17b",
@@ -6668,8 +7189,8 @@
 "active_params_b": 9.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.09999999999999999,
-"price_out": 0.15,
+"price_in": 0.16999999999999998,
+"price_out": 0.25,
 "price_cached": null,
 "aliases": [
 "Qwen: Qwen3.5-9B",
@@ -6751,9 +7272,9 @@
 "active_params_b": 27.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.32,
-"price_out": 3.25,
-"price_cached": 0.03,
+"price_in": 0.44999999999999996,
+"price_out": 2.7,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3.6 27B",
 "qwen/qwen3.6-27b",
@@ -6772,9 +7293,9 @@
 "active_params_b": 3.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.15,
-"price_out": 1.0,
-"price_cached": 0.049999999999999996,
+"price_in": 0.09999999999999999,
+"price_out": 0.8999999999999999,
+"price_cached": 0.024999999999999998,
 "aliases": [
 "Qwen: Qwen3.6 35B A3B",
 "qwen/qwen3.6-35b-a3b",
@@ -6799,27 +7320,6 @@
 "aliases": [
 "Qwen: Qwen3.6 Flash",
 "qwen/qwen3.6-flash"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-6-max",
-"family": "qwen/qwen3-max",
-"provider": "qwen",
-"release_date": "2026-04-27",
-"training_cutoff": null,
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.67,
-"context_k": 262.144,
-"price_in": 1.0270000000000001,
-"price_out": 6.162,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3.6 Max Preview",
-"qwen/qwen3.6-max-preview",
-"qwen/qwen3.6-max-preview-20260420"
 ],
 "source": "openrouter"
 },
@@ -6903,7 +7403,9 @@
 "aliases": [
 "Qwen: Qwen3.7 Plus",
 "qwen/qwen3.7-plus",
-"qwen/qwen3.7-plus-20260602"
+"qwen/qwen3.7-plus-20260602",
+"Qwen: Qwen3.7 Plus (batch)",
+"qwen/qwen3.7-plus:batch"
 ],
 "source": "openrouter"
 },
@@ -6939,9 +7441,9 @@
 "active_params_b": 27.0,
 "reasoning": 1.0,
 "context_k": 1000.0,
-"price_in": 0.425,
-"price_out": 2.5500000000000003,
-"price_cached": 0.08499999999999999,
+"price_in": 0.039,
+"price_out": 1.25,
+"price_cached": 0.0039000000000000003,
 "aliases": [
 "Qwen: Qwen3.8 27B",
 "qwen/qwen3.8-27b",
@@ -7035,24 +7537,20 @@
 },
 {
 "model_key": "qwen3-8b",
-"family": "qwen/qwen",
-"provider": "qwen",
-"release_date": "2025-04-28",
-"training_cutoff": "2025-03-31",
+"family": "qwen",
+"provider": null,
+"release_date": null,
+"training_cutoff": null,
 "open_weights": true,
 "params_b": 8.0,
 "active_params_b": 8.0,
-"reasoning": 0.67,
-"context_k": 131.072,
-"price_in": 0.117,
-"price_out": 0.45499999999999996,
+"reasoning": null,
+"context_k": null,
+"price_in": null,
+"price_out": null,
 "price_cached": null,
-"aliases": [
-"Qwen: Qwen3 8B",
-"qwen/qwen3-8b",
-"qwen/qwen3-8b-04-28"
-],
-"source": "openrouter"
+"aliases": [],
+"source": "name"
 },
 {
 "model_key": "qwen3-coder",
@@ -7157,67 +7655,6 @@
 "source": "openrouter"
 },
 {
-"model_key": "qwen3-coder-plus",
-"family": "qwen/qwen3-coder",
-"provider": "qwen",
-"release_date": "2025-09-23",
-"training_cutoff": "2025-06-30",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.0,
-"context_k": 1000.0,
-"price_in": 0.65,
-"price_out": 3.25,
-"price_cached": 0.13,
-"aliases": [
-"Qwen: Qwen3 Coder Plus",
-"qwen/qwen3-coder-plus"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-max",
-"family": "qwen/qwen3-max",
-"provider": "qwen",
-"release_date": "2025-09-23",
-"training_cutoff": "2025-06-30",
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.0,
-"context_k": 262.144,
-"price_in": 0.78,
-"price_out": 3.9,
-"price_cached": 0.156,
-"aliases": [
-"Qwen: Qwen3 Max",
-"qwen/qwen3-max"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-max-thinking",
-"family": "qwen/qwen3-max",
-"provider": "qwen",
-"release_date": "2026-02-09",
-"training_cutoff": null,
-"open_weights": null,
-"params_b": null,
-"active_params_b": null,
-"reasoning": 0.67,
-"context_k": 262.144,
-"price_in": 0.78,
-"price_out": 3.9,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 Max Thinking",
-"qwen/qwen3-max-thinking",
-"qwen/qwen3-max-thinking-20260123"
-],
-"source": "openrouter"
-},
-{
 "model_key": "qwen3-next-80b-a3b",
 "family": "qwen/qwen3-next",
 "provider": "qwen",
@@ -7228,34 +7665,13 @@
 "active_params_b": 3.0,
 "reasoning": 0.0,
 "context_k": 262.144,
-"price_in": 0.09999999999999999,
+"price_in": 0.09,
 "price_out": 1.1,
-"price_cached": 0.07,
+"price_cached": null,
 "aliases": [
 "Qwen: Qwen3 Next 80B A3B Instruct",
 "qwen/qwen3-next-80b-a3b-instruct",
 "qwen/qwen3-next-80b-a3b-instruct-2509"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-next-80b-a3b-thinking",
-"family": "qwen/qwen3-next",
-"provider": "qwen",
-"release_date": "2025-09-11",
-"training_cutoff": "2025-09-30",
-"open_weights": true,
-"params_b": 80.0,
-"active_params_b": 3.0,
-"reasoning": 0.67,
-"context_k": 262.144,
-"price_in": 0.15,
-"price_out": 1.2,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 Next 80B A3B Thinking",
-"qwen/qwen3-next-80b-a3b-thinking",
-"qwen/qwen3-next-80b-a3b-thinking-2509"
 ],
 "source": "openrouter"
 },
@@ -7276,26 +7692,6 @@
 "aliases": [
 "Qwen: Qwen3 VL 235B A22B Instruct",
 "qwen/qwen3-vl-235b-a22b-instruct"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-vl-235b-a22b-thinking",
-"family": "qwen/qwen3-vl",
-"provider": "qwen",
-"release_date": "2025-09-23",
-"training_cutoff": "2025-03-31",
-"open_weights": true,
-"params_b": 235.0,
-"active_params_b": 22.0,
-"reasoning": 0.67,
-"context_k": 131.072,
-"price_in": 0.39999999999999997,
-"price_out": 4.0,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 VL 235B A22B Thinking",
-"qwen/qwen3-vl-235b-a22b-thinking"
 ],
 "source": "openrouter"
 },
@@ -7330,32 +7726,12 @@
 "active_params_b": 3.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.19999999999999998,
-"price_out": 2.4,
+"price_in": 0.29,
+"price_out": 1.0,
 "price_cached": null,
 "aliases": [
 "Qwen: Qwen3 VL 30B A3B Thinking",
 "qwen/qwen3-vl-30b-a3b-thinking"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-vl-32b",
-"family": "qwen/qwen3-vl",
-"provider": "qwen",
-"release_date": "2025-10-23",
-"training_cutoff": null,
-"open_weights": true,
-"params_b": 32.0,
-"active_params_b": 32.0,
-"reasoning": 0.0,
-"context_k": 131.072,
-"price_in": 0.10400000000000001,
-"price_out": 0.41600000000000004,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 VL 32B Instruct",
-"qwen/qwen3-vl-32b-instruct"
 ],
 "source": "openrouter"
 },
@@ -7370,32 +7746,12 @@
 "active_params_b": 8.0,
 "reasoning": 0.0,
 "context_k": 262.144,
-"price_in": 0.117,
-"price_out": 0.45499999999999996,
-"price_cached": null,
+"price_in": 0.25,
+"price_out": 0.75,
+"price_cached": 0.12,
 "aliases": [
 "Qwen: Qwen3 VL 8B Instruct",
 "qwen/qwen3-vl-8b-instruct"
-],
-"source": "openrouter"
-},
-{
-"model_key": "qwen3-vl-8b-thinking",
-"family": "qwen/qwen3-vl",
-"provider": "qwen",
-"release_date": "2025-10-14",
-"training_cutoff": null,
-"open_weights": true,
-"params_b": 8.0,
-"active_params_b": 8.0,
-"reasoning": 0.67,
-"context_k": 131.072,
-"price_in": 0.18,
-"price_out": 2.0999999999999996,
-"price_cached": null,
-"aliases": [
-"Qwen: Qwen3 VL 8B Thinking",
-"qwen/qwen3-vl-8b-thinking"
 ],
 "source": "openrouter"
 },
@@ -7762,9 +8118,9 @@
 "active_params_b": null,
 "reasoning": 0.67,
 "context_k": 524.288,
-"price_in": 0.09,
-"price_out": 0.36,
-"price_cached": 0.018,
+"price_in": 0.15,
+"price_out": 0.6,
+"price_cached": 0.03,
 "aliases": [
 "Upstage: Solar Pro 4",
 "upstage/solar-pro4",
@@ -7914,6 +8270,48 @@
 "source": "openrouter"
 },
 {
+"model_key": "step-5",
+"family": "stepfun/step",
+"provider": "stepfun",
+"release_date": "2026-10-08",
+"training_cutoff": null,
+"open_weights": true,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.67,
+"context_k": 1048.576,
+"price_in": 1.0,
+"price_out": 2.7,
+"price_cached": 0.09999999999999999,
+"aliases": [
+"StepFun: Step 5 Preview",
+"stepfun/step-5-preview",
+"stepfun/step-5-preview-20261008"
+],
+"source": "openrouter"
+},
+{
+"model_key": "summarize",
+"family": "scaledown/summarize",
+"provider": "scaledown",
+"release_date": "2026-10-13",
+"training_cutoff": null,
+"open_weights": null,
+"params_b": null,
+"active_params_b": null,
+"reasoning": 0.0,
+"context_k": 1000.0,
+"price_in": 0.04,
+"price_out": 0.0,
+"price_cached": null,
+"aliases": [
+"ScaleDown: Summarize",
+"scaledown/summarize",
+"scaledown/summarize-20260928"
+],
+"source": "openrouter"
+},
+{
 "model_key": "swe-llama",
 "family": "swe-llama",
 "provider": null,
@@ -7974,22 +8372,23 @@
 "source": "openrouter"
 },
 {
-"model_key": "trinity-large-thinking",
-"family": "arcee-ai/trinity-large",
-"provider": "arcee-ai",
-"release_date": "2026-04-01",
+"model_key": "ternary-bonsai-2-9b",
+"family": "prism-ml/ternary-bonsai",
+"provider": "prism-ml",
+"release_date": "2026-10-16",
 "training_cutoff": null,
 "open_weights": true,
-"params_b": null,
-"active_params_b": null,
+"params_b": 9.0,
+"active_params_b": 9.0,
 "reasoning": 0.67,
 "context_k": 262.144,
-"price_in": 0.25,
-"price_out": 0.7999999999999999,
-"price_cached": 0.06,
+"price_in": 0.08,
+"price_out": 0.13,
+"price_cached": 0.04,
 "aliases": [
-"Arcee AI: Trinity Large Thinking",
-"arcee-ai/trinity-large-thinking"
+"PrismML: Ternary Bonsai 2 9B",
+"prism-ml/ternary-bonsai-2-9b",
+"prism-ml/ternary-bonsai-2-9b-20261015"
 ],
 "source": "openrouter"
 },
@@ -8070,26 +8469,6 @@
 "aliases": [
 "Mancer: Weaver (alpha)",
 "mancer/weaver"
-],
-"source": "openrouter"
-},
-{
-"model_key": "wizardlm-2-8x22b",
-"family": "microsoft/wizardlm-8x22b",
-"provider": "microsoft",
-"release_date": "2024-04-16",
-"training_cutoff": "2024-04-30",
-"open_weights": true,
-"params_b": 22.0,
-"active_params_b": 22.0,
-"reasoning": 0.0,
-"context_k": 65.535,
-"price_in": 0.62,
-"price_out": 0.62,
-"price_cached": null,
-"aliases": [
-"WizardLM-2 8x22B",
-"microsoft/wizardlm-2-8x22b"
 ],
 "source": "openrouter"
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CLAUDE_CODE_CANDIDATES, execCandidates, formatKnowledge, hookPolicy, planPart, routingArgs } from "../lib/hook.mjs";
+import { CLAUDE_CODE_CANDIDATES, candidateCards, execCandidates, formatKnowledge, hookPolicy, planPart, routingArgs } from "../lib/hook.mjs";
 
 // A home with no ~/.claude and no ~/.stealthlab, so the user's own exec setup never leaks into a test.
 const bareEnv = () => {
@@ -92,16 +92,16 @@ test("a plan on a virtual key (no global Goal) is still remembered and reported"
 });
 
 test("the reliability target is a setting the hook passes as model_constraints", () => {
-  const a = routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "0.7", STEALTHLAB_HOOK_RELIABILITY_CONFIDENCE: "0.8" }), "m");
+  const a = routingArgs(hookPolicy({ ...bareEnv(), STEALTHLAB_HOOK_RELIABILITY: "0.7", STEALTHLAB_HOOK_RELIABILITY_CONFIDENCE: "0.8" }), "m");
   assert.deepEqual(a.model_constraints, { reliability_target: 0.7, reliability_confidence: 0.8 });
-  assert.equal(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "2" }), "m").model_constraints, undefined);
+  assert.equal(routingArgs(hookPolicy({ ...bareEnv(), STEALTHLAB_HOOK_RELIABILITY: "2" }), "m").model_constraints, undefined);
 });
 
 test("by default the plan is matched to this session's own model: no less reliable than it alone, minus a tolerance", () => {
-  assert.deepEqual(routingArgs(hookPolicy({}), "m").model_constraints, { reliability_baseline: "m|claude-code" });
-  assert.deepEqual(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "match:0.05" }), "m").model_constraints,
+  assert.deepEqual(routingArgs(hookPolicy(bareEnv()), "m").model_constraints, { reliability_baseline: "m|claude-code" });
+  assert.deepEqual(routingArgs(hookPolicy({ ...bareEnv(), STEALTHLAB_HOOK_RELIABILITY: "match:0.05" }), "m").model_constraints,
     { reliability_baseline: "m|claude-code", reliability_tolerance: 0.05 });
-  assert.equal(routingArgs(hookPolicy({ STEALTHLAB_HOOK_RELIABILITY: "match:7" }), "m").model_constraints, undefined,
+  assert.equal(routingArgs(hookPolicy({ ...bareEnv(), STEALTHLAB_HOOK_RELIABILITY: "match:7" }), "m").model_constraints, undefined,
     "a malformed tolerance asks for no target at all (server default)");
 });
 
@@ -111,4 +111,25 @@ test("lean delivery (strong session models) still carries the model plan", () =>
   assert.match(text, /Model plan \(prior\) -- follow it/);
   assert.match(text, /model: "haiku"/);
   assert.equal(formatKnowledge({ outcome: "no_match" }, 8000, { mode: "lean" }), "", "nothing to say: nothing shown");
+});
+
+test("the hook tells the server what it pays for each open model it runs, so a model the server has no card for is ranked", () => {
+  const env = bareEnv();
+  fs.mkdirSync(env.STEALTHLAB_HOME, { recursive: true });
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["new-model-9b", "no-price"] } },
+    profiles: { "new-model-9b": { model_id: "acme/new-model-9b", input_per_mtok: 0.05, output_per_mtok: 0.2, cached_input_per_mtok: 0.01 },
+                "no-price": { model_id: "x" } } }));
+  assert.deepEqual(candidateCards(["new-model-9b|stealth", "no-price|stealth", "claude-opus-5-5|claude-code"], env),
+    { "new-model-9b": { price_in: 0.05, price_out: 0.2, price_cached: 0.01, model_id: "acme/new-model-9b" } },
+    "only models with both prices; a model without a profile (Claude) sends nothing");
+  const a = routingArgs({ ...hookPolicy({ ...env, STEALTHLAB_HOOK_CANDIDATES: "new-model-9b|stealth" }) }, "claude-opus-5-5");
+  assert.deepEqual(a.model_constraints.cards, { "new-model-9b": { price_in: 0.05, price_out: 0.2, price_cached: 0.01, model_id: "acme/new-model-9b" } });
+  assert.deepEqual(candidateCards(["a|b"], bareEnv()), {}, "no exec.json: nothing");
+});
+
+test("the triage's category goes to the plan, so models are ranked for that kind of work", () => {
+  const a = routingArgs(hookPolicy(bareEnv()), "claude-opus-5-5", "claude-code", { category: "repo_change" });
+  assert.equal(a.model_constraints.category, "repo_change");
+  assert.equal(routingArgs(hookPolicy(bareEnv()), "m").model_constraints?.category, undefined, "no verdict: no category");
 });

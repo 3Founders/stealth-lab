@@ -227,6 +227,7 @@ async function cmdInstall(v) {
   }
   out("\nRestart your agent (or reload its MCP servers) to pick up kell.");
   if (failed) process.exitCode = 1;
+  return { failed, ok: v["dry-run"] ? 0 : chosen.length - failed };
 }
 
 // One command for the first-time install. Order matters: the token and URL are saved by the install, exec.json is written
@@ -254,8 +255,14 @@ async function cmdSetup(v) {
     return cmdInstall({ ...v, "with-exec": dispatch });
   }
   await step("register your agents", `adds the kell server and hooks to ${(await pickClients(v.client)).chosen.map((c) => c.label).join(", ") || "no detected agent"} (the hooks run in every workspace), and saves the URL${v.token ? " and token" : ""} in ~/.stealthlab/config.json. Undo: kell uninstall.`);
-  await cmdInstall({ ...v, "with-exec": dispatch });
-  if (process.exitCode) return;
+  const installed = await cmdInstall({ ...v, "with-exec": dispatch });
+  // one agent that could not be registered (VS Code's own `code --add-mcp` crashing, say) does not stop the rest: the
+  // model list and the readiness check still run for the agents that were. Nothing registered at all: stop here.
+  if (process.exitCode && !(installed?.ok > 0)) return;
+  if (process.exitCode) {
+    out(`(${installed.failed} agent${installed.failed === 1 ? " was" : "s were"} not registered, see FAIL above; setup goes on for the rest)`);
+    process.exitCode = 0;
+  }
   await step("model list and Cursor model", dispatch ? `writes ~/.stealthlab/exec.json (cheap open models; your key is read from $${keyEnv}, never stored) if there is none${v["cursor-model"] ? `, and saves the Cursor model ${v["cursor-model"]}` : ""}.` : "saves the Cursor model only (connect-only mode).");        // the install failed for a client: nothing to check yet
   if (v["cursor-model"]) writeConfig({ cursor_model: String(v["cursor-model"]).trim() });
   // --answers off|on: whether a cheap model may answer questions and chat (lib/answer.mjs); saved in config.json
