@@ -623,7 +623,8 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     try {
       const { answerTurn } = await import("./answer.mjs");
       const a = await answerTurn({ prompt: payload.prompt, root: payload.cwd || process.cwd(), transcriptPath: payload.transcript_path,
-                                   sessionId: payload.session_id, env, fetchImpl, log, work: verdict.work });
+                                   sessionId: payload.session_id, env, fetchImpl, log, work: verdict.work,
+                                   kind: verdict.kind, category: verdict.category });
       if (a?.handled) {
         timer.set("outcome", "answered");
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }

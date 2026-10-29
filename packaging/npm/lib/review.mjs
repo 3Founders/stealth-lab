@@ -147,19 +147,41 @@ export const FINDING_REVIEW_SYSTEM = [
 
 export async function reviewFinding({ root, request, finding, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
                                       runClaude = null, signal = null }) {
-  const name = String(model || env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5").trim();
-  if (name.toLowerCase() === "off" || !name.includes("claude") || !String(finding || "").trim() || !root) return null;
-  const { readOnlyArgs, runClaudeAsync } = await import("./claude_call.mjs");
   const user = `The developer's request:\n${String(request || "").slice(0, 6000)}\n\nThe agent's report (no change made):\n` +
-    `${String(finding).slice(0, 6000)}`;
-  const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, timeoutMs, root)))(readOnlyArgs(name, FINDING_REVIEW_SYSTEM), user);
+    `${String(finding || "").slice(0, 6000)}`;
+  return String(finding || "").trim() ? reviewInRepo({ root, system: FINDING_REVIEW_SYSTEM, user, what: "finding-review", env, log, timeoutMs, model, runClaude, signal }) : null;
+}
+
+// An answer to a question about the repository, written by a cheap agent that read the code (lib/answer.mjs): checked by
+// the strong reviewer in the repository too -- the files the agent read are not in the reviewer's prompt, and a review
+// without them rejected correct answers as "unsupported" (kell-try, 2026-10-30).
+export const REPO_ANSWER_REVIEW_SYSTEM = [
+  "A developer asked a question about this repository and another assistant answered it after reading the code. You are in",
+  "the repository with read-only tools (Read, Grep, Glob). Check the answer against the code: it is good only if it is",
+  "correct, answers what was asked, and claims nothing the code does not support. An answer that guesses, dodges, or asks",
+  "the developer for something the repository holds is NOT good. Reply with only a JSON object:",
+  '{"verdict": "good" | "bad" | "unsure", "why": one sentence}.',
+].join(" ");
+
+export async function reviewRepoAnswer({ root, question, reply, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
+                                         runClaude = null, signal = null }) {
+  const user = `The developer's question:\n${String(question || "").slice(0, 6000)}\n\nThe answer:\n${String(reply || "").slice(0, 12000)}`;
+  return String(reply || "").trim() ? reviewInRepo({ root, system: REPO_ANSWER_REVIEW_SYSTEM, user, what: "answer-review", env, log, timeoutMs, model, runClaude, signal }) : null;
+}
+
+// a strong Claude reviewer that reads the repository itself -> {verdict, why, model, cost_usd} | null
+async function reviewInRepo({ root, system, user, what, env, log, timeoutMs, model, runClaude, signal }) {
+  const name = String(model || env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5").trim();
+  if (name.toLowerCase() === "off" || !name.includes("claude") || !root) return null;
+  const { readOnlyArgs, runClaudeAsync } = await import("./claude_call.mjs");
+  const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, reviewLimitMs(env)), root)))(readOnlyArgs(name, system), user);
   let j = null;
   try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
   const v = j && !j.is_error ? parseAnswerVerdict(j.result) : null;
-  if (!v) { log(`finding-review: ${name} gave no usable verdict (exit ${r?.status ?? "?"})`); return null; }
-  log(`finding-review: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
+  if (!v) { log(`${what}: ${name} gave no usable verdict (exit ${r?.status ?? "?"})`); return null; }
+  log(`${what}: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
   const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
-  recordSpend(env, { what: "finding-review", model: name, cost_usd: cost });
+  recordSpend(env, { what, model: name, cost_usd: cost });
   return { ...v, model: name, cost_usd: cost };
 }
 

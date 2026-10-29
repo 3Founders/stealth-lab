@@ -80,7 +80,9 @@ export async function startConsole({ ui, env = process.env, fetchImpl = fetch, s
 export async function ensureConsole({ url, server, source = "startup", env = process.env, fetchImpl = fetch, spawnImpl = spawn,
                                       open = openBrowser } = {}) {
   if (!launchEnabled(env)) return "disabled";
-  const connected = server === "started" || ((server === "up" || server === "remote" || server === "off") && (await answers(url, { fetchImpl })));
+  // a hosted MCP is a network round trip away: 1.5 s missed it now and then (0.6-1.4 s from India, 2026-10-29)
+  const connected = server === "started" || ((server === "up" || server === "remote" || server === "off")
+    && (await answers(url, { fetchImpl, timeoutMs: server === "remote" ? 5000 : 1500 })));
   if (!connected) { logHook(env, "console", "the MCP is not answering: console not opened"); return "not-connected"; }
   let state = await runningConsole({ env, fetchImpl });
   if (!state) {

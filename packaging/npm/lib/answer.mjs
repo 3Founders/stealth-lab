@@ -15,7 +15,8 @@ import { readConfig } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
 import { profileKey } from "./executors/profile.mjs";
 import { costOf, recordSpend } from "./spend.mjs";
-import { reviewAnswer } from "./review.mjs";
+import { reviewAnswer, reviewRepoAnswer } from "./review.mjs";
+import { KEY_ENV, runAgent } from "./agent/step_agent.mjs";
 import { locate, renderForWriter } from "./locate.mjs";
 import { sessionTurns, turnsText } from "./brief.mjs";
 import { sessionStartedAt } from "./dag_run.mjs";
@@ -74,9 +75,53 @@ export function sessionNotes({ root, transcriptPath, sessionId, current = "", en
   return parts.join("\n\n");
 }
 
+// STEALTHLAB_ANSWER_READING=off: questions about the code get the single call too (with the located code), as before
+export const readingEnabled = (env = process.env) => (env.STEALTHLAB_ANSWER_READING || "on").toLowerCase() !== "off";
+const READ_STEPS = 40;
+const READ_SECONDS = 180;
+
+// The cheap model reads the repository (read_file / search / list_files only: it runs in the developer's checkout) and
+// answers; the strong reviewer checks the answer in the repository too. -> answerTurn's result, or null
+export async function answerByReading({ prompt, root, notes, name, profile, env, fetchImpl, log, reviewRepo, review = reviewAnswer, started, agent = runAgent }) {
+  const task = `${notes ? `Session notes:\n${notes}\n\n` : ""}The developer's machine: ${machineNote()}\n\nThe question:\n${String(prompt || "").trim()}`;
+  let r;
+  try {
+    r = await agent({ task, base_url: profile.openai_base_url, model_id: profile.model_id, request_extras: profile.request_extras,
+      ...(profile.no_system_role ? { no_system_role: true } : {}), ...(profile.temperature !== undefined ? { temperature: profile.temperature } : {}),
+      ...(profile.top_p !== undefined ? { top_p: profile.top_p } : {}), input_per_mtok: profile.input_per_mtok, output_per_mtok: profile.output_per_mtok,
+      ...(profile.cached_input_per_mtok !== undefined ? { cached_input_per_mtok: profile.cached_input_per_mtok } : {}),
+      read_only: true, max_steps: READ_STEPS, max_seconds: READ_SECONDS },
+      { cwd: root, env: { ...env, [KEY_ENV]: profileKey(profile, env) }, fetchImpl });
+  } catch (err) {
+    log(`answer: ${name} could not read the repository (${err.message})`);
+    return null;
+  }
+  const reply = String(r?.message || "").trim();
+  if (typeof r?.costUsd === "number") recordSpend(env, { what: "answer", model: name, cost_usd: r.costUsd });
+  if (!reply || r.stop === "stalled" || r.stop === "timed_out" || r.stop === "max_steps") {
+    log(`answer: ${name} read the code but gave no answer (${r?.stop || "no reply"}, ${r?.steps ?? "?"} steps); the session's model answers`);
+    return null;
+  }
+  const replied = Date.now();
+  // a strong reviewer that is not a Claude model cannot read the repository: it checks the answer as text, with the notes
+  const strong = String(env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5");
+  const v = strong.includes("claude") || strong.toLowerCase() === "off" ? await reviewRepo({ root, question: prompt, reply, env, log })
+    : await review({ context: notes || "", message: prompt, reply, env, fetchImpl, log });
+  if (v?.verdict !== "good") {
+    log(`answer: ${name}'s reply not shown (review: ${v ? `${v.verdict} -- ${v.why}` : "no verdict"}); the session's model answers`);
+    return null;
+  }
+  const secs = Math.round((Date.now() - started) / 1000);
+  log(`answer: ${name} answered in ${secs} s after reading the code (${r.steps} steps, reply ${Math.round((replied - started) / 1000)} s, ` +
+      `review ${Math.round((Date.now() - replied) / 1000)} s, $${((r.costUsd || 0) + (v.cost_usd || 0)).toFixed(4)}); review: good`);
+  return { handled: true, model: name, answer: reply, cost_usd: (r.costUsd || 0) + (v.cost_usd || 0),
+           text: `Answered by ${name} in ${secs} s after reading the code (kell answered it before this session's model ran; checked by ${v.model || "a reviewer"}).\n\n${reply}` };
+}
+
 // -> {handled: true, text, model, answer, cost_usd} | null (not answered here: the session's model does it)
 export async function answerTurn({ prompt, root = null, transcriptPath = null, sessionId = null, env = process.env, fetchImpl = globalThis.fetch,
-                                   log = () => {}, review = reviewAnswer, timeoutMs = 120000, work = null }) {
+                                   log = () => {}, review = reviewAnswer, timeoutMs = 120000, work = null, kind = null, category = null,
+                                   reviewRepo = reviewRepoAnswer }) {
   if (!answersEnabled(env)) return null;
   const started = Date.now();
   const name = String(env.STEALTHLAB_ANSWER_MODEL || "glm-5.3-flash").trim();
@@ -84,6 +129,11 @@ export async function answerTurn({ prompt, root = null, transcriptPath = null, s
   if (!profile?.openai_base_url) { log(`answer: no profile for ${name}`); return null; }
   root = root ? (git(root, ["rev-parse", "--show-toplevel"]).trim() || root) : null;      // git's paths are from the top
   const notes = sessionNotes({ root, transcriptPath, sessionId, current: prompt, env });
+  // a question about this repository's code is answered by reading it (lib/agent/step_agent.mjs, read-only); a single call
+  // with the first 80 lines kell located could not: 3 of 4 such questions fell back to the session's model (2026-10-30)
+  if (root && (kind === "repo_specific" || category === "code_question") && readingEnabled(env)) {
+    return answerByReading({ prompt, root, notes, name, profile, env, fetchImpl, log, reviewRepo, review, started });
+  }
   const code = root ? renderForWriter(locate({ prompt, root, env }), root, { max: CODE_MAX }) : "";
   const recent = turnsText(sessionTurns({ transcriptPath, sessionId, current: prompt, env }), 6000);
   const context = [`The developer's machine: ${machineNote()}`, notes && `Session notes:\n${notes}`,

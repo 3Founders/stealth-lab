@@ -66,6 +66,14 @@ export function shellNote(platform = process.platform) {
     : `This is ${platform === "darwin" ? "macOS" : "Linux"}: run_shell runs /bin/sh.`;
 }
 
+// answering a question about the repository, without changing it (cfg.read_only)
+const READ_SYSTEM = `You answer a developer's question about the git repository in your current directory. You can only read it:
+- Find the code with search / list_files and read what you need with read_file (numbered lines). You cannot change files or run commands.
+- You have at most {max_steps} tool calls. Look before you answer: the answer must come from the code you read, not from memory.
+- When you know the answer, call finish with it as the summary: plain and specific, naming the files, functions and line numbers involved.
+- If what you read does not settle the question, say exactly what is unknown; do not ask the developer for what the repository holds.`;
+const READ_TOOLS = new Set(["read_file", "list_files", "search", "finish"]);
+
 const TOOLS = [
   fn("read_file", "Read a file with line numbers.", { path: str("File path relative to the repo root"),
     start_line: int("First line, 1-based (default 1)"), num_lines: int("How many lines (default 200)") }, ["path"]),
@@ -485,9 +493,13 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   const maxSteps = Math.min(400, Math.max(1, Number(cfg.max_steps) || Number(process.env.STEALTHLAB_AGENT_MAX_STEPS) || 200));
   const maxCost = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
   const rootCause = cfg.method === "root_cause";
-  const system = SYSTEM.replace("{max_steps}", String(maxSteps)).replace("{shell}", shellNote()) + (rootCause ? `\n${METHOD}` : "");
-  // the history tool (lib/area_history.mjs) needs the repository's git history; cfg.history_tool turns it on
-  const tools = cfg.history_tool ? [...TOOLS, HISTORY_TOOL] : TOOLS;
+  const readOnly = cfg.read_only === true;
+  const system = readOnly ? READ_SYSTEM.replace("{max_steps}", String(maxSteps))
+    : SYSTEM.replace("{max_steps}", String(maxSteps)).replace("{shell}", shellNote()) + (rootCause ? `\n${METHOD}` : "");
+  // the history tool (lib/area_history.mjs) needs the repository's git history; cfg.history_tool turns it on. A read-only
+  // run (cfg.read_only: answering a question about the code, lib/answer.mjs) gets the reading tools and finish only.
+  const tools = readOnly ? TOOLS.filter((t) => READ_TOOLS.has(t.function.name))
+    : cfg.history_tool ? [...TOOLS, HISTORY_TOOL] : TOOLS;
   // every tool call with its arguments and (cut) output, one JSON line each, for reading a run afterwards (cfg.transcript: a path)
   const transcript = typeof cfg.transcript === "string" && cfg.transcript ? cfg.transcript : null;
   const record = (entry) => {
@@ -520,6 +532,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
 
   const seen = new Map();          // tool call signature -> its last output, for repeated reads
   let emptyTurns = 0;               // replies with neither a tool call nor text (below)
+  let warnedEnd = false;            // a read-only run was told its calls are nearly used up
   // cfg.max_seconds: the run's own time budget -- it stops itself before it, so its tokens and cost are reported (a run killed
   // from outside prints nothing, and its spend was counted as $0)
   const deadline = Number(cfg.max_seconds) > 0 ? Date.now() + Number(cfg.max_seconds) * 1000 : null;
@@ -573,6 +586,8 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
           result = "not finished: none of the project's own files is changed yet (new scripts do not count). Make the fix in " +
             "the project's code, check it, then call finish. If you are sure no change is needed, call finish again and say why.";
         } else if (name === "finish") { finalMessage = String(args.summary || "").trim(); finished = true; result = "done"; }
+        // a read-only run works in the developer's own checkout: a tool it was not offered is refused, never run
+        else if (readOnly && !READ_TOOLS.has(name)) throw new Error(`${name} is not available: this run can only read`);
         else {
           if (detector && (name === "edit_file" || name === "write_file")) detector.seed(args.path, fileHash(cwd, args.path));
           result = await runTool(name, args, { cwd, env, blockInstalls: cfg.block_installs !== false });
@@ -606,6 +621,15 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     }
     if (stalled) { stop = "stalled"; break; }
     if (finished) { stop = "finished"; break; }
+    // a read-only run answers a question: near the end of its calls it is told to answer with what it has, not run out
+    // (glm used all 25 on "is there dead code in _common.py?" and answered nothing, 2026-10-30)
+    // ... or its time: "why are the tests slow?" ran out at 180 s after 31 calls with nothing said (2026-10-30)
+    const nearTime = deadline && Date.now() >= deadline - 30000;
+    if (readOnly && !warnedEnd && (maxSteps - step <= 3 || nearTime)) {
+      warnedEnd = true;
+      messages.push({ role: "user", content: `${nearTime ? "Your time is nearly up" : `${Math.max(0, maxSteps - step)} tool calls are left`}. ` +
+        "Call finish now with your answer from what you have read, and say what you did not get to check." });
+    }
     const spent = costOf(cfg, tin, tout, tcached);
     if (maxCost !== null && spent !== null && spent >= maxCost) { stop = "cost_cap"; break; }
   }

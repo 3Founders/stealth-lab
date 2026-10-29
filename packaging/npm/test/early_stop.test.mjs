@@ -447,3 +447,28 @@ test("after older outputs are elided, reading the same file again is new informa
   kept.forget();
   assert.equal(kept.observe(read), null, "after forget(), the read is fresh");
 });
+
+test("agent, read-only: only the reading tools are offered, a write it asks for anyway is refused, and finish is the answer", async () => {
+  const repo = gitRepo({ "a.py": "def f():\n    return 1\n" });
+  const p = await provider((n) => n === 1 ? turn(call("c1", "write_file", { path: "a.py", content: "x" }))
+    : n === 2 ? turn(call("c2", "read_file", { path: "a.py" }))
+    : turn(call("c3", "finish", { summary: "f() in a.py:1 returns 1." })));
+  try {
+    const r = await run(p, repo, { read_only: true, task: "what does f return?" });
+    assert.equal(r.message, "f() in a.py:1 returns 1.");
+    assert.deepEqual(p.seen[0].tools.map((t) => t.function.name).sort(), ["finish", "list_files", "read_file", "search"]);
+    assert.match(JSON.stringify(p.seen[1].messages), /write_file is not available: this run can only read/);
+    assert.equal(fs.readFileSync(path.join(repo, "a.py"), "utf8"), "def f():\n    return 1\n", "the checkout is untouched");
+    assert.match(p.seen[0].messages[0].content, /You answer a developer's question/);
+  } finally { p.close(); }
+});
+
+test("agent: an empty reply is not an answer; it is asked to go on", async () => {
+  const repo = gitRepo({ "a.py": "x = 1\n" });
+  const p = await provider((n) => n === 1 ? { role: "assistant", content: "" } : turn(call("c1", "finish", { summary: "done" })));
+  try {
+    const r = await run(p, repo, { read_only: true });
+    assert.equal(r.message, "done");
+    assert.match(JSON.stringify(p.seen[1].messages), /Your last reply was empty/);
+  } finally { p.close(); }
+});

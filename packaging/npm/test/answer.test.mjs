@@ -84,7 +84,8 @@ test("hook: the judge says work=answer -> the cheap answer is delivered, remembe
     const body = JSON.parse(init.body);
     const sys = body.messages[0].content;
     const content = /You check a reply/.test(sys) ? JSON.stringify({ verdict: "good", why: "matches the diff" }) : "Yes, group() returns 0 now.";
-    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }], usage: {} }) };
+    const reply = { choices: [{ message: { content } }], usage: {} };      // as fetch does: the body as text or as JSON
+    return { ok: true, status: 200, json: async () => reply, text: async () => JSON.stringify(reply) };
   };
   await runPromptHook({ stdinText: JSON.stringify({ prompt: "so group() returns 0 now?", cwd: repo, session_id: "s1", transcript_path: transcript }),
     settings: { url: "http://x/mcp" }, userAgent: "t", env: e, fetchImpl, write: (s) => out.push(JSON.parse(s)), log: () => {},
@@ -111,4 +112,22 @@ test("small talk gets no review; a question, or a conversational reply with a co
   assert.equal(await answerTurn({ prompt: "ok, continue", root: repo, transcriptPath: transcript, env, fetchImpl: chat("Run:\n```\ngit reset --hard\n```"),
                                   review: reviewer("bad", asked), work: "conversation" }), null);
   assert.equal(asked.length, 2, "a reply with a command in it is reviewed");
+});
+
+test("a question about the code is answered by reading it, and checked in the repository; a reply not called good is not shown", async () => {
+  const { env, repo, transcript } = setup();
+  const seen = [];
+  const agent = async (cfg, opts) => { seen.push({ cfg, opts }); return { message: "group() in calc.py:2 returns 0.", stop: "finished", steps: 3, costUsd: 0.002 }; };
+  const { answerByReading } = await import("../lib/answer.mjs");
+  const base = { prompt: "what does group() return?", root: repo, notes: "", name: "glm-5.3-flash", env,
+    profile: { model_id: "glm-5.3-flash", openai_base_url: "https://z.example/v4", key_env: "ZK" }, fetchImpl: chat("x"), log: () => {}, started: Date.now(), agent };
+  const a = await answerByReading({ ...base, reviewRepo: async () => ({ verdict: "good", why: "w", model: "claude-sonnet-5-5", cost_usd: 0.04 }) });
+  assert.equal(a.handled, true);
+  assert.match(a.text, /after reading the code/);
+  assert.equal(seen[0].cfg.read_only, true);
+  assert.equal(seen[0].opts.cwd, repo);
+  assert.equal(seen[0].opts.env.OPEN_MODEL_API_KEY, "k");
+  assert.equal(await answerByReading({ ...base, reviewRepo: async () => ({ verdict: "bad", why: "wrong line" }) }), null);
+  assert.equal(await answerByReading({ ...base, agent: async () => ({ message: "", stop: "stalled", steps: 25 }),
+                                       reviewRepo: async () => { throw new Error("not reached"); } }), null);
 });
