@@ -121,10 +121,12 @@ model's chance on a category is its ability plus its skills along that node.
 Ranking stays cost-aware (ladder.py): the plan is the cheapest sequence of tries that is as reliable as the session's
 own model. That is LLMRouterBench's CostSave point, with the session's model in place of its best single model.
 
-**Not active yet.** The shipped bundle (the 2026-10-08 fit, with the cards refreshed 2026-10-29) has no category
-nodes, so a named category falls back cleanly to the generic prior. A fit with LLMRouterBench had them, but its
-flattened card prior failed `test_routing_check_calibration` (Opus first after bad audits: 43%, needs 60%). A rebuild
-without LLMRouterBench is next.
+**Active since 2026-10-29.** The shipped bundle is fitted without LLMRouterBench, on SWE-bench, SWE-rebench,
+SWE-agent, RouterBench and OpenRouter cards (`build_prior_bundle.py --sources`). It has category nodes for
+repo_change, script, math, knowledge, reasoning and writing. A fit with LLMRouterBench was tried first. Its flattened
+card prior failed `test_routing_check_calibration`: after bad audits, Opus went first only 43% of the time, against
+the 60% required. This one passes. agent_tools has no RouterBench data, so it falls back like the four empty
+categories.
 
 **Only the bundle has category nodes, so far.** A database refit stores no draws for the synthetic nodes, so a
 deployment with its own fit routes as before until that is added. The same holds for the Way codes.
