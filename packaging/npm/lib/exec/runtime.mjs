@@ -123,6 +123,8 @@ export class ExecRuntime {
         task: input.task, checks, scope, goal_id: input.goal_id || null, procedure_id: input.procedure_id || null,
         step_order: stepOrder, executor: input.executor || null, model: input.model || null, timeoutS, hangS,
         checkTimeoutS, race, escalate, base, noChangeExpected: NO_CHANGE_RE.test(input.task), instance_key: planKey,
+        // a cap on the agent's tool calls (a trivial edit gets few: lib/dispatch.mjs); only agents that count steps use it
+        ...(Number(input.max_steps) > 0 ? { maxSteps: Math.min(400, Math.floor(Number(input.max_steps))) } : {}),
       },
       attempts: [], winner: null, error: null, selection: null, applied: null, discarded: false,
       cancelRequested: false, lastEvent: "queued", waiters: new Set(),
@@ -342,6 +344,7 @@ export class ExecRuntime {
       const runTag = `${run.id}.${tag}`;
       const spec = await adapter.buildCommand({ task: run.input.task, model: a.model, worktree: a.worktree, timeoutS: run.input.timeoutS,
                                                 env, bin: probe.bin || undefined, profile, runTag,
+                                                ...(run.input.maxSteps ? { limits: { max_steps: run.input.maxSteps } } : {}),
                                                 // an adapter that can, writes each tool call beside the attempt's logs
                                                 transcriptPath: path.join(dir, `${tag}.transcript.jsonl`) });
       if (!spec || !spec.cmd) throw new Error(`adapter "${a.executor}" returned no command`);

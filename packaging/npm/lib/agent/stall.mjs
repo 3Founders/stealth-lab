@@ -17,7 +17,8 @@
 //      made their first change within 34 calls (cache-full-1, jsonargparse, 2026-10-27)
 //
 // A stalled run is reported as failed (with the rule that stopped it) and counted against its model: it did fail. Thresholds:
-// STEALTHLAB_EARLY_STOP_STEPS (d, default 6), STEALTHLAB_EARLY_STOP_ERRORS (c, default 3). STEALTHLAB_EARLY_STOP=off turns the
+// STEALTHLAB_EARLY_STOP_STEPS (d, default 6), STEALTHLAB_EARLY_STOP_ERRORS (c, default 3), STEALTHLAB_EARLY_STOP_WASTE_TOKENS
+// (e's token budget, default 300000; 0 turns that part off). STEALTHLAB_EARLY_STOP=off turns the
 // stop off (read by the stealth executor, which passes it to the agent: the agent's own env carries no STEALTHLAB_ variable).
 export const earlyStopEnabled = (env = process.env) => (env.STEALTHLAB_EARLY_STOP || "on").toLowerCase() !== "off";
 
@@ -54,8 +55,10 @@ const exitOf = (result) => {
 };
 
 export class StallDetector {
-  constructor({ noChangeSteps = 6, errorRun = 3 } = {}) {
+  constructor({ noChangeSteps = 6, errorRun = 3, wasteTokens = 300_000 } = {}) {
     this.noChangeSteps = noChangeSteps;
+    this.wasteTokens = wasteTokens;   // e: uncached input tokens spent on calls that brought nothing new, before the first change
+    this.wasted = 0;
     this.errorRun = errorRun;
     this.step = 0;
     this.errors = 0;
@@ -74,6 +77,10 @@ export class StallDetector {
   // the worktree as the run starts
   start(fingerprint) { this.fp0 = fingerprint; this.fp = fingerprint; }
 
+  // the agent's older tool outputs were dropped to save context (step_agent.mjs compact): what it read then is no longer in
+  // front of it, so reading it again is new information, not a repeat
+  forget() { this.seenCalls.clear(); }
+
   // before a file's FIRST edit: what it holds now (null: it does not exist yet), so putting it back counts as a return
   seed(file, hash) {
     const p = norm(file);
@@ -81,8 +88,9 @@ export class StallDetector {
   }
 
   // One tool call done. info: { name, args, result, hash (the edited file's content hash after a successful edit/write),
-  // fingerprint (the worktree's, after an edit/write/run_shell) }. -> null | { rule, why }
-  observe({ name, args = {}, result = "", hash = null, fingerprint = undefined }) {
+  // fingerprint (the worktree's, after an edit/write/run_shell), stepTokens (this call's share of its step's uncached input
+  // tokens) }. -> null | { rule, why }
+  observe({ name, args = {}, result = "", hash = null, fingerprint = undefined, stepTokens = undefined }) {
     this.step++;
     const failed = /^error:/.test(String(result));
     this.errors = failed ? this.errors + 1 : 0;
@@ -153,6 +161,12 @@ export class StallDetector {
     // on a solved jsonargparse-508), and a ceiling of 48 calls of any kind stopped all 10 of its step-agent tries at 2-6 min of
     // their 10 (replay-2g, 2026-10-28). A hard ceiling (24x) still stops endless browsing.
     if (!this.started && !fresh) this.repeatsBeforeChange = (this.repeatsBeforeChange || 0) + 1;
+    // ... and what those repeats cost: each one rides on the whole conversation, so 24 repeats at step 60 are a million
+    // tokens and 24 at step 10 are cheap (gemma, kell-try 2026-10-29: 64 calls, 1.07M input tokens, no edit)
+    if (!this.started && !fresh && typeof stepTokens === "number") this.wasted += stepTokens;
+    if (!this.started && this.wasteTokens && this.wasted >= this.wasteTokens) {
+      return { rule: "e", why: `${this.step} tool calls without any change to the worktree; ${Math.round(this.wasted / 1000)}k uncached input tokens went to calls that brought nothing new` };
+    }
     if (!this.started && ((this.repeatsBeforeChange || 0) >= this.noChangeSteps * 4 || this.step >= this.noChangeSteps * 24)) {
       return { rule: "e", why: `${this.step} tool calls without any change to the worktree (${this.repeatsBeforeChange || 0} of them repeats)` };
     }

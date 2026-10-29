@@ -101,3 +101,14 @@ test("open, status and close work through consoleCtl; close stops the named proc
   assert.match(o, /started and opened/);
   assert.deepEqual(w.opened, ["http://127.0.0.1:4322/?t=def"]);
 });
+
+test("a console page already open in the browser: a new session does not open a second tab; a closed one is opened again", async () => {
+  const w = world({ running: true });
+  const seen = (s) => async (u) => ({ status: 200, json: async () => (String(u).endsWith("/health") ? { ok: true, page_seen_s: s } : {}) });
+  assert.equal(await ensureConsole({ url: "http://127.0.0.1:8765/mcp", server: "up", source: "startup", env: w.env, fetchImpl: seen(5), spawnImpl: w.spawnImpl, open: w.open }), "already-open");
+  assert.deepEqual(w.opened, []);
+  assert.equal(await ensureConsole({ url: "http://127.0.0.1:8765/mcp", server: "up", source: "startup", env: w.env, fetchImpl: seen(600), spawnImpl: w.spawnImpl, open: w.open }), "opened",
+    "no page for 10 minutes: the tab was closed");
+  assert.equal(await ensureConsole({ url: "http://127.0.0.1:8765/mcp", server: "up", source: "startup", env: w.env, fetchImpl: seen(null), spawnImpl: w.spawnImpl, open: w.open }), "opened",
+    "no page ever");
+});

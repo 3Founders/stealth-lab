@@ -29,6 +29,14 @@ export const answersEnabled = (env = process.env) => {
   return (v || "on").toLowerCase() !== "off";
 };
 
+// the developer's OS, for any command in a reply (and its review): unsaid, glm answered a Windows user with a POSIX
+// `find | sort` one-liner and the review rejected it (kell-try, 2026-10-29)
+export function machineNote(platform = process.platform) {
+  return platform === "win32"
+    ? "Windows. Give shell commands for PowerShell (and cmd where they differ); a POSIX-only command does not run there."
+    : platform === "darwin" ? "macOS (zsh)." : "Linux (bash).";
+}
+
 export const ANSWER_SYSTEM = [
   "You are the assistant in a developer's coding session, answering their latest message. You get the session's notes",
   "(what was asked so far, the files changed and the changes themselves), the code the message is about, and the last",
@@ -41,6 +49,7 @@ export const ANSWER_SYSTEM = [
 const DIFF_MAX = 12000;
 const CODE_MAX = 10000;
 const REQUESTS = 15;
+const SMALL_TALK_MAX = 400;
 
 function git(root, args) {
   try {
@@ -67,7 +76,7 @@ export function sessionNotes({ root, transcriptPath, sessionId, current = "", en
 
 // -> {handled: true, text, model, answer, cost_usd} | null (not answered here: the session's model does it)
 export async function answerTurn({ prompt, root = null, transcriptPath = null, sessionId = null, env = process.env, fetchImpl = globalThis.fetch,
-                                   log = () => {}, review = reviewAnswer, timeoutMs = 120000 }) {
+                                   log = () => {}, review = reviewAnswer, timeoutMs = 120000, work = null }) {
   if (!answersEnabled(env)) return null;
   const started = Date.now();
   const name = String(env.STEALTHLAB_ANSWER_MODEL || "glm-5.3-flash").trim();
@@ -77,10 +86,12 @@ export async function answerTurn({ prompt, root = null, transcriptPath = null, s
   const notes = sessionNotes({ root, transcriptPath, sessionId, current: prompt, env });
   const code = root ? renderForWriter(locate({ prompt, root, env }), root, { max: CODE_MAX }) : "";
   const recent = turnsText(sessionTurns({ transcriptPath, sessionId, current: prompt, env }), 6000);
-  const context = [notes && `Session notes:\n${notes}`, code && `Code the message is about:\n${code}`, recent && `The last turns:\n${recent}`]
+  const context = [`The developer's machine: ${machineNote()}`, notes && `Session notes:\n${notes}`,
+                   code && `Code the message is about:\n${code}`, recent && `The last turns:\n${recent}`]
     .filter(Boolean).join("\n\n");
   const user = `${context ? `${context}\n\n` : ""}The developer's latest message:\n${String(prompt || "").trim()}`;
-  let reply = "";
+  const gathered = Date.now();
+  let reply = "", cost = null;
   try {
     const messages = profile.no_system_role ? [{ role: "user", content: `${ANSWER_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: ANSWER_SYSTEM }, { role: "user", content: user }];
@@ -94,20 +105,28 @@ export async function answerTurn({ prompt, root = null, transcriptPath = null, s
     const body = await res.json();
     reply = String(body?.choices?.[0]?.message?.content || "").trim();
     const u = body?.usage || {};
-    const cost = costOf(profile, u);
+    cost = costOf(profile, u);
     recordSpend(env, { what: "answer", model: name, cost_usd: cost });
   } catch (err) {
     log(`answer: ${name} ${err.name === "TimeoutError" ? "timed out" : err.message}`);
     return null;
   }
   if (!reply) { log(`answer: ${name} gave an empty reply`); return null; }
-  const v = await review({ context, message: prompt, reply, env, fetchImpl, log });
+  const replied = Date.now();
+  // a short reply to a turn that is not a task or a question (hi, thanks, continue) cannot mislead anyone: no review.
+  // The review of "hi, are you working?" took 3x the reply (kell-try, 2026-10-29). Questions keep theirs: one caught a
+  // POSIX command given to a Windows user the same evening.
+  const light = work === "conversation" && reply.length <= SMALL_TALK_MAX && !/```|\n\s*\$ |\bgit |\brm /.test(reply);
+  const v = light ? { verdict: "good", why: "a short reply to a conversational turn", model: null }
+    : await review({ context, message: prompt, reply, env, fetchImpl, log });
   if (v?.verdict !== "good") {
     log(`answer: ${name}'s reply not shown (review: ${v ? `${v.verdict} -- ${v.why}` : "no verdict"}); the session's model answers`);
     return null;
   }
   const secs = Math.round((Date.now() - started) / 1000);
-  log(`answer: ${name} answered in ${secs} s; review: good`);
+  const took = (a, b) => `${Math.round((b - a) / 1000)} s`;
+  log(`answer: ${name} answered in ${secs} s (context ${took(started, gathered)}, reply ${took(gathered, replied)}, ` +
+      `review ${light ? "skipped (small talk)" : took(replied, Date.now())}${typeof cost === "number" ? `, $${cost.toFixed(4)}` : ""}); review: good`);
   return { handled: true, model: name, answer: reply,
-           text: `Answered by ${name} in ${secs} s (kell answered it before this session's model ran; checked by ${v.model || "a reviewer"}).\n\n${reply}` };
+           text: `Answered by ${name} in ${secs} s (kell answered it before this session's model ran${v.model ? `; checked by ${v.model}` : ""}).\n\n${reply}` };
 }

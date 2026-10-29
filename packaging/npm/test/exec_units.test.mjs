@@ -66,7 +66,7 @@ test("runChecks: exit codes, 40-line redacted tail, per-check timeout", async ()
   fs.writeFileSync(path.join(dir, "loud.mjs"),
     "for (let i = 0; i < 100; i++) console.log('line ' + i);\nconsole.error('key sk-test-ABCDEFGHIJKLMNOPQRSTUVWX');\nprocess.exit(3);\n");
   fs.writeFileSync(path.join(dir, "slow.mjs"), "setTimeout(() => {}, 60000);\n");
-  const res = await runChecks({ cwd: dir, checks: ["node loud.mjs", "node -e \"process.exit(0)\"", "node slow.mjs"], timeoutS: 1, env: process.env });
+  const res = await runChecks({ cwd: dir, checks: ["node loud.mjs", "node -e \"process.exit(0)\"", "node slow.mjs"], timeoutS: 3, env: process.env });   // 1 s: node itself took longer to start on a busy machine
   assert.equal(res[0].exit, 3);
   const lines = res[0].tail.split("\n");
   assert.equal(lines.length, 40);

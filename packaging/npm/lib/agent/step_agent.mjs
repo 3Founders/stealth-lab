@@ -53,7 +53,18 @@ smallest correct change.
 - Check your work by running the project's tests or a quick command with run_shell when one exists.
 - You have at most {max_steps} tool calls. Spend them locating the right code, then editing, then checking.
 - When done, call finish with a short summary. Add a line "Learned: <one fact worth keeping>" only if you found something surprising.
+- If the task refers to something that is not in the code, or nothing needs changing, make no change: call finish and say plainly what you looked for, where, and what you found. That report is a complete answer; an invented change is not.
+- {shell}
 - Do not touch files outside the task, do not install packages, and never print or look for credentials.`;
+
+// which shell run_shell is (Node's exec: cmd.exe on Windows, /bin/sh elsewhere). Unsaid, models write POSIX commands on
+// Windows: gemma looped on `echo '{...}' > f.json`, whose single quotes cmd.exe keeps (kell-try, 2026-10-29)
+export function shellNote(platform = process.platform) {
+  return platform === "win32"
+    ? "This is Windows: run_shell runs cmd.exe. There is no grep, sed, cat or find -name; single quotes are not quotes. Use " +
+      "double quotes, and write files with write_file (or a python -c one-liner) rather than echo."
+    : `This is ${platform === "darwin" ? "macOS" : "Linux"}: run_shell runs /bin/sh.`;
+}
 
 const TOOLS = [
   fn("read_file", "Read a file with line numbers.", { path: str("File path relative to the repo root"),
@@ -325,17 +336,21 @@ async function chat({ baseUrl, key, body, fetchImpl, sleep, log }) {
   throw new Error(`the endpoint kept failing: ${lastErr.message}`);
 }
 
+// -> how many tool outputs were elided (0: none)
 function compact(messages) {
   let total = messages.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0);
-  if (total <= CONTEXT_CHAR_LIMIT) return;
+  if (total <= CONTEXT_CHAR_LIMIT) return 0;
+  let elided = 0;
   // elide the oldest tool outputs, keeping the system prompt, the task and the last 8 messages
   for (let i = 2; i < messages.length - 8 && total > CONTEXT_CHAR_LIMIT; i++) {
     const m = messages[i];
     if (m.role === "tool" && typeof m.content === "string" && m.content.length > 200) {
       total -= m.content.length - 40;
       m.content = "[older tool output elided to save context]";
+      elided++;
     }
   }
+  return elided;
 }
 
 // the model's sampling: its profile's temperature and top_p, else the provider's default. It was temperature 0 for every
@@ -470,7 +485,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   const maxSteps = Math.min(400, Math.max(1, Number(cfg.max_steps) || Number(process.env.STEALTHLAB_AGENT_MAX_STEPS) || 200));
   const maxCost = typeof cfg.max_cost_usd === "number" ? cfg.max_cost_usd : null;
   const rootCause = cfg.method === "root_cause";
-  const system = SYSTEM.replace("{max_steps}", String(maxSteps)) + (rootCause ? `\n${METHOD}` : "");
+  const system = SYSTEM.replace("{max_steps}", String(maxSteps)).replace("{shell}", shellNote()) + (rootCause ? `\n${METHOD}` : "");
   // the history tool (lib/area_history.mjs) needs the repository's git history; cfg.history_tool turns it on
   const tools = cfg.history_tool ? [...TOOLS, HISTORY_TOOL] : TOOLS;
   // every tool call with its arguments and (cut) output, one JSON line each, for reading a run afterwards (cfg.transcript: a path)
@@ -498,7 +513,8 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   let tin = 0, tout = 0, tcached = 0, step = 0, stop = "max_steps", finalMessage = "";
   // stop a stuck run early (lib/agent/stall.mjs); cfg.early_stop === false turns it off
   const detector = cfg.early_stop === false ? null
-    : new StallDetector({ noChangeSteps: Number(cfg.early_stop_steps) || 6, errorRun: Number(cfg.early_stop_errors) || 3 });
+    : new StallDetector({ noChangeSteps: Number(cfg.early_stop_steps) || 6, errorRun: Number(cfg.early_stop_errors) || 3,
+                          wasteTokens: cfg.early_stop_waste_tokens === undefined ? 300_000 : Number(cfg.early_stop_waste_tokens) });
   detector?.start(fingerprint(cwd));
   let stalled = null;
 
@@ -508,7 +524,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   const deadline = Number(cfg.max_seconds) > 0 ? Date.now() + Number(cfg.max_seconds) * 1000 : null;
   while (step < maxSteps) {
     if (deadline && Date.now() >= deadline) { stop = "timed_out"; break; }
-    compact(messages);
+    if (compact(messages)) { detector?.forget(); seen.clear(); }   // what was elided is no longer in front of it
     log(`step ${step + 1}: asking ${cfg.model_id}`);
     let reply;
     try {
@@ -525,6 +541,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     tin += Number(usage.prompt_tokens) || 0;
     tcached += Number(usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens) || 0;
     tout += Number(usage.completion_tokens) || 0;
+    const stepUncached = Math.max(0, (Number(usage.prompt_tokens) || 0) - (Number(usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens) || 0));
     const msg = reply.choices && reply.choices[0] && reply.choices[0].message;
     if (!msg) throw new Error("unexpected reply shape from the endpoint");
     const calls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
@@ -573,7 +590,8 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
       if (detector && name !== "finish") {
         const edit = (name === "edit_file" || name === "write_file") && !/^error:/.test(String(result));
         stalled = detector.observe({ name, args, result: String(result), hash: edit ? fileHash(cwd, args.path) : null,
-                                     fingerprint: edit || name === "run_shell" ? fingerprint(cwd) : undefined });
+                                     fingerprint: edit || name === "run_shell" ? fingerprint(cwd) : undefined,
+                                     stepTokens: stepUncached / Math.max(1, calls.length) });
         if (stalled) { log(`stalled (rule ${stalled.rule}): ${stalled.why}`); break; }
       }
       if (finished || step >= maxSteps) break;

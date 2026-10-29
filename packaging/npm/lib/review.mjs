@@ -128,6 +128,39 @@ export async function reviewAnswer({ context, message, reply, env = process.env,
                        timeoutMs, runClaude, signal });
 }
 
+// A cheap agent that finished without changing anything and says why ("the typo is not there", "there is no CLI example
+// to extend") is reporting a finding, not failing. Before this, kell counted it as a failed try and went on to the next
+// model: on kell-try 2026-10-29, two models found correctly that a typo did not exist, both were thrown away, and the
+// dispatch ran 15 minutes before the session's model said the same. The reviewer checks the claim in the repository
+// itself (read-only tools), since a finding is a claim about the code and the reviewer has no diff to read.
+export const FINDING_REVIEW_SYSTEM = [
+  "A developer asked a coding agent for a change. The agent made no change and reports why. You are in the repository",
+  "with read-only tools (Read, Grep, Glob). Check the report against the code: look for what the request refers to",
+  "yourself, the way the agent should have. The report is good only if it is correct (what it says is or is not in the",
+  "code is so), it answers the request (it says plainly why no change was made, and what the developer could ask for",
+  "instead when the request rests on something that is not there), and a change really is not what the request needs:",
+  "an agent that gave up on a doable change, or misread the request, is bad. Reply with only a JSON object:",
+  '{"verdict": "good" | "bad" | "unsure", "why": one sentence}.',
+].join(" ");
+
+export async function reviewFinding({ root, request, finding, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
+                                      runClaude = null, signal = null }) {
+  const name = String(model || env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5").trim();
+  if (name.toLowerCase() === "off" || !name.includes("claude") || !String(finding || "").trim() || !root) return null;
+  const { readOnlyArgs, runClaudeAsync } = await import("./claude_call.mjs");
+  const user = `The developer's request:\n${String(request || "").slice(0, 6000)}\n\nThe agent's report (no change made):\n` +
+    `${String(finding).slice(0, 6000)}`;
+  const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, timeoutMs, root)))(readOnlyArgs(name, FINDING_REVIEW_SYSTEM), user);
+  let j = null;
+  try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
+  const v = j && !j.is_error ? parseAnswerVerdict(j.result) : null;
+  if (!v) { log(`finding-review: ${name} gave no usable verdict (exit ${r?.status ?? "?"})`); return null; }
+  log(`finding-review: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
+  const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;
+  recordSpend(env, { what: "finding-review", model: name, cost_usd: cost });
+  return { ...v, model: name, cost_usd: cost };
+}
+
 // One reviewer call: a Claude model through a lean `claude -p`, or an exec.json profile's endpoint. -> {verdict, why,
 // model, cost_usd} | null (no model, an error, an unusable reply). Its cost goes to the spend ledger as `what`.
 async function askReviewer({ name, system, user, parse, what, env, fetchImpl, log, timeoutMs, runClaude, signal }) {

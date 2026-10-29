@@ -5,11 +5,11 @@
 import { spawn } from "node:child_process";
 import { claudeChildEnv, launchOrThrow } from "./executors/common.mjs";
 
-export function runClaudeAsync(env, args, input, signal, timeoutMs = 180000) {
+export function runClaudeAsync(env, args, input, signal, timeoutMs = 180000, cwd = undefined) {
   return new Promise((resolve) => {
     let launch;
     try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
-    const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: claudeChildEnv(env) });
+    const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: claudeChildEnv(env), ...(cwd ? { cwd } : {}) });
     let stdout = "", stderr = "";
     const timer = setTimeout(() => child.kill(), timeoutMs);
     const abort = () => child.kill();
@@ -25,3 +25,9 @@ export function runClaudeAsync(env, args, input, signal, timeoutMs = 180000) {
 // the lean, tool-less one-shot: a short system prompt of the caller's, no tools, no project settings, JSON output
 export const leanArgs = (model, system) => ["-p", "--model", model, "--system-prompt", system,
   "--tools", "", "--setting-sources", "user", "--strict-mcp-config", "--output-format", "json"];
+
+// the same, with read-only tools: a reviewer that has to look at the repository itself (a finding that nothing needs
+// changing is checked against the code, not taken on its word -- lib/review.mjs reviewFinding). Run with cwd = the repo.
+export const readOnlyArgs = (model, system) => ["-p", "--model", model, "--system-prompt", system,
+  "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob", "--setting-sources", "user", "--strict-mcp-config",
+  "--output-format", "json"];

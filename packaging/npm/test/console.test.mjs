@@ -293,3 +293,12 @@ test("/runs/stream sends each run's model output as it is written, and never the
     assert.ok(!JSON.stringify(events).includes("RAW-DIFF-SECRET"));
   } finally { await t.close(); }
 });
+
+test("/health says when a browser page last polled it; kell's own check (no Sec-Fetch headers) does not count", async () => {
+  const t = await boot();
+  try {
+    assert.equal((await t.call("GET", "/health")).json().page_seen_s, null);
+    await t.call("GET", "/health", undefined, { "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" });
+    assert.equal((await t.call("GET", "/health")).json().page_seen_s, 0);
+  } finally { t.close(); }
+});

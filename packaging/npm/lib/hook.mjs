@@ -29,6 +29,8 @@
 import { parseOverride, sessionTurns, turnsText } from "./brief.mjs";
 import { markShown, pendingLines, recordDispatch } from "./continuity.mjs";
 import { maybeStartSurvey } from "./auto_survey.mjs";
+import { activateVenv } from "./venv.mjs";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -589,6 +591,13 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
   if (override.kind === "cheap") payload.prompt = override.prompt;
   // the first prompt in a repo starts its survey, detached (lib/auto_survey.mjs): never waits, never fails the hook
   try { maybeStartSurvey({ cwd: payload.cwd || process.cwd(), env }); } catch { /* best effort */ }
+  // the project's own Python for every check and agent this prompt starts (lib/venv.mjs)
+  try {
+    const cwd = payload.cwd || process.cwd();
+    const top = spawnSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { encoding: "utf8", timeout: 3000, windowsHide: true });
+    const venv = activateVenv(cwd, env) || (top.status === 0 && activateVenv(top.stdout.trim(), env));
+    if (venv) log?.(`stealthlab hook: the project's virtualenv ${venv}`);
+  } catch { /* best effort: the default python */ }
   if (!settings.url || !shouldLookUp(payload.prompt, policy)) { timer.set("outcome", "no lookup"); return; }
   const model = policy.strongMode || policy.routing ? detectModel(payload, env) : null;
   const mode = deliveryMode(policy, policy.strongMode ? model : null);
@@ -606,7 +615,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     });
     timer.mark("triage_end");
     timer.set("triage", verdict ? { work: verdict.work || null, needs_retrieval: verdict.needs_retrieval ?? null } : null);
-    log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
+    log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"} category=${verdict.category || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
   }
   // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
   // the session's model would run (lib/answer.mjs); a reply not called good is never shown
@@ -614,7 +623,7 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
     try {
       const { answerTurn } = await import("./answer.mjs");
       const a = await answerTurn({ prompt: payload.prompt, root: payload.cwd || process.cwd(), transcriptPath: payload.transcript_path,
-                                   sessionId: payload.session_id, env, fetchImpl, log });
+                                   sessionId: payload.session_id, env, fetchImpl, log, work: verdict.work });
       if (a?.handled) {
         timer.set("outcome", "answered");
         try { rememberLookup(payload, null, { env }); } catch { /* capture is best-effort */ }

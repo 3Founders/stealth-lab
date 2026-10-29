@@ -103,6 +103,7 @@ function describeModel(p, env) {
 
 export function createConsole({ env = process.env, token = crypto.randomBytes(18).toString("hex"), uiDir = null, allowOrigins = [],
                                 fetchImpl = globalThis.fetch, cli = runCli, runPollMs = 1000 } = {}) {
+  let pageSeenAt = 0;                       // when a console page last polled /health (null in /health: never)
   let port = 0;
   const hosts = () => new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const origins = () => new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...allowOrigins]);
@@ -263,7 +264,12 @@ export function createConsole({ env = process.env, token = crypto.randomBytes(18
 
   async function route(req, res, url) {
     const m = req.method, p = url.pathname;
-    if (m === "GET" && p === "/health") return send(res, 200, { ok: true });
+    if (m === "GET" && p === "/health") {
+      // the page polls this every 4 s (a hidden tab about once a minute); kell's own check comes from node, with no
+      // Sec-Fetch-* header -- so the launcher can tell an open page from none (lib/console_launch.mjs ensureConsole)
+      if (req.headers["sec-fetch-site"] || req.headers["sec-fetch-mode"]) pageSeenAt = Date.now();
+      return send(res, 200, { ok: true, page_seen_s: pageSeenAt ? Math.round((Date.now() - pageSeenAt) / 1000) : null });
+    }
     if (m === "GET" && p === "/clients") {
       const all = new Map(clients({ env }).map((c) => [c.id, c]));
       return send(res, 200, SUPPORTED.map((id) => ({ id, label: all.get(id)?.label || id, detected: Boolean(all.get(id)?.detect()), installed: isInstalled(id, env), hooks: HOOKS[id], notes: NOTES[id] })));

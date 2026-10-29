@@ -420,3 +420,30 @@ test("agent: an account out of credit fails at once (no retries) and reads as a 
     (err) => PROVIDER_LIMIT.test(err.message) && /out of credit/.test(err.message));
   assert.equal(calls, 1, "one request, no retries");
 });
+
+test("rule e also counts what the repeats cost: uncached input tokens on calls that brought nothing new stop a run that only reads", () => {
+  // gemma on kell-try (2026-10-29): 64 calls and 1.07M input tokens without an edit, looking for something that was not there
+  const read = { name: "read_file", args: { path: "core.py" }, result: "1| x = 1" };
+  const d = new StallDetector({ wasteTokens: 100_000 });
+  assert.equal(d.observe({ ...read, stepTokens: 60_000 }), null, "the first read is new information: free");
+  assert.equal(d.observe({ ...read, stepTokens: 60_000 }), null, "60k wasted");
+  assert.match(d.observe({ ...read, stepTokens: 60_000 }).why, /120k uncached input tokens went to calls that brought nothing new/);
+  const cheap = new StallDetector({ wasteTokens: 100_000 });
+  for (let i = 0; i < 10; i++) assert.equal(cheap.observe({ ...read, stepTokens: 2_000 }), null, "cheap repeats early on stay under the budget");
+  const off = new StallDetector({ wasteTokens: 0 });
+  for (let i = 0; i < 10; i++) assert.equal(off.observe({ ...read, stepTokens: 60_000 }), null);
+  const fresh = new StallDetector({ wasteTokens: 100_000 });
+  for (let i = 0; i < 10; i++) assert.equal(fresh.observe({ name: "read_file", args: { path: `f${i}.py` }, result: "x", stepTokens: 60_000 }), null,
+    "reading new code costs nothing against the budget, however big the context");
+});
+
+test("after older outputs are elided, reading the same file again is new information, not a repeat", () => {
+  const read = { name: "read_file", args: { path: "core.py" }, result: "1| x = 1" };
+  const d = new StallDetector({ noChangeSteps: 1, wasteTokens: 0 });          // e: 4 repeats before a change
+  d.observe(read); d.observe(read); d.observe(read); d.observe(read);
+  assert.equal(d.observe(read).rule, "e", "the fourth repeat stops it");
+  const kept = new StallDetector({ noChangeSteps: 1, wasteTokens: 0 });
+  kept.observe(read); kept.observe(read); kept.observe(read);
+  kept.forget();
+  assert.equal(kept.observe(read), null, "after forget(), the read is fresh");
+});

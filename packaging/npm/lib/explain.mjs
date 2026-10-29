@@ -10,8 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
-import { profileKey } from "./executors/profile.mjs";
-import { costOf } from "./spend.mjs";
+import { helperCall } from "./helper_call.mjs";
 
 export const explainEnabled = (env = process.env) => (env.STEALTHLAB_EXPLAIN || "on").toLowerCase() !== "off";
 
@@ -49,20 +48,11 @@ export async function explainChange({ request, diff, check, summary = "", env = 
     if (!profile?.openai_base_url) { log(`explain: no profile for ${name}`); return fallback; }
     const user = `Request:\n${String(request || "").trim()}\n\nCheck that passed: ${check || "(none)"}\n\n` +
       `The change (git diff):\n${String(diff).slice(0, DIFF_MAX)}` + (summary ? `\n\nThe model's own note:\n${tidy(summary)}` : "");
-    const messages = profile.no_system_role
-      ? [{ role: "user", content: `${EXPLAIN_SYSTEM}\n\n${user}` }]
-      : [{ role: "system", content: EXPLAIN_SYSTEM }, { role: "user", content: user }];
-    const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(Math.max(500, Number(env.STEALTHLAB_EXPLAIN_TIMEOUT_MS || 20000))),
-      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
-      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 400, temperature: 0, ...(profile.request_extras || {}) }),
-    });
-    if (!res.ok) { log(`explain: HTTP ${res.status}`); return fallback; }
-    const body = await res.json();
-    const u = body?.usage;
-    const cost = costOf(profile, u);
-    if (cost !== null) ledger(env, { what: "explain", model: name, cost_usd: cost });
-    return tidy(body?.choices?.[0]?.message?.content) || fallback;
+    // gemma, or a model on another provider when it is slow (lib/helper_call.mjs)
+    const r = await helperCall({ what: "explain", primary: name, system: EXPLAIN_SYSTEM, user, maxTokens: 400, readConfig,
+      timeoutMs: Math.max(500, Number(env.STEALTHLAB_EXPLAIN_TIMEOUT_MS || 20000)), parse: (t) => tidy(t) || null,
+      env, fetchImpl, log, record: (row) => ledger(env, row) });
+    return r?.value || fallback;
   } catch (err) {
     log(`explain: ${err.name === "TimeoutError" ? "timed out" : err.message}`);
     return fallback;

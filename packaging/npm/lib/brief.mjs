@@ -12,8 +12,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { configDir } from "./config.mjs";
 import { readExecConfig } from "./exec/store.mjs";
-import { profileKey } from "./executors/profile.mjs";
-import { costOf } from "./spend.mjs";
+import { helperCall } from "./helper_call.mjs";
 import { dispatchedTurns } from "./continuity.mjs";
 
 export const KINDS = ["code", "question", "chat"];
@@ -213,23 +212,12 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
     const user = `${history ? `Earlier turns:\n${history}\n\n` : ""}Latest message:\n${String(prompt || "").trim()}` +
       (files ? `\n\nFiles the message names:\n${files}` : "") +
       (listing ? `\n\nThe project's files (to tell where a named function or feature lives):\n${listing}` : "");
-    const messages = profile.no_system_role
-      ? [{ role: "user", content: `${BRIEF_SYSTEM}\n\n${user}` }]
-      : [{ role: "system", content: BRIEF_SYSTEM }, { role: "user", content: user }];
     const timeoutMs = Math.max(500, Number(env.STEALTHLAB_BRIEF_TIMEOUT_MS || 15000));
-    const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
-      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
-      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 600, temperature: 0, ...(profile.request_extras || {}) }),
-    });
-    if (!res.ok) { log(`brief: HTTP ${res.status}`); return null; }
-    const body = await res.json();
-    const u = body?.usage;
-    const cost = costOf(profile, u);
-    if (cost !== null) ledger(env, { what: "brief", model: name, cost_usd: cost });
-    const brief = parseBrief(body?.choices?.[0]?.message?.content);
-    if (!brief) log("brief: the reply was not a brief");
-    return brief;
+    // the first usable reply of gemma or, when it is slow, a model on another provider (lib/helper_call.mjs)
+    const r = await helperCall({ what: "brief", primary: name, system: BRIEF_SYSTEM, user, maxTokens: 600, timeoutMs, parse: parseBrief,
+                                 env, fetchImpl, log, readConfig, record: (row) => ledger(env, row) });
+    if (!r) return null;
+    return r.value;
   } catch (err) {
     log(`brief: ${err.name === "TimeoutError" ? "timed out" : err.message}`);
     return null;

@@ -45,8 +45,17 @@ export async function runningConsole({ env = process.env, fetchImpl = fetch } = 
   let s;
   try { s = JSON.parse(fs.readFileSync(statePath(env), "utf8")); } catch { return null; }
   if (!s || !Number.isInteger(s.port) || typeof s.url !== "string") return null;
-  return (await answers(`http://127.0.0.1:${s.port}/health`, { fetchImpl })) ? s : null;
+  try {
+    const r = await fetchImpl(`http://127.0.0.1:${s.port}/health`, { signal: AbortSignal.timeout(1500) });
+    if (!(r.ok ?? (r.status >= 200 && r.status < 300))) return null;
+    let h = {};
+    try { h = (await r.json?.()) || {}; } catch { /* an older helper: {ok} only */ }
+    return { ...s, pageSeenS: typeof h.page_seen_s === "number" ? h.page_seen_s : null };
+  } catch { return null; }
 }
+
+// a console page polled the helper within this long: it is open (a hidden tab polls about once a minute)
+const PAGE_OPEN_S = 90;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -81,6 +90,11 @@ export async function ensureConsole({ url, server, source = "startup", env = pro
     if (!state) { logHook(env, "console", "the console helper did not start"); return "failed"; }
   }
   if (source !== "startup") return "running";
+  // a page already showing this console: no second tab (each new session opened one, 2026-10-29)
+  if (typeof state.pageSeenS === "number" && state.pageSeenS <= PAGE_OPEN_S) {
+    logHook(env, "console", `the console is already open in a browser tab (port ${state.port}): not opened again`);
+    return "already-open";
+  }
   open(state.url);
   logHook(env, "console", `opened the console on port ${state.port}`);
   return "opened";

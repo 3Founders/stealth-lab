@@ -8,7 +8,7 @@
 // counted, and the next similar task is planned from it. Failure or no model: null, and the steps keep their
 // mechanical descriptions (nothing is lost, only not generalised). STEALTHLAB_WAY_DESCRIBE=off.
 import { readExecConfig } from "./exec/store.mjs";
-import { profileKey } from "./executors/profile.mjs";
+import { helperCall } from "./helper_call.mjs";
 
 export const describeEnabled = (env = process.env) => (env.STEALTHLAB_WAY_DESCRIBE || "on").toLowerCase() !== "off";
 
@@ -61,20 +61,12 @@ export async function describeWay({ task, diff, steps, env = process.env, fetchI
     if (!profile?.openai_base_url) return null;
     const user = `The problem it solved:\n${String(task || "").slice(0, 1500)}\n\nThe steps (one per file):\n` +
       steps.map((s, i) => `${i + 1}. ${s.at.join(", ")}: changes ${s.gives.slice(0, 6).join(", ") || "(see diff)"}`).join("\n") +
+      "\n(Tests and docs in the diff are context, not steps: write exactly one step per numbered line above.)" +
       `\n\nThe change (git diff):\n${String(diff).slice(0, 9000)}`;
-    const messages = profile.no_system_role
-      ? [{ role: "user", content: `${DESCRIBE_SYSTEM}\n\n${user}` }]
-      : [{ role: "system", content: DESCRIBE_SYSTEM }, { role: "user", content: user }];
-    const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
-      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
-      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 1500, temperature: 0, ...(profile.request_extras || {}) }),
-    });
-    if (!res.ok) { log(`way: describe HTTP ${res.status}`); return null; }
-    const body = await res.json();
-    const d = parseDescription(body?.choices?.[0]?.message?.content, steps.length, steps.map((s) => s.at));
-    if (!d) log("way: describe gave no usable reply");
-    return d;
+    // gemma, or a model on another provider when it is slow (lib/helper_call.mjs)
+    const r = await helperCall({ what: "way: describe", primary: name, system: DESCRIBE_SYSTEM, user, maxTokens: 1500, timeoutMs, env, fetchImpl, log,
+      parse: (t) => parseDescription(t, steps.length, steps.map((s) => s.at)) });
+    return r?.value || null;
   } catch (err) {
     log(`way: describe ${err.name === "TimeoutError" ? "timed out" : err.message}`);
     return null;

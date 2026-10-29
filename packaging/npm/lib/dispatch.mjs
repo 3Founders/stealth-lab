@@ -33,6 +33,7 @@ import { writeDagRun, writeDispatchRun } from "./dispatch_run.mjs";
 import { runDag, sessionStartedAt } from "./dag_run.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
 import { describeEntry } from "./way_describe.mjs";
+import { baselineKey, readBaseline, recordSuiteSecs, suiteSecs, writeBaseline } from "./baseline_cache.mjs";
 import { reproAgentEnabled, reproduceTests } from "./repro_agent.mjs";
 import { addEntry, diffFromGit, ensureRoute, readEntry, recordObs } from "./library.mjs";
 import { executorFor } from "./model_guard.mjs";
@@ -58,6 +59,25 @@ import { createUndoPoint, discardUndoPoint, finishUndoPoint, undoEnabled } from 
 import { cheapWritten } from "./continuity.mjs";
 
 const TERMINAL = new Set(["verified", "failed", "timed_out", "cancelled"]);
+
+// The new config / CI / docs file a request asks for, when it names one that is not in the repository and names no file
+// that is -> its path, else null
+const NON_CODE = /\.(ya?ml|json|toml|ini|cfg|conf|md|rst|txt|env|editorconfig)$|(^|\/)(Dockerfile|Makefile|\.gitignore|\.dockerignore|CODEOWNERS)$/i;
+export function newNonCodeTarget(prompt, root) {
+  const paths = [...String(prompt || "").matchAll(/(?:^|[\s`'"(])((?:\.?[\w.-]+\/)*\.?[\w-]+(?:\.[\w-]+)?)(?=$|[\s`'"),:;]|\.\s)/g)]
+    .map((m) => m[1].replace(/^\.\//, "")).filter((p) => /[/.]/.test(p) && !/^\.+$/.test(p) && !/^\d+(\.\d+)*$/.test(p));
+  const exists = (p) => { try { return fs.existsSync(path.join(root, p)); } catch { return false; } };
+  if (!root || paths.some(exists)) return null;
+  return paths.find((p) => NON_CODE.test(p)) || null;
+}
+
+// A finished try that is a report, not a failure: the agent ended on its own (not stalled, not stopped, not limited),
+// changed nothing, and said why in more than a line. Whether the report is right is the reviewer's call.
+export function isFinding(result) {
+  if (!result || result.state !== "failed" || result.stalled || result.usage_limited || result.stop_reason) return false;
+  if ((result.diff?.files || []).length || !/empty diff/.test(String(result.error || ""))) return false;
+  return String(result.summary || "").replace(/\s+/g, " ").trim().length >= 40;
+}
 // the executor's task text: the issue whole plus the pointers; at 2,000 it cut 8 of 25 real issues (survey 2026-10-16)
 const TASK_MAX = TASK_CHARS_MAX;
 
@@ -124,6 +144,12 @@ export function dispatchPolicy(env = process.env) {
     capFloorS: capFloorS(env),
     // two cheap answers that fail the same advance tests end the cheap tries at once (STEALTHLAB_DISPATCH_SHARED_FAIL_STOP=off)
     sharedFailStop: (env.STEALTHLAB_DISPATCH_SHARED_FAIL_STOP || "on").toLowerCase() !== "off",
+    // a cheap agent that finished without a change and says why is checked as a finding (lib/review.mjs reviewFinding); a
+    // confirmed one ends the dispatch with that report (STEALTHLAB_DISPATCH_FINDINGS=off: counted as a failed try, as before)
+    findings: (env.STEALTHLAB_DISPATCH_FINDINGS || "on").toLowerCase() !== "off",
+    // the tool calls a cheap agent gets for a task the judge calls a trivial edit (STEALTHLAB_DISPATCH_TRIVIAL_STEPS; 0: no cap)
+    trivialSteps: Number.isFinite(Number(env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS)) && env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS !== ""
+      && env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS !== undefined ? Math.max(0, Number(env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS)) : 30,
     // the test writer flags a task that reads two ways: no cheap answer is delivered for it (STEALTHLAB_DISPATCH_AMBIGUITY=off)
     ambiguityStop: (env.STEALTHLAB_DISPATCH_AMBIGUITY || "on").toLowerCase() !== "off",
     // an image task's passing page is compared with the screenshot by a model that can see (lib/visual_check.mjs)
@@ -375,6 +401,18 @@ export function writeBaselineCheckRunner(dir, check) {
 // in it count as new, and a right answer was failed for one (a local install, 2026-10-28).
 export function baselineFails(code, out, named) {
   return (code === 1 ? failingTests(out) : []).filter((id) => !String(named || "").includes(id.split("::").pop().replace(/\[.*$/, "")));
+}
+
+// pytest's own count on the unchanged code -> {failed, passed} | null; `weak` when a third or more fail there: "passes the
+// check" then says little (kell-try on Python 3.14, 2026-10-29: 417 failed, every dispatch judged on the rest)
+export function baselineHealth(out) {
+  const tail = String(out || "").slice(-4000);
+  // `-q` prints the summary bare, the default between ===== bars
+  const m = [...tail.matchAll(/^(?:=+ )?([^\n]*?\b(?:passed|failed)\b[^\n]*?) in [\d.]+s/gm)].pop();
+  if (!m) return null;
+  const n = (w) => Number((new RegExp(`(\\d+) ${w}\\b`).exec(m[1]) || [])[1] || 0);
+  const failed = n("failed") + n("errors?"), passed = n("passed");
+  return failed + passed ? { failed, passed, weak: failed / (failed + passed) >= 1 / 3 } : null;
 }
 
 export function failingTests(out) {
@@ -1019,11 +1057,15 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // names nothing the code spells, and the brief has seen the file names (tsql.py, ||)
   const searchTerms = (brief?.search_terms || []).map((t) => `\`${String(t).replace(/`/g, "")}\``).join(" ");
   const locPrompt = `${rawPayload.prompt || ""}\n${payload.prompt || ""}\n${searchTerms}`;
-  const searched = locate({ prompt: locPrompt, root: payload.cwd || root, env });
+  // a task that creates a config, CI or docs file the repository does not have yet has no code to locate: the search only
+  // finds words ("lint workflow ... on push" -> _cli.py), and its tests would be checked for a change they cannot see
+  const newFile = newNonCodeTarget(rawPayload.prompt || payload.prompt, payload.cwd || root);
+  if (newFile) log(`dispatch: the task creates ${newFile}, a new non-code file: no code located`);
+  const searched = newFile ? { spots: [], files: [], testFile: null } : locate({ prompt: locPrompt, root: payload.cwd || root, env });
   // a cheap model narrows the search to the files and functions the fix is in (lib/locate_model.mjs); the test file is
   // the search's for the first file picked
   let loc = searched;
-  if (locateEnabled(env)) {
+  if (locateEnabled(env) && !newFile) {
     const { narrowLocation } = await import("./locate_model.mjs");
     loc = await narrowLocation({ prompt: rawPayload.prompt || payload.prompt, root: payload.cwd || root, loc: searched, env, fetchImpl, log });
     if (loc !== searched && loc.files[0]) loc = { ...loc, testFile: testFileFor(payload.cwd || root, loc.files[0]) || searched.testFile };
@@ -1085,17 +1127,33 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   const workDir = testFirstOn || (check && policy.baselineCheck) ? specDir(env) : null;
   let checkRun = check;
+  let weakBaseline = null;                 // most of the project's tests fail before any change (baselineHealth)
   if (check && !specOnly && (testFirstOn || evidence) && policy.baselineCheck && /\bpytest\b/.test(check)) {
     const bdir = workDir;
     checkRun = `${pythonBin({ env })} "${writeBaselineCheckRunner(bdir, check)}"`;
     const named = String(`${rawPayload.prompt || ""}\n${payload.prompt || ""}`);
-    runShellCapture(check, { cwd: payload.cwd || root, timeoutMs: 300000, signal: specAbort.signal }).then(({ code, out }) => {
+    // run once per state of the checkout (lib/baseline_cache.mjs): the same commit, changes and Python give the same result
+    const baseKey = baselineKey(payload.cwd || root, check, env);
+    const cached = readBaseline(baseKey, env);
+    if (cached) log("dispatch: the unchanged code's check result is known for this state of the checkout (not run again)");
+    const baseT0 = Date.now();
+    (cached ? Promise.resolve(cached) : runShellCapture(check, { cwd: payload.cwd || root, timeoutMs: 300000, signal: specAbort.signal })
+      .then((r) => {
+        writeBaseline(baseKey, r, env);
+        if (r.code !== null) recordSuiteSecs(payload.cwd || root, check, (Date.now() - baseT0) / 1000, env);
+        return r;
+      })).then(({ code, out }) => {
       const fails = baselineFails(code, out, named);
       try {
         if (fails.length) fs.writeFileSync(path.join(bdir, "BASE_FAILS"), fails.join("\n") + "\n");
         else fs.writeFileSync(path.join(bdir, "BASE_NONE"), String(code ?? "none"));
       } catch { /* */ }
       if (fails.length) log(`dispatch: ${fails.length} test(s) already fail on the unchanged code: answers are judged on new failures only`);
+      const health = baselineHealth(out);
+      if (health?.weak) {
+        weakBaseline = health;
+        log(`dispatch: ${health.failed} of ${health.failed + health.passed} tests fail on the unchanged code: the check says little here, the review carries the verdict`);
+      }
       // ... and so is the session's own fix, when the capture hooks decide whether it goes into the library (lib/capture_hook.mjs)
       import("./capture_hook.mjs").then((c) => c.rememberBaseFails(env, rawPayload.session_id, code === 1 ? fails : [])).catch(() => {});
     });
@@ -1147,7 +1205,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let goalRel = null;
   if (goalFileEnabled(env)) {
     const src = repoContextSources({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env, files: loc.files });
-    goalRel = writeGoalFile({ root, goalId: goalIdFor(plan.goal_id, rawPayload.prompt), title: plan.goal_title || plan.goal_name,
+    // no stored way matched: the plan's goal id is the server's catch-all, the same for unrelated tasks (kell-try, 2026-10-29:
+    // a typo fix, a script and a CI file all wrote .kell/goals/3067c287-....md), so the file is named from the request
+    goalRel = writeGoalFile({ root, goalId: goalIdFor(reply?.outcome === "no_match" ? null : plan.goal_id, rawPayload.prompt), title: plan.goal_title || plan.goal_name,
       prompt: rawPayload.prompt || payload.prompt, check, testFile: loc.testFile, spots: loc.spots,
       claims: src.claims, library: [hist, src.library].filter(Boolean).join("\n\n") });
     if (goalRel) log(`dispatch: goal file ${goalRel}`);
@@ -1158,9 +1218,15 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     : fitTask(withWhere(taskText(payload.prompt), [pack, where, testing].filter(Boolean).join("\n\n")), ctx);
   // the limit on all the cheap tries together, and the ceiling of any one model's own cap: 150 s plus an allowance for the task's material
   const totalLeftS = () => policy.totalS - (Date.now() - dispatchStart) / 1000;
+  // the last answer's check is the project's suite plus the review: the time kept for it follows how long this project's
+  // suite took last time (lib/baseline_cache.mjs), never less than the configured reserve
+  const suiteS = check && env.STEALTHLAB_DISPATCH_CHECK_RESERVE_S === undefined ? suiteSecs(payload.cwd || root, check, env) : null;
+  if (suiteS) policy.checkReserveS = Math.max(policy.checkReserveS, Math.min(Math.ceil(suiteS * 1.3 + 90), policy.totalS - 240));
   const baseLimitS = Math.min(policy.timeoutS, Math.max(60, Math.floor(totalLeftS() - policy.checkReserveS)));
   if (baseLimitS < policy.timeoutS) log(`dispatch: the tries get ${baseLimitS} s (the whole dispatch must end within ${policy.totalS} s, ${policy.checkReserveS} s kept for checking)`);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
+  let finding = null;                      // a cheap agent's confirmed report that no change is needed (judge below)
+  let findingReviews = 0;
   const runLimitS = () => baseLimitS;
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
   const runRung = async (rung) => {
@@ -1176,7 +1242,10 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         // one run's limits are the tries' own: it cannot usefully outlast them, and a run that prints nothing for that
         // long has stopped working
         timeout_s: Math.min(3600, Math.ceil(policy.runTimeoutS || runLimitS(rung))), hang_s: Math.min(3600, Math.ceil(policy.runTimeoutS || runLimitS(rung))),
-        ...(plan.instance_key ? { instance_key: plan.instance_key } : {}) });
+        ...(plan.instance_key ? { instance_key: plan.instance_key } : {}),
+        // a trivial edit (a typo, a rename, one value) needs few tool calls: glm used 43 steps and 455k tokens checking a
+        // typo that was not there, and two such runs on one key used up its tokens-per-minute (kell-try, 2026-10-29)
+        ...(triage?.kind === "trivial_edit" && policy.trivialSteps ? { max_steps: policy.trivialSteps } : {}) });
       runId = started.run_id;
       running.set(rung.unit, runId);
       startedAt = Date.now();
@@ -1265,6 +1334,20 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       // by its own model's cap (slower than its wins here usually are): not a failure of the model either
       tried.push({ unit: rung.unit, state: capped ? `capped at ${Math.round(capS * 10) / 10} s` : "cancelled", run_id: result.run_id, cost_usd: result.cost_usd });
       log(`dispatch ${rung.unit}: no pass (${tried[tried.length - 1].state})`);
+      return false;
+    }
+    // finished on its own, changed nothing and said why: a finding ("the typo is not there"), checked in the repository by
+    // the strong reviewer. At most two are reviewed per dispatch; a confirmed one ends the dispatch (the loop below)
+    if (policy.findings && !finding && findingReviews < 2 && isFinding(result)) {
+      findingReviews++;
+      const { reviewFinding } = await import("./review.mjs");
+      const fr = await reviewFinding({ root: payload.cwd || root, request: rawPayload.prompt || payload.prompt, finding: result.summary,
+                                       env, log, signal: specAbort.signal, ...(runClaude ? { runClaude } : {}) });
+      const good = fr?.verdict === "good";
+      tried.push({ unit: rung.unit, state: good ? "finding, confirmed by review" : `finding, not confirmed (${fr ? `${fr.verdict}: ${fr.why}` : "no verdict"})`,
+                   run_id: result.run_id, cost_usd: result.cost_usd });
+      log(`dispatch ${rung.unit}: no change, reports a finding; review: ${fr ? `${fr.verdict} (${fr.why.slice(0, 160)})` : "no verdict"}`);
+      if (good) finding = { rung, result, review: fr };
       return false;
     }
     if (ok && evidence) {
@@ -1416,7 +1499,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     // needs T for can never be accepted, so the tries stop now instead of at the limit
     : !s && testFirstOn && (specOnly || ruleUses(acceptRule, "T")) ? { noSpec: true } : new Promise(() => {})));
   let noSpec = false;
-  while (!winner && (queue.length || pending.size)) {
+  while (!winner && !finding && (queue.length || pending.size)) {
     // the limit is per provider: it is there because 3 agents on one provider exceed its tokens-per-minute; a model on
     // another provider (glm-5.3-flash on z.ai) does not take a General Compute slot (Modal, sqlglot-4051: minimax got
     // the last 2 of 10 minutes because flash held one of the two slots)
@@ -1499,6 +1582,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       tried.push({ unit: done.rung.unit, state: "timed out while being checked", run_id: done.run_id ?? null, cost_usd: done.result?.cost_usd ?? null });
       break;
     }
+    if (finding) break;
     if (verdict && evidence) {
       cands.push(done);
       // the other models still running may finish a little later: answers that agree are stronger evidence
@@ -1559,8 +1643,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   clearTimeout(timer);
   clearTimeout(totalTimer);
-  if (sharedFail || ambiguous || noSpec) {
-    log(noSpec ? "dispatch: no reproduction test could be written for this task (none that fails on the unchanged code); the session's model takes over"
+  if (sharedFail || ambiguous || noSpec || finding) {
+    log(finding ? `dispatch: ${finding.rung.unit}'s finding was confirmed: no change made, the report is the answer`
+      : noSpec ? "dispatch: no reproduction test could be written for this task (none that fails on the unchanged code); the session's model takes over"
       : ambiguous ? `dispatch: the task reads two ways (${ambiguous}); the session's model takes over`
       : `dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
     for (const unit of pending.keys()) {
@@ -1572,7 +1657,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       tried.push({ unit, state: "cancelled", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     pending.clear();
-    for (const rung of queue) tried.push({ unit: rung.unit, state: noSpec ? "skipped (no reproduction test)" : ambiguous ? "skipped (the task reads two ways)"
+    for (const rung of queue) tried.push({ unit: rung.unit, state: finding ? "skipped (a finding was confirmed)" : noSpec ? "skipped (no reproduction test)" : ambiguous ? "skipped (the task reads two ways)"
                                                                    : "skipped (two answers failed the same advance tests)" });
     queue.length = 0;
   }
@@ -1599,6 +1684,16 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     for (const rung of queue) tried.push({ unit: rung.unit, state: "skipped (time limit)" });
   }
   specAbort.abort();                       // a test writer still going (no pass, or a time-out) is not needed now
+  if (finding) {
+    const { rung, result, review } = finding;
+    const secs = Math.round((Date.now() - dispatchStart) / 1000);
+    const spent = tried.reduce((s, t) => s + (typeof t.cost_usd === "number" ? t.cost_usd : 0), 0) + (review.cost_usd || 0);
+    const report = String(result.summary || "").replace(/\n+Learned:[\s\S]*$/, "").trim();
+    return { handled: true, finding: true, model: rung.model, unit: rung.unit, files: [], run_id: result.run_id, tried, spec, loc,
+      text: `No change made: ${rung.model} looked into this and reports that none is needed or possible as asked; ` +
+        `${review.model || "the reviewer"} checked that against the code (${secs} s, $${spent.toFixed(4)}, before this session's model ran).` +
+        `\n\n${report}\n\nReviewer: ${review.why}` };
+  }
   if (winner) {
     // the others still running: cancelled (not counted against their models), then awaited so their cost is known
     for (const unit of pending.keys()) {
@@ -1703,6 +1798,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         `It passed ${checkLabel} in an isolated worktree and the change is applied: ` +
         `${(applied.files || []).join(", ") || "no files"}.` + (entry ? ` Recorded in the library as ${entry}.` : "") +
         (undoPoint ? " To put it back as it was: kell undo." : undoNote) +
+        (weakBaseline ? ` Note: ${weakBaseline.failed} of ${weakBaseline.failed + weakBaseline.passed} of this project's tests fail here ` +
+          "before any change (a missing package or an unsupported Python?), so the tests said little; the review carried the verdict." : "") +
         (explanation ? `\n\n${explanation}` : "") };
   }
   const triedUnits = new Set(tried.map((t) => t.unit));

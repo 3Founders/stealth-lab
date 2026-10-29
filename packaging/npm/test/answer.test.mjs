@@ -95,3 +95,20 @@ test("hook: the judge says work=answer -> the cheap answer is delivered, remembe
   assert.deepEqual(dispatchedTurns("s1", { env: e }).map((t) => t.role), ["user", "assistant"]);
   assert.deepEqual(pendingLines("s1", { env: e }), ['Earlier in this session, glm-5.3-flash answered "so group() returns 0 now?" (kell, checked by a reviewer).']);
 });
+
+test("small talk gets no review; a question, or a conversational reply with a command in it, keeps it; the model is told the OS", async () => {
+  const { env, repo, transcript } = setup();
+  const seen = [], asked = [];
+  const a = await answerTurn({ prompt: "hi, are you working?", root: repo, transcriptPath: transcript, env, fetchImpl: chat("Yes, ready.", seen),
+                               review: reviewer("bad", asked), work: "conversation" });
+  assert.equal(a.handled, true);
+  assert.equal(asked.length, 0, "no review for a greeting");
+  assert.doesNotMatch(a.text, /checked by/);
+  assert.match(JSON.stringify(seen[0].body.messages), /The developer's machine: /);
+  assert.equal(await answerTurn({ prompt: "what does group() return?", root: repo, transcriptPath: transcript, env, fetchImpl: chat("0."),
+                                  review: reviewer("bad", asked), work: "answer" }), null);
+  assert.equal(asked.length, 1, "a question is reviewed");
+  assert.equal(await answerTurn({ prompt: "ok, continue", root: repo, transcriptPath: transcript, env, fetchImpl: chat("Run:\n```\ngit reset --hard\n```"),
+                                  review: reviewer("bad", asked), work: "conversation" }), null);
+  assert.equal(asked.length, 2, "a reply with a command in it is reviewed");
+});
