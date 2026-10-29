@@ -1205,9 +1205,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   let goalRel = null;
   if (goalFileEnabled(env)) {
     const src = repoContextSources({ reply, root, cwd: payload.cwd || root, prompt: payload.prompt, env, files: loc.files });
-    // no stored way matched: the plan's goal id is the server's catch-all, the same for unrelated tasks (kell-try, 2026-10-29:
+    // no stored way resolved (no_match, not_needed): the plan's goal id is the server's catch-all, the same for unrelated tasks (kell-try, 2026-10-29:
     // a typo fix, a script and a CI file all wrote .kell/goals/3067c287-....md), so the file is named from the request
-    goalRel = writeGoalFile({ root, goalId: goalIdFor(reply?.outcome === "no_match" ? null : plan.goal_id, rawPayload.prompt), title: plan.goal_title || plan.goal_name,
+    goalRel = writeGoalFile({ root, goalId: goalIdFor(reply?.outcome === "resolved" ? plan.goal_id : null, rawPayload.prompt), title: plan.goal_title || plan.goal_name,
       prompt: rawPayload.prompt || payload.prompt, check, testFile: loc.testFile, spots: loc.spots,
       claims: src.claims, library: [hist, src.library].filter(Boolean).join("\n\n") });
     if (goalRel) log(`dispatch: goal file ${goalRel}`);
@@ -1662,7 +1662,7 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
     queue.length = 0;
   }
   // every cheap try finished and none was accepted: this ending had no line of its own (ct-smoke-final4)
-  if (!winner && !timedOut && !sharedFail && !ambiguous && !noSpec) {
+  if (!winner && !finding && !timedOut && !sharedFail && !ambiguous && !noSpec) {
     log(`dispatch: no cheap answer accepted (${tried.length} tried); the session's model takes over`);
   }
   if (timedOut) {

@@ -431,6 +431,13 @@ export class ExecRuntime {
         onSpawn: (ch) => { a.checkHandle = ch; if (ch && a.cancelRequested) ch.kill("cancelled"); },
         shouldStop: () => a.cancelRequested,
       };
+      // nothing changed: no test can make that a pass, so the suite is not run on it -- the agent's report (a finding, lib/
+      // dispatch.mjs isFinding) is judged without waiting the 3.5 min the suite took on kell-try (2026-10-30)
+      if (!a.diff.files.length && !run.input.noChangeExpected && !a.scopeViolations.length) {
+        a.checks = [];
+        a.error = "empty diff";
+        return this.setState(run, a, "failed");
+      }
       // the tests related to what changed run first: a failure there ends the attempt at once; a pass changes nothing, the
       // full check below always runs (lib/exec/related.mjs)
       const quick = relatedChecks(run.input.checks, a.diff.files, a.worktree, env);
