@@ -1817,6 +1817,16 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   // a loss for this area only when the models were really tried: not a task that reads two ways, not usage limits
   if (!ambiguous && tried.some((t) => !/usage_limited|^skipped|^cancelled$/.test(String(t.state)))) recordArea(root, area, false);
   const runMd = writeDispatchRun(root, { task: rawPayload.prompt, loc, specFile: spec?.file, regressFile: regressIn(), python: pythonBin({ env }), tried });
+  // the passing-but-not-accepted answers' patches go into the repository's .kell/, where the session's model reads them
+  // without a permission prompt (~/.stealthlab/runs is outside the project: "I didn't have permission to read it", 2026-10-30)
+  for (const t of tried) if (t.patch && root) {
+    try {
+      const dest = path.join(root, ".kell", "tried", `${String(t.run_id || path.basename(t.patch, ".patch")).replace(/[^\w.-]/g, "_")}.patch`);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(t.patch, dest);
+      t.patch = path.relative(payload.cwd || root, dest).replace(/\\/g, "/");
+    } catch { /* the note names the original path */ }
+  }
   return { handled: false, tried, spec, loc, runMd, remaining: (plan.ladder || []).filter((u) => !triedUnits.has(u)), ...(sharedFail ? { sharedFail } : {}), ...(ambiguous ? { ambiguous } : {}) };
 }
 
@@ -1945,7 +1955,8 @@ export function triedNote(d) {
     const p = passed[0];
     return `kell first tried this on ${d.tried.map((t) => t.unit.split("|")[0]).join(", ")}. ${p.unit.split("|")[0]}'s answer ` +
       `passed the project's check but was not applied: the acceptance rule did not accept it ` +
-      `(evidence: ${String(p.state).replace(/^passed the check, not accepted by the rule \(|\)$/g, "").slice(0, 300)}). Its change is in ${p.patch}. Read it first: ` +
+      `(evidence: ${String(p.state).replace(/^passed the check, not accepted by the rule \(|\)$/g, "").slice(0, 300)})` +
+      `${p.review ? `; the review said: ${String(p.review).slice(0, 300)}` : ""}. Its change is in ${p.patch}. Read it first: ` +
       "if it does what the task asks, apply it (`git apply` that file), run the tests and finish from there; if not, do the " +
       "task yourself. There is nothing to report." + handoffNote(d);
   }

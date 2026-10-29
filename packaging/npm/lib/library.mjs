@@ -695,7 +695,8 @@ function writeIfChanged(file, text) {
 // .kell/.gitignore: the generated files, rebuilt from library.md / the server. library.md, library/solutions
 // and SUMMARY's sources stay committable -- whether .kell/ is committed at all is the repo owner's choice.
 const GITATTRIBUTES = "library.md merge=union\n";
-const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json", "areas.md", "dag_state.json", "evidence.key", "evidence.md.prev"];
+const GITIGNORE_LINES = ["index/library.idx", "index/terms.idx", "SUMMARY.md", "routing.md", "index/way_vectors.json", "areas.md", "dag_state.json", "evidence.key", "evidence.md.prev",
+  "tried/"];   // tried/: the patches of answers that passed but were not accepted, for the session's model (lib/dispatch.mjs)
 
 export function ensureGitFiles(root) {
   const attr = P(root, ".gitattributes");

@@ -163,12 +163,16 @@ export async function reviewFinding({ root, request, finding, env = process.env,
   return { ...v, model: name, cost_usd: cost };
 }
 
+// a Claude reviewer's limit: 120 s cut a review of a 60-line type-hint diff with no verdict, which delayed the end of the
+// cheap tries by 5 minutes (kell-try, 2026-10-30; a 20-line one took 60 s). STEALTHLAB_REVIEW_TIMEOUT_S, default 240.
+const reviewLimitMs = (env) => Math.max(30, Number(env.STEALTHLAB_REVIEW_TIMEOUT_S) || 240) * 1000;
+
 // One reviewer call: a Claude model through a lean `claude -p`, or an exec.json profile's endpoint. -> {verdict, why,
 // model, cost_usd} | null (no model, an error, an unusable reply). Its cost goes to the spend ledger as `what`.
 async function askReviewer({ name, system, user, parse, what, env, fetchImpl, log, timeoutMs, runClaude, signal }) {
   if (name.includes("claude")) {
     const { leanArgs, runClaudeAsync } = await import("./claude_call.mjs");
-    const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, 120000))))(leanArgs(name, system), user);
+    const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, reviewLimitMs(env)))))(leanArgs(name, system), user);
     let j = null;
     try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
     const v = j && !j.is_error ? parse(j.result) : null;

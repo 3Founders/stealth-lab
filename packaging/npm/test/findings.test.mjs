@@ -135,4 +135,10 @@ test("two answers the strong review will not call a fix end the cheap tries; the
   assert.ok(Date.now() - t0 < 15000, "did not wait for the slow third model");
   assert.ok(d.tried.filter((t) => /not accepted by the rule/.test(t.state)).length >= 2);
   assert.ok(d.tried.some((t) => /invents a new one/.test(t.review || "")), "the reviewer's reason goes to the session's model");
+  const kept = d.tried.find((t) => t.patch);
+  assert.match(kept.patch, /^\.kell\/tried\/r-\d\.patch$/, "the patch is copied into the repository");
+  assert.ok(fs.existsSync(path.join(repo, kept.patch)));
+  const { triedNote } = await import("../lib/dispatch.mjs");
+  assert.match(triedNote(d), /the review said: the request names an existing example; the diff invents a new one/);
+  assert.match(triedNote(d), /Its change is in \.kell\/tried\/r-\d\.patch/);
 });
