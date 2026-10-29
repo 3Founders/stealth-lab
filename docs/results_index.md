@@ -1,4 +1,4 @@
-# Results index: everything measured so far (2026-10-24)
+# Results index: everything measured so far (2026-10-24, section H added 2026-10-29)
 
 Every result we have, grouped by area, with superseded numbers replaced by their corrected versions and a link to the
 source. Written by reading each source and recomputing the series costs from the raw result files.
@@ -135,17 +135,35 @@ Sources: [latency_routing_results.md](latency_routing_results.md), [HANDOFF_abte
 - **The company onboarding flow:** a local end-to-end check against Postgres 17 with one real provider call passed
   (commit `534a148`). It hasn't run on staging or in a real Cursor.
 
+## H. Cheap models given a fair run, and ranking per kind of work (2026-10-27 to 10-29)
+
+Details and every table: [results_2026-10-29.md](results_2026-10-29.md).
+
+| # | Result | Numbers | Status |
+|---|---|---|---|
+| H1 | **GLM-5.3-flash with every fix, on sqlglot 508/518/527** | Solved 2 of 3, the same as Opus; about $0.12 per try. kell $0.88 vs Opus alone $1.48: **about 40% less at equal quality** | 3 issues only; 531/559/560 still to run |
+| H2 | Driver: kell's step agent vs lean Claude Code | Same solves, **3-4x cheaper**, so the step agent is the default again. This reverses C2: the step agent was handicapped by greedy sampling, dropped reasoning and the stall rule | Measured |
+| H3 | Why the open models underperformed | GLM read "high" effort as near-minimal thinking (74 vs 724 tokens) and lost its reasoning between tool calls; gpt-oss and gemma were greedy by default; stall rule e cut GLM short in 10 of 10 runs | Fixed |
+| H4 | Local end-to-end on a real install | gemma did a real task for **$0.043 vs Opus's $0.36**; before the fixes, the first prompt of a session never dispatched, and two check bugs failed every cheap answer | Fixed and measured once |
+| H5 | Locating the right file, 87 issues | Top-1 32% → **38%**; top-3 49% → **59%** | Measured |
+| H6 | Reviewer v2 with the changed code shown | Wrong accepted 2/7 → **1/7**; right accepted 7/8 (15 graded answers) | Adopted; recorded as a preregistration deviation |
+| H7 | Contamination | An earlier replay was invalid: the agent downloaded the upstream fix. The replay has no network now, and a fetch that went through counts as not solved | Fixed |
+| H8 | LLMRouterBench as a prior for untested models | The card prior's order on held-out models went from -0.07 to 0.60, but the full fit flattened it (Haiku would rank above Opus), so it is not shipped as the prior | Measured; not shipped |
+| H9 | LiveCodeBench probe (100 problems, 37 anchors) | Lines up poorly with the fitted ranking (r = 0.55 on 5 anchors, 0.21 on 37): puzzles are not repo work | Measured; kept for the "script" category |
+| H10 | **Per-category ranking via the triage judge (JEV)** | 12 categories; live, a bug report came back as repo_change and a SQL request as sql, in about 340 ms | Built; the per-category fit is being validated |
+| H11 | A model added later | It is ranked from OpenRouter's live catalogue or the prices kell sends; before, it was dropped. Removing a model moves no other model | Built and tested |
+
 ---
 
 ## What this means, in one view
 
 | Area | Evidence today |
 |---|---|
-| **Reduce** | **Strong on benchmarks** (−49% on 150 code tasks, −3 solved). **Mixed on real repos** (one issue cheaper, one more expensive) |
-| **Tests decide** | **Weak on real repos.** The current default let 8 of 25 wrong fixes through in the survey, even though v7 applied 0 wrong out of 2 |
+| **Reduce** | **Strong on benchmarks** (−49% on 150 code tasks, −3 solved). **On real repos: promising but small** (H1: about −40% at equal quality on 3 sqlglot issues, after the fixes; earlier series mixed) |
+| **Tests decide** | **Weak on real repos.** The current default let 8 of 25 wrong fixes through in the survey, even though v7 applied 0 wrong out of 2. Reviewer v2 cut wrong accepted from 2/7 to 1/7 (H6), not yet re-run on the 25 |
 | **Recall** | **Knowledge helps open models on benchmarks** (+8.5, confirmed). On the user's own repo: not shown; C vs C0 shows nothing yet |
 | **Reuse** | Not measured |
-| **Route learning** | Not measured |
+| **Route learning** | Not measured. Built: per-category rankings via the triage judge, and day-one ranks for new models (H10, H11) |
 | **Memory accuracy** | Strong: ~97% of facts correct |
 | **Latency** | About 2× slower; routing is about a quarter of the extra time |
 
