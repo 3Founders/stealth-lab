@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HUMAN, MAX_AGENTS, newAgentHandle } from "@/lib/delegator/agents";
+import { HUMAN, MAX_AGENTS, newAgentHandle } from "@/lib/chat/agents";
 
 describe("adding agents", () => {
   it("the first free @assistant-N, in order, filling gaps", () => {

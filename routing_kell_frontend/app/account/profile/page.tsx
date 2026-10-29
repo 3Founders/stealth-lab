@@ -167,7 +167,7 @@ function Editor() {
   );
 }
 
-/** No profile server on this site: name and about line on the account, photo in this browser. See lib/device-profile.ts. */
+/** No profile server on this site: name and about line on the account, photo on the account through keळ's server, with a copy in this browser. See lib/device-profile.ts. */
 function DeviceEditor() {
   const [p, setP] = useState<DeviceProfile | null | undefined>(undefined);
   const [name, setName] = useState("");
@@ -215,9 +215,9 @@ function DeviceEditor() {
             <input ref={file} id="p-photo" type="file" accept={AVATAR_TYPES.join(",")} onChange={pick} className="visually-hidden" aria-label="Choose a profile photo" />
             <div className="cluster">
               <button type="button" className="btn-ink" onClick={() => file.current?.click()}><span>{photo ? "Change photo" : "Add a photo"}</span></button>
-              {photo && <button type="button" className="btn-line" onClick={() => removeDevicePhoto(p.subject)}>Remove</button>}
+              {photo && <button type="button" className="btn-line" onClick={() => void removeDevicePhoto(p.subject)}>Remove</button>}
             </div>
-            <p className="small dim">PNG, JPEG or WebP. It is shrunk and kept only in this browser; it is not uploaded and will not follow you to another device.</p>
+            <p className="small dim">PNG, JPEG or WebP. It is shrunk, then saved on your keळ account so it shows on every device you sign in on.</p>
             {photoError && <p className="small" role="alert">{photoError}</p>}
           </div>
         </div>

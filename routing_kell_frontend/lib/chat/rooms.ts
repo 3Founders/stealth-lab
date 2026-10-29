@@ -7,6 +7,7 @@ import type { KeyValue } from "@/lib/byok/spend";
 
 export const DEFAULT_ROOM = "#general";
 export const MAX_ROOMS = 12;
+// The storage keys keep their original "delegator" name on purpose: renaming them would hide rooms already saved on a device.
 const key = (subject: string) => `kel.delegator.rooms.${subject}`;
 const ROOM = /^#[a-z0-9][a-z0-9_-]{0,29}$/;
 

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-import { SPRINGS, SpringValue, rubberBand } from "@/lib/delegator/spring";
+import { SPRINGS, SpringValue, rubberBand } from "@/lib/chat/spring";
 
 const NEAR_END = 120; // px from the bottom that still counts as "reading the latest"
 const RELEASE_MS = 90; // no wheel input for this long: the finger has let go

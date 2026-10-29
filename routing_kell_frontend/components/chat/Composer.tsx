@@ -1,6 +1,6 @@
 "use client";
 import { useId, useMemo, useRef, useState } from "react";
-import { applyMention, matchHandles, mentionQuery } from "@/lib/delegator/ui";
+import { applyMention, matchHandles, mentionQuery } from "@/lib/chat/ui";
 
 /**
  * The message box. Typing "@" opens a list of the room's handles. It follows the W3C combobox pattern: focus stays in
@@ -60,7 +60,7 @@ export default function Composer({ handles, onSend, disabled }: { handles: strin
         ref={ref} rows={1} value={text} disabled={disabled}
         role="combobox" aria-label="Message" aria-autocomplete="list" aria-expanded={open}
         aria-controls={open ? listId : undefined} aria-activedescendant={open ? `${listId}-${idx}` : undefined}
-        placeholder="Message the room. @ to mention, /stop, /invite @bob/cursor, /add-agent --name=x"
+        placeholder="Message the room. @ to mention an agent, /add-agent to add one, /stop to pause"
         onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); setDismissed(false); setActive(0); }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
         onKeyDown={onKeyDown}

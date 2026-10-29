@@ -54,13 +54,13 @@ describe("Back control", () => {
     }
     expect(back).not.toHaveBeenCalled();
   });
-  it("is absent on the homepage and on the full-screen Delegator", async () => {
-    path = "/delegator";
+  it("is absent on the homepage and on the full-screen Chat", async () => {
+    path = "/chat";
     await mount();
     expect(link()).toBeNull();
   });
-  it("inside the Delegator it is shown in the sidebar (the inline copy), while the floating one stays hidden there", async () => {
-    path = "/delegator";
+  it("inside the Chat it is shown in the sidebar (the inline copy), while the floating one stays hidden there", async () => {
+    path = "/chat";
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
     await act(async () => { root!.render(<><BackButton /><BackButton inline /></>); });
     const links = host.querySelectorAll("a.back-btn");

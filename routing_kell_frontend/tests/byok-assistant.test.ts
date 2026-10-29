@@ -2,11 +2,11 @@
 // The built-in assistant: answers when addressed, says why when it cannot, and never lets the key reach the room.
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DAILY_CAP, readCap, recordUse, usedToday, withinCap, writeCap, type KeyValue } from "@/lib/byok/spend";
-import { ASSISTANT_HANDLE, attachAssistant, toChatTurns, type AssistantDeps } from "@/lib/delegator/adapters/assistant";
-import { attachMockAgent } from "@/lib/delegator/adapters/mock";
-import { agentIdentity } from "@/lib/delegator/adapters/mcp";
-import { Broker } from "@/lib/delegator/relay/broker";
-import type { AgentIdentity, GroupMessage, RelayEvent } from "@/lib/delegator/types";
+import { ASSISTANT_HANDLE, attachAssistant, toChatTurns, type AssistantDeps } from "@/lib/chat/adapters/assistant";
+import { attachMockAgent } from "@/lib/chat/adapters/mock";
+import { agentIdentity } from "@/lib/chat/adapters/mcp";
+import { Broker } from "@/lib/chat/relay/broker";
+import type { AgentIdentity, GroupMessage, RelayEvent } from "@/lib/chat/types";
 
 const SECRET = "sk-live-ROOMLEAKSECRET-0123456789";
 const alice: AgentIdentity = { handle: "@alice", displayName: "Alice", type: "human", status: "online" };

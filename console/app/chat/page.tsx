@@ -1,8 +1,8 @@
-import RoomView from "@/components/delegator/RoomView";
-import { springVars } from "@/lib/delegator/spring";
-import "./delegator.css";
+import RoomView from "@/components/chat/RoomView";
+import { springVars } from "@/lib/chat/spring";
+import "./chat.css";
 
-export const metadata = { title: "Delegator (dev sandbox)" };
+export const metadata = { title: "Chat (dev sandbox)" };
 
 export default function Page() {
   return (

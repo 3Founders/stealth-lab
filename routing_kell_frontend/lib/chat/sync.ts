@@ -1,7 +1,7 @@
 /**
  * Keeps your rooms and chats the same on every device you sign in on (docs/rooms_design.md; server in backend/app/services/rooms.py).
  *
- * Local-first: this device already holds your whole history (lib/delegator/store.ts). Sending writes to the local outbox first and
+ * Local-first: this device already holds your whole history (lib/chat/store.ts). Sending writes to the local outbox first and
  * works offline; the engine then pushes the outbox, pulls what other devices (and other people) added since its cursor, and tells
  * the screen. The merge is a union by event id: the id of a message is its event id, so a retry, a message echoed back from the
  * server, or the same event arriving twice is one message. Nothing is edited in place, so there is nothing to conflict.

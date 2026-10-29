@@ -70,7 +70,7 @@ export default function AccountMenu({ username }: { username: string }) {
           {PROJECT_SYNC_ENABLED && <Link href="/account" role="menuitem" onClick={() => setOpen(false)}>Projects</Link>}
           <Link ref={firstItemRef} href="/account/profile" role="menuitem" onClick={() => setOpen(false)}>Profile</Link>
           <Link href="/account/connections" role="menuitem" onClick={() => setOpen(false)}>Connected apps</Link>
-          <Link href="/delegator" role="menuitem" onClick={() => setOpen(false)}>Delegator</Link>
+          <Link href="/chat" role="menuitem" onClick={() => setOpen(false)}>Chat</Link>
           {orgAdminEnabled() && <Link href="/org" role="menuitem" onClick={() => setOpen(false)}>Organization</Link>}
           <Link href="/account/models" role="menuitem" onClick={() => setOpen(false)}>Models</Link>
           <hr />

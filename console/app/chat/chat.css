@@ -1,7 +1,10 @@
-/* The Delegator sandbox: a chat shell in the console's own palette (paper, ink, yellow, cobalt). Scoped by the dg- prefix. */
-.dg-page { /* spring timing functions and durations (--dg-micro, --dg-smooth, --dg-bouncy, each with -d) are set inline from lib/delegator/spring.ts */
-  --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; /* the chat takes the window: the site nav floats above, the page has no heading of its own */ padding: 24px var(--pad); }
-.dg-shell { min-height: 0; display: grid; grid-template-columns: 260px 1fr; border: 0; border-radius: 0; overflow: hidden; background: #fff; font-size: 15px; }
+/* The Chat sandbox: a chat shell in the console's own palette (paper, ink, yellow, cobalt). Scoped by the dg- prefix. */
+.dg-page { /* spring timing functions and durations (--dg-micro, --dg-smooth, --dg-bouncy, each with -d) are set inline from lib/chat/spring.ts */
+  --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms; --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-bouncy: cubic-bezier(.34, 1.4, .64, 1); --dg-bouncy-d: 360ms; interpolate-size: allow-keywords; height: 100dvh; display: flex; flex-direction: column; }
+/* This page is the chat and the logo: the console's own header, grid lines and footer are not shown here. */
+body:has(.dg-page) .nav-wrap, body:has(.dg-page) .console-foot, body:has(.dg-page) .gridlines, body:has(.dg-page) .skip { display: none; }
+
+.dg-shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 260px 1fr; border: 0; border-radius: 0; overflow: hidden; background: #fff; font-size: 15px; }
 .dg-shell { transition: box-shadow var(--dg-smooth-d) var(--dg-smooth); }
 .dg-shell[data-paused="true"] { box-shadow: inset 0 3px 0 #b3261e; }
 
@@ -82,38 +85,10 @@
 .dg-mentions li { transition: background-color var(--dg-micro-d) var(--dg-micro); padding: 6px 10px; border-radius: 5px; cursor: pointer; }
 .dg-mentions li[data-active="true"] { background: var(--yellow); }
 
-.dg-menu, .dg-close, .dg-scrim { display: none; }
-.dg-shell { height: var(--dg-h, 100dvh); }
-/* Phones: the chat takes the whole screen. The room list is a drawer that slides over it; inputs are 16px so iOS does not zoom
-   in on focus; every control is at least 44px; the composer clears the home indicator. */
 @media (max-width: 760px) {
-  .dg-shell { grid-template-columns: 1fr; grid-template-rows: 1fr; font-size: 16px; }
-  .dg-side { position: fixed; inset: 0 auto 0 0; width: min(88vw, 340px); z-index: 40; border-right: 1px solid var(--rule-strong); padding: 14px 12px calc(14px + env(safe-area-inset-bottom)); transform: translateX(-102%); visibility: hidden; transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d); box-shadow: 0 0 30px rgba(0,0,0,.25); }
-  .dg-shell[data-menu="open"] .dg-side { transform: none; visibility: visible; transition: transform var(--dg-smooth-d) var(--dg-smooth), visibility 0s; }
-  .dg-scrim { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.4); opacity: 0; pointer-events: none; transition: opacity var(--dg-smooth-d) var(--dg-smooth); }
-  .dg-shell[data-menu="open"] .dg-scrim { opacity: 1; pointer-events: auto; }
-  .dg-close { display: grid; place-items: center; position: absolute; top: 8px; right: 8px; width: 44px; height: 44px; font-size: 26px; line-height: 1; background: none; border: 0; color: var(--ink); cursor: pointer; border-radius: 8px; }
-  .dg-menu { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; font: inherit; font-size: 15px; background: #fff; color: var(--ink); border: 1px solid var(--rule-strong); border-radius: 8px; cursor: pointer; }
-  .dg-head { gap: 8px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; flex-wrap: nowrap; }
-  .dg-head h1 { font-size: 16px; margin-right: auto; }
+  .dg-shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .dg-side { border-right: 0; border-bottom: 1px solid var(--rule); max-height: 38dvh; }
   .dg-limit { display: none; }
-  .dg-breaker { min-height: 44px; padding: 0 12px; font-size: 15px; white-space: nowrap; }
-  .dg-banner { padding: 7px 12px; }
-  .dg-viewport { padding: 12px 12px 6px; -webkit-overflow-scrolling: touch; }
-  .dg-run { grid-template-columns: 30px 1fr; gap: 10px; }
-  .dg-avatar { width: 30px; height: 30px; font-size: 12px; }
-  .dg-typing { padding: 2px 12px 0; }
-  .dg-stop { min-height: 36px; padding: 0 16px; }
-  .dg-composer { padding: 6px 12px calc(10px + env(safe-area-inset-bottom)); gap: 8px; }
-  .dg-composer textarea { font-size: 16px; }
-  .dg-composer button { min-width: 64px; }
-  .dg-mentions { left: 12px; right: 12px; min-width: 0; }
-  .dg-mentions li { padding: 12px 10px; }
-  .dg-add { min-height: 44px; }
-  .dg-members li:has(.dg-remove) { padding-right: 48px; }
-  .dg-remove { top: 2px; right: 2px; min-width: 44px; min-height: 44px; font-size: 22px; opacity: .8; }
-  .dg-room { min-height: 44px; align-items: center; }
-  .dg-jump { bottom: 12px; min-height: 40px; }
 }
 @keyframes dg-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dg-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
@@ -138,58 +113,3 @@
 .dg-brand { padding: 2px 6px 10px; }
 .dg-brand img { height: 38px; width: auto; display: block; }
 .dg-brand a { display: inline-block; }
-/* Once the room is showing it is the whole screen: the site nav, footer and grid lines step aside (the logo in the sidebar goes home). */
-body:has(.dg-shell) .nav-wrap, body:has(.dg-shell) .footer, body:has(.dg-shell) .gridlines, body:has(.dg-shell) .skip { display: none; }
-body:has(.dg-shell) .dg-page { width: 100%; max-width: none; margin: 0; padding: 0; }
-body:has(.dg-shell) { overflow: hidden; }
-.dg-addkey { color: var(--cobalt); text-decoration: underline; text-underline-offset: 2px; }
-.dg-stop { margin-left: auto; font: inherit; font-size: 12.5px; padding: 2px 12px; border: 1px solid var(--ink); border-radius: 999px; background: #fff; color: var(--ink); cursor: pointer; }
-.dg-stop:hover { background: var(--yellow); }
-.dg-backrow { padding: 0 6px 12px; }
-.dg-add { align-self: flex-start; margin: 8px 6px 0; min-height: 40px; }
-.dg-members li { position: relative; }
-.dg-members li:has(.dg-remove) { padding-right: 34px; }
-.dg-remove { position: absolute; top: 4px; right: 4px; background: none; border: 0; color: inherit; opacity: .55; cursor: pointer; font-size: 16px; line-height: 1; min-width: 28px; min-height: 28px; border-radius: 6px; transition: opacity var(--dg-micro-d) var(--dg-micro), background-color var(--dg-micro-d) var(--dg-micro); }
-.dg-remove:hover, .dg-remove:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
-.dg-add:disabled { opacity: .45; cursor: not-allowed; }
-body:has(.dg-shell) { overscroll-behavior: none; }
-/* Rooms, the add forms, and relay tasks. */
-.dg-rooms { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.dg-rooms li { display: flex; align-items: center; gap: 2px; }
-.dg-x { flex: none; background: none; border: 0; color: inherit; opacity: .5; cursor: pointer; font-size: 16px; min-width: 28px; min-height: 28px; border-radius: 6px; }
-.dg-x:hover, .dg-x:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
-.dg-form { display: grid; gap: 6px; margin: 8px 6px 0; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: #fff; font-size: 13.5px; }
-.dg-form fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
-.dg-form legend { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); padding: 0; margin-bottom: 4px; }
-.dg-form fieldset label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.35; }
-.dg-form input[type="text"], .dg-form input:not([type]) { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
-.dg-form-row { display: flex; gap: 8px; margin-top: 4px; }
-.dg-mini-btn { min-height: 36px; padding: 0 14px; }
-.dg-err { font-size: 12.5px; color: #b3261e; margin: 4px 6px 0; }
-.dg-form .dg-err { margin: 0; }
-.dg-connect { background: var(--soft); border-radius: 8px; padding: 10px; margin: 8px 6px 0; }
-.dg-badge[data-kind="tab"] { background: var(--grey); }
-.dg-task { animation: dg-rise var(--dg-smooth-d) var(--dg-smooth) both; border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; background: var(--paper); }
-.dg-status { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: #6b4e00; }
-.dg-status[data-status="done"] { background: #e3f4e9; color: #1b5e3a; }
-.dg-status[data-status="failed"], .dg-status[data-status="cancelled"] { background: #fdecea; color: #7a1812; }
-.dg-status[data-status="claimed"] { background: #e6edf8; color: var(--cobalt); }
-.dg-result { border-top: 1px solid var(--rule); padding-top: 8px; display: grid; gap: 3px; }
-.dg-hint { font-size: 12.5px; color: var(--grey); margin: 0; }
-.dg-task-actions { display: flex; gap: 8px; }
-.dg-mini { font: inherit; font-size: 13px; min-height: 32px; padding: 0 12px; border: 1px solid var(--ink); border-radius: 6px; background: #fff; color: var(--ink); cursor: pointer; }
-.dg-mini:hover { background: var(--yellow); }
-@media (max-width: 760px) {
-  .dg-x { min-width: 44px; min-height: 44px; font-size: 22px; }
-  .dg-form input { font-size: 16px !important; min-height: 44px; }
-  .dg-mini { min-height: 44px; padding: 0 16px; }
-  .dg-mini-btn { min-height: 44px; }
-}
-.dg-data { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 6px; }
-.dg-unread { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--cobalt); color: #fff; font-size: 11.5px; line-height: 20px; text-align: center; }
-.dg-room { align-items: center; }
-.dg-sync { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: #e3f4e9; color: #1b5e3a; white-space: nowrap; }
-.dg-sync[data-status="syncing"] { background: #e6edf8; color: var(--cobalt); }
-.dg-sync[data-status="offline"], .dg-sync[data-status="error"] { background: #fdecea; color: #7a1812; }
-.dg-form input[readonly] { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); width: 100%; }
-@media (max-width: 760px) { .dg-sync { font-size: 12.5px; } .dg-unread { min-height: 24px; line-height: 24px; } }

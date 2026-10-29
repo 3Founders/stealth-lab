@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 /**
- * "Back" for every page except the homepage and the full-screen Delegator. Built to current guidance (WCAG 2.2 AA, the GOV.UK
+ * "Back" for every page except the homepage and the full-screen Chat. Built to current guidance (WCAG 2.2 AA, the GOV.UK
  * back link, Next.js navigation):
  *  - it is a real link to "/", so it works without JavaScript, in a new tab, and for someone who arrived on a shared link;
  *  - once the visitor has moved between pages of THIS site, a plain click goes back in history instead (router.back()), so it
@@ -26,9 +26,9 @@ export default function BackButton({ inline = false }: { inline?: boolean } = {}
     setOwnHistory(true);
   }, [pathname]);
 
-  // No back control on the homepage, and none on the full-screen Delegator (it has its own way home).
-  // `inline` is the copy the full-screen Delegator shows inside its own sidebar, where the floating one would sit on top of the chat.
-  if (pathname === "/" || (!inline && pathname.startsWith("/delegator"))) return null;
+  // No back control on the homepage, and none on the full-screen Chat (it has its own way home).
+  // `inline` is the copy the full-screen Chat shows inside its own sidebar, where the floating one would sit on top of the chat.
+  if (pathname === "/" || (!inline && pathname.startsWith("/chat"))) return null;
 
   const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (!ownHistory || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

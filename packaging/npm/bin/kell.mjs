@@ -58,6 +58,8 @@ Usage:
                                              (no provider key on this machine; exit 0 = ready, 3 = not ready)
   npx -y kell-mcp install [options]         register kell with your agents
   kell uninstall [--client <id>]             remove it again
+  kell console open | close | status         open the console in the browser (starting it), stop it, or say if it runs
+                                             (Claude Code: /kell-console open | close | status; opens by itself when a session starts)
   kell console [--port N] [--ui-dir <dir>] [--allow-origin <url>]
                                              the local helper the MCP console page talks to: install, keys, local
                                              models, streamed replies; loopback only, the address it prints holds a token
@@ -504,7 +506,7 @@ async function main() {
     }
   }
   // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
-  const sub = (cmd === "hook" || cmd === "survey" || cmd === "join") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
+  const sub = (cmd === "hook" || cmd === "survey" || cmd === "join" || cmd === "console") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;
   if (cmd === "survey") return cmdSurvey(sub, argv);
   let v;
   try {
@@ -549,11 +551,23 @@ async function main() {
     case "join":
       return cmdJoin(sub, v);
     case "console": {
+      // `kell console open | close | status` (also /kell-console in Claude Code): control the helper, then exit
+      const ctl = ["open", "close", "status"].includes(sub) ? sub : null;
+      if (ctl) {
+        const { consoleCtl } = await import("../lib/console_launch.mjs");
+        return out(await consoleCtl(ctl));
+      }
       // the local helper behind the MCP console (lib/console.mjs): loopback only, a token in the printed address
       const { createConsole } = await import("../lib/console.mjs");
       const c = createConsole({ uiDir: v["ui-dir"] ? path.resolve(String(v["ui-dir"])) : null,
                                 allowOrigins: [].concat(v["allow-origin"] || []).map(String) });
       const { port, url } = await c.listen(v.port ? Number(v.port) : 0);
+      // Published while it runs so a Claude Code session can find it instead of starting a second one (lib/console_launch.mjs).
+      const stateFile = (await import("../lib/console_launch.mjs")).statePath();
+      try { (await import("../lib/exec/store.mjs")).writePrivate(stateFile, JSON.stringify({ pid: process.pid, port, url })); } catch { /* optional */ }
+      const forget = () => { try { if (JSON.parse(fs.readFileSync(stateFile, "utf8")).pid === process.pid) fs.rmSync(stateFile, { force: true }); } catch { /* none */ } };
+      process.on("exit", forget);
+      for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(0));
       out(`kell console on 127.0.0.1:${port} (this machine only). Open:
   ${url}
 Ctrl+C to stop.`);
@@ -654,7 +668,18 @@ Ctrl+C to stop.`);
           await (await lazy.capture()).runCaptureWorker(process.env.STEALTHLAB_CAPTURE_JOB);
         } else if (sub === "ensure-server") {
           const { ensureServer } = await import("../lib/ensure_server.mjs");
-          await ensureServer({ url: resolveSettings({}).url });
+          const url = resolveSettings({}).url;
+          const server = await ensureServer({ url });
+          // Claude Code pipes the SessionStart payload; its "source" says whether this is a fresh start. Never fails the hook.
+          let source = "startup";
+          if (!process.stdin.isTTY) {
+            try {
+              const chunks = [];
+              for await (const c of process.stdin) chunks.push(c);
+              source = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}").source || "startup";
+            } catch { /* keep the default */ }
+          }
+          try { await (await import("../lib/console_launch.mjs")).ensureConsole({ url, server, source }); } catch { /* the console is a convenience */ }
         } else if (sub === "route-subagent" || sub === "route-report") {
           const chunks = [];
           for await (const c of process.stdin) chunks.push(c);

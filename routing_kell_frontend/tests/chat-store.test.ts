@@ -2,10 +2,10 @@
 // Room history on this device: it survives a reload, is encrypted at rest, can't be moved or tampered with, and can be exported.
 import { describe, expect, it } from "vitest";
 import type { KvStore } from "@/lib/byok/vault";
-import type { RelayTask } from "@/lib/delegator/relay-client";
-import { readAgents, writeAgents } from "@/lib/delegator/rooms";
-import { HistoryStore } from "@/lib/delegator/store";
-import type { GroupMessage } from "@/lib/delegator/types";
+import type { RelayTask } from "@/lib/chat/relay-client";
+import { readAgents, writeAgents } from "@/lib/chat/rooms";
+import { HistoryStore } from "@/lib/chat/store";
+import type { GroupMessage } from "@/lib/chat/types";
 
 const mapStore = (): KvStore & { map: Map<string, unknown> } => {
   const map = new Map<string, unknown>();

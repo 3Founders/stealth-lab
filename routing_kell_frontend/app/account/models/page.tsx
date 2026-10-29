@@ -150,7 +150,7 @@ function Panel({ subject }: { subject: string }) {
   function chooseKell() {
     if (!kellAck) return;
     writeChoice(kv(), subject, { source: "kell", model: kellModel });
-    router.push("/delegator"); // the choice is for the Delegator's agents: go back and use it
+    router.push("/chat"); // the choice is for the Chat's agents: go back and use it
   }
 
   function chooseOwnKey() {
@@ -272,7 +272,7 @@ function Panel({ subject }: { subject: string }) {
       <div className="models-list">
         <h2 className="h3">Your keys</h2>
         {keys === undefined && <p className="small dim">Loading…</p>}
-        {keys && keys.length === 0 && <p className="small dim">No keys yet. Add one above to chat with a model in Delegator.</p>}
+        {keys && keys.length === 0 && <p className="small dim">No keys yet. Add one above to chat with a model in Chat.</p>}
         {keys?.map((k) => {
           const pr = probe[k.id] ?? { state: "idle" as const };
           return (

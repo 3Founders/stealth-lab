@@ -17,6 +17,10 @@ export default {
   reactStrictMode: true,
   // `irm .../install.ps1 | iex` and `curl .../install.sh | bash` need the
   // installers as text, not a download (see scripts/sync-installers.mjs).
+  // The chat was first shipped at /delegator; keep old links and bookmarks working.
+  async redirects() {
+    return [{ source: "/delegator", destination: "/chat", permanent: true }];
+  },
   async headers() {
     return [
       ...["/install.sh", "/install.ps1"].map((source) => ({

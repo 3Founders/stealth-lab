@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ProviderError, listModels, streamChat } from "@/lib/byok/chat";
 import type { KeyValue } from "@/lib/byok/spend";
 import type { KeyMeta } from "@/lib/byok/vault";
-import { makeResolver } from "@/lib/delegator/adapters/resolve";
+import { makeResolver } from "@/lib/chat/adapters/resolve";
 import { KELL_MODEL_IDS, kellBase, kellModelsAvailable, kellTarget, onlyKellModels, readChoice, writeChoice } from "@/lib/kell-models";
 
 const mem = (): KeyValue => { const m = new Map<string, string>(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v) }; };

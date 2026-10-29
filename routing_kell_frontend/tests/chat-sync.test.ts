@@ -4,11 +4,11 @@
 // (idempotent ids, ordered seq, membership), mirroring backend/app/services/rooms.py.
 import { describe, expect, it } from "vitest";
 import type { KvStore } from "@/lib/byok/vault";
-import { toEvent, toMessage } from "@/lib/delegator/events";
-import { RoomsApiError, type AppendResult, type EventIn, type EventsPage, type ServerEvent, type ServerRoom } from "@/lib/delegator/rooms-api";
-import { HistoryStore } from "@/lib/delegator/store";
-import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/delegator/sync";
-import type { GroupMessage } from "@/lib/delegator/types";
+import { toEvent, toMessage } from "@/lib/chat/events";
+import { RoomsApiError, type AppendResult, type EventIn, type EventsPage, type ServerEvent, type ServerRoom } from "@/lib/chat/rooms-api";
+import { HistoryStore } from "@/lib/chat/store";
+import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
+import type { GroupMessage } from "@/lib/chat/types";
 
 const mapStore = (): KvStore => {
   const map = new Map<string, unknown>();

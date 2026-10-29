@@ -1,15 +1,15 @@
 "use client";
 import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/message-scroller";
 import { useEffect, useMemo, useRef, useState } from "react";
-import Composer from "@/components/delegator/Composer";
-import { useSpringScroll } from "@/components/delegator/useSpringScroll";
-import { agentIdentity, parseCommand, recipientsFor, toMcpPayload } from "@/lib/delegator/adapters/mcp";
-import { attachMockAgent } from "@/lib/delegator/adapters/mock";
-import { Broker } from "@/lib/delegator/relay/broker";
-import { openChannel } from "@/lib/delegator/relay/channel";
-import type { AgentActivity, AgentIdentity, GroupMessage, Room } from "@/lib/delegator/types";
-import { MAX_DEPTH } from "@/lib/delegator/types";
-import { groupMessages, initials } from "@/lib/delegator/ui";
+import Composer from "@/components/chat/Composer";
+import { useSpringScroll } from "@/components/chat/useSpringScroll";
+import { agentIdentity, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
+import { attachMockAgent } from "@/lib/chat/adapters/mock";
+import { Broker } from "@/lib/chat/relay/broker";
+import { openChannel } from "@/lib/chat/relay/channel";
+import type { AgentActivity, AgentIdentity, GroupMessage, Room } from "@/lib/chat/types";
+import { MAX_DEPTH } from "@/lib/chat/types";
+import { groupMessages, initials } from "@/lib/chat/ui";
 
 const HUMANS: AgentIdentity[] = [
   { handle: "@alice", displayName: "Alice", type: "human", status: "online" },

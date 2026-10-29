@@ -936,6 +936,14 @@ _room_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
 )
 
+from app.mcp_server import photo_routes as _photo_routes  # noqa: E402 -- the profile photo that follows a person across devices (db/159_profile_photos.sql)
+
+_photo_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+)
+
 
 @server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
 async def healthz(request: Request) -> JSONResponse:  # noqa: ARG001

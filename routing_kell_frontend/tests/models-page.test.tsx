@@ -192,7 +192,7 @@ describe("keळ models (pilot) when the deployment has a hosted server", () => {
     await act(async () => { host!.querySelector<HTMLInputElement>(".models-ack input")!.click(); });
     expect(use.disabled).toBe(false);
     await act(async () => { use.click(); });
-    expect(push).toHaveBeenCalledWith("/delegator"); // choosing keL models takes you back to the Delegator
+    expect(push).toHaveBeenCalledWith("/chat"); // choosing keL models takes you back to the Chat
     expect(writes.join("|")).toContain("kel.assistant.source.u1");
     expect(writes.join("|")).toContain("glm-5.3-flash");
     expect(writes.join("|")).not.toMatch(/Bearer|token/i);

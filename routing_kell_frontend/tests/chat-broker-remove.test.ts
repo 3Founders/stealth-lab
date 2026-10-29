@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { Broker } from "@/lib/delegator/relay/broker";
+import { Broker } from "@/lib/chat/relay/broker";
 
 describe("removing an agent", () => {
   it("takes it out of the room and stops waking it", async () => {

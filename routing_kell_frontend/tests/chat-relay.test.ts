@@ -1,8 +1,8 @@
 // @vitest-environment node
 // The relay client and the room list: what is sent, how errors read, and that rooms behave.
 import { describe, expect, it } from "vitest";
-import { cursorOf, mentionedNames, mergeTasks, relay, validAgentName, type RelayTask } from "@/lib/delegator/relay-client";
-import { DEFAULT_ROOM, MAX_ROOMS, newRoomName, readRooms, withoutRoom, writeRooms } from "@/lib/delegator/rooms";
+import { cursorOf, mentionedNames, mergeTasks, relay, validAgentName, type RelayTask } from "@/lib/chat/relay-client";
+import { DEFAULT_ROOM, MAX_ROOMS, newRoomName, readRooms, withoutRoom, writeRooms } from "@/lib/chat/rooms";
 import type { KeyValue } from "@/lib/byok/spend";
 
 const task = (id: string, created: string, over: Partial<RelayTask> = {}): RelayTask => ({ id, agent_id: "a", room: "#general", from: "u", text: "t", locators: [], depth: 0, status: "queued", created_at: created, claimed_at: null, finished_at: null, result: null, check: null, ...over });

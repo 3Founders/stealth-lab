@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import { PHOTO_EVENT, readDevicePhoto } from "@/lib/device-profile";
+import { PHOTO_EVENT, readDevicePhoto, syncDevicePhoto } from "@/lib/device-profile";
 
-/** The photo kept in this browser (see lib/device-profile.ts), or null. Follows changes made on the profile page. */
+/** The photo for this account: this browser's copy, refreshed from the server (see lib/device-profile.ts), or null. Follows changes made on the profile page. */
 export function useDevicePhoto(subject: string | null | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     if (!subject) { setUrl(null); return; }
     const read = () => setUrl(readDevicePhoto(subject));
     read();
+    void syncDevicePhoto(subject);
     const on = (e: Event) => { if ((e as CustomEvent).detail === subject) read(); };
     window.addEventListener(PHOTO_EVENT, on);
     return () => window.removeEventListener(PHOTO_EVENT, on);

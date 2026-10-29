@@ -10,6 +10,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { addCaptureHooks, removeCaptureHooks } from "./capture_hook.mjs";
 import { addRouteHooks, removeRouteHooks } from "./model_guard.mjs";
+import { installConsoleCommand, removeConsoleCommand } from "./console_launch.mjs";
 import { uninstallCursorHooks, upsertCursorHooks } from "./cursor_hooks.mjs";
 import { installClaudeMd, uninstallClaudeMd } from "./claude_md.mjs";
 import { PACKAGE, isOwnCommand } from "./names.mjs";
@@ -195,6 +196,7 @@ export function upsertClaudeHook(file, commandSpec, timeoutSec = 900, { guard = 
   const args = commandSpec.args || [];
   const launch = { command: commandSpec.command, args: args[args.length - 1] === HOOK_MARK ? args.slice(0, -1) : args };
   addCaptureHooks(doc, launch);
+  try { installConsoleCommand(path.dirname(file), launch); } catch { /* the slash command is a convenience */ }   // /kell-console
   if (guard) addRouteHooks(doc, launch);          // the model guard (lib/model_guard.mjs)
   else removeRouteHooks(doc);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -213,6 +215,7 @@ export function removeClaudeHook(file) {
   }
   const capture = removeCaptureHooks(doc);
   const route = removeRouteHooks(doc);
+  const command = prompt || capture || route ? removeConsoleCommand(path.dirname(file)) : false;   // /kell-console
   if (!prompt && !capture && !route) return false;
   fs.copyFileSync(file, `${file}.bak`);
   if (doc.hooks && !Object.keys(doc.hooks).length) delete doc.hooks;

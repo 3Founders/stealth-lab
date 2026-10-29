@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The header follows the SESSION: a signed-in visitor never sees "Sign in", even when the profile request fails, and gets the Delegator link.
+// The header follows the SESSION: a signed-in visitor never sees "Sign in", even when the profile request fails, and gets the Chat link.
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
@@ -37,24 +37,24 @@ const text = () => host!.textContent ?? "";
 afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; notify = null; });
 
 describe("Header sign-in state", () => {
-  it("signed out: offers Sign in and no Delegator link", async () => {
+  it("signed out: offers Sign in and no Chat link", async () => {
     session = null;
     await mount();
     expect(text()).toContain("Sign in");
-    expect(host!.querySelector('a[href="/delegator"]')).toBeNull();
+    expect(host!.querySelector('a[href="/chat"]')).toBeNull();
   });
   it("everyone, signed in or not, sees Connect in the nav", async () => {
     session = null;
     await mount();
     expect(host!.querySelector('.nav-links a[href="/connect"]')?.textContent).toBe("Connect");
   });
-  it("signed in but the profile request failed: no Sign in button, an account menu, and the Delegator link", async () => {
+  it("signed in but the profile request failed: no Sign in button, an account menu, and the Chat link", async () => {
     session = { token: "t", subject: "u" };
     profile = { kind: "error" };
     await mount();
     expect(host!.querySelector('a[href="/sign-in"]')).toBeNull();
     expect(host!.querySelector(".account-trigger")).not.toBeNull();
-    expect(host!.querySelector('a[href="/delegator"]')).not.toBeNull();
+    expect(host!.querySelector('a[href="/chat"]')).not.toBeNull();
   });
   it("signed in with a profile: shows the username", async () => {
     session = { token: "t", subject: "u" };
@@ -63,12 +63,12 @@ describe("Header sign-in state", () => {
     expect(text()).toContain("chait");
     expect(host!.querySelector('a[href="/sign-in"]')).toBeNull();
   });
-  it("signing out brings Sign in back and removes the Delegator link", async () => {
+  it("signing out brings Sign in back and removes the Chat link", async () => {
     session = { token: "t", subject: "u" };
     profile = { kind: "error" };
     await mount();
     await act(async () => { notify!(null); });
-    expect(host!.querySelector('a[href="/delegator"]')).toBeNull();
+    expect(host!.querySelector('a[href="/chat"]')).toBeNull();
     expect(text()).toContain("Sign in");
   });
 });

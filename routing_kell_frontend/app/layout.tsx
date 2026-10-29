@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   icons: { icon: "/kel-mark.png" },
 };
 
-// On Android the on-screen keyboard resizes the page (the Delegator composer stays visible); iOS is handled by the Delegator itself.
+// On Android the on-screen keyboard resizes the page (the Chat composer stays visible); iOS is handled by the Chat itself.
 export const viewport: Viewport = { width: "device-width", initialScale: 1, interactiveWidget: "resizes-content" };
 
 // Motion is opt-in: only pages whose visitor has not asked for reduced motion get the reveal classes.
