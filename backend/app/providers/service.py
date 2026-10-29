@@ -34,7 +34,7 @@ from app.providers.url_guard import check_endpoint
 from app.services.access import AccessScope
 from app.services.classification import DataClass
 
-MAX_OUTPUT_TOKENS = 16000
+MAX_OUTPUT_TOKENS = 128_000
 MAX_PROMPT_CHARS = 400_000
 
 

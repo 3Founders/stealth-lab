@@ -29,7 +29,7 @@
 // prompt or tool) and exits 0. Off switches are shared with Claude Code: STEALTHLAB_HOOK=off (no lookups),
 // STEALTHLAB_CAPTURE=off (no reports).
 //
-// What leaves the machine: the prompt (up to 1,500 characters) and the workspace's .kell/claims.md, to your
+// What leaves the machine: the prompt (up to FIND_WAYS_QUERY_MAX characters, cut head and tail) and the workspace's .kell/claims.md, to your
 // kell endpoint, exactly as the Claude Code hook sends them; reports carry ids, model and pass/fail only.
 // Locally the prompt sits in a 0600 job file only until the worker reads it (it deletes the file first).
 import crypto from "node:crypto";
