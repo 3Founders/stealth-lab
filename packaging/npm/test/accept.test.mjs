@@ -83,7 +83,9 @@ test("a passing answer the rule does not accept is handed to the session with it
   assert.equal(d.handled, false);
   const note = triedNote(d);
   assert.match(note, /gemma-4-31b-it's answer passed the project's check but was not applied/);
-  assert.match(note, /acc-patches-[^ ]*r-1\.patch/, "the patch's path is given");
+  // copied into the repository's .kell/ so the session's model can read it without a permission prompt (2026-10-30)
+  assert.match(note, /\.kell\/tried\/r-1\.patch/, "the patch's path is given");
+  assert.ok(fs.existsSync(path.join(repo, ".kell", "tried", "r-1.patch")));
   assert.doesNotMatch(note, /none passed the check/);
 });
 

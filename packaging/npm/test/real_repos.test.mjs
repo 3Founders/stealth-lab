@@ -201,7 +201,8 @@ test("B1 through dispatch: the goal file holds the context and the task points t
       async runResult() { return { state: "failed", cost_usd: 0.001, checks: [{ tail: "no" }] }; }, async cancelRun() { return {}; } };
     const extra = mode === "goalfile" ? {} : mode === "inline" ? { STEALTHLAB_DISPATCH_GOALFILE: "off" }
       : { STEALTHLAB_DISPATCH_GOALFILE: "off", STEALTHLAB_DISPATCH_CONTEXT: "off" };
-    await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN }, root: repo, mine: "claude-opus-5-5|claude-code",
+    // a resolved way: the goal file is named after the plan's goal (with no way resolved it is named from the request)
+    await dispatch({ payload: { cwd: repo, prompt: "Fix calc.py so x is 2" }, reply: { model_plan: PLAN, outcome: "resolved" }, root: repo, mine: "claude-opus-5-5|claude-code",
       env: { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "python -m pytest -q", STEALTHLAB_DISPATCH_TESTFIRST: "off", STEALTHLAB_DISPATCH_CROSSCHECK: "off",
              STEALTHLAB_BRIEF: "off", STEALTHLAB_DISPATCH_LOCATE: "off", ...extra }, runtime: rt });
     assert.ok(seen[0].startsWith("Fix calc.py so x is 2"));

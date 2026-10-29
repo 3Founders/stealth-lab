@@ -57,6 +57,12 @@ smallest correct change.
 - {shell}
 - Do not touch files outside the task, do not install packages, and never print or look for credentials.`;
 
+// a model's own control tokens left in its text: gemma's reply on General Compute opened with "<|channel>thought <channel|>",
+// and that reached the developer in a finding (kell-try, 2026-10-30)
+export function stripControl(text) {
+  return String(text || "").replace(/<\|channel\|?>[\s\S]*?<channel\|>/g, "").replace(/<\|[a-z_]+\|?>|<[a-z_]+\|>/gi, "").trim();
+}
+
 // which shell run_shell is (Node's exec: cmd.exe on Windows, /bin/sh elsewhere). Unsaid, models write POSIX commands on
 // Windows: gemma looped on `echo '{...}' > f.json`, whose single quotes cmd.exe keeps (kell-try, 2026-10-29)
 export function shellNote(platform = process.platform) {
@@ -634,6 +640,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     if (maxCost !== null && spent !== null && spent >= maxCost) { stop = "cost_cap"; break; }
   }
 
+  finalMessage = stripControl(finalMessage);
   if (stalled) finalMessage = `stopped early (stalled, rule ${stalled.rule}): ${stalled.why}`;
   if (!finalMessage) finalMessage = stop === "max_steps" ? `stopped after ${maxSteps} tool calls without finishing` : stop === "cost_cap" ? "stopped: cost cap reached" : "";
   return { type: "final", message: finalMessage, learned: parseLearned(finalMessage), tokens: { in: tin, out: tout, cached: tcached },

@@ -472,3 +472,9 @@ test("agent: an empty reply is not an answer; it is asked to go on", async () =>
     assert.match(JSON.stringify(p.seen[1].messages), /Your last reply was empty/);
   } finally { p.close(); }
 });
+
+test("stripControl: a model's control tokens are taken out of its text; ordinary text is left as it is", async () => {
+  const { stripControl } = await import("../lib/agent/step_agent.mjs");
+  assert.equal(stripControl("<|channel>thought\n<channel|>The task has no referent."), "The task has no referent.");
+  assert.equal(stripControl("a|b and <b>bold</b>"), "a|b and <b>bold</b>");
+});

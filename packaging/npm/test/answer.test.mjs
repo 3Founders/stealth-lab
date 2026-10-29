@@ -131,3 +131,21 @@ test("a question about the code is answered by reading it, and checked in the re
   assert.equal(await answerByReading({ ...base, agent: async () => ({ message: "", stop: "stalled", steps: 25 }),
                                        reviewRepo: async () => { throw new Error("not reached"); } }), null);
 });
+
+test("hook: a bare approval ('yes do it') with no earlier turn is a conversation, not a dispatch", async () => {
+  const { env, repo } = setup();
+  fs.writeFileSync(path.join(env.STEALTHLAB_HOME, "config.json"), JSON.stringify({ dispatch: true }));
+  const out = [];
+  const empty = path.join(env.STEALTHLAB_HOME, "empty.jsonl");
+  fs.writeFileSync(empty, "");
+  const fetchImpl = async (url, init) => {
+    if (String(url).endsWith("/triage")) return { ok: true, status: 200, text: async () => JSON.stringify({ needs_retrieval: false, kind: "conversation", work: "change", provider: "jev" }) };
+    const reply = { choices: [{ message: { content: "Happy to: what should I do?" } }], usage: {} };
+    return { ok: true, status: 200, json: async () => reply, text: async () => JSON.stringify(reply) };
+  };
+  await runPromptHook({ stdinText: JSON.stringify({ prompt: "yes do it", cwd: repo, session_id: "s9", transcript_path: empty }),
+    settings: { url: "http://x/mcp" }, userAgent: "t", env, fetchImpl, write: (s) => out.push(JSON.parse(s)), log: () => {},
+    dispatchImpl: async () => assert.fail("nothing to approve: no dispatch") });
+  assert.equal(out[0]?.decision, "block");
+  assert.match(out[0].reason, /what should I do\?/);
+});

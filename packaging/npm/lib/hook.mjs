@@ -614,6 +614,11 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
       timeoutMs: policy.triageTimeoutMs, fetchImpl,
     });
     timer.mark("triage_end");
+    // "yes do it" approves a change proposed earlier in the session; with no earlier turn there is nothing to approve, and
+    // the judge's work=change sent a bare "yes do it" to a 2.5-minute dispatch (kell-try, 2026-10-30): it is a conversation
+    if (verdict?.work === "change" && verdict.kind === "conversation" && !turns.length) {
+      verdict = { ...verdict, work: "conversation", reason: "an approval with nothing before it to approve" };
+    }
     timer.set("triage", verdict ? { work: verdict.work || null, needs_retrieval: verdict.needs_retrieval ?? null } : null);
     log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"} category=${verdict.category || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
   }
