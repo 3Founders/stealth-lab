@@ -519,6 +519,7 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
   let stalled = null;
 
   const seen = new Map();          // tool call signature -> its last output, for repeated reads
+  let emptyTurns = 0;               // replies with neither a tool call nor text (below)
   // cfg.max_seconds: the run's own time budget -- it stops itself before it, so its tokens and cost are reported (a run killed
   // from outside prints nothing, and its spend was counted as $0)
   const deadline = Number(cfg.max_seconds) > 0 ? Date.now() + Number(cfg.max_seconds) * 1000 : null;
@@ -549,6 +550,13 @@ export async function runAgent(cfg, { cwd = process.cwd(), env = process.env, fe
     // explicitly preserved and returned together with the tool results") and gpt-oss expects its past chain of thought on
     // tool turns. Dropped, the model rebuilt its working from raw tool output every step (GLM: 146 steps on one issue)
     messages.push({ role: "assistant", content: msg.content ?? null, ...reasoningOf(msg), ...(calls.length ? { tool_calls: calls } : {}) });
+    // an empty turn (no tool call, no text) is not an answer: gpt-oss did that on step 25 of a search and the run ended
+    // as "answered" with nothing in it (kell-try, 2026-10-30). It is asked twice to go on before that counts.
+    if (!calls.length && !String(msg.content || "").trim() && emptyTurns < 2) {
+      emptyTurns++;
+      messages.push({ role: "user", content: "Your last reply was empty. Continue with a tool call, or call finish with your summary." });
+      continue;
+    }
     if (!calls.length) { finalMessage = String(msg.content || "").trim(); stop = "answered"; break; }
 
     let finished = false;

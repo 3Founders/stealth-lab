@@ -97,3 +97,42 @@ test("newNonCodeTarget: a config, CI or docs file the repository does not have y
   assert.equal(newNonCodeTarget("write tools/flatten.py that reads a JSON file", repo), null, "new code is still code");
   assert.equal(newNonCodeTarget("bump the version to 4.32.1", repo), null, "a version is not a path");
 });
+
+test("two answers the strong review will not call a fix end the cheap tries; the third model is not waited for", async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "rv-home-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({
+    executors: { stealth: { models: ["gemma-4-31b-it", "glm-5.3-flash", "minimax-m2-7"] } },
+    profiles: { rev: { model_id: "rev", openai_base_url: "https://rev.example/v1", key_env: "RK" } } }));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "rv-repo-"));
+  const g = (...a) => execFileSync("git", ["-C", repo, ...a], { stdio: "pipe" });
+  g("init", "-q"); g("config", "user.email", "t@e"); g("config", "user.name", "t");
+  fs.writeFileSync(path.join(repo, "core.py"), "x = 1\n");
+  fs.mkdirSync(path.join(repo, ".kell")); fs.writeFileSync(path.join(repo, ".kell", ".keep"), "");
+  g("add", "-A"); g("commit", "-q", "-m", "init");
+  const patches = fs.mkdtempSync(path.join(os.tmpdir(), "rv-patches-"));
+  const rt = { calls: 0, cancelled: 0,
+    async achieve() { rt.calls++; return { run_id: `r-${rt.calls}` }; },
+    async runResult(id) {
+      if (id === "r-3") await new Promise((r) => setTimeout(r, 20000));      // the third model: slow
+      else await new Promise((r) => setTimeout(r, id === "r-1" ? 100 : 400));
+      const f = path.join(patches, `${id}.patch`);
+      fs.writeFileSync(f, "diff --git a/core.py b/core.py\n--- a/core.py\n+++ b/core.py\n@@ -1 +1 @@\n-x = 1\n+x = 2  # a new example\n");
+      return { run_id: id, state: "verified", cost_usd: 0.01, checks: [{ tail: "" }], diff: { files: ["core.py"], patch_path: f, worktree: null } };
+    },
+    async applyRun() { throw new Error("nothing should be applied"); },
+    async cancelRun() { rt.cancelled++; } };
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content:
+    JSON.stringify({ verdict: "does_not_fix", why: "the request names an existing example; the diff invents a new one" }) } }] }) });
+  const env = { STEALTHLAB_HOME: home, ...LEGACY_POLICY, STEALTHLAB_DISPATCH_CHECK: "node -e 0", STEALTHLAB_DISPATCH_TESTFIRST: "off",
+    STEALTHLAB_DISPATCH_CROSSCHECK: "off", STEALTHLAB_BRIEF: "off", STEALTHLAB_EXPLAIN: "off", STEALTHLAB_LOCATE_MODEL: "off",
+    STEALTHLAB_DISPATCH_ACCEPT: "E Rs", STEALTHLAB_REVIEW_STRONG_MODEL: "rev", RK: "k", STEALTHLAB_DISPATCH_PARALLEL: "on",
+    STEALTHLAB_DISPATCH_MAX_PARALLEL: "3", STEALTHLAB_DISPATCH_WIDTH: "3" };
+  const plan = { status: "ok", instance_key: "g1.k1", goal_id: "g1", ladder: ["gemma-4-31b-it|stealth", "glm-5.3-flash|stealth", "minimax-m2-7|stealth"] };
+  const t0 = Date.now();
+  const d = await dispatch({ payload: { cwd: repo, prompt: "add --dry-run to the CLI example in core.py" }, reply: { model_plan: plan }, root: repo,
+    mine: MINE, env, runtime: rt, fetchImpl });
+  assert.equal(d.handled, false);
+  assert.ok(Date.now() - t0 < 15000, "did not wait for the slow third model");
+  assert.ok(d.tried.filter((t) => /not accepted by the rule/.test(t.state)).length >= 2);
+  assert.ok(d.tried.some((t) => /invents a new one/.test(t.review || "")), "the reviewer's reason goes to the session's model");
+});

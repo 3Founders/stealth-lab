@@ -147,6 +147,8 @@ export function dispatchPolicy(env = process.env) {
     // a cheap agent that finished without a change and says why is checked as a finding (lib/review.mjs reviewFinding); a
     // confirmed one ends the dispatch with that report (STEALTHLAB_DISPATCH_FINDINGS=off: counted as a failed try, as before)
     findings: (env.STEALTHLAB_DISPATCH_FINDINGS || "on").toLowerCase() !== "off",
+    // two answers the strong review rejects end the cheap tries (STEALTHLAB_DISPATCH_REVIEW_FAIL_STOP=off: they go on)
+    reviewFailStop: (env.STEALTHLAB_DISPATCH_REVIEW_FAIL_STOP || "on").toLowerCase() !== "off",
     // the tool calls a cheap agent gets for a task the judge calls a trivial edit (STEALTHLAB_DISPATCH_TRIVIAL_STEPS; 0: no cap)
     trivialSteps: Number.isFinite(Number(env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS)) && env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS !== ""
       && env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS !== undefined ? Math.max(0, Number(env.STEALTHLAB_DISPATCH_TRIVIAL_STEPS)) : 30,
@@ -1226,6 +1228,8 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   if (baseLimitS < policy.timeoutS) log(`dispatch: the tries get ${baseLimitS} s (the whole dispatch must end within ${policy.totalS} s, ${policy.checkReserveS} s kept for checking)`);
   const running = new Map();               // unit -> run_id of a started run, for cancelling the rest once one passes
   let finding = null;                      // a cheap agent's confirmed report that no change is needed (judge below)
+  const reviewRejects = [];                // the strong review's reasons for answers it would not call a fix
+  let reviewStop = null;                   // two of them: the cheap tries end (the loop below)
   let findingReviews = 0;
   const runLimitS = () => baseLimitS;
   // one rung: start it and wait for its result -> {rung, run_id, result} | {rung, error}
@@ -1621,7 +1625,13 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
         tried.push({ unit: c.rung.unit, state: `passed the check, not accepted by the rule (${evidenceLine(c.evidence)})`,
                      run_id: c.result.run_id, cost_usd: c.result.cost_usd, patch: c.result.diff?.patch_path || null,
                      review: c.evidence?.Rs_why || c.evidence?.R_why || null });
+        if (c.evidence?.Rs_why && !c.evidence.Rs) reviewRejects.push(String(c.evidence.Rs_why));
       }
+      // two answers that passed the tests and that the strong review would not call a fix: the request is likely not
+      // what the cheap models take it for (kell-try, 2026-10-30: "add --dry-run to the CLI example" where there was none;
+      // two invented examples were rejected and the dispatch waited 5 more minutes for a third). The session's model
+      // takes over now, with the reviewer's reasons (STEALTHLAB_DISPATCH_REVIEW_FAIL_STOP=off: they go on)
+      if (policy.reviewFailStop && reviewRejects.length >= 2) { reviewStop = reviewRejects.slice(0, 2); break; }
       if (timedOut) break;
       continue;
     }
@@ -1643,8 +1653,9 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
   }
   clearTimeout(timer);
   clearTimeout(totalTimer);
-  if (sharedFail || ambiguous || noSpec || finding) {
+  if (sharedFail || ambiguous || noSpec || finding || reviewStop) {
     log(finding ? `dispatch: ${finding.rung.unit}'s finding was confirmed: no change made, the report is the answer`
+      : reviewStop ? `dispatch: the review would not call two answers a fix (${reviewStop[0].slice(0, 160)}); the session's model takes over`
       : noSpec ? "dispatch: no reproduction test could be written for this task (none that fails on the unchanged code); the session's model takes over"
       : ambiguous ? `dispatch: the task reads two ways (${ambiguous}); the session's model takes over`
       : `dispatch: two cheap answers failed the same advance tests (${sharedFail}); the session's model takes over`);
@@ -1657,12 +1668,12 @@ export async function dispatch({ payload: rawPayload, reply, root, mine, env = p
       tried.push({ unit, state: "cancelled", run_id: r?.run_id ?? running.get(unit) ?? null, cost_usd: r?.result?.cost_usd ?? null });
     }
     pending.clear();
-    for (const rung of queue) tried.push({ unit: rung.unit, state: finding ? "skipped (a finding was confirmed)" : noSpec ? "skipped (no reproduction test)" : ambiguous ? "skipped (the task reads two ways)"
+    for (const rung of queue) tried.push({ unit: rung.unit, state: finding ? "skipped (a finding was confirmed)" : reviewStop ? "skipped (the review rejected two answers)" : noSpec ? "skipped (no reproduction test)" : ambiguous ? "skipped (the task reads two ways)"
                                                                    : "skipped (two answers failed the same advance tests)" });
     queue.length = 0;
   }
   // every cheap try finished and none was accepted: this ending had no line of its own (ct-smoke-final4)
-  if (!winner && !finding && !timedOut && !sharedFail && !ambiguous && !noSpec) {
+  if (!winner && !finding && !reviewStop && !timedOut && !sharedFail && !ambiguous && !noSpec) {
     log(`dispatch: no cheap answer accepted (${tried.length} tried); the session's model takes over`);
   }
   if (timedOut) {
