@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import weakref
 from typing import Any, Awaitable, Callable, Optional, Sequence
 
@@ -35,7 +36,30 @@ async def _members(pool: Any, *, writable: bool) -> list:
     except Exception:  # noqa: BLE001 -- a pool without the registry (offline fakes): no members
         return []
     out = [s for s in shards if s.role == ROLE_SEARCH]
+    if out and not any(_reachable(s) for s in out):
+        # registered members, but this process holds the connection string of none of them (a deployment that runs
+        # only local .kell memory and routing, without the global knowledge databases): run as one database instead of
+        # failing every lookup and every model plan on ShardUnavailable. Some but not all set: unchanged.
+        _warn_unreachable(len(out))
+        return []
     return [s for s in out if (s.writable if writable else s.status in READABLE_STATUSES)]
+
+
+def _reachable(info: Any) -> bool:
+    """A member this process can connect to: its connection string is in the environment (dsn_env NULL is the control
+    database itself)."""
+    env = getattr(info, "dsn_env", None)
+    return env is None or bool(os.environ.get(env))
+
+
+_WARNED: dict[str, bool] = {}
+
+
+def _warn_unreachable(n: int) -> None:
+    if not _WARNED.get("unreachable"):
+        _WARNED["unreachable"] = True
+        log.warning("search group: %d search members are registered but none of their connection strings is set; "
+                    "running as a single database (no global knowledge lookups)", n)
 
 
 async def grouped(pool: Any) -> bool:
