@@ -103,7 +103,9 @@ export const ANSWER_REVIEW_SYSTEM = [
   "assistant knew (the session's notes, its changes, the relevant code, the earlier turns), the message and the reply.",
   "Decide whether the reply answers the message correctly and completely, agrees with the code and the changes shown,",
   "and claims nothing they do not support. A reply that guesses, dodges the question, or would mislead the developer",
-  "is NOT good. Reply with only a JSON object:",
+  "is NOT good. Nor is one that cannot answer from what it was shown and asks the developer for something an assistant",
+  "working in the repository could find itself (by reading the project's files or running a command there): the",
+  "session's own assistant, which can look, answers instead. Reply with only a JSON object:",
   '{"verdict": "good" | "bad" | "unsure", "why": one sentence}.',
 ].join(" ");
 
