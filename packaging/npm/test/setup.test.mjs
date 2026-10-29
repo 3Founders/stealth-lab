@@ -183,3 +183,15 @@ test("keyIsSetAsync agrees with keyIsSet and asks the Windows user environment o
   assert.equal((await keyIsSetAsync("K", { env: {}, platform: "win32", execFileImpl: reg("", new Error("not found")) })).set, false);
   assert.equal(asked, 2);
 });
+
+test("a server that asks for sign-in is reachable, and the fix is kell login, not starting a server", async () => {
+  const fetchImpl = async () => ({ status: 401, ok: false, headers: new Map() });
+  const anon = await probeServer("https://mcp.example/mcp", undefined, { fetchImpl });
+  assert.equal(anon.signIn, true);
+  assert.match(anon.detail, /needs you signed in/);
+  const refused = await probeServer("https://mcp.example/mcp", "tok", { fetchImpl });
+  assert.match(refused.detail, /refused the token/);
+  const c = checklist({ server: anon, hasToken: false, dispatch: false });
+  assert.equal(c.items.find((i) => i.name === "server").fix, "kell login");
+  assert.match(c.items.find((i) => i.name === "token").detail, /needs sign-in/);
+});

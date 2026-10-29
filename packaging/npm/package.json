@@ -23,7 +23,7 @@
     "prepublishOnly": "node scripts/check-publish.mjs && node --test test/*.test.mjs"
   },
   "stealthlab": {
-    "defaultMcpUrl": ""
+    "defaultMcpUrl": "https://mcp.kell.org.in/mcp"
   },
   "repository": {
     "type": "git",

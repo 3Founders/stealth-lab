@@ -83,7 +83,12 @@ export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 1
   } catch (err) {
     return { ok: false, detail: `unreachable (${err.cause?.message || err.message})` };
   }
-  if (res.status === 401 || res.status === 403) return { ok: false, detail: `the server refused the token (HTTP ${res.status})` };
+  // 401 with no token: the server is up and asks callers to sign in (the hosted one does); that is the token item's
+  // fix, not a server problem. With a token: that token was refused.
+  if (res.status === 401 || res.status === 403) {
+    return token ? { ok: false, detail: `the server refused the token (HTTP ${res.status})`, signIn: true }
+                 : { ok: false, detail: `reachable; it needs you signed in (HTTP ${res.status})`, signIn: true };
+  }
   if (!res.ok) return { ok: false, detail: `HTTP ${res.status}` };
   const sid = res.headers.get("mcp-session-id");
   if (sid) await fetchImpl(url, { method: "DELETE", headers: { ...headers, "mcp-session-id": sid } }).catch(() => {});
@@ -93,8 +98,10 @@ export async function probeServer(url, token, { fetchImpl = fetch, timeoutMs = 1
 // -> { ready, items: [{ name, ok, detail, fix? }] }. Pure given its inputs, so tests can drive every branch.
 export function checklist({ server, hasToken, execOk, execDetail, models, keyEnv, key, dispatch, cursorModel, wantsCursor, central = false, platform = process.platform }) {
   const items = [];
-  items.push({ name: "server", ok: server.ok, detail: server.detail, fix: server.ok ? undefined : "start it, or pass --url <https://host/mcp>; check with `kell doctor`" });
-  items.push({ name: "token", ok: hasToken, detail: hasToken ? "saved" : "none (reads are anonymous; reporting outcomes needs one)",
+  items.push({ name: "server", ok: server.ok, detail: server.detail,
+               fix: server.ok ? undefined : server.signIn ? "kell login" : "start it, or pass --url <https://host/mcp>; check with `kell doctor`" });
+  items.push({ name: "token", ok: hasToken,
+               detail: hasToken ? "saved" : server.signIn ? "none (this server needs sign-in)" : "none (reads are anonymous; reporting outcomes needs one)",
                fix: hasToken ? undefined : "kell login   (or: setup --token-file <file>)" });
   if (dispatch) {
     items.push({ name: "exec.json", ok: execOk, detail: execOk ? `${models.length} model(s): ${models.join(", ")}` : execDetail,

@@ -18,7 +18,7 @@
     $ErrorActionPreference = "Stop"
 
     # Hosted endpoint. Empty until the production URL is fixed.
-    $DefaultUrl = ""
+    $DefaultUrl = "https://mcp.kell.org.in/mcp"
     $Pkg = if ($env:STEALTHLAB_MCP_PACKAGE) { $env:STEALTHLAB_MCP_PACKAGE } else { "kell-mcp@latest" }  # override to pin a version
 
     $Url = if ($env:STEALTHLAB_MCP_URL) { $env:STEALTHLAB_MCP_URL } else { $DefaultUrl }

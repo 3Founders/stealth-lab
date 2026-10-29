@@ -13,7 +13,7 @@ set -euo pipefail
 
 # Hosted endpoint. Empty until the production URL is fixed; override with
 # STEALTHLAB_MCP_URL=... or --url.
-DEFAULT_URL=""
+DEFAULT_URL="https://mcp.kell.org.in/mcp"
 PKG="${STEALTHLAB_MCP_PACKAGE:-kell-mcp@latest}"   # override to pin a version
 
 URL="${STEALTHLAB_MCP_URL:-$DEFAULT_URL}"
