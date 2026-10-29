@@ -216,7 +216,7 @@ export async function makeBrief({ prompt, transcriptPath, cwd = null, env = proc
     const messages = profile.no_system_role
       ? [{ role: "user", content: `${BRIEF_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: BRIEF_SYSTEM }, { role: "user", content: user }];
-    const timeoutMs = Math.max(500, Number(env.STEALTHLAB_BRIEF_TIMEOUT_MS || 8000));
+    const timeoutMs = Math.max(500, Number(env.STEALTHLAB_BRIEF_TIMEOUT_MS || 15000));
     const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
       headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },

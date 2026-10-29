@@ -25,14 +25,22 @@ export const DESCRIBE_SYSTEM = [
 
 const clip = (s, n) => String(s || "").replace(/[\r\n|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
 
-// -> {goal, way, slots: {k: v}, steps: [string], invariants: [string]} | null
-export function parseDescription(text, nSteps) {
+// -> {goal, way, slots: {k: v}, steps: [string], invariants: [string]} | null. A reply with MORE steps than given (the
+// model also wrote one for a test file the diff shows) keeps, per given step, the reply step that names that step's file
+// -- `files[i]` the files of step i -- when every given step has one.
+export function parseDescription(text, nSteps, files = []) {
   const s = String(text || "");
   const a = s.indexOf("{"), b = s.lastIndexOf("}");
   if (a < 0 || b <= a) return null;
   let o;
   try { o = JSON.parse(s.slice(a, b + 1)); } catch { return null; }
-  if (!o || typeof o.goal !== "string" || !o.goal.trim() || !Array.isArray(o.steps) || o.steps.length !== nSteps) return null;
+  if (!o || typeof o.goal !== "string" || !o.goal.trim() || !Array.isArray(o.steps)) return null;
+  if (o.steps.length > nSteps && files.length === nSteps) {
+    const named = files.map((fs) => o.steps.find((x) => typeof x === "string" &&
+      fs.some((f) => x.includes(f) || x.includes(f.split("/").pop()))));
+    if (named.every(Boolean)) o.steps = named;
+  }
+  if (o.steps.length !== nSteps) return null;
   const slots = {};
   for (const [k, v] of Object.entries(o.slots && typeof o.slots === "object" ? o.slots : {}).slice(0, 4)) {
     const key = clip(k, 30).replace(/[^\w-]/g, "");
@@ -64,7 +72,7 @@ export async function describeWay({ task, diff, steps, env = process.env, fetchI
     });
     if (!res.ok) { log(`way: describe HTTP ${res.status}`); return null; }
     const body = await res.json();
-    const d = parseDescription(body?.choices?.[0]?.message?.content, steps.length);
+    const d = parseDescription(body?.choices?.[0]?.message?.content, steps.length, steps.map((s) => s.at));
     if (!d) log("way: describe gave no usable reply");
     return d;
   } catch (err) {

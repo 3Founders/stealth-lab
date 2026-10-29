@@ -226,6 +226,16 @@ test("parseDescription: one step per step given, slots and invariants clipped; a
   assert.equal(parseDescription("not json", 1), null);
 });
 
+test("parseDescription: a step written for a test file in the diff is dropped when every given step names its file", () => {
+  // gemma-4-31b on the count_leaves dispatch (2026-10-29): one source step given, two returned
+  const reply = '```json\n{"goal":"Add a utility function","way":"Implement and test","slots":{"function":"count_leaves"},' +
+    '"steps":["jsonargparse/_util.py: implement {function} and add it to __all__",' +
+    '"jsonargparse_tests/test_util.py: import {function} and add test cases"]}\n```';
+  const d = parseDescription(reply, 1, [["jsonargparse/_util.py"]]);
+  assert.deepEqual(d.steps, ["jsonargparse/_util.py: implement {function} and add it to __all__"]);
+  assert.equal(parseDescription(reply, 1, [["pkg/other.py"]]), null, "no reply step names the given step's file");
+});
+
 test("two fixes of the same kind, described: one general Goal, one Way with {slot} steps, each fix keeping its own values", async () => {
   const repo = gitRepo({ "pkg/expressions.py": "class Expression:\n    pass\n" });
   const reply = (fn) => async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({

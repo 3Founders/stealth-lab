@@ -5,7 +5,7 @@
 //
 // STEALTHLAB_EXPLAIN=off: no call; the message carries the cheap agent's own closing summary instead (as short), or
 // nothing. STEALTHLAB_EXPLAIN_MODEL (default gemma-4-31b-it, an exec.json profile) and STEALTHLAB_EXPLAIN_TIMEOUT_MS
-// (default 6000) tune it. Never throws; a failed or slow call falls back to the agent's summary.
+// (default 20000: General Compute's gemma can take ~7 s to its first token, 11-15 s in all) tune it. Never throws; a failed or slow call falls back to the agent's summary.
 import fs from "node:fs";
 import path from "node:path";
 import { configDir } from "./config.mjs";
@@ -53,7 +53,7 @@ export async function explainChange({ request, diff, check, summary = "", env = 
       ? [{ role: "user", content: `${EXPLAIN_SYSTEM}\n\n${user}` }]
       : [{ role: "system", content: EXPLAIN_SYSTEM }, { role: "user", content: user }];
     const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(Math.max(500, Number(env.STEALTHLAB_EXPLAIN_TIMEOUT_MS || 6000))),
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(Math.max(500, Number(env.STEALTHLAB_EXPLAIN_TIMEOUT_MS || 20000))),
       headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
       body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 400, temperature: 0, ...(profile.request_extras || {}) }),
     });
