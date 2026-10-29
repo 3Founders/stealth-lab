@@ -11,8 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { readExecConfig } from "./exec/store.mjs";
-import { profileKey } from "./executors/profile.mjs";
-import { costOf, recordSpend } from "./spend.mjs";
+import { helperCall } from "./helper_call.mjs";
+import { recordSpend } from "./spend.mjs";
 import { enclosingBlock, fixDensity, isSource } from "./locate.mjs";
 
 export const NARROW_SYSTEM = [
@@ -90,18 +90,12 @@ export async function narrowLocation({ prompt, root, loc, env = process.env, fet
     const user = `The report:\n${String(prompt || "").slice(0, 5000)}\n\nSource files:\n${list.join("\n")}\n\n` +
       (outlines ? `Outlines of the files a text search matched${dense.length ? ", then of the files this repository's bug fixes changed most" : ""}:\n${outlines}`
         : "A text search matched no file.");
-    const messages = profile.no_system_role ? [{ role: "user", content: `${NARROW_SYSTEM}\n\n${user}` }]
-      : [{ role: "system", content: NARROW_SYSTEM }, { role: "user", content: user }];
-    const res = await fetchImpl(`${profile.openai_base_url.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
-      headers: { "content-type": "application/json", authorization: `Bearer ${profileKey(profile, env)}` },
-      body: JSON.stringify({ model: profile.model_id, messages, max_tokens: 3000, temperature: 0, ...(profile.request_extras || {}) }),
-    });
-    if (!res.ok) { log(`locate: narrowing HTTP ${res.status}`); return loc; }
-    const body = await res.json();
-    recordSpend(env, { what: "locate", model: profile.name, cost_usd: costOf(profile, body?.usage) });
-    const picks = checkPicks(body?.choices?.[0]?.message?.content, root, known);
-    if (!picks || (!picks.files.length && !picks.functions.length)) { log("locate: narrowing gave nothing usable"); return loc; }
+    // gemma, or a model on another provider when it is slow (lib/helper_call.mjs): this call took 20 s of a 45 s pre-dispatch
+    const r = await helperCall({ what: "locate", primary: name, system: NARROW_SYSTEM, user, maxTokens: 3000, timeoutMs, env, fetchImpl, log,
+      record: (row) => recordSpend(env, row),
+      parse: (t) => { const p = checkPicks(t, root, known); return p && (p.files.length || p.functions.length) ? p : null; } });
+    if (!r) return loc;
+    const picks = r.value;
     // files: the model's, then its functions' files, then the search's; spots: its functions, then the search's spots
     const files = [...new Set([...picks.files, ...picks.functions.map((f) => f.file), ...(loc?.files || [])])].slice(0, 3);
     const spots = [];

@@ -24,8 +24,10 @@ function git(root, args) {
 // -> the cache key for this checkout and check, or null (not a git checkout: no key, so no cache)
 export function baselineKey(root, check, env = process.env) {
   const head = git(root, ["rev-parse", "HEAD"]);
-  const diff = git(root, ["diff", "HEAD", "--binary"]);
-  const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  // kell's own notes (.kell/: goal files, run.md, the library) change on every dispatch and no test reads them: left out,
+  // or the key never matched twice (kell-try, 2026-10-30)
+  const diff = git(root, ["diff", "HEAD", "--binary", "--", ".", ":(exclude).kell"]);
+  const untracked = git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--", ".", ":(exclude).kell"]);
   if (head === null || diff === null || untracked === null) return null;
   const h = crypto.createHash("sha256").update(head).update("\0").update(diff).update("\0").update(String(check)).update("\0")
     .update(String(env.VIRTUAL_ENV || "")).update("\0");

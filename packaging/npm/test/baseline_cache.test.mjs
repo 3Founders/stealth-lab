@@ -67,3 +67,11 @@ test("the suite's last duration is kept per repository and check, whatever the c
   assert.equal(suiteSecs("/r", "pytest -x", env), 12);
   assert.equal(recordSuiteSecs("/r", "pytest", NaN, env), false);
 });
+
+test("kell's own notes in .kell/ do not change the key: they change on every dispatch and no test reads them", () => {
+  const { dir } = repo();
+  const k0 = baselineKey(dir, "pytest", {});
+  fs.mkdirSync(path.join(dir, ".kell", "goals"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".kell", "goals", "G-1.md"), "GOAL|x\n");
+  assert.equal(baselineKey(dir, "pytest", {}), k0);
+});
