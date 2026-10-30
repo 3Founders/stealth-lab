@@ -124,11 +124,12 @@ class Hit:
 def registry_vectors() -> tuple[dict[str, int], Optional[np.ndarray], str]:
     """(card id -> row, unit vectors, embedding model id) of the bundled registry cards; ({}, None, "") without them."""
     try:
-        z = np.load(VECTORS_FILE, allow_pickle=False)
-        ids = [str(x) for x in z["ids"]]
-        m = z["vectors"].astype(np.float32)
+        with np.load(VECTORS_FILE, allow_pickle=False) as z:
+            ids = [str(x) for x in z["ids"]]
+            m = z["vectors"].astype(np.float32)
+            model = str(z["model"])
         m /= np.linalg.norm(m, axis=1, keepdims=True) + 1e-9
-        return {cid: i for i, cid in enumerate(ids)}, m, str(z["model"])
+        return {cid: i for i, cid in enumerate(ids)}, m, model
     except (OSError, KeyError, ValueError):
         return {}, None, ""
 

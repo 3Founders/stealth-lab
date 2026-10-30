@@ -184,6 +184,14 @@ async def _warm_up() -> None:
                              asyncio.to_thread(_warm_tool_router), return_exceptions=True)
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).info("warm-up skipped", exc_info=True)
+    # the registry's vectors are not shipped (89 MB): a server without them embeds the cards now, in the background
+    # (app/tool_routing/vectors.py); until then the router ranks by keywords and the reranker
+    try:
+        from app.tool_routing.vectors import build_if_missing
+
+        await build_if_missing()
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).info("tool vectors skipped", exc_info=True)
 
 
 def _warm_tool_router() -> None:

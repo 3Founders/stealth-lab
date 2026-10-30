@@ -201,3 +201,34 @@ def test_an_installed_tool_reaches_the_reranker_and_comes_first_when_it_is_relev
     hits, _ = run(rank("check that the login page renders in a real browser", [*many, *installed], goal="database", k=3,
                        reranker=irrelevant))
     assert all(h.card.source != "installed" for h in hits)
+
+
+def test_the_server_builds_missing_vectors_and_resumes_a_checkpoint(tmp_path, monkeypatch):
+    import numpy as np
+
+    from app.tool_routing import vectors as V
+
+    out = tmp_path / "registry_vectors.npz"
+    monkeypatch.setattr(V, "VECTORS_FILE", out)
+    monkeypatch.setattr(V, "registry_cards", lambda: tuple(CARDS))
+    monkeypatch.setattr(V, "registry_vectors", type("C", (), {"cache_clear": staticmethod(lambda: None)})())
+    calls = []
+
+    class Emb(FakeEmbedder):
+        def available(self):
+            return True
+
+        def embedding_model_id(self):
+            return "fake@8"
+
+        async def embed(self, texts, input_type="document"):
+            calls.append(len(texts))
+            return await super().embed(texts, input_type)
+
+    ckpt = out.with_name(out.stem + ".partial.npz")
+    first = run(Emb().embed([CARDS[0].text]))
+    np.savez(ckpt, ids=np.array([CARDS[0].id]), vectors=np.array(first, dtype=np.float16), model=np.array("fake@8"))
+    assert run(V.build_registry_vectors(batch=2, say=lambda m: None, embedder=Emb())) is True
+    with np.load(out) as z:
+        assert [str(i) for i in z["ids"]] == [c.id for c in CARDS] and str(z["model"]) == "fake@8"
+    assert sum(calls[1:]) == len(CARDS) - 1 and not ckpt.exists()      # the checkpointed card was not embedded again
