@@ -23,6 +23,7 @@ import { groupMessages, initials } from "@/lib/chat/ui";
 import { getAccessToken } from "@/lib/session";
 import NotificationBell from "@/components/chat/NotificationBell";
 import PersonAvatar from "@/components/chat/PersonAvatar";
+import ProfileWidget from "@/components/chat/ProfileWidget";
 import { fallbackName } from "@/lib/chat/events";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
@@ -729,6 +730,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <p className="dg-note">
           Agents on the relay stay on your account and keep working with this page closed. Agents in this tab use the model you chose under <Link href="/account/models" style={{ textDecoration: "underline" }}>Models</Link>{backing?.text.startsWith("keळ") ? " (public material only)" : " with your own key"}.
         </p>
+        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} />
       </aside>
 
       <section className="dg-main" aria-label={`Room ${room}`}>

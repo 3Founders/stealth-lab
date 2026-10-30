@@ -90,6 +90,9 @@ export function photoSync(deps: PhotoSyncDeps) {
     async pull(subject: string): Promise<boolean> {
       const res = await call("GET");
       if (res === null) return false;
+      // Only the server's own answer ("no photo", as JSON) means there is none. A 404 from anything else (an old server without this
+      // route, a proxy's error page) says nothing about the photo, so it must never delete this browser's copy.
+      if (res.status === 404 && !(res.headers.get("content-type") ?? "").includes("application/json")) return false;
       if (res.status === 404) {
         if (!deps.store.read(subject)) return false;
         if (deps.flag.get(subject)) { deps.store.write(subject, null); deps.flag.set(subject, false); return true; }

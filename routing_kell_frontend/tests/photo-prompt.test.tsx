@@ -44,9 +44,19 @@ describe("profile photo question", () => {
   it("'Not now' is remembered, so it is asked only once", async () => {
     await render();
     await act(async () => { ([...host!.querySelectorAll("button")].find((b) => b.textContent === "Not now") as HTMLButtonElement).click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 320)); });   // it animates out first
     expect(shown()).toBe(false);
     expect(window.localStorage.getItem("kel.profile.photo.asked.u1")).toBe("1");
     act(() => root?.unmount()); host?.remove();
+    await render(); expect(shown()).toBe(false);
+  });
+
+  it("is marked as asked the moment it is shown, so no later path (a photo added elsewhere, a reload, losing the photo) asks again", async () => {
+    await render();
+    expect(shown()).toBe(true);
+    expect(window.localStorage.getItem("kel.profile.photo.asked.u1")).toBe("1");
+    act(() => root?.unmount()); host?.remove();
+    window.localStorage.removeItem("kel.profile.photo.u1");   // e.g. the photo vanished from this browser afterwards
     await render(); expect(shown()).toBe(false);
   });
 });

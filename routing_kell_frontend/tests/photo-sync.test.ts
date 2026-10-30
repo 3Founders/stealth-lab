@@ -13,7 +13,7 @@ function rig(server: { photo: string | null }, opts: { offline?: boolean; synced
     calls.push(String(init.method));
     if (opts.offline) throw new Error("down");
     if (init.method === "GET") {
-      if (server.photo === null) return new Response(null, { status: 404 });
+      if (server.photo === null) return new Response(JSON.stringify({ error: "no photo" }), { status: 404, headers: { "content-type": "application/json" } });
       const img = dataUrlToBytes(server.photo)!;
       return new Response(img.bytes.buffer as ArrayBuffer, { status: 200, headers: { "content-type": img.type } });
     }
@@ -74,5 +74,17 @@ describe("photo sync", () => {
   it("refuses to upload something that is not a jpeg, png or webp data url", () => {
     expect(dataUrlToBytes("data:image/svg+xml;base64,AAAA")).toBeNull();
     expect(dataUrlToBytes("https://x.test/a.png")).toBeNull();
+  });
+
+  it("a 404 that is not the server's own 'no photo' (an old server, a proxy page) never deletes the photo here", async () => {
+    const r = rig({ photo: null }, { local: URL_A, synced: true });
+    const plain = photoSync({
+      token: async () => "tok", origin: "https://mcp.example",
+      fetchImpl: (async () => new Response("Not Found", { status: 404, headers: { "content-type": "text/plain" } })) as unknown as typeof fetch,
+      store: { read: (s) => r.mem.get(s) ?? null, write: (s, u) => void r.mem.set(s, u) },
+      flag: { get: () => true, set: () => {} },
+    });
+    expect(await plain.pull("u1")).toBe(false);
+    expect(r.mem.get("u1")).toBe(URL_A);
   });
 });

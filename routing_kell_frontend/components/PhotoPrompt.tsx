@@ -8,6 +8,7 @@ import { getSession, onSessionChange } from "@/lib/session";
 // Pages where a question would be in the way: signing in, approving access, the older onboarding flow.
 const QUIET = ["/sign-in", "/oauth", "/onboarding"];
 const askedKey = (subject: string) => `kel.profile.photo.asked.${subject}`;
+const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /**
  * After sign-in, once per account: "Add a profile photo?". It is skippable, and "Not now" is remembered, so nobody is asked twice.
@@ -37,7 +38,11 @@ export default function PhotoPrompt() {
     (async () => {
       try { if (window.localStorage.getItem(askedKey(subject))) return; } catch { return; }
       await syncDevicePhoto(subject);
-      if (live && !readDevicePhoto(subject)) setOpen(true);
+      if (!live) return;
+      // Asked once, ever: the question is marked as asked the moment it is shown, whatever happens next (a photo added, "Not now",
+      // the dialog dismissed, the page left). A person who already has a photo is marked too, so a later hiccup cannot bring it back.
+      try { window.localStorage.setItem(askedKey(subject), "1"); } catch { /* storage blocked: it may ask again, harmless */ }
+      if (!readDevicePhoto(subject)) setOpen(true);
     })();
     return () => { live = false; };
   }, [subject, path]);
@@ -49,9 +54,12 @@ export default function PhotoPrompt() {
     if (!open && d.open) d.close();
   }, [open]);
 
+  // Closing takes a moment so it can animate out (the iOS sheet motion in globals.css), then the dialog is really closed.
   function done() {
-    if (subject) { try { window.localStorage.setItem(askedKey(subject), "1"); } catch { /* asked again next time, harmless */ } }
-    setOpen(false);
+    const d = dialog.current;
+    if (!d || !d.open) { setOpen(false); return; }
+    d.setAttribute("data-closing", "");
+    window.setTimeout(() => { d.removeAttribute("data-closing"); setOpen(false); }, reducedMotion() ? 0 : 260);
   }
 
   async function pick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -69,7 +77,7 @@ export default function PhotoPrompt() {
   }
 
   return (
-    <dialog ref={dialog} className="photo-ask" aria-labelledby="photo-ask-title" onClose={() => setOpen(false)} onCancel={() => done()}>
+    <dialog ref={dialog} className="photo-ask" aria-labelledby="photo-ask-title" onClose={() => setOpen(false)} onCancel={(e) => { e.preventDefault(); done(); }}>
       <h2 className="h3" id="photo-ask-title">Add a profile photo?</h2>
       <p className="small">People in your rooms see it next to your messages. It&rsquo;s optional, and you can change it later under Account, Profile.</p>
       <input ref={file} type="file" accept={AVATAR_TYPES.join(",")} onChange={pick} className="visually-hidden" aria-label="Choose a profile photo" />

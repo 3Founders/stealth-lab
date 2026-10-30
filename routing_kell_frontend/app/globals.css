@@ -653,6 +653,21 @@ main, footer { position: relative; z-index: 1; }
 .models-wrap .models-select select { width: auto; min-width: 190px; }
 
 /* The one-time "Add a profile photo?" question after sign-in (components/PhotoPrompt.tsx). */
-.photo-ask { border: 1px solid var(--rule-strong); border-radius: 12px; padding: 22px; max-width: min(92vw, 440px); width: 100%; background: var(--paper); color: var(--ink); box-shadow: 0 20px 60px rgba(0,0,0,.25); display: grid; gap: 12px; }
-.photo-ask[open] { display: grid; }
-.photo-ask::backdrop { background: rgba(0,0,0,.4); }
+.photo-ask { border: 1px solid var(--rule-strong); border-radius: 16px; padding: 22px; max-width: min(92vw, 440px); width: 100%; background: var(--paper); color: var(--ink); box-shadow: 0 24px 64px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.12); display: none; gap: 12px; font-family: inherit; }
+.photo-ask[open] { display: grid; animation: photo-in .5s cubic-bezier(.32, .72, 0, 1) both; }
+.photo-ask[open]::backdrop { background: rgba(0,0,0,.4); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: photo-fade .35s ease-out both; }
+.photo-ask[data-closing] { animation: photo-out .26s cubic-bezier(.4, 0, 1, 1) both; }
+.photo-ask[data-closing]::backdrop { animation: photo-fade-out .26s ease-in both; }
+/* The iOS sheet curve (cubic-bezier .32,.72,0,1): quick start, long soft landing. On a phone it rises from the bottom edge as a sheet. */
+@keyframes photo-in { from { opacity: 0; transform: translateY(14px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes photo-out { to { opacity: 0; transform: translateY(8px) scale(.97); } }
+@keyframes photo-fade { from { opacity: 0; } }
+@keyframes photo-fade-out { to { opacity: 0; } }
+@media (max-width: 640px) {
+  .photo-ask { margin: auto 0 0; max-width: none; border-radius: 20px 20px 0 0; border-bottom: 0; padding: 22px 20px calc(22px + env(safe-area-inset-bottom)); }
+  .photo-ask[open] { animation-name: photo-sheet-in; animation-duration: .55s; }
+  .photo-ask[data-closing] { animation-name: photo-sheet-out; }
+  @keyframes photo-sheet-in { from { transform: translateY(100%); } to { transform: none; } }
+  @keyframes photo-sheet-out { to { transform: translateY(100%); } }
+}
+@media (prefers-reduced-motion: reduce) { .photo-ask[open], .photo-ask[data-closing], .photo-ask::backdrop { animation: none !important; } }
