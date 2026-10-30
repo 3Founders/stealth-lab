@@ -365,9 +365,35 @@ sys.exit(subprocess.call([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:
 // unchanged code (BASE_FAILS: the tests that failed there; BASE_NONE: none failed, or that run said nothing usable)
 // and pass when every failing test also failed there. Anything else -- a new failure, an error before the tests ran
 // (exit 2+), no failing test names in the output -- keeps the check's own exit code.
+// A change to test files only (not conftest.py, nothing deleted) cannot break any other test: the check runs just those
+// files when the command is a bare pytest (only options, no paths). Writing two unit tests ran jsonargparse's whole suite
+// for 3.7 minutes per answer (kell-try, 2026-10-30). STEALTHLAB_CHECK_SCOPE=off: always the whole command.
 const RUN_BASELINE_CHECK = `import os, re, subprocess, sys, time
 d = os.path.dirname(os.path.abspath(__file__))
 cmd = open(os.path.join(d, "CHECK"), encoding="utf-8").read()
+
+def scoped(cmd):
+    if os.environ.get("STEALTHLAB_CHECK_SCOPE", "on").lower() == "off":
+        return cmd
+    m = re.match(r"\\s*(?:python\\S*\\s+-m\\s+pytest|pytest)((?:\\s+-\\S+)*)\\s*$", cmd)
+    if not m:
+        return cmd
+    st = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], stdout=subprocess.PIPE, text=True, errors="replace")
+    files = []
+    for line in st.stdout.splitlines():
+        code, name = line[:2], line[3:].split(" -> ")[-1].strip().strip('"').replace(os.sep, "/")
+        if name.startswith(".kell/"):
+            continue
+        if "D" in code:
+            return cmd
+        files.append(name)
+    test = re.compile(r"(^|/)(tests?|testing|[^/]*_tests)/[^/]*\\.py$|(^|/)test_[^/]*\\.py$|_test\\.py$")
+    if not files or any(not test.search(f) or f.endswith("conftest.py") for f in files):
+        return cmd
+    print("[stealthlab] only test files changed: the check runs " + ", ".join(files))
+    return cmd.rstrip() + " " + " ".join('"%s"' % f for f in files)
+
+cmd = scoped(cmd)
 p = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
 sys.stdout.write(p.stdout[-20000:])
 if p.returncode != 1:

@@ -578,6 +578,8 @@ async function runPromptHookCore(args) {
 // prompt (an answer, a dispatch) gets none.
 async function withToolNote(out, tooling, log) {
   if (!tooling.pending) return;
+  // a blocked prompt (an answer, a dispatch) shows no note: it does not wait for the tool question either
+  if (out.some((s) => { try { return JSON.parse(s)?.decision === "block"; } catch { return false; } })) return;
   const reply = await tooling.pending;
   const note = reply ? formatToolNote(reply, tooling.goal) : "";
   log?.(`stealthlab hook: tools goal=${tooling.goal} ${reply ? `${reply.tools.length} found` : "no reply"}${note ? "" : " (no note)"}`);
@@ -660,7 +662,9 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
   // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
   // the session's model would run (lib/answer.mjs); a reply not called good is never shown
   // A question that needs an outside tool is the session's: the answering agent reads the repository and has no tools.
-  if (dispatchInstalled(env) && override.kind !== "cheap" && !tooling.pending &&
+  // Not for code_search: the judge tags questions about this repository's own code with it too ("how does jsonargparse
+  // decide ...", kell-try 2026-10-30), and the answering agent is the one that reads this repository.
+  if (dispatchInstalled(env) && override.kind !== "cheap" && (!tooling.pending || tooling.goal === "code_search") &&
       (verdict?.work === "answer" || verdict?.work === "conversation")) {
     try {
       const { answerTurn } = await import("./answer.mjs");

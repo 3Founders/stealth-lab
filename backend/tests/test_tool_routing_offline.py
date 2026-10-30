@@ -251,3 +251,14 @@ def test_the_database_store_keeps_query_syntax_out_and_rows_round_trip():
     assert back.text == card.text and back.extra == {"stars": 5, "verified": True} and back.goals == card.goals
     assert store.card_hash(card) == store.card_hash(back) or back.extra != card.extra
     assert store.card_hash(card) != store.card_hash(CARDS[1]) and store.text_hash(card) == store.text_hash(back)
+
+
+def test_install_commands_come_from_the_registry_and_name_generic_servers_after_their_publisher():
+    from app.tool_routing.catalog import install_command
+
+    assert install_command({"name": "com.stripe/mcp", "remote_urls": [{"type": "streamable-http", "url": "https://mcp.stripe.com"}]}) \
+        == "claude mcp add --transport http stripe https://mcp.stripe.com"
+    assert install_command({"name": "io.github.microsoft/playwright-mcp", "packages": [{"registry": "npm", "id": "@playwright/mcp"}]}) \
+        == "claude mcp add playwright-mcp -- npx -y @playwright/mcp"
+    assert install_command({"name": "a/b", "remote_urls": [{"url": "https://h/{TENANT}/mcp"}]}) == ""     # a template is not a URL
+    assert install_command({"name": "a/b", "packages": [{"registry": "npm", "id": "x; rm -rf /"}]}) == ""  # not a package name

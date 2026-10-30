@@ -22,7 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { changesSource, reviewPatch } from "./review.mjs";
+import { changesSource, reviewPatch, reviewPatchInRepo } from "./review.mjs";
 import { depsEnv } from "./exec/deps.mjs";
 
 export const SIGNALS = ["E", "T", "T*", "S", "F", "X", "A", "C", "R", "Rno", "Rs", "Rs_no"];
@@ -101,7 +101,20 @@ export async function answerEvidence({ rule, result, spec, specRunner, python = 
   const ask = (model, yes, no) => review({ prompt, diff: patch, worktree: result?.diff?.worktree || null, env, log, model, fetchImpl, signal })
     .then((v) => { ev[yes] = v?.verdict === "fixes"; ev[no] = v?.verdict === "does_not_fix"; ev[`${yes}_why`] = v?.why || null; ev[`${yes}_model`] = v?.model || null; ev.review_cost = (ev.review_cost || 0) + (v?.cost_usd || 0); });
   if (ruleUses(rule, "R", "Rno") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_MODEL || "gemma-4-31b-it", "R", "Rno"));
-  if (ruleUses(rule, "Rs", "Rs_no") && patch) jobs.push(ask(env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5", "Rs", "Rs_no"));
+  if (ruleUses(rule, "Rs", "Rs_no") && patch) {
+    const strong = env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5";
+    jobs.push(ask(strong, "Rs", "Rs_no").then(async () => {
+      // unsure from the diff alone: asked again in the answer's worktree, where the reviewer can open the code the diff
+      // calls or tests (lib/review.mjs reviewPatchInRepo). STEALTHLAB_REVIEW_IN_REPO=off: the diff alone decides.
+      const wt = result?.diff?.worktree;
+      if (ev.Rs || ev.Rs_no || !wt || review !== reviewPatch || (env.STEALTHLAB_REVIEW_IN_REPO || "on").toLowerCase() === "off") return;
+      const v = await reviewPatchInRepo({ root: wt, prompt, diff: patch, env, log, model: strong, signal });
+      if (!v) return;
+      ev.Rs = v.verdict === "fixes"; ev.Rs_no = v.verdict === "does_not_fix";
+      ev.Rs_why = v.why || ev.Rs_why; ev.Rs_model = v.model || ev.Rs_model; ev.Rs_in_repo = true;
+      ev.review_cost = (ev.review_cost || 0) + (v.cost_usd || 0);
+    }));
+  }
   await Promise.all(jobs);
   return { ...ev, patch };
 }

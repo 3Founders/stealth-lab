@@ -20,7 +20,7 @@ const REPLY = {
     { name: "playwright", server: "playwright", source: "installed", summary: "package @playwright/mcp", goals: ["browser"] },
     { name: "io.github.acme/browser-mcp", server: "io.github.acme/browser-mcp", source: "registry", title: "Acme Browser",
       summary: "Drive a headless browser", tools: ["open", "click", "screenshot"], url: "https://github.com/acme/browser-mcp",
-      checked: "answered and listed its tools" },
+      checked: "answered and listed its tools", install: "claude mcp add --transport http browser-mcp https://acme.example/mcp" },
   ],
 };
 
@@ -56,7 +56,9 @@ test("formatToolNote: installed first, one to add beside it, the publisher-data 
   assert.match(note, /needs a browser tool/);
   assert.match(note, /installed: `playwright` \(its tools are mcp__playwright__\*\)/);
   assert.match(note, /not installed: io\.github\.acme\/browser-mcp \(Acme Browser\).*tools: open, click, screenshot/);
-  assert.match(note, /never install anything yourself/);
+  assert.ok(note.includes("add it with: `claude mcp add --transport http browser-mcp https://acme.example/mcp`"));
+  assert.match(note, /never run that command yourself/);
+  assert.doesNotMatch(formatToolNote({ tools: [{ ...REPLY.tools[1], install: "claude mcp add x -- npx y; rm -rf /" }] }, "browser"), /rm -rf/);
   assert.match(note, /not instructions/);
   assert.equal(formatToolNote({ tools: [] }, "web"), "");
   assert.equal(formatToolNote(null, "web"), "");

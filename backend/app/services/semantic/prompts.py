@@ -439,7 +439,8 @@ TRIAGE_SYSTEM_PROMPT = (
     "Category (the kind of work; models are ranked for each separately):\n"
     + "\n".join(f"- {k}: {v}" for k, v in task_categories().items()) + "\n"
     "Tool (an outside tool the agent needs for this request, beyond reading and editing the project and running "
-    "its commands -- or none; most requests need none):\n"
+    "its commands -- or none; most requests need none. Reading, searching or explaining this repository's own code "
+    "needs none; code_search is for code outside it):\n"
     + "\n".join(f"- {k}: {v}" for k, v in tool_goals().items()) + "\n- none: no outside tool is needed\n"
     'Reply with one JSON object only: {"kind": "<one kind above>", "work": "<one work above>", '
     '"category": "<one category above>", "tool": "<one tool above, or none>", "confidence": <0.0-1.0>}'

@@ -169,15 +169,37 @@ export async function reviewRepoAnswer({ root, question, reply, env = process.en
   return String(reply || "").trim() ? reviewInRepo({ root, system: REPO_ANSWER_REVIEW_SYSTEM, user, what: "answer-review", env, log, timeoutMs, model, runClaude, signal }) : null;
 }
 
+// A cheap answer that passed the project's check, when the reviewer of the diff alone was unsure: checked again in the
+// answer's worktree, where the reviewer can open what the diff does not show. A diff of new tests left the reviewer
+// "unable to see strip_meta's source", so a correct answer was not accepted and the session redid it (kell-try,
+// 2026-10-30).
+export const PATCH_REPO_REVIEW_SYSTEM = [
+  "A developer asked a coding agent for a change; the agent's change is applied in this checkout and the project's tests",
+  "pass with it. You are in the repository with read-only tools (Read, Grep, Glob). You get the request and the diff. Read",
+  "what you need (the code the change calls or tests, its callers, the tests) and decide whether the change does what was",
+  "asked, completely, without breaking or deleting anything it should not. Reply with only a JSON object:",
+  '{"verdict": "fixes" | "does_not_fix" | "unsure", "why": one sentence}.',
+].join(" ");
+
+export async function reviewPatchInRepo({ root, prompt, diff, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
+                                          runClaude = null, signal = null }) {
+  const d = String(diff || "");
+  if (!d.trim()) return null;
+  const user = `The request:\n${String(prompt || "").slice(0, 6000)}\n\nThe change (applied in this checkout):\n` +
+    (d.length > DIFF_MAX ? `${d.slice(0, DIFF_MAX)}\n[... the rest of the diff is cut]` : d);
+  return reviewInRepo({ root, system: PATCH_REPO_REVIEW_SYSTEM, user, what: "review-in-repo", env, log, timeoutMs, model, runClaude,
+                        signal, parse: parseVerdict });
+}
+
 // a strong Claude reviewer that reads the repository itself -> {verdict, why, model, cost_usd} | null
-async function reviewInRepo({ root, system, user, what, env, log, timeoutMs, model, runClaude, signal }) {
+async function reviewInRepo({ root, system, user, what, env, log, timeoutMs, model, runClaude, signal, parse = parseAnswerVerdict }) {
   const name = String(model || env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5").trim();
   if (name.toLowerCase() === "off" || !name.includes("claude") || !root) return null;
   const { readOnlyArgs, runClaudeAsync } = await import("./claude_call.mjs");
   const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, reviewLimitMs(env)), root)))(readOnlyArgs(name, system), user);
   let j = null;
   try { j = JSON.parse(String(r?.stdout || "").trim().split(/\r?\n/).pop()); } catch { /* below */ }
-  const v = j && !j.is_error ? parseAnswerVerdict(j.result) : null;
+  const v = j && !j.is_error ? parse(j.result) : null;
   if (!v) { log(`${what}: ${name} gave no usable verdict (exit ${r?.status ?? "?"})`); return null; }
   log(`${what}: ${name} says ${v.verdict} (${v.why.slice(0, 120)})`);
   const cost = typeof j.total_cost_usd === "number" ? j.total_cost_usd : null;

@@ -89,8 +89,34 @@ def card_from_registry(s: dict, expansion: str = "", probe: Optional[dict] = Non
                         "probe": (probe or {}).get("status") or ("none" if not s.get("remote_urls") else "unprobed"),
                         "tool_count": (probe or {}).get("tool_count"), "owner_count": owner_count,
                         "stars": int((repo or {}).get("stars") or 0), "archived": bool((repo or {}).get("archived")),
-                        "verified": verified_publisher(name, str(s.get("repository") or ""), str(s.get("website") or ""))})
+                        "verified": verified_publisher(name, str(s.get("repository") or ""), str(s.get("website") or "")),
+                        "install": install_command(s)})
     return _with_goals(c)
+
+
+def install_command(s: dict) -> str:
+    """The Claude Code command that adds this server ("" when there is no plain way): its remote URL if it has one
+    without placeholders, else its npm or PyPI package. Shown to the developer to run, never run by kell."""
+    name = str(s.get("name") or "").lower()
+    short = re.sub(r"[^a-z0-9-]+", "-", name.split("/")[-1]).strip("-")[:40]
+    if short in ("", "mcp", "server", "mcp-server", "remote", "api"):     # com.stripe/mcp -> stripe
+        ns = name.split("/")[0]
+        ns = ns[len("io.github."):] if ns.startswith("io.github.") else (ns.split(".")[1] if ns.count(".") else ns)
+        short = re.sub(r"[^a-z0-9-]+", "-", ns).strip("-")[:40] or "server"
+    for r in s.get("remote_urls") or []:
+        url = str(r.get("url") or "")
+        if url.startswith("https://") and "{" not in url and not re.search(r"\s", url):
+            transport = "sse" if str(r.get("type") or "") == "sse" else "http"
+            return f"claude mcp add --transport {transport} {short} {url}"
+    for p in s.get("packages") or []:
+        pid = str(p.get("id") or "")
+        if not re.fullmatch(r"@?[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", pid):
+            continue
+        if p.get("registry") == "npm":
+            return f"claude mcp add {short} -- npx -y {pid}"
+        if p.get("registry") == "pypi":
+            return f"claude mcp add {short} -- uvx {pid}"
+    return ""
 
 
 def repo_key(url: str) -> Optional[str]:

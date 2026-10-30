@@ -64,3 +64,20 @@ test("reviewPatch with a Claude model: one lean claude -p call, the verdict from
   const bad = await reviewPatch({ prompt: "x", diff: "d", env: {}, model: "claude-sonnet-5-5", runClaude: async () => ({ status: 1, stdout: "" }) });
   assert.equal(bad, null);
 });
+
+test("reviewPatchInRepo: the strong reviewer reads the checkout with read-only tools and returns fixes/does_not_fix", async () => {
+  const { reviewPatchInRepo } = await import("../lib/review.mjs");
+  const calls = [];
+  const runClaude = async (args, input) => {
+    calls.push({ args, input });
+    return { status: 0, stdout: JSON.stringify({ result: '{"verdict": "fixes", "why": "the tests cover both cases"}', total_cost_usd: 0.02 }) };
+  };
+  const v = await reviewPatchInRepo({ root: os.tmpdir(), prompt: "add tests for strip_meta", diff: "diff --git a/t.py b/t.py\n+def test_x(): pass\n",
+                                       env: { STEALTHLAB_SPEND_LOG: "off" }, runClaude });
+  assert.equal(v.verdict, "fixes");
+  assert.equal(v.cost_usd, 0.02);
+  assert.ok(calls[0].args.includes("--system-prompt"));
+  assert.match(calls[0].args.join(" "), /Read/);
+  assert.match(calls[0].input, /applied in this checkout/);
+  assert.equal(await reviewPatchInRepo({ root: os.tmpdir(), prompt: "x", diff: "  ", runClaude }), null);
+});

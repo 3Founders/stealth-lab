@@ -467,8 +467,10 @@ export class ExecRuntime {
     if (a.spawned && a.state === "cancelled") {
       // stopped by the caller (another model passed first, or the time limit): not a verdict on this model
       a.evidence = { reported: false, queued: false, skipped: "cancelled: not a model outcome" };
-    } else if (a.spawned && a.state !== "verified" && PROVIDER_LIMIT.test(`${a.summary || ""}
+    } else if (a.spawned && a.state !== "verified" && a.state !== "timed_out" && PROVIDER_LIMIT.test(`${a.summary || ""}
 ${a.error || ""}`)) {
+      // not a try that ran out of time: a 429 it recovered from stays in its log, and a 10-minute gpt-oss run that
+      // timed out was filed as "provider limit" and kept out of the model's record (kell-try, 2026-10-30)
       // the provider refused (rate limit, out of tokens for the day): the model never got to try
       a.usageLimited = true;
       a.evidence = { reported: false, queued: false, skipped: "provider limit: not a model outcome" };
