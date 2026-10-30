@@ -232,3 +232,22 @@ def test_the_server_builds_missing_vectors_and_resumes_a_checkpoint(tmp_path, mo
     with np.load(out) as z:
         assert [str(i) for i in z["ids"]] == [c.id for c in CARDS] and str(z["model"]) == "fake@8"
     assert sum(calls[1:]) == len(CARDS) - 1 and not ckpt.exists()      # the checkpointed card was not embedded again
+
+
+def test_the_database_store_keeps_query_syntax_out_and_rows_round_trip():
+    import numpy as np
+
+    from app.tool_routing import store
+
+    assert store.tsquery("Check the page's <b>SQL</b> | DROP TABLE x; 'quoted' & !not") == "check drop not page quoted sql table"
+    v = np.arange(1, 1025, dtype=np.float32)
+    s = store.small(v)
+    assert s.shape == (256,) and abs(float(np.linalg.norm(s)) - 1.0) < 1e-5
+    card = CARDS[0]
+    row = {"id": card.id, "source": card.source, "name": card.name, "title": card.title, "description": card.description,
+           "server": card.server, "goals": list(card.goals), "how": card.how, "url": card.url, "expansion": card.expansion,
+           "tools": list(card.tools), "tools_text": card.tools_text, "extra": '{"stars": 5, "verified": true}'}
+    back = store.card_from_row(row)
+    assert back.text == card.text and back.extra == {"stars": 5, "verified": True} and back.goals == card.goals
+    assert store.card_hash(card) == store.card_hash(back) or back.extra != card.extra
+    assert store.card_hash(card) != store.card_hash(CARDS[1]) and store.text_hash(card) == store.text_hash(back)

@@ -80,6 +80,13 @@ outcomes the way the model ranking does.
     93% and 0.90; with the triage's goal, as the hook runs, 98% and 0.89 (the one miss: a stock price got general
     scrapers). ToolRet (520 queries, 44k tools): nDCG@10 BM25 22.1, dense 27.8, hybrid 30.7, + reranker 40.2 (the
     paper's best retriever: 33.8).
-  - Hosted: about 430 MB of memory for the router once loaded (cards 142, BM25 80, vectors 205); loading takes about
-    two minutes at startup (`_warm_tool_router`). Warm calls take 5-8 s.
+  - Storage: the catalog lives in the control database (db/160_tool_cards.sql: tool_cards, tool_card_vectors,
+    tool_terms), filled by the server itself from the snapshot in its image (app/tool_routing/store.py sync_catalog:
+    advisory lock, only changed cards written, only changed text re-embedded). A first load takes about 6 minutes
+    (vectors from a local file) or about 35 (embedded on DeepInfra); a restart with nothing changed writes nothing.
+    Per request: rare-word full-text search and an exact scan of 256-dimension vectors in a narrow table (0.3 s warm),
+    then the full-vector similarity of those ~570 candidates and the unchanged ranking. A whole /tools call takes 3-5 s,
+    most of it the embedding and reranker APIs. Measured and rejected: an HNSW index (3-18 s a query once its 400 MB no
+    longer fit the buffers) and an OR of all the request's words (22k matches, 4.6 s to rank). Without the tables (an
+    older database) the server falls back to loading the files.
   - Open: Brave, Exa and Tavily do not surface for web search (more general scrapers do); outcome logging (P3).

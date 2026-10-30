@@ -82,6 +82,7 @@ class BM25:
 
 
 _INDEXES: dict[int, BM25] = {}
+_ONLINE: dict[tuple[str, str], np.ndarray] = {}   # (model, card text) -> vector, for cards embedded per request
 
 
 def index_for(cards: Sequence[ToolCard]) -> BM25:
@@ -151,8 +152,12 @@ STOP = {"the", "and", "for", "with", "that", "this", "from", "into", "its", "wha
 
 async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = None, embedder: Any = None, k: int = 8,
                min_bm25: float = 0.0, reranker: Any = None,
-               vector_store: Optional[tuple[dict[str, int], np.ndarray, str]] = None) -> tuple[list[Hit], dict[str, Any]]:
-    """-> (the top k hits, how they were found). `goal`: the triage's tool goal; None picks the best-matching one."""
+               vector_store: Optional[tuple[dict[str, int], np.ndarray, str]] = None,
+               known_sims: Optional[dict[str, float]] = None,
+               query_vector: Optional[np.ndarray] = None) -> tuple[list[Hit], dict[str, Any]]:
+    """-> (the top k hits, how they were found). `goal`: the triage's tool goal; None picks the best-matching one.
+    `known_sims`: card id -> cosine to the query, already computed (the database's candidates, app/tool_routing/store.py);
+    `query_vector`: need_text()'s vector, already embedded."""
     info: dict[str, Any] = {"cards": len(cards), "lexical": True, "semantic": False}
     given_goal = goal if goal in TOOL_GOALS else None
     if not cards or not query.strip():
@@ -163,8 +168,7 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     # as "which server", or they rank by the request's topic: "search the web for how teams handle rate limiting" put
     # a rate-limiting server first, and "show the React 19 docs" scored Context7 0.08 (a cross-encoder asks whether a
     # text answers the question). Asked this way: Context7 0.66, the rate-limiting server 0.13 (2026-10-30)
-    need = (f"Which MCP server gives a coding agent the ability to {TOOL_GOALS[given_goal][0]}? The agent's task: {query}"
-            if given_goal else query)
+    need = need_text(query, given_goal)
     order = [i for i in np.argsort(-bm) if bm[i] > min_bm25]
     bm_rank = {int(i): r for r, i in enumerate(order)}
 
@@ -172,8 +176,8 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     qvec = None
     if embedder is not None:
         try:
-            qvec = await _query_vector(need, embedder)
-            vec_rank = await _vector_ranks(qvec, cards, embedder, store=vector_store, top=1000)
+            qvec = query_vector if query_vector is not None else await _query_vector(need, embedder)
+            vec_rank = await _vector_ranks(qvec, cards, embedder, store=vector_store, top=1000, known=known_sims)
             info["semantic"] = bool(vec_rank)
         except Exception as exc:  # noqa: BLE001 -- lexical alone, and said so
             info["degraded"] = f"embedding unavailable: {type(exc).__name__}"
@@ -223,6 +227,13 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     return hits[:k], info
 
 
+def need_text(query: str, goal: Optional[str]) -> str:
+    """What the meaning and the reranker read: with the triage's goal, asked as which server can do it."""
+    if goal in TOOL_GOALS:
+        return f"Which MCP server gives a coding agent the ability to {TOOL_GOALS[goal][0]}? The agent's task: {query}"
+    return query
+
+
 def _fuse(pool: list[Hit], qw: list[str]) -> list[Hit]:
     """The reranked pool in order. The reranker's scores saturate (a dozen docs servers all at ~0.99), so among the
     cards it calls relevant, its order and the order by use (stars, liveness, a verified publisher) are fused by RRF:
@@ -268,10 +279,11 @@ async def _goal_by_meaning(q: np.ndarray, embedder: Any, floor: float = 0.0) -> 
 
 
 async def _vector_ranks(q: np.ndarray, cards: Sequence[ToolCard], embedder: Any, top: int = 200,
-                        store: Optional[tuple[dict[str, int], np.ndarray, str]] = None) -> dict[int, int]:
-    """Card index -> rank by cosine to the query vector: cards in the vector store (the bundled registry vectors, or the
-    caller's) from it, the rest embedded now."""
-    rows, mat, model = store or registry_vectors()
+                        store: Optional[tuple[dict[str, int], np.ndarray, str]] = None,
+                        known: Optional[dict[str, float]] = None) -> dict[int, int]:
+    """Card index -> rank by cosine to the query vector: cards in `known` (similarities the database computed) from it,
+    then cards in the vector store (the bundled registry vectors, or the caller's), the rest embedded now."""
+    rows, mat, model = store or (({}, None, "") if known is not None else registry_vectors())
     same_space = mat is not None and model == _model_id(embedder) and mat.shape[1] == q.shape[0]
     sims = np.full(len(cards), -np.inf, dtype=np.float32)
     todo = []
@@ -279,15 +291,27 @@ async def _vector_ranks(q: np.ndarray, cards: Sequence[ToolCard], embedder: Any,
     have = idx >= 0
     if have.any():
         sims[have] = mat[idx[have]] @ q
+    for i, c in enumerate(cards):
+        if known and known.get(c.id) is not None:
+            sims[i], have[i] = known[c.id], True
     todo = [int(i) for i in np.nonzero(~have)[0]]
     # registry cards are embedded offline (scripts/build_tool_vectors.py); without those vectors only a small catalog is
     # embedded per call -- thousands would cost a minute and the embedding quota on every request
     if len(todo) > ONLINE_MAX:
         todo = [i for i in todo if cards[i].source in ("installed", "kell")][:ONLINE_MAX]
     if todo:
-        vecs = await embedder.embed([cards[i].text[:2000] for i in todo], input_type="document")
-        for i, v in zip(todo, vecs):
-            v = np.array(v, dtype=np.float32)
+        # the caller's own cards come back with every prompt: their vectors are remembered (by model and text), so only
+        # the first prompt pays for them (1-2 s a request, 2026-10-30)
+        mid = _model_id(embedder)
+        keys = [(mid, cards[i].text[:2000]) for i in todo]
+        missing = [k for k in dict.fromkeys(keys) if k not in _ONLINE]
+        if missing:
+            for k, v in zip(missing, await embedder.embed([k[1] for k in missing], input_type="document")):
+                if len(_ONLINE) >= 4096:
+                    _ONLINE.pop(next(iter(_ONLINE)))
+                _ONLINE[k] = np.array(v, dtype=np.float32)
+        for i, k in zip(todo, keys):
+            v = _ONLINE[k]
             sims[i] = float(v @ q / (np.linalg.norm(v) + 1e-9))
     order = [int(i) for i in np.argsort(-sims) if np.isfinite(sims[i])][:top]
     return {i: r for r, i in enumerate(order)}

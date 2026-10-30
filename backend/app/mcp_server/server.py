@@ -181,17 +181,35 @@ async def _warm_up() -> None:
 
         await asyncio.to_thread(shared_ssl_context)
         await asyncio.gather(asyncio.to_thread(_emb._vertex_credentials_sync), asyncio.to_thread(default_judge),
-                             asyncio.to_thread(_warm_tool_router), return_exceptions=True)
+                             return_exceptions=True)
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).info("warm-up skipped", exc_info=True)
-    # the registry's vectors are not shipped (89 MB): a server without them embeds the cards now, in the background
-    # (app/tool_routing/vectors.py); until then the router ranks by keywords and the reranker
+    await _warm_tool_catalog()
+
+
+async def _warm_tool_catalog() -> None:
+    """The tool router's catalog. With the tool_cards table (db/160_tool_cards.sql) the snapshot shipped in the image is
+    synced into it in the background (app/tool_routing/store.py) and requests read candidates from it; without one
+    (a database before 160) the process loads the cards itself and builds the vectors it lacks (app/tool_routing/vectors.py)."""
+    if os.environ.get("TOOL_ROUTING", "on").lower() == "off":
+        return
+    log = logging.getLogger(__name__)
+    pool = _LIFESPAN_STATE.get("pool")
     try:
+        if pool is not None:
+            async with pool.acquire() as conn:
+                has_table = await conn.fetchval("SELECT to_regclass('public.tool_cards') IS NOT NULL")
+            if has_table:
+                from app.tool_routing.store import sync_catalog
+
+                await sync_catalog(pool, say=log.info)
+                return
+        await asyncio.to_thread(_warm_tool_router)
         from app.tool_routing.vectors import build_if_missing
 
         await build_if_missing()
-    except Exception:  # noqa: BLE001
-        logging.getLogger(__name__).info("tool vectors skipped", exc_info=True)
+    except Exception:  # noqa: BLE001 -- the router falls back to what it has; a restart tries again
+        log.warning("tool catalog warm-up failed", exc_info=True)
 
 
 def _warm_tool_router() -> None:
@@ -2418,20 +2436,29 @@ async def _external_tools(need: str, goal: str, installed: list[dict[str, Any]] 
     if os.environ.get("TOOL_ROUTING", "on").lower() == "off":
         return None
     try:
+        from app.tool_routing import store as _store
         from app.tool_routing.catalog import installed_cards, registry_cards
-        from app.tool_routing.rerank import rerank
-        from app.tool_routing.retrieve import rank
-
-        cards = [*installed_cards(installed), *registry_cards()]
-        if not cards:
-            return None
-        # the router's own embedder (its vectors are its own; find_ways' stay in their space): none without its key
         from app.tool_routing.providers import ToolEmbedder
+        from app.tool_routing.rerank import rerank
+        from app.tool_routing.retrieve import _query_vector, need_text, rank
 
+        # the router's own embedder (its vectors are its own; find_ways' stay in their space): none without its key
         embedder = ToolEmbedder()
         embedder = embedder if embedder.available() else None
-        hits, info = await rank(condense(need.strip(), 2000), cards, goal=goal or None, embedder=embedder,
-                                k=max(1, min(int(k or 8), 20)), reranker=rerank)
+        query = condense(need.strip(), 2000)
+        pool = _LIFESPAN_STATE.get("pool")
+        known = qvec = None
+        if pool is not None and await _store.ready(pool):
+            # the catalog in the database (db/160_tool_cards.sql): its full-text and nearest-neighbour candidates
+            qvec = await _query_vector(need_text(query, goal or None), embedder) if embedder else None
+            found, known = await _store.candidates(pool, query, qvec)
+            cards = [*installed_cards(installed), *found]
+        else:
+            cards = [*installed_cards(installed), *registry_cards()]
+        if not cards:
+            return None
+        hits, info = await rank(query, cards, goal=goal or None, embedder=embedder, k=max(1, min(int(k or 8), 20)),
+                                reranker=rerank, known_sims=known, query_vector=qvec)
     except Exception:  # noqa: BLE001 -- the router never breaks discover_tools
         logging.getLogger(__name__).warning("tool routing failed", exc_info=True)
         return None
