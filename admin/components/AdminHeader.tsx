@@ -15,12 +15,15 @@ const platformLinks = [
   { href: "/review", label: "Review" },
   { href: "/moderation", label: "Moderation" },
   { href: "/credits", label: "Credits" },
+  { href: "/billing", label: "Billing" },
+  { href: "/security", label: "Security" },
 ];
 
 // Per-organisation governance, shown on a second row for the organisation picked in the selector.
 const orgLinks = [
   { href: "/", label: "Executive", need: "admin" },
   { href: "/start", label: "Get started", need: "admin" },
+  { href: "/team", label: "Team", need: "admin" },
   { href: "/policy", label: "Policy", need: "admin" },
   { href: "/usage", label: "Usage", need: "admin" },
   { href: "/performance", label: "Performance", need: "admin" },

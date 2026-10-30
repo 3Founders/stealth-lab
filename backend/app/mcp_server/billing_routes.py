@@ -153,7 +153,7 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return Response(status_code=200)                       # acknowledged, not credited; reconcile by hand
         try:
             await wallet.credit_payment(pool, org_id=order["organization_id"], payment_ref=pay["payment_id"],
-                                        amount_paise=pay["amount"], created_by="razorpay")
+                                        amount_paise=pay["amount"], created_by="razorpay", order_id=pay["order_id"])
         except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a payment
             log.exception("billing webhook: crediting payment %s failed", pay["payment_id"])
             return Response(status_code=500)

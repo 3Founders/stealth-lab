@@ -13,6 +13,7 @@ from app.api import claims, goals, me, procedures, projects, repositories, searc
 from app.api import runs
 from app.api import chat_completions
 from app.api import org_admin
+from app.api import admin_billing
 from app.api import publications, workspaces
 from app.api import contributors as contributors_api
 from app.api import profile as profile_api
@@ -149,6 +150,7 @@ app.include_router(tasks.router)
 app.include_router(me.router)
 app.include_router(org_admin.mine_router)
 app.include_router(org_admin.router)
+app.include_router(admin_billing.router)
 app.include_router(org_admin.join_router)
 app.include_router(search.router)
 

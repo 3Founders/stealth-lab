@@ -700,3 +700,21 @@ main, footer { position: relative; z-index: 1; }
 .profile-photo .cluster > button:active, .crop .cluster > button:active, .photo-ask .cluster > button:active { transform: scale(.98); }
 .profile-photo .cluster > button:disabled, .crop .cluster > button:disabled, .photo-ask .cluster > button:disabled { box-shadow: none; transform: none; opacity: .5; }
 @media (prefers-reduced-motion: reduce) { .profile-photo .cluster > button, .crop .cluster > button, .photo-ask .cluster > button { transition: none; transform: none !important; } }
+
+/* Boxes (connector address and install blocks, notes, results, sign-in, models, empty states): frosted glass over the page, with the
+   site's soft drop shadow. Where the browser cannot blur what is behind, they fall back to a nearly solid white. */
+.install, .models-note, .out, .signin, .cform-result, .demo-cost, .stealth-peek, .log, .film-box, .org-dialog {
+  background: rgba(255, 255, 255, .72);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(23, 23, 23, .16);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .1), 0 2px 6px rgba(0, 0, 0, .07);
+}
+.empty { background: rgba(255, 255, 255, .6); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1px solid rgba(23, 23, 23, .16); border-radius: 12px; box-shadow: 0 10px 26px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .06); }
+.doc-sec pre, .prose pre { border-radius: 10px; border: 1px solid rgba(23, 23, 23, .16); box-shadow: 0 8px 22px rgba(0, 0, 0, .08); }
+.install { transition: transform .3s var(--ease), box-shadow .3s var(--ease); }
+.install:hover { transform: translateY(-1px); box-shadow: 0 16px 38px rgba(0, 0, 0, .14), 0 2px 6px rgba(0, 0, 0, .08); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .install, .models-note, .out, .signin, .cform-result, .demo-cost, .stealth-peek, .log, .film-box, .org-dialog, .empty { background: rgba(255, 255, 255, .94); }
+}
+@media (prefers-reduced-motion: reduce) { .install, .install:hover { transition: none; transform: none; } }

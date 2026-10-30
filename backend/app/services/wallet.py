@@ -98,7 +98,7 @@ async def find_order(pool: Any, order_id: str) -> Optional[dict[str, Any]]:
 
 
 async def credit_payment(pool: Any, *, org_id: str, payment_ref: str, amount_paise: int, created_by: str,
-                         source: str = "razorpay", env: Optional[Mapping[str, str]] = None) -> bool:
+                         source: str = "razorpay", env: Optional[Mapping[str, str]] = None, order_id: Optional[str] = None) -> bool:
     """Add a verified payment to the wallet. True when credited now, False when this payment was already credited."""
     if amount_paise <= 0:
         raise WalletError("a payment must be a positive amount")
@@ -106,9 +106,18 @@ async def credit_payment(pool: Any, *, org_id: str, payment_ref: str, amount_pai
     usd = usd_for_paise(amount_paise, env)
     if usd <= 0:
         raise WalletError("that amount is too small to credit")
-    async with tenant_transaction(pool, _scope(org_id)) as conn:
-        got = await conn.fetchval(
-            "INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, inr_per_usd, "
-            "margin, created_by) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (payment_ref) DO NOTHING "
-            "RETURNING 1", str(org_id), payment_ref, source, amount_paise, usd, inr_per_usd, margin, created_by)
+    base = ("INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, inr_per_usd, margin, created_by{cols}) "
+            "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8{vals}) ON CONFLICT (payment_ref) DO NOTHING RETURNING 1")
+    args = (str(org_id), payment_ref, source, amount_paise, usd, inr_per_usd, margin, created_by)
+    try:
+        async with tenant_transaction(pool, _scope(org_id)) as conn:
+            got = await conn.fetchval(base.format(cols=", order_id", vals=", $9"), *args, order_id)
+    except Exception as exc:  # noqa: BLE001
+        # The order_id column comes with migration 161. If this code is running before that migration, still credit the payment:
+        # a customer's money must never wait on bookkeeping. (Reconciliation then shows the credit without an order.)
+        if "order_id" not in str(exc):
+            raise
+        log.warning("credit_payment: order_id column missing (apply migration 161); crediting without it")
+        async with tenant_transaction(pool, _scope(org_id)) as conn:
+            got = await conn.fetchval(base.format(cols="", vals=""), *args)
     return bool(got)

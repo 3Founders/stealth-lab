@@ -513,3 +513,15 @@ main, footer { position: relative; z-index: 1; }
   a { text-decoration: none; }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+
+/* Shared bits used by the billing, team and security pages. */
+.cluster { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+.table-wrap { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 15px; background: #fff; }
+.table th, .table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+.table th { font-weight: 400; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
+.table tfoot td { border-top: 1px solid var(--rule-strong); }
+.profile-card { display: grid; gap: 14px; padding: 20px; border: 1px solid var(--rule-strong); border-radius: 8px; background: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .06); }
+.profile-card.cform { grid-column: auto; gap: 18px; }
+@media print { .invoice-sheet { box-shadow: none; border: 0; max-width: none; } .invoice-sheet ~ *, .nav-wrap, .gridlines, .footer { display: none !important; } body * { visibility: hidden; } .invoice-sheet, .invoice-sheet * { visibility: visible; } .invoice-sheet { position: absolute; left: 0; top: 0; width: 100%; } }

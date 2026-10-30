@@ -7,6 +7,7 @@ import AdminHeader from "@/components/AdminHeader";
 import DemoBanner from "@/components/DemoBanner";
 import SmoothScroll from "@/components/SmoothScroll";
 import { OrgProvider } from "@/components/OrgContext";
+import MfaGate from "@/components/MfaGate";
 
 export const metadata: Metadata = {
   title: { default: "keळ admin", template: "%s · keळ admin" },
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </div>
         <OrgProvider>
           <DemoBanner />
+          <MfaGate />
           <AdminHeader />
           <main id="main">{children}</main>
         </OrgProvider>
