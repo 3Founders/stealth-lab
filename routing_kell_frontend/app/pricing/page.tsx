@@ -20,7 +20,7 @@ export default function PricingPage() {
     <>
       <section className="page-hero frame grid">
         <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>PRICING</b></div>
-        <h1 className="display"><AnimatedHeading>Pay as you go</AnimatedHeading></h1>
+        <h1 className="display"><AnimatedHeading>Plans and pricing</AnimatedHeading></h1>
       </section>
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <div className="profile-wrap" style={{ gridColumn: "1 / span 12", display: "grid", gap: 28 }}>
