@@ -14,16 +14,16 @@ opt-in: the local executor layer, `install --with-exec`, described below.)
 
 | Platform | Command |
 |---|---|
-| macOS / Linux | `curl -fsSL https://<site>/install.sh \| bash` |
-| Windows (PowerShell) | `irm https://<site>/install.ps1 \| iex` |
+| macOS / Linux | `curl -fsSL https://www.kell.org.in/install.sh \| bash` |
+| Windows (PowerShell) | `irm https://www.kell.org.in/install.ps1 \| iex` |
 | Any OS with Node 18.17+ | `npx -y kell-mcp install` |
 
 It configures every supported agent it detects. To limit it to some agents:
 
 ```bash
 npx -y kell-mcp install --client claude-code --client cursor
-curl -fsSL https://<site>/install.sh | bash -s -- --client claude-code
-$env:STEALTHLAB_CLIENTS = "claude-code,cursor"; irm https://<site>/install.ps1 | iex
+curl -fsSL https://www.kell.org.in/install.sh | bash -s -- --client claude-code
+$env:STEALTHLAB_CLIENTS = "claude-code,cursor"; irm https://www.kell.org.in/install.ps1 | iex
 ```
 
 `STEALTHLAB_MCP_PACKAGE` pins what the scripts install (for example
