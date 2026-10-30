@@ -1,0 +1,4 @@
+# the tool router's data: the scripts write the plain files here; what the server ships is committed gzipped
+*
+!.gitignore
+!*.json.gz

@@ -40,7 +40,9 @@ def test_listed_tools_stay_within_their_token_budget(monkeypatch):
     tools = run(srv.server.list_tools())
     sizes = {t.name: len(json.dumps(t.model_dump(exclude_none=True))) // 4 for t in tools}
     assert sizes["find_ways"] <= 900, sizes
-    assert sum(sizes.values()) <= 1500, sizes
+    # 2,000: raised from 1,500 (2026-10-30) when discover_tools began routing external tools -- its fuller
+    # description (goals, the installed list) is worth ~100 tokens a turn more than a terse one
+    assert sum(sizes.values()) <= 2000, sizes
 
 
 def test_find_ways_full_guide_is_one_call_away():

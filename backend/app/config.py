@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     # Comma-separated additional Voyage keys, rotated in order on a per-key
     # failure -- same pattern as gemini_api_keys below (embeddings.py::_embed_voyage).
     voyage_api_keys: Optional[str] = None
+    # DeepInfra: the tool router's own embedder and reranker (app/tool_routing/providers.py)
+    deepinfra_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
     # Comma-separated list of Gemini API keys, rotated in order when a key
     # hits its quota (429). Two free-tier keys double the effective TPM
