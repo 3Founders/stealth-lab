@@ -68,3 +68,9 @@ was slow, which was most of the night.
    model after a few minutes instead of only after every cheap try has ended. Related: cheap answers to repository
    questions are about 75% cheaper but about twice as slow (glm 215 s vs about 100 s); a faster provider for the step
    agents (Cerebras, Groq) is the lever there.
+8. **The web checker (to revisit when better open models are connected, 2026-10-31).** claude.ai's `delegate` tool has
+   gemma-4-31b-it check glm-5.3-flash's answer (`WEB_CHECK_MODEL`): a different family, cheap and fast, but smaller
+   than the model it checks, so a subtle mistake in a long technical answer can pass. When a stronger open model is
+   connected to the hosted call_model (a Qwen3-235B or DeepSeek class model, still about a cent a check), switch
+   `WEB_CHECK_MODEL` to it. Opus in the chat reads the answer too, so this is a second opinion, and the verdict it gives
+   is what the routing records.

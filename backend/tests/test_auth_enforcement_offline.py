@@ -469,7 +469,7 @@ def test_every_registered_mcp_tool_is_classified(mcp):
     # other decorators (e.g. @_activity.traced) may sit between @server.tool() and the def
     names = set(re.findall(r"@server\.tool\([^)]*\)\s*\n(?:@[\w.]+(?:\([^)]*\))?\s*\n)*async def (\w+)\(", src))
     assert names == {"find_ways", "submit_way", "submit", "report_discovery", "recommend_models", "report_model_run",
-                     "report_result", "report_audit", "report_check_evidence", "call_model", "delegate", "discover_tools", "use_tool",
+                     "report_result", "report_audit", "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool",
                      "delegate_inbox", "delegate_result"}
     unclassified = sorted(n for n in names if n not in mcp._TOOL_SCOPES)
     assert not unclassified, f"classify these MCP tools in _TOOL_SCOPES (default is deny-to-readers): {unclassified}"

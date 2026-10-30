@@ -349,3 +349,53 @@ def test_find_ways_tools_put_what_a_chat_can_add_before_package_only_servers(mon
     out = _json.loads(run(srv._with_routes(_json.dumps({"outcome": "not_needed"}),
                                            Triage(False, kind="knowledge_question", tool="packages"), "PyYAML CVEs", None)))
     assert [t["name"] for t in out["tools"]["tools"]] == ["mine", "remote-1", "remote-2", "remote-3"]
+
+
+def test_tool_refs_name_a_server_by_package_or_host_never_a_path_or_a_nickname():
+    from app.tool_routing.store import card_refs, norm_ref
+
+    assert norm_ref("@playwright/mcp@latest") == "@playwright/mcp"
+    assert norm_ref("https://mcp.context7.com/mcp?key=SECRET") == "mcp.context7.com"
+    assert norm_ref("mcp.stripe.com") == "mcp.stripe.com" and norm_ref("uvx") == "uvx"
+    assert norm_ref("rm -rf /") == "" and norm_ref("") == ""
+    reg = card_from_registry({"name": "io.github.upstash/context7", "description": "docs",
+                              "remote_urls": [{"type": "streamable-http", "url": "https://mcp.context7.com/mcp"}],
+                              "packages": [{"registry": "npm", "id": "@upstash/context7-mcp"}]})
+    assert card_refs(reg) == {"mcp.context7.com"}
+    pkg = card_from_registry({"name": "io.github.microsoft/playwright-mcp", "packages": [{"registry": "npm", "id": "@playwright/mcp"}]})
+    assert card_refs(pkg) == {"@playwright/mcp"}
+    mine = installed_cards([{"server": "pw", "tools": [{"name": "pw", "description": "package @playwright/mcp@latest"}]}])[0]
+    assert card_refs(mine) == {"@playwright/mcp"}                       # the user's own name "pw" is not a ref
+
+
+def test_an_outcome_report_becomes_rows_and_bad_input_is_dropped():
+    from app.mcp_server.server import _outcome_rows
+
+    rows = _outcome_rows({"tool_goal": "docs", "outcome": "pass", "check_kind": "tests",
+                          "used": [{"ref": "https://mcp.context7.com/mcp", "tool": "query-docs"}, "rm -rf /"],
+                          "suggested": ["mcp.context7.com", "https://other.example/mcp"]}, client="claude-code", owner="u1")
+    by = {r["ref"]: r for r in rows}
+    assert set(by) == {"mcp.context7.com", "other.example"}
+    assert by["mcp.context7.com"]["used"] and by["mcp.context7.com"]["suggested"] and by["mcp.context7.com"]["outcome"] == "pass"
+    assert not by["other.example"]["used"] and by["other.example"]["outcome"] == "unknown"      # offered, not used
+    assert all(r["owner_id"] == "u1" and r["client"] == "claude-code" and r["check_kind"] == "tests" for r in rows)
+    bad = _outcome_rows({"tool_goal": "nope", "outcome": "great", "used": ["mcp.x.com"]}, client="c", owner=None)
+    assert bad[0]["tool_goal"] is None and bad[0]["outcome"] == "unknown"
+
+
+def test_what_worked_for_a_goal_moves_a_relevant_tool_up():
+    from app.tool_routing.store import card_refs
+
+    a = card_from_registry({"name": "io.github.a/docs-a", "description": "Library docs A",
+                            "remote_urls": [{"url": "https://a.example/mcp"}]}, repo={"stars": 5000})
+    b = card_from_registry({"name": "io.github.b/docs-b", "description": "Library docs B",
+                            "remote_urls": [{"url": "https://b.example/mcp"}]}, repo={"stars": 50})
+
+    async def both_fit(query, docs):
+        return [0.9 for _ in docs]
+
+    plain, _ = run(rank("look up the library docs", [a, b], goal="docs", k=2, reranker=both_fit))
+    assert plain[0].card.id == a.id                                    # more used, nothing proven yet
+    proven, _ = run(rank("look up the library docs", [a, b], goal="docs", k=2, reranker=both_fit,
+                         outcomes={"b.example": (9, 10), "a.example": (1, 10)}, refs=card_refs))
+    assert proven[0].card.id == b.id                                   # b worked on this goal's tasks; a did not

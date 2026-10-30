@@ -43,6 +43,7 @@ import { autoTidy } from "./library_tidy.mjs";
 import { addEntry, codeWays, diffFromGit, ensureRoute, findStealthRoot, recordObs } from "./library.mjs";
 import { wayStepsForEntry } from "./way_extract.mjs";
 import { isOwnCommand } from "./names.mjs";
+import { recordToolUse, takeRecord, TOOL_MATCH } from "./tool_outcomes.mjs";
 
 const BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "bin", "kell.mjs");
 const SESSION_TTL_MS = 24 * 3600 * 1000;
@@ -52,7 +53,8 @@ export const WORKER_TIMEOUT_MS = 30_000;
 
 // settings.json entries this package owns (event -> {matcher?, command suffix}); see installCaptureHooks.
 export const CAPTURE_HOOKS = {
-  PostToolUse: { matcher: "Bash|PowerShell", mark: "hook capture-tool" },   // Windows Claude Code has both
+  // Windows Claude Code has both shells; MCP tools and web search/fetch for the tool outcome record (lib/tool_outcomes.mjs)
+  PostToolUse: { matcher: "Bash|PowerShell|mcp__.*|WebSearch|WebFetch", mark: "hook capture-tool" },
   Stop: { mark: "hook capture-stop" },
   SessionStart: { mark: "hook ensure-server" },     // starts a local kell server that is down (lib/ensure_server.mjs)
 };
@@ -238,6 +240,10 @@ function toolOutput(resp) {
 }
 
 export function onPostToolUse(payload, { env = process.env, now = Date.now() } = {}) {
+  if (captureEnabled(env) && TOOL_MATCH.test(String(payload?.tool_name || ""))) {
+    try { recordToolUse(payload, { env }); } catch { /* the tool record is best-effort */ }
+    return null;
+  }
   if (!captureEnabled(env) || !SHELL_TOOLS.has(payload?.tool_name)) return null;
   if (!looksLikeTest(payload.tool_input?.command)) return null;
   const file = sessionFile(env, payload.session_id);
@@ -366,7 +372,9 @@ export function promptEdits(transcriptPath, cwd) {
 // Returns the entry id, or null (nothing to add, or growth switched off). Never throws to the hook.
 // `edits`: the files this turn edited (promptEdits). Without any, nothing is added: a question, or a turn that cannot be
 // told from one, is not a solved problem, and the diff of the whole working tree is not this turn's change.
-export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl, edits = null } = {}) {
+// tags: the tools the prompt used ("tool:<package or host>", lib/tool_outcomes.mjs), so a later lookup sees what the
+// solution used
+export function recordLibraryEntry(s, { env = process.env, now = new Date(), gitImpl, edits = null, tags = [] } = {}) {
   if (!libraryAutoEnabled(env) || !s || s.library_added || s.library_match || !s.cwd || !s.title) return null;
   if (!fs.existsSync(path.join(s.cwd, ".kell"))) return null;
   const last = [...(s.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
@@ -375,7 +383,8 @@ export function recordLibraryEntry(s, { env = process.env, now = new Date(), git
   const diff = diffFromGit(s.cwd, "HEAD", { files: edits, ...(gitImpl ? { gitImpl } : {}) });
   if (!diff.trim()) return null;                    // nothing changed: not a solved problem
   // the Way's steps from the diff (lib/way_extract.mjs): the shape a later, similar task is planned in
-  const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null, steps: wayStepsForEntry(diff) },
+  const entry = addEntry(s.cwd, { title: s.title, check: last.command, observed: true, diff, route: s.route || null, steps: wayStepsForEntry(diff),
+                                  ...(tags.length ? { tags } : {}) },
                          { now, ...(gitImpl ? { gitImpl } : {}) });
   s.library_added = entry.id;
   autoTidy(s.cwd, env);                              // an exact duplicate of an earlier entry is dropped, the newer one kept
@@ -392,9 +401,24 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
   } catch (err) {
     logHook(env, "capture-stop", `local OBS not recorded (${err.message})`);
   }
+  // the tools this prompt was offered and used (lib/tool_outcomes.mjs), with the prompt's test verdict as their outcome
+  let toolsOutcome = null;
+  try {
+    const rec = takeRecord(env, payload?.session_id);
+    if (rec) {
+      const last = [...(s?.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
+      toolsOutcome = { tool_goal: rec.goal || undefined, suggested: rec.suggested || [], used: rec.used || [],
+                       outcome: last ? (passedRun(last, s) ? "pass" : "fail") : "unknown",
+                       check_kind: last ? "tests" : "self_report",
+                       ...(s?.lookup?.goal_id ? { goal_id: s.lookup.goal_id } : {}) };
+    }
+  } catch (err) {
+    logHook(env, "capture-stop", `tool record not read (${err.message})`);
+  }
   let added = null;
   try {
-    added = recordLibraryEntry(s, { env, edits: promptEdits(payload?.transcript_path, s?.cwd) });
+    added = recordLibraryEntry(s, { env, edits: promptEdits(payload?.transcript_path, s?.cwd),
+                                    tags: (toolsOutcome?.used || []).map((u) => `tool:${u.ref}`) });
     if (added) { writeSession(file, s); logHook(env, "capture-stop", `library entry ${added} added`); }
   } catch (err) {
     logHook(env, "capture-stop", `library entry not added (${err.message})`);
@@ -411,14 +435,16 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
     if (describe) spawnWorker(writeJob({ describe }), env);
     return { status: "no-token", ...(added ? { library_entry: added } : {}) };
   }
-  if (!s) return { status: "no-lookup" };
-  const report = buildReport(s, { sessionId: payload.session_id, model });
-  if (!report && !added) return { status: "nothing-to-report" };
+  if (!s && !toolsOutcome) return { status: "no-lookup" };
+  const report = s ? buildReport(s, { sessionId: payload.session_id, model }) : null;
+  if (!report && !added && !toolsOutcome) return { status: "nothing-to-report" };
   if (report) s.reported = true;
-  writeSession(file, s);
-  const job = writeJob({ ...(report ? { report } : {}), ...(added ? { code_ways: s.cwd, describe } : {}) });
+  if (s) writeSession(file, s);
+  const job = writeJob({ ...(report ? { report } : {}), ...(added ? { code_ways: s.cwd, describe } : {}),
+                         ...(toolsOutcome ? { tools_outcome: toolsOutcome } : {}) });
   spawnWorker(job, env);
-  return { status: "detached", ...(report ? { report } : {}), ...(added ? { library_entry: added } : {}) };
+  return { status: "detached", ...(report ? { report } : {}), ...(added ? { library_entry: added } : {}),
+           ...(toolsOutcome ? { tools_outcome: toolsOutcome } : {}) };
 }
 
 // The detached worker: `kell hook capture-stop` with STEALTHLAB_CAPTURE_JOB set.
@@ -439,6 +465,20 @@ export async function runCaptureWorker(file, { env = process.env, report } = {})
       logHook(env, "capture-stop", `reported=${Boolean(r?.reported)} queued=${Boolean(r?.queued)} accepted=${job.report.accepted}`);
     } catch (err) {
       logHook(env, "capture-stop", `report failed (${err.message})`);
+    }
+  }
+  if (job.tools_outcome) {
+    // which tools the prompt used and how it ended: the tool router learns per goal (backend /tools/outcome)
+    try {
+      const { hostedSettings } = await import("./exec/hosted.mjs");
+      const { freshToken } = await import("./oauth.mjs");
+      const { sendOutcome } = await import("./tool_outcomes.mjs");
+      const settings = hostedSettings(env);
+      const token = await freshToken(settings, { env });
+      const t = await Promise.race([sendOutcome(job.tools_outcome, { url: settings.url, token }), timer()]);
+      logHook(env, "capture-stop", `tools recorded=${t?.recorded ?? 0} (used ${job.tools_outcome.used.length}, outcome ${job.tools_outcome.outcome})`);
+    } catch (err) {
+      logHook(env, "capture-stop", `tools not recorded (${err.message})`);
     }
   }
   if (job.describe) {

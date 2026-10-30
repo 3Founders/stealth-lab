@@ -16,7 +16,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 
@@ -154,10 +154,13 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
                min_bm25: float = 0.0, reranker: Any = None,
                vector_store: Optional[tuple[dict[str, int], np.ndarray, str]] = None,
                known_sims: Optional[dict[str, float]] = None,
-               query_vector: Optional[np.ndarray] = None) -> tuple[list[Hit], dict[str, Any]]:
+               query_vector: Optional[np.ndarray] = None,
+               outcomes: Optional[dict[str, tuple[int, int]]] = None,
+               refs: Optional[Callable[[ToolCard], set[str]]] = None) -> tuple[list[Hit], dict[str, Any]]:
     """-> (the top k hits, how they were found). `goal`: the triage's tool goal; None picks the best-matching one.
     `known_sims`: card id -> cosine to the query, already computed (the database's candidates, app/tool_routing/store.py);
-    `query_vector`: need_text()'s vector, already embedded."""
+    `query_vector`: need_text()'s vector, already embedded. `outcomes`: ref -> (passes, judged) of the tools used on
+    tasks of this goal (app/tool_routing/store.py tool_outcomes), with `refs` naming a card's refs."""
     info: dict[str, Any] = {"cards": len(cards), "lexical": True, "semantic": False}
     given_goal = goal if goal in TOOL_GOALS else None
     if not cards or not query.strip():
@@ -220,7 +223,7 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
         if rel:
             for h, r in zip(pool, rel):
                 h.rerank = r
-            hits = _fuse(pool, qw) + [h for h in hits if id(h) not in {id(x) for x in pool}]
+            hits = _fuse(pool, qw, outcomes, refs) + [h for h in hits if id(h) not in {id(x) for x in pool}]
             info["reranked"] = True
         else:
             info["reranked"] = False
@@ -234,7 +237,26 @@ def need_text(query: str, goal: Optional[str]) -> str:
     return query
 
 
-def _fuse(pool: list[Hit], qw: list[str]) -> list[Hit]:
+OUTCOME_LIFT = 0.2                  # pass rate 1.0 with many outcomes: +0.1; 0.0: -0.1 (an RRF list's best is ~0.09)
+OUTCOME_PRIOR_N = 5                 # outcomes before the pass rate counts for half its weight
+
+
+def _proven(h: Hit, outcomes: Optional[dict[str, tuple[int, int]]], refs: Any) -> float:
+    """What the card's record on this goal's tasks adds to its score: its smoothed pass rate around 0.5, weighted by how
+    many outcomes there are -- a tool that kept failing goes down, one that kept working goes up, a new one is unmoved."""
+    if not outcomes or refs is None:
+        return 0.0
+    wins = judged = 0
+    for r in refs(h.card):
+        w, n = outcomes.get(r, (0, 0))
+        wins, judged = wins + w, judged + n
+    if not judged:
+        return 0.0
+    return OUTCOME_LIFT * ((wins + 1) / (judged + 2) - 0.5) * judged / (judged + OUTCOME_PRIOR_N)
+
+
+def _fuse(pool: list[Hit], qw: list[str], outcomes: Optional[dict[str, tuple[int, int]]] = None,
+          refs: Any = None) -> list[Hit]:
     """The reranked pool in order. The reranker's scores saturate (a dozen docs servers all at ~0.99), so among the
     cards it calls relevant, its order and the order by use (stars, liveness, a verified publisher) are fused by RRF:
     relevance alone ranked 12-star servers over Context7 and Brave. Relevant installed tools come first -- the session
@@ -250,8 +272,10 @@ def _fuse(pool: list[Hit], qw: list[str]) -> list[Hit]:
     good = [h for h in pool if id(h) not in taken and (h.rerank or 0) >= RELEVANT]
     by_rel = {id(h): i for i, h in enumerate(sorted(good, key=lambda h: -h.score))}
     by_use = {id(h): i for i, h in enumerate(sorted(good, key=lambda h: (-(popularity(h.card) * quality(h.card)), -h.score)))}
+    # what worked: a tool's record on this goal's tasks moves it (P3: the ranking learns per goal). Not a third RRF list:
+    # as one, a tool that failed 9 times in 10 still beat one that worked 9 times in 10 on stars alone
     for h in good:
-        h.score = 1.0 / (FUSE_K + by_rel[id(h)] + 1) + 1.0 / (FUSE_K + by_use[id(h)] + 1)
+        h.score = 1.0 / (FUSE_K + by_rel[id(h)] + 1) + 1.0 / (FUSE_K + by_use[id(h)] + 1) + _proven(h, outcomes, refs)
     good.sort(key=lambda h: (-h.score, -(popularity(h.card) * quality(h.card))))   # a tie goes to the more used
     taken |= {id(h) for h in good}
     rest = sorted((h for h in pool if id(h) not in taken), key=lambda h: -h.score)

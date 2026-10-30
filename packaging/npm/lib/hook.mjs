@@ -38,10 +38,11 @@ import { claudeDir } from "./claude_exec.mjs";
 import { readConfig } from "./config.mjs";
 import { DELEGATOR, claudeAlias, executorFor } from "./model_guard.mjs";
 import { execConfigPath } from "./exec/store.mjs";
-import { modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
+import { captureEnabled, modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
 import { adoptLegacyDir, findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
 import { routingTimer } from "./routing_timing.mjs";
 import { callTools, formatToolNote, installedServers } from "./tool_note.mjs";
+import { noteSuggested, startPrompt } from "./tool_outcomes.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
 
@@ -561,9 +562,16 @@ export async function runPromptHook(args) {
 // whichever way the hook ends. A timing failure never reaches the prompt.
 async function runPromptHookCore(args) {
   let prompt = "";
-  try { prompt = String(JSON.parse(args.stdinText || "{}").prompt || ""); } catch { /* the body ignores a bad payload */ }
+  let sessionId = null;
+  try {
+    const p = JSON.parse(args.stdinText || "{}");
+    prompt = String(p.prompt || "");
+    sessionId = p.session_id || null;
+  } catch { /* the body ignores a bad payload */ }
   const timer = routingTimer({ env: args.env || process.env, prompt, surface: "claude-code" });
-  const tooling = {};                    // the body starts the tool question here when the triage names a tool goal
+  // every prompt starts a fresh tool record (lib/tool_outcomes.mjs): the tools it is offered and uses, sent at Stop
+  try { if (sessionId && captureEnabled(args.env || process.env)) startPrompt(args.env || process.env, sessionId); } catch { /* best-effort */ }
+  const tooling = { sessionId, env: args.env || process.env };   // the body starts the tool question here when the triage names a tool goal
   const out = [];
   try {
     return await promptHookBody({ ...args, timer, tooling, write: (s) => { out.push(s); } });
@@ -581,6 +589,7 @@ async function withToolNote(out, tooling, log) {
   // a blocked prompt (an answer, a dispatch) shows no note: it does not wait for the tool question either
   if (out.some((s) => { try { return JSON.parse(s)?.decision === "block"; } catch { return false; } })) return;
   const reply = await tooling.pending;
+  try { if (tooling.sessionId) noteSuggested(tooling.env, tooling.sessionId, tooling.goal, reply); } catch { /* best-effort */ }
   const note = reply ? formatToolNote(reply, tooling.goal) : "";
   log?.(`stealthlab hook: tools goal=${tooling.goal} ${reply ? `${reply.tools.length} found` : "no reply"}${note ? "" : " (no note)"}`);
   if (!note) return;

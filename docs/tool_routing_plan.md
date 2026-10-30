@@ -89,4 +89,11 @@ outcomes the way the model ranking does.
     most of it the embedding and reranker APIs. Measured and rejected: an HNSW index (3-18 s a query once its 400 MB no
     longer fit the buffers) and an OR of all the request's words (22k matches, 4.6 s to rank). Without the tables (an
     older database) the server falls back to loading the files.
-  - Open: Brave, Exa and Tavily do not surface for web search (more general scrapers do); outcome logging (P3).
+  - Open: Brave, Exa and Tavily do not surface for web search (more general scrapers do).
+- P3, outcomes (2026-10-31): which tools a task was offered and used, and how it ended, go to `tool_observations`
+  (db/162). Claude Code: the capture hooks watch MCP tools and web search/fetch (PostToolUse matcher), keep a record per
+  prompt (packaging/npm/lib/tool_outcomes.mjs), and send it at Stop with the test verdict (POST /tools/outcome); the
+  library entry for the prompt gets `tool:<ref>` tags. claude.ai: the listed `report_tools` tool, which find_ways'
+  tools field asks for at the end of the task. A server is named by its package or URL host, never the user's own name
+  for it or a URL path. Ranking: a tool's smoothed pass rate on the goal's tasks moves it by up to +/-0.1, weighted by
+  how many outcomes there are (app/tool_routing/retrieve.py _proven).

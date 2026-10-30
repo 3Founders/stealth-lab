@@ -303,7 +303,8 @@ test("Windows: a test run through Claude Code's PowerShell tool is captured like
   assert.equal(onPostToolUse({ ...base, tool_name: "PowerShell", tool_input: { command: "python -m pytest -q test_check.py" },
     tool_response: { stdout: "1 passed in 1.29s" } }, { env }), true);
   assert.equal(onPostToolUse({ ...base, tool_name: "Read", tool_input: { command: "pytest" }, tool_response: {} }, { env }), null);
-  assert.equal(CAPTURE_HOOKS.PostToolUse.matcher, "Bash|PowerShell");
+  // both shells, plus MCP tools and web search/fetch for the tool outcome record (lib/tool_outcomes.mjs)
+  assert.equal(CAPTURE_HOOKS.PostToolUse.matcher, "Bash|PowerShell|mcp__.*|WebSearch|WebFetch");
 });
 
 test("passedRun: a run whose only failures already failed on the unchanged code passes; a new failure does not", async () => {

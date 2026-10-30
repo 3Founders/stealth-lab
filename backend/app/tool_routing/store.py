@@ -21,6 +21,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from typing import Any, Callable, Optional, Sequence
 
@@ -266,3 +267,78 @@ async def _write_vectors(pool: Any, pairs: Sequence[tuple[str, np.ndarray]], mod
                 INSERT INTO tool_card_vectors (id, small) SELECT u.id, u.s::vector FROM u
                 ON CONFLICT (id) DO UPDATE SET small = EXCLUDED.small
             """, ids, full, short, model)
+
+
+# --- outcomes (db/162_tool_observations.sql) ------------------------------------------------------------------------
+# A server is named across users by its package or its URL host -- what the registry card and an installed server's
+# config both carry -- never by a user's own name for it ("gh", "my-github") or a URL path (it can hold a key).
+
+OUTCOME_TTL_S = 300.0
+_outcomes: dict[str, tuple[float, dict[str, tuple[int, int]]]] = {}
+_PKG = re.compile(r"^(@[a-z0-9._-]+/[a-z0-9._-]+|[a-z0-9._-]+)(?:@[^/\s]*)?$")
+
+
+def norm_ref(value: str) -> str:
+    """'@playwright/mcp@latest' -> '@playwright/mcp'; 'https://mcp.context7.com/mcp' or 'mcp.context7.com' -> the host;
+    '' when it is neither."""
+    v = str(value or "").strip().lower()
+    m = re.match(r"^[a-z][a-z0-9+.-]*://([^/?#\s:]+)", v)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", v) and not v.endswith((".js", ".py", ".ts")):
+        return v                                                         # a bare host
+    m = _PKG.match(v)
+    return m.group(1) if m else ""
+
+
+def card_refs(card: ToolCard) -> set[str]:
+    """The refs a card answers to: its connector URL's host and the package in its install command (registry cards),
+    or the package / host in its description (an installed server, as lib/tool_note.mjs describes it)."""
+    refs = set()
+    ex = card.extra or {}
+    if ex.get("connector_url"):
+        refs.add(norm_ref(ex["connector_url"]))
+    m = re.search(r"(?:npx -y|uvx)\s+(\S+)", str(ex.get("install") or ""))
+    if m:
+        refs.add(norm_ref(m.group(1)))
+    m = re.search(r"(?:package|remote server at)\s+(\S+)", card.description or "")
+    if m:
+        refs.add(norm_ref(m.group(1)))
+    return {r for r in refs if r}
+
+
+async def record_outcome(pool: Any, rows: Sequence[dict[str, Any]]) -> int:
+    """Insert tool_observations rows (already validated: ref, used, suggested, outcome, ...). -> how many."""
+    rows = [r for r in rows if r.get("ref")][:50]
+    if not rows:
+        return 0
+    async with pool.acquire() as conn:
+        await conn.executemany("""
+            INSERT INTO tool_observations (tool_goal, ref, tool, used, suggested, outcome, check_kind, client, goal_id, owner_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        """, [(r.get("tool_goal"), r["ref"][:200], str(r.get("tool") or "")[:120], bool(r.get("used")),
+               bool(r.get("suggested")), r.get("outcome") or "unknown", r.get("check_kind") or "self_report",
+               str(r.get("client") or "")[:40], r.get("goal_id"), r.get("owner_id")) for r in rows])
+    for goal in {r.get("tool_goal") for r in rows}:
+        _outcomes.pop(str(goal), None)
+    return len(rows)
+
+
+async def tool_outcomes(pool: Any, goal: Optional[str]) -> dict[str, tuple[int, int]]:
+    """ref -> (passes, judged) for the tools USED on tasks of this goal (unknown outcomes left out). Cached briefly."""
+    key = str(goal)
+    hit = _outcomes.get(key)
+    if hit and time.monotonic() - hit[0] < OUTCOME_TTL_S:
+        return hit[1]
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT ref, count(*) FILTER (WHERE outcome = 'pass') AS wins,
+                       count(*) FILTER (WHERE outcome IN ('pass', 'fail')) AS judged
+                FROM tool_observations WHERE used AND tool_goal IS NOT DISTINCT FROM $1 GROUP BY ref
+            """, goal)
+        out = {r["ref"]: (int(r["wins"]), int(r["judged"])) for r in rows if r["judged"]}
+    except Exception:  # noqa: BLE001 -- no table yet: no outcomes
+        out = {}
+    _outcomes[key] = (time.monotonic(), out)
+    return out

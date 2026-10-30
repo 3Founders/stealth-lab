@@ -626,6 +626,7 @@ _TOOL_SCOPES: dict[str, str] = {
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
         "report_discovery", "submit_way", "submit", "report_model_run", "report_result", "report_audit", "report_check_evidence",
+        "report_tools",
         "delegate_inbox", "delegate_result")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
@@ -650,7 +651,8 @@ def _enforce_tool_scope(tool_name: str) -> None:
 
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "submit", "recommend_models", "report_model_run", "report_result",
-    "report_check_evidence", "call_model", "delegate", "discover_tools", "use_tool", "delegate_inbox", "delegate_result"})
+    "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
+    "delegate_result"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -674,6 +676,9 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     # the same as call_model, through a fixed cheap model and a second model's check
     "delegate": {"title": "Delegate to a cheap model", "read_only_hint": False, "destructive_hint": False,
                  "idempotent_hint": False, "open_world_hint": True},
+    # records which tools a task used and how it ended: a write, never destructive
+    "report_tools": {"title": "Report the tools a task used", "read_only_hint": False, "destructive_hint": False,
+                     "idempotent_hint": False, "open_world_hint": False},
     "discover_tools": {"title": "Find more tools", "read_only_hint": True, "open_world_hint": False},
     # runs the named tool, which may write or call an external model: not read-only
     "use_tool": {"title": "Run a discovered tool", "read_only_hint": False, "destructive_hint": False,
@@ -1190,6 +1195,90 @@ async def triage_route(request: Request) -> JSONResponse:
     if verdict is None:
         verdict = _ft.Triage(True, reason="triage off")
     return JSONResponse(verdict.as_dict())
+
+
+_OUTCOMES = ("pass", "fail", "unknown")
+
+
+def _outcome_rows(body: dict[str, Any], *, client: str, owner: str | None) -> list[dict[str, Any]]:
+    """A tool-outcome report -> tool_observations rows. used: [{"ref" or "server", "tool"?}] or names; suggested: the
+    same. A ref is normalised to a package or a host (app/tool_routing/store.py norm_ref); anything else is dropped."""
+    from app.tool_routing.goals import TOOL_GOALS
+    from app.tool_routing.store import norm_ref
+
+    goal = body.get("tool_goal") if body.get("tool_goal") in TOOL_GOALS else None
+    outcome = body.get("outcome") if body.get("outcome") in _OUTCOMES else "unknown"
+    check = body.get("check_kind") if body.get("check_kind") in ("tests", "judge", "self_report") else "self_report"
+    goal_id = body.get("goal_id") if isinstance(body.get("goal_id"), str) and re.fullmatch(r"[0-9a-f-]{36}", body["goal_id"]) else None
+
+    def refs(items: Any) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for x in (items if isinstance(items, list) else [])[:30]:
+            raw = x if isinstance(x, str) else (x.get("ref") or x.get("connector_url") or x.get("server") or "") if isinstance(x, dict) else ""
+            ref = norm_ref(str(raw))
+            if ref:
+                out.setdefault(ref, str(x.get("tool") or "") if isinstance(x, dict) else "")
+        return out
+
+    used, suggested = refs(body.get("used")), refs(body.get("suggested"))
+    rows = [{"ref": r, "tool": t, "used": True, "suggested": r in suggested} for r, t in used.items()]
+    rows += [{"ref": r, "tool": "", "used": False, "suggested": True} for r in suggested if r not in used]
+    for r in rows:
+        r.update(tool_goal=goal, outcome=outcome if r["used"] else "unknown", check_kind=check, client=client,
+                 goal_id=goal_id, owner_id=owner)
+    return rows
+
+
+@server.custom_route("/tools/outcome", methods=["POST"], include_in_schema=False)
+async def tools_outcome_route(request: Request) -> JSONResponse:
+    """Claude Code's capture hook, at the end of a prompt that needed or used an outside tool: which tools the note
+    suggested, which were used, and how the task ended (its tests). Body: {"tool_goal"?, "suggested": [...], "used":
+    [{"ref", "tool"?}], "outcome": pass|fail|unknown, "check_kind"?, "goal_id"?}. Same gate and rate limit as /tools."""
+    from app.mcp_server import find_ways_triage as _ft
+    from app.tool_routing import store as _store
+
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "send a JSON object"}, status_code=400)
+    token = await _route_token(request)
+    owner = token.subject if token is not None and token.subject else None
+    if not _ft.WINDOW.allow(f"tools-outcome:{owner or (request.client.host if request.client else 'unknown')}"):
+        return JSONResponse({"recorded": 0, "note": "rate limit"})
+    pool = _LIFESPAN_STATE.get("pool")
+    rows = _outcome_rows(body, client="claude-code", owner=owner)
+    n = await _store.record_outcome(pool, rows) if pool is not None and rows else 0
+    return JSONResponse({"recorded": n})
+
+
+@server.tool()
+@_activity.traced
+async def report_tools(ctx: Context, used: list[str], outcome: str = "unknown", tool_goal: str = "",
+                       suggested: list[str] | None = None) -> str:
+    """
+    At the end of a task where outside tools were offered or used (find_ways' tools field), say which: so the ranking
+    learns which tools work for which kind of task. used: the connectors you called, by their URL or package (as
+    find_ways listed them) -- not your own name for them. outcome: pass, fail or unknown (did the task succeed?).
+    tool_goal: the goal find_ways named. suggested: the ones it offered. No task text is sent or stored.
+    """
+    from app.tool_routing import store as _store
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    tok = None
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+        tok = get_access_token()
+    except Exception:  # noqa: BLE001
+        tok = None
+    rows = _outcome_rows({"used": used, "suggested": suggested or [], "outcome": outcome, "tool_goal": tool_goal,
+                          "check_kind": "self_report"}, client="claude-web", owner=getattr(tok, "subject", None))
+    n = await _store.record_outcome(pool, rows) if rows else 0
+    return json.dumps({"recorded": n, **({} if n else {"note": "nothing recognised: pass each tool's URL or package"})})
 
 
 @server.custom_route("/tools", methods=["POST"], include_in_schema=False)
@@ -2260,7 +2349,9 @@ async def _with_routes(reply: str, triaged: Any, query: str, installed: list[Any
             body["tools"] = {**ext, "next": (
                 "Use one you have (source installed) if it fits. For one you lack, do the task as well as you can "
                 "without it and offer to add it: connector_url in a chat (Settings -> Connectors -> Add custom "
-                "connector), install in Claude Code. Never run an install yourself.")}
+                "connector), install in Claude Code. Never run an install yourself. When the task is done, call "
+                "report_tools(used=[the URLs or packages of the tools you called], outcome=pass|fail|unknown, "
+                f"tool_goal=\"{triaged.tool}\").")}
     elif triaged.kind in _DELEGATE_KINDS and triaged.work in (None, "answer"):
         body["delegate"] = {
             "why": "a general question a cheap model answers well; it saves the user's usage",
@@ -2485,7 +2576,7 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 # so the hooks, the executor and older clients that call them directly keep working. "all" lists every tool.
 # ---------------------------------------------------------------------------
 
-CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "delegate", "discover_tools", "use_tool"})
+CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "delegate", "report_tools", "discover_tools", "use_tool"})
 DISCOVERY_TOOLS: frozenset[str] = frozenset({"discover_tools", "use_tool"})
 
 
@@ -2595,18 +2686,20 @@ async def _external_tools(need: str, goal: str, installed: list[Any] | None, k: 
         embedder = embedder if embedder.available() else None
         query = condense(need.strip(), 2000)
         pool = _LIFESPAN_STATE.get("pool")
-        known = qvec = None
+        known = qvec = outcomes = None
         if pool is not None and await _store.ready(pool):
             # the catalog in the database (db/160_tool_cards.sql): its full-text and nearest-neighbour candidates
             qvec = await _query_vector(need_text(query, goal or None), embedder) if embedder else None
             found, known = await _store.candidates(pool, query, qvec)
             cards = [*installed_cards(_installed_list(installed)), *found]
+            outcomes = await _store.tool_outcomes(pool, goal) if goal else None
         else:
             cards = [*installed_cards(_installed_list(installed)), *registry_cards()]
         if not cards:
             return None
         hits, info = await rank(query, cards, goal=goal or None, embedder=embedder, k=max(1, min(int(k or 8), 20)),
-                                reranker=rerank, known_sims=known, query_vector=qvec)
+                                reranker=rerank, known_sims=known, query_vector=qvec, outcomes=outcomes,
+                                refs=_store.card_refs)
     except Exception:  # noqa: BLE001 -- the router never breaks discover_tools
         logging.getLogger(__name__).warning("tool routing failed", exc_info=True)
         return None
