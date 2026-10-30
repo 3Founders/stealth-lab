@@ -4,7 +4,8 @@ The table is db/159_profile_photos.sql (in the Neon database, like rooms).
 
 Who may call: a signed-in person, proven by their Supabase WEBSITE-SESSION token, exactly as for /v1/rooms (``Gate`` is reused from
 delegate_routes). The subject scopes the row: there is no way to name someone else's photo, so there is nothing to enumerate.
-This is the caller's OWN photo only. Showing a photo to other people (for example in a shared room) is a separate decision.
+``/v1/me/photo`` is the caller's own photo. ``GET /v1/people/{sub}/photo`` shows someone else's photo, but only to a person who
+shares at least one room with them, so a photo is never open to everyone and subjects cannot be probed (every refusal is the same 404).
 
 The server does not decode or re-encode images. It checks the size (at most 64 KB; the site sends about 10 KB) and that the first
 bytes are a JPEG, PNG or WebP signature, and serves the bytes back with that exact type and ``nosniff``. Honest limit: a file with
@@ -79,3 +80,29 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
             "ON CONFLICT (sub) DO UPDATE SET content_type = EXCLUDED.content_type, data = EXCLUDED.data, updated_at = now()",
             subject, kind, data)
         return Response(status_code=204, headers=headers)
+
+    @server.custom_route("/v1/people/{sub}/photo", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def person_photo(request: Request) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        me, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        other = request.path_params.get("sub", "")
+        if not other or len(other) > 128:
+            return _error(request, "no photo", 404)
+        if other != me:
+            shares = await pool.fetchval(
+                "SELECT 1 FROM room_members a JOIN room_members b ON b.room_id = a.room_id "
+                "WHERE a.member_sub = $1 AND b.member_sub = $2 AND a.removed_at IS NULL AND b.removed_at IS NULL LIMIT 1", me, other)
+            if not shares:
+                return _error(request, "no photo", 404)
+        row = await pool.fetchrow("SELECT content_type, data, updated_at FROM profile_photos WHERE sub = $1", other)
+        if row is None:
+            return _error(request, "no photo", 404)
+        return Response(bytes(row["data"]), media_type=row["content_type"], headers={
+            **cors_headers(request), "Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff",
+            "X-Photo-Updated": row["updated_at"].isoformat()})

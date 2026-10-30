@@ -6,6 +6,7 @@ import "./globals.css";
 import Header from "@/components/Header";
 import BackButton from "@/components/BackButton";
 import OnboardingGate from "@/components/OnboardingGate";
+import PhotoPrompt from "@/components/PhotoPrompt";
 import Footer from "@/components/Footer";
 import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SmoothScroll />
         <Telemetry />
         <OnboardingGate />
+        <PhotoPrompt />
         <Header />
         <BackButton />
         <main id="main">

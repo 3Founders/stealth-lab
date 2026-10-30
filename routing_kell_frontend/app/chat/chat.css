@@ -213,3 +213,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 @media (max-width: 720px) { .dg-bell-pop { position: fixed; left: 12px; right: 12px; top: 56px; width: auto; } }
 
 @media (prefers-reduced-motion: reduce) { .dg-side { scroll-behavior: auto; } }
+
+/* Profile photos in the room: the photo fills the avatar, and the member list uses a smaller one. */
+.dg-avatar { overflow: hidden; }
+.dg-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.dg-avatar-sm { width: 22px; height: 22px; font-size: 10px; flex: none; }

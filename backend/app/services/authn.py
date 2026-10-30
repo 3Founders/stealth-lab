@@ -459,7 +459,7 @@ def validate_token(
         subject=str(subject),
         issuer=claims.get("iss"),
         email=claims.get("email"),
-        name=claims.get("preferred_username") or claims.get("name"),
+        name=_claim_name(claims),
         claims=dict(claims),
     )
 
@@ -506,7 +506,7 @@ async def validate_token_async(token: str, *, config: OidcConfig, jwks_provider:
         subject=str(subject),
         issuer=claims.get("iss"),
         email=claims.get("email"),
-        name=claims.get("preferred_username") or claims.get("name"),
+        name=_claim_name(claims),
         claims=dict(claims),
     )
 
@@ -760,6 +760,17 @@ _MEMBERSHIP_SELECT = (
 )
 
 
+def _claim_name(claims: Mapping[str, Any]) -> Optional[str]:
+    """The person's display name from token claims. Supabase keeps the name a person typed (or their Google/GitHub name) under
+    ``user_metadata``, not as a top-level ``name`` claim, so look there too; before this, people showed up as "member" in rooms."""
+    meta = claims.get("user_metadata")
+    meta = meta if isinstance(meta, Mapping) else {}
+    for value in (claims.get("preferred_username"), claims.get("name"), meta.get("display_name"), meta.get("full_name"), meta.get("name")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:80]
+    return None
+
+
 async def ensure_user(pool: Any, actor: Actor) -> str:
     """Get-or-create the users row for a validated Actor; returns its id.
 
@@ -785,7 +796,28 @@ async def ensure_user(pool: Any, actor: Actor) -> str:
             raise RuntimeError("user row vanished during concurrent provisioning")
     if not row["is_active"] or row["t_expired"] is not None:
         raise IdentityInactive(f"user {actor.subject} is inactive")
+    await _sync_display_name(pool, actor)
     return str(row["id"])
+
+
+_NAME_SYNCED: set[tuple[str, str, str]] = set()
+
+
+async def _sync_display_name(pool: Any, actor: Actor) -> None:
+    """Keep users.display_name in step with the name on the token, so a name changed on the website shows in rooms. Best effort
+    (a failure never blocks sign-in) and once per process per value, so it adds no query to ordinary requests."""
+    if not actor.name:
+        return
+    key = (actor.issuer or "", actor.subject, actor.name)
+    if key in _NAME_SYNCED:
+        return
+    try:
+        await pool.execute(
+            "UPDATE users SET display_name = $3 WHERE issuer = $1 AND external_subject = $2 AND display_name IS DISTINCT FROM $3",
+            actor.issuer or "", actor.subject, actor.name)
+        _NAME_SYNCED.add(key)
+    except Exception:  # noqa: BLE001 -- cosmetic; try again on a later request
+        return
 
 
 async def resolve_memberships(pool: Any, user_id: str) -> list[ResolvedMembership]:

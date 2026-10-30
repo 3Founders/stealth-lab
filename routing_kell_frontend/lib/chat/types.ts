@@ -5,6 +5,8 @@ export interface AgentIdentity {
   displayName: string;
   type: "human" | "local_agent" | "remote_agent";
   status: "online" | "busy" | "offline";
+  /** The account this person is (people only), for showing their profile photo. */
+  sub?: string;
 }
 
 export interface DualPayload {

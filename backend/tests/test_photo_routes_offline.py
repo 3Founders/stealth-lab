@@ -23,6 +23,10 @@ def test_sniff_accepts_only_the_three_types():
 class FakePool:
     def __init__(self):
         self.rows = {}
+        self.shares = set()   # (viewer, owner) pairs that share a room
+
+    async def fetchval(self, sql, me, other):
+        return 1 if (me, other) in self.shares else None
 
     async def fetchrow(self, sql, sub):
         return self.rows.get(sub)
@@ -52,10 +56,10 @@ class FakeServer:
         return deco
 
 
-def client():
+def client(with_pool=False):
     server, pool = FakeServer(), FakePool()
     pr.register(server, FakeGate(), lambda: pool)
-    return TestClient(server.app)
+    return (TestClient(server.app), pool) if with_pool else TestClient(server.app)
 
 
 def test_round_trip_is_per_person_and_needs_sign_in():
@@ -76,3 +80,16 @@ def test_rejects_other_types_and_oversize():
     h = {"authorization": "alice"}
     assert c.put("/v1/me/photo", content=b"<svg/>", headers=h).status_code == 415
     assert c.put("/v1/me/photo", content=JPEG + b"0" * pr.MAX_BYTES, headers=h).status_code == 413
+
+
+def test_someone_elses_photo_is_visible_only_to_people_who_share_a_room_with_them():
+    c, pool = client(with_pool=True)
+    assert c.put("/v1/me/photo", content=PNG, headers={"authorization": "alice"}).status_code == 204
+    assert c.get("/v1/people/alice/photo").status_code == 401
+    assert c.get("/v1/people/alice/photo", headers={"authorization": "bob"}).status_code == 404     # strangers
+    pool.shares.add(("bob", "alice"))
+    got = c.get("/v1/people/alice/photo", headers={"authorization": "bob"})
+    assert got.status_code == 200 and got.content == PNG and got.headers["content-type"] == "image/png"
+    assert got.headers["cache-control"].startswith("private")
+    assert c.get("/v1/people/alice/photo", headers={"authorization": "alice"}).status_code == 200   # your own
+    assert c.get("/v1/people/nobody/photo", headers={"authorization": "bob"}).status_code == 404

@@ -416,3 +416,13 @@ def test_access_py_hosts_the_builder_the_rule_protects():
     access_src = (BACKEND / "app" / "services" / "access.py").read_text(encoding="utf-8")
     assert "def tenant_predicate(" in access_src
     assert "def scope_predicates(" in access_src
+
+
+def test_claim_name_reads_the_supabase_user_metadata_too():
+    from app.services.authn import _claim_name
+    assert _claim_name({"name": "Top Level"}) == "Top Level"
+    assert _claim_name({"user_metadata": {"display_name": "Typed Name", "full_name": "Google Name"}}) == "Typed Name"
+    assert _claim_name({"user_metadata": {"full_name": "Google Name"}}) == "Google Name"
+    assert _claim_name({"user_metadata": {"name": "  "}}) is None
+    assert _claim_name({}) is None
+    assert len(_claim_name({"name": "x" * 200})) == 80

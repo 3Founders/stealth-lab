@@ -22,6 +22,8 @@ import { MAX_DEPTH } from "@/lib/chat/types";
 import { groupMessages, initials } from "@/lib/chat/ui";
 import { getAccessToken } from "@/lib/session";
 import NotificationBell from "@/components/chat/NotificationBell";
+import PersonAvatar from "@/components/chat/PersonAvatar";
+import { fallbackName } from "@/lib/chat/events";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
@@ -355,7 +357,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           t: run.messages[0].timestamp, key: run.key,
           node: (
             <MessageScroller.Item key={run.key} messageId={run.key} className="dg-run" data-agent={run.sender.type !== "human"}>
-              <Avatar who={run.sender} />
+              {run.sender.type === "human"
+                ? <PersonAvatar sub={run.sender.sub} mine={run.sender.handle === HUMAN.handle} selfSub={subject} initials={initials(run.sender.handle)} />
+                : <Avatar who={run.sender} />}
               <div className="dg-col">
                 <div className="dg-meta">
                   <b>{run.sender.handle}</b>
@@ -674,8 +678,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <ul className="dg-members">
               {members.filter((m) => m.kind === "person").map((m) => (
                 <li key={m.sub ?? m.agent_id}>
-                  <span className="dg-dot" data-a="human" aria-hidden="true" />
-                  <span className="dg-handle">{m.me ? "You" : m.name ?? "Member"}</span>
+                  <PersonAvatar sub={m.sub ?? undefined} mine={m.me} selfSub={subject} initials={initials(`@${m.name ?? "member"}`)} className="dg-avatar dg-avatar-sm" />
+                  <span className="dg-handle">{m.me ? "You" : m.name ?? fallbackName(m.sub)}</span>
                   <span className="dg-badge" data-kind="tab">{m.role}</span>
                   {iAmOwner && !m.me && m.role !== "owner" && <button type="button" className="dg-remove" onClick={() => void removePerson(m)} aria-label={`Remove ${m.name ?? "this person"} from ${room}`} title="Remove from room">×</button>}
                 </li>

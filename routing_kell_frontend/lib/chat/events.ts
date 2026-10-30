@@ -21,6 +21,9 @@ export function toEvent(m: GroupMessage, deviceId: string, lamport: number): Eve
 /** What to show for someone who isn't you: their account name, else "member". */
 const personHandle = (name: string | null) => `@${(name ?? "member").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "member"}`;
 
+/** Someone whose account has no name yet: "Member 1a2b" (a few letters of their id), so two such people are not the same name. */
+export const fallbackName = (sub: string | null | undefined): string => `Member ${(sub ?? "").replace(/[^a-z0-9]/gi, "").slice(0, 4).toLowerCase() || "?"}`.trim();
+
 /** A stored event as a message in the room, or null for kinds the room doesn't show (yet). */
 export function toMessage(e: ServerEvent, roomLabel: string): GroupMessage | null {
   if (e.kind !== "msg" && e.kind !== "system") return null;
@@ -30,7 +33,7 @@ export function toMessage(e: ServerEvent, roomLabel: string): GroupMessage | nul
     ? { handle: e.sender.handle, displayName: e.sender.handle.replace(/^@/, ""), type: "local_agent" as const, status: "online" as const }
     : mine
       ? HUMAN
-      : { handle: personHandle(e.sender.name), displayName: e.sender.name ?? "Member", type: "human" as const, status: "online" as const };
+      : { handle: personHandle(e.sender.name ?? fallbackName(e.sender.sub)), displayName: e.sender.name ?? fallbackName(e.sender.sub), type: "human" as const, status: "online" as const, sub: e.sender.sub };
   return {
     id: e.id, roomId: roomLabel, sender,
     recipients: e.mentions.length ? e.mentions.map((n) => `@${n}`) : ["@all"],
