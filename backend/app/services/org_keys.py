@@ -41,6 +41,11 @@ _DECLARATIONS = ("zdr", "no_training", "region", "dpa_signed")
 CLIENT_FLAGS = ("no_system_role", "vision", "strong", "first")
 
 
+def _declared(declarations: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+    """Only the four data-handling keys, and only those the admin actually answered. A key left out stays unknown."""
+    return {k: declarations[k] for k in _DECLARATIONS if declarations and k in declarations and declarations[k] is not None}
+
+
 def credential_ref(org_id: str, connection_id: str) -> str:
     return f"{SCHEME}:{org_id}:{connection_id}"
 
@@ -92,11 +97,20 @@ def validate(org_id: str, connection_id: str, *, provider: str, base_url: str, u
     return cleaned
 
 
+def _row_declarations(row: Mapping[str, Any]) -> dict[str, Any]:
+    raw = row.get("declarations") if hasattr(row, "get") else None
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    return _declared(raw if isinstance(raw, Mapping) else {})
+
+
 def _public(row: Mapping[str, Any]) -> dict[str, Any]:
     units = row["units"] if isinstance(row["units"], list) else json.loads(row["units"])
     return {"connection_id": row["connection_id"], "provider": row["provider"], "base_url": row["base_url"],
             "units": units, "allowed_data_classes": list(row["allowed_data_classes"]), "key_hint": row["key_hint"],
             "enabled": bool(row["enabled"]), "updated_by": row["updated_by"],
+            # a key that is absent here was never declared (unknown); false means the admin declared "no"
+            "declarations": _row_declarations(row),
             "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None}
 
 
@@ -110,6 +124,7 @@ async def put_provider_key(pool: Any, *, actor_subject: str, actor_user_id: Opti
     declarations = dict(declarations or {})
     cleaned = validate(org_id, connection_id, provider=provider, base_url=base_url, units=units,
                        data_classes=data_classes, declarations=declarations)
+    declared = _declared(declarations)       # a PUT replaces what was declared: a box left out is unknown again
     secret = api_key.strip() if isinstance(api_key, str) else None
     if api_key is not None and not secret:
         raise gov.Invalid("api_key is empty")
@@ -122,33 +137,35 @@ async def put_provider_key(pool: Any, *, actor_subject: str, actor_user_id: Opti
                 raise gov.Invalid("api_key is required for a new connection")
             await conn.execute(
                 "INSERT INTO org_provider_keys (organization_id, connection_id, provider, base_url, units, "
-                "allowed_data_classes, secret_ciphertext, key_hint, created_by, updated_by) "
-                "VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $9)",
+                "allowed_data_classes, secret_ciphertext, key_hint, created_by, updated_by, declarations) "
+                "VALUES ($1::uuid, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $9, $10::jsonb)",
                 str(org_id), connection_id, provider.strip(), base_url, cleaned, list(data_classes),
                 secret_box.seal(secret, org_id=org_id, connection_id=connection_id), secret_box.hint(secret),
-                actor_subject)
+                actor_subject, declared)
             action = "org_provider_key.create"
         else:
             if secret:
                 await conn.execute(
                     "UPDATE org_provider_keys SET provider=$3, base_url=$4, units=$5::jsonb, allowed_data_classes=$6, "
-                    "secret_ciphertext=$7, key_hint=$8, enabled=TRUE, updated_by=$9, updated_at=now() "
-                    "WHERE organization_id=$1::uuid AND connection_id=$2",
+                    "secret_ciphertext=$7, key_hint=$8, enabled=TRUE, updated_by=$9, updated_at=now(), "
+                    "declarations=$10::jsonb WHERE organization_id=$1::uuid AND connection_id=$2",
                     str(org_id), connection_id, provider.strip(), base_url, cleaned, list(data_classes),
                     secret_box.seal(secret, org_id=org_id, connection_id=connection_id), secret_box.hint(secret),
-                    actor_subject)
+                    actor_subject, declared)
             else:
                 await conn.execute(
                     "UPDATE org_provider_keys SET provider=$3, base_url=$4, units=$5::jsonb, allowed_data_classes=$6, "
-                    "enabled=TRUE, updated_by=$7, updated_at=now() WHERE organization_id=$1::uuid AND connection_id=$2",
+                    "enabled=TRUE, updated_by=$7, updated_at=now(), declarations=$8::jsonb "
+                    "WHERE organization_id=$1::uuid AND connection_id=$2",
                     str(org_id), connection_id, provider.strip(), base_url, cleaned, list(data_classes),
-                    actor_subject)
+                    actor_subject, declared)
             action = "org_provider_key.update"
         # the audit row names the connection and whether the key changed, never the key
         await gov._audit(conn, actor_subject=actor_subject, actor_user_id=actor_user_id, action=action,
                          object_type="org_provider_key", object_id=connection_id, org_id=org_id,
                          details={"provider": provider.strip(), "base_url": base_url,
-                                  "models": [u["model"] for u in cleaned], "key_replaced": bool(secret)})
+                                  "models": [u["model"] for u in cleaned], "key_replaced": bool(secret),
+                                  "declarations": declared})
         row = await conn.fetchrow(
             "SELECT * FROM org_provider_keys WHERE organization_id = $1::uuid AND connection_id = $2",
             str(org_id), connection_id)
@@ -204,7 +221,7 @@ class OrgKeyStore:
                 units = r["units"] if isinstance(r["units"], list) else json.loads(r["units"])
                 out.append(registry.connection_from_dict(_record(
                     str(org), r["connection_id"], provider=r["provider"], base_url=r["base_url"], units=units,
-                    data_classes=list(r["allowed_data_classes"]), declarations={})))
+                    data_classes=list(r["allowed_data_classes"]), declarations=_row_declarations(r))))
         return out
 
 

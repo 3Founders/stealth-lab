@@ -394,3 +394,60 @@ def test_joining_needs_a_signed_in_person_and_an_invite_that_works(api):
     r = _req(api, "POST", "/v1/join", json={"code": "garbage"})
     assert r.status_code == 404 and "not valid" in r.text
     assert _req(api, "POST", "/v1/join", json={"code": _code()}).status_code == 404     # the fake finds no invite
+
+
+# ------------------------------------------------------------------ data-handling declarations (migration 158)
+
+def _stored_row(declarations):
+    return {"connection_id": "gc", "provider": "general-compute", "base_url": "https://api.generalcompute.com/v1",
+            "units": UNITS, "allowed_data_classes": ["USER_PRIVATE"], "key_hint": "...3456", "enabled": True,
+            "updated_by": "u", "updated_at": datetime.now(timezone.utc), "declarations": declarations}
+
+
+def test_declarations_are_stored_returned_and_a_declared_no_differs_from_unknown():
+    pool = FakePool({"SELECT id FROM org_provider_keys": None,
+                     "SELECT * FROM org_provider_keys": lambda: _stored_row({"zdr": False, "region": "in"}),
+                     "INSERT INTO audit_events": {"id": 1}})
+    out = _put(pool, {"admin"}, declarations={"zdr": False, "no_training": None, "region": "in", "junk": True})
+    insert = pool.statements("INSERT INTO org_provider_keys")[0][1]
+    assert {"zdr": False, "region": "in"} in insert                  # written as one object; unanswered and unknown keys dropped
+    assert out["declarations"] == {"zdr": False, "region": "in"}     # false is kept ("declared no"); no_training is absent ("unknown")
+
+
+def test_a_row_stored_before_the_column_existed_reads_as_nothing_declared():
+    row = _stored_row({})
+    del row["declarations"]
+    pool = FakePool({"SELECT id FROM org_provider_keys": None, "SELECT * FROM org_provider_keys": lambda: row,
+                     "INSERT INTO audit_events": {"id": 1}})
+    assert _put(pool, {"admin"})["declarations"] == {}
+
+
+def test_a_members_connection_carries_what_the_admin_declared_into_the_gateway():
+    row = _stored_row({"zdr": True, "no_training": True, "region": "in", "dpa_signed": True})
+    # asyncpg's jsonb codec can hand back text: both forms must read the same
+    for declarations in (row["declarations"], json.dumps(row["declarations"])):
+        store = org_keys.OrgKeyStore(lambda d=declarations: FakePool({"FROM org_provider_keys": [{**row, "declarations": d}]}))
+        conn = run(store.list_connections(AccessScope.for_org_member("u", [ORG])))[0]
+        assert conn.compliance == {"zdr": True, "no_training": True, "region": "in", "dpa_signed": True}
+    bare = org_keys.OrgKeyStore(lambda: FakePool({"FROM org_provider_keys": [_stored_row({})]}))
+    assert run(bare.list_connections(AccessScope.for_org_member("u", [ORG])))[0].compliance == {
+        "zdr": None, "no_training": None, "region": "unknown", "dpa_signed": False}
+
+
+def test_the_provider_presets_are_admin_only_and_carry_no_price_or_declaration(api):
+    api.state.ctx = _human({ORG: {"member"}})
+    assert _req(api, "GET", f"/v1/orgs/{ORG}/provider-presets").status_code == 403
+    api.state.ctx = _human({OTHER: {"owner"}})
+    assert _req(api, "GET", f"/v1/orgs/{ORG}/provider-presets").status_code == 404
+    api.state.ctx = _human({ORG: {"admin"}})
+    r = _req(api, "GET", f"/v1/orgs/{ORG}/provider-presets")
+    assert r.status_code == 200
+    body = r.json()
+    names = {p["provider"] for p in body["providers"]}
+    assert {"deepinfra", "together", "fireworks", "groq", "cerebras", "openrouter"} <= names
+    assert all(p["base_url"].startswith("https://") for p in body["providers"])
+    assert any(not p["verified"] for p in body["providers"])               # unconfirmed bases say so
+    flat = json.dumps(body)
+    for forbidden in ("input_per_mtok", "output_per_mtok", '"zdr"', "no_training_declared"):
+        assert forbidden not in flat.replace('"declarations": ["zdr"', "")  # only the list of declaration NAMES appears
+    assert body["declarations"] == ["zdr", "no_training", "region", "dpa_signed"]

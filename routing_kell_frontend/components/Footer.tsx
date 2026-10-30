@@ -5,7 +5,7 @@ import { companyLinks } from "@/lib/social-links";
 
 // Only routes and anchors that exist in this build.
 const cols: Array<{ h: string; items: string[][] }> = [
-  { h: "Product", items: [["See it work", "/#action"], ["Docs", "/docs"]] },
+  { h: "Product", items: [["See it work", "/#action"], ["Docs", "/docs"], ["Pricing", "/pricing"]] },
   {
     h: "How to use",
     items: [
@@ -46,7 +46,10 @@ export default function Footer() {
         ))}
         <nav className="footer-legal" aria-label="Legal">
           <span>Legal</span>
-          <Link href="/docs#legal">Legal documents</Link>
+          <Link href="/docs/legal/terms">Terms</Link>
+          <Link href="/docs/legal/privacy">Privacy</Link>
+          <Link href="/legal/refunds">Refunds and cancellation</Link>
+          <Link href="/contact">Contact</Link>
         </nav>
         <div className="footer-base">
           <span>© {new Date().getFullYear()} keळ</span>

@@ -348,6 +348,20 @@ async def list_provider_keys(org_id: str, pool=Depends(get_pool), ctx=Depends(ge
         raise _http(exc) from exc
 
 
+@router.get("/provider-presets")
+async def provider_presets(org_id: str, ctx=Depends(get_auth_context)) -> dict:
+    """What the Providers form offers in its dropdowns: provider base URLs and the catalog's model names. No prices
+    and no data-handling declarations are preset (providers.presets)."""
+    _, roles = _caller(ctx, org_id)
+    try:
+        gov._require(roles, gov.ADMIN_ROLES, "listing provider presets")
+    except gov.GovernanceError as exc:
+        raise _http(exc) from exc
+    from app.providers.presets import presets
+
+    return presets()
+
+
 @router.put("/provider-keys/{connection_id}")
 async def put_provider_key(org_id: str, connection_id: str, body: ProviderKeyBody, pool=Depends(get_pool),
                            ctx=Depends(get_auth_context)) -> dict:

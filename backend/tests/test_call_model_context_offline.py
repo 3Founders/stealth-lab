@@ -47,7 +47,9 @@ def test_without_context_nothing_changes(monkeypatch):
     assert req.system is None
 
 
-def test_context_is_capped_and_redacted(monkeypatch):
+def test_context_is_redacted_and_no_longer_cut_to_6000_characters(monkeypatch):
+    # the 6,000-character cut was removed on purpose (bigger prompts); the whole-prompt size limit is the provider
+    # service's MAX_PROMPT_CHARS, and secrets are still redacted
     req, _ = _call(monkeypatch, context="OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789\n" + "x" * 9000)
     assert "sk-abcdefghijklmnopqrstuvwxyz0123456789" not in req.system
-    assert len(req.system) < 6500
+    assert req.system.count("x") >= 9000
