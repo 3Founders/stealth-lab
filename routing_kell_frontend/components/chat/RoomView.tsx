@@ -20,10 +20,13 @@ import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import type { AgentActivity, AgentIdentity, GroupMessage } from "@/lib/chat/types";
 import { MAX_DEPTH } from "@/lib/chat/types";
 import { groupMessages, initials } from "@/lib/chat/ui";
-import { getAccessToken } from "@/lib/session";
+import { getAccessToken, signOut } from "@/lib/session";
 import NotificationBell from "@/components/chat/NotificationBell";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
+import HamburgerMenu from "@/components/chat/HamburgerMenu";
+import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
+import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName } from "@/lib/chat/events";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
@@ -152,6 +155,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
   const prefsRef = useRef(prefs);
   const [notes, setNotes] = useState<Note[]>([]);
+  // Settings window (opened from the menu) and the look-and-feel preferences it holds (lib/chat/prefs.ts).
+  const [settings, setSettings] = useState<{ open: boolean; section: SectionId }>({ open: false, section: "preferences" });
+  const [chatPrefs, setChatPrefsState] = useState<ChatPrefs>(DEFAULT_CHAT_PREFS);
+  useEffect(() => { setChatPrefsState(loadChatPrefs(subject)); }, [subject]);
+  const setChatPrefs = useCallback((p: ChatPrefs) => { setChatPrefsState(p); saveChatPrefs(subject, p); }, [subject]);
+  const [accountName, setAccountName] = useState("");
+  useEffect(() => { void import("@/lib/device-profile").then((m) => m.loadDeviceProfile()).then((p) => { if (p) setAccountName(p.name || (p.email ?? "")); }); }, [subject]);
   const openRoomRef = useRef<(r: string | null) => void>(() => {});
   useEffect(() => { const p = loadPrefs(subject); prefsRef.current = p; setPrefsState(p); }, [subject]);
   const setPrefs = useCallback((p: Prefs) => { prefsRef.current = p; setPrefsState(p); savePrefs(subject, p); }, [subject]);
@@ -612,7 +622,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const count = agents.length + relayAgents.length;
 
   return (
-    <div className="dg-shell" data-paused={paused} data-menu={menuOpen ? "open" : "closed"}>
+    <div className="dg-shell" data-paused={paused} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
         <button type="button" className="dg-close" onClick={() => setMenuOpen(false)} aria-label="Close the room list">×</button>
@@ -639,8 +649,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             </form>
           )}
 
-        <p className="dg-note">Rooms are open: they follow you to your other devices, Claude, ChatGPT and other connectors can join them, and keळ can read them. They are not end-to-end encrypted.</p>
-
         <h2>Agents</h2>
         <ul className="dg-members">
           <li>
@@ -652,7 +660,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               <span className="dg-dot" data-a={a.online ? "human" : "idle"} aria-hidden="true" />
               <span className="dg-handle">{a.handle}</span>
               <span className="dg-badge">agent</span>
-              <span className="dg-state" data-a="idle">{a.online ? "Online · keeps running when this page is closed" : "Offline · keeps its tasks until it checks in"}</span>
+              <span className="dg-state" data-a="idle">{a.online ? "online" : "offline"}</span>
               <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${a.handle}`} title={`Remove ${a.handle}`}>×</button>
             </li>
           ))}
@@ -664,8 +672,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <span className="dg-handle">{h}</span>
                 <span className="dg-badge" data-kind="tab">in this tab</span>
                 {backing && !backing.ready
-                  ? <Link className="dg-state dg-addkey" href="/account/models">{backing.text}</Link>
-                  : <span className="dg-state" data-a={a}>{a === "idle" ? (backing?.text ?? "") : LABEL[a]}</span>}
+                  ? <Link className="dg-state dg-addkey" href="/account/models">Add a key</Link>
+                  : <span className="dg-state" data-a={a}>{a === "idle" ? "" : LABEL[a]}</span>}
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${h} from the room`} title={`Remove ${h}`}>×</button>
               </li>
             );
@@ -719,24 +727,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <b>@{justAdded} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
           </p>
         )}
-        <h2>Your data</h2>
-        <p className="dg-note">Your rooms and chats are saved in this browser, encrypted, and synced to your account so they follow you to your other devices. Download keeps a copy of your own.</p>
-        <div className="dg-data">
-          <button type="button" className="btn-line dg-mini-btn" onClick={() => void download()}>Download</button>
-          <button type="button" className="btn-line dg-mini-btn" onClick={() => importFile.current?.click()}>Import</button>
-          <button type="button" className="btn-line dg-mini-btn" onClick={() => void wipe()}>Delete history</button>
-          <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
-        </div>
-        <p className="dg-note">
-          Agents on the relay stay on your account and keep working with this page closed. Agents in this tab use the model you chose under <Link href="/account/models" style={{ textDecoration: "underline" }}>Models</Link>{backing?.text.startsWith("keळ") ? " (public material only)" : " with your own key"}.
-        </p>
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} />
       </aside>
 
       <section className="dg-main" aria-label={`Room ${room}`}>
         <header className="dg-head">
+          <HamburgerMenu paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open rooms and agents">
-            <span aria-hidden="true">☰</span> <span>{count} agent{count === 1 ? "" : "s"}</span>
+            <span aria-hidden="true">▤</span> <span>Rooms</span>
           </button>
           <h1>{room}</h1>
           <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>
@@ -744,10 +742,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           </span>
           <NotificationBell notes={notes} prefs={prefs} room={room} onPrefs={setPrefs} onOpen={(r) => openRoomRef.current(r)}
             onReadAll={() => setNotes((p) => p.map((n) => ({ ...n, read: true })))} onClear={() => setNotes([])} />
-          <span className="dg-limit">In-tab agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
-          <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>
-            <span aria-hidden="true">{paused ? "▶" : "⏸"}</span>{paused ? "Resume agents" : "Pause agents"}
-          </button>
         </header>
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
 
@@ -783,8 +777,17 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
           )}
         </div>
-        <Composer handles={mentionable} onSend={(t) => void submit(t)} />
+        <Composer handles={mentionable} onSend={(t) => void submit(t)} enterToSend={chatPrefs.enterToSend} />
       </section>
+      <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
+      <SettingsDialog
+        open={settings.open} section={settings.section} room={room}
+        onSection={(section) => setSettings((x) => ({ ...x, section }))} onClose={() => setSettings((x) => ({ ...x, open: false }))}
+        chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} notifyPrefs={prefs} onNotifyPrefs={setPrefs}
+        data={{ onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe() }}
+        agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH }}
+        account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
+      />
     </div>
   );
 }

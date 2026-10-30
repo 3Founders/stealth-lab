@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { askPermission, permission, type Note, type Permission, type Prefs, type RoomLevel } from "@/lib/chat/notify";
+import NotificationSettings from "@/components/chat/NotificationSettings";
+import type { Note, Prefs } from "@/lib/chat/notify";
 
 const LABEL: Record<Note["kind"], string> = {
   mention: "Mention", message: "Message", agent: "Agent", task: "Task", approval: "Needs approval", room: "Room",
 };
-const LEVELS: Array<[RoomLevel, string]> = [["all", "Everything"], ["mentions", "Mentions and results"], ["mute", "Mute (mentions only)"]];
 
 /** The bell: recent notifications, and the settings that decide which ones reach you and how. */
 export default function NotificationBell({ notes, prefs, room, onPrefs, onOpen, onReadAll, onClear }: {
@@ -13,11 +13,9 @@ export default function NotificationBell({ notes, prefs, room, onPrefs, onOpen, 
   onPrefs: (p: Prefs) => void; onOpen: (room: string | null) => void; onReadAll: () => void; onClear: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [perm, setPerm] = useState<Permission>("default");
   const box = useRef<HTMLDivElement>(null);
   const unread = notes.filter((n) => !n.read).length;
 
-  useEffect(() => { setPerm(permission()); }, [open]);
   useEffect(() => {
     if (!open) return;
     const off = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
@@ -25,13 +23,6 @@ export default function NotificationBell({ notes, prefs, room, onPrefs, onOpen, 
     document.addEventListener("mousedown", off); document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", off); document.removeEventListener("keydown", esc); };
   }, [open]);
-
-  async function toggleDesktop(on: boolean) {
-    if (!on) return onPrefs({ ...prefs, desktop: false });
-    const p = perm === "granted" ? "granted" : await askPermission();
-    setPerm(p);
-    onPrefs({ ...prefs, desktop: p === "granted" });
-  }
 
   return (
     <div className="dg-bell" ref={box}>
@@ -56,19 +47,7 @@ export default function NotificationBell({ notes, prefs, room, onPrefs, onOpen, 
                 </li>))}</ul>}
           <fieldset className="dg-bell-set">
             <legend>Settings</legend>
-            <label><input type="checkbox" checked={prefs.desktop && perm === "granted"} onChange={(e) => void toggleDesktop(e.target.checked)} disabled={perm === "unsupported" || perm === "denied"} /> Alerts when this tab is in the background</label>
-            {perm === "denied" && <p className="dg-hint">Your browser is blocking alerts for this site. Allow them in the site settings, then turn this on.</p>}
-            {perm === "unsupported" && <p className="dg-hint">This browser can&rsquo;t show alerts. The bell and tab title still update.</p>}
-            <label><input type="checkbox" checked={prefs.sound} onChange={(e) => onPrefs({ ...prefs, sound: e.target.checked })} /> Sound</label>
-            <label><input type="checkbox" checked={prefs.previews} onChange={(e) => onPrefs({ ...prefs, previews: e.target.checked })} /> Show message text in alerts</label>
-            <label><input type="checkbox" checked={prefs.quiet.on} onChange={(e) => onPrefs({ ...prefs, quiet: { ...prefs.quiet, on: e.target.checked } })} /> Quiet hours
-              {" "}<input type="time" aria-label="Quiet hours start" value={prefs.quiet.from} onChange={(e) => onPrefs({ ...prefs, quiet: { ...prefs.quiet, from: e.target.value } })} />
-              {" – "}<input type="time" aria-label="Quiet hours end" value={prefs.quiet.to} onChange={(e) => onPrefs({ ...prefs, quiet: { ...prefs.quiet, to: e.target.value } })} /></label>
-            <label>This room ({room}){" "}
-              <select value={prefs.rooms[room] ?? "all"} onChange={(e) => onPrefs({ ...prefs, rooms: { ...prefs.rooms, [room]: e.target.value as RoomLevel } })}>
-                {LEVELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select></label>
-            <p className="dg-hint">Alerts work while keळ is open in a tab, even in the background. They can&rsquo;t reach you with the browser closed yet.</p>
+            <NotificationSettings prefs={prefs} room={room} onPrefs={onPrefs} />
           </fieldset>
         </div>
       )}

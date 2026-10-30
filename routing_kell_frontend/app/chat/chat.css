@@ -236,3 +236,77 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-me-pic { box-shadow: 0 4px 12px rgba(0, 0, 0, .2), 0 1px 3px rgba(0, 0, 0, .14); }
 .dg-members li:has(.dg-avatar-sm) { grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 10px; }
 .dg-members li:has(.dg-avatar-sm) .dg-handle { padding-left: 2px; }
+
+/* The hamburger menu at the left of the room header. */
+.dg-hamburger { position: relative; flex: none; }
+.dg-burger { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--rule); background: #fff; display: grid; place-items: center; cursor: pointer; box-shadow: 0 4px 12px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .08); transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
+.dg-burger:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .1); }
+.dg-burger:active { transform: scale(.96); }
+.dg-burger[aria-expanded="true"] { background: var(--soft); }
+.dg-burger-bars { display: grid; gap: 4px; width: 18px; }
+.dg-burger-bars i { display: block; height: 2px; border-radius: 2px; background: var(--ink); }
+.dg-menu-pop { position: absolute; left: 0; top: calc(100% + 8px); z-index: 35; min-width: 232px; padding: 6px; background: #fff; border: 1px solid var(--rule-strong); border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, .2), 0 2px 8px rgba(0, 0, 0, .1); display: grid; gap: 1px; animation: dg-pop .28s cubic-bezier(.32, .72, 0, 1) both; transform-origin: top left; }
+.dg-menu-pop > button, .dg-menu-pop > a { display: block; width: 100%; text-align: left; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 15px; color: var(--ink); text-decoration: none; cursor: pointer; }
+.dg-menu-pop > button:hover, .dg-menu-pop > a:hover, .dg-menu-pop > button:focus-visible, .dg-menu-pop > a:focus-visible { background: var(--soft); outline: none; }
+.dg-menu-pop hr { border: 0; border-top: 1px solid var(--rule); margin: 5px 4px; }
+@keyframes dg-pop { from { opacity: 0; transform: translateY(-6px) scale(.96); } to { opacity: 1; transform: none; } }
+
+/* The big Settings window. */
+.dg-settings { padding: 0; border: 0; background: transparent; max-width: none; width: min(960px, 94vw); height: min(660px, 88vh); margin: auto; overflow: visible; color: var(--ink); font-family: inherit; }
+.dg-settings[open] { display: block; animation: photo-in .5s cubic-bezier(.32, .72, 0, 1) both; }
+.dg-settings[open]::backdrop { background: rgba(0, 0, 0, .4); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); animation: photo-fade .35s ease-out both; }
+.dg-settings[data-closing] { animation: photo-out .24s cubic-bezier(.4, 0, 1, 1) both; }
+.dg-settings[data-closing]::backdrop { animation: photo-fade-out .24s ease-in both; }
+.dg-set-frame { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #fff; border: 1px solid var(--rule-strong); border-radius: 16px; box-shadow: 0 28px 70px rgba(0, 0, 0, .3), 0 2px 10px rgba(0, 0, 0, .12); overflow: hidden; }
+.dg-set-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 22px; border-bottom: 1px solid var(--rule); }
+.dg-set-head h2 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.dg-set-x { width: 36px; height: 36px; border-radius: 10px; border: 0; background: transparent; font-size: 24px; line-height: 1; cursor: pointer; color: var(--ink); }
+.dg-set-x:hover { background: var(--soft); }
+.dg-set-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
+.dg-set-nav { display: grid; align-content: start; gap: 2px; padding: 12px; border-right: 1px solid var(--rule); background: var(--paper); overflow-y: auto; }
+.dg-set-nav button { text-align: left; padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; font: inherit; font-size: 15px; color: var(--ink); cursor: pointer; }
+.dg-set-nav button:hover { background: rgba(0, 0, 0, .05); }
+.dg-set-nav button[aria-selected="true"] { background: #fff; box-shadow: 0 4px 12px rgba(0, 0, 0, .1), 0 1px 2px rgba(0, 0, 0, .08); font-weight: 500; }
+.dg-set-panel { padding: 22px 26px 30px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; min-height: 0; outline: none; }
+.dg-set-panel section { display: grid; gap: 14px; max-width: 600px; }
+.dg-set-panel h3 { font-size: 20px; margin: 0; font-weight: 400; }
+.dg-set-lead { color: #444; font-size: 15px; line-height: 1.45; margin: 0; }
+.dg-set-group { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.dg-set-group legend { font-size: 13px; color: var(--grey); padding: 0; margin-bottom: 6px; }
+.dg-seg { display: inline-grid; grid-auto-flow: column; gap: 4px; padding: 4px; border-radius: 12px; background: var(--paper); border: 1px solid var(--rule); width: fit-content; }
+.dg-seg label { position: relative; padding: 7px 16px; border-radius: 9px; cursor: pointer; font-size: 14px; }
+.dg-seg label[data-on="true"] { background: #fff; box-shadow: 0 3px 10px rgba(0, 0, 0, .12), 0 1px 2px rgba(0, 0, 0, .08); }
+.dg-seg input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+.dg-seg label:focus-within { outline: 2px solid var(--cobalt); outline-offset: 2px; }
+.dg-set-row { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: start; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 12px; background: #fff; cursor: pointer; }
+.dg-set-row input { margin-top: 3px; }
+.dg-set-row b { font-weight: 500; font-size: 15px; display: block; }
+.dg-set-row small { display: block; color: var(--grey); font-size: 13px; margin-top: 2px; }
+.dg-set-cards { display: grid; gap: 12px; }
+.dg-set-cards > div { display: grid; gap: 4px; justify-items: start; padding: 14px 16px; border: 1px solid var(--rule); border-radius: 12px; background: #fff; box-shadow: 0 6px 16px rgba(0, 0, 0, .06); }
+.dg-set-cards b { font-weight: 500; }
+.dg-set-cards small { color: var(--grey); font-size: 13px; margin-bottom: 8px; }
+.dg-set-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dg-set-links a { text-decoration: underline; }
+.dg-keys { display: grid; gap: 4px; margin: 0; }
+.dg-keys > div { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--rule); }
+.dg-keys dt, .dg-keys dd { margin: 0; font-size: 14px; }
+.dg-keys kbd { font-family: inherit; font-size: 12px; padding: 2px 7px; border: 1px solid var(--rule-strong); border-bottom-width: 2px; border-radius: 6px; background: #fff; }
+.dg-about { display: grid; gap: 12px; padding-left: 18px; margin: 0; font-size: 15px; line-height: 1.45; }
+.dg-bell-set-body { display: grid; gap: 10px; font-size: 14px; }
+.dg-set-panel .dg-bell-set-body { padding: 14px 16px; border: 1px solid var(--rule); border-radius: 12px; background: #fff; }
+@media (max-width: 720px) {
+  .dg-settings { width: 100vw; height: 100dvh; max-height: none; margin: 0; }
+  .dg-set-frame { border-radius: 0; border: 0; }
+  .dg-set-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .dg-set-nav { display: flex; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--rule); padding: 8px 10px; scrollbar-width: none; }
+  .dg-set-nav button { white-space: nowrap; flex: none; }
+  .dg-set-panel { padding: 18px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .dg-keys > div { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { .dg-settings[open], .dg-settings[data-closing], .dg-settings::backdrop, .dg-menu-pop, .dg-burger { animation: none !important; transition: none !important; } }
+
+/* Preferences that change the room itself. */
+.dg-shell[data-times="false"] .dg-meta time { display: none; }
+.dg-shell[data-compact="true"] .dg-run { padding-block: 3px; }
+.dg-shell[data-compact="true"] .dg-body p { line-height: 1.32; }

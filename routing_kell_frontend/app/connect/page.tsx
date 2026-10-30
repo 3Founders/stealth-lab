@@ -36,12 +36,6 @@ export default function Connect() {
         ))}
 
         <CopyField label="Instruction to paste" value={TASK_PROMPT} event="connector_prompt_copy" />
-
-        <p className="caption">
-          Neither site runs hooks, so keळ only runs when the model decides to call it; the instruction above is what
-          makes it do that. They have no repository or test command, so you get the lookup, not automatic cheap-model
-          dispatch.
-        </p>
       </div>
     </>
   );

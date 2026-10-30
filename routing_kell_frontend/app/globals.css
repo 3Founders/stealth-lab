@@ -690,3 +690,13 @@ main, footer { position: relative; z-index: 1; }
 .crop-ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 999px rgba(255, 255, 255, .72); border: 2px solid #fff; pointer-events: none; }
 .crop-zoom { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; width: min(260px, 100%); }
 .crop-zoom input { width: 100%; accent-color: var(--ink); }
+
+/* Photo buttons (profile page, the adjust view, the sign-in question): clear space between them, and the soft drop shadow. */
+.profile-photo .cluster, .crop .cluster, .photo-ask .cluster { display: flex; flex-wrap: wrap; gap: 14px 18px; align-items: center; }
+.profile-photo .cluster > button, .crop .cluster > button, .photo-ask .cluster > button { margin: 0; min-height: 44px; box-shadow: 0 6px 16px rgba(0, 0, 0, .16), 0 1px 3px rgba(0, 0, 0, .12); transition: transform .25s var(--ease), box-shadow .25s var(--ease), background-color .25s var(--ease); }
+.profile-photo .cluster > .btn-line, .crop .cluster > .btn-line, .photo-ask .cluster > .btn-line { background: #fff; }
+.profile-photo .cluster > button:hover, .crop .cluster > button:hover, .photo-ask .cluster > button:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(0, 0, 0, .2), 0 2px 4px rgba(0, 0, 0, .12); }
+.profile-photo .cluster > .btn-line:hover, .crop .cluster > .btn-line:hover, .photo-ask .cluster > .btn-line:hover { background: var(--yellow); }
+.profile-photo .cluster > button:active, .crop .cluster > button:active, .photo-ask .cluster > button:active { transform: scale(.98); }
+.profile-photo .cluster > button:disabled, .crop .cluster > button:disabled, .photo-ask .cluster > button:disabled { box-shadow: none; transform: none; opacity: .5; }
+@media (prefers-reduced-motion: reduce) { .profile-photo .cluster > button, .crop .cluster > button, .photo-ask .cluster > button { transition: none; transform: none !important; } }

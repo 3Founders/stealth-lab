@@ -1,12 +1,13 @@
 "use client";
 import { useId, useMemo, useRef, useState } from "react";
+import { sends } from "@/lib/chat/prefs";
 import { applyMention, matchHandles, mentionQuery } from "@/lib/chat/ui";
 
 /**
  * The message box. Typing "@" opens a list of the room's handles. It follows the W3C combobox pattern: focus stays in
  * the text box, the list is a listbox, and aria-activedescendant names the highlighted option.
  */
-export default function Composer({ handles, onSend, disabled }: { handles: string[]; onSend: (text: string) => void; disabled?: boolean }) {
+export default function Composer({ handles, onSend, disabled, enterToSend = true }: { handles: string[]; onSend: (text: string) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -41,7 +42,7 @@ export default function Composer({ handles, onSend, disabled }: { handles: strin
       if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pick(options[idx]); return; }
       if (e.key === "Escape") { e.preventDefault(); setDismissed(true); return; }
     }
-    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }
+    if (sends({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, composing: e.nativeEvent.isComposing }, enterToSend)) { e.preventDefault(); send(); }
   };
 
   return (

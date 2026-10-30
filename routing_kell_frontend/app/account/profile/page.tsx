@@ -178,7 +178,7 @@ function DeviceEditor() {
   const [photoError, setPhotoError] = useState("");
   const file = useRef<HTMLInputElement>(null);
   const photo = useDevicePhoto(p?.subject);
-  const [chosen, setChosen] = useState<File | null>(null);
+  const [chosen, setChosen] = useState<Blob | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -198,6 +198,11 @@ function DeviceEditor() {
     const problem = avatarProblem(f);
     if (problem) { setPhotoError(problem); return; }
     setPhotoError(""); setChosen(f);   // next: adjust it (zoom and move), then save
+  }
+  // Re-open the saved photo in the adjust view (it can be zoomed in and moved; to start from the full original, choose it again).
+  async function adjustSaved() {
+    if (!photo) return;
+    try { setPhotoError(""); setChosen(await (await fetch(photo)).blob()); } catch { setPhotoError("We couldn't open the saved photo. Choose it again to adjust it."); }
   }
   async function savePhoto(square: Blob) {
     if (!p) return;
@@ -232,6 +237,7 @@ function DeviceEditor() {
             <input ref={file} id="p-photo" type="file" accept={AVATAR_TYPES.join(",")} onChange={pick} className="visually-hidden" aria-label="Choose a profile photo" />
             <div className="cluster">
               <button type="button" className="btn-ink" onClick={() => file.current?.click()}><span>{photo ? "Change photo" : "Add a photo"}</span></button>
+              {photo && <button type="button" className="btn-line" onClick={() => void adjustSaved()}>Resize or crop</button>}
               {photo && <button type="button" className="btn-line" onClick={() => void removeDevicePhoto(p.subject)}>Remove</button>}
             </div>
             <p className="small dim">PNG, JPEG or WebP. It is shrunk, then saved on your keळ account so it shows on every device you sign in on.</p>
