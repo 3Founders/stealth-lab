@@ -2,7 +2,29 @@
 
 Status: the website side (`/pricing`) and the backend side (`backend/app/mcp_server/billing_routes.py`, `backend/app/services/wallet.py`) are built. Nothing takes real money until the environment below is set and the legal checklist is done. Several numbers are deliberately **not final** (see Open decisions); the site reads them from settings and says "not set" when they are absent.
 
-## The plan
+## Plans (source: `kell_decks/4_kell_router_and_coding_agents.html`, slides 7-8)
+
+These are the prices the founders chose. All in rupees, **before GST**. The credits below are how "extra usage" is bought on every plan.
+
+| Plan | Price | For | Includes |
+|---|---|---|---|
+| **Pro** | ₹999 a month | One person or a small student team | Connect an assistant or coding tool; a recommended plan per task; lower-cost models included (about $5 of provider cost) or your own key; a short cost note after each task. Public or non-sensitive material only. |
+| **Teams** | ₹1,800 per seat a month | Three or more seats | Everything in Pro; usage shared across the team; per-person and monthly spending limits and one stop-all switch; members, invitations, usage by person, exportable record; a shared library that learns from the team's results. |
+| **Enterprise** | Custom, by annual contract | Private code or compliance needs | Everything in Teams; a no-retention provider option under a signed agreement; runs inside the customer's systems with their sign-in; private tests on their own tasks; security review, DPA and support terms. |
+| **Pilot** | ₹649 per seat for 2 weeks | Teams of 3 to 10 seats, MCP only | Assistant or coding tool connected to the kell MCP; recommendations; routine steps on lower-cost models with usage included; a kept record; a joint report (cost per solved task, with and without kell). Not included: the website assistant room and team admin pages. Invoiced directly. |
+
+Extra usage on every plan: bought in advance as credits at the provider's cost plus a published margin (formula below).
+
+**What is actually live, which the website must say plainly:**
+
+- Buying credits in advance: built and tested, not yet switched on.
+- Pro and Teams monthly/per-seat billing and GST invoices: **planned, not built**. Until they are, the page shows the plans with "Not yet available online" and a contact route; the pilot is invoiced directly.
+- Teams admin pages: built but off in production.
+- Enterprise items: planned; none is available today.
+
+**Claims to keep off the site unless verified:** the deck says Pro is "about half the price of Claude Pro", Teams "about half a Claude Team seat" and Enterprise "no more than half" of the Claude plan. These are comparisons against a third party's list prices (the deck calls them approximate) and no measured saving backs them. Do not headline them; if shown at all, label as approximate India list prices with a date. Also: no savings percentages from the deck's measurements slide, and no pilot lead named.
+
+## The credit plan
 
 People want to pay us while the company is not yet incorporated, so the first version is the simplest one that is honest:
 
@@ -27,6 +49,7 @@ The server derives the balance from `provider_call_ledger` (credits minus settle
 
 `routing_kell_frontend/app/pricing/page.tsx` (route `/pricing`, linked from the header, the footer and the account page), logic in `lib/billing.ts`:
 
+- **Plans** (data in `lib/plans.ts`, kept in step with the Plans table above): Pro, Teams, Enterprise and Pilot with the founders' prices in rupees before GST. Every card is labelled "Not available online yet" (Enterprise: "Planned"; Pilot: "Invoiced directly") and links to `/contact` to ask; there is **no subscription checkout**. The deck's comparisons with another company's prices and its savings percentages are not shown.
 - The rule in words, with a worked example labelled "Illustration, not a quote". With no margin configured the example has no number in it.
 - What credits are and are not, the top-up range, the data path, GST wording.
 - Signed-in people: the balance in rupees (balance in dollars divided by the dollars one rupee buys, from the server's own rate), preset amounts (₹100, ₹500, ₹1,000, ₹5,000) or a custom whole-rupee amount, and a Razorpay Checkout button.

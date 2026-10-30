@@ -56,4 +56,18 @@ describe("/pricing", () => {
     expect(host!.textContent).toContain("₹100");
     expect(host!.querySelector("button[type=submit]")?.textContent).toContain("Pay ₹500");
   });
+
+  it("shows the four plans with the founders' prices, none buyable online, and a way to ask", async () => {
+    await render(503, {});
+    const t = host!.textContent ?? "";
+    for (const price of ["₹999", "₹1,800", "₹649", "Custom"]) expect(t).toContain(price);
+    expect(t).toContain("before GST");
+    expect(t).toContain("Not available online yet");
+    expect(t).toContain("Invoiced directly");
+    expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude Pro|ChatGPT|per developer/i);
+    const asks = [...host!.querySelectorAll("article a")].map((a) => a.getAttribute("href"));
+    expect(asks).toEqual(["/contact", "/contact", "/contact", "/contact"]);
+    // no plan has a checkout: the only submit button is the credit top-up, and billing is off here
+    expect(host!.querySelector("button[type=submit]")).toBeNull();
+  });
 });

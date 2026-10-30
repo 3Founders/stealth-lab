@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import AnimatedHeading from "@/components/AnimatedHeading";
+import { PLANS } from "@/lib/plans";
 import {
   DEFAULT_MAX_INR, DEFAULT_MIN_INR, PRESET_AMOUNTS_INR, amountProblem, billingApi, gstMode, gstSentence, marginPct, openCheckout,
   remainingInr, workedExample, type Loaded, type Wallet,
@@ -23,8 +24,27 @@ export default function PricingPage() {
       </section>
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <div className="profile-wrap" style={{ gridColumn: "1 / span 12", display: "grid", gap: 28 }}>
+          <div className="profile-card" aria-labelledby="plans-title">
+            <h2 className="h3" id="plans-title">Plans</h2>
+            <p className="small dim">Prices are in rupees, before GST. No plan can be bought online yet: monthly and per-seat billing is still being built. Ask for one and we will set it up with you directly.</p>
+            <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", marginTop: 16 }}>
+              {PLANS.map((p) => (
+                <article key={p.id} className="card" aria-label={p.name} style={{ border: "1px solid var(--rule-strong)", borderRadius: 6, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
+                  <h3 className="h3" style={{ fontSize: 22 }}>{p.name}</h3>
+                  <p><b style={{ fontSize: 28, fontWeight: 400 }}>{p.price}</b> <span className="small dim">{p.per}</span></p>
+                  <p className="small dim">{p.forWhom}</p>
+                  <ul className="small" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.includes.map((t) => <li key={t}>{t}</li>)}</ul>
+                  {p.notIncluded && <ul className="small dim" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.notIncluded.map((t) => <li key={t}>{t}</li>)}</ul>}
+                  <p className="caption" role="status">{p.status}</p>
+                  <Link className="btn-line" href="/contact"><span>{p.cta}</span></Link>
+                </article>
+              ))}
+            </div>
+            <p className="small dim" style={{ marginTop: 14 }}>Extra usage on any plan is bought in advance as credits, below.</p>
+          </div>
+
           <div className="profile-card">
-            <h2 className="h3">How it works</h2>
+            <h2 className="h3">Extra usage: prepaid credits</h2>
             <p className="small">
               You buy prepaid credits in rupees. When a model runs for you through keळ, the credit it uses is the provider&rsquo;s own charge for that run
               {pct === null ? " plus a margin" : <> plus {pct}%</>}. There is no subscription and no minimum spend beyond the first top-up.
