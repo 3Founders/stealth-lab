@@ -1,0 +1,45 @@
+/* The MCP console page (/console): rules for classes only the console uses, scoped under .kc so they cannot touch the rest of the site.
+   Ported from console/app/globals.css; the shared look (tokens, .btn-ink, .frame ...) comes from the site's own globals. */
+.kc .console-main { padding-top: clamp(96px, 11vw, 150px); padding-bottom: 96px; }
+.kc .console-head { grid-column: 1 / -1; margin-bottom: 8px; }
+.kc .console-head h1 { font-size: clamp(34px, 5vw, 64px); }
+.kc .console-head .lead { margin-top: 16px; max-width: 40em; }
+.kc .panel { grid-column: 1 / -1; padding-top: 28px; display: grid; gap: 28px; }
+.kc .card { border: 1px solid var(--rule-strong); background: rgba(255,255,255,.6); border-radius: 6px; padding: 18px 20px; }
+.kc .card h2 { font-size: 24px; margin-bottom: 10px; }
+.kc .card h3 { font-size: 18px; margin-bottom: 6px; }
+.kc .card p + p { margin-top: 8px; }
+.kc .notice { border: 1px solid var(--ink); background: var(--soft); border-radius: 6px; padding: 12px 16px; font-size: 16px; }
+.kc .notice[data-tone="bad"] { background: #fff; border-width: 2px; }
+.kc .cluster { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+.kc .field { display: grid; gap: 6px; }
+.kc .field label, .kc .field .label { font-size: 14px; font-weight: 400; color: #333; }
+.kc .field .hint { font-size: 13.5px; color: var(--grey); }
+.kc .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px 18px; }
+.kc .check { display: flex; gap: 10px; align-items: flex-start; font-size: 17px; font-weight: 400; }
+.kc .check small { display: block; font-weight: 300; color: var(--grey); font-size: 14px; }
+.kc .rows { display: grid; gap: 0; border-top: 1px solid var(--rule-strong); }
+.kc .row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 2fr) auto; gap: 8px 18px; padding: 14px 0; border-bottom: 1px solid var(--rule); align-items: start; }
+.kc .row .name { font-size: 18px; font-weight: 400; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+.kc .row { grid-template-columns: 1fr; }
+}
+.kc .checklist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-strong); }
+.kc .checklist li { display: grid; grid-template-columns: 90px 1fr; gap: 8px 14px; padding: 11px 0; border-bottom: 1px solid var(--rule); }
+.kc .checklist .fix { color: #333; font-size: 15px; }
+.kc pre.diff { margin: 0; background: rgba(255,255,255,.6); border: 1px solid var(--rule-strong); border-radius: 4px; padding: 12px 14px; font-size: 13.5px; font-weight: 400; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; }
+.kc .compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.kc .pane { border: 1px solid var(--rule-strong); background: #fff; border-radius: 6px; display: flex; flex-direction: column; min-height: 220px; }
+.kc .pane header { display: flex; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--rule); font-weight: 400; }
+.kc .pane .out { padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; font-weight: 400; flex: 1; min-height: 120px; }
+.kc .pane .out[data-empty="true"] { color: var(--grey); font-weight: 300; }
+.kc .pane footer { padding: 10px 14px; border-top: 1px solid var(--rule); font-size: 13.5px; color: #444; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.kc .picker { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.kc .picker label { display: inline-flex; gap: 8px; align-items: center; font-weight: 400; }
+.kc .keyline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.kc .keyline input { max-width: 340px; }
+.kc .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.kc .console-foot { border-top: 1px solid var(--rule-strong); padding-block: 24px 40px; position: relative; z-index: 1; }
+.kc .console-foot .frame { display: flex; flex-wrap: wrap; gap: 8px 28px; justify-content: space-between; font-size: 14px; color: #444; }
+.kc .grid-full { grid-column: 1 / -1; }
+.kc .statusbar { margin-top: 20px; }
