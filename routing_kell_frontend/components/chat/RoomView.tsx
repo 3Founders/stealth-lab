@@ -21,6 +21,8 @@ import type { AgentActivity, AgentIdentity, GroupMessage } from "@/lib/chat/type
 import { MAX_DEPTH } from "@/lib/chat/types";
 import { groupMessages, initials } from "@/lib/chat/ui";
 import { getAccessToken } from "@/lib/session";
+import NotificationBell from "@/components/chat/NotificationBell";
+import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
 const STATUS: Record<RelayTask["status"], string> = {
@@ -106,6 +108,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // relay state
   const [relayAgents, setRelayAgents] = useState<RelayAgent[]>([]);
+  const relayAgentsRef = useRef<RelayAgent[]>([]);
+  relayAgentsRef.current = relayAgents;
   const [tasksByRoom, setTasksByRoom] = useState<Record<string, RelayTask[]>>({});
   const [relayError, setRelayError] = useState("");
   const tasksRef = useRef(tasksByRoom);
@@ -136,7 +140,25 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history]);
+  const firstRooms = useRef(true);
   const note = useCallback((text: string, r: string = roomRef.current) => push(r, { kind: "notice", id: broker.newId(), text, t: Date.now() }), [broker, push]);
+
+  // Notifications (lib/chat/notify.ts): what reaches you, in the bell, the tab title, the app badge, a chime and, in the background, an OS alert.
+  const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
+  const prefsRef = useRef(prefs);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const openRoomRef = useRef<(r: string | null) => void>(() => {});
+  useEffect(() => { const p = loadPrefs(subject); prefsRef.current = p; setPrefsState(p); }, [subject]);
+  const setPrefs = useCallback((p: Prefs) => { prefsRef.current = p; setPrefsState(p); savePrefs(subject, p); }, [subject]);
+  const notify = useCallback((kind: NoteKind, r: string | null, title: string, body: string) => {
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+    const d = decide({ kind, room: r, onScreen: r !== null && r === roomRef.current, hidden }, prefsRef.current);
+    if (!d.record) return;
+    const n: Note = { id: crypto.randomUUID(), kind, room: r, title, body: previewText(prefsRef.current, body), at: Date.now(), read: false };
+    setNotes((p) => [n, ...p].slice(0, 50));
+    if (d.sound) chime();
+    if (d.os) showOs(n, (x) => openRoomRef.current(x));
+  }, []);
 
   const deps = useMemo<AssistantDeps>(() => ({
     resolve: makeResolver({ vault, token: getAccessToken, kv, subject }),
@@ -206,8 +228,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       busy: () => Object.keys(streamingRef.current).length > 0 || (tasksRef.current[roomRef.current] ?? []).some((t) => !isFinished(t)),
       hidden: () => document.visibilityState === "hidden",
       hooks: {
-        onMessages: (label, ms) => { for (const m of ms) push(label, { kind: "msg", m }, true); },
+        onMessages: (label, ms) => {
+          for (const m of ms) {
+            push(label, { kind: "msg", m }, true);
+            if (m.sender.handle === HUMAN.handle) continue;
+            const mention = m.recipients.includes(HUMAN.handle);
+            const kind: NoteKind = mention ? "mention" : m.sender.type === "human" ? "message" : "agent";
+            notify(kind, label, mention ? `${m.sender.displayName} mentioned you` : m.sender.displayName, m.payload.text);
+          }
+        },
         onRooms: (c) => {
+          if (firstRooms.current) firstRooms.current = false;
+          else for (const a of c.added) notify("room", a.label, `Added to ${a.title || a.label}`, "A room was added to your account.");
           if (c.added.length || c.removed.length) {
             setRoomList((l) => {
               let rooms = l.rooms.filter((r) => !c.removed.includes(r));
@@ -234,7 +266,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     window.addEventListener("online", wake);
     document.addEventListener("visibilitychange", wake);
     return () => { engine.stop(); window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); engineRef.current = null; };
-  }, [rapi, history, push]);
+  }, [rapi, history, push, notify]);
 
   // Bring this room's saved history back from this device (what is already on screen wins on a clash).
   const hydrate = useCallback(async (r: string) => {
@@ -276,7 +308,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           const [a, t] = await Promise.all([api.agents(), api.tasks(room, cursorOf(have))]);
           if (!live) return;
           setRelayAgents(a);
-          if (t.length) setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], t) }));
+          if (t.length) {
+            const before = new Map(have.map((x) => [x.id, x.status]));
+            for (const x of t) {
+              const was = before.get(x.id);
+              if (was === x.status) continue;
+              const who = relayAgentsRef.current.find((a) => a.id === x.agent_id)?.handle ?? "An agent";
+              if (x.status === "needs_approval") notify("approval", room, `${who} needs your approval`, x.text);
+              else if (x.status === "done") notify("task", room, `${who} finished a task`, x.result ?? x.text);
+              else if (x.status === "failed") notify("task", room, `${who} could not finish a task`, x.result ?? x.text);
+            }
+            setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], t) }));
+          }
           setRelayError("");
           busy = [...have, ...t].some((x) => !isFinished(x));
         } catch (err) {
@@ -288,7 +331,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     };
     void tick();
     return () => { live = false; if (timer) clearTimeout(timer); };
-  }, [api, room]);
+  }, [api, room, notify]);
 
   const tasks = tasksByRoom[room] ?? [];
   const lines = lineStore.current[room] ?? [];
@@ -423,6 +466,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // ---- rooms
   const chooseRoom = (r: string) => { setRoomList((l) => ({ ...l, current: r })); setMenuOpen(false); };
+  openRoomRef.current = (r) => { if (r && roomList.rooms.includes(r)) chooseRoom(r); };
+  useEffect(() => { setNotes((p) => (p.some((n) => !n.read && n.room === room) ? p.map((n) => (n.room === room ? { ...n, read: true } : n)) : p)); }, [room]);
+  const unreadTotal = Object.entries(info).reduce((a, [r, v]) => a + (r === room ? 0 : v.unread), 0);
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\+?\) /, "");
+    document.title = titleWithCount(base, unreadTotal);
+    setBadge(unreadTotal);
+    return () => { document.title = base; setBadge(0); };
+  }, [unreadTotal]);
   const createRoom = (e: React.FormEvent) => {
     e.preventDefault();
     const r = newRoomName(roomList.rooms, newRoom ?? "");
@@ -681,6 +733,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>
             {sync.status === "syncing" ? "Syncing…" : sync.status === "offline" ? `Offline${sync.pending ? ` · ${sync.pending} waiting` : ""}` : sync.status === "error" ? "Not syncing" : sync.pending ? `${sync.pending} sending` : "Synced"}
           </span>
+          <NotificationBell notes={notes} prefs={prefs} room={room} onPrefs={setPrefs} onOpen={(r) => openRoomRef.current(r)}
+            onReadAll={() => setNotes((p) => p.map((n) => ({ ...n, read: true })))} onClear={() => setNotes([])} />
           <span className="dg-limit">In-tab agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
           <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>
             <span aria-hidden="true">{paused ? "▶" : "⏸"}</span>{paused ? "Resume agents" : "Pause agents"}

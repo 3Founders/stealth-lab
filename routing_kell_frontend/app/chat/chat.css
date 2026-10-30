@@ -193,3 +193,20 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-sync[data-status="offline"], .dg-sync[data-status="error"] { background: #fdecea; color: #7a1812; }
 .dg-form input[readonly] { font: inherit; font-size: 13px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); width: 100%; }
 @media (max-width: 760px) { .dg-sync { font-size: 12.5px; } .dg-unread { min-height: 24px; line-height: 24px; } }
+
+/* Notifications: the bell in the room header, its list and its settings. */
+.dg-bell { position: relative; }
+.dg-bell > .dg-mini { display: inline-flex; align-items: center; gap: 6px; }
+.dg-bell-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 30; width: min(380px, calc(100vw - 24px)); max-height: min(70vh, 560px); overflow: auto; background: #fff; border: 1px solid var(--rule-strong); border-radius: 8px; padding: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .14); display: grid; gap: 10px; }
+.dg-bell-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dg-bell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.dg-bell-list button { width: 100%; text-align: left; display: grid; gap: 2px; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; font: inherit; cursor: pointer; }
+.dg-bell-list button:hover { background: var(--soft); }
+.dg-bell-list li[data-read="false"] button { background: #f3f6fc; }
+.dg-bell-kind { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); }
+.dg-bell-list b { font-weight: 500; font-size: 14px; }
+.dg-bell-list span:last-child { font-size: 13px; color: #444; overflow-wrap: anywhere; }
+.dg-bell-set { border: 0; border-top: 1px solid var(--rule); padding: 10px 0 0; margin: 0; display: grid; gap: 8px; font-size: 14px; }
+.dg-bell-set legend { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); padding: 0; }
+.dg-bell-set select, .dg-bell-set input[type="time"] { font: inherit; }
+@media (max-width: 720px) { .dg-bell-pop { position: fixed; left: 12px; right: 12px; top: 56px; width: auto; } }
