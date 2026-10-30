@@ -109,7 +109,9 @@ main, footer { position: relative; z-index: 1; }
 .logo img { height: 54px; width: auto; margin-block: -4px; display: block; }
 .nav-links { display: flex; gap: clamp(16px, 3vw, 40px); font-size: 16px; font-weight: 400; color: #444; }
 .nav-links a { padding: 8px 2px; position: relative; }
-.nav-links a::after { content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 2px; background: var(--yellow); transform: scaleX(0); transform-origin: left; transition: transform .35s var(--ease); }
+.nav-links a::after { content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 2px; border-radius: 2px; background: var(--yellow); transform: scaleX(0); transform-origin: left; transition: transform .35s var(--ease), box-shadow .35s var(--ease); }
+/* The underline floats: the same soft, layered drop shadow the photo dialog and profile card have. */
+.nav-links a:hover::after, .nav-links a[aria-current="page"]::after { box-shadow: 0 6px 14px rgba(0, 0, 0, .22), 0 1px 3px rgba(0, 0, 0, .14); }
 .nav-links a:hover::after, .nav-links a[aria-current="page"]::after { transform: scaleX(1); }
 .nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--ink); }
 /* Symmetric by default so text-only buttons (Save, Unlock, ...) center
