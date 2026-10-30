@@ -59,3 +59,12 @@ was slow, which was most of the night.
 4. Per-model step budgets: glm makes its first edit late (call 69 on one solved issue); gemma loops on re-reads early.
 5. minimax's place in the race: two rejections in two tries here; check on more tasks before demoting it.
 6. gpt-oss: the empty-reply nudge (lib/agent/step_agent.mjs) is new; check whether it now finishes more runs.
+7. **Hard tasks: the money is saved, the time is not (caveat, 2026-10-30).** When a cheap model solves a hard,
+   multi-step fix, kell costs about 40% less than Opus alone at equal quality (sqlglot 508/518/527: glm solved 2 of 3,
+   as Opus did; $0.88 vs $1.48; three issues only, so promising, not proven). When none solves it, the cheap tries cost
+   cents (about +10% on the session model's bill) but the developer waits: on kell-try (the subcommand error message)
+   four tries ran 17 minutes before the session's model started, 19 minutes in all. To do: (a) skip or shorten the cheap
+   tries when the task looks hard and the outcome records say cheap models fail on that kind; (b) start the session's
+   model after a few minutes instead of only after every cheap try has ended. Related: cheap answers to repository
+   questions are about 75% cheaper but about twice as slow (glm 215 s vs about 100 s); a faster provider for the step
+   agents (Cerebras, Groq) is the lever there.
