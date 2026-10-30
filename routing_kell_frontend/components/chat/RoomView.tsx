@@ -3,6 +3,7 @@ import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/mes
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
+import SmoothText from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
 import { recordUse, withinCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore } from "@/lib/byok/vault";
@@ -700,7 +701,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     <Avatar who={assistantIdentityFor(h)} />
                     <div className="dg-col">
                       <div className="dg-meta"><b>{h}</b><span className="dg-badge">agent</span></div>
-                      <div className="dg-body"><p>{v.text || "…"}</p></div>
+                      <div className="dg-body"><p><SmoothText text={v.text} /></p></div>
                     </div>
                   </MessageScroller.Item>
                 ))}
