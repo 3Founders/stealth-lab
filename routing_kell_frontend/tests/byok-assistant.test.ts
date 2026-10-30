@@ -93,6 +93,25 @@ describe("assistant", () => {
     expect(d2.started).toEqual(["#r"]);
   });
 
+  it("in a room with other people it answers only when mentioned, and with no model set up a plain line gets no key prompt", async () => {
+    const shared = world();
+    const d1 = deps({ shared: () => true });
+    attachAssistant(shared.b, d1);
+    await shared.b.send(say(shared.b, "hi all", ["@all"]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(d1.started).toEqual([]);
+
+    const noModel = world();
+    const d2 = deps({ resolve: async () => null });
+    attachAssistant(noModel.b, d2);
+    await noModel.b.send(say(noModel.b, "hi all", ["@all"]));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(texts(noModel.events).some((t) => /Add a key/.test(t))).toBe(false);
+    await noModel.b.send(say(noModel.b, "@assistant hi"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(texts(noModel.events).some((t) => /Add a key/.test(t))).toBe(true);
+  });
+
   it("a reached daily cap is a notice, not a request", async () => {
     const { b, events } = world();
     const d = deps({ allowed: () => false });

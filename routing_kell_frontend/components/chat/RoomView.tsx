@@ -77,6 +77,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const engineRef = useRef<SyncEngine | null>(null);
   const [sync, setSync] = useState<SyncState>({ status: "idle", pending: 0, lastSyncAt: null, error: null });
   const [info, setInfo] = useState<RoomsChange["info"]>({});
+  const infoRef = useRef(info);
+  infoRef.current = info;
   const [members, setMembers] = useState<RoomMember[]>([]);
   const [invite, setInvite] = useState<{ url: string; days: number; uses: number } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -162,6 +164,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   const deps = useMemo<AssistantDeps>(() => ({
     resolve: makeResolver({ vault, token: getAccessToken, kv, subject }),
+    shared: (r) => (infoRef.current[r]?.members ?? 1) > 1,
     allowed: () => withinCap(kv, subject),
     used: () => void recordUse(kv, subject),
     history: (r) => (lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])),
@@ -747,7 +750,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>
               <MessageScroller.Content ref={contentRef} className="dg-content">
                 {items.length === 0 && streamingHere.length === 0 && (
-                  <p className="dg-empty">No messages in {room} yet. Say hello: <code>@assistant-1 hello</code>. Add your own agents with <b>+ Add agent</b>.</p>
+                  <p className="dg-empty">No messages in {room} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}Add your own agents with <b>+ Add agent</b>.</p>
                 )}
                 {items.map((i) => i.node)}
                 {streamingHere.map(([h, v]) => (

@@ -44,7 +44,8 @@ export function withoutRoom(list: RoomList, room: string): RoomList {
 // The in-tab agents you have added (their handles; they are not secret), so a reload brings the same agents back.
 const agentsKey = (subject: string) => `kel.delegator.agents.${subject}`;
 const AGENT = /^@[a-z0-9][a-z0-9_-]{0,23}$/i;
-export const DEFAULT_AGENTS = ["@assistant-1"];
+// No agent is added for you: a person who joins a room by invite should not find a model assistant that asks them for a key. Add one with "+ Add agent".
+export const DEFAULT_AGENTS: string[] = [];
 
 export function readAgents(kv: KeyValue, subject: string, max = 5): string[] {
   try {

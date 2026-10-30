@@ -11,6 +11,8 @@ export const assistantIdentity = assistantIdentityFor(ASSISTANT_HANDLE);
 export interface AssistantDeps {
   /** What backs an agent right now, or null when nothing is set up. Called per message; nothing here keeps the key or token. */
   resolve(): Promise<{ stream: (messages: ChatMessage[], signal: AbortSignal) => AsyncIterable<string>; secrets: string[] } | null>;
+  /** True when the room has other people in it. An agent there answers only when it is mentioned. */
+  shared?(roomId: string): boolean;
   /** Spend guard: false means today's soft cap is reached. */
   allowed(): boolean;
   used(): void;
@@ -51,10 +53,12 @@ export function attachAssistant(broker: Broker, deps: AssistantDeps, handle: str
   return broker.attach(handle, async ({ message }: TransportPacket) => {
     const roomId = message.roomId;
     const others = (broker.room(roomId)?.members ?? []).filter((h) => broker.isAgent(h) && h !== handle);
-    if (message.recipients.includes("@all") && others.length > 0) return; // not addressed to it
+    const addressed = !message.recipients.includes("@all");
+    if (!addressed && (others.length > 0 || deps.shared?.(roomId))) return; // not addressed to it; in a room with other people it waits to be mentioned
     let target: Awaited<ReturnType<AssistantDeps["resolve"]>>;
     try { target = await deps.resolve(); } catch (err) { return broker.notice(roomId, err instanceof Error ? err.message : "The agent could not start."); }
-    if (!target) return broker.notice(roomId, "Add a key to chat here, or choose keळ models: both are under Models in your account menu.");
+    // A line to the whole room is not a request to this agent, so with no model set up it stays quiet; only a mention gets the prompt.
+    if (!target) return addressed ? broker.notice(roomId, "Add a key to chat here, or choose keळ models: both are under Models in your account menu.") : undefined;
     if (!deps.allowed()) return broker.notice(roomId, "Today's reply limit is reached. You can raise it under Models.");
 
     const controller = new AbortController();

@@ -103,9 +103,9 @@ describe("history store", () => {
 });
 
 describe("in-tab agents survive a reload", () => {
-  it("defaults to one assistant, remembers the list (including none), and ignores junk", () => {
+  it("starts with no agent (a person who joins by invite is not asked for a key), remembers the list (including none), and ignores junk", () => {
     const s = kv();
-    expect(readAgents(s, "u1")).toEqual(["@assistant-1"]);
+    expect(readAgents(s, "u1")).toEqual([]);
     writeAgents(s, "u1", ["@assistant-1", "@reviewer"]);
     expect(readAgents(s, "u1")).toEqual(["@assistant-1", "@reviewer"]);
     writeAgents(s, "u1", []);
