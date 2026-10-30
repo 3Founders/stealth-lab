@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
+import { forgetInvite, recallInvite, rememberInvite } from "@/lib/chat/pending-invite";
 import { roomsApi } from "@/lib/chat/rooms-api";
 import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
 
@@ -24,7 +25,13 @@ export default function JoinRoomPage() {
 }
 
 function Join() {
-  const code = useSearchParams().get("code") ?? "";
+  const fromAddress = useSearchParams().get("code") ?? "";
+  // The address can lose its ?code= on the way through sign-in and onboarding; the code is kept for that (lib/chat/pending-invite.ts).
+  const [code, setCode] = useState(fromAddress);
+  useEffect(() => {
+    if (fromAddress) { rememberInvite(fromAddress); setCode(fromAddress); }
+    else setCode(recallInvite());
+  }, [fromAddress]);
   const api = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
@@ -40,7 +47,7 @@ function Join() {
 
   async function join() {
     setBusy(true); setError("");
-    try { const r = await api.join(code); setJoined({ title: r.title, already: r.already_member }); }
+    try { const r = await api.join(code); forgetInvite(); setJoined({ title: r.title, already: r.already_member }); }
     catch (err) { setError(err instanceof Error ? err.message : "That didn't work."); }
     finally { setBusy(false); }
   }

@@ -30,7 +30,8 @@ export default function OnboardingGate() {
       const profile = await getMyProfile();
       if (cancelled || profile.kind !== "ok") return;
       if (profile.data.onboarding_required) {
-        router.replace(`/onboarding?redirect=${encodeURIComponent(pathname)}`);
+        // keep the query too: an invite link (/room/join?code=...) must still carry its code after onboarding
+        router.replace(`/onboarding?redirect=${encodeURIComponent(pathname + window.location.search)}`);
       }
     })();
     return () => { cancelled = true; };
