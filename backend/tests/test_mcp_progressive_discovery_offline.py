@@ -29,7 +29,7 @@ def _listed():
 
 def test_progressive_lists_only_the_core(monkeypatch):
     monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "progressive")
-    assert _listed() == ["discover_tools", "find_ways", "use_tool"]
+    assert _listed() == ["delegate", "discover_tools", "find_ways", "use_tool"]
 
 
 def test_listed_tools_stay_within_their_token_budget(monkeypatch):
@@ -44,7 +44,9 @@ def test_listed_tools_stay_within_their_token_budget(monkeypatch):
     assert sizes["find_ways"] <= 1100, sizes
     # 2,000: raised from 1,500 (2026-10-30) when discover_tools began routing external tools -- its fuller
     # description (goals, the installed list) is worth ~100 tokens a turn more than a terse one
-    assert sum(sizes.values()) <= 2000, sizes
+    # 2,300: raised from 2,000 (2026-10-30) for the delegate tool (~300): a chat client (claude.ai) has no hooks, so its
+    # cheap-model path is a tool it sees on every turn
+    assert sum(sizes.values()) <= 2300, sizes
 
 
 def test_find_ways_full_guide_is_one_call_away():
@@ -64,7 +66,7 @@ def test_report_result_is_found_and_run_through_discovery():
 
 def test_all_lists_every_tool_without_the_discovery_pair(monkeypatch):
     monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "all")
-    assert _listed() == ["call_model", "delegate_inbox", "delegate_result", "find_ways", "recommend_models",
+    assert _listed() == ["call_model", "delegate", "delegate_inbox", "delegate_result", "find_ways", "recommend_models",
                          "report_audit", "report_check_evidence", "report_discovery", "report_model_run", "report_result",
                          "submit", "submit_way"]
 

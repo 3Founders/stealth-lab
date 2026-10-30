@@ -284,9 +284,47 @@ def test_find_ways_adds_tools_or_a_delegation_for_a_client_without_hooks(monkeyp
     assert "Settings -> Connectors" in out["tools"]["next"] and "delegate" not in out
 
     out = _json.loads(run(srv._with_routes(base, Triage(False, kind="knowledge_question", work="answer"), "what is CORS?", None)))
-    assert out["delegate"]["call"]["tool"] == "call_model" and out["delegate"]["or"]["arguments"]["name"] == "call_model"
+    assert out["delegate"]["call"]["tool"] == "delegate" and "task" in out["delegate"]["call"]["arguments"]
 
     plain = run(srv._with_routes(base, Triage(False, kind="trivial_edit", work="change"), "rename x", None))
     assert plain == base                                              # nothing to add: unchanged
     assert run(srv._with_routes("not json", Triage(False, kind="knowledge_question"), "q", None)) == "not json"
     assert run(srv._with_routes(base, None, "q", None)) == base
+
+
+def test_delegate_runs_a_cheap_model_checks_it_with_another_and_records_the_outcome(monkeypatch):
+    import json as _json
+
+    from app.mcp_server import server as srv
+
+    calls, reports = [], []
+
+    async def fake_call_model(ctx, prompt, model="auto", system=None, **kw):
+        calls.append({"model": model, "system": system, "data_class": kw.get("data_class")})
+        if system:                                                     # the check
+            return _json.dumps({"unit": "gemma-4-31b-it|direct", "text": verdict_text[0], "usage": {"cost_usd": 0.001}})
+        return _json.dumps({"unit": "glm-5.3-flash|direct", "text": "CORS lets a server allow other origins.",
+                            "usage": {"cost_usd": 0.002, "tokens_in": 50, "tokens_out": 20, "latency_ms": 900}})
+
+    async def fake_report(ctx, **kw):
+        reports.append(kw)
+        return "{}"
+
+    monkeypatch.setattr(srv, "call_model", fake_call_model)
+    monkeypatch.setattr(srv, "report_model_run", fake_report)
+    verdict_text = ['{"verdict": "good", "why": "correct"}']
+    out = _json.loads(run(srv.delegate(None, task="Explain CORS in one sentence.")))
+    assert out["answer"].startswith("CORS") and out["check"]["verdict"] == "good" and out["cost_usd"] == 0.003
+    assert [c["data_class"] for c in calls] == ["PUBLIC_SOURCE", "PUBLIC_SOURCE"] and calls[1]["system"]
+    assert out["recorded"] and reports[0]["accepted"] is True and reports[0]["check_kind"] == "judge"
+    assert reports[0]["model"] == "glm-5.3-flash" and reports[0]["instance_key"].startswith("web-delegate:")
+
+    verdict_text[0] = "no json here"
+    out = _json.loads(run(srv.delegate(None, task="Explain CORS in one sentence.")))
+    assert out["check"]["verdict"] == "unsure" and "recorded" not in out and len(reports) == 1   # no verdict, no record
+
+    async def refusing(ctx, prompt, **kw):
+        return "REFUSED: daily cap reached"
+    monkeypatch.setattr(srv, "call_model", refusing)
+    assert run(srv.delegate(None, task="x")).startswith("REFUSED: daily cap reached")
+    assert run(srv.delegate(None, task="  ")).startswith("REFUSED")
