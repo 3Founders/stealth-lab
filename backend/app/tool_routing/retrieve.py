@@ -20,7 +20,7 @@ from typing import Any, Optional, Sequence
 
 import numpy as np
 
-from app.tool_routing.catalog import DATA, ToolCard, quality, words
+from app.tool_routing.catalog import DATA, ToolCard, popularity, publisher, quality, words
 from app.tool_routing.goals import TOOL_GOALS
 
 RRF_K = 60
@@ -29,6 +29,14 @@ INSTALLED_BONUS = 1.0 / (RRF_K + 4)
 QUALITY_WEIGHT = 1.0 / (RRF_K + 3)     # a full-quality card over an empty one: about a few ranks, never more than relevance
 VECTORS_FILE = DATA / "registry_vectors.npz"
 RERANK_POOL = 40                    # first-stage candidates the cross-encoder reads
+# after the cross-encoder (its scores are 0..1): what moves a relevant card up. An installed tool the reranker finds
+# relevant comes first -- the session can call it now; then the widely used and the official (2026-10-30: by relevance
+# alone, pay-per-call wrappers outranked Microsoft's Playwright server and Context7)
+INSTALLED_MIN = 0.10                # an installed tool the reranker scores at least this comes first
+RELEVANT = 0.5                      # the reranker's yes/no point: above it, a card fits the request
+FUSE_K = 10                         # RRF constant for relevance x popularity among the relevant (small: the top matters)
+BRAND_LIFT = 0.10
+GOAL_POPULAR = 15                   # the goal's most used servers, among those related by meaning, that reach the reranker
 ONLINE_MAX = 300                    # registry cards without offline vectors embedded per call, at most
 
 
@@ -60,6 +68,18 @@ class BM25:
             out[ids] += self.idf[t] * tf * (self.k1 + 1) / (tf + self.norm[ids])
         return out
 
+    def score_docs(self, query: list[str], docs: Sequence[list[str]]) -> np.ndarray:
+        """`docs` outside the index, scored with its statistics (a word it has never seen counts as its rarest)."""
+        top = max(self.idf.values(), default=1.0)
+        out = np.zeros(len(docs), dtype=np.float32)
+        q = set(query)
+        for j, d in enumerate(docs):
+            norm = self.k1 * (1 - self.b + self.b * len(d) / (self.avg or 1))
+            for t, f in Counter(d).items():
+                if t in q:
+                    out[j] += self.idf.get(t, top) * f * (self.k1 + 1) / (f + norm)
+        return out
+
 
 _INDEXES: dict[int, BM25] = {}
 
@@ -73,6 +93,21 @@ def index_for(cards: Sequence[ToolCard]) -> BM25:
             _INDEXES.pop(next(iter(_INDEXES)))
         idx = _INDEXES[key] = BM25([words(c.text) for c in cards])
     return idx
+
+
+def _bm25_scores(qw: list[str], cards: Sequence[ToolCard]) -> np.ndarray:
+    """BM25 over `cards`. The caller's own few (installed, kell) are scored against the index of the rest, so a request
+    with a different installed list reuses the registry's index instead of rebuilding 48k cards' (2026-10-30)."""
+    own = [i for i, c in enumerate(cards) if c.source in ("installed", "kell")]
+    if not own or len(own) == len(cards):
+        return index_for(cards).scores(qw)
+    mine = set(own)
+    rest = [i for i in range(len(cards)) if i not in mine]
+    idx = index_for([cards[i] for i in rest])
+    out = np.zeros(len(cards), dtype=np.float32)
+    out[rest] = idx.scores(qw)
+    out[own] = idx.score_docs(qw, [words(cards[i].text) for i in own])
+    return out
 
 
 @dataclass
@@ -122,7 +157,13 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     if not cards or not query.strip():
         return [], info
     qw = [w for w in words(query) if w not in STOP]
-    bm = index_for(cards).scores(qw)
+    bm = _bm25_scores(qw, cards)
+    # the triage's goal says what KIND of tool is needed; the meaning and the reranker read it with the request, asked
+    # as "which server", or they rank by the request's topic: "search the web for how teams handle rate limiting" put
+    # a rate-limiting server first, and "show the React 19 docs" scored Context7 0.08 (a cross-encoder asks whether a
+    # text answers the question). Asked this way: Context7 0.66, the rate-limiting server 0.13 (2026-10-30)
+    need = (f"Which MCP server gives a coding agent the ability to {TOOL_GOALS[given_goal][0]}? The agent's task: {query}"
+            if given_goal else query)
     order = [i for i in np.argsort(-bm) if bm[i] > min_bm25]
     bm_rank = {int(i): r for r, i in enumerate(order)}
 
@@ -130,8 +171,8 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     qvec = None
     if embedder is not None:
         try:
-            qvec = await _query_vector(query, embedder)
-            vec_rank = await _vector_ranks(qvec, cards, embedder, store=vector_store)
+            qvec = await _query_vector(need, embedder)
+            vec_rank = await _vector_ranks(qvec, cards, embedder, store=vector_store, top=1000)
             info["semantic"] = bool(vec_rank)
         except Exception as exc:  # noqa: BLE001 -- lexical alone, and said so
             info["degraded"] = f"embedding unavailable: {type(exc).__name__}"
@@ -157,18 +198,52 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     # the cross-encoder reads the request with each of the first stage's best (app/tool_routing/rerank.py); the same
     # bonuses then apply on its 0..1 scale. No reranker, or it fails: the first-stage order
     if reranker is not None and hits:
+        # the installed ones always reach the reranker: there are few, and one sharing no word with the request
+        # ("playwright" for "check the page in a real browser") otherwise never makes the first stage's 40
         pool = hits[:RERANK_POOL]
-        rel = await reranker(query, [h.card.text[:1500] for h in pool])
+        pool += [h for h in hits[RERANK_POOL:] if h.card.source == "installed"][:20]
+        # and so do the goal's most used servers among those the meaning finds related: a general one (Context7 for
+        # "the React 19 docs") loses on words and meaning to dozens of narrow ones, and only the reranker can tell that it
+        # fits. Not the goal's tag alone: 4,844 cards are tagged web, browser-use and tldraw among the most used (2026-10-30)
+        if goal:
+            seen = {id(h.card) for h in pool}
+            popular = sorted((h for h in hits if goal in h.card.goals and h.vector_rank is not None
+                              and popularity(h.card) > 0 and id(h.card) not in seen),
+                             key=lambda h: -(popularity(h.card) * quality(h.card)))
+            pool += popular[:GOAL_POPULAR]
+        rel = await reranker(need, [h.card.text[:1500] for h in pool])
         if rel:
             for h, r in zip(pool, rel):
                 h.rerank = r
-                h.score = r + (0.03 if h.goal_match else 0.0) + (0.05 if h.card.source == "installed" else 0.0) + 0.10 * quality(h.card)
-            pool.sort(key=lambda h: -h.score)
-            hits = pool + hits[RERANK_POOL:]
+            hits = _fuse(pool, qw) + [h for h in hits if id(h) not in {id(x) for x in pool}]
             info["reranked"] = True
         else:
             info["reranked"] = False
     return hits[:k], info
+
+
+def _fuse(pool: list[Hit], qw: list[str]) -> list[Hit]:
+    """The reranked pool in order. The reranker's scores saturate (a dozen docs servers all at ~0.99), so among the
+    cards it calls relevant, its order and the order by use (stars, liveness, a verified publisher) are fused by RRF:
+    relevance alone ranked 12-star servers over Context7 and Brave. Relevant installed tools come first -- the session
+    can call them now; then the relevant, fused; then the rest by relevance. An official server named in the request
+    ("stripe", "sentry") is lifted."""
+    brands = {w for w in qw if len(w) >= 4}
+    for h in pool:
+        pub = publisher(h.card)
+        h.score = float(h.rerank or 0.0) + 0.10 * quality(h.card) + (0.03 if h.goal_match else 0.0) + (
+            BRAND_LIFT if pub and h.card.extra.get("verified") and any(b in pub for b in brands) else 0.0)
+    mine = sorted((h for h in pool if h.card.source == "installed" and (h.rerank or 0) >= INSTALLED_MIN), key=lambda h: -h.score)
+    taken = {id(h) for h in mine}
+    good = [h for h in pool if id(h) not in taken and (h.rerank or 0) >= RELEVANT]
+    by_rel = {id(h): i for i, h in enumerate(sorted(good, key=lambda h: -h.score))}
+    by_use = {id(h): i for i, h in enumerate(sorted(good, key=lambda h: (-(popularity(h.card) * quality(h.card)), -h.score)))}
+    for h in good:
+        h.score = 1.0 / (FUSE_K + by_rel[id(h)] + 1) + 1.0 / (FUSE_K + by_use[id(h)] + 1)
+    good.sort(key=lambda h: (-h.score, -(popularity(h.card) * quality(h.card))))   # a tie goes to the more used
+    taken |= {id(h) for h in good}
+    rest = sorted((h for h in pool if id(h) not in taken), key=lambda h: -h.score)
+    return mine + good + rest
 
 
 async def _query_vector(query: str, embedder: Any) -> np.ndarray:

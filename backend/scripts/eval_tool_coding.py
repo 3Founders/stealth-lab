@@ -42,8 +42,10 @@ async def main(a) -> int:
         rr = 0.0
         misses = []
         for it in items:
+            # "goal": the rerank arm with the labelled goal given, as the hook gives the triage's (the others guess it)
             hits, info = await rank(it["q"], cards, k=a.k, embedder=emb if arm != "bm25" else None,
-                                    reranker=rerank if arm == "rerank" else None)
+                                    reranker=rerank if arm in ("rerank", "goal") else None,
+                                    goal=it["goal"] if arm == "goal" else None)
             g_ok += info.get("goal") == it["goal"]
             pos = next((i for i, h in enumerate(hits) if acceptable(h.card, it)), None)
             if pos is not None:
@@ -65,7 +67,7 @@ async def main(a) -> int:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arms", default="bm25,hybrid,rerank")
+    ap.add_argument("--arms", default="bm25,hybrid,rerank,goal")
     ap.add_argument("--k", type=int, default=5)
     ap.add_argument("--show-misses", action="store_true")
     ap.add_argument("--out", default="../.scratch/tool_eval_coding.json")

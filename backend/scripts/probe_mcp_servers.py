@@ -52,8 +52,10 @@ def parse(r: httpx.Response) -> dict:
 
 async def probe(client: httpx.AsyncClient, url: str, timeout: float) -> dict:
     t0 = time.monotonic()
+    if "{" in url:  # a template ("https://host:{PORT}/mcp"): it needs the user's own settings before it is a URL
+        return {"status": "unprobed", "ms": 0, "why": "templated url"}
     try:
-        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+        init ={"jsonrpc": "2.0", "id": 1, "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "kell-probe", "version": "0.1"}}}
         r = await client.post(url, json=init, headers=HEADERS, timeout=timeout)
         ms = int((time.monotonic() - t0) * 1000)
@@ -74,7 +76,7 @@ async def probe(client: httpx.AsyncClient, url: str, timeout: float) -> dict:
                 "tools": [{"name": str(t.get("name", ""))[:80], "description": " ".join(str(t.get("description") or "").split())[:300]}
                           for t in tools[:TOOLS_MAX] if isinstance(t, dict) and t.get("name")],
                 "tool_count": len(tools)}
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+    except Exception as exc:  # noqa: BLE001 -- one odd server (httpx.InvalidURL is not an HTTPError) must not end the run
         return {"status": "dead", "ms": int((time.monotonic() - t0) * 1000), "why": type(exc).__name__}
 
 

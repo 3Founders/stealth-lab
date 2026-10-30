@@ -181,9 +181,22 @@ async def _warm_up() -> None:
 
         await asyncio.to_thread(shared_ssl_context)
         await asyncio.gather(asyncio.to_thread(_emb._vertex_credentials_sync), asyncio.to_thread(default_judge),
-                             return_exceptions=True)
+                             asyncio.to_thread(_warm_tool_router), return_exceptions=True)
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).info("warm-up skipped", exc_info=True)
+
+
+def _warm_tool_router() -> None:
+    """The registry's cards, their BM25 index and vectors, loaded once: the first /tools call took 89 s without it."""
+    if os.environ.get("TOOL_ROUTING", "on").lower() == "off":
+        return
+    from app.tool_routing.catalog import registry_cards
+    from app.tool_routing.retrieve import index_for, registry_vectors
+
+    cards = registry_cards()
+    if cards:
+        index_for(list(cards))
+        registry_vectors()
 
 
 class OidcAwareTokenVerifier(TokenVerifier):
@@ -1143,6 +1156,38 @@ async def triage_route(request: Request) -> JSONResponse:
     if verdict is None:
         verdict = _ft.Triage(True, reason="triage off")
     return JSONResponse(verdict.as_dict())
+
+
+@server.custom_route("/tools", methods=["POST"], include_in_schema=False)
+async def tools_route(request: Request) -> JSONResponse:
+    """The hook's tool question, asked only when the triage named a tool goal: which tools fit this prompt.
+
+    Body `{"need": "<the prompt>", "goal"?: "<app/tool_routing/goals.py id>", "installed"?: [{"server", "tools"}],
+    "k"?: n}`; reply discover_tools' `external` object, or `{"tools": []}`. The same router, in one POST instead of an
+    MCP session. Same gate and per-caller rate limit as /triage (each call embeds and reranks).
+    """
+    from app.mcp_server import find_ways_triage as _ft
+
+    denied = await _route_gate(request)
+    if denied is not None:
+        return denied
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    need = body.get("need") if isinstance(body, dict) else None
+    if not isinstance(need, str) or not need.strip():
+        return JSONResponse({"error": "send JSON with a non-empty string `need`"}, status_code=400)
+    goal = body.get("goal") if isinstance(body.get("goal"), str) else ""
+    installed = body.get("installed") if isinstance(body.get("installed"), list) else None
+    k = body.get("k") if isinstance(body.get("k"), int) else 5
+    token = await _route_token(request)
+    key = (token.subject if token is not None and token.subject else None) or (
+        request.client.host if request.client else "unknown")
+    if not _ft.WINDOW.allow(f"tools:{key}"):
+        return JSONResponse({"tools": [], "note": "rate limit"})
+    external = await _external_tools(condense(need.strip(), _ft.QUERY_MAX), goal, installed, k)
+    return JSONResponse(external or {"tools": []})
 
 
 app = _oauth.wrap_app(

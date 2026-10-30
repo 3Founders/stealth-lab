@@ -13,6 +13,7 @@ TOOL_EMBED_MODEL, TOOL_EMBED_DIM (default 1024), TOOL_RERANK_MODEL ("off": none)
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Optional, Sequence
 
@@ -54,12 +55,24 @@ class ToolEmbedder:
             raise RuntimeError("DEEPINFRA_KEY is not set")
         client = self._client or httpx.AsyncClient(timeout=60)
         try:
-            r = await client.post(f"{BASE}/openai/embeddings", headers={"authorization": f"Bearer {self.key}"},
-                                  json={"model": self.model, "input": list(texts), "encoding_format": "float",
-                                        "dimensions": self.dim})
-            r.raise_for_status()
-            data = sorted(r.json()["data"], key=lambda d: d["index"])
-            return [d["embedding"][: self.dim] for d in data]
+            # a dropped connection, a DNS hiccup, a 429 or a 5xx is retried with back-off: one getaddrinfo failure
+            # ended a 25-minute embedding run with nothing saved (2026-10-30)
+            for attempt in range(5):
+                try:
+                    r = await client.post(f"{BASE}/openai/embeddings", headers={"authorization": f"Bearer {self.key}"},
+                                          json={"model": self.model, "input": list(texts), "encoding_format": "float",
+                                                "dimensions": self.dim})
+                    if r.status_code == 429 or r.status_code >= 500:
+                        raise httpx.HTTPStatusError(f"HTTP {r.status_code}", request=r.request, response=r)
+                    r.raise_for_status()
+                    data = sorted(r.json()["data"], key=lambda d: d["index"])
+                    return [d["embedding"][: self.dim] for d in data]
+                except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    if attempt == 4 or (status is not None and status < 500 and status != 429):
+                        raise
+                    await asyncio.sleep(2 * 2 ** attempt)
+            raise RuntimeError("unreachable")
         finally:
             if self._client is None:
                 await client.aclose()

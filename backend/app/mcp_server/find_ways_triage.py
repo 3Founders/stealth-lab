@@ -46,10 +46,11 @@ class Triage:
     reason: str = ""                    # why the lookup runs when it runs without a "reusable_task" verdict
     latency_ms: float = 0.0
     category: Optional[str] = None      # app/routing/task_categories.py key: which ranking the plan uses (None: generic)
+    tool: Optional[str] = None          # app/tool_routing/goals.py key: the outside tool the request needs (None: none)
 
     def as_dict(self) -> dict:
         out: dict[str, Any] = {"needs_retrieval": self.needs_retrieval, "latency_ms": round(self.latency_ms, 1)}
-        for key in ("kind", "work", "confidence", "provider", "category"):
+        for key in ("kind", "work", "confidence", "provider", "category", "tool"):
             if getattr(self, key) is not None:
                 out[key] = getattr(self, key)
         if self.reason:
@@ -79,13 +80,14 @@ async def triage(query: str, judge: Any, *, context: str = "", timeout_s: float 
     kind, confidence = result.value.get("kind"), result.value.get("confidence")
     work = result.value.get("work")
     category = result.value.get("category")
+    tool = result.value.get("tool")
     provider = getattr(result, "provider", None)
     if kind == RETRIEVE_KIND:
-        return Triage(True, kind, confidence, work, provider, latency_ms=ms, category=category)
+        return Triage(True, kind, confidence, work, provider, latency_ms=ms, category=category, tool=tool)
     if not isinstance(confidence, (int, float)) or confidence < min_confidence:
         return Triage(True, kind, confidence, work, provider, reason=f"{kind} below confidence {min_confidence:g}",
-                      latency_ms=ms, category=category)
-    return Triage(False, kind, confidence, work, provider, latency_ms=ms, category=category)
+                      latency_ms=ms, category=category, tool=tool)
+    return Triage(False, kind, confidence, work, provider, latency_ms=ms, category=category, tool=tool)
 
 
 class TriageCache:

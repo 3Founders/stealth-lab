@@ -87,13 +87,23 @@ async def doc_vectors(cards: list[ToolCard], embedder, path: Path) -> tuple[dict
             m = z["vectors"].astype(np.float32)
             m /= np.linalg.norm(m, axis=1, keepdims=True) + 1e-9
             return {str(c): i for i, c in enumerate(z["ids"])}, m, model
-    vecs, t0 = [], time.monotonic()
+    # resumable: the vectors so far are checkpointed, and a rerun continues from them
+    part = path.with_name(path.stem + ".partial.npz")
+    vecs: list = []
+    if part.exists():
+        z = np.load(part, allow_pickle=False)
+        if str(z["model"]) == model:
+            vecs = list(z["vectors"].astype(np.float32))
+            print(f"  resuming from {len(vecs)} embedded")
+    t0 = time.monotonic()
     step = int(os.environ.get("EVAL_EMBED_BATCH", "96"))
-    for i in range(0, len(cards), step):
+    for i in range(len(vecs), len(cards), step):
         vecs.extend(await embedder.embed([c.text[:2000] for c in cards[i:i + step]], input_type="document"))
         if (i // step) % 5 == 0:
+            np.savez(part, vectors=np.array(vecs, dtype=np.float16), model=np.array(model))
             print(f"  embedded {len(vecs)}/{len(cards)} ({time.monotonic() - t0:.0f} s)", flush=True)
     np.savez_compressed(path, ids=np.array([c.id for c in cards]), vectors=np.array(vecs, dtype=np.float16), model=np.array(model))
+    part.unlink(missing_ok=True)
     m = np.array(vecs, dtype=np.float32)
     m /= np.linalg.norm(m, axis=1, keepdims=True) + 1e-9
     return {c.id: i for i, c in enumerate(cards)}, m, model

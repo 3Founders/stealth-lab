@@ -23,15 +23,17 @@ UA = "kell-tool-router/0.1 (+https://www.kell.org.in)"
 def page(cursor: str | None) -> dict:
     q = {"limit": "100", **({"cursor": cursor} if cursor else {})}
     req = urllib.request.Request(f"{BASE}?{urllib.parse.urlencode(q)}", headers={"user-agent": UA, "accept": "application/json"})
-    for attempt in range(4):
+    # retries ride out an outage (a DNS failure lasted minutes, 2026-10-30): 2 s doubling to 2 min, ~10 min in all
+    for attempt in range(9):
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 return json.load(r)
-        except Exception as exc:  # noqa: BLE001 -- a flaky page is retried, then the run stops with what it has
-            if attempt == 3:
+        except Exception as exc:  # noqa: BLE001 -- retried; the checkpoint keeps what was fetched if it still fails
+            if attempt == 8:
                 raise
-            print(f"retry after {exc}", file=sys.stderr)
-            time.sleep(2 * (attempt + 1))
+            wait = min(120, 2 * 2 ** attempt)
+            print(f"retry in {wait} s after {exc}", file=sys.stderr, flush=True)
+            time.sleep(wait)
     return {}
 
 
@@ -63,10 +65,17 @@ def card(entry: dict) -> dict | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="app/tool_routing/data/mcp_registry.json")
-    ap.add_argument("--max-pages", type=int, default=200)
+    ap.add_argument("--max-pages", type=int, default=5000)
+    ap.add_argument("--fresh", action="store_true", help="ignore a checkpoint and start over")
     a = ap.parse_args()
+    # resumable: the servers so far and the next cursor are checkpointed every 25 pages; a rerun continues from them
+    part = Path(a.out).with_suffix(".partial.json")
     by_name: dict[str, dict] = {}
     cursor, pages, seen_cursors = None, 0, set()
+    if part.exists() and not a.fresh:
+        st = json.loads(part.read_text(encoding="utf-8"))
+        by_name, cursor, pages = st["servers"], st["cursor"], st["pages"]
+        print(f"resuming at page {pages} ({len(by_name)} servers), cursor {cursor}", flush=True)
     while pages < a.max_pages:
         d = page(cursor)
         pages += 1
@@ -85,12 +94,16 @@ def main() -> int:
         if not cursor or cursor in seen_cursors:
             break
         seen_cursors.add(cursor)
+        if pages % 25 == 0:
+            part.parent.mkdir(parents=True, exist_ok=True)
+            part.write_text(json.dumps({"servers": by_name, "cursor": cursor, "pages": pages}, ensure_ascii=False), encoding="utf-8")
         time.sleep(0.3)
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     cards = sorted(by_name.values(), key=lambda c: c["name"])
     out.write_text(json.dumps({"source": BASE, "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                "pages": pages, "servers": cards}, ensure_ascii=False, indent=0), encoding="utf-8")
+    part.unlink(missing_ok=True)
     print(f"{len(cards)} servers from {pages} pages -> {out} ({out.stat().st_size // 1024} KB)")
     return 0
 

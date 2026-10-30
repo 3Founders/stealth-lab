@@ -41,6 +41,7 @@ import { execConfigPath } from "./exec/store.mjs";
 import { modelFromTranscript, promptTitle, rememberLookup } from "./capture_hook.mjs";
 import { adoptLegacyDir, findStealthRoot, readEntry, requestPayload, unesc, upsertRoutes } from "./library.mjs";
 import { routingTimer } from "./routing_timing.mjs";
+import { callTools, formatToolNote, installedServers } from "./tool_note.mjs";
 
 const ACCEPT = "application/json, text/event-stream";
 
@@ -562,15 +563,41 @@ async function runPromptHookCore(args) {
   let prompt = "";
   try { prompt = String(JSON.parse(args.stdinText || "{}").prompt || ""); } catch { /* the body ignores a bad payload */ }
   const timer = routingTimer({ env: args.env || process.env, prompt, surface: "claude-code" });
+  const tooling = {};                    // the body starts the tool question here when the triage names a tool goal
+  const out = [];
   try {
-    return await promptHookBody({ ...args, timer });
+    return await promptHookBody({ ...args, timer, tooling, write: (s) => { out.push(s); } });
   } finally {
+    try { await withToolNote(out, tooling, args.log); } catch { /* the tool note is best-effort */ }
+    for (const s of out) args.write(s);
     timer.finish();
   }
 }
 
+// The tool router's lines (lib/tool_note.mjs) go into whatever context the hook wrote, or on their own; a blocked
+// prompt (an answer, a dispatch) gets none.
+async function withToolNote(out, tooling, log) {
+  if (!tooling.pending) return;
+  const reply = await tooling.pending;
+  const note = reply ? formatToolNote(reply, tooling.goal) : "";
+  log?.(`stealthlab hook: tools goal=${tooling.goal} ${reply ? `${reply.tools.length} found` : "no reply"}${note ? "" : " (no note)"}`);
+  if (!note) return;
+  for (let i = 0; i < out.length; i++) {
+    let o;
+    try { o = JSON.parse(out[i]); } catch { continue; }
+    if (o?.decision === "block") return;
+    const ctx = o?.hookSpecificOutput?.additionalContext;
+    if (typeof ctx === "string") {
+      o.hookSpecificOutput.additionalContext = `${ctx}\n\n${note}`;
+      out[i] = JSON.stringify(o);
+      return;
+    }
+  }
+  out.push(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: note } }));
+}
+
 // dispatchImpl: for tests, a stand-in for lib/dispatch.mjs dispatch()
-async function promptHookBody({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl, timer }) {
+async function promptHookBody({ stdinText, settings, userAgent, env = process.env, fetchImpl, write, log, dispatchImpl, timer, tooling = {} }) {
   const policy = hookPolicy(env);
   let payload;
   try {
@@ -620,11 +647,21 @@ async function promptHookBody({ stdinText, settings, userAgent, env = process.en
       verdict = { ...verdict, work: "conversation", reason: "an approval with nothing before it to approve" };
     }
     timer.set("triage", verdict ? { work: verdict.work || null, needs_retrieval: verdict.needs_retrieval ?? null } : null);
-    log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"} category=${verdict.category || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
+    log(`stealthlab hook: triage ${verdict ? `kind=${verdict.kind || "-"} work=${verdict.work || "-"} category=${verdict.category || "-"} tool=${verdict.tool || "-"}${verdict.provider ? ` (${verdict.provider})` : ""}${verdict.reason ? `: ${verdict.reason}` : ""}` : "gave no verdict"}`);
+  }
+  // the tool question, started now so it runs while the lookup and any dispatch do (lib/tool_note.mjs)
+  if (verdict?.tool && (env.STEALTHLAB_HOOK_TOOLS || "on").toLowerCase() !== "off") {
+    tooling.goal = verdict.tool;
+    tooling.pending = callTools({
+      url: settings.url, token: settings.token, userAgent, need: String(payload.prompt).trim(), goal: verdict.tool,
+      installed: installedServers(payload.cwd || process.cwd(), env, { skipUrl: settings.url }), fetchImpl,
+    });
   }
   // a question or conversation: a cheap model answers it, a reviewer checks the reply, and the developer gets it before
   // the session's model would run (lib/answer.mjs); a reply not called good is never shown
-  if (dispatchInstalled(env) && override.kind !== "cheap" && (verdict?.work === "answer" || verdict?.work === "conversation")) {
+  // A question that needs an outside tool is the session's: the answering agent reads the repository and has no tools.
+  if (dispatchInstalled(env) && override.kind !== "cheap" && !tooling.pending &&
+      (verdict?.work === "answer" || verdict?.work === "conversation")) {
     try {
       const { answerTurn } = await import("./answer.mjs");
       const a = await answerTurn({ prompt: payload.prompt, root: payload.cwd || process.cwd(), transcriptPath: payload.transcript_path,

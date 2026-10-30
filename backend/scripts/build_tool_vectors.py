@@ -33,19 +33,32 @@ async def main(batch: int) -> int:
         print("DEEPINFRA_KEY is not set")
         return 1
     model = e.embedding_model_id()
-    vecs: list[list[float]] = []
+    # resumable: vectors so far are checkpointed by card id every few batches; a rerun embeds only the rest
+    ckpt = VECTORS_FILE.with_name(VECTORS_FILE.stem + ".partial.npz")
+    have: dict[str, np.ndarray] = {}
+    if ckpt.exists():
+        z = np.load(ckpt, allow_pickle=False)
+        if str(z["model"]) == model:
+            have = {str(i): v for i, v in zip(z["ids"], z["vectors"])}
+            print(f"resuming: {len(have)} cards already embedded")
+    todo = [c for c in cards if c.id not in have]
     t0 = time.monotonic()
-    for i in range(0, len(cards), batch):
-        part = [c.text[:2000] for c in cards[i:i + batch]]
-        vecs.extend(await e.embed(part, input_type="document"))
-        print(f"{min(i + batch, len(cards))}/{len(cards)} ({time.monotonic() - t0:.0f} s)", flush=True)
+    for n, i in enumerate(range(0, len(todo), batch), 1):
+        part = todo[i:i + batch]
+        for c, v in zip(part, await e.embed([c.text[:2000] for c in part], input_type="document")):
+            have[c.id] = np.array(v, dtype=np.float16)
+        if n % 10 == 0 or i + batch >= len(todo):
+            np.savez(ckpt, ids=np.array(list(have)), vectors=np.array(list(have.values()), dtype=np.float16), model=np.array(model))
+            print(f"{len(have)}/{len(cards)} ({time.monotonic() - t0:.0f} s)", flush=True)
+    vecs = [have[c.id] for c in cards]
     np.savez_compressed(VECTORS_FILE, ids=np.array([c.id for c in cards]), vectors=np.array(vecs, dtype=np.float16),
                         model=np.array(model))
+    ckpt.unlink(missing_ok=True)
     print(f"{len(cards)} vectors ({model}) -> {VECTORS_FILE} ({VECTORS_FILE.stat().st_size // 1024} KB)")
     return 0
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--batch", type=int, default=64)
+    ap.add_argument("--batch", type=int, default=256)
     raise SystemExit(asyncio.run(main(ap.parse_args().batch)))

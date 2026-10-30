@@ -23,6 +23,7 @@ DATA = Path(__file__).parent / "data"
 REGISTRY_FILE = DATA / "mcp_registry.json"
 EXPANSIONS_FILE = DATA / "registry_expansions.json"   # scripts/expand_tool_cards.py
 PROBE_FILE = DATA / "registry_probe.json"             # scripts/probe_mcp_servers.py
+STARS_FILE = DATA / "registry_stars.json"             # scripts/fetch_repo_stars.py
 BULK_PUBLISHER = 30                                  # servers under one namespace beyond which a publisher counts as bulk
 WORD = re.compile(r"[a-z0-9]+")
 
@@ -73,7 +74,8 @@ def tag_goals(text: str, limit: int = 3) -> tuple[str, ...]:
     return tuple(gid for n, gid in hits if n > 0)[:limit]
 
 
-def card_from_registry(s: dict, expansion: str = "", probe: Optional[dict] = None, owner_count: int = 1) -> ToolCard:
+def card_from_registry(s: dict, expansion: str = "", probe: Optional[dict] = None, owner_count: int = 1,
+                       repo: Optional[dict] = None) -> ToolCard:
     how = ", ".join([f"remote: {t}" for t in s.get("remotes") or []]
                     + [f"{p.get('registry')}: {p.get('id')}" for p in s.get("packages") or [] if p.get("id")])
     name = str(s.get("name") or "")
@@ -86,8 +88,38 @@ def card_from_registry(s: dict, expansion: str = "", probe: Optional[dict] = Non
                  extra={"version": s.get("version") or "", "updated": s.get("updated") or "",
                         "probe": (probe or {}).get("status") or ("none" if not s.get("remote_urls") else "unprobed"),
                         "tool_count": (probe or {}).get("tool_count"), "owner_count": owner_count,
+                        "stars": int((repo or {}).get("stars") or 0), "archived": bool((repo or {}).get("archived")),
                         "verified": verified_publisher(name, str(s.get("repository") or ""), str(s.get("website") or ""))})
     return _with_goals(c)
+
+
+def repo_key(url: str) -> Optional[str]:
+    """"owner/repo" (lowercase) of a GitHub repository URL, as scripts/fetch_repo_stars.py keys it."""
+    m = re.search(r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", url or "")
+    if not m:
+        return None
+    name = m.group(2)[:-4] if m.group(2).endswith(".git") else m.group(2)
+    return f"{m.group(1)}/{name}".lower()
+
+
+def popularity(c: ToolCard) -> float:
+    """0..1 from the card's repository stars (log scale: ~30 stars 0.33, ~1k 0.67, ~30k 1). Half for a publisher the
+    namespace does not verify: anyone can point a card at a famous repository. 0 for an archived one."""
+    import math
+    stars = int(c.extra.get("stars") or 0)
+    if c.source != "registry" or stars <= 0 or c.extra.get("archived"):
+        return 0.0
+    p = min(1.0, math.log10(stars + 1) / 4.5)
+    return p if c.extra.get("verified") else p * 0.5
+
+
+def publisher(c: ToolCard) -> str:
+    """The namespace owner's name: io.github.getsentry/... -> getsentry, com.stripe/... -> stripe ("" otherwise)."""
+    ns = c.name.split("/")[0].lower() if c.source == "registry" else ""
+    if ns.startswith("io.github."):
+        return ns[len("io.github."):]
+    parts = ns.split(".")
+    return parts[1] if len(parts) >= 2 else ""
 
 
 def verified_publisher(name: str, repository: str, website: str) -> bool:
@@ -99,8 +131,14 @@ def verified_publisher(name: str, repository: str, website: str) -> bool:
     if ns.startswith("io.github."):
         org = ns[len("io.github."):]
         return bool(org) and f"github.com/{org}/" in repo + "/"
-    domain = ".".join(reversed(ns.split(".")))
-    return bool(domain) and (f"//{domain}" in site or f".{domain}" in site or f"//{domain}" in repo or f".{domain}/" in repo)
+    # the registrable domain is the namespace's first two labels: com.figma.mcp/... is figma.com's (it was read as
+    # mcp.figma.com, and Figma's own server counted as unverified)
+    labels = ns.split(".")
+    domain = ".".join(reversed(labels[:2])) if len(labels) >= 2 else ""
+    if not domain:
+        return False
+    hosts = re.findall(r"//([a-z0-9.-]+)", site + " " + repo)
+    return any(h == domain or h.endswith("." + domain) for h in hosts) or f"github.com/{labels[1]}/" in repo + "/"
 
 
 def card_from_installed(server: str, tool: dict) -> ToolCard:
@@ -163,14 +201,15 @@ def registry_cards() -> tuple[ToolCard, ...]:
     data = read_json(REGISTRY_FILE)
     if not data:
         return ()
-    exp, probe = read_json(EXPANSIONS_FILE), read_json(PROBE_FILE)
+    exp, probe, stars = read_json(EXPANSIONS_FILE), read_json(PROBE_FILE), read_json(STARS_FILE)
     servers = [s for s in data.get("servers") or [] if s.get("name")]
     owners: dict[str, int] = {}
     for s in servers:
         ns = s["name"].split("/")[0]
         owners[ns] = owners.get(ns, 0) + 1
     # a server the probe found dead is not recommended (it stays in the snapshot)
-    return tuple(card_from_registry(s, exp.get(f"registry:{s['name']}", ""), probe.get(s["name"]), owners[s["name"].split("/")[0]])
+    return tuple(card_from_registry(s, exp.get(f"registry:{s['name']}", ""), probe.get(s["name"]), owners[s["name"].split("/")[0]],
+                                    stars.get(repo_key(str(s.get("repository") or "")) or ""))
                  for s in servers if (probe.get(s["name"]) or {}).get("status") != "dead")
 
 

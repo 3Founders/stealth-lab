@@ -154,3 +154,50 @@ def test_liveness_publishers_and_real_tools_shape_a_card():
     assert quality(bulk) < quality(unprobed)
     assert card_from_registry({**base, "name": "io.github.someoneelse/x"}).extra["verified"] is False
     assert card_from_registry({**base, "name": "com.cloudflare/mcp", "website": "https://developers.cloudflare.com/x"}).extra["verified"] is True
+
+
+def test_stars_and_an_official_publisher_lift_a_relevant_server_but_not_an_irrelevant_one():
+    from app.tool_routing.catalog import popularity, publisher
+
+    official = card_from_registry({"name": "io.github.microsoft/playwright-mcp", "description": "Drive a real browser with Playwright",
+                                   "repository": "https://github.com/microsoft/playwright-mcp", "remotes": ["streamable-http"]},
+                                  repo={"stars": 38000})
+    wrapper = card_from_registry({"name": "com.paybrowser/agent", "description": "A real Chromium browser for agents, pay per action",
+                                  "repository": "https://github.com/microsoft/playwright-mcp", "remotes": ["streamable-http"]},
+                                 repo={"stars": 38000})
+    assert popularity(official) > 0.9 and popularity(wrapper) <= 0.5     # a famous repo does not make a copycat famous
+    assert popularity(card_from_registry({"name": "a/b", "description": "x"}, repo={"stars": 9000, "archived": True})) == 0.0
+    assert publisher(official) == "microsoft" and publisher(reg("com.stripe/mcp", "Stripe")) == "stripe"
+
+    async def wrapper_slightly_ahead(query, docs):
+        return [0.80 if "pay per action" in d else 0.75 if "Playwright" in d else 0.01 for d in docs]
+
+    hits, _ = run(rank("check the page in a real browser", [wrapper, official, *CARDS[1:]], k=2, reranker=wrapper_slightly_ahead))
+    assert hits[0].card.id == official.id
+    stripe = card_from_registry({"name": "com.stripe/mcp", "description": "Payments API", "website": "https://stripe.com"})
+    other = reg("io.github.someone/payments", "Payments API")
+
+    async def same(query, docs):
+        return [0.6 for _ in docs]
+
+    hits, _ = run(rank("add a stripe subscription checkout", [other, stripe], k=2, reranker=same))
+    assert hits[0].card.id == stripe.id
+
+
+def test_an_installed_tool_reaches_the_reranker_and_comes_first_when_it_is_relevant():
+    many = [reg(f"io.github.p{i}/browser-{i}", f"Open a real browser page {i}, click and screenshot") for i in range(60)]
+    installed = installed_cards([{"server": "playwright", "tools": [{"name": "playwright", "description": "package @playwright/mcp"}]}])
+
+    async def knows_playwright(query, docs):
+        return [0.6 if "playwright" in d.lower() else 0.7 for d in docs]
+
+    hits, _ = run(rank("check that the login page renders in a real browser", [*many, *installed], goal="browser", k=3,
+                       reranker=knows_playwright))
+    assert hits[0].card.source == "installed"
+
+    async def irrelevant(query, docs):
+        return [0.01 if "playwright" in d.lower() else 0.7 for d in docs]
+
+    hits, _ = run(rank("check that the login page renders in a real browser", [*many, *installed], goal="database", k=3,
+                       reranker=irrelevant))
+    assert all(h.card.source != "installed" for h in hits)

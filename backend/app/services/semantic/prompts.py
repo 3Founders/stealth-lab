@@ -380,7 +380,7 @@ def parse_identity_batch(kind: str, body: Any, candidate_count: int) -> list[dic
 # work kell holds knowledge for at all (app/mcp_server/find_ways_triage.py). Only "reusable_task" is worth
 # a lookup; every other kind is something the agent handles from the repository and its own knowledge.
 
-TRIAGE_PROMPT_VERSION = "find_ways_triage@v2"   # v2: + category (app/routing/task_categories.py)
+TRIAGE_PROMPT_VERSION = "find_ways_triage@v3"   # v2: + category (app/routing/task_categories.py); v3: + tool
 
 TRIAGE_KINDS = {
     "reusable_task": ("Work to carry out -- build, fix, configure, migrate, integrate, test or deploy something -- "
@@ -415,6 +415,13 @@ WORK_KINDS = {
                      "what the assistant already did in the earlier turns."),
 }
 
+def tool_goals() -> dict[str, str]:
+    """The kinds of outside tool the router ranks for (app/tool_routing/goals.py), as the triage names them."""
+    from app.tool_routing.goals import TOOL_GOALS
+
+    return {k: d for k, (d, _w) in TOOL_GOALS.items()}
+
+
 def task_categories() -> dict[str, str]:
     """The kinds of work models are ranked for separately (app/routing/task_categories.py), as the triage names them."""
     from app.routing.task_categories import CATEGORIES
@@ -431,8 +438,11 @@ TRIAGE_SYSTEM_PROMPT = (
     "Work:\n" + "\n".join(f"- {k}: {v}" for k, v in WORK_KINDS.items()) + "\n"
     "Category (the kind of work; models are ranked for each separately):\n"
     + "\n".join(f"- {k}: {v}" for k, v in task_categories().items()) + "\n"
+    "Tool (an outside tool the agent needs for this request, beyond reading and editing the project and running "
+    "its commands -- or none; most requests need none):\n"
+    + "\n".join(f"- {k}: {v}" for k, v in tool_goals().items()) + "\n- none: no outside tool is needed\n"
     'Reply with one JSON object only: {"kind": "<one kind above>", "work": "<one work above>", '
-    '"category": "<one category above>", "confidence": <0.0-1.0>}'
+    '"category": "<one category above>", "tool": "<one tool above, or none>", "confidence": <0.0-1.0>}'
 )
 
 
@@ -457,4 +467,6 @@ def parse_triage(body: Any) -> dict:
         out["work"] = work
     if body.get("category") in task_categories():     # an unknown category is no category: the generic ranking
         out["category"] = body["category"]
+    if body.get("tool") in tool_goals():              # "none" or anything unknown: no tool note
+        out["tool"] = body["tool"]
     return out
