@@ -609,7 +609,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   return (
     <div className="dg-shell" data-paused={paused} data-menu={menuOpen ? "open" : "closed"}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
-      <aside id="dg-side" className="dg-side" aria-label="Your rooms and agents">
+      <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
         <button type="button" className="dg-close" onClick={() => setMenuOpen(false)} aria-label="Close the room list">×</button>
         {brand && <div className="dg-brand">{brand}</div>}
         {back && <div className="dg-backrow">{back}</div>}
