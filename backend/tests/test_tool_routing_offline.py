@@ -328,3 +328,24 @@ def test_delegate_runs_a_cheap_model_checks_it_with_another_and_records_the_outc
     monkeypatch.setattr(srv, "call_model", refusing)
     assert run(srv.delegate(None, task="x")).startswith("REFUSED: daily cap reached")
     assert run(srv.delegate(None, task="  ")).startswith("REFUSED")
+
+
+def test_find_ways_tools_put_what_a_chat_can_add_before_package_only_servers(monkeypatch):
+    import json as _json
+
+    from app.mcp_server import server as srv
+    from app.mcp_server.find_ways_triage import Triage
+
+    async def fake_tools(need, goal, installed, k):
+        assert k == 8
+        return {"goal": goal, "tools": [
+            {"name": "pkg-best", "source": "registry", "install": "claude mcp add a -- npx -y a"},
+            {"name": "remote-1", "source": "registry", "connector_url": "https://r1/mcp"},
+            {"name": "pkg-2", "source": "registry"},
+            {"name": "mine", "source": "installed"},
+            {"name": "remote-2", "source": "registry", "connector_url": "https://r2/mcp"},
+            {"name": "remote-3", "source": "registry", "connector_url": "https://r3/mcp"}]}
+    monkeypatch.setattr(srv, "_external_tools", fake_tools)
+    out = _json.loads(run(srv._with_routes(_json.dumps({"outcome": "not_needed"}),
+                                           Triage(False, kind="knowledge_question", tool="packages"), "PyYAML CVEs", None)))
+    assert [t["name"] for t in out["tools"]["tools"]] == ["mine", "remote-1", "remote-2", "remote-3"]

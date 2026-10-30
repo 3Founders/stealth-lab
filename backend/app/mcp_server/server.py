@@ -2053,9 +2053,10 @@ async def delegate(ctx: Context, task: str, check: bool = True, max_tokens: int 
     """
     Hand a self-contained sub-task to a cheap model and get its answer back, checked by a second model: a summary, an
     explanation, a first draft, extracting or reformatting data, boilerplate, a comparison of public material. It saves
-    the user's usage. task: everything the model needs -- it sees nothing else. Not for private, secret or personal
-    data, nor for deep multi-step reasoning. Read the answer and the check before you use it, say in one line that it
-    was delegated, and do it yourself if it is refused, fails, or the check says bad.
+    the user's usage. task: the task as the user put it plus the context the model needs (it sees nothing else) -- not
+    an outline of the answer: writing that yourself spends the usage delegating saves. Not for private, secret or
+    personal data, nor for deep multi-step reasoning. Read the answer and the check before you use it, say in one line
+    that it was delegated, and do it yourself if it is refused, fails, or the check says bad.
     """
     if not str(task or "").strip():
         return "REFUSED: send the task as a self-contained instruction"
@@ -2247,10 +2248,15 @@ async def _with_routes(reply: str, triaged: Any, query: str, installed: list[Any
         return reply
     if triaged.tool:
         try:
-            ext = await _external_tools(query, triaged.tool, installed, 4)
+            ext = await _external_tools(query, triaged.tool, installed, 8)
         except Exception:  # noqa: BLE001 -- the knowledge goes back without tools
             ext = None
         if ext and ext.get("tools"):
+            # yours first, then what a chat can add (a connector URL), then package-only servers (Claude Code only), each
+            # group in the ranker's order: on claude.ai a small remote tool was offered while the better ones were
+            # packages it cannot add (2026-10-31)
+            group = lambda t: 0 if t.get("source") == "installed" else 1 if t.get("connector_url") else 2
+            ext["tools"] = sorted(ext["tools"], key=group)[:4]
             body["tools"] = {**ext, "next": (
                 "Use one you have (source installed) if it fits. For one you lack, do the task as well as you can "
                 "without it and offer to add it: connector_url in a chat (Settings -> Connectors -> Add custom "
@@ -2258,7 +2264,8 @@ async def _with_routes(reply: str, triaged: Any, query: str, installed: list[Any
     elif triaged.kind in _DELEGATE_KINDS and triaged.work in (None, "answer"):
         body["delegate"] = {
             "why": "a general question a cheap model answers well; it saves the user's usage",
-            "call": {"tool": "delegate", "arguments": {"task": "<the question, self-contained, with everything needed>"}},
+            "call": {"tool": "delegate", "arguments": {"task": "<the question as asked, plus the context it needs; not an "
+                                                                "outline of the answer>"}},
             "then": "read the answer and its check; say in one line that it was delegated; answer yourself if the "
                     "question needs private data or deep multi-step reasoning, or the check says bad",
         }
