@@ -177,6 +177,22 @@ the version **before** the 2026-10-28 fixes (section H).
 
 ---
 
+## J. kell in Claude Code after the polish: 10 everyday prompts (2026-10-30, `docs/results_2026-10-30.md`)
+
+One repository (kell-try), headless Claude Code sessions on the kell profile, the hosted MCP. Everything a prompt cost is
+counted (cheap tries, kell's helpers, the Sonnet reviews, Opus when it ran); one run each.
+
+| | Before the polish (10-29) | After (10-30) |
+|---|---|---|
+| prompts done with no Opus | 6 of 10 (the first ten) | **8 of 10** (3 re-runs and 7 new, vaguer ones: not the same set) |
+| false-premise change ("fix a typo that is not there") | 15 min, then Opus | **264 s, $0.04**, a confirmed finding |
+| questions about the code | glm blind, 3 of 4 fell to Opus | glm **reads the repo**: 3 of 3, $0.02-0.07 (Opus: $0.12-0.28) |
+| baseline per change | 2.5-3.75 min, every time | **cached** per state of the checkout |
+| all ten, vs Opus alone | - | **~-45%** ($1.27 vs ~$2.30; -31% on the six where Opus was measured) |
+
+Still slow: a vague, wide change took 18 minutes (cheap, accepted, but Opus would be quicker). The review is not
+consistent on false-premise requests.
+
 ## What this means, in one view
 
 | Area | Evidence today |
