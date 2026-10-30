@@ -188,37 +188,6 @@ function Panel({ subject }: { subject: string }) {
         <p className="small dim">Keys are kept per browser. Clearing this site&rsquo;s data, or using another browser, removes them; add the key again there. A script running on this site could in principle use your stored key, so use keys with a spending limit set at the provider.</p>
       </div>
 
-      <section className="models-kell" aria-labelledby="kell-models">
-        <h2 className="h3" id="kell-models">keळ models <span className="status" data-s="unknown">Pilot</span></h2>
-        <p className="small">Two small models on keळ&rsquo;s own provider accounts, for trying the assistant without a key of your own. It is separate from your keys and is never used instead of one.</p>
-        <ul className="small models-kell-terms">
-          <li>Capped: a small daily allowance per person, enforced by the server.</li>
-          <li>Public material only. Do not send private code, secrets or personal data.</li>
-          <li>Your prompt goes to the model provider (Z.ai or General Compute). We have no data-processing agreement with them yet.</li>
-        </ul>
-        {!kellOn ? (
-          <p className="small dim" role="status">Not available yet. Your own key, below, is the way to chat today.</p>
-        ) : (
-          <>
-            <p className="small" role="status">The assistant is using: <b>{choice.source === "kell" ? `keळ models (${choice.model})` : "your own key"}</b>.</p>
-            <label className="small models-ack"><input type="checkbox" checked={kellAck} onChange={(e) => setKellAck(e.target.checked)} /> I understand: public material only, capped, and my prompts go to the model provider.</label>
-            <div className="models-kell-controls">
-              <div className="models-select">
-                <label className="small" htmlFor="m-kell-model">Model</label>
-                <select id="m-kell-model" value={kellModel} onChange={(e) => setKellModel(e.target.value)}>
-                  {KELL_MODEL_IDS.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <button type="button" className="btn-ink" disabled={!kellAck} onClick={chooseKell}><span>Use keळ models for the assistant</span></button>
-              {choice.source === "kell" && <button type="button" className="btn-line" onClick={chooseOwnKey}>Use my own key instead</button>}
-              <button type="button" className="btn-line" onClick={() => void testKell()} disabled={kellProbe.state === "testing"}>{kellProbe.state === "testing" ? "Testing…" : "Test"}</button>
-            </div>
-            {kellProbe.state === "ok" && <p className="small" role="status">Works. Available to you: {kellProbe.models.join(", ")}.</p>}
-            {kellProbe.state === "failed" && <p className="small" role="alert">{kellProbe.message}</p>}
-          </>
-        )}
-      </section>
-
       {note && <p className="small" role="status">{note}</p>}
 
       <section className="models-ways" aria-labelledby="other-ways">
@@ -304,16 +273,6 @@ function Panel({ subject }: { subject: string }) {
             </article>
           );
         })}
-      </div>
-
-      <div className="models-cap">
-        <h2 className="h3">Daily limit</h2>
-        <p className="small dim">A soft limit in this browser on assistant replies per day. It is a convenience: your provider bills you and applies its own limits.</p>
-        <div className="cfield" style={{ maxWidth: 240 }}>
-          <label htmlFor="m-cap">Replies per day</label>
-          <input id="m-cap" type="number" min={1} max={5000} value={cap} onChange={(e) => setCap(writeCap(kv(), subject, Number(e.target.value)))} />
-          <span className="hint">Used today: {used}</span>
-        </div>
       </div>
     </>
   );

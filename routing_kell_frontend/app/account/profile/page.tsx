@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
 import Avatar from "@/components/Avatar";
 import DevicePhoto, { useDevicePhoto } from "@/components/DevicePhoto";
+import PhotoCropper from "@/components/PhotoCropper";
 import { ABOUT_MAX, NAME_MAX, loadDeviceProfile, removeDevicePhoto, saveDeviceProfile, setDevicePhoto, type DeviceProfile } from "@/lib/device-profile";
 import { getMyProfile, removeAvatar, updateMyProfile, uploadAvatar, type MyProfileResult } from "@/lib/kel-api";
 import type { ApiState } from "@/lib/api";
@@ -177,6 +178,8 @@ function DeviceEditor() {
   const [photoError, setPhotoError] = useState("");
   const file = useRef<HTMLInputElement>(null);
   const photo = useDevicePhoto(p?.subject);
+  const [chosen, setChosen] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -194,7 +197,15 @@ function DeviceEditor() {
     if (!f || !p) return;
     const problem = avatarProblem(f);
     if (problem) { setPhotoError(problem); return; }
-    setPhotoError(await setDevicePhoto(p.subject, f) ?? "");
+    setPhotoError(""); setChosen(f);   // next: adjust it (zoom and move), then save
+  }
+  async function savePhoto(square: Blob) {
+    if (!p) return;
+    setSaving(true);
+    const msg = await setDevicePhoto(p.subject, square);
+    setSaving(false);
+    setPhotoError(msg ?? "");
+    if (!msg || msg.startsWith("Saved on this device")) setChosen(null);   // a photo kept on this device still counts; only a failure keeps the editor open
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -209,6 +220,12 @@ function DeviceEditor() {
     <>
       <div className="profile-card">
         <h2 className="h3">Photo</h2>
+        {chosen ? (
+          <>
+            <PhotoCropper file={chosen} busy={saving} onSave={(b) => void savePhoto(b)} onCancel={() => { setChosen(null); setPhotoError(""); }} />
+            {photoError && <p className="small" role="alert">{photoError}</p>}
+          </>
+        ) : (
         <div className="profile-photo">
           {photo ? <DevicePhoto url={photo} size={96} alt="Your profile photo" /> : <span className="avatar" aria-hidden="true" style={{ width: 96, height: 96, display: "grid", placeItems: "center", fontSize: 32 }}>{(name || p.email || "?").trim().charAt(0).toUpperCase()}</span>}
           <div className="stack">
@@ -221,6 +238,7 @@ function DeviceEditor() {
             {photoError && <p className="small" role="alert">{photoError}</p>}
           </div>
         </div>
+        )}
       </div>
       <form className="cform profile-form" onSubmit={save}>
         <h2 className="h3">About you</h2>

@@ -673,3 +673,20 @@ main, footer { position: relative; z-index: 1; }
   @keyframes photo-sheet-out { to { transform: translateY(100%); } }
 }
 @media (prefers-reduced-motion: reduce) { .photo-ask[open], .photo-ask[data-closing], .photo-ask::backdrop { animation: none !important; } }
+
+/* Buttons that sit together (profile photo, dialogs, forms): one row that wraps, equal height, even gaps. */
+.cluster { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; }
+.cluster > .btn-ink, .cluster > .btn-line { min-height: 44px; }
+/* The box holding the photo and the other profile cards: opaque, with the site's soft drop shadow. */
+.profile-card { background: #fff; box-shadow: 0 10px 28px rgba(0, 0, 0, .08), 0 1px 3px rgba(0, 0, 0, .06); }
+.profile-photo .stack { display: grid; gap: 10px; min-width: 0; flex: 1 1 220px; }
+.profile-photo .btn-ink, .profile-photo .btn-line { min-height: 44px; white-space: nowrap; }
+
+/* The photo cropper (components/PhotoCropper.tsx). */
+.crop { display: grid; gap: 14px; justify-items: center; width: 100%; }
+.crop-view { position: relative; width: min(260px, 100%); aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #eee; touch-action: none; overscroll-behavior: contain; cursor: grab; user-select: none; -webkit-user-select: none; outline-offset: 3px; box-shadow: 0 10px 28px rgba(0, 0, 0, .14); }
+.crop-view:active { cursor: grabbing; }
+.crop-view canvas { width: 100%; height: 100%; display: block; }
+.crop-ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 999px rgba(255, 255, 255, .72); border: 2px solid #fff; pointer-events: none; }
+.crop-zoom { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; width: min(260px, 100%); }
+.crop-zoom input { width: 100%; accent-color: var(--ink); }

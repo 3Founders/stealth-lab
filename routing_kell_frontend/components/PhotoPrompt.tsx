@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import PhotoCropper from "@/components/PhotoCropper";
 import { readDevicePhoto, setDevicePhoto, syncDevicePhoto } from "@/lib/device-profile";
 import { AVATAR_TYPES, avatarProblem } from "@/lib/profile-form";
 import { getSession, onSessionChange } from "@/lib/session";
@@ -21,6 +22,7 @@ export default function PhotoPrompt() {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [chosen, setChosen] = useState<File | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const file = useRef<HTMLInputElement>(null);
 
@@ -68,8 +70,13 @@ export default function PhotoPrompt() {
     if (!f || !subject) return;
     const problem = avatarProblem(f);
     if (problem) { setError(problem); return; }
+    setError(""); setChosen(f);   // next: adjust it (zoom and move), then save
+  }
+
+  async function save(square: Blob) {
+    if (!subject) return;
     setBusy(true); setError("");
-    const msg = await setDevicePhoto(subject, f);
+    const msg = await setDevicePhoto(subject, square);
     setBusy(false);
     // A photo that is saved here but not yet on the server is still a photo: only a failure to use the picture keeps the question open.
     if (msg && !msg.startsWith("Saved on this device")) { setError(msg); return; }
@@ -81,10 +88,14 @@ export default function PhotoPrompt() {
       <h2 className="h3" id="photo-ask-title">Add a profile photo?</h2>
       <p className="small">People in your rooms see it next to your messages. It&rsquo;s optional, and you can change it later under Account, Profile.</p>
       <input ref={file} type="file" accept={AVATAR_TYPES.join(",")} onChange={pick} className="visually-hidden" aria-label="Choose a profile photo" />
-      <div className="cluster">
-        <button type="button" className="btn-ink" onClick={() => file.current?.click()} disabled={busy}><span>{busy ? "Working…" : "Choose a photo"}</span></button>
-        <button type="button" className="btn-line" onClick={done} disabled={busy}>Not now</button>
-      </div>
+      {chosen
+        ? <PhotoCropper file={chosen} busy={busy} onSave={(b) => void save(b)} onCancel={() => { setChosen(null); setError(""); }} />
+        : (
+          <div className="cluster">
+            <button type="button" className="btn-ink" onClick={() => file.current?.click()}><span>Choose a photo</span></button>
+            <button type="button" className="btn-line" onClick={done}>Not now</button>
+          </div>
+        )}
       {error && <p className="small" role="alert">{error}</p>}
     </dialog>
   );

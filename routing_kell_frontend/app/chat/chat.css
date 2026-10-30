@@ -229,3 +229,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-me-text b { font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-me-text span { font-size: 12px; color: var(--grey); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .dg-me, .dg-me:hover, .dg-me:active { transition: none; transform: none; } }
+
+/* Profile photos in the room float with the site's soft drop shadow; the people list leaves room for the photo next to the name. */
+.dg-avatar { box-shadow: 0 5px 14px rgba(0, 0, 0, .2), 0 1px 3px rgba(0, 0, 0, .14); }
+.dg-avatar-sm { box-shadow: 0 3px 8px rgba(0, 0, 0, .18), 0 1px 2px rgba(0, 0, 0, .12); }
+.dg-me-pic { box-shadow: 0 4px 12px rgba(0, 0, 0, .2), 0 1px 3px rgba(0, 0, 0, .14); }
+.dg-members li:has(.dg-avatar-sm) { grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 10px; }
+.dg-members li:has(.dg-avatar-sm) .dg-handle { padding-left: 2px; }

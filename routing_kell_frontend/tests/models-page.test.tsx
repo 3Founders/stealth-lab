@@ -65,10 +65,8 @@ const byText = (t: string) => [...host!.querySelectorAll("button")].find((b) => 
 afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; rows.length = 0; for (const k of Object.keys(keyOf)) delete keyOf[k]; session = { token: "t", subject: "u1" }; models = ["model-a", "model-b"]; vi.restoreAllMocks(); });
 
 describe("Models page", () => {
-  it("with the section switched off, the kell-hosted models show as a labelled pilot that is not available, with the data warning, and make no network call", async () => {
-    const f = vi.fn();
-    vi.stubGlobal("fetch", f);
-    vi.stubEnv("NEXT_PUBLIC_KEL_MODELS", "off");
+  it("no longer offers the keळ-hosted pilot models or a daily limit, only your own keys", async () => {
+    vi.stubEnv("NEXT_PUBLIC_KEL_MCP_URL", "https://mcp.example.org");
     vi.resetModules();
     const { default: Page } = await import("@/app/account/models/page");
     host = document.createElement("div"); document.body.append(host);
@@ -76,13 +74,9 @@ describe("Models page", () => {
     await act(async () => { root!.render(<Page />); });
     await flush(); await flush();
     const text = host!.textContent ?? "";
-    expect(text).toMatch(/Pilot/);
-    expect(text).toMatch(/Public material only/);
-    expect(text).toMatch(/no data-processing agreement/);
-    expect(text).toMatch(/Not available yet/);
-    expect(text).toMatch(/never used instead of one/);
-    expect(f).not.toHaveBeenCalled();
-    vi.unstubAllGlobals(); vi.unstubAllEnvs();
+    expect(text).not.toMatch(/Pilot|keळ models|Two small models|Daily limit|Replies per day/);
+    expect(text).toMatch(/Where your key goes/);
+    vi.unstubAllEnvs();
   });
 
   it("signed out: only a sign-in notice that returns here", async () => {
@@ -172,39 +166,5 @@ describe("Add several keys at once", () => {
     await click(byText("Save selected"));
     expect(rows.map((r) => r.provider)).toEqual(["openai"]);
     expect(host!.querySelector<HTMLTextAreaElement>("#m-env")!.value).toBe("");
-  });
-});
-
-describe("keळ models (pilot) when the deployment has a hosted server", () => {
-  it("is opt-in: the choice needs the acknowledgement, a Test reports the real status and message, and 'own key' stays the default", async () => {
-    vi.stubEnv("NEXT_PUBLIC_KEL_MCP_URL", "https://mcp.example.org");
-    vi.resetModules();
-    const writes: string[] = [];
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation((k, v) => { writes.push(`${k}=${v}`); });
-    const { default: Page } = await import("@/app/account/models/page");
-    host = document.createElement("div"); document.body.append(host);
-    root = createRoot(host);
-    await act(async () => { root!.render(<Page />); });
-    await flush(); await flush();
-    expect(host!.textContent).toContain("The assistant is using: your own key");
-    const use = byText("Use keळ models for the assistant");
-    expect(use.disabled).toBe(true); // not until the person acknowledges
-    await act(async () => { host!.querySelector<HTMLInputElement>(".models-ack input")!.click(); });
-    expect(use.disabled).toBe(false);
-    await act(async () => { use.click(); });
-    expect(push).toHaveBeenCalledWith("/chat"); // choosing keL models takes you back to the Chat
-    expect(writes.join("|")).toContain("kel.assistant.source.u1");
-    expect(writes.join("|")).toContain("glm-5.3-flash");
-    expect(writes.join("|")).not.toMatch(/Bearer|token/i);
-    // Test: a cap hit or refusal is shown as the server's status and sentence (listModels is mocked in this file; the request itself,
-    // its headers and the error text are covered in kell-models.test.ts)
-    models = new Error("The provider answered 403: Daily budget reached.");
-    await click(byText("Test"));
-    expect(host!.querySelector('[role="alert"]')!.textContent).toMatch(/403.*Daily budget reached/);
-    models = ["glm-5.3-flash", "not-offered"];
-    await click(byText("Test"));
-    expect(host!.textContent).toContain("Works. Available to you: glm-5.3-flash.");
-    expect(host!.textContent).not.toContain("not-offered");
-    vi.unstubAllEnvs();
   });
 });

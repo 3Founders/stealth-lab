@@ -10,7 +10,7 @@ import { browserFlag, defaultToken, photoSync } from "@/lib/photo-sync";
 
 export const NAME_MAX = 40;
 export const ABOUT_MAX = 280;
-export const PHOTO_PX = 192;
+export const PHOTO_PX = 256;
 export const PHOTO_EVENT = "kel-device-photo";
 const photoKey = (subject: string) => `kel.profile.photo.${subject}`;
 
