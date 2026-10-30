@@ -39,7 +39,9 @@ def test_listed_tools_stay_within_their_token_budget(monkeypatch):
     monkeypatch.setattr(srv.settings, "mcp_tool_discovery", "progressive")
     tools = run(srv.server.list_tools())
     sizes = {t.name: len(json.dumps(t.model_dump(exclude_none=True))) // 4 for t in tools}
-    assert sizes["find_ways"] <= 900, sizes
+    # 1,100: raised from 900 (2026-10-30) for the chat paragraph (claude.ai has no hooks: the description is what makes
+    # it call find_ways at the start of a task, pass its connectors, and use the tools and delegate fields)
+    assert sizes["find_ways"] <= 1100, sizes
     # 2,000: raised from 1,500 (2026-10-30) when discover_tools began routing external tools -- its fuller
     # description (goals, the installed list) is worth ~100 tokens a turn more than a terse one
     assert sum(sizes.values()) <= 2000, sizes

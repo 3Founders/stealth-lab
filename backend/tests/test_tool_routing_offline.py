@@ -262,3 +262,31 @@ def test_install_commands_come_from_the_registry_and_name_generic_servers_after_
         == "claude mcp add playwright-mcp -- npx -y @playwright/mcp"
     assert install_command({"name": "a/b", "remote_urls": [{"url": "https://h/{TENANT}/mcp"}]}) == ""     # a template is not a URL
     assert install_command({"name": "a/b", "packages": [{"registry": "npm", "id": "x; rm -rf /"}]}) == ""  # not a package name
+
+
+def test_find_ways_adds_tools_or_a_delegation_for_a_client_without_hooks(monkeypatch):
+    import json as _json
+
+    from app.mcp_server import server as srv
+    from app.mcp_server.find_ways_triage import Triage
+
+    async def fake_tools(need, goal, installed, k):
+        assert goal == "docs" and installed == ["Context7"]
+        return {"goal": goal, "tools": [{"name": "context7", "source": "installed"},
+                                         {"name": "io.github.x/docs", "source": "registry", "connector_url": "https://x/mcp",
+                                          "install": "claude mcp add --transport http docs https://x/mcp"}]}
+    monkeypatch.setattr(srv, "_external_tools", fake_tools)
+    base = _json.dumps({"outcome": "not_needed"})
+
+    out = _json.loads(run(srv._with_routes(base, Triage(False, kind="knowledge_question", work="answer", tool="docs"),
+                                           "React 19 useActionState docs", ["Context7"])))
+    assert out["tools"]["tools"][0]["source"] == "installed" and out["tools"]["tools"][1]["connector_url"] == "https://x/mcp"
+    assert "Settings -> Connectors" in out["tools"]["next"] and "delegate" not in out
+
+    out = _json.loads(run(srv._with_routes(base, Triage(False, kind="knowledge_question", work="answer"), "what is CORS?", None)))
+    assert out["delegate"]["call"]["tool"] == "call_model" and out["delegate"]["or"]["arguments"]["name"] == "call_model"
+
+    plain = run(srv._with_routes(base, Triage(False, kind="trivial_edit", work="change"), "rename x", None))
+    assert plain == base                                              # nothing to add: unchanged
+    assert run(srv._with_routes("not json", Triage(False, kind="knowledge_question"), "q", None)) == "not json"
+    assert run(srv._with_routes(base, None, "q", None)) == base

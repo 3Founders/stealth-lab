@@ -90,8 +90,18 @@ def card_from_registry(s: dict, expansion: str = "", probe: Optional[dict] = Non
                         "tool_count": (probe or {}).get("tool_count"), "owner_count": owner_count,
                         "stars": int((repo or {}).get("stars") or 0), "archived": bool((repo or {}).get("archived")),
                         "verified": verified_publisher(name, str(s.get("repository") or ""), str(s.get("website") or "")),
-                        "install": install_command(s)})
+                        "install": install_command(s), "connector_url": connector_url(s)})
     return _with_goals(c)
+
+
+def connector_url(s: dict) -> str:
+    """The server's remote MCP URL ("" when it has none, or only a template): what claude.ai and Claude Desktop add as a
+    custom connector (Settings -> Connectors). A server with only a package cannot be added there."""
+    for r in s.get("remote_urls") or []:
+        url = str(r.get("url") or "")
+        if url.startswith("https://") and "{" not in url and not re.search(r"\s", url):
+            return url
+    return ""
 
 
 def install_command(s: dict) -> str:
