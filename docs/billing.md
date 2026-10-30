@@ -47,6 +47,8 @@ The server derives the balance from `provider_call_ledger` (credits minus settle
 
 ## What the website shows
 
+**Update:** on the founders' instruction the credits UI was taken off `/pricing` (no extra-usage block, balance, top-up or Checkout, and no "Credit and billing" link on the account page). The page now shows the plans and the data-path note only. The backend wallet and billing routes, `lib/billing.ts` and its tests are unchanged and can be wired back in; the bullets below describing the credit block describe that removed UI.
+
 `routing_kell_frontend/app/pricing/page.tsx` (route `/pricing`, linked from the header, the footer and the account page), logic in `lib/billing.ts`:
 
 - **Plans** (data in `lib/plans.ts`, kept in step with the Plans table above): Pro, Teams, Enterprise and Pilot with the founders' prices in rupees before GST. Every card is labelled "Not available online yet" (Enterprise: "Planned"; Pilot: "Invoiced directly") and links to `/contact` to ask; there is **no subscription checkout**. The deck's comparisons with another company's prices and its savings percentages are not shown.
