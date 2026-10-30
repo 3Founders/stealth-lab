@@ -17,6 +17,7 @@ after every deploy (the container's disk is thrown away).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -148,7 +149,9 @@ async def sync_catalog(pool: Any, embedder: Optional[ToolEmbedder] = None,
 
 
 async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
-    cards = registry_cards()
+    # every CPU-heavy step runs in a thread: parsing 48k cards on the event loop kept the server from answering its
+    # readiness check for about a minute after each deploy (2026-10-30)
+    cards = await asyncio.to_thread(registry_cards)
     if not cards:
         say("tool catalog: no registry snapshot in this image")
         return False
@@ -159,9 +162,10 @@ async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
     stored = {r["id"]: r["card_hash"] for r in rows}
     # only cards that changed are written (stars and liveness change without the text changing); the embedding is kept
     # when the embedded text is the same
-    write = [c for c in cards if stored.get(c.id) != card_hash(c)]
+    write = await asyncio.to_thread(lambda: [c for c in cards if stored.get(c.id) != card_hash(c)])
     for i in range(0, len(write), UPSERT_BATCH):
         part = write[i:i + UPSERT_BATCH]
+        payload = await asyncio.to_thread(_payload, part)
         async with pool.acquire() as conn:
             await conn.execute("""
                 INSERT INTO tool_cards (id, source, name, title, description, server, goals, how, url, expansion,
@@ -170,7 +174,7 @@ async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
                        ARRAY(SELECT jsonb_array_elements_text(u.goals)), u.how, u.url, u.expansion,
                        ARRAY(SELECT jsonb_array_elements_text(u.tools)), u.tools_text, u.extra, u.text_hash, u.card_hash,
                        to_tsvector('english', u.body), now()
-                FROM jsonb_to_recordset($1::jsonb) AS u(id text, source text, name text, title text, description text,
+                FROM jsonb_to_recordset($1::text::jsonb) AS u(id text, source text, name text, title text, description text,
                      server text, goals jsonb, how text, url text, expansion text, tools jsonb, tools_text text,
                      extra jsonb, text_hash text, card_hash text, body text)
                 ON CONFLICT (id) DO UPDATE SET
@@ -181,20 +185,14 @@ async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
                     embedding = CASE WHEN tool_cards.text_hash = EXCLUDED.text_hash THEN tool_cards.embedding END,
                     embedding_model = CASE WHEN tool_cards.text_hash = EXCLUDED.text_hash THEN tool_cards.embedding_model END,
                     text_hash = EXCLUDED.text_hash, card_hash = EXCLUDED.card_hash, updated_at = now()
-            """, json.dumps([{
-                "id": c.id, "source": c.source, "name": c.name, "title": c.title, "description": c.description,
-                "server": c.server, "goals": list(c.goals), "how": c.how, "url": c.url, "expansion": c.expansion,
-                "tools": list(c.tools), "tools_text": c.tools_text, "extra": c.extra, "text_hash": text_hash(c),
-                "card_hash": card_hash(c),
-                "body": " ".join(words(c.text)),
-            } for c in part], ensure_ascii=False, default=str).replace("\\u0000", ""))  # publishers' NULs: text can't hold them
+            """, payload)
     if write:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM tool_card_vectors v USING tool_cards t WHERE v.id = t.id AND t.embedding IS NULL")
     ids = [c.id for c in cards]
     async with pool.acquire() as conn:
         gone = await conn.execute("DELETE FROM tool_cards WHERE source = 'registry' AND NOT (id = ANY($1::text[]))", ids)
-    changed = sum(1 for c in cards if have.get(c.id) != text_hash(c))
+    changed = await asyncio.to_thread(lambda: sum(1 for c in cards if have.get(c.id) != text_hash(c)))
     async with pool.acquire() as conn:
         if write or gone != "DELETE 0" or not await conn.fetchval("SELECT EXISTS (SELECT 1 FROM tool_terms)"):
             async with conn.transaction():
@@ -212,6 +210,16 @@ async def _sync(pool: Any, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
     return done
 
 
+def _payload(part: Sequence[ToolCard]) -> str:
+    """One upsert batch as JSON text (sent as text: the app pool's jsonb codec would encode a string again)."""
+    return json.dumps([{
+        "id": c.id, "source": c.source, "name": c.name, "title": c.title, "description": c.description,
+        "server": c.server, "goals": list(c.goals), "how": c.how, "url": c.url, "expansion": c.expansion,
+        "tools": list(c.tools), "tools_text": c.tools_text, "extra": c.extra, "text_hash": text_hash(c),
+        "card_hash": card_hash(c), "body": " ".join(words(c.text)),
+    } for c in part], ensure_ascii=False, default=str).replace("\\u0000", "")  # publishers' NULs: text can't hold them
+
+
 async def _embed_missing(pool: Any, cards: Sequence[ToolCard], e: ToolEmbedder, say: Callable[[str], None]) -> bool:
     model = e.embedding_model_id() if e.available() else ""
     async with pool.acquire() as conn:
@@ -226,7 +234,7 @@ async def _embed_missing(pool: Any, cards: Sequence[ToolCard], e: ToolEmbedder, 
 
 
 async def _fill(pool: Any, todo: Sequence[ToolCard], model: str, e: ToolEmbedder, say: Callable[[str], None]) -> bool:
-    rows, mat, file_model = registry_vectors()          # a vectors file built for the same model saves the embedding
+    rows, mat, file_model = await asyncio.to_thread(registry_vectors)   # a vectors file of the same model saves embedding
     from_file = [c for c in todo if mat is not None and file_model == model and c.id in rows]
     if from_file:
         await _write_vectors(pool, [(c.id, mat[rows[c.id]]) for c in from_file], file_model)
@@ -249,10 +257,12 @@ async def _fill(pool: Any, todo: Sequence[ToolCard], model: str, e: ToolEmbedder
 async def _write_vectors(pool: Any, pairs: Sequence[tuple[str, np.ndarray]], model: str) -> None:
     for i in range(0, len(pairs), 500):
         part = pairs[i:i + 500]
+        ids, full, short = await asyncio.to_thread(
+            lambda: ([p[0] for p in part], [_vec(p[1]) for p in part], [_vec(small(p[1])) for p in part]))
         async with pool.acquire() as conn:
             await conn.execute("""
                 WITH u AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[]) AS u(id, v, s)),
                 full_ AS (UPDATE tool_cards t SET embedding = u.v::vector, embedding_model = $4 FROM u WHERE t.id = u.id)
                 INSERT INTO tool_card_vectors (id, small) SELECT u.id, u.s::vector FROM u
                 ON CONFLICT (id) DO UPDATE SET small = EXCLUDED.small
-            """, [p[0] for p in part], [_vec(p[1]) for p in part], [_vec(small(p[1])) for p in part], model)
+            """, ids, full, short, model)
