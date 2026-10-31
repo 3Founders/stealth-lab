@@ -90,6 +90,7 @@ export async function installNative(ctx, { cwd, state }) {
     Object.assign(t, { testFails: 0, lastTest: undefined, tools: new Set(), tokens: undefined, cost: undefined })
     const verdict = await post(cfg.url, "/triage", { query: String(e.prompt.text).slice(0, 6000) }, { token: cfg.token })
     t.goal = verdict?.tool && verdict.tool !== "-" ? String(verdict.tool) : undefined
+    if (strong) t.strongRef = strong            // the session's own model, kept before the switch so escalation can go back to it
     const pick = chooseModel(verdict, { cheap, strong: strong || t.strongRef })
     t.which = pick.which
     const ref = parseModel(pick.ref)

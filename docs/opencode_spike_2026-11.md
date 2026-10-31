@@ -3,10 +3,10 @@
 Code: [experiments/opencode_kell/](../experiments/opencode_kell/) (README there has the commands). Facts about the hooks:
 [harness_facts_2026-11.md](harness_facts_2026-11.md). Nothing was deployed, published or changed on the hosted server.
 
-**Where it stopped.** The comparison runs (Claude Code against OpenCode, three tasks) and the six acceptance prompts were
-**not completed**, and Layer 2 was **not run against a live model**. A live OpenCode run with `--auto` (it auto-approves tool
-permissions) was refused by the session's permission classifier after earlier ones had been allowed; I did not work around it.
-Everything marked "ran" below ran; everything marked "not run" is written and, where stated, unit-tested only.
+**Where it stands.** After the first pass was cut short (a live `--auto` run was refused by the permission classifier), the
+person allowed `run-sandbox.sh` runs with `--auto` in fixtures under `experiments/opencode_kell/fixtures/`, each under five
+minutes. Under that, the six acceptance prompts and Layer 2 ran live (below). The Claude Code arm of the comparison was
+**not run**: it is a different tool and was outside that permission, so there is no side-by-side cost or time.
 
 ## Step 0
 
@@ -38,24 +38,43 @@ code, Sonnet reviewed it "good", $0.0236). Two things stopped a clean result:
 - kell's server is the local one (`127.0.0.1:8765`) and was down at first; `/readyz` answered `migrations: behind` (the local
   code is ahead of its database). `/mcp` worked. Hosted use needs `kell login`, which needs a person.
 
-Six prompts from `handoff_claude_code_launch_2026-10-30.md` section 4: **not run**, except the first (a repo question), which
-ran twice without the answer path and once with it killed at 9 s.
+### The six prompts (OpenCode 2.2.5 + bridge, real kell hooks, local kell server, `gc/gemma-4-31B-it`, one run each)
+
+| Prompt | Expected (handoff section 4) | What happened |
+|---|---|---|
+| "what does `clamp` in `mathx.py` do?" | triage `work=answer`; a cheap model answers, Sonnet checks | triage was `work=answer`, but kell added nothing ("no knowledge added: aborted due to timeout" after ~25 s); the session's own model read the file and answered. 53 s. **Not as expected.** (An earlier run did get glm-5.3-flash's reviewed answer: 24 s, $0.0236.) |
+| a small bug with a failing test | a cheap model fixes it in a worktree, tests pass, Sonnet reviews, report, `kell undo` | triage `work=change`; kell did **not** dispatch (no worktree, no review). The session's model fixed `mathx.py` and the tests passed (4 passed). 77 s. **Fix works, dispatch not as expected.** |
+| "check that the login page still renders in a real browser" | triage `tool=browser`, `tools goal=browser N found`, a tool note | triage `tool=browser`, log shows `tools goal=browser 5 found`. The model used a built-in browser skill and asked for a URL. 116 s. **As expected for the router; whether the note reached the model was not checked.** |
+| "rename foo to bar in utils.py" | no tool note, no knowledge dump, no long wait | triage `trivial_edit`; renamed correctly. 40 s, of which ~25 s was the kell lookup timing out. **Outcome right, wait not short.** |
+| "thanks, looks good" | nothing added | triage `conversation`; "lookup not_needed, not dispatched"; plain reply. 33 s. **As expected.** |
+| "!opus explain the architecture" | kell skips the prompt | kell triaged it as a normal question (the `!` prefix is not honoured by the hook itself; Claude Code strips it before the hook). 46 s. **Not as expected**, a bridge gap: strip a leading `!model` and skip. |
+
+Why the answer and dispatch paths did not fire here: every real prompt shows the same ~25 s "no knowledge added (aborted due to
+timeout)", so kell's lookup against the local server (down at first, then `migrations: behind`) times out and the later
+answer/dispatch steps do not run. That is a local-server problem to separate from the bridge; hosted use needs `kell login`.
 
 ## Layer 2: native pieces (`plugin/native.mjs`, `KELL_OC_NATIVE=on`)
 
 | Piece | What is written | State |
 |---|---|---|
-| (a) triage + model | `POST /triage` on each prompt, `switchModel` to the cheap model, or keep the session's own for a hard task or no verdict | unit-tested (model choice); `switchModel` in the prompt hook proven in Step 0 b; not run with the real triage |
-| (b) escalation | `tool.execute.after` on the shell tool detects a test command and its exit; two failures on the cheap model switch to the strong one | unit-tested (counter, reset, no-op cases); not run live |
+| (a) triage + model | `POST /triage` on each prompt, `switchModel` to the cheap model, or keep the session's own for a hard task or no verdict | **ran live**: triage `work=answer` and `work=change` both picked `gc/minimax-m2.7`, and the session ran on it |
+| (b) escalation | `tool.execute.after` on the shell tool detects a test command and its exit; two failures on the cheap model switch to the strong one | unit-tested (counter, reset, no-op cases); **not triggered live**: the cheap model fixed the bug on the first test run |
 | (c) tools | `POST /tools` for the triage's tool goal; remote https servers with no sign-in added via `mcp.transform` + `reload()` | filter unit-tested; the router's field names for "needs sign-in" are guesses; not run live |
-| (d) recording | per idle: used tools and test result to `/tools/outcome`; tokens and cost are read from the last message and logged | the POST is written; **`report_model_run` is not wired**, and tokens/cost go to the log only |
+| (d) recording | per idle: used tools and test result to `/tools/outcome`; tokens and cost are read from the last message and logged | **ran live**: record `used: shell, glob, read, edit; outcome accepted; check_kind tests; model gc/minimax-m2.7`. Tokens and cost came back empty (the `session.context` read did not return them), and **`report_model_run` is not wired** |
 
-## Results table (the requested measurement)
+## Results (the requested measurement)
 
-Not collected. The three tasks (repo question, failing-test fix, tool task) were not run on either arm, so there is no cost,
-wall time or pass/fail to report. The only timings seen, from the repo question on the fixture with kell's answer path off:
-37 s and 16 s with `gc/gemma-4-31B-it`; with the answer path on and the hook killed at 9 s, 60 s. These are one run each and say
-nothing about the comparison.
+OpenCode + plugin arm only, one run each, on the `clamp` fixture; cost was not recorded (tokens and cost were not readable, and
+the models bill per token on General Compute).
+
+| Task | Setup | Wall time | Pass/fail |
+|---|---|---|---|
+| Repo question | bridge + kell hooks, gemma | 53 s | answered correctly (kell added nothing) |
+| Failing-test fix | bridge + kell hooks, gemma | 77 s | tests pass (4 passed) |
+| Failing-test fix | bridge + Layer 2, triage picks minimax | 45 s | tests pass (4 passed), recorded `accepted` |
+| Tool task (browser) | bridge + kell hooks, gemma | 116 s | router found 5 tools; no URL to test, so no pass/fail |
+
+**Claude Code + kell arm: not run.** These are single runs and say nothing about the comparison.
 
 ## What would need a fork
 
@@ -70,8 +89,8 @@ Nothing else in Layers 1 and 2 needed a fork. No server change is needed for the
 
 ## Open problems
 
-1. **Cold-start hangs.** Several first runs after a config or environment change hung for more than 150 s with no output; the
-   retry then took 10 to 40 s. Not diagnosed. It blocks any benchmark until understood.
+1. **Cold-start hangs.** About one run in three (a fresh fixture, `KELL_OC_NATIVE=on`) produced no output for the whole 280 s
+   and was killed; the retry took 36 to 45 s. Not diagnosed. It blocks any benchmark until understood.
 2. **MCP tool names.** In 2.2.5 MCP tools appear to go through a code-mode `execute` tool, so hooks written for
    `mcp__stealthlab__report_result` may never match. Needs a run with an MCP server to see the real tool name.
 3. **Prompt text arrives quoted.** The CLI passed the message wrapped in quotes (`"\"...\""`); the hooks see the quotes.
@@ -80,12 +99,11 @@ Nothing else in Layers 1 and 2 needed a fork. No server change is needed for the
    `session.context` and logs them; sending them with `report_model_run` is not done.
 6. **kell state is per Claude Code session id.** The bridge passes OpenCode's session id and a small transcript path; kell's
    Stop-hook report reads the transcript for the model and edits, so edits are missing in OpenCode.
-7. **The classifier stop.** Re-running with `--auto` needs the person to allow it (or to run the sandbox themselves with
-   `experiments/opencode_kell/run-sandbox.sh`).
+7. **`!model` prefix and the answer/dispatch paths** (see the prompt table): a leading `!opus` should skip kell; the answer and
+   dispatch steps never ran because the local lookup times out.
 
 ## Next, in order
 
-1. Run `run-sandbox.sh` with the real hooks after `kell login` against the hosted server (no local server), with
-   `KELL_OC_MIN_TIMEOUT_S=90`, and fill the six-prompt table.
-2. Find the cold-start hang.
-3. Then Layer 2 on the failing-test fixture (`fixtures/make_fixture.sh`), and the three-task comparison against Claude Code.
+1. `kell login` against the hosted server (no local server), then repeat the six prompts and look for the cheap-model answer and
+   dispatch. 2. Find the cold-start hang. 3. Escalation live: a fixture where the cheap model fails its first fix. 4. The Claude
+   Code arm of the comparison, once someone decides to spend on it.

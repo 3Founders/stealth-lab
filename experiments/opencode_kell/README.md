@@ -1,8 +1,8 @@
 # kell inside OpenCode, as a plugin (spike)
 
-Status: a spike. Layer 1 (the Claude Code hooks bridge) ran end to end in OpenCode with a stand-in hook; against kell's real
-hooks it ran up to the answer path. Layer 2 is written and unit-tested but **not run live**. See
-[docs/opencode_spike_2026-11.md](../../docs/opencode_spike_2026-11.md) for results and open problems.
+Status: a spike. Layer 1 (the Claude Code hooks bridge) and Layer 2 ran live in OpenCode 2.2.5; the six acceptance prompts ran
+once each (answer and dispatch paths did not fire, see the doc); escalation is unit-tested only; the Claude Code arm of the
+comparison was not run. See [docs/opencode_spike_2026-11.md](../../docs/opencode_spike_2026-11.md).
 
 Pinned to `@opencode/cli`, `@opencode/plugin`, `@opencode/sdk` **2.2.5** (the `latest` on npm, 2026-10-31). This is
 OpenCode's V2 plugin API (`Plugin.define`); plugins written for the older `@opencode-ai/plugin` 1.x do not apply.
@@ -16,7 +16,7 @@ OpenCode's V2 plugin API (`Plugin.define`); plugins written for the older `@open
 | `plugin/native.mjs` | Layer 2, on with `KELL_OC_NATIVE=on`: triage picks the model, escalation after two failed test runs, tool-router suggestions as remote MCP servers, a per-turn record to `/tools/outcome`. |
 | `test/` | `node --test test/*.test.mjs`: 11 offline tests (no network, no OpenCode). |
 | `sandbox/` | A project for `run-sandbox.sh`: General Compute as an OpenAI-compatible provider, plus the Step 0 probes (`plugins/switch-test`, `plugins/probe`) and a stand-in hook (`fake-hook.mjs`). |
-| `fixtures/` | `make_fixture.sh <dir>` builds the small repo (a `clamp()` bug, one failing test); `with_opencode.mjs <dir>` writes its `opencode.json`. |
+| `fixtures/` | `run_prompt.sh <name> "<prompt>"` runs one prompt in `fixtures/run/<name>` (under 5 minutes). `make_fixture.sh <dir>` builds the small repo (a `clamp()` bug, one failing test); `with_opencode.mjs <dir>` writes its `opencode.json`. |
 | `run-sandbox.sh` | Runs the pinned OpenCode in an isolated profile (XDG directories under `sandbox/.xdg`), so your own OpenCode is untouched. |
 
 ## Run it

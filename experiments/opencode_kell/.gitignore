@@ -3,3 +3,4 @@ sandbox/.xdg/
 sandbox/.state/
 sandbox/*.log
 sandbox/probe.txt
+fixtures/run/
