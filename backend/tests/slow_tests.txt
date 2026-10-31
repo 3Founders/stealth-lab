@@ -1,0 +1,39 @@
+# Tests that take more than a few seconds ON THEIR OWN. tests/conftest.py gives them the `slow` marker and pytest.ini skips that
+# marker by default.   Run them:   pytest -m slow     Run everything:   pytest -m ""
+# Measured 2026-10-31 with --durations on this machine (threshold 4 s per test). A line is a node-id prefix: a file marks the whole
+# file, file::test marks one test and its parametrized variants. Do NOT delete a test to speed the suite up: add it here.
+#
+# Whole files (a module-scoped fixture or a sampler costs minutes; marking only the first test would just move the cost):
+tests/test_routing_fit_offline.py
+tests/test_routing_priors_offline.py
+tests/test_mcp_progressive_discovery_offline.py
+#
+# Single tests (seconds measured):
+tests/test_trace_collector.py::test_a1_append_cost_does_not_scale_with_existing_file_size   # 84s
+tests/test_live_scripts_not_collected.py::test_root_level_live_scripts_excluded_from_bare_collection   # 38s
+tests/test_loop_logic.py::test_agent_failure_does_not_abort_the_round   # 28s
+tests/test_procedure_extraction.py::test_best_binder_for_prefers_call_graph_over_literal_when_it_covers_more   # 25s
+tests/test_procedure_extraction.py::test_best_binder_for_falls_back_to_literal_with_no_coverage   # 25s
+tests/test_procedure_extraction.py::test_derive_slots_uses_a_real_registered_binder_against_this_repos_own_files   # 21s
+tests/test_migration_upgrade_e2e.py::test_migration_upgrade_path_populated_v1_to_hardening   # 20s
+tests/test_apply_change_set_removed_security.py::test_knowledge_updater_imported_only_by_the_two_gated_endpoints   # 13s
+tests/test_observability_offline.py::test_component_names_cover_all_three_surfaces   # 12s
+tests/test_object_storage_e2e.py::test_memory_store_is_refused_in_production   # 12s
+tests/test_step_binding_offline.py::test_no_implementation_mcp_tools_or_routes   # 11s
+tests/test_mcp_v1_surface_offline.py::test_v1_exposes_exactly_five_tools_three_claim_resources_and_two_prompts   # 7s
+tests/test_tool_routing_offline.py::test_find_ways_adds_tools_or_a_delegation_for_a_client_without_hooks   # 7s
+tests/test_panel_agents.py::test_anthropic_agent_extracts_text_from_sdk_response   # 7s
+tests/test_nonblocking_llm_offline.py::test_v1_mcp_transport_is_stateless_so_any_instance_can_serve_any_request   # 7s
+tests/test_token_split_offline.py::test_the_mcp_server_takes_mcp_app_tokens_and_refuses_website_sessions   # 6s
+tests/test_tenant_isolation_p1a_e2e.py::test_an_anonymous_caller_may_read_but_every_write_and_execute_tool_is_refused   # 6s
+tests/test_condense.py::test_the_mcp_surface_tells_the_model_the_unit_is_a_goal   # 6s
+tests/test_auth_enforcement_offline.py::test_mcp_human_token_carries_the_same_scopes_and_orgs_as_rest   # 6s
+tests/test_telemetry_offline.py::test_run_trace_has_children_and_correlates_with_canonical_events   # 5s
+tests/test_goals_api_offline.py::test_search_goals_route_default_over_real_http_is_lexical_only   # 5s
+tests/test_retrieval_identity_offline.py::test_production_startup_refuses_to_run_without_providers   # 5s
+tests/test_rooms_e2e.py::test_routes_end_to_end_with_cors_membership_and_sync   # 5s
+tests/test_tool_gateway_offline.py::test_consent_then_call_through_the_server_tool   # 5s
+tests/test_routing_check_calibration.py::test_a_kind_whose_cheap_answers_pass_is_no_longer_skipped   # 5s
+tests/test_rooms_e2e.py::test_stream_sends_what_is_new_then_ends_with_a_cursor   # 5s
+tests/test_routing_check_calibration.py::test_audits_that_find_wrong_answers_send_a_kind_back_to_the_session_model   # 4s
+tests/test_voyage_embedding_retry.py::test_gemini_configured_with_no_key_fails_closed_never_silently_switches_provider   # 4s

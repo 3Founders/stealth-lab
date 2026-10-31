@@ -83,7 +83,16 @@ _AUTH_ENV_AMBIENT_AT_STARTUP = {k for k in _AUTH_ENV_KEYS if k in os.environ}
 _real_load_dotenv = dotenv.load_dotenv
 
 
+# A plain offline run is HERMETIC: it never reads backend/.env, neither into os.environ (server.py's module-level load_dotenv) nor
+# into the settings singleton (pydantic env_file). A developer's .env carries real service-token, provider and identity settings,
+# and 23 tests failed on a machine with one and passed on a clean checkout. Export DATABASE_URL (or TEST_DATABASE_URL) to run the
+# live-DB tests with the .env as before, or KELL_TEST_USE_DOTENV=1 to force it.
+_HERMETIC = not os.environ.get("DATABASE_URL") and os.environ.get("KELL_TEST_USE_DOTENV") != "1"      # an empty DATABASE_URL= counts as unset
+
+
 def _load_dotenv_without_leaking_database_url(*args, **kwargs):
+    if _HERMETIC:
+        return False
     had_database_url = "DATABASE_URL" in os.environ
     had_auth = {k for k in _AUTH_ENV_KEYS if k in os.environ}
     result = _real_load_dotenv(*args, **kwargs)
@@ -116,6 +125,12 @@ def pytest_configure(config):
     try:
         from app import config as _cfg
 
+        if _HERMETIC:
+            # Offline tests that drive the OpenRouter client through a fake transport only need the setting to be NON-EMPTY; they used
+            # to get a developer's real key from .env (and failed on any clean machine). A dummy keeps them hermetic and keeps the real
+            # key out of the test process.
+            os.environ.setdefault("OPENROUTER_API_KEY", "sk-or-test-not-a-real-key")
+            _cfg.settings = _cfg.Settings(_env_file=None)       # defaults plus the real environment, never backend/.env
         for _k, _attr in (
             ("SUPABASE_PROJECT_URL", "supabase_project_url"),
             ("SUPABASE_JWT_AUDIENCE", "supabase_jwt_audience"),
@@ -196,3 +211,32 @@ def _no_live_semantic_providers(monkeypatch):
         return cls([], kw.get("policy") or RetryPolicy())
 
     monkeypatch.setattr(SemanticJudge, "from_settings", classmethod(offline))
+
+
+# ---- the fast default run -------------------------------------------------------------------------------------------------
+# tests/slow_tests.txt lists tests that take more than a few seconds each (measured; see the header of that file). They get the
+# `slow` marker here, so no test file is edited, and pytest.ini deselects the marker by default. A line is a node id prefix:
+# `tests/test_x.py` marks the whole file, `tests/test_x.py::test_name` one test (and all its parametrized variants).
+import pathlib  # noqa: E402
+
+_SLOW_LIST = pathlib.Path(__file__).with_name("slow_tests.txt")
+
+
+def _slow_prefixes() -> tuple[str, ...]:
+    try:
+        lines = _SLOW_LIST.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ()
+    ids = (s.split("#", 1)[0].strip().replace("\\", "/") for s in lines)       # a trailing "# 84s" note is allowed
+    return tuple(i for i in ids if i)
+
+
+def pytest_collection_modifyitems(config, items):
+    prefixes = _slow_prefixes()
+    if not prefixes:
+        return
+    slow = pytest.mark.slow
+    for item in items:
+        nodeid = item.nodeid.replace("\\", "/")
+        if any(nodeid == p or nodeid.startswith(p + "::") or nodeid.startswith(p + "[") for p in prefixes):
+            item.add_marker(slow)
