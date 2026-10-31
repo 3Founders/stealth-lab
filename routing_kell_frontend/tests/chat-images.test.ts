@@ -12,11 +12,11 @@ const msg = (id: string, text: string, attachments?: ImageAttachment[], sender: 
   ({ id, roomId: "r", sender, recipients: ["@all"], payload: { text, ...(attachments ? { attachments } : {}) }, timestamp: 1, depthCounter: 0 });
 
 describe("which files can be attached", () => {
-  it("takes png, jpeg, webp and gif up to 10 MB, four at a time", () => {
+  it("takes png, jpeg, webp and gif up to 40 MB, four at a time", () => {
     expect(whyNotImage({ type: "image/png", size: 1000 }, 0)).toBeNull();
     expect(whyNotImage({ type: "image/svg+xml", size: 1000, name: "a.svg" }, 0)).toMatch(/not a PNG/);
     expect(whyNotImage({ type: "application/pdf", size: 10 }, 0)).toMatch(/not a PNG/);
-    expect(whyNotImage({ type: "image/png", size: 11 * 1024 * 1024 }, 0)).toMatch(/over 10 MB/);
+    expect(whyNotImage({ type: "image/png", size: 41 * 1024 * 1024 }, 0)).toMatch(/over 40 MB/);
     expect(whyNotImage({ type: "image/png", size: 10 }, 4)).toMatch(/At most 4/);
   });
   it("scales a big picture down to the same shape, and never enlarges one", () => {

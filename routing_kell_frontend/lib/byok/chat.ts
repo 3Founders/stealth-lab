@@ -36,7 +36,8 @@ function imagesAsMarkdown(list: unknown): string {
 }
 export interface ProviderTarget { provider: Provider; baseUrl: string; apiKey: string; extraHeaders?: Record<string, string> }
 
-export class ProviderError extends Error {}
+/** `status` is the HTTP status when the provider answered with a refusal (413 means the request was too big). */
+export class ProviderError extends Error { constructor(message: string, readonly status?: number) { super(message); this.name = "ProviderError"; } }
 
 /** Removes the key itself, and anything key-shaped, from text before it is shown anywhere. */
 export function scrub(text: string, ...secrets: string[]): string {
@@ -68,7 +69,7 @@ async function fail(res: Response, t: ProviderTarget): Promise<never> {
   try { body = (await res.text()).slice(0, 600); } catch { /* none */ }
   // An OpenAI-style error envelope carries a sentence meant for people; show that, not the raw JSON.
   try { const m = (JSON.parse(body) as { error?: { message?: unknown } })?.error?.message; if (typeof m === "string" && m) body = m; } catch { /* not JSON */ }
-  throw new ProviderError(scrub(`The provider answered ${res.status}${body ? `: ${body}` : "."}`, t.apiKey));
+  throw new ProviderError(scrub(`The provider answered ${res.status}${body ? `: ${body}` : "."}`, t.apiKey), res.status);
 }
 
 async function send(t: ProviderTarget, path: string, init: RequestInit, fetchImpl: typeof fetch): Promise<Response> {

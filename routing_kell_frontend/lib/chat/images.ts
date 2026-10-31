@@ -15,8 +15,10 @@
 import type { ImageAttachment } from "./types";
 
 export const MAX_IMAGES = 4;
-export const MAX_FILE_BYTES = 10 * 1024 * 1024;
+export const MAX_FILE_BYTES = 40 * 1024 * 1024;
 export const MAX_EDGE = 1568;
+/** A prepared picture is squeezed until its base64 is at most this long, so a few of them fit in one request. */
+export const TARGET_CHARS = 450_000;
 /** At most this many pictures go to the model in one request (the newest); older ones are replaced by "[image omitted]". */
 export const MAX_IMAGES_PER_REQUEST = 3;
 const MAX_DATA_URL_CHARS = 6_000_000;
@@ -39,22 +41,86 @@ export function fitWithin(w: number, h: number, max = MAX_EDGE): { width: number
   return { width: Math.max(1, Math.round(w * k)), height: Math.max(1, Math.round(h * k)) };
 }
 
-/** Reads a picture file, scales it down and re-encodes it. Needs a browser (canvas); it is not called in tests. */
-export async function prepareImage(file: File): Promise<ImageAttachment> {
-  const bitmap = await createImageBitmap(file).catch(() => { throw new Error(`${file.name || "That file"} could not be read as a picture.`); });
-  const { width, height } = fitWithin(bitmap.width, bitmap.height);
+/** Draws a decoded picture at `edge` and returns it as base64 JPEG at `quality`. */
+function encode(bitmap: ImageBitmap, edge: number, quality: number): { data: string; width: number; height: number } {
+  const { width, height } = fitWithin(bitmap.width, bitmap.height, edge);
   const canvas = document.createElement("canvas");
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("This browser can't prepare pictures.");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, width, height); // a transparent picture becomes white, not black
   ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close?.();
-  const url = canvas.toDataURL("image/jpeg", 0.86);
-  const data = url.slice(url.indexOf(",") + 1);
-  if (!data) throw new Error("This browser can't prepare pictures.");
-  return { kind: "image", mime: "image/jpeg", data, name: file.name || "picture", width, height };
+  const url = canvas.toDataURL("image/jpeg", quality);
+  return { data: url.slice(url.indexOf(",") + 1), width, height };
 }
+
+/**
+ * Reads a picture file of any size or shape and brings it down to a size a model request can carry: first the longest side is capped at
+ * MAX_EDGE, then the quality and the size are stepped down until the picture is at most TARGET_CHARS. The picture keeps its proportions.
+ * Needs a browser (canvas); it is not called in tests.
+ */
+export async function prepareImage(file: File): Promise<ImageAttachment> {
+  const bitmap = await createImageBitmap(file).catch(() => { throw new Error(`${file.name || "That file"} could not be read as a picture.`); });
+  try {
+    let edge = MAX_EDGE;
+    let out = encode(bitmap, edge, 0.86);
+    for (const [q, shrink] of [[0.72, 1], [0.62, 1], [0.62, 0.8], [0.55, 0.8], [0.5, 0.8]] as const) {
+      if (out.data.length <= TARGET_CHARS) break;
+      edge = Math.max(480, Math.round(edge * shrink));
+      out = encode(bitmap, edge, q);
+    }
+    if (!out.data) throw new Error("This browser can't prepare pictures.");
+    return { kind: "image", mime: "image/jpeg", data: out.data, name: file.name || "picture", width: out.width, height: out.height };
+  } finally { bitmap.close?.(); }
+}
+
+/** The steps taken when a provider says a request is too big: the same pictures, each aimed at a smaller size budget (base64 characters). After the last, they are left out. */
+export const SHRINK_LEVELS: Array<{ edge: number; quality: number; chars: number }> = [
+  { edge: 1024, quality: 0.75, chars: 220_000 }, { edge: 640, quality: 0.65, chars: 90_000 }, { edge: 384, quality: 0.55, chars: 35_000 },
+];
+
+/** One picture of a request, redrawn smaller and never larger than it was: it is squeezed until it fits the level's budget. Needs a browser. */
+export async function shrinkImage(p: { mime: string; data: string }, level: number): Promise<{ mime: string; data: string }> {
+  const step = SHRINK_LEVELS[Math.min(level, SHRINK_LEVELS.length) - 1];
+  if (!step) return p;
+  const blob = await (await fetch(`data:${p.mime};base64,${p.data}`)).blob();
+  const bitmap = await createImageBitmap(blob);
+  try {
+    let edge = Math.min(step.edge, Math.max(bitmap.width, bitmap.height));
+    let quality = step.quality;
+    let out = encode(bitmap, edge, quality);
+    for (let i = 0; i < 6 && out.data.length > step.chars; i++) {
+      edge = Math.max(128, Math.round(edge * 0.8));
+      quality = Math.max(0.4, quality - 0.06);
+      out = encode(bitmap, edge, quality);
+    }
+    return { mime: "image/jpeg", data: out.data.length < p.data.length ? out.data : p.data };
+  } finally { bitmap.close?.(); }
+}
+
+/**
+ * The turns of a request with every picture shrunk to `level` (1..SHRINK_LEVELS.length), or removed with a note when `level` is past the
+ * last step. Only the copy being sent changes; the message in the room keeps its full picture.
+ */
+export async function shrinkTurns<T extends { role: string; content: unknown }>(turns: T[], level: number, shrink: typeof shrinkImage = shrinkImage): Promise<T[]> {
+  const out: T[] = [];
+  for (const t of turns) {
+    if (!Array.isArray(t.content)) { out.push(t); continue; }
+    const parts: unknown[] = [];
+    for (const part of t.content as Array<{ type: string; mime?: string; data?: string }>) {
+      if (part.type !== "image") { parts.push(part); continue; }
+      if (level > SHRINK_LEVELS.length) { parts.push({ type: "text", text: "[picture left out: too large for this provider]" }); continue; }
+      try { parts.push({ type: "image", ...(await shrink({ mime: part.mime ?? "image/jpeg", data: part.data ?? "" }, level)) }); }
+      catch { parts.push({ type: "text", text: "[picture left out: could not be made smaller]" }); }
+    }
+    out.push({ ...t, content: parts });
+  }
+  return out;
+}
+
+/** True when a request carries at least one picture. */
+export const hasPictures = (turns: Array<{ content: unknown }>): boolean =>
+  turns.some((t) => Array.isArray(t.content) && (t.content as Array<{ type: string }>).some((p) => p.type === "image"));
 
 export const dataUrlOf = (a: Pick<ImageAttachment, "mime" | "data">): string => `data:${a.mime};base64,${a.data}`;
 

@@ -1,9 +1,9 @@
 import type { ChatMessage, ChatPart } from "@/lib/byok/chat";
-import { scrub } from "@/lib/byok/chat";
+import { ProviderError, scrub } from "@/lib/byok/chat";
 import { Broker } from "../relay/broker";
 import type { AgentIdentity, GroupMessage, TransportPacket } from "../types";
 import { toMcpPayload } from "./mcp";
-import { MAX_IMAGES_PER_REQUEST, visionHint, withoutDataImages } from "../images";
+import { MAX_IMAGES_PER_REQUEST, SHRINK_LEVELS, hasPictures, shrinkTurns, visionHint, withoutDataImages } from "../images";
 
 export const ASSISTANT_HANDLE = "@assistant";
 export const assistantIdentityFor = (handle: string): AgentIdentity => ({ handle, displayName: handle.replace(/^@/, ""), type: "local_agent", status: "online" });
@@ -22,6 +22,8 @@ export interface AssistantDeps {
   onStart(roomId: string, handle: string, controller: AbortController): void;
   onDelta(roomId: string, handle: string, text: string): void;
   onEnd(roomId: string, handle: string): void;
+  /** Redraws the request's pictures smaller (level 1..3) or removes them (level 4). Defaults to the browser's canvas; tests pass their own. */
+  shrink?(turns: ChatMessage[], level: number): Promise<ChatMessage[]>;
 }
 
 /**
@@ -93,9 +95,24 @@ export function attachAssistant(broker: Broker, deps: AssistantDeps, handle: str
       // The message that woke the agent is always part of what it is sent, even if the page's history has not caught up with it.
       const history = deps.history(roomId);
       turns = toChatTurns(history.some((m) => m.id === message.id) ? history : [...history, message], handle);
-      for await (const piece of target.stream(turns, controller.signal)) {
-        text += piece;
-        deps.onDelta(roomId, handle, text);
+      // A provider that says the request is too big (413) is not the end: the same pictures are sent again, smaller each time, and
+      // as a last step left out, so a large photo never stops the conversation. Only before any reply text has arrived.
+      let level = 0;
+      let sending = turns;
+      for (;;) {
+        try {
+          for await (const piece of target.stream(sending, controller.signal)) {
+            text += piece;
+            deps.onDelta(roomId, handle, text);
+          }
+          break;
+        } catch (err) {
+          const tooBig = err instanceof ProviderError && err.status === 413;
+          if (!tooBig || text || !hasPictures(sending) || level > SHRINK_LEVELS.length) throw err;
+          level += 1;
+          sending = await (deps.shrink ?? shrinkTurns)(turns, level);
+          if (level > SHRINK_LEVELS.length) broker.notice(roomId, "The provider would not take the pictures even at the smallest size, so they were left out of this request.");
+        }
       }
     } catch (err) {
       if ((err as { name?: string })?.name !== "AbortError") {

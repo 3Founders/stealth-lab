@@ -551,3 +551,25 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-img-ask { font: inherit; font-size: 13px; padding: 8px 12px; border-radius: 8px; border: 0; cursor: pointer; background: var(--dg-glass-strong, #fff); color: var(--ink); box-shadow: var(--dg-lift, 0 4px 12px rgba(0, 0, 0, .14)); }
 .dg-img-ask:hover { background: var(--yellow); }
 @media (prefers-reduced-motion: reduce) { .dg-pic, .dg-img img { animation: none; transition: none; } }
+
+/* "+ Add agent": a small popup over the chat. It reuses the Settings dialog's frame, animation and backdrop, at a smaller size. */
+.dg-settings.dg-addagent { width: min(440px, 94vw); height: auto; max-height: 92dvh; }
+.dg-addagent .dg-set-frame { height: auto; display: block; }
+.dg-addagent .dg-set-head { padding: 14px 18px; }
+.dg-addagent .dg-set-head h2 { font-size: 19px; }
+.dg-addagent-body { display: grid; gap: 12px; padding: 16px 18px 20px; }
+.dg-addagent-body fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dg-addagent-body legend { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--grey); padding: 0 0 6px; }
+.dg-addagent-body fieldset label { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 36px; cursor: pointer; }
+.dg-addagent-body fieldset input[type="radio"] { width: 16px; height: 16px; margin: 0; accent-color: var(--cobalt); box-shadow: none; }
+.dg-addagent-body > label[for] { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--grey); }
+.dg-addagent-body input[type="text"], .dg-addagent-body input:not([type]) { font: inherit; font-size: 15px; padding: 10px 12px; width: 100%; border-radius: 6px; }
+.dg-addagent .dg-form-row { display: flex; gap: 8px; padding-top: 4px; }
+@media (max-width: 760px) { .dg-settings.dg-addagent { width: min(440px, 94vw); height: auto; margin: auto; } .dg-addagent .dg-set-frame { border-radius: 12px; } .dg-addagent-body input { font-size: 16px; min-height: 44px; } }
+
+/* Phones: the room list is a drawer over the chat. The glass pass gave `.dg-page .dg-side` position: relative and z-index 3 for the wide layout,
+   which beat the drawer's own fixed position and z-index 40 and left it under the dimming layer, so every tap on it landed on the layer. */
+@media (max-width: 760px) {
+  .dg-page .dg-side { position: fixed; z-index: 40; box-shadow: 12px 0 40px rgba(0, 0, 0, .25); }
+}
+.dg-addagent .dg-set-head h2 { font-size: 19px; text-transform: none; letter-spacing: -.01em; color: var(--ink); margin: 0; font-weight: 400; }

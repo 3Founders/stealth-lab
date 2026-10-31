@@ -31,6 +31,7 @@ import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
 import MessageText from "@/components/chat/MessageText";
+import AddAgentDialog from "@/components/chat/AddAgentDialog";
 import { withoutDataImages } from "@/lib/chat/images";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
@@ -685,21 +686,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           </>
         )}
 
-        {!adding
-          ? <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
-          : (
-            <form className="dg-form" onSubmit={(e) => void submitAgent(e)}>
-              <fieldset>
-                <legend>What kind of agent?</legend>
-                <label><input type="radio" name="dg-kind" checked={addKind === "mine"} onChange={() => setAddKind("mine")} /> My own agent</label>
-                <label><input type="radio" name="dg-kind" checked={addKind === "tab"} onChange={() => setAddKind("tab")} disabled={full} /> A model in this tab</label>
-              </fieldset>
-              <label htmlFor="dg-agent-name">Name{addKind === "tab" ? " (optional)" : ""}</label>
-              <input id="dg-agent-name" autoFocus value={addName} onChange={(e) => setAddName(e.target.value)} placeholder={addKind === "mine" ? "web-chat" : "reviewer"} maxLength={40} autoComplete="off" />
-              {formError && <p className="dg-err" role="alert">{formError}</p>}
-              <div className="dg-form-row"><button type="submit" className="btn-ink dg-mini-btn"><span>Add</span></button><button type="button" className="btn-line dg-mini-btn" onClick={() => { setAdding(false); setFormError(""); }}>Cancel</button></div>
-            </form>
-          )}
+        <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
+        <AddAgentDialog
+          open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
+          kind={addKind} onKind={setAddKind} name={addName} onName={setAddName} error={formError} onSubmit={(e) => void submitAgent(e)}
+        />
         {justAdded && (
           <p className="dg-note dg-connect" role="status">
             <b>@{justAdded} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
