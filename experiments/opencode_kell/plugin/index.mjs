@@ -23,6 +23,7 @@ export default Plugin.define({
   id: "kell",
   setup: async (ctx) => {
     debug("setup: start")
+    debug("env names:", Object.keys(process.env).filter((k) => /CLAUDE|ANTHROPIC|OPENCODE|XDG|^NODE|STEALTH/i.test(k)).sort().join(","))
     for (const dom of [ctx.session, ctx.tool]) {      // timestamps around each registration, to see where a stalled start waits
       const orig = dom.hook.bind(dom)
       dom.hook = async (name, cb, ...rest) => { debug("setup: registering", name); const r = await orig(name, cb, ...rest); debug("setup: registered", name); return r }

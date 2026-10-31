@@ -170,3 +170,31 @@ strong rung here would be another General Compute model, not Claude.
 
 **Comparison (OpenCode + plugin vs Claude Code + kell): not run.** It needs Claude Code runs, and the reviewer fault above is a
 Claude Code question too.
+
+## Fourth pass (2026-10-31): the reviewer's exit 1 (diagnosis so far) and what blocks the rest
+
+With headless `claude` runs allowed in the fixtures, the reviewer's exit 1 was checked first, as cheaply as possible:
+
+| Test (run from a shell, in a fixture) | Result |
+|---|---|
+| `claude -p` with the inherited environment (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, ... all set) | exit 0, `ok` |
+| the same with those variables removed | exit 0, `ok` |
+| kell's own call (`lib/claude_call.mjs` `runClaudeAsync` + `leanArgs`) with the sandbox's `XDG_*` variables | exit 0, `is_error false` |
+| the reviewer's call (`readOnlyArgs`, cwd = fixture) with `CLAUDE_PROJECT_DIR`, `STEALTHLAB_*`, `KELL_OC_*` and the `XDG_*` set, with and without `CLAUDE_PROJECT_DIR` | exit 0, valid JSON verdict, no stderr |
+| the environment the hook really runs with inside OpenCode (names logged by the plugin) | the same `CLAUDE*`, `STEALTHLAB_*` and `XDG_*` names as the shell |
+
+So **the sandbox's config folders and the inherited variables do not hide the sign-in or make `claude` think it is nested**; the
+reviewer call works in every variant I could build. The real stderr of the failing 10:27 calls was never logged
+(`review.mjs:203,223` print only the exit code), so the cause stays unknown. Candidates not yet excluded: two `claude`
+calls started at the same moment (the run showed two tries reviewed within seconds of each other), or a transient error on the
+Anthropic side at that time. A one-line change to log `r.stderr` there would settle it; I left kell's code alone as instructed.
+
+**Why the rest did not run.** Config was restored to the local server, as asked, and the local server is a poor substrate for
+dispatch: its lookup times out (`no knowledge added (The operation was aborted due to timeout)`) and `/readyz` says
+`migrations: behind`, so even a standalone `hook-prompt` for the failing-test fix ended with no dispatch (26 s). Dispatch,
+its reviewer and `kell undo` ran only against the hosted server, which needs the OAuth sign-in that `kell logout` removed. A run
+pointed at the hosted URL with the local token gets "triage gave no verdict" and does nothing.
+Also: a fixture directory could not be deleted once ("Device or resource busy"), so fixtures are created under new names per run.
+
+Not done: one dispatched fix applied, `kell undo` restoring it, and the three-task comparison against Claude Code. Needs
+`kell login --url https://mcp.kell.org.in/mcp` again; after the runs, `kell logout` and the local config go back.
