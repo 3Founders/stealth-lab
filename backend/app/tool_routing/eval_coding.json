@@ -1,64 +1,230 @@
 {
-  "about": "Requests a coding agent gets, each with the tool goal it needs and a pattern an acceptable tool's name, title or description matches (case-insensitive). Scored by scripts/eval_tool_coding.py: goal accuracy, hit@5, MRR. Patterns name capabilities, not one product, so the set stays valid as the registry changes.",
-  "items": [
-    {"q": "what's the latest news on the EU AI Act this week", "goal": "web", "match": "web search|search the web|news|serp|brave|exa|tavily"},
-    {"q": "read this blog post and summarise it: https://example.com/post", "goal": "web", "match": "fetch|read.*(page|url)|markdown|scrape|crawl"},
-    {"q": "search the internet for how other people solved this webpack error", "goal": "web", "match": "web search|search the web|search engine|serp|brave|exa"},
-
-    {"q": "how do I define a loader in react router v7", "goal": "docs", "match": "documentation|docs|library|context7|reference"},
-    {"q": "show me the current FastAPI docs for dependency injection", "goal": "docs", "match": "documentation|docs|library|context7|reference"},
-    {"q": "what are the parameters of the stripe-node createPaymentIntent call in the latest SDK", "goal": "docs", "match": "documentation|docs|sdk|reference|api reference|stripe"},
-
-    {"q": "find examples on GitHub of people using pydantic v2 model_validator", "goal": "code_search", "match": "code search|search code|github|grep|sourcegraph|repositor"},
-    {"q": "how do other open-source projects configure ruff with pre-commit", "goal": "code_search", "match": "code search|search code|github|repositor|grep"},
-    {"q": "search across our organisation's repos for uses of the deprecated getUser function", "goal": "code_search", "match": "code search|search code|github|gitlab|repositor|grep|sourcegraph"},
-
-    {"q": "what is the latest version of fastapi on pypi", "goal": "packages", "match": "pypi|package|npm|registry|version"},
-    {"q": "does lodash 4.17.20 have any known vulnerabilities", "goal": "packages", "match": "vulnerab|cve|advisor|security|npm|package|osv|audit"},
-    {"q": "which dependencies of this project are outdated", "goal": "packages", "match": "dependenc|outdated|package|npm|pypi|version|upgrade"},
-
-    {"q": "the login page looks broken on mobile, check it in a browser", "goal": "browser", "match": "browser|playwright|puppeteer|selenium|chrome|screenshot|headless"},
-    {"q": "take a screenshot of localhost:3000 after clicking the sign up button", "goal": "browser", "match": "browser|playwright|puppeteer|screenshot|chrome|headless"},
-    {"q": "write and run an end-to-end test that fills in the checkout form", "goal": "browser", "match": "browser|playwright|puppeteer|selenium|e2e|end-to-end|test"},
-
-    {"q": "query the postgres database for users created today", "goal": "database", "match": "postgres|sql|database|supabase|neon"},
-    {"q": "show me the schema of the orders table in our MySQL database", "goal": "database", "match": "mysql|sql|database|schema"},
-    {"q": "how many keys are in the redis cache right now", "goal": "database", "match": "redis|cache|key-value|database"},
-
-    {"q": "open a pull request with these changes", "goal": "vcs", "match": "pull request|github|gitlab|\\bpr\\b"},
-    {"q": "list the open issues labelled bug in our repo", "goal": "vcs", "match": "issue|github|gitlab|jira|linear"},
-    {"q": "what did reviewers say on PR 482", "goal": "vcs", "match": "pull request|review|github|gitlab|\\bpr\\b"},
-
-    {"q": "why did the last CI run fail on main", "goal": "ci_cd", "match": "\\bci\\b|pipeline|github actions|workflow|build|circleci|jenkins"},
-    {"q": "deploy this branch to a preview environment", "goal": "ci_cd", "match": "deploy|vercel|netlify|railway|preview|render|fly"},
-    {"q": "rerun the failed GitHub Actions job", "goal": "ci_cd", "match": "github actions|workflow|\\bci\\b|pipeline|job"},
-
-    {"q": "list the S3 buckets in our AWS account", "goal": "cloud", "match": "aws|s3|cloud|bucket"},
-    {"q": "why is the payments pod crash looping in kubernetes", "goal": "cloud", "match": "kubernetes|k8s|pod|cluster|kubectl"},
-    {"q": "add a DNS record for api.example.com in cloudflare", "goal": "cloud", "match": "cloudflare|dns|domain"},
-
-    {"q": "find why the API returns 500 in production", "goal": "observability", "match": "sentry|error|log|datadog|monitor|observab|incident|trace"},
-    {"q": "show me the error rate of the checkout service over the last hour", "goal": "observability", "match": "metric|datadog|grafana|prometheus|monitor|observab|error rate"},
-    {"q": "search the production logs for 'payment timeout'", "goal": "observability", "match": "log|datadog|grafana|loki|elastic|observab|splunk"},
-
-    {"q": "implement the settings screen from our Figma file", "goal": "design", "match": "figma|design"},
-    {"q": "export the icons from the design system as SVG", "goal": "design", "match": "figma|design|icon|svg"},
-    {"q": "get the colour tokens from the design file", "goal": "design", "match": "figma|design|token"},
-
-    {"q": "scrape the pricing table from a competitor's website", "goal": "data", "match": "scrap|crawl|extract|web data|firecrawl|apify"},
-    {"q": "get the current stock price of NVIDIA", "goal": "data", "match": "stock|market|finance|ticker|quote"},
-    {"q": "enrich this list of company domains with employee counts", "goal": "data", "match": "enrich|company|firmograph|clearbit|apollo|people"},
-
-    {"q": "extract the tables from this PDF invoice", "goal": "files_media", "match": "pdf|document|ocr|extract|table"},
-    {"q": "convert this markdown report to a Word document", "goal": "files_media", "match": "convert|docx|word|document|pandoc|pdf"},
-    {"q": "resize these product images to 800px wide", "goal": "files_media", "match": "image|resize|media|photo"},
-
-    {"q": "post the release notes to the #engineering slack channel", "goal": "messaging", "match": "slack|chat|message|channel"},
-    {"q": "create a Linear ticket for this bug", "goal": "messaging", "match": "linear|jira|ticket|issue"},
-    {"q": "email the on-call engineer the incident summary", "goal": "messaging", "match": "email|gmail|mail|smtp|resend|sendgrid"},
-
-    {"q": "refund the last payment of customer cus_123 in stripe", "goal": "payments", "match": "stripe|payment|refund|billing"},
-    {"q": "create a monthly subscription product priced at 20 dollars", "goal": "payments", "match": "stripe|subscription|billing|payment|price"},
-    {"q": "list this month's failed invoices", "goal": "payments", "match": "invoice|billing|stripe|payment"}
-  ]
+ "about": "Requests a coding agent gets, each with the tool goal it needs and a pattern an acceptable tool's name, title or description matches (case-insensitive). Scored by scripts/eval_tool_coding.py: goal accuracy, hit@5, MRR. Patterns name capabilities, not one product, so the set stays valid as the registry changes.",
+ "items": [
+  {
+   "q": "what's the latest news on the EU AI Act this week",
+   "goal": "web",
+   "match": "web search|search the web|news|serp|brave|exa|tavily"
+  },
+  {
+   "q": "read this blog post and summarise it: https://example.com/post",
+   "goal": "web",
+   "match": "fetch|read.*(page|url)|markdown|scrape|crawl"
+  },
+  {
+   "q": "search the internet for how other people solved this webpack error",
+   "goal": "web",
+   "match": "web search|search the web|search engine|serp|brave|exa"
+  },
+  {
+   "q": "how do I define a loader in react router v7",
+   "goal": "docs",
+   "match": "documentation|docs|library|context7|reference"
+  },
+  {
+   "q": "show me the current FastAPI docs for dependency injection",
+   "goal": "docs",
+   "match": "documentation|docs|library|context7|reference"
+  },
+  {
+   "q": "what are the parameters of the stripe-node createPaymentIntent call in the latest SDK",
+   "goal": "docs",
+   "match": "documentation|docs|sdk|reference|api reference|stripe"
+  },
+  {
+   "q": "find examples on GitHub of people using pydantic v2 model_validator",
+   "goal": "code_search",
+   "match": "code search|search code|github|grep|sourcegraph|repositor"
+  },
+  {
+   "q": "how do other open-source projects configure ruff with pre-commit",
+   "goal": "code_search",
+   "match": "code search|search code|github|repositor|grep"
+  },
+  {
+   "q": "search across our organisation's repos for uses of the deprecated getUser function",
+   "goal": "code_search",
+   "match": "code search|search code|github|gitlab|repositor|grep|sourcegraph"
+  },
+  {
+   "q": "what is the latest version of fastapi on pypi",
+   "goal": "packages",
+   "match": "pypi|package|npm|registry|version"
+  },
+  {
+   "q": "does lodash 4.17.20 have any known vulnerabilities",
+   "goal": "security",
+   "match": "vulnerab|cve|advisor|security|npm|package|osv|audit"
+  },
+  {
+   "q": "which dependencies of this project are outdated",
+   "goal": "packages",
+   "match": "dependenc|outdated|package|npm|pypi|version|upgrade"
+  },
+  {
+   "q": "the login page looks broken on mobile, check it in a browser",
+   "goal": "browser",
+   "match": "browser|playwright|puppeteer|selenium|chrome|screenshot|headless"
+  },
+  {
+   "q": "take a screenshot of localhost:3000 after clicking the sign up button",
+   "goal": "browser",
+   "match": "browser|playwright|puppeteer|screenshot|chrome|headless"
+  },
+  {
+   "q": "write and run an end-to-end test that fills in the checkout form",
+   "goal": "browser",
+   "match": "browser|playwright|puppeteer|selenium|e2e|end-to-end|test"
+  },
+  {
+   "q": "query the postgres database for users created today",
+   "goal": "database",
+   "match": "postgres|sql|database|supabase|neon"
+  },
+  {
+   "q": "show me the schema of the orders table in our MySQL database",
+   "goal": "database",
+   "match": "mysql|sql|database|schema"
+  },
+  {
+   "q": "how many keys are in the redis cache right now",
+   "goal": "database",
+   "match": "redis|cache|key-value|database"
+  },
+  {
+   "q": "open a pull request with these changes",
+   "goal": "vcs",
+   "match": "pull request|github|gitlab|\\bpr\\b"
+  },
+  {
+   "q": "list the open issues labelled bug in our repo",
+   "goal": "vcs",
+   "match": "issue|github|gitlab|jira|linear"
+  },
+  {
+   "q": "what did reviewers say on PR 482",
+   "goal": "vcs",
+   "match": "pull request|review|github|gitlab|\\bpr\\b"
+  },
+  {
+   "q": "why did the last CI run fail on main",
+   "goal": "ci_cd",
+   "match": "\\bci\\b|pipeline|github actions|workflow|build|circleci|jenkins"
+  },
+  {
+   "q": "deploy this branch to a preview environment",
+   "goal": "ci_cd",
+   "match": "deploy|vercel|netlify|railway|preview|render|fly"
+  },
+  {
+   "q": "rerun the failed GitHub Actions job",
+   "goal": "ci_cd",
+   "match": "github actions|workflow|\\bci\\b|pipeline|job"
+  },
+  {
+   "q": "list the S3 buckets in our AWS account",
+   "goal": "cloud",
+   "match": "aws|s3|cloud|bucket"
+  },
+  {
+   "q": "why is the payments pod crash looping in kubernetes",
+   "goal": "cloud",
+   "match": "kubernetes|k8s|pod|cluster|kubectl"
+  },
+  {
+   "q": "add a DNS record for api.example.com in cloudflare",
+   "goal": "cloud",
+   "match": "cloudflare|dns|domain"
+  },
+  {
+   "q": "find why the API returns 500 in production",
+   "goal": "observability",
+   "match": "sentry|error|log|datadog|monitor|observab|incident|trace"
+  },
+  {
+   "q": "show me the error rate of the checkout service over the last hour",
+   "goal": "observability",
+   "match": "metric|datadog|grafana|prometheus|monitor|observab|error rate"
+  },
+  {
+   "q": "search the production logs for 'payment timeout'",
+   "goal": "observability",
+   "match": "log|datadog|grafana|loki|elastic|observab|splunk"
+  },
+  {
+   "q": "implement the settings screen from our Figma file",
+   "goal": "design",
+   "match": "figma|design"
+  },
+  {
+   "q": "export the icons from the design system as SVG",
+   "goal": "design",
+   "match": "figma|design|icon|svg"
+  },
+  {
+   "q": "get the colour tokens from the design file",
+   "goal": "design",
+   "match": "figma|design|token"
+  },
+  {
+   "q": "scrape the pricing table from a competitor's website",
+   "goal": "data",
+   "match": "scrap|crawl|extract|web data|firecrawl|apify"
+  },
+  {
+   "q": "get the current stock price of NVIDIA",
+   "goal": "data",
+   "match": "stock|market|finance|ticker|quote"
+  },
+  {
+   "q": "enrich this list of company domains with employee counts",
+   "goal": "data",
+   "match": "enrich|company|firmograph|clearbit|apollo|people"
+  },
+  {
+   "q": "extract the tables from this PDF invoice",
+   "goal": "files_media",
+   "match": "pdf|document|ocr|extract|table"
+  },
+  {
+   "q": "convert this markdown report to a Word document",
+   "goal": "files_media",
+   "match": "convert|docx|word|document|pandoc|pdf"
+  },
+  {
+   "q": "resize these product images to 800px wide",
+   "goal": "files_media",
+   "match": "image|resize|media|photo"
+  },
+  {
+   "q": "post the release notes to the #engineering slack channel",
+   "goal": "messaging",
+   "match": "slack|chat|message|channel"
+  },
+  {
+   "q": "create a Linear ticket for this bug",
+   "goal": "tickets",
+   "match": "linear|jira|ticket|issue"
+  },
+  {
+   "q": "email the on-call engineer the incident summary",
+   "goal": "messaging",
+   "match": "email|gmail|mail|smtp|resend|sendgrid"
+  },
+  {
+   "q": "refund the last payment of customer cus_123 in stripe",
+   "goal": "payments",
+   "match": "stripe|payment|refund|billing"
+  },
+  {
+   "q": "create a monthly subscription product priced at 20 dollars",
+   "goal": "payments",
+   "match": "stripe|subscription|billing|payment|price"
+  },
+  {
+   "q": "list this month's failed invoices",
+   "goal": "payments",
+   "match": "invoice|billing|stripe|payment"
+  }
+ ]
 }

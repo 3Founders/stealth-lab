@@ -102,6 +102,10 @@ outcomes the way the model ranking does.
 
 - Per-person or per-team outcome ranking: tool_observations keeps owner_id on every row, but the ranking adds up every
   user's outcomes together. A team's own record could weigh more for that team.
-- Image generation has no goal of its own (2026-10-31): "make me a banner" and "a minimal fox logo" were triaged as
-  `design` and offered Figma-type tools, not image generators. Add a `generate` goal (create images, video or audio
-  with AI models), sharpen `design` to editing design files, and re-tag the catalog.
+- Official vendors with few stars rank low: ElevenLabs' own server (io.elevenlabs/mcp, remote, verified) links a repo
+  with 6 stars, so a voiceover request offered smaller tools first. A signal for "the vendor's own server" (a verified
+  company namespace that is not a bulk publisher) would fix it. fal and Stability have no official server in the
+  registry at all.
+- Done 2026-10-31: the goals went from 15 to 25 (generate, security, tickets, workspace, analytics, crm, commerce,
+  social, sandbox, ai_models); triage chose right on 15 of 15 new-kind requests, and image requests now get image
+  generators (Glif, Nano Banana, logo makers) instead of Figma.

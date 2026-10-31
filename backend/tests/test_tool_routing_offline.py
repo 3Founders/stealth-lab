@@ -58,8 +58,8 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_goals_are_fifteen_with_descriptions_and_markers():
-    assert len(TOOL_GOALS) == 15
+def test_goals_are_twenty_five_with_descriptions_and_markers():
+    assert len(TOOL_GOALS) == 25 and {"generate", "workspace", "tickets", "security", "sandbox"} <= set(TOOL_GOALS)
     assert all(desc and markers for desc, markers in TOOL_GOALS.values())
 
 
