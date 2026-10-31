@@ -83,20 +83,23 @@ async def balance(pool: Any, org_id: str) -> dict[str, Any]:
 
 async def record_order(pool: Any, *, org_id: str, order_id: str, amount_paise: int, created_by: str,
                        plan: Optional[str] = None, seats: Optional[int] = None, team_name: Optional[str] = None,
-                       buyer_user_id: Optional[str] = None, period_days: Optional[int] = None) -> None:
-    """Record an order we created. A plan order also records what it is for (plan, seats, team name, buyer, period), so the
-    webhook activates it from this row and never from a field in the webhook body."""
+                       buyer_user_id: Optional[str] = None, period_days: Optional[int] = None,
+                       pack: Optional[str] = None, pack_usd: Optional[Decimal] = None) -> None:
+    """Record an order we created. A plan order also records what it is for (plan, seats, team name, buyer, period) and a pack
+    order the pack and its credit dollars, so the webhook activates it from this row and never from a field in the webhook body."""
+    cols = ["order_id", "organization_id", "amount_paise", "created_by"]
+    vals: list[Any] = [order_id, str(org_id), amount_paise, created_by]
+    casts = ["", "::uuid", "", ""]
+    for name, value, cast in (("plan", plan, ""), ("seats", seats, ""), ("team_name", team_name, ""),
+                              ("buyer_user_id", buyer_user_id, "::uuid"), ("period_days", period_days, ""),
+                              ("pack", pack, ""), ("pack_usd", pack_usd, "")):
+        if value is not None:
+            cols.append(name)
+            vals.append(value)
+            casts.append(cast)
+    marks = ", ".join(f"${i + 1}{c}" for i, c in enumerate(casts))
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
-        if plan is None:
-            await conn.execute("INSERT INTO billing_orders (order_id, organization_id, amount_paise, created_by) "
-                               "VALUES ($1, $2::uuid, $3, $4) ON CONFLICT (order_id) DO NOTHING",
-                               order_id, str(org_id), amount_paise, created_by)
-        else:
-            await conn.execute(
-                "INSERT INTO billing_orders (order_id, organization_id, amount_paise, created_by, plan, seats, team_name, "
-                "buyer_user_id, period_days) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9) "
-                "ON CONFLICT (order_id) DO NOTHING",
-                order_id, str(org_id), amount_paise, created_by, plan, seats, team_name, buyer_user_id, period_days)
+        await conn.execute(f"INSERT INTO billing_orders ({', '.join(cols)}) VALUES ({marks}) ON CONFLICT (order_id) DO NOTHING", *vals)
 
 
 async def find_order(pool: Any, order_id: str) -> Optional[dict[str, Any]]:
@@ -105,17 +108,23 @@ async def find_order(pool: Any, order_id: str) -> Optional[dict[str, Any]]:
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         row = await conn.fetchrow(
             "SELECT order_id, organization_id::text AS organization_id, amount_paise, plan, seats, team_name, "
-            "buyer_user_id::text AS buyer_user_id, period_days FROM billing_orders WHERE order_id = $1", order_id)
+            "buyer_user_id::text AS buyer_user_id, period_days, pack, pack_usd FROM billing_orders WHERE order_id = $1", order_id)
     return dict(row) if row else None
 
 
 async def credit_payment(pool: Any, *, org_id: str, payment_ref: str, amount_paise: int, created_by: str,
-                         source: str = "razorpay", env: Optional[Mapping[str, str]] = None, order_id: Optional[str] = None) -> bool:
-    """Add a verified payment to the wallet. True when credited now, False when this payment was already credited."""
+                         source: str = "razorpay", env: Optional[Mapping[str, str]] = None, order_id: Optional[str] = None,
+                         usd: Optional[Decimal] = None) -> bool:
+    """Add a verified payment to the wallet. True when credited now, False when this payment was already credited.
+    `usd` is a pack's fixed credit-dollars; without it the dollars come from the rupees, the exchange rate and the margin."""
     if amount_paise <= 0:
         raise WalletError("a payment must be a positive amount")
     inr_per_usd, margin = rates(env)
-    usd = usd_for_paise(amount_paise, env)
+    if usd is None:
+        usd = usd_for_paise(amount_paise, env)
+    else:
+        usd = Decimal(str(usd))
+        inr_per_usd, margin = (Decimal(amount_paise) / 100 / usd).quantize(Decimal("0.0001")), None
     if usd <= 0:
         raise WalletError("that amount is too small to credit")
     base = ("INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, inr_per_usd, margin, created_by{cols}) "

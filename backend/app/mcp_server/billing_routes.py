@@ -3,6 +3,7 @@ Buying credits, on the hosted MCP service (the site calls these; Razorpay calls 
 
   GET  /v1/billing/wallet    the person's balance, history and what a rupee buys     (website session)
   POST /v1/billing/orders    {"amount_inr": 500} -> a Razorpay order for Checkout    (website session)
+                             {"pack": "credits_1000"} -> additional credits, a fixed pack (people with an active plan)
                              {"plan": "pro"} or {"plan": "pilot", "seats": 1..10, "team_name": "..."} -> a plan order
   GET  /v1/billing/plan      the buyer's latest plan: plan, seats, team_name, active_until
   POST /v1/billing/webhook   Razorpay's payment.captured / order.paid                (signature, no session)
@@ -27,7 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import accounts, plans, wallet
+from app.services import accounts, packs, plans, wallet
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
@@ -115,6 +116,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         out = await wallet.balance(pool_getter(), org)
         out["usd_per_100_inr"] = str(wallet.usd_for_paise(10_000))
         out["min_inr"], out["max_inr"] = wallet.MIN_TOPUP_INR, wallet.MAX_TOPUP_INR
+        out["packs"] = packs.listing()
+        out["packs_need_plan"] = packs.requires_plan()
         return _json(request, out)
 
     @server.custom_route("/v1/billing/orders", methods=["POST", "OPTIONS"], include_in_schema=False)
@@ -130,6 +133,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             data = await request.json()
             if isinstance(data, dict) and "plan" in data:
                 return await plan_order(request, who, org, data)
+            if isinstance(data, dict) and "pack" in data:
+                return await pack_order(request, who, org, data)
             paise = parse_amount_inr(data.get("amount_inr") if isinstance(data, dict) else None)
             order = await _create_razorpay_order(paise, f"kell-{org[:8]}")
             await wallet.record_order(pool_getter(), org_id=org, order_id=str(order["id"]), amount_paise=paise,
@@ -141,6 +146,22 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         return _json(request, {"order_id": order["id"], "amount_paise": paise, "currency": "INR",
                                "key_id": os.environ["RAZORPAY_KEY_ID"],
                                "credit_usd": str(wallet.usd_for_paise(paise))}, 201)
+
+    async def pack_order(request: Request, who: Any, account: str, data: dict[str, Any]) -> Response:
+        """Additional credits: a fixed pack, priced here from its id; for people with an active plan unless that is switched off."""
+        try:
+            order = packs.parse_pack_order(data)
+            await packs.check_allowed(pool_getter(), account)
+            rz = await _create_razorpay_order(order.amount_paise, f"kell-{order.pack}-{account[:8]}")
+            await wallet.record_order(pool_getter(), org_id=account, order_id=str(rz["id"]), amount_paise=order.amount_paise,
+                                      created_by=who.actor_id, pack=order.pack, pack_usd=order.usd)
+        except plans.PlanError as exc:
+            return _err(request, exc.status, str(exc))
+        except wallet.WalletError as exc:
+            return _err(request, exc.status, str(exc))
+        return _json(request, {"order_id": rz["id"], "amount_paise": order.amount_paise, "currency": "INR",
+                               "key_id": os.environ["RAZORPAY_KEY_ID"], "pack": order.pack,
+                               "credit_usd": str(order.usd)}, 201)
 
     async def plan_order(request: Request, who: Any, account: str, data: dict[str, Any]) -> Response:
         """Pro or Pilot: the amount is worked out here from the plan, never taken from the request."""
@@ -197,7 +218,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                 await wallet.mark_event(pool, event_id)
                 return Response(status_code=200)
             await wallet.credit_payment(pool, org_id=order["organization_id"], payment_ref=pay["payment_id"],
-                                        amount_paise=pay["amount"], created_by="razorpay", order_id=pay["order_id"])
+                                        amount_paise=pay["amount"], created_by="razorpay", order_id=pay["order_id"],
+                                        usd=order.get("pack_usd"))
             await wallet.mark_event(pool, event_id)
         except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a payment
             log.exception("billing webhook: crediting payment %s failed", pay["payment_id"])

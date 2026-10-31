@@ -221,3 +221,26 @@ def test_reconcile_finds_a_captured_plan_payment_whose_webhook_never_came_and_a_
         assert again["activated"] == 0
         assert Decimal((await wallet.balance(pool, uid))["purchased_usd"]) == Decimal("12")
     run(body)
+
+
+def test_a_pack_order_is_recorded_with_its_dollars_and_credits_exactly_those_once_and_the_gate_needs_a_plan():
+    from app.services import packs
+
+    async def body(pool):
+        uid, sub = await _user(pool)
+        with pytest.raises(packs.PackNeedsPlan):                                  # no plan yet: refused
+            await packs.check_allowed(pool, uid, env={})
+        assert await plans.activate(pool, order=_order("starter", buyer=uid), payment_id="pay_" + uuid.uuid4().hex, amount_paise=20_000)
+        await packs.check_allowed(pool, uid, env={})                              # an active plan: allowed
+        oid = "order_" + uuid.uuid4().hex
+        await wallet.record_order(pool, org_id=uid, order_id=oid, amount_paise=100_000, created_by=sub, pack="credits_1000",
+                                  pack_usd=Decimal("5.25"))
+        found = await wallet.find_order(pool, oid)
+        assert found["pack"] == "credits_1000" and Decimal(str(found["pack_usd"])) == Decimal("5.25")
+        ref = "pay_" + uuid.uuid4().hex
+        assert await wallet.credit_payment(pool, org_id=uid, payment_ref=ref, amount_paise=100_000, created_by="razorpay",
+                                           order_id=oid, usd=found["pack_usd"])
+        assert not await wallet.credit_payment(pool, org_id=uid, payment_ref=ref, amount_paise=100_000, created_by="razorpay",
+                                               order_id=oid, usd=found["pack_usd"])      # a repeat credits nothing
+        assert Decimal((await wallet.balance(pool, uid))["purchased_usd"]) == Decimal("6.25")     # $1 plan + $5.25 pack
+    run(body)

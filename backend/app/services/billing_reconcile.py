@@ -45,7 +45,7 @@ async def recent_orders(pool: Any, *, older_than_minutes: int, within_days: int,
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         rows = await conn.fetch(
             "SELECT o.order_id, o.organization_id::text AS organization_id, o.amount_paise, o.plan, o.seats, o.team_name, "
-            "o.buyer_user_id::text AS buyer_user_id, o.period_days FROM billing_orders o "
+            "o.buyer_user_id::text AS buyer_user_id, o.period_days, o.pack, o.pack_usd FROM billing_orders o "
             "WHERE o.created_at < now() - make_interval(mins => $1) AND o.created_at > now() - make_interval(days => $2) "
             "AND NOT EXISTS (SELECT 1 FROM plan_entitlements e WHERE e.order_id = o.order_id) "
             "ORDER BY o.created_at DESC LIMIT $3", int(older_than_minutes), int(within_days), int(limit))
@@ -78,7 +78,7 @@ async def reconcile(pool: Any, *, fetch_payments: FetchPayments = razorpay_order
                 else:
                     done = await wallet.credit_payment(pool, org_id=order["organization_id"], payment_ref=str(pay["id"]),
                                                        amount_paise=int(pay["amount"]), created_by="reconcile",
-                                                       order_id=order["order_id"])
+                                                       order_id=order["order_id"], usd=order.get("pack_usd"))
                 out["activated"] += 1 if done else 0
             except Exception:  # noqa: BLE001
                 log.exception("reconcile: activating payment %s failed", pay.get("id"))
