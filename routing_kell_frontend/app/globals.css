@@ -724,8 +724,8 @@ main, footer { position: relative; z-index: 1; }
    only the colour is cleared. The yellow/ink hover fills and the focus ring (an outline, not a border) are untouched, so state is still visible.
    The status-dot rings and the dashed "failed"/"unknown" shapes keep their strokes: there the stroke is the meaning, not decoration. */
 :root {
-  --sh-lift: 0 6px 16px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
-  --sh-lift-hover: 0 10px 24px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .85);
+  --sh-lift: 0 6px 16px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09);
+  --sh-lift-hover: 0 10px 24px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1);
   --sh-dent: inset 0 1px 3px rgba(0, 0, 0, .14), 0 1px 0 rgba(255, 255, 255, .7);
   --sh-float: 0 12px 32px rgba(0, 0, 0, .12), 0 2px 6px rgba(0, 0, 0, .08);
 }
@@ -747,7 +747,7 @@ main, footer { position: relative; z-index: 1; }
 .btn-line:hover, .copy:hover { background-color: var(--yellow); }
 .demo-tabs button[aria-selected="true"], .rstrip span[data-on="true"], .org-chipbtn[aria-pressed="true"] { border-color: transparent; }
 .models-wrap select:hover { border-color: transparent; box-shadow: var(--sh-lift-hover); }
-.org-stop { border-color: transparent; box-shadow: 0 6px 16px rgba(179, 38, 30, .25), inset 0 1px 0 rgba(255, 255, 255, .75); }
+.org-stop { border-color: transparent; box-shadow: 0 6px 16px rgba(179, 38, 30, .25); }
 .btn-ink { box-shadow: var(--sh-lift); }
 .btn-ink:hover { box-shadow: var(--sh-lift-hover); }
 .status[data-s="failed"], .status[data-s="unknown"] { border-style: solid; border-color: transparent; }
@@ -802,18 +802,18 @@ main, footer { position: relative; z-index: 1; }
 .hero-actions .btn-ink, .hero-actions .btn-line { min-height: 56px; font-size: 19px; padding: 12px 26px; border-radius: 10px; }
 .hero-actions .btn-ink {
   background: linear-gradient(135deg, #FFE066, #FFD21F 55%, #FFB800); color: var(--ink); font-weight: 500;
-  box-shadow: 0 0 22px rgba(255, 196, 0, .6), 0 8px 26px rgba(255, 178, 0, .45), 0 1px 3px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .6);
+  box-shadow: 0 0 22px rgba(255, 196, 0, .6), 0 8px 26px rgba(255, 178, 0, .45), 0 1px 3px rgba(0, 0, 0, .1);
   animation: kell-glow 3.2s ease-in-out infinite;
   transition: box-shadow .3s var(--ease), transform .25s var(--ease), filter .25s var(--ease);
 }
 .hero-actions .btn-ink .sq { background: var(--ink); color: #FFD21F; width: 32px; height: 32px; border-radius: 7px; }
 .hero-actions .btn-ink:hover {
   animation: none; transform: translateY(-2px); filter: saturate(1.1) brightness(1.04);
-  box-shadow: 0 0 36px rgba(255, 196, 0, .9), 0 14px 36px rgba(255, 178, 0, .55), 0 2px 5px rgba(0, 0, 0, .12), inset 0 1px 0 rgba(255, 255, 255, .7);
+  box-shadow: 0 0 36px rgba(255, 196, 0, .9), 0 14px 36px rgba(255, 178, 0, .55), 0 2px 5px rgba(0, 0, 0, .12);
 }
 @keyframes kell-glow {
-  0%, 100% { box-shadow: 0 0 18px rgba(255, 196, 0, .45), 0 8px 24px rgba(255, 178, 0, .35), 0 1px 3px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .6); }
-  50% { box-shadow: 0 0 34px rgba(255, 196, 0, .85), 0 10px 32px rgba(255, 178, 0, .55), 0 1px 3px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .6); }
+  0%, 100% { box-shadow: 0 0 18px rgba(255, 196, 0, .45), 0 8px 24px rgba(255, 178, 0, .35), 0 1px 3px rgba(0, 0, 0, .1); }
+  50% { box-shadow: 0 0 34px rgba(255, 196, 0, .85), 0 10px 32px rgba(255, 178, 0, .55), 0 1px 3px rgba(0, 0, 0, .1); }
 }
 @media (prefers-reduced-motion: reduce) { .hero-actions .btn-ink { animation: none; } }
 

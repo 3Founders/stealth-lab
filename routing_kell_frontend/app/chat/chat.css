@@ -422,9 +422,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 /* Round three: no boundaries anywhere in the chat. Every border colour is cleared (widths stay, so nothing shifts), the dividers become soft
    shadows, fields sit recessed in the glass instead of outlined, and the panes animate in. The status dots keep their rings: the ring is the
    meaning there. */
-.dg-page { --dg-edge: transparent; --dg-hi: inset 0 1px 0 rgba(255, 255, 255, .75); --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .14), 0 1px 0 rgba(255, 255, 255, .7);
-  --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
-  --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .85); }
+.dg-page { --dg-edge: transparent; --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .14), 0 1px 0 rgba(255, 255, 255, .7);
+  --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09);
+  --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1); }
 .dg-page *, .dg-page *::before, .dg-page *::after { border-color: transparent !important; }
 .dg-page .dg-dot[data-a="idle"] { border-color: var(--grey) !important; }
 .dg-page .dg-dot[data-a="processing"] { border-color: var(--ink) !important; }
@@ -487,5 +487,5 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 /* The selected room: a slight yellow tint in the glass (the site's yellow, kept pale so the text stays readable), with a warm shadow. */
 .dg-page .dg-room[aria-current="page"] {
   background: linear-gradient(135deg, rgba(255, 210, 31, .34), rgba(255, 241, 168, .5)), var(--dg-glass-strong);
-  box-shadow: 0 8px 22px rgba(166, 128, 0, .22), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
+  box-shadow: 0 8px 22px rgba(166, 128, 0, .22), 0 1px 3px rgba(0, 0, 0, .09);
 }

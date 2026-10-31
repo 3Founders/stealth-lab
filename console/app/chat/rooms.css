@@ -97,5 +97,5 @@
 /* The selected room: a slight yellow tint in the glass, with a warm shadow. */
 .dg-page .dg-room[aria-current="page"] {
   background: linear-gradient(135deg, rgba(255, 210, 31, .34), rgba(255, 241, 168, .5)), var(--dg-glass-strong);
-  box-shadow: 0 8px 22px rgba(166, 128, 0, .22), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
+  box-shadow: 0 8px 22px rgba(166, 128, 0, .22), 0 1px 3px rgba(0, 0, 0, .09);
 }
