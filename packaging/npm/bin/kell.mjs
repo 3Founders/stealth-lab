@@ -35,7 +35,7 @@ const lazy = {
   store: () => import("../lib/exec/store.mjs"),
 };
 // kept in step with clients() by a test (test/setup.test.mjs); written out so --help does not load the installer
-const CLIENT_IDS = "claude-code, cursor, vscode, windsurf, cline, codex, claude-desktop";
+const CLIENT_IDS = "claude-code, cursor, vscode, windsurf, cline, codex, opencode, claude-desktop";
 // freshToken() returns the saved token unless a refresh token is stored, so the OAuth module is loaded only for a signed-in session
 async function renewToken(settings) {
   if (!readConfig().refresh_token) return settings.token;
@@ -195,7 +195,7 @@ async function cmdInstall(v) {
       continue;
     }
     try {
-      const where = c.install(ctx);
+      const where = await c.install(ctx);
       out(`  ok    ${c.label.padEnd(15)} ${typeof where === "string" ? where : c.where()}`);
     } catch (err) {
       failed++;
@@ -302,10 +302,13 @@ async function cmdSetup(v) {
   try { keyName = Object.values(readExecConfig().profiles)[0]?.key_env || keyEnv; } catch { /* reported above */ }
   const chosenIds = (await pickClients(v.client)).chosen.map((c) => c.id);
   const cfgNow = readConfig();
-  const res = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: keyName,
+  const resRaw = checklist({ server, hasToken: Boolean(settings.token), execOk, execDetail, models, keyEnv: keyName,
                           key: keyName === keyNameFirst ? key : await keyIsSetAsync(keyName), dispatch, cursorModel: cfgNow.cursor_model || process.env.STEALTHLAB_CURSOR_MODEL,
                           wantsCursor: chosenIds.includes("cursor"),
                           central: (() => { try { const ps = Object.values(readExecConfig().profiles); return ps.length > 0 && ps.every((p) => p.key_from); } catch { return false; } })() });
+  // kell's OpenCode agent (lib/opencode_setup.mjs): opencode itself and the installed plugin
+  const ocItems = chosenIds.includes("opencode") ? (await import("../lib/opencode_setup.mjs")).opencodeChecks() : [];
+  const res = { items: [...resRaw.items, ...ocItems], ready: resRaw.ready && ocItems.every((i) => i.ok) };
   out(created ? `\nWrote ${"~/.stealthlab/exec.json"} (open models on General Compute; your key stays in $${keyName}).` : "");
   out("\nReadiness:");
   for (const i of res.items) out(`  ${i.ok ? "ok     " : "MISSING"} ${i.name.padEnd(16)} ${i.detail}`);
@@ -368,7 +371,7 @@ async function cmdUninstall(v) {
   const { chosen } = await pickClients(v.client?.length ? v.client : ["all"]);
   for (const c of chosen) {
     try {
-      const removed = c.uninstall();
+      const removed = await c.uninstall();
       if (removed) out(`  removed  ${c.label}`);
     } catch (err) {
       out(`  skip     ${c.label}: ${err.message}`);

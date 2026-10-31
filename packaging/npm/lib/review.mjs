@@ -8,6 +8,7 @@
 // (.scratch/acceptance_rules_preregistered_2026-10-16.md) and are not tuned on it.
 // STEALTHLAB_REVIEW_MODEL names the model (an exec.json profile; default gemma-4-31b-it); "off": no review.
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { readExecConfig } from "./exec/store.mjs";
 import { enclosingBlock } from "./locate.mjs";
@@ -145,11 +146,11 @@ export const FINDING_REVIEW_SYSTEM = [
   '{"verdict": "good" | "bad" | "unsure", "why": one sentence}.',
 ].join(" ");
 
-export async function reviewFinding({ root, request, finding, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
+export async function reviewFinding({ root, fetchImpl = globalThis.fetch, request, finding, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
                                       runClaude = null, signal = null }) {
   const user = `The developer's request:\n${String(request || "").slice(0, 6000)}\n\nThe agent's report (no change made):\n` +
     `${String(finding || "").slice(0, 6000)}`;
-  return String(finding || "").trim() ? reviewInRepo({ root, system: FINDING_REVIEW_SYSTEM, user, what: "finding-review", env, log, timeoutMs, model, runClaude, signal }) : null;
+  return String(finding || "").trim() ? reviewInRepo({ root, system: FINDING_REVIEW_SYSTEM, user, what: "finding-review", env, fetchImpl, log, timeoutMs, model, runClaude, signal }) : null;
 }
 
 // An answer to a question about the repository, written by a cheap agent that read the code (lib/answer.mjs): checked by
@@ -163,10 +164,10 @@ export const REPO_ANSWER_REVIEW_SYSTEM = [
   '{"verdict": "good" | "bad" | "unsure", "why": one sentence}.',
 ].join(" ");
 
-export async function reviewRepoAnswer({ root, question, reply, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
+export async function reviewRepoAnswer({ root, fetchImpl = globalThis.fetch, question, reply, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
                                          runClaude = null, signal = null }) {
   const user = `The developer's question:\n${String(question || "").slice(0, 6000)}\n\nThe answer:\n${String(reply || "").slice(0, 12000)}`;
-  return String(reply || "").trim() ? reviewInRepo({ root, system: REPO_ANSWER_REVIEW_SYSTEM, user, what: "answer-review", env, log, timeoutMs, model, runClaude, signal }) : null;
+  return String(reply || "").trim() ? reviewInRepo({ root, system: REPO_ANSWER_REVIEW_SYSTEM, user, what: "answer-review", env, fetchImpl, log, timeoutMs, model, runClaude, signal }) : null;
 }
 
 // A cheap answer that passed the project's check, when the reviewer of the diff alone was unsure: checked again in the
@@ -181,20 +182,38 @@ export const PATCH_REPO_REVIEW_SYSTEM = [
   '{"verdict": "fixes" | "does_not_fix" | "unsure", "why": one sentence}.',
 ].join(" ");
 
-export async function reviewPatchInRepo({ root, prompt, diff, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
+export async function reviewPatchInRepo({ root, fetchImpl = globalThis.fetch, prompt, diff, env = process.env, log = () => {}, timeoutMs = 180000, model = null,
                                           runClaude = null, signal = null }) {
   const d = String(diff || "");
   if (!d.trim()) return null;
   const user = `The request:\n${String(prompt || "").slice(0, 6000)}\n\nThe change (applied in this checkout):\n` +
     (d.length > DIFF_MAX ? `${d.slice(0, DIFF_MAX)}\n[... the rest of the diff is cut]` : d);
-  return reviewInRepo({ root, system: PATCH_REPO_REVIEW_SYSTEM, user, what: "review-in-repo", env, log, timeoutMs, model, runClaude,
+  return reviewInRepo({ root, system: PATCH_REPO_REVIEW_SYSTEM, user, what: "review-in-repo", env, fetchImpl, log, timeoutMs, model, runClaude,
                         signal, parse: parseVerdict });
 }
 
+// Without Claude Code (kell's OpenCode agent, or a machine with no `claude`), a Claude reviewer is replaced by an exec.json
+// profile: STEALTHLAB_REVIEW_FALLBACK_MODEL, default deepseek-v3.2 (owner decision 2026-10-31). It is shown the request and
+// the diff only; it cannot read the repository. STEALTHLAB_CLAUDE=off forces the fallback.
+let claudeSeen;
+export function claudeInstalled(env = process.env) {
+  if (String(env.STEALTHLAB_CLAUDE || "").toLowerCase() === "off") return false;
+  if (claudeSeen === undefined) claudeSeen = spawnSync(process.platform === "win32" ? "where" : "which", ["claude"], { stdio: "ignore" }).status === 0;
+  return claudeSeen;
+}
+const fallbackReviewer = (env) => String(env.STEALTHLAB_REVIEW_FALLBACK_MODEL || "deepseek-v3.2").trim();
+// runClaude is a test's stand-in for `claude`, so it counts as installed
+const useClaude = (name, env, runClaude) => name.includes("claude") && (Boolean(runClaude) || claudeInstalled(env));
+
 // a strong Claude reviewer that reads the repository itself -> {verdict, why, model, cost_usd} | null
-async function reviewInRepo({ root, system, user, what, env, log, timeoutMs, model, runClaude, signal, parse = parseAnswerVerdict }) {
+async function reviewInRepo({ root, system, user, what, env, log, timeoutMs, model, runClaude, signal, parse = parseAnswerVerdict,
+                              fetchImpl = globalThis.fetch }) {
   const name = String(model || env.STEALTHLAB_REVIEW_STRONG_MODEL || "claude-sonnet-5-5").trim();
-  if (name.toLowerCase() === "off" || !name.includes("claude") || !root) return null;
+  if (name.toLowerCase() === "off" || !root) return null;
+  if (!useClaude(name, env, runClaude)) {
+    return askReviewer({ name: name.includes("claude") ? fallbackReviewer(env) : name, system, user, parse, what, env, fetchImpl, log,
+                         timeoutMs, runClaude: null, signal });
+  }
   const { readOnlyArgs, runClaudeAsync } = await import("./claude_call.mjs");
   const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, reviewLimitMs(env)), root)))(readOnlyArgs(name, system), user);
   let j = null;
@@ -214,6 +233,7 @@ const reviewLimitMs = (env) => Math.max(30, Number(env.STEALTHLAB_REVIEW_TIMEOUT
 // One reviewer call: a Claude model through a lean `claude -p`, or an exec.json profile's endpoint. -> {verdict, why,
 // model, cost_usd} | null (no model, an error, an unusable reply). Its cost goes to the spend ledger as `what`.
 async function askReviewer({ name, system, user, parse, what, env, fetchImpl, log, timeoutMs, runClaude, signal }) {
+  if (name.includes("claude") && !useClaude(name, env, runClaude)) name = fallbackReviewer(env);
   if (name.includes("claude")) {
     const { leanArgs, runClaudeAsync } = await import("./claude_call.mjs");
     const r = await (runClaude || ((a, input) => runClaudeAsync(env, a, input, signal, Math.max(timeoutMs, reviewLimitMs(env)))))(leanArgs(name, system), user);

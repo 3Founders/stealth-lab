@@ -19,6 +19,25 @@ const DEBUG = process.env.KELL_OC_DEBUG === "1"
 const stateDir = () => path.join(process.env.KELL_OC_STATE_DIR || path.join(os.homedir(), ".stealthlab", "opencode"))
 const debug = (...a) => { if (DEBUG) try { fs.appendFileSync(path.join(stateDir(), "plugin.log"), `${new Date().toISOString()} ${a.join(" ")}\n`) } catch { /* best effort */ } }
 
+/** The last turn's usage: assistant messages after the last user message, summed. Field names follow OpenCode's
+ *  session-message schema (tokens: input, output, cache.read; cost in USD); anything missing is left out. */
+export function turnUsage(messages, model) {
+  const list = Array.isArray(messages) ? messages : []
+  let i = list.length - 1
+  while (i >= 0 && (list[i]?.role ?? list[i]?.info?.role) !== "user") i--
+  const out = { scaffold: "opencode", ...(model ? { model } : {}) }
+  let tin = 0, tout = 0, cached = 0, cost = 0, seen = false, costSeen = false
+  for (const m of list.slice(i + 1)) {
+    const t = m?.tokens ?? m?.info?.tokens
+    const c = m?.cost ?? m?.info?.cost
+    if (t && typeof t === "object") { seen = true; tin += Number(t.input) || 0; tout += (Number(t.output) || 0) + (Number(t.reasoning) || 0); cached += Number(t.cache?.read) || 0 }
+    if (Number.isFinite(Number(c)) && c !== null && c !== undefined) { costSeen = true; cost += Number(c) }
+  }
+  if (seen) Object.assign(out, { tokens_in: tin, tokens_out: tout, tokens_cached: cached })
+  if (costSeen) out.cost_usd = Math.round(cost * 1e6) / 1e6
+  return out
+}
+
 export default Plugin.define({
   id: "kell",
   setup: async (ctx) => {
@@ -107,7 +126,7 @@ ${merged.reason}`
     await ctx.session.hook("model.request", (e) => {
       if (e.kind !== "primary") return
       const s = state(e.sessionID)
-      s.model = e.model.id
+      s.model = `${e.model.providerID}/${e.model.id}`
       note(e.sessionID, { type: "assistant", message: { role: "assistant", model: e.model.id } })
     })
 
@@ -139,9 +158,14 @@ ${merged.reason}`
     })
 
     // --- Stop -> experimental.idle: a block keeps the session going with the reason as the next message (twice at most).
+    // The turn's model, tokens and cost go along as kell_usage (kell's capture-stop puts them in report_model_run).
     await ctx.session.hook("experimental.idle", async (e) => {
       const s = state(e.sessionID)
-      const merged = await fire("Stop", "", { ...base(e.sessionID, "Stop"), stop_hook_active: s.continued > 0 })
+      let messages = []
+      try { messages = (await Promise.race([ctx.session.context({ sessionID: e.sessionID }), new Promise((ok) => setTimeout(() => ok(null), 2000))]))?.messages || [] } catch { /* optional */ }
+      const kell_usage = turnUsage(messages, s.model)
+      debug("usage", JSON.stringify(kell_usage))
+      const merged = await fire("Stop", "", { ...base(e.sessionID, "Stop"), stop_hook_active: s.continued > 0, kell_usage })
       if (!merged || merged.decision !== "deny" || s.continued >= 2) return
       s.continued += 1
       await ctx.session.synthetic({ sessionID: e.sessionID, text: merged.reason || "Continue.", delivery: "steer" })

@@ -287,7 +287,21 @@ export function modelFromTranscript(file) {
   return null;
 }
 
-export function buildReport(session, { sessionId, model }) {
+// Another agent running kell's hooks (the OpenCode plugin) can pass the turn's usage in the Stop payload as `kell_usage`:
+// {scaffold, tokens_in, tokens_out, tokens_cached, cost_usd}. Only these fields are kept, and only finite numbers.
+export function usageFields(u) {
+  if (!u || typeof u !== "object") return {};
+  const out = {};
+  for (const k of ["tokens_in", "tokens_out", "tokens_cached", "cost_usd"]) {
+    const n = Number(u[k]);
+    if (u[k] !== undefined && u[k] !== null && Number.isFinite(n) && n >= 0) out[k] = n;
+  }
+  if (typeof u.scaffold === "string" && /^[a-z][a-z0-9-]{1,30}$/.test(u.scaffold)) out.scaffold = u.scaffold;
+  return out;
+}
+
+export function buildReport(session, { sessionId, model, usage = null }) {
+  const extra = usageFields(usage);
   if (!session || session.reported || !session.lookup || !model) return null;
   const last = [...(session.tests || [])].reverse().find((x) => x.verdict !== null && x.verdict !== undefined);
   if (!last) return null;
@@ -295,13 +309,13 @@ export function buildReport(session, { sessionId, model }) {
   // with the next model. Without one, it is a standalone observation (report_model_run).
   if (session.lookup.instance_key) {
     return { via: "report_result", instance_key: session.lookup.instance_key, model, scaffold: "claude-code",
-             accepted: passedRun(last, session), check_kind: "tests" };
+             accepted: passedRun(last, session), check_kind: "tests", ...extra };
   }
   const key = crypto.createHash("sha256").update(`${sessionId}|${session.prompt_key}`).digest("hex").slice(0, 24);
   return {
     model, scaffold: "claude-code", accepted: passedRun(last, session), instance_key: `cc-${key}`,
     goal_id: session.lookup.goal_id || undefined, procedure_id: session.lookup.procedure_id || undefined,
-    check_kind: "tests", attempt_index: 0,
+    check_kind: "tests", attempt_index: 0, ...extra,
   };
 }
 
@@ -436,7 +450,7 @@ export function onStop(payload, { env = process.env, hasToken, spawnWorker = spa
     return { status: "no-token", ...(added ? { library_entry: added } : {}) };
   }
   if (!s && !toolsOutcome) return { status: "no-lookup" };
-  const report = s ? buildReport(s, { sessionId: payload.session_id, model }) : null;
+  const report = s ? buildReport(s, { sessionId: payload.session_id, model: payload.kell_usage?.model || model, usage: payload.kell_usage }) : null;
   if (!report && !added && !toolsOutcome) return { status: "nothing-to-report" };
   if (report) s.reported = true;
   if (s) writeSession(file, s);

@@ -1,5 +1,8 @@
 # kell inside OpenCode, as a plugin (spike)
 
+**The product copy now lives in `packaging/npm/lib/opencode/`** and is installed by `kell setup --client opencode`
+(`packaging/npm/lib/opencode_setup.mjs`; steps in docs/new_user_setup.md Part C). This folder stays as the spike's record.
+
 Status: a spike. Layer 1 (the Claude Code hooks bridge) and Layer 2 ran live in OpenCode 2.2.5; the six acceptance prompts ran
 once each (answer and dispatch paths did not fire, see the doc); escalation is unit-tested only; the Claude Code arm of the
 comparison was not run. See [docs/opencode_spike_2026-11.md](../../docs/opencode_spike_2026-11.md).

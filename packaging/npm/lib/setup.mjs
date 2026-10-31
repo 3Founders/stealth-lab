@@ -33,6 +33,8 @@ export function execTemplate(keyEnv = DEFAULT_KEY_ENV, { claudeCode = false } = 
       // each at its vendor's sampling (temperature 1.0); General Compute's own default is greedy for gemma
       "gemma-4-31b-it": gc("gemma-4-31B-it", 0.09, 0.34, { no_system_role: true, temperature: 1.0, top_p: 0.95 }),
       "minimax-m2-7": gc("minimax-m2.7", 0.21, 0.84, { temperature: 1.0, top_p: 0.95 }),
+      // the strong rung and the reviewer when Claude Code is not there (kell's OpenCode agent); DeepSeek's own list price
+      "deepseek-v3.2": gc("deepseek-v3.2", 0.28, 0.42),
     },
     max_concurrent_runs: 2,
   };

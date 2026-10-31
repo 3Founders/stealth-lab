@@ -319,3 +319,14 @@ test("passedRun: a run whose only failures already failed on the unchanged code 
   assert.equal(passedRun({ verdict: true }, {}), true);
   assert.equal(passedRun({ verdict: null }, base), false);
 });
+
+test("buildReport: usage from another agent (kell_usage) is kept, whitelisted and numeric only", async () => {
+  const { buildReport, usageFields } = await import("../lib/capture_hook.mjs");
+  const session = { lookup: { goal_id: "g1" }, prompt_key: "p", tests: [{ verdict: true, at: 1 }] };
+  const r = buildReport(session, { sessionId: "s", model: "gc/minimax-m2.7",
+    usage: { scaffold: "opencode", tokens_in: 1200, tokens_out: 300, cost_usd: 0.0004, secret: "x", tokens_cached: "NaN" } });
+  assert.equal(r.scaffold, "opencode");
+  assert.deepEqual([r.tokens_in, r.tokens_out, r.cost_usd, r.tokens_cached, r.secret], [1200, 300, 0.0004, undefined, undefined]);
+  assert.deepEqual(usageFields(null), {});
+  assert.equal(buildReport(session, { sessionId: "s", model: "m" }).scaffold, "claude-code");
+});

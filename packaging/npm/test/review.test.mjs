@@ -81,3 +81,22 @@ test("reviewPatchInRepo: the strong reviewer reads the checkout with read-only t
   assert.match(calls[0].input, /applied in this checkout/);
   assert.equal(await reviewPatchInRepo({ root: os.tmpdir(), prompt: "x", diff: "  ", runClaude }), null);
 });
+
+test("without Claude Code a Claude reviewer falls back to an exec.json profile (deepseek-v3.2 by default)", async () => {
+  const { reviewPatchInRepo, reviewPatch } = await import("../lib/review.mjs");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "kell-rev-"));
+  fs.writeFileSync(path.join(home, "exec.json"), JSON.stringify({ executors: {}, profiles: {
+    "deepseek-v3.2": { model_id: "deepseek-v3.2", key_env: "K", openai_base_url: "https://x.test/v1", input_per_mtok: 0.28, output_per_mtok: 0.42 } } }));
+  const env = { STEALTHLAB_HOME: home, K: "k", STEALTHLAB_CLAUDE: "off", STEALTHLAB_SPEND_LOG: "off" };
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, model: JSON.parse(init.body).model });
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '{"verdict": "fixes", "why": "ok"}' } }], usage: { prompt_tokens: 1000, completion_tokens: 10 } }) };
+  };
+  const v = await reviewPatchInRepo({ root: os.tmpdir(), prompt: "fix f", diff: "+x", env, fetchImpl });
+  assert.equal(v.verdict, "fixes");
+  assert.equal(v.model, "deepseek-v3.2");
+  const w = await reviewPatch({ prompt: "fix f", diff: "+x", env, fetchImpl, model: "claude-sonnet-5-5" });
+  assert.equal(w.model, "deepseek-v3.2");
+  assert.deepEqual(seen.map((s) => s.model), ["deepseek-v3.2", "deepseek-v3.2"]);
+});

@@ -268,3 +268,19 @@ What this does and does not say:
 - **Not done:** the reviewer on OpenAI-compatible providers (it lives in `packaging/npm/lib/review.mjs` and today calls headless `claude`),
   the Anthropic-API-key option, and the "Claude Code's headless claude when installed" selector. Session mode needs no reviewer; the
   reviewer matters only for dispatch mode.
+
+## Productised (2026-10-31, Anuj's session)
+
+- The plugin moved to `packaging/npm/lib/opencode/`. `kell setup --client opencode` installs it into
+  `~/.stealthlab/opencode/plugin` (with `@opencode/plugin` 2.2.5 from npm), writes kell's hooks there, and adds to
+  OpenCode's `opencode.json`: the General Compute provider (minimax-m2.7 cheap, deepseek-v3.2 strong), the plugin, kell's
+  MCP server (`codemode: false`, so tools keep their `mcp__` names) and the default model. `kell uninstall --client
+  opencode` removes only those keys.
+- deepseek-v3.2 failed at first ("Streaming request failed"): General Compute refuses it when 8k+ output tokens are
+  requested, and OpenCode asks 32k. The provider config caps it at 4k; one prompt then ran in 17 s through the installed
+  agent in a clean profile. A mid-session switch from minimax to deepseek was checked by capturing the outgoing request.
+- The reviewer works without Claude Code (falls back to deepseek-v3.2). Each turn's model goes to kell's capture-stop as
+  `kell_usage`; tokens and cost are not readable through `session.context` in 2.2.5, so they are left out for now.
+- Not done: live escalation with deepseek (needs auto-approved test runs, which this session may not start), the
+  clean-profile acceptance with `kell login`, the remaining hang. All on [revisit.md](revisit.md).
+

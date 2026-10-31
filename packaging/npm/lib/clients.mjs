@@ -371,6 +371,16 @@ export function clients({ env = process.env, platform = process.platform } = {})
       uninstall: () => removeCodexServer(codex),
     },
     {
+      // kell's own agent on OpenCode (lib/opencode_setup.mjs). Only on request (--client opencode or all): it installs a plugin
+      // with npm and edits OpenCode's global config, which an agent detected in passing should not get.
+      id: "opencode",
+      label: "OpenCode",
+      detect: () => false,
+      where: () => "kell's OpenCode plugin, hooks and MCP server (~/.stealthlab/opencode, OpenCode's opencode.json)",
+      install: async ({ url, token, launch }) => (await import("./opencode_setup.mjs")).installOpenCode({ url, token, launch, env }),
+      uninstall: async () => (await import("./opencode_setup.mjs")).uninstallOpenCode({ env }),
+    },
+    {
       id: "claude-desktop",
       label: "Claude Desktop",
       detect: () => fs.existsSync(path.dirname(desktop)),

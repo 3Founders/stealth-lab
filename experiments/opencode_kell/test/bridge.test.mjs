@@ -69,3 +69,16 @@ test("tool names and arguments map both ways", () => {
   assert.deepEqual(claudeResponse("shell", { output: { exit: 1, output: "boom\n" }, content: [{ type: "text", text: "boom\n" }] }), { stdout: "boom\n", stderr: "", interrupted: false, exit_code: 1 })
   assert.deepEqual(claudeResponse("read", { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] }), { text: "a\nb" })
 })
+
+test("turnUsage sums the last turn's assistant tokens and cost", async () => {
+  const { turnUsage } = await import("../plugin/index.mjs")
+  const msgs = [
+    { role: "user" }, { role: "assistant", tokens: { input: 50, output: 5 }, cost: 0.1 },
+    { role: "user" },
+    { role: "assistant", tokens: { input: 1000, output: 200, reasoning: 50, cache: { read: 400 } }, cost: 0.0003 },
+    { role: "assistant", tokens: { input: 1100, output: 100 }, cost: 0.0002 },
+  ]
+  assert.deepEqual(turnUsage(msgs, "gc/minimax-m2.7"),
+    { scaffold: "opencode", model: "gc/minimax-m2.7", tokens_in: 2100, tokens_out: 350, tokens_cached: 400, cost_usd: 0.0005 })
+  assert.deepEqual(turnUsage([], null), { scaffold: "opencode" })
+})

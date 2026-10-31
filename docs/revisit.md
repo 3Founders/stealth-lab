@@ -7,12 +7,6 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ### Open (need the owners)
 
-- **Our agent's strong model.** Recommended: a strong open model (largest GLM / Qwen / DeepSeek) on the same General
-  Compute key, so a user needs one key. An Anthropic API key is optional, and so is Claude Code's headless claude when
-  installed. Never a Claude subscription sign-in inside OpenCode.
-- **Our agent's reviewer** (today Sonnet through headless claude): the same choice as the strong model, configurable.
-- **Our agent's default mode.** Recommended: "session" (the cheap model runs the session, with escalation on failing
-  tests), with "dispatch" (the Claude Code flow) as a setting.
 - **Where a pilot user's model key comes from:** (a) their own General Compute key, or (b) a kell-run organisation they
   join. Detail: [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md) section 3.
 - **npm:** the first version number, and whether `"license": "UNLICENSED"` stays (Chaitanya publishes).
@@ -24,6 +18,13 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ### Made (kept here so they aren't reopened by accident)
 
+- **2026-10-31, our agent's models:** cheap minimax-m2.7, strong deepseek-v3.2, both on General Compute (one key). Not
+  gpt-oss (owner). An Anthropic key is a later option; never a Claude subscription sign-in inside OpenCode.
+- **2026-10-31, the reviewer without Claude Code:** headless claude when installed, otherwise an exec.json profile
+  (`STEALTHLAB_REVIEW_FALLBACK_MODEL`, default deepseek-v3.2), in `lib/review.mjs`.
+- **2026-10-31, our agent's default mode:** "session" (the cheap model runs the session, escalation after 2 failed test
+  runs); "dispatch" (the Claude Code flow) is a setting.
+
 - **2026-10-31, the harness:** OpenCode (MIT, plugin API 2.2.5 pinned), as a plugin with no fork. DeepSeek Harness was
   not chosen while it is a preview, but its design (replaceable parts) is the pattern we follow.
 - **2026-10-31, the claude.ai checker:** gemma-4-31b-it checks glm-5.3-flash for now; a stronger checker later
@@ -34,6 +35,23 @@ items here (not in other docs); remove one when it is done, with the commit that
   `kell/images` is free to users, 30 a day, paid by kell.
 - **2026-10-31, tool outcomes:** recorded for every user; the ranking adds them all together for now.
 - **2026-10-31, the one list:** everything we leave for later goes in this file.
+
+## Our agent (OpenCode)
+
+- **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start); about 2 runs
+  in 6 still stalled in the spike. Not diagnosed. Detail: [opencode_spike_2026-11.md](opencode_spike_2026-11.md).
+- **kell's MCP server in OpenCode uses the saved token as a header**, which isn't refreshed; after it expires, run
+  `kell setup --client opencode` again. Better: OpenCode's own OAuth against kell's server (it supports dynamic client
+  registration; kell's server answered "requires a login before it can register a client").
+- **General Compute's deepseek-v3.2 refuses 8k+ output tokens** (OpenCode asks 32k by default). kell's provider config caps
+  it at 4k. Ask General Compute for the real limit, or whether it's a bug.
+- **Not done from the spike plan:** a timing and cost table against Claude Code; re-running dispatch mode in OpenCode;
+  the Anthropic-key option; a full clean-profile acceptance with `kell login` and the six prompts; renaming
+  opencode_spike_2026-11.md to a product doc.
+- **Per-turn tokens and cost aren't sent yet.** `session.context` in OpenCode 2.2.5 returns messages without `tokens` or
+  `cost`, so `kell_usage` carries only the model. Read them from the SDK's message events or the session store instead.
+- **The plugin needs npm at setup** (`@opencode/plugin` 2.2.5 is installed into `~/.stealthlab/opencode/plugin`); kell-mcp
+  itself keeps no dependencies. Publishing the plugin as its own npm package would remove that step.
 
 ## Cost and speed
 

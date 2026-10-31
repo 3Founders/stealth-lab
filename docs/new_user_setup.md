@@ -206,6 +206,52 @@ tools that read public information, never ones that send, post or pay.
 
 ---
 
+## Part C: kell's own agent (on OpenCode)
+
+kell's own coding agent runs on OpenCode, an open-source coding agent. kell picks the model for each request: a cheap open
+model works first, and a stronger one (deepseek-v3.2) takes over when the project's tests keep failing. You don't need
+Claude Code or a Claude plan for this part, only the model key from step A6.
+
+Do steps A1, A3 (`npm install -g kell-mcp`), A5 (`kell login`) and A6 (the key) first, if you haven't.
+
+### C1. Install OpenCode
+
+```
+npm install -g @opencode/cli@2.2.5
+```
+
+Close the terminal and open a new one. `opencode --version` should print `2.2.5`.
+
+### C2. Add kell to OpenCode
+
+```
+kell setup --client opencode
+```
+
+It installs kell's plugin (this takes a minute the first time), adds the General Compute models and kell's server to
+OpenCode's settings, and ends with the checklist. Every item should be ok; run the command it prints next to any that
+isn't.
+
+### C3. Try it
+
+```
+cd <your project folder>
+opencode
+```
+
+Send the same prompts as in A8. Under each reply, OpenCode shows which model wrote it: `minimax-m2.7` is the cheap one,
+`deepseek-v3.2` the stronger one. A request kell can't classify starts on deepseek-v3.2.
+
+### C4. Remove it
+
+```
+kell uninstall --client opencode
+```
+
+It removes only what kell added to OpenCode's settings; your own settings stay.
+
+---
+
 ## If something goes wrong
 
 | What you see | What to do |
@@ -220,6 +266,8 @@ tools that read public information, never ones that send, post or pay.
 | Claude waits for a click on every kell call | Do B3. |
 | A kell tool call on claude.ai is refused right after an update | Customize → Connectors → kell → Disconnect, then Connect again (B2), so claude.ai sees kell's newest tools. |
 | A cheap model's change in Claude Code looks wrong | `kell undo`. |
+| OpenCode says "Streaming request failed" | Run `kell setup --client opencode` again (it sets the output limit General Compute needs), then restart OpenCode. |
+| OpenCode shows kell's server as needing a login | Run `kell login`, then `kell setup --client opencode` again. |
 
 For anything else, send the kell team what you typed, what you saw, and (for Claude Code) the last lines of
 `~/.stealthlab/hooks.log`.
