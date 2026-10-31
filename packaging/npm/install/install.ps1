@@ -6,7 +6,7 @@
 #   $env:STEALTHLAB_MCP_URL = "https://<host>/mcp"     # override the endpoint
 #   $env:STEALTHLAB_CLIENTS = "claude-code,cursor"     # only these clients
 #   $env:STEALTHLAB_TOKEN   = "<token>"                # optional; reads are anonymous
-#   $env:STEALTHLAB_MCP_PACKAGE = "kell-mcp@0.1.0" # optional; pin a version
+#   $env:STEALTHLAB_MCP_PACKAGE = "kell-mcp@0.2.0" # optional; pin a version
 #
 # Installs nothing kell-side on this machine: it registers the HOSTED
 # kell MCP endpoint with the coding agents it finds (Claude Code,

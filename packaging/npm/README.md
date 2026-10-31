@@ -27,7 +27,7 @@ $env:STEALTHLAB_CLIENTS = "claude-code,cursor"; irm https://www.kell.org.in/inst
 ```
 
 `STEALTHLAB_MCP_PACKAGE` pins what the scripts install (for example
-`kell-mcp@0.1.0`, or a local `.tgz` for testing before a release).
+`kell-mcp@0.2.0`, or a local `.tgz` for testing before a release).
 
 Other commands: `kell doctor` checks that the endpoint answers
 `initialize`. `kell uninstall` removes the entries. `--dry-run`
