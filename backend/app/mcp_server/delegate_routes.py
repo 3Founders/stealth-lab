@@ -29,7 +29,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from app.services import delegate as dg
 
-DEFAULT_ORIGINS = "https://www.kell.org.in,https://kell.org.in,http://localhost:3000,http://127.0.0.1:3000"
+DEFAULT_ORIGINS = "https://www.kell.org.in,https://kell.org.in,http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100"
 STREAM_SECONDS = 50
 POLL_SECONDS = 2.0
 
