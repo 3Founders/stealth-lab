@@ -342,3 +342,16 @@ async def tool_outcomes(pool: Any, goal: Optional[str]) -> dict[str, tuple[int, 
         out = {}
     _outcomes[key] = (time.monotonic(), out)
     return out
+
+
+async def card_by_name(pool: Any, name: str) -> Optional[ToolCard]:
+    """One registry card by its server name ("app.glif/glif"), from the database, else the bundled snapshot."""
+    if pool is not None:
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(f"SELECT {_COLS} FROM tool_cards WHERE id = $1", f"registry:{name}")
+            if row:
+                return card_from_row(row)
+        except Exception:  # noqa: BLE001 -- no table: the files
+            pass
+    return next((c for c in registry_cards() if c.name == name), None)

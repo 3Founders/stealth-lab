@@ -48,7 +48,8 @@ def test_listed_tools_stay_within_their_token_budget(monkeypatch):
     # cheap-model path is a tool it sees on every turn
     # 2,500 (2026-10-31, the ceiling the owner set): + report_tools (~300), how a chat client reports which tools a task
     # used, so the tool ranking learns from claude.ai too
-    assert sum(sizes.values()) <= 2500, sizes
+    # 2,600 (2026-10-31, owner): + the gateway paragraph on use_tool (use an outside server without installing it)
+    assert sum(sizes.values()) <= 2600, sizes
 
 
 def test_find_ways_full_guide_is_one_call_away():

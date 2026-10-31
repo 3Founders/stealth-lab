@@ -127,3 +127,11 @@ test("hook: STEALTHLAB_HOOK_TOOLS=off and a failing /tools both leave the prompt
     assert.equal(out.length, 0);
   }
 });
+
+test("formatToolNote: a server usable through kell gets the call, not an install command", () => {
+  const note = formatToolNote({ tools: [{ name: "app.glif/glif", source: "registry", summary: "Generate images", via_kell: true,
+                                          install: "claude mcp add --transport http glif https://glif.app/api/mcp" }] }, "generate");
+  assert.ok(note.includes('use_tool(server="app.glif/glif"'));
+  assert.ok(!note.includes("add it with"));
+  assert.match(note, /may return a link/);
+});
