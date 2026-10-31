@@ -150,3 +150,66 @@ Cross-check, delegated attempts on glm: small edit $0.02 to 0.03, typical task $
 - **Capacity:** Anthropic's per-user rate guidance is 200 to 300 thousand tokens a minute; the three General Compute models share about 200 thousand a minute for the whole key. One heavy routed user can use the whole quota.
 - Chat assistants (claude.ai) stay on Claude; only delegated sub-tasks (a few thousand tokens each) reach us, so their cost is pennies.
 
+## 9. The harness (kell-branded OpenCode): final unit economics (2026-11-01)
+
+Decisions this rests on: the harness is free software and the same product for everyone; every model call goes through kell's own provider keys (all declared zero-retention by the founders); no bring-your-own-key for now; private code is allowed on the two connections. Model: glm-5.3-flash ($0.15 in / $0.03 cached / $0.50 out per million), 90% provider cache hit, Rs 90 to the dollar. Token volumes are from the 2026-10-31 research and are mostly estimates.
+
+### Cost of a day of harness use (our cost)
+
+| Intensity, per active day | Input tokens | Our cost at 90% cache hit | At 50% hit |
+|---|---|---|---|
+| Light | about 12M | $0.55 to 0.63 | $1.13 to 1.21 |
+| **Typical full-time** | **about 21M** | **$0.96 to 1.08** | $1.98 to 2.10 |
+| Heavy | about 180M | $7.9 to 8.7 | $16.6 to 17.3 |
+
+A typical full-time month (20 active days) costs us **$19 to 22**. A weaker model may take 1.5 to 2 times the steps.
+
+### How long each plan's included usage lasts in the harness
+
+| Plan | Included | Typical full-time days | Light days |
+|---|---|---|---|
+| Starter (Rs 200) | $1 | 1 | 1.7 |
+| Pilot (Rs 649, 30 days) | $4 | 3.9 | 6.8 |
+| Pro, deck (Rs 999) | $5 | 4.9 | 8.5 |
+| Pro, built (Rs 1,200) | $6 | 5.9 | 10.2 |
+| Plus (Rs 2,000) | $12 | 11.8 | 20.4 |
+
+A full-time user uses the whole allowance well before the 30 days end, so for harness users assume the included usage is **fully spent** (no breakage).
+
+### Margin per plan when the usage is fully spent
+
+After Razorpay (2.36%) and Rs 7 of judging overhead:
+
+| Plan | Price | Left | Share |
+|---|---|---|---|
+| Starter | Rs 200 | Rs 98 | 49% |
+| Pilot | Rs 649 | Rs 267 | 41% |
+| Pro (deck) | Rs 999 | Rs 518 | 52% |
+| Pro (built) | Rs 1,200 | Rs 625 | 52% |
+| Plus | Rs 2,000 | Rs 866 | 43% |
+
+### Beyond the included usage (top-up at the token rate)
+
+| Markup on cost | Typical day | Typical full-time month |
+|---|---|---|
+| +25% | $1.27 (Rs 115) | $25 (Rs 2,290) |
+| +75% | $1.78 (Rs 161) | $36 (Rs 3,210) |
+
+Gross profit on a top-up month is about $5 at +25% and $15 at +75%. The metered price passes cache-rate swings to the customer.
+
+### Referral reward (if used)
+
+A reward of Rs 90 to Rs 150 of usage per paid referral takes a pilot's margin from Rs 267 to Rs 117 to 177, and still leaves a profit.
+
+### Fixed costs and break-even
+
+Fixed costs are about $75 to $280 a month (Rs 6,750 to 25,200), including items not first counted. At the margins above, about **8 to 40 paying Pro or Plus users** cover them (5 to 29 on Plus alone).
+
+### Risks specific to the harness
+
+- **No bring-your-own-key means no relief valve:** the per-day token cap and the stop at zero balance must exist before launch.
+- **Capacity:** a full-time user averages about 44,000 tokens a minute with bursts of 200,000 to 300,000. Z.ai's limits on our key are unknown; the General Compute models share about 200,000 a minute.
+- **Cache hit rate** is the swing factor for fixed-price plans; model switching mid-session resets it.
+- **Production price entries still wrong:** gemma is declared at $1 / $3 per million against $0.09 / $0.34 in the notes.
+- **Unsigned DPAs:** zero retention is the founders' declaration; do not advertise it until agreements are in hand.
+- **Upstream maintenance:** the fork pins OpenCode 2.2.5's V2 plugin API; keep the MIT notice and rename it clearly.
