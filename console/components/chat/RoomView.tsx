@@ -74,9 +74,6 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   const [roles, setRoles] = useState<Roles>(() => seedRoles(ROOMS, HUMANS[0].handle));
   const [manageOpen, setManageOpen] = useState(false);
   const [panelHidden, setPanelHidden] = useState(false);
-  const [newRoom, setNewRoom] = useState<string | null>(null); // null = closed
-  const [formError, setFormError] = useState("");
-  const roomInput = useRef<HTMLInputElement>(null);
   const [roomId, setRoomId] = useState(ROOMS[0].id);
   const [me, setMe] = useState(HUMANS[0]);
   const [lines, setLines] = useState<Record<string, Line[]>>({});
@@ -126,16 +123,16 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   useEffect(() => { scrollToEnd({ instant: true }); }, [roomId, scrollToEnd]);
   useEffect(() => { follow(); }, [blocks, follow]);
 
-  const createRoom = (e: React.FormEvent) => {
-    e.preventDefault();
-    const r = newRoomId(rooms.map((x) => x.id), newRoom ?? "");
-    if ("error" in r) { setFormError(r.error); return; }
+  const createRoom = (raw: string): { id: string } | { error: string } => {
+    const r = newRoomId(rooms.map((x) => x.id), raw);
+    if ("error" in r) return r;
     const room: Room = { id: r.id, title: r.id.slice(1), members: [me.handle] };
     broker.addRoom(room);
     setRooms((p) => [...p, room]);
     setMembers((p) => ({ ...p, [room.id]: room.members }));
     setRoles((p) => ({ ...p, [room.id]: { [me.handle]: "owner" } }));
-    setRoomId(room.id); setNewRoom(null); setFormError("");
+    setRoomId(room.id);
+    return { id: room.id };
   };
   const setRole = (rid: string, handle: string, role: "admin" | "member") => setRoles((p) => ({ ...p, [rid]: { ...p[rid], [handle]: role } }));
   const removeMember = (rid: string, handle: string) => {
@@ -189,21 +186,7 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
             </button>
           ))}
         </nav>
-        <div className="dg-swap" data-open={newRoom !== null}>
-          <div className="dg-swap-btn">
-            <button type="button" className="dg-add" tabIndex={newRoom === null ? 0 : -1} onClick={() => { setNewRoom(""); setFormError(""); setTimeout(() => roomInput.current?.focus(), 0); }}>+ New room</button>
-          </div>
-          <div className="dg-swap-form">
-            <div className="dg-swap-inner">
-              <form className="dg-form" onSubmit={createRoom}>
-                <label htmlFor="dg-room-name">Room name</label>
-                <input ref={roomInput} id="dg-room-name" value={newRoom ?? ""} tabIndex={newRoom === null ? -1 : 0} onChange={(e) => setNewRoom(e.target.value)} placeholder="design-review" maxLength={30} autoComplete="off" />
-                {formError && <p className="dg-err" role="alert">{formError}</p>}
-                <div className="dg-form-row"><button type="submit" className="dg-mini" tabIndex={newRoom === null ? -1 : 0}>Create</button><button type="button" className="dg-mini" tabIndex={newRoom === null ? -1 : 0} onClick={() => { setNewRoom(null); setFormError(""); }}>Cancel</button></div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <button type="button" className="dg-add" onClick={() => setManageOpen(true)}>Manage rooms</button>
         <h2>In this room</h2>
         <ul className="dg-members">
           {roomMembers.map((h) => {
@@ -230,7 +213,7 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={rooms.map((r) => ({ id: r.id, members: members[r.id] ?? r.members }))} initial={roomId}
         me={me.handle} roles={roles} isAgent={(h) => broker.isAgent(h)}
-        onSetRole={setRole} onRemove={removeMember} onDissolve={dissolve}
+        onSetRole={setRole} onRemove={removeMember} onDissolve={dissolve} onCreate={createRoom}
       />
       <section className="dg-main" aria-label={roomId}>
         <header className="dg-head">

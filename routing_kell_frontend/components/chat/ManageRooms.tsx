@@ -14,6 +14,8 @@ export interface ManageRoomsProps {
   roomId: (label: string) => string | undefined;
   /** Dissolve (owner) or leave (anyone else) a room; the parent asks the person to confirm. */
   onDissolve: (label: string) => Promise<void> | void;
+  /** Makes a room and switches to it, or says why it cannot. */
+  onCreate: (name: string) => { id: string } | { error: string };
 }
 
 /**
@@ -30,6 +32,8 @@ export default function ManageRooms(p: ManageRoomsProps) {
   const [invite, setInvite] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newError, setNewError] = useState("");
 
   const sid = p.roomId(room);
   const role = p.roles[room] ?? "owner"; // a room only on this device is yours alone
@@ -88,6 +92,12 @@ export default function ManageRooms(p: ManageRoomsProps) {
     } catch (e) { fail(e); }
   }
   async function copy() { try { await navigator.clipboard.writeText(invite ?? ""); setCopied(true); } catch { setCopied(false); } }
+  function create(e: React.FormEvent) {
+    e.preventDefault();
+    const r = p.onCreate(newName);
+    if ("error" in r) { setNewError(r.error); return; }
+    setNewName(""); setNewError(""); setRoom(r.id);
+  }
   async function dissolve() { setBusy("room"); try { await p.onDissolve(room); } finally { setBusy(""); } }
 
   // A person can be changed or removed by someone above them: the owner by anyone's rank but their own, an admin only for plain members.
@@ -102,6 +112,12 @@ export default function ManageRooms(p: ManageRoomsProps) {
         </div>
         <div className="dg-set-body">
           <nav className="dg-set-nav" aria-label="Rooms">
+            <form className="dg-newroom" onSubmit={create}>
+              <label htmlFor="dg-manage-new">New room</label>
+              <input id="dg-manage-new" value={newName} onChange={(e) => { setNewName(e.target.value); setNewError(""); }} placeholder="design-review" maxLength={30} autoComplete="off" />
+              {newError && <p className="dg-err" role="alert">{newError}</p>}
+              <button type="submit" className="btn-line dg-mini" disabled={!newName.trim()}>+ Create room</button>
+            </form>
             {p.rooms.map((r) => (
               <button key={r} type="button" aria-selected={r === room} onClick={() => setRoom(r)}>
                 #{r.slice(1)}{p.roles[r] && p.roles[r] !== "member" && <span className="dg-badge" data-kind="tab" style={{ marginLeft: 8 }}>{p.roles[r]}</span>}

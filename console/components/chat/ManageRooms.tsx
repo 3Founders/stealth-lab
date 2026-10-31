@@ -10,12 +10,16 @@ export interface ManageRoomsProps {
   onSetRole: (room: string, handle: string, role: "admin" | "member") => void;
   onRemove: (room: string, handle: string) => void;
   onDissolve: (room: string) => void;
+  /** Makes a room and switches to it, or says why it cannot. */
+  onCreate: (name: string) => { id: string } | { error: string };
 }
 
 /** "Manage rooms" from the menu: pick a room, then see who is in it, change roles, remove people and agents, and dissolve or leave. */
 export default function ManageRooms(p: ManageRoomsProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [room, setRoom] = useState(p.initial);
+  const [newName, setNewName] = useState("");
+  const [newError, setNewError] = useState("");
 
   useEffect(() => {
     const d = dialog.current;
@@ -30,6 +34,13 @@ export default function ManageRooms(p: ManageRoomsProps) {
   const people = (current?.members ?? []).filter((h) => !p.isAgent(h));
   const agents = (current?.members ?? []).filter((h) => p.isAgent(h));
 
+  function create(e: React.FormEvent) {
+    e.preventDefault();
+    const r = p.onCreate(newName);
+    if ("error" in r) { setNewError(r.error); return; }
+    setNewName(""); setNewError(""); setRoom(r.id);
+  }
+
   return (
     <dialog ref={dialog} className="dg-manage" aria-labelledby="dg-manage-title" onCancel={(e) => { e.preventDefault(); p.onClose(); }} onClick={(e) => { if (e.target === dialog.current) p.onClose(); }}>
       <div className="dg-manage-frame">
@@ -39,6 +50,12 @@ export default function ManageRooms(p: ManageRoomsProps) {
         </div>
         <div className="dg-manage-body">
           <nav className="dg-manage-nav" aria-label="Rooms">
+            <form className="dg-newroom" onSubmit={create}>
+              <label htmlFor="dg-manage-new">New room</label>
+              <input id="dg-manage-new" value={newName} onChange={(e) => { setNewName(e.target.value); setNewError(""); }} placeholder="design-review" maxLength={30} autoComplete="off" />
+              {newError && <p className="dg-err" role="alert">{newError}</p>}
+              <button type="submit" className="dg-mini" disabled={!newName.trim()}>+ Create room</button>
+            </form>
             {p.rooms.map((r) => <button key={r.id} type="button" aria-selected={r.id === room} onClick={() => setRoom(r.id)}>{r.id}</button>)}
           </nav>
           <div className="dg-manage-panel">

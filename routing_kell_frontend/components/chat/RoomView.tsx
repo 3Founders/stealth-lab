@@ -124,8 +124,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   tasksRef.current = tasksByRoom;
 
   // sidebar forms
-  const [newRoom, setNewRoom] = useState<string | null>(null); // null = closed
-  const roomInputRef = useRef<HTMLInputElement | null>(null);
   const [adding, setAdding] = useState(false);
   const [addKind, setAddKind] = useState<"mine" | "tab">("mine");
   const [addName, setAddName] = useState("");
@@ -475,12 +473,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setBadge(unreadTotal);
     return () => { document.title = base; setBadge(0); };
   }, [unreadTotal]);
-  const createRoom = (e: React.FormEvent) => {
-    e.preventDefault();
-    const r = newRoomName(roomList.rooms, newRoom ?? "");
-    if ("error" in r) return setFormError(r.error);
-    setFormError(""); setNewRoom(null);
+  /** Called from Manage rooms: makes the room and switches to it, or returns why it cannot. */
+  const createRoomNamed = (raw: string): { id: string } | { error: string } => {
+    const r = newRoomName(roomList.rooms, raw);
+    if ("error" in r) return r;
     setRoomList({ rooms: [...roomList.rooms, r.name], current: r.name });
+    return { id: r.name };
   };
   const deleteRoom = async (r: string) => {
     const next = withoutRoom(roomList, r);
@@ -619,21 +617,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             </li>
           ))}
         </ul>
-        <div className="dg-swap" data-open={newRoom !== null}>
-          <div className="dg-swap-btn">
-            <button type="button" className="btn-line dg-add" tabIndex={newRoom === null ? 0 : -1} onClick={() => { setNewRoom(""); setFormError(""); setTimeout(() => roomInputRef.current?.focus(), 0); }}>+ New room</button>
-          </div>
-          <div className="dg-swap-form">
-            <div className="dg-swap-inner">
-              <form className="dg-form" onSubmit={createRoom}>
-                <label htmlFor="dg-room-name">Room name</label>
-                <input ref={roomInputRef} id="dg-room-name" value={newRoom ?? ""} tabIndex={newRoom === null ? -1 : 0} onChange={(e) => setNewRoom(e.target.value)} placeholder="design-review" maxLength={30} autoComplete="off" />
-                {formError && <p className="dg-err" role="alert">{formError}</p>}
-                <div className="dg-form-row"><button type="submit" className="btn-ink dg-mini-btn" tabIndex={newRoom === null ? -1 : 0}><span>Create</span></button><button type="button" className="btn-line dg-mini-btn" tabIndex={newRoom === null ? -1 : 0} onClick={() => { setNewRoom(null); setFormError(""); }}>Cancel</button></div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage rooms</button>
 
         <h2>Agents</h2>
         <ul className="dg-members">
@@ -709,7 +693,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
         roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
-        roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }}
+        roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }} onCreate={createRoomNamed}
       />
       <section className="dg-main" aria-label={`Room ${room}`}>
         <header className="dg-head">

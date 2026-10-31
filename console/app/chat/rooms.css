@@ -13,13 +13,6 @@
 .dg-add:hover, .dg-mini:hover:not(:disabled) { background: var(--yellow); }
 .dg-mini:disabled { opacity: .45; cursor: not-allowed; }
 .dg-danger { color: #b3261e; border-color: #b3261e; }
-.dg-swap { display: grid; }
-.dg-swap-btn, .dg-swap-form { grid-area: 1 / 1; }
-.dg-swap-btn { display: flex; transition: opacity var(--dg-micro-d) var(--dg-micro), visibility 0s linear 0s; }
-.dg-swap-form { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows var(--dg-smooth-d) var(--dg-smooth), opacity var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d); }
-.dg-swap-inner { min-height: 0; overflow: hidden; }
-.dg-swap[data-open="true"] .dg-swap-btn { opacity: 0; visibility: hidden; transition: opacity var(--dg-micro-d) var(--dg-micro), visibility 0s linear var(--dg-micro-d); }
-.dg-swap[data-open="true"] .dg-swap-form { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows var(--dg-bouncy-d) var(--dg-bouncy), opacity var(--dg-smooth-d) var(--dg-smooth), visibility 0s; }
 .dg-form { display: grid; gap: 6px; margin: 8px 6px 0; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: #fff; font-size: 13.5px; }
 .dg-form input { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
 .dg-form-row { display: flex; gap: 8px; margin-top: 4px; }
@@ -54,3 +47,26 @@
 .dg-manage-people select { font: inherit; font-size: 14px; padding: 4px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
 @media (max-width: 640px) { .dg-manage-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .dg-manage-nav { grid-auto-flow: column; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--rule); } }
 @media (prefers-reduced-motion: reduce) { .dg-shell, .dg-swap-btn, .dg-swap-form, .dg-menu-pop, .dg-manage[open] { animation: none !important; transition: none !important; } }
+
+/* Glass and shadow, as on the main site header: every button and popup is a frosted pane lifted by a soft drop shadow, with no black outline. */
+.dg-page { --dg-glass: rgba(248, 246, 239, .72); --dg-glass-strong: rgba(248, 246, 239, .86); --dg-edge: rgba(255, 255, 255, .6);
+  --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1);
+  --dg-float: 0 20px 52px rgba(0, 0, 0, .22), 0 3px 10px rgba(0, 0, 0, .12); }
+.dg-page .dg-add, .dg-page .dg-mini, .dg-page .dg-breaker, .dg-page .dg-burger, .dg-page .dg-rooms-btn, .dg-page .dg-manage-x {
+  background: var(--dg-glass); border: 1px solid var(--dg-edge); color: var(--ink); border-radius: 10px;
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: var(--dg-lift);
+  transition: transform var(--dg-micro-d) var(--dg-micro), box-shadow var(--dg-micro-d) var(--dg-micro), background-color var(--dg-micro-d) var(--dg-micro);
+}
+.dg-page .dg-add:hover, .dg-page .dg-mini:hover:not(:disabled), .dg-page .dg-breaker:hover, .dg-page .dg-burger:hover, .dg-page .dg-rooms-btn:hover, .dg-page .dg-manage-x:hover {
+  background: var(--dg-glass-strong); box-shadow: var(--dg-lift-hover); transform: translateY(-1px);
+}
+.dg-page .dg-jump { border: 0; box-shadow: var(--dg-lift); }
+.dg-page .dg-menu-pop, .dg-page .dg-mentions, .dg-page .dg-form, .dg-page .dg-manage-frame {
+  background: var(--dg-glass-strong); border: 1px solid var(--dg-edge);
+  -webkit-backdrop-filter: blur(16px) saturate(1.25); backdrop-filter: blur(16px) saturate(1.25); box-shadow: var(--dg-float);
+}
+.dg-newroom { display: grid; gap: 6px; padding: 4px 4px 12px; margin-bottom: 8px; border-bottom: 1px solid var(--rule); }
+.dg-newroom label { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); }
+.dg-newroom input { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 8px; background: rgba(255, 255, 255, .7); color: var(--ink); min-width: 0; }
+.dg-newroom .dg-mini { justify-self: start; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .dg-page { --dg-glass: rgba(248, 246, 239, .96); --dg-glass-strong: rgba(248, 246, 239, .98); } }
