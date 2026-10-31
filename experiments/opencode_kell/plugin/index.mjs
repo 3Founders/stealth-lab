@@ -22,12 +22,29 @@ const debug = (...a) => { if (DEBUG) try { fs.appendFileSync(path.join(stateDir(
 export default Plugin.define({
   id: "kell",
   setup: async (ctx) => {
+    debug("setup: start")
+    for (const dom of [ctx.session, ctx.tool]) {      // timestamps around each registration, to see where a stalled start waits
+      const orig = dom.hook.bind(dom)
+      dom.hook = async (name, cb, ...rest) => { debug("setup: registering", name); const r = await orig(name, cb, ...rest); debug("setup: registered", name); return r }
+    }
     const cwd = String(ctx.location?.directory || process.cwd())
     const hooks = loadHooks(settingsFiles(cwd))
     const sessions = new Map()                       // sessionID -> { started, context: [], continued, model }
     const state = (id) => { let s = sessions.get(id); if (!s) { s = { started: false, context: [], continued: 0, model: undefined }; sessions.set(id, s) } return s }
-    let mcpServers = []
-    try { mcpServers = (await ctx.mcp.list()).map((x) => String(x.name ?? x.id ?? x[0] ?? "")).filter(Boolean) } catch { /* no MCP list: names pass through */ }
+    // Not awaited in setup: asking the host for its MCP servers while plugins are still loading never returned (the cold-start
+    // hang, found 2026-10-31: runs with this plugin stalled with no output, the same runs without it took 14 s). Looked up on the
+    // first tool call instead, with a time limit; names pass through when it does not answer.
+    let mcpServers = [], mcpAsked = false
+    const servers = async () => {
+      if (!mcpAsked) {
+        mcpAsked = true
+        try {
+          const list = await Promise.race([ctx.mcp.list(), new Promise((_, no) => setTimeout(() => no(new Error("mcp.list timed out")), 2000))])
+          mcpServers = list.map((x) => String(x.name ?? x.id ?? x[0] ?? "")).filter(Boolean)
+        } catch { /* no MCP list: names pass through */ }
+      }
+      return mcpServers
+    }
 
     const transcriptFile = (id) => {
       const dir = path.join(stateDir(), "transcripts")
@@ -90,7 +107,7 @@ ${merged.reason}`
 
     // --- PreToolUse -> tool.execute.before: deny throws (the call fails with the reason); updatedInput rewrites.
     await ctx.tool.hook("execute.before", async (e) => {
-      const name = claudeName(e.tool, mcpServers)
+      const name = claudeName(e.tool, await servers())
       const merged = await fire("PreToolUse", name, { ...base(e.sessionID, "PreToolUse"), tool_name: name, tool_input: claudeInput(e.tool, e.input), tool_use_id: e.id })
       if (!merged) return
       if (merged.decision === "deny") throw new Error(merged.reason || "blocked by a PreToolUse hook")
@@ -101,7 +118,7 @@ ${merged.reason}`
     // --- PostToolUse -> tool.execute.after: context and block feedback are appended to the tool's result.
     await ctx.tool.hook("execute.after", async (e) => {
       if (e.status !== "completed") return
-      const name = claudeName(e.tool, mcpServers)
+      const name = claudeName(e.tool, await servers())
       const merged = await fire("PostToolUse", name, {
         ...base(e.sessionID, "PostToolUse"), tool_name: name, tool_input: claudeInput(e.tool, e.input), tool_use_id: e.id,
         tool_response: claudeResponse(e.tool, e.result),

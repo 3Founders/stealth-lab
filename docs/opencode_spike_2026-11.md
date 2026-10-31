@@ -144,3 +144,29 @@ Claude Code run (the cause made them unnecessary; the permission also covered on
 rename fixture has no tests, so kell correctly says "not dispatched (no check)".
 Note for kell: a leaked `STEALTHLAB_DISPATCH_CHECK` silently judges every repo by one command; a log line naming it when it is
 used would have made this a one-minute diagnosis.
+
+## Third pass (2026-10-31): the hang, escalation, undo
+
+**Cold-start hang: fixed in the bridge.** Reproduced first: 5 of 5 runs with the plugin stalled for 90 s with two log lines
+("spawning process ... serve --stdio", "cli starting"), the same fixture without the plugin took 14 s, and the bare
+`opencode serve --stdio` printed its URL at once. So the wait is the host loading the plugin. The plugin's `setup` awaited
+`ctx.mcp.list()` before registering anything (`plugin/index.mjs`, the old line 30); asking the host for its MCP servers while
+plugins are still loading never returned. It is now asked lazily on the first tool call, with a 2 s limit. After the change, 7
+of 7 plain runs took 17-23 s. Caveat: one intermediate version of the fix still stalled 2 of 3 runs, and I did not isolate why
+before the final edit (which also added setup timestamps), so treat "stable" as 7 runs, not a proof. `setup` now logs each hook
+registration to `plugin.log` with `KELL_OC_DEBUG=1`.
+
+**Live escalation: not triggered.** `fixtures/make_esc_fixture.sh` builds a two-file bug (rounding mode in `tax.py` and
+tax-the-sum in `invoice.py`; each fix alone leaves failures). With Layer 2 on (`gc/minimax-m2.7` cheap), the cheap model fixed
+both files and all 5 tests passed on its first full test run: 141 s, `record ... outcome accepted`. So there were no failed cheap
+tries and no escalation; the mechanism remains unit-tested only. A harder task is needed (or a forced-weak cheap model), and the
+strong rung here would be another General Compute model, not Claude.
+
+**`kell undo` after a dispatched fix: not confirmed.** In the failing-test fixture dispatch verified two cheap fixes (runs
+`r-20261031102656-*`: `state verified, winner 0, applied false`), but kell's Sonnet review step failed every time
+(`review: claude-sonnet-5-5 gave no usable verdict (exit 1)`, and `review-in-repo` the same), so nothing was applied and
+`kell undo --list` says "no undo points". The files were then changed by the session's own model. The reviewer is the headless
+`claude` that kell starts; its exit 1 was not diagnosed because running Claude Code is outside what was allowed so far.
+
+**Comparison (OpenCode + plugin vs Claude Code + kell): not run.** It needs Claude Code runs, and the reviewer fault above is a
+Claude Code question too.
