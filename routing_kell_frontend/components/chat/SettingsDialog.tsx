@@ -70,7 +70,7 @@ export default function SettingsDialog(p: SettingsProps) {
       <div className="dg-set-frame">
         <header className="dg-set-head">
           <h2 id="dg-settings-title">Settings</h2>
-          <button type="button" className="dg-set-x" onClick={close} aria-label="Close settings">×</button>
+          <button type="button" className="dg-set-x" onClick={close} aria-label="Close settings">Done</button>
         </header>
         <div className="dg-set-body">
           <nav className="dg-set-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">

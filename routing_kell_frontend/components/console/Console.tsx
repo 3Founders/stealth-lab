@@ -87,7 +87,7 @@ export default function Console() {
               <p className="small dim">From a checkout of the repository:</p>
               <CopyCommand command={HELPER_COMMANDS.checkout} label="Start the helper, from a checkout" />
             </div>
-            <p className="small dim" style={{ marginTop: 14 }}>New to keळ? The <a href="/connect#claude-code" style={{ textDecoration: "underline" }}>step-by-step setup guide</a> covers Claude Code and Claude on the web.</p>
+            <p className="small dim" style={{ marginTop: 14 }}>New to keळ? The <a href="/connect/claude-code" style={{ textDecoration: "underline" }}>step-by-step setup guide</a> covers Claude Code and Claude on the web.</p>
             <div className="cluster" style={{ marginTop: 16 }}>
               <button type="button" className="btn-ink" onClick={() => void connect()}>Check again</button>
             </div>
@@ -119,7 +119,7 @@ export default function Console() {
               </button>
             ))}
           </div>
-          {tab === "connect" && <p className="small dim">Setting up for the first time? Follow the <a href="/connect#claude-code" style={{ textDecoration: "underline" }}>step-by-step guide</a>.</p>}
+          {tab === "connect" && <p className="small dim">Setting up for the first time? Follow the <a href="/connect/claude-code" style={{ textDecoration: "underline" }}>step-by-step guide</a>.</p>}
           {tab === "connect" && <ConnectPanel client={gate.client} initial={gate.clients} />}
           {tab === "models" && <ModelsPanel client={gate.client} />}
           {tab === "playground" && <PlaygroundPanel client={gate.client} />}

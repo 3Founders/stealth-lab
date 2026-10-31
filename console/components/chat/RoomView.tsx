@@ -176,7 +176,7 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   return (
     <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"}>
       <aside className="dg-side" aria-label="Rooms and members">
-        <button type="button" className="dg-close" onClick={() => setPanelHidden(true)} aria-label="Close the room list" title="Close the room list">×</button>
+        <button type="button" className="dg-close" onClick={() => setPanelHidden(true)} aria-label="Close the room list" title="Close the room list">‹</button>
         {brand && <div className="dg-brand">{brand}</div>}
         <h2>Rooms</h2>
         <nav>

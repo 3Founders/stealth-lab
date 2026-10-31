@@ -70,3 +70,26 @@
 .dg-newroom input { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 8px; background: rgba(255, 255, 255, .7); color: var(--ink); min-width: 0; }
 .dg-newroom .dg-mini { justify-self: start; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .dg-page { --dg-glass: rgba(248, 246, 239, .96); --dg-glass-strong: rgba(248, 246, 239, .98); } }
+
+/* No boundaries: every border colour is cleared (widths stay), dividers become soft shadows, fields sit recessed in the glass, corners are tighter. */
+.dg-page { --dg-edge: transparent; --dg-r-btn: 6px; --dg-r-pop: 8px; --dg-r-dialog: 10px;
+  --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .14), 0 1px 0 rgba(255, 255, 255, .7); }
+.dg-page *, .dg-page *::before, .dg-page *::after { border-color: transparent !important; }
+.dg-page .dg-dot[data-a="idle"] { border-color: var(--grey) !important; }
+.dg-page .dg-dot[data-a="processing"] { border-color: var(--ink) !important; }
+.dg-page .dg-add, .dg-page .dg-mini, .dg-page .dg-breaker, .dg-page .dg-burger, .dg-page .dg-rooms-btn, .dg-page .dg-manage-x, .dg-page .dg-room, .dg-page .dg-composer button { border-radius: var(--dg-r-btn); }
+.dg-page .dg-menu-pop, .dg-page .dg-mentions, .dg-page .dg-form { border-radius: var(--dg-r-pop); }
+.dg-page .dg-manage-frame { border-radius: var(--dg-r-dialog); }
+.dg-page .dg-side { position: relative; z-index: 3; box-shadow: 8px 0 28px rgba(0, 0, 0, .08); }
+.dg-page .dg-head { position: relative; z-index: 2; background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: 0 8px 22px rgba(0, 0, 0, .08); }
+.dg-page input:not([type="radio"]):not([type="checkbox"]), .dg-page select, .dg-page textarea { background: var(--dg-glass-strong); box-shadow: var(--dg-dent); }
+.dg-page .dg-composer textarea { border-radius: var(--dg-r-btn); box-shadow: var(--dg-lift); }
+.dg-page .dg-room[aria-current="page"] { background: var(--dg-glass-strong); color: var(--ink); box-shadow: var(--dg-lift); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); font-weight: 500; }
+.dg-page .dg-room[aria-current="page"] span { color: var(--cobalt); }
+.dg-page .dg-manage-nav button[aria-selected="true"] { background: var(--dg-glass-strong); box-shadow: var(--dg-lift); }
+.dg-page .dg-manage-x { width: auto; padding: 0 14px; font: inherit; font-size: 14px; }
+@keyframes dg-glass-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.dg-page .dg-composer, .dg-page .dg-form { animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-page .dg-room { transition: background-color var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), transform var(--dg-micro-d) var(--dg-micro); }
+.dg-page .dg-room:hover:not([aria-current="page"]) { background: rgba(255, 255, 255, .55); box-shadow: var(--dg-lift); transform: translateX(3px); }
+@media (prefers-reduced-motion: reduce) { .dg-page .dg-composer, .dg-page .dg-form { animation: none !important; } .dg-page .dg-room:hover { transform: none !important; } }

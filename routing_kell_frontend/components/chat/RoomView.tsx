@@ -25,6 +25,7 @@ import NotificationBell from "@/components/chat/NotificationBell";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
 import ManageRooms from "@/components/chat/ManageRooms";
+import { PanelCloseIcon, RemoveIcon } from "@/components/chat/icons";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
@@ -605,7 +606,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
-        <button type="button" className="dg-close" onClick={() => { setMenuOpen(false); setPanelHidden(true); }} aria-label="Close the room list" title="Close the room list">×</button>
+        <button type="button" className="dg-close" onClick={() => { setMenuOpen(false); setPanelHidden(true); }} aria-label="Close the room list" title="Close the room list"><PanelCloseIcon /></button>
         {brand && <div className="dg-brand">{brand}</div>}
         {back && <div className="dg-backrow">{back}</div>}
 
@@ -631,7 +632,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               <span className="dg-handle">{a.handle}</span>
               <span className="dg-badge">agent</span>
               <span className="dg-state" data-a="idle">{a.online ? "online" : "offline"}</span>
-              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${a.handle}`} title={`Remove ${a.handle}`}>×</button>
+              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${a.handle}`} title={`Remove ${a.handle}`}><RemoveIcon /></button>
             </li>
           ))}
           {agents.map((h) => {
@@ -644,7 +645,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 {backing && !backing.ready
                   ? <Link className="dg-state dg-addkey" href="/account/models">Add a key</Link>
                   : <span className="dg-state" data-a={a}>{a === "idle" ? "" : LABEL[a]}</span>}
-                <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${h} from the room`} title={`Remove ${h}`}>×</button>
+                <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${h} from the room`} title={`Remove ${h}`}><RemoveIcon /></button>
               </li>
             );
           })}
@@ -687,7 +688,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <b>@{justAdded} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
           </p>
         )}
-        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} />
+        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
       <ManageRooms

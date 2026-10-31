@@ -108,7 +108,7 @@ export default function ManageRooms(p: ManageRoomsProps) {
       <div className="dg-set-frame">
         <div className="dg-set-head">
           <h2 id="dg-manage-title">Manage rooms</h2>
-          <button type="button" className="dg-set-x" onClick={close} aria-label="Close">×</button>
+          <button type="button" className="dg-set-x" onClick={close} aria-label="Close">Done</button>
         </div>
         <div className="dg-set-body">
           <nav className="dg-set-nav" aria-label="Rooms">

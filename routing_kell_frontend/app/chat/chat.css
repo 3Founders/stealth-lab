@@ -369,3 +369,117 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   .dg-page { --dg-glass: rgba(248, 246, 239, .96); --dg-glass-strong: rgba(248, 246, 239, .98); }
 }
 @media (prefers-reduced-motion: reduce) { .dg-page .btn-line, .dg-page .dg-add, .dg-page .dg-mini, .dg-page .dg-burger { transition: none; transform: none !important; } }
+
+/* Round two of the glass pass: tighter corners, the Back to home button, the message box, the selected room, and icons in place of a plain x.
+   The logo and the Back to home button share one width (--dg-brand-w) so they line up as a pair. */
+.dg-page { --dg-r-btn: 6px; --dg-r-pop: 8px; --dg-r-dialog: 10px; --dg-brand-w: 132px; }
+.dg-page .btn-line, .dg-page .dg-add, .dg-page .dg-mini, .dg-page .dg-breaker, .dg-page .dg-stop, .dg-page .dg-burger, .dg-page .dg-menu,
+.dg-page .dg-rooms-btn, .dg-page .dg-set-x, .dg-page .dg-manage-x, .dg-page .back-btn--inline, .dg-page .dg-composer button { border-radius: var(--dg-r-btn); }
+.dg-page .dg-menu-pop, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-form, .dg-page .dg-me { border-radius: var(--dg-r-pop); }
+.dg-page .dg-set-frame, .dg-page .dg-manage-frame { border-radius: var(--dg-r-dialog); }
+.dg-page .dg-room, .dg-page .dg-set-nav button, .dg-page .dg-manage-nav button, .dg-page .dg-menu-pop button { border-radius: var(--dg-r-btn); }
+.dg-page .dg-form input, .dg-page .dg-newroom input, .dg-page .dg-as select { border-radius: var(--dg-r-btn); }
+
+/* Back to home: the same frosted pane as the other buttons, as wide as the logo above it. */
+.dg-brand img { width: var(--dg-brand-w); height: auto; }
+.dg-backrow { padding: 0 6px 12px; }
+.dg-page .back-btn--inline {
+  width: var(--dg-brand-w); min-height: 40px; padding: 0 10px; justify-content: center; gap: 6px; font-size: 14px; white-space: nowrap;
+  background: var(--dg-glass); border: 1px solid var(--dg-edge); color: var(--ink);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: var(--dg-lift);
+}
+.dg-page .back-btn--inline:hover { background: var(--dg-glass-strong); box-shadow: var(--dg-lift-hover); transform: translateY(-1px); }
+.dg-page .back-btn--inline:active { transform: none; box-shadow: var(--dg-lift); }
+
+/* The message box: no outline, a frosted pane with a shadow. Focus shows as a soft blue glow, never a black rule. */
+.dg-page .dg-composer textarea {
+  border: 1px solid var(--dg-edge); border-radius: var(--dg-r-btn); background: var(--dg-glass-strong);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: var(--dg-lift);
+}
+.dg-page .dg-composer textarea:focus-visible { outline: 2px solid transparent; box-shadow: var(--dg-lift), 0 0 0 3px rgba(25, 58, 112, .28); }
+.dg-page .dg-composer button { box-shadow: var(--dg-lift); }
+.dg-page .dg-composer button:not(:disabled):hover { box-shadow: var(--dg-lift-hover); }
+
+/* The selected room: translucent glass with the shadow, not a solid black fill. */
+.dg-page .dg-room[aria-current="page"] {
+  background: var(--dg-glass-strong); color: var(--ink); border: 1px solid var(--dg-edge); box-shadow: var(--dg-lift);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); font-weight: 500;
+}
+.dg-page .dg-room[aria-current="page"] span { color: var(--cobalt); }
+.dg-page .dg-set-nav button[aria-selected="true"], .dg-page .dg-manage-nav button[aria-selected="true"] {
+  background: var(--dg-glass-strong); border: 1px solid var(--dg-edge); box-shadow: var(--dg-lift);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2);
+}
+
+/* Icons instead of a plain x: closing the room list, and taking an agent out of the room. */
+.dg-close svg, .dg-remove svg { display: block; }
+.dg-page .dg-close { border-radius: var(--dg-r-btn); width: 34px; height: 34px; opacity: .75; }
+.dg-page .dg-close:hover, .dg-page .dg-close:focus-visible { opacity: 1; background: var(--dg-glass-strong); box-shadow: var(--dg-lift); }
+.dg-page .dg-remove { border-radius: var(--dg-r-btn); font-size: 0; }
+.dg-page .dg-set-x, .dg-page .dg-manage-x { width: auto; height: 34px; padding: 0 14px; font: inherit; font-size: 14px; line-height: 1; }
+@media (max-width: 760px) { .dg-page .dg-close { width: 44px; height: 44px; } .dg-page .dg-remove { min-width: 44px; } }
+
+/* Round three: no boundaries anywhere in the chat. Every border colour is cleared (widths stay, so nothing shifts), the dividers become soft
+   shadows, fields sit recessed in the glass instead of outlined, and the panes animate in. The status dots keep their rings: the ring is the
+   meaning there. */
+.dg-page { --dg-edge: transparent; --dg-hi: inset 0 1px 0 rgba(255, 255, 255, .75); --dg-dent: inset 0 1px 3px rgba(0, 0, 0, .14), 0 1px 0 rgba(255, 255, 255, .7);
+  --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
+  --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .85); }
+.dg-page *, .dg-page *::before, .dg-page *::after { border-color: transparent !important; }
+.dg-page .dg-dot[data-a="idle"] { border-color: var(--grey) !important; }
+.dg-page .dg-dot[data-a="processing"] { border-color: var(--ink) !important; }
+
+/* Dividers become shadows. */
+.dg-page .dg-side { position: relative; z-index: 3; box-shadow: 8px 0 28px rgba(0, 0, 0, .08); }
+.dg-page .dg-head { position: relative; z-index: 2; background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: 0 8px 22px rgba(0, 0, 0, .08); }
+.dg-page .dg-banner { box-shadow: 0 6px 16px rgba(179, 38, 30, .12); }
+.dg-page .dg-set-head, .dg-page .dg-set-nav, .dg-page .dg-newroom, .dg-page .dg-danger { box-shadow: none; }
+.dg-page .dg-set-nav { box-shadow: 8px 0 24px rgba(0, 0, 0, .05); }
+.dg-page .dg-set-head { box-shadow: 0 8px 20px rgba(0, 0, 0, .06); position: relative; z-index: 1; }
+.dg-page .dg-manage-nav { box-shadow: 8px 0 24px rgba(0, 0, 0, .05); }
+.dg-page .dg-manage-head { box-shadow: 0 8px 20px rgba(0, 0, 0, .06); position: relative; z-index: 1; }
+
+/* Fields sit recessed in the glass. */
+.dg-page input:not([type="radio"]):not([type="checkbox"]):not([type="range"]), .dg-page select, .dg-page textarea { background: var(--dg-glass-strong); box-shadow: var(--dg-dent); }
+.dg-page .dg-composer textarea { box-shadow: var(--dg-lift); }
+.dg-page input:focus-visible, .dg-page select:focus-visible { outline: 2px solid transparent; box-shadow: var(--dg-dent), 0 0 0 3px rgba(25, 58, 112, .28); }
+.dg-page kbd { box-shadow: var(--dg-lift); }
+.dg-page .dg-payload, .dg-page .dg-result, .dg-page .dg-note-box { box-shadow: var(--dg-dent); border-radius: var(--dg-r-btn); }
+
+/* Everything that was a rectangle of paper is glass with a shadow. */
+.dg-page .dg-me, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-menu-pop, .dg-page .dg-form { box-shadow: var(--dg-float); }
+
+/* Profile: the red sign-out button under the card. */
+.dg-me-wrap { position: sticky; bottom: 0; margin-top: auto; display: grid; gap: 8px; }
+.dg-me-wrap .dg-me { position: static; margin-top: 0; }
+.dg-page .dg-signout {
+  font: inherit; font-size: 14px; min-height: 38px; padding: 0 14px; cursor: pointer; width: 100%;
+  color: #b3261e; font-weight: 500; background: var(--dg-glass); border: 1px solid transparent; border-radius: var(--dg-r-btn);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: var(--dg-lift);
+  transition: transform var(--dg-micro-d) var(--dg-micro), box-shadow var(--dg-micro-d) var(--dg-micro), background-color var(--dg-micro-d) var(--dg-micro), color var(--dg-micro-d) var(--dg-micro);
+}
+.dg-page .dg-signout:hover { background: #b3261e; color: #fff; box-shadow: 0 12px 28px rgba(179, 38, 30, .35), 0 2px 5px rgba(0, 0, 0, .12); transform: translateY(-1px); }
+.dg-page .dg-signout:active { transform: scale(.98); }
+.dg-page .dg-signout:focus-visible { outline: 2px solid transparent; box-shadow: var(--dg-lift), 0 0 0 3px rgba(179, 38, 30, .35); }
+
+/* Animation: panes glide in, rooms and buttons respond to the pointer, the selected room slides its glass into place. */
+@keyframes dg-glass-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes dg-head-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes dg-side-in { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+.dg-page .dg-head { animation: dg-head-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-page .dg-side > * { animation: dg-side-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-page .dg-side > *:nth-child(2) { animation-delay: 40ms; } .dg-page .dg-side > *:nth-child(3) { animation-delay: 80ms; }
+.dg-page .dg-side > *:nth-child(4) { animation-delay: 120ms; } .dg-page .dg-side > *:nth-child(5) { animation-delay: 160ms; }
+.dg-page .dg-composer { animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-page .dg-form, .dg-page .dg-bell-pop, .dg-page .dg-me, .dg-page .dg-signout, .dg-page .back-btn--inline { animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-page .dg-room { transition: background-color var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), transform var(--dg-micro-d) var(--dg-micro), color var(--dg-micro-d) var(--dg-micro); }
+.dg-page .dg-room:hover:not([aria-current="page"]) { background: rgba(255, 255, 255, .55); box-shadow: var(--dg-lift); transform: translateX(3px); }
+.dg-page .dg-room[aria-current="page"] { transform: translateX(3px); }
+.dg-page .dg-set-nav button, .dg-page .dg-manage-nav button { transition: background-color var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), transform var(--dg-micro-d) var(--dg-micro); }
+.dg-page .dg-set-nav button:hover, .dg-page .dg-manage-nav button:hover { transform: translateX(2px); }
+.dg-page .dg-composer textarea { transition: box-shadow var(--dg-smooth-d) var(--dg-smooth), background-color var(--dg-smooth-d) var(--dg-smooth), transform var(--dg-micro-d) var(--dg-micro); }
+.dg-page .dg-composer textarea:focus-visible { transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) {
+  .dg-page .dg-head, .dg-page .dg-side > *, .dg-page .dg-composer, .dg-page .dg-form, .dg-page .dg-bell-pop, .dg-page .dg-me, .dg-page .dg-signout, .dg-page .back-btn--inline { animation: none !important; }
+  .dg-page .dg-room, .dg-page .dg-room:hover, .dg-page .dg-room[aria-current="page"], .dg-page .dg-signout, .dg-page .dg-signout:hover, .dg-page .dg-composer textarea:focus-visible, .dg-page .dg-set-nav button:hover, .dg-page .dg-manage-nav button:hover { transition: none; transform: none !important; }
+}

@@ -46,7 +46,7 @@ export default function ManageRooms(p: ManageRoomsProps) {
       <div className="dg-manage-frame">
         <div className="dg-manage-head">
           <h2 id="dg-manage-title">Manage rooms</h2>
-          <button type="button" className="dg-manage-x" onClick={p.onClose} aria-label="Close">×</button>
+          <button type="button" className="dg-manage-x" onClick={p.onClose} aria-label="Close">Done</button>
         </div>
         <div className="dg-manage-body">
           <nav className="dg-manage-nav" aria-label="Rooms">
