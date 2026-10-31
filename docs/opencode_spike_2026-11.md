@@ -255,3 +255,16 @@ What this does and does not say:
   5 tests pass; 163 s; recorded on `gc/gemma-4-31B-it`.
 - Still seen: about one run in four (here two of six) stalls with no output for the whole 280 s, so the earlier fix removed one cause
   of the cold-start hang, not all of them.
+
+## Phase 2 (partial, 2026-10-31)
+
+- **Models on General Compute with only its key** (`/v1/models`, today): `gpt-oss-120b`, `deepseek-v3.1`, `deepseek-v3.2`, `gemma-4-31B-it`,
+  `minimax-m2.7`. The strongest open model there is `deepseek-v3.2`, the natural default for the strong rung
+  (`KELL_OC_STRONG_MODEL=gc/deepseek-v3.2`, with the model added to the provider's `models` list). Not yet tried in a run; the runs above
+  used gemma as the strong rung.
+- **General Compute 403:** a direct chat call to `gemma-4-31B-it` returns 200 now, so the earlier `HTTP 403` (it came right after a
+  dispatch had made several parallel calls on the same key) was not reproduced; OpenCode's message carries no response body. Unknown
+  between rate limit, quota and model access until it recurs with the body logged.
+- **Not done:** the reviewer on OpenAI-compatible providers (it lives in `packaging/npm/lib/review.mjs` and today calls headless `claude`),
+  the Anthropic-API-key option, and the "Claude Code's headless claude when installed" selector. Session mode needs no reviewer; the
+  reviewer matters only for dispatch mode.
