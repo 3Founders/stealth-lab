@@ -74,8 +74,8 @@ it on when the backend answers). With the flag off the cards look as they do now
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 3..10}` or `{"plan": "pro"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for pro) |
-| `GET /v1/billing/plan` | none | `{"plan": "pilot"\|"pro"\|null, "seats": N, "active_until": "ISO date or null"}` |
+| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 3..10, "team_name": "<2..60 chars>"}` or `{"plan": "pro"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for pro) |
+| `GET /v1/billing/plan` | none | `{"plan": "pilot"\|"pro"\|null, "seats": N, "team_name": "..." or null, "active_until": "ISO date or null"}` |
 
 The server computes the amount (Pilot: ₹649 per seat times seats; Pro: ₹999). The page never sends an amount for a plan. The
 existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use the same shape as today: `503` billing off,
@@ -83,7 +83,7 @@ existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use 
 
 ### Pilot card (build this first)
 
-1. A seat picker limited to **3 to 10** (a stepper or a select; no free typing). Below 3 or above 10 never sends a request.
+1. A **team name** field (2 to 60 characters, required; "Acme pilot" style). The server creates a real team workspace with this name and makes the buyer its owner, so the other seats can be invited into it. Then a seat picker limited to **3 to 10** (a stepper or a select; no free typing). Below 3 or above 10, or a missing team name, never sends a request.
 2. The total, live: `₹649 × seats`, and "before GST" (or the GST sentence from the config).
 3. The two dates: starts today, ends in 14 days (`period_days`), shown as plain dates.
 4. A **"Start the pilot"** button. One payment covers the whole team. Signed out: "Sign in to start the pilot", returning to
@@ -92,7 +92,7 @@ existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use 
    admin pages). Do not state a dollar figure for the included usage; the founders have not set it.
 6. The line "By paying you accept the Terms and the Refund policy", both linked.
 7. After Checkout success: "Waiting for confirmation", then poll `GET /v1/billing/plan` for up to about a minute. When it
-   returns `plan: "pilot"`, show "Pilot active until <date> for <seats> seats" and what to do next: connect your tool at
+   returns `plan: "pilot"`, show "Pilot active until <date> for <seats> seats in <team_name>" and what to do next: connect your tool at
    `/docs` (link to the setup guide) and contact us for the joint report. If it does not arrive, say so and link to `/contact`
    with the order id.
 8. If the person already has an active pilot, show "Active until <date>" instead of the buy button (no second pilot from the
@@ -104,9 +104,13 @@ A "Buy Pro (30 days)" button. This is a **one-month pass, paid once and renewed 
 plainly: "30 days of Pro. Renew when it ends." Active Pro shows "Active until <date>" and "Renew". Same states and
 confirmation flow as the Pilot. Pro is for public or non-sensitive material only: say so next to the button.
 
+### Plan prices (from kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; rupees, before GST)
+
+Pro ₹999 a month; Pilot ₹649 per seat for 2 weeks (3 to 10 seats); Teams ₹1,800 per seat a month; Enterprise custom. Keep these in `lib/plans.ts` only.
+
 ### Teams and Enterprise
 
-Stay "contact us", with their existing status labels.
+Stay "contact us", with their existing status labels. Teams needs the team admin pages, which are built but switched off, so it is not purchasable online yet.
 
 ### Labels
 
