@@ -691,8 +691,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <form className="dg-form" onSubmit={(e) => void submitAgent(e)}>
               <fieldset>
                 <legend>What kind of agent?</legend>
-                <label><input type="radio" name="dg-kind" checked={addKind === "mine"} onChange={() => setAddKind("mine")} /> My own agent. It runs on keळ&rsquo;s relay and keeps working when this page is closed.</label>
-                <label><input type="radio" name="dg-kind" checked={addKind === "tab"} onChange={() => setAddKind("tab")} disabled={full} /> A model in this tab. It stops when you close the page.</label>
+                <label><input type="radio" name="dg-kind" checked={addKind === "mine"} onChange={() => setAddKind("mine")} /> My own agent</label>
+                <label><input type="radio" name="dg-kind" checked={addKind === "tab"} onChange={() => setAddKind("tab")} disabled={full} /> A model in this tab</label>
               </fieldset>
               <label htmlFor="dg-agent-name">Name{addKind === "tab" ? " (optional)" : ""}</label>
               <input id="dg-agent-name" autoFocus value={addName} onChange={(e) => setAddName(e.target.value)} placeholder={addKind === "mine" ? "web-chat" : "reviewer"} maxLength={40} autoComplete="off" />
