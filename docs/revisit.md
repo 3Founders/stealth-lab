@@ -44,4 +44,7 @@ generation). Waiting:
 
 - **Your own agent on an open harness** (OpenCode, Codex CLI, Qwen Code, ...), with kell built in instead of hooked in.
   Waiting on the research (the Perplexity prompt of 2026-10-31).
+- **The one-line installers run kell through npx** (`install.sh` / `install.ps1` call `npx kell-mcp install`), so
+  Claude Code's hooks become `npx -y kell-mcp@latest hook-prompt`: an npx start on every prompt. Make them
+  `npm install -g` first. Until then [new_user_setup.md](new_user_setup.md) uses `npm install -g kell-mcp`.
 - **npm publish and the first real users** (Chaitanya): [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md).
