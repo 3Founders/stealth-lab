@@ -13,7 +13,7 @@ vi.mock("next/link", () => ({ default: ({ href, children, className }: { href: s
 vi.mock("@/lib/session", () => ({ getAccessToken: async () => null, getSession: async () => null, onSessionChange: () => () => {} }));
 
 import PricingPage from "@/app/pricing/page";
-import { PLANS, perDay, plusVersusPro, tasksEstimate, usageBuys } from "@/lib/plans";
+import { PLANS, perDay, plusVersusPro } from "@/lib/plans";
 
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
@@ -50,20 +50,15 @@ describe("/pricing", () => {
     expect(host!.querySelectorAll(".plan-plus").length).toBe(1);
   });
 
-  it("shows the per-day figure, the usage in dollars and the estimate, all taken from the plan data", async () => {
+  it("shows the per-day figure taken from the plan data, and no usage line, no 'lower-cost models' line and no estimate", async () => {
     await render();
     const card = (name: string) => host!.querySelector(`article[aria-label="${name}"]`)!.textContent ?? "";
     expect(card("Starter")).toContain("about ₹7 a day");
     expect(card("Pro")).toContain("about ₹40 a day");
     expect(card("Plus")).toContain("about ₹67 a day");
-    expect(card("Starter")).toContain("$1 of usage included");
-    expect(card("Pro")).toContain("$6 of usage included");
-    expect(card("Plus")).toContain("$12 of usage included");
-    for (const p of PLANS.filter((x) => x.includedUsd)) {
-      expect(card(p.name)).toContain(perDay(p) ?? "");
-      expect(card(p.name)).toContain(usageBuys(p) ?? "");
-      expect(usageBuys(p)).toMatch(/^Estimate: about /);                                       // marked as an estimate
-    }
+    for (const p of PLANS.filter((x) => x.priceInr)) expect(card(p.name)).toContain(perDay(p) ?? p.price);
+    const t = host!.textContent ?? "";
+    expect(t).not.toMatch(/of usage included|Lower-cost models|Estimate: about|delegated tasks/i);
   });
 
   it("says 'Plus gives twice Pro's usage for ₹800 more', computed from the data and not typed", async () => {
@@ -73,13 +68,6 @@ describe("/pricing", () => {
     expect(plusVersusPro(plus, pro)).toBe("Plus gives twice Pro's usage for ₹800 more.");
     expect(plusVersusPro({ ...plus, priceInr: 2500, includedUsd: 18 }, pro)).toBe("Plus gives three times Pro's usage for ₹1,300 more.");
     expect(plusVersusPro({ ...plus, includedUsd: 9 }, pro)).toBe("Plus gives 1.5 times Pro's usage for ₹800 more.");
-  });
-
-  it("the usage estimate is rounded to two figures and is not a promise", () => {
-    expect(tasksEstimate(1)).toBe(19);
-    expect(tasksEstimate(6)).toBe(120);
-    expect(tasksEstimate(12)).toBe(230);
-    expect(tasksEstimate(4)).toBe(77);
   });
 
   it("uses no countdown, no scarcity, no crossed-out price and no pre-selected upsell", async () => {

@@ -5,24 +5,21 @@ import AnimatedHeading from "@/components/AnimatedHeading";
 import CreditPacks from "@/components/billing/CreditPacks";
 import PlanBuy from "@/components/billing/PlanBuy";
 import { billingApi, buyPlansOn, gstMode, gstSentence, type Loaded, type PlanState } from "@/lib/billing";
-import { LADDER, PLANS, isBuyable, perDay, plusVersusPro, usageBuys, type BuyablePlanId, type Plan } from "@/lib/plans";
+import { LADDER, PLANS, isBuyable, perDay, plusVersusPro, type BuyablePlanId, type Plan } from "@/lib/plans";
 import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
 
 const api = billingApi({ token: getAccessToken });
 const link = { textDecoration: "underline" } as const;
 
-/** One plan card. Everything shown comes from lib/plans.ts: the price, the per-day figure, the usage and the estimate are not typed here. */
+/** One plan card. Everything shown comes from lib/plans.ts: the price and the per-day figure are not typed here. */
 function PlanCard({ p, buy, session, state, reload }: { p: Plan; buy: boolean; session: Session | null | undefined; state: Loaded<PlanState> | null; reload: () => Promise<Loaded<PlanState>> }) {
   const day = perDay(p);
-  const buys = usageBuys(p);
   return (
     <article className={`card plan-card${p.recommended ? " plan-plus" : ""}`} aria-label={p.name} data-recommended={p.recommended ? "true" : undefined}
       style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
       <h3 className="h3" style={{ fontSize: 22 }}>{p.name}{p.recommended && <span className="plan-rec">Recommended</span>}</h3>
       <p><b style={{ fontSize: 28, fontWeight: 400 }}>{p.price}</b> <span className="small dim">{p.per}</span></p>
       {day && <p className="small dim">{day}</p>}
-      {p.includedUsd && <p className="small"><b>${p.includedUsd}</b> of usage included</p>}
-      {buys && <p className="small dim">{buys}</p>}
       <p className="small dim">{p.forWhom}</p>
       <ul className="small" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.includes.map((t) => <li key={t}>{t}</li>)}</ul>
       {buy && isBuyable(p.id)
@@ -69,7 +66,7 @@ export default function PricingPage() {
             <div className="plan-ladder" style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", marginTop: 20 }}>
               {LADDER.map((p) => <PlanCard key={p.id} p={p} buy={buy} session={session} state={state} reload={reload} />)}
             </div>
-            {plusVsPro && <p className="small" style={{ marginTop: 14 }}><b>{plusVsPro}</b> Included usage is in dollars of model usage; the estimate under each plan is how many delegated tasks that covers at the average cost we measured on a small sample.</p>}
+            {plusVsPro && <p className="small" style={{ marginTop: 14 }}><b>{plusVsPro}</b></p>}
             {buy && <p className="small dim" style={{ marginTop: 6 }}>If you buy a higher plan while a lower one is running, both run, and the higher plan applies.</p>}
             <h3 className="h3" style={{ fontSize: 20, marginTop: 28 }}>For teams</h3>
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", marginTop: 12 }}>

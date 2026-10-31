@@ -5,7 +5,7 @@
  *
  * The ladder: three 30-day passes bought once and renewed by hand (not subscriptions), each with an amount of usage included, in dollars,
  * that the server credits at purchase. Plus is the plan the page recommends. The recommendation is a plain label, never a claim about what
- * other buyers do. Everything derived from the numbers below (the per-day figure, "twice Pro's usage for ₹800 more", the task estimate) is
+ * other buyers do. Everything derived from the numbers below (the per-day figure, "twice Pro's usage for ₹800 more") is
  * computed here, so a change of price changes every sentence with it.
  *
  * There is no separate plan for teams to try it and no pilot: discounts will come from referral codes, not from another plan.
@@ -38,18 +38,12 @@ export interface Plan {
   cta: string;
 }
 
-/** Dollars one delegated task cost on the cheap side: the average of 10 prompts in one small repository (docs/unit_economics_2026-10.md, section 1). */
-export const USD_PER_DELEGATED_TASK_ESTIMATE = 0.052;
-
-const usage = (usd: number) => `$${usd} of usage included`;
-
 export const PLANS: Plan[] = [
   {
     id: "starter", name: "Starter", price: "₹200", priceInr: 200, per: "for 30 days", periodDays: 30, includedUsd: 1, forWhom: "To try it on real work.",
     includes: [
       "Connect an assistant or coding tool.",
       "A recommended plan for each task.",
-      `Lower-cost models, with ${usage(1)}.`,
       "A short cost note after each task.",
     ],
     status: "Not available online yet", cta: "Ask for Starter",
@@ -59,7 +53,6 @@ export const PLANS: Plan[] = [
     includes: [
       "Connect an assistant or coding tool.",
       "A recommended plan for each task.",
-      `Lower-cost models, with ${usage(6)}.`,
       "A short cost note after each task.",
     ],
     status: "Not available online yet", cta: "Ask for Pro",
@@ -69,7 +62,6 @@ export const PLANS: Plan[] = [
     includes: [
       "Connect an assistant or coding tool.",
       "A recommended plan for each task.",
-      `Lower-cost models, with ${usage(12)}.`,
       "A short cost note after each task.",
     ],
     status: "Not available online yet", cta: "Ask for Plus",
@@ -109,18 +101,6 @@ export const isBuyable = (id: string): id is BuyablePlanId => (BUYABLE as string
 /** "about ₹67 a day": the price spread over the days it covers. */
 export function perDay(p: Plan): string | null {
   return p.priceInr && p.periodDays ? `about ₹${Math.round(p.priceInr / p.periodDays).toLocaleString("en-IN")} a day` : null;
-}
-
-/** Rounds to two significant figures: 19.2 becomes 19, 115.4 becomes 120, 230.8 becomes 230. An estimate should not look exact. */
-const roughly = (n: number) => { const d = Math.pow(10, Math.max(0, Math.floor(Math.log10(Math.max(1, n))) - 1)); return Math.round(n / d) * d; };
-
-/** About how many delegated tasks the included usage covers, as a number. An estimate from one small sample, not a promise. */
-export function tasksEstimate(includedUsd: number): number { return roughly(includedUsd / USD_PER_DELEGATED_TASK_ESTIMATE); }
-
-/** The small "what the usage buys" line for a plan, marked as an estimate. */
-export function usageBuys(p: Plan): string | null {
-  if (!p.includedUsd) return null;
-  return `Estimate: about ${tasksEstimate(p.includedUsd).toLocaleString("en-IN")} delegated tasks. Real tasks vary.`;
 }
 
 /** "Plus gives twice Pro's usage for ₹800 more", worked out from the two plans (null if either lacks a number). */
