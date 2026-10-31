@@ -718,3 +718,82 @@ main, footer { position: relative; z-index: 1; }
   .install, .models-note, .out, .signin, .cform-result, .demo-cost, .stealth-peek, .log, .film-box, .org-dialog, .empty { background: rgba(255, 255, 255, .94); }
 }
 @media (prefers-reduced-motion: reduce) { .install, .install:hover { transition: none; transform: none; } }
+
+/* No black boundaries anywhere on the site (the chat did this first, see app/chat/chat.css "Round three"). Buttons, pills, fields, cards, menus and
+   dialogs lose their dark outline and read as raised or recessed glass with the site's drop shadow instead. Border widths stay, so nothing shifts;
+   only the colour is cleared. The yellow/ink hover fills and the focus ring (an outline, not a border) are untouched, so state is still visible.
+   The status-dot rings and the dashed "failed"/"unknown" shapes keep their strokes: there the stroke is the meaning, not decoration. */
+:root {
+  --sh-lift: 0 6px 16px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
+  --sh-lift-hover: 0 10px 24px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1), inset 0 1px 0 rgba(255, 255, 255, .85);
+  --sh-dent: inset 0 1px 3px rgba(0, 0, 0, .14), 0 1px 0 rgba(255, 255, 255, .7);
+  --sh-float: 0 12px 32px rgba(0, 0, 0, .12), 0 2px 6px rgba(0, 0, 0, .08);
+}
+/* buttons and pills */
+.account-trigger, .back-btn, .btn-line, .copy, .tabs button, .scopes span, .scopes button, .status, .oauth-btn, .cstep-remove, .cstep-add,
+.demo-tabs button, .film-bar button, .org-chipbtn, .org-role, .org-tabs, .rstrip span, .models-wrap select, .term-controls button {
+  border-color: transparent; box-shadow: var(--sh-lift);
+}
+.btn-line, .copy, .tabs button, .oauth-btn, .cstep-remove, .cstep-add, .demo-tabs button, .scopes button, .term-controls button { background-color: rgba(255, 255, 255, .72); }
+.term-controls button { background-color: rgba(255, 255, 255, .08); color: #ECE9E1; box-shadow: 0 4px 12px rgba(0, 0, 0, .35); }
+.term-controls button:hover { border-color: transparent; background-color: rgba(255, 255, 255, .16); }
+.btn-line, .copy, .oauth-btn, .cstep-remove, .cstep-add, .demo-tabs button, .tabs button, .back-btn, .account-trigger, .org-chipbtn {
+  transition: background-color .25s var(--ease), box-shadow .25s var(--ease), transform .25s var(--ease);
+}
+.btn-line:hover, .copy:hover, .oauth-btn:hover, .cstep-add:hover, .demo-tabs button:hover, .tabs button:hover, .back-btn:hover, .account-trigger:hover, .org-chipbtn:hover {
+  box-shadow: var(--sh-lift-hover); transform: translateY(-1px);
+}
+.btn-line:active, .copy:active, .oauth-btn:active, .cstep-add:active, .demo-tabs button:active, .tabs button:active, .org-chipbtn:active { transform: none; box-shadow: var(--sh-lift); }
+.btn-line:hover, .copy:hover { background-color: var(--yellow); }
+.demo-tabs button[aria-selected="true"], .rstrip span[data-on="true"], .org-chipbtn[aria-pressed="true"] { border-color: transparent; }
+.models-wrap select:hover { border-color: transparent; box-shadow: var(--sh-lift-hover); }
+.org-stop { border-color: transparent; box-shadow: 0 6px 16px rgba(179, 38, 30, .25), inset 0 1px 0 rgba(255, 255, 255, .75); }
+.btn-ink { box-shadow: var(--sh-lift); }
+.btn-ink:hover { box-shadow: var(--sh-lift-hover); }
+.status[data-s="failed"], .status[data-s="unknown"] { border-style: solid; border-color: transparent; }
+.status::before { border-color: var(--ink); } /* the dot keeps its ring */
+.status[data-s="evidenced"]::before { border-color: var(--cobalt); }
+.status[data-s="unknown"]::before { border-color: var(--grey); }
+
+/* fields sit recessed in the glass */
+.cfield input[type="text"], .cfield input[type="email"], .cfield input[type="password"], .cfield textarea, .cfield select,
+.org-picker select, .org-picker input, .ask input {
+  border-color: transparent; background: rgba(255, 255, 255, .72); box-shadow: var(--sh-dent);
+}
+.cfield input:focus-visible, .cfield textarea:focus-visible, .cfield select:focus-visible, .org-picker select:focus-visible, .org-picker input:focus-visible {
+  outline: 2px solid transparent; box-shadow: var(--sh-dent), 0 0 0 3px rgba(25, 58, 112, .28);
+}
+
+/* cards, panes, menus, dialogs: glass with a shadow */
+.nav, .nav-panel, .account-menu, .action, .out.fail, .signin, .cform-result, .profile-card, .models-note, .models-kell, .models-way, .photo-ask, .org-dialog,
+.org-banner, .org-code, .org-danger, .empty, .log, .demo-cost, .stealth-peek, .film-box, .install, .kc .card, .kc .notice, .kc .pane, .kc pre.diff,
+.doc-sec pre, .prose pre, .avatar {
+  border-color: transparent; box-shadow: var(--sh-float);
+}
+.nav, .nav-panel, .account-menu { background-color: rgba(248, 246, 239, .9); }
+.nav { -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); }
+.kc .card, .kc .notice, .kc .pane, .profile-card, .models-way, .models-kell, .org-code { background-color: rgba(255, 255, 255, .72); -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); }
+.kc .notice[data-tone="bad"] { background-color: #fff; }
+.org-banner { background: rgba(253, 236, 234, .85); box-shadow: 0 6px 16px rgba(179, 38, 30, .15); }
+.avatar { box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+.term { border-color: transparent; box-shadow: 0 16px 40px rgba(0, 0, 0, .28); }
+.org-tabs { overflow: hidden; }
+.org-tabs button + button { box-shadow: -6px 0 10px -8px rgba(0, 0, 0, .25); }
+.empty, .models-kell, .org-code { border-style: solid; }
+
+/* the editorial grids and rows: the dark rules go, a pale hairline stays so the structure still reads */
+.source-list, .steps, .lineage ol, .trust, .cells, .cell, .run-ledger, .close-links, .list, .routes, .docs-nav, .doc-sec, .prose, .cache-row, .month, .footer,
+.kc .rows, .kc .checklist, .kc .console-foot, .loop, .action-steps, .film-bar, .org-table th {
+  border-color: var(--rule);
+}
+.org-nav a[aria-current="page"] { border-bottom-color: var(--cobalt); }
+.org-nav { border-bottom-color: var(--rule); }
+.bubble, .prose blockquote { border-left-color: var(--yellow); }
+.footer { border-top-color: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-line, .copy, .oauth-btn, .cstep-add, .demo-tabs button, .tabs button, .back-btn, .account-trigger, .org-chipbtn { transition: none; transform: none !important; }
+}
+
+/* Selected bars used a 1px ink outline (an outline, so the border pass above missed it): a soft shadow instead. */
+.month-bars button[aria-current="true"] i, .cache-row[data-kel="true"] .cache-bar b { outline: 0; box-shadow: 0 3px 10px rgba(0, 0, 0, .22); }

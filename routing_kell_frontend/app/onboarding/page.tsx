@@ -113,7 +113,7 @@ function OnboardingInner() {
             {editing ? (
               <input
                 type="text" value={name} onChange={(e) => setName(e.target.value)} maxLength={32}
-                style={{ font: "inherit", fontSize: 22, border: "1px solid var(--rule-strong)", borderRadius: 3, padding: "6px 10px" }}
+                style={{ font: "inherit", fontSize: 22, border: "1px solid transparent", boxShadow: "var(--sh-dent)", background: "rgba(255,255,255,.72)", borderRadius: 6, padding: "6px 10px" }}
                 autoFocus onBlur={() => setEditing(false)}
               />
             ) : (

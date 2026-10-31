@@ -130,7 +130,7 @@ function ProjectSyncPage() {
               aria-label="About the privacy of synced projects"
               onClick={() => setInfoOpen((o) => !o)}
               style={{
-                width: 16, height: 16, borderRadius: "50%", border: "1px solid var(--rule-strong)",
+                width: 16, height: 16, borderRadius: "50%", border: "1px solid transparent", boxShadow: "0 1px 4px rgba(0,0,0,.3)",
                 background: "none", padding: 0, fontSize: 10, lineHeight: "14px", fontFamily: "serif",
                 fontStyle: "italic", color: "var(--grey)", cursor: "pointer",
               }}
