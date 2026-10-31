@@ -198,3 +198,40 @@ Also: a fixture directory could not be deleted once ("Device or resource busy"),
 
 Not done: one dispatched fix applied, `kell undo` restoring it, and the three-task comparison against Claude Code. Needs
 `kell login --url https://mcp.kell.org.in/mcp` again; after the runs, `kell logout` and the local config go back.
+
+## Fifth pass (2026-10-31): hosted sign-in, dispatch applied, undo, and the comparison
+
+**Reviewer exit 1: gone after the sign-in, cause never seen.** With the hosted server (OAuth sign-in) the Sonnet review worked on
+every run: `review: claude-sonnet-5-5 says fixes` / `review-in-repo ... fixes`. The earlier exit-1 runs were on the same
+machine, so a transient failure (or two concurrent `claude` calls) remains the likeliest cause. No fix was needed in the bridge.
+
+**Dispatched fix applied, and `kell undo` restores it: confirmed.** Fresh fixture `d4`: minimax-m2-7 passed the project's check,
+Sonnet said "fixes", "accepted by the rule", `mathx.py` was changed, 4 tests passed, and `kell undo --list` showed
+`u-20261031121510-f1df3c`. `kell undo` answered "undone ... restored mathx.py"; the file was back to the bug and pytest showed
+`1 failed, 3 passed`. (The OpenCode session itself then ended with `Provider request failed with HTTP 403` from General
+Compute on its own gemma call, exit 1 — the fix was already in.)
+
+**Comparison, one run each, same fixtures, both arms with kell's hooks from `~/.claude/settings.json` against the hosted server.**
+Claude Code arm = headless `claude -p` (Sonnet 5.5) with Bash/Read/Edit/Write/Glob/Grep allowed. OpenCode arm = the plugin
+(Layer 1; Layer 2 on for the escalation task), session model `gc/gemma-4-31B-it`.
+
+| Task | Arm | Wall | Cost | Result |
+|---|---|---|---|---|
+| Repo question (`clamp`) | OpenCode + plugin | 70 s | not measured | correct answer (names the bug) |
+| | Claude Code + kell | 15 s | $0.096 | correct answer (names the bug) |
+| Failing-test fix | OpenCode + plugin | 71 s | not measured | pass: kell dispatch (glm-5.3-flash, Sonnet "fixes") applied the fix, 4 tests pass; the session's own call then hit HTTP 403 |
+| | Claude Code + kell | 45 s | $0.106 | pass, 4 tests; the session fixed it itself in 5 turns |
+| Two-file bug (escalation task) | OpenCode + plugin | 197 s | not measured | pass, 5 tests; kell dispatch (glm-5.3-flash, accepted after a Sonnet in-repo review) |
+| | Claude Code + kell | 38 s | $0.109 | pass, 5 tests |
+
+What this does and does not say:
+- **Cost:** only the Claude Code arm has a number (its own `total_cost_usd`). OpenCode's per-message tokens and cost were not readable
+  through the plugin, and General Compute's price per token was not applied, so the cheap-model arm has no dollar figure. No
+  claim about savings can be made from this table.
+- **Time:** the OpenCode arm was slower on all three (70, 71, 197 s against 15, 45, 38 s), the session model being gemma and the
+  dispatch waits (lookups, tries, Sonnet reviews) adding to it.
+- **Quality:** all six runs ended with passing tests (or a correct answer). One run each; no variance.
+- **Escalation by the plugin: still not seen.** On the two-file task Layer 2 chose the strong model because its `/triage` call
+  (which reads `~/.stealthlab/config.json`, whose URL is the stopped local server) returned an empty verdict; dispatch then solved it.
+  Layer 2 should take its server from `STEALTHLAB_MCP_URL` like the hook does; not yet changed.
+- Claude Code's own kell hook said it "didn't record this in the kell library" — the headless runs carry no kell workflow.
