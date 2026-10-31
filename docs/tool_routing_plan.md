@@ -97,3 +97,11 @@ outcomes the way the model ranking does.
   tools field asks for at the end of the task. A server is named by its package or URL host, never the user's own name
   for it or a URL path. Ranking: a tool's smoothed pass rate on the goal's tasks moves it by up to +/-0.1, weighted by
   how many outcomes there are (app/tool_routing/retrieve.py _proven).
+
+## To revisit
+
+- Per-person or per-team outcome ranking: tool_observations keeps owner_id on every row, but the ranking adds up every
+  user's outcomes together. A team's own record could weigh more for that team.
+- Image generation has no goal of its own (2026-10-31): "make me a banner" and "a minimal fox logo" were triaged as
+  `design` and offered Figma-type tools, not image generators. Add a `generate` goal (create images, video or audio
+  with AI models), sharpen `design` to editing design files, and re-tag the catalog.
