@@ -12,6 +12,7 @@ export const CLAUDE_WEB_PROMPT =
 export const CLAUDE_CODE_NEEDS = [
   "Windows, macOS or Linux.",
   "A Claude Pro, Max, Team or Enterprise plan.",
+  "Claude Code, installed and signed in.",
   "A Google or GitHub account, to sign in to keळ.",
   "Node.js 18.17 or newer. Check with node --version; if it is missing or lower, install the LTS version from nodejs.org and open a new terminal.",
 ];
@@ -21,12 +22,6 @@ export const CLAUDE_CODE_STEPS: Step[] = [
     title: "Open a terminal",
     list: ["Windows: press the Windows key, type PowerShell, press Enter.", "macOS: press Cmd+Space, type Terminal, press Enter.", "Linux: open your terminal app."],
     note: "Use this terminal for every command below. Open a new one when a step says so.",
-  },
-  {
-    title: "Install Claude Code, if you don't have it",
-    code: "npm install -g @anthropic-ai/claude-code",
-    codeLabel: "Install Claude Code",
-    body: "Then type claude and follow its sign-in to your Claude account. When you see the Claude prompt, type /exit.",
   },
   {
     title: "Install keळ",
