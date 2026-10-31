@@ -19,7 +19,7 @@ export function toEvent(m: GroupMessage, deviceId: string, lamport: number): Eve
 }
 
 /** What to show for someone who isn't you: their account name, else "member". */
-const personHandle = (name: string | null) => `@${(name ?? "member").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "member"}`;
+export const personHandle = (name: string | null) => `@${(name ?? "member").trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "member"}`;
 
 /** Someone whose account has no name yet: "Member 1a2b" (a few letters of their id), so two such people are not the same name. */
 export const fallbackName = (sub: string | null | undefined): string => `Member ${(sub ?? "").replace(/[^a-z0-9]/gi, "").slice(0, 4).toLowerCase() || "?"}`.trim();

@@ -61,7 +61,7 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
         ref={ref} rows={1} value={text} disabled={disabled}
         role="combobox" aria-label="Message" aria-autocomplete="list" aria-expanded={open}
         aria-controls={open ? listId : undefined} aria-activedescendant={open ? `${listId}-${idx}` : undefined}
-        placeholder="Message the room. @ to mention an agent, /add-agent to add one, /stop to pause"
+        placeholder="Message the room. @ to mention a person or an agent, /add-agent to add one, /stop to pause"
         onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); setDismissed(false); setActive(0); }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
         onKeyDown={onKeyDown}

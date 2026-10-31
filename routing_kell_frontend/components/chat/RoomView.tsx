@@ -29,7 +29,7 @@ import { PanelCloseIcon, RemoveIcon } from "@/components/chat/icons";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
-import { fallbackName } from "@/lib/chat/events";
+import { fallbackName, personHandle } from "@/lib/chat/events";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
@@ -88,6 +88,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const infoRef = useRef(info);
   infoRef.current = info;
   const [members, setMembers] = useState<RoomMember[]>([]);
+  /** The other people in this room, as the @handles you can mention (their account name, the way the server stores a mention of them). */
+  const peopleHandles = members.filter((m) => m.kind === "person" && !m.me).map((m) => personHandle(m.name ?? fallbackName(m.sub)));
+  /** Your own @handle in a shared room: a message that mentions it is a mention of you. */
+  const myHandleRef = useRef<string | null>(null);
+  const meMember = members.find((m) => m.kind === "person" && m.me);
+  myHandleRef.current = meMember ? personHandle(meMember.name ?? fallbackName(meMember.sub)) : null;
 
   const [roomList, setRoomList] = useState<RoomList>(() => readRooms(kv, subject));
   const room = roomList.current;
@@ -248,7 +254,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           for (const m of ms) {
             push(label, { kind: "msg", m }, true);
             if (m.sender.handle === HUMAN.handle) continue;
-            const mention = m.recipients.includes(HUMAN.handle);
+            const mine = myHandleRef.current;
+            const mention = m.recipients.includes(HUMAN.handle) || (mine !== null && m.recipients.includes(mine));
             const kind: NoteKind = mention ? "mention" : m.sender.type === "human" ? "message" : "agent";
             notify(kind, label, mention ? `${m.sender.displayName} mentioned you` : m.sender.displayName, m.payload.text);
           }
@@ -464,6 +471,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, [menuOpen]);
 
   // ---- rooms
+  /** Wide screens have a panel that can be closed; phones have a drawer. Closing or opening must touch only the one that is on screen,
+   *  or a drawer closed with the x leaves the panel flag set and the next "Open sidebar" tap opens nothing. */
+  const isWide = () => typeof window === "undefined" || typeof window.matchMedia !== "function" || window.matchMedia("(min-width: 761px)").matches;
+  const closeSidebar = () => { if (isWide()) setPanelHidden(true); else setMenuOpen(false); };
+  const openSidebar = () => { if (isWide()) setPanelHidden(false); else setMenuOpen(true); };
+  const toggleSidebar = () => { if (isWide()) setPanelHidden((h) => !h); else setMenuOpen((o) => !o); };
   const chooseRoom = (r: string) => { setRoomList((l) => ({ ...l, current: r })); setMenuOpen(false); };
   openRoomRef.current = (r) => { if (r && roomList.rooms.includes(r)) chooseRoom(r); };
   useEffect(() => { setNotes((p) => (p.some((n) => !n.read && n.room === room) ? p.map((n) => (n.room === room ? { ...n, read: true } : n)) : p)); }, [room]);
@@ -587,7 +600,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       } catch (err) { note(err instanceof Error ? err.message : "That didn't send."); }
       if (!localMentions.length) return;
     } else {
-      const unknown = mentionedNames(line).filter((n) => !agents.includes(`@${n}`) && !names.has(n));
+      const people = new Set(peopleHandles.map((h) => h.slice(1)));
+      const unknown = mentionedNames(line).filter((n) => !agents.includes(`@${n}`) && !names.has(n) && !people.has(n));
       if (unknown.length && !localMentions.length) note(`No agent named ${unknown.map((n) => `@${n}`).join(", ")}. Add one with + Add agent.`);
     }
     const m: GroupMessage = {
@@ -598,7 +612,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   };
 
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);
-  const mentionable = [...agents, ...relayAgents.map((a) => a.handle)];
+  const mentionable = [...new Set([...agents, ...relayAgents.map((a) => a.handle), ...peopleHandles])];
   const full = agents.length >= MAX_AGENTS;
   const count = agents.length + relayAgents.length;
 
@@ -606,7 +620,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
-        <button type="button" className="dg-close" onClick={() => { setMenuOpen(false); setPanelHidden(true); }} aria-label="Close the room list" title="Close the room list"><PanelCloseIcon /></button>
+        <button type="button" className="dg-close" onClick={closeSidebar} aria-label="Close the room list" title="Close the room list"><PanelCloseIcon /></button>
         {brand && <div className="dg-brand">{brand}</div>}
         {back && <div className="dg-backrow">{back}</div>}
 
@@ -698,16 +712,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${room}`}>
         <header className="dg-head">
-          <HamburgerMenu panelOpen={!panelHidden} onTogglePanel={() => { setPanelHidden((h) => !h); setMenuOpen(false); }} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
-          <button type="button" className="dg-menu" onClick={() => { if (panelHidden) setPanelHidden(false); else setMenuOpen(true); }} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
+          <HamburgerMenu panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
+          <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{room}</h1>
+          <NotificationBell notes={notes} prefs={prefs} room={room} onPrefs={setPrefs} onOpen={(r) => openRoomRef.current(r)}
+            onReadAll={() => setNotes((p) => p.map((n) => ({ ...n, read: true })))} onClear={() => setNotes([])} />
           <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>
             {sync.status === "syncing" ? "Syncing…" : sync.status === "offline" ? `Offline${sync.pending ? ` · ${sync.pending} waiting` : ""}` : sync.status === "error" ? "Not syncing" : sync.pending ? `${sync.pending} sending` : "Synced"}
           </span>
-          <NotificationBell notes={notes} prefs={prefs} room={room} onPrefs={setPrefs} onOpen={(r) => openRoomRef.current(r)}
-            onReadAll={() => setNotes((p) => p.map((n) => ({ ...n, read: true })))} onClear={() => setNotes([])} />
         </header>
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
 

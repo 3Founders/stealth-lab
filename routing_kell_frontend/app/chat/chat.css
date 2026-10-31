@@ -489,3 +489,37 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   background: linear-gradient(135deg, rgba(255, 210, 31, .34), rgba(255, 241, 168, .5)), var(--dg-glass-strong);
   box-shadow: 0 8px 22px rgba(166, 128, 0, .22), 0 1px 3px rgba(0, 0, 0, .09);
 }
+
+/* Header: the title takes the slack, so the bell and the sync pill sit together at the right end. The pill has a fixed width (its text changes
+   between "Syncing…", "Synced" and "Offline · 2 waiting"), so nothing beside it moves when the status changes. */
+.dg-head h1 { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-sync { flex: none; box-sizing: border-box; width: 132px; text-align: center; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px) { .dg-sync { width: 92px; padding-inline: 6px; } }
+
+/* Alerts: the bell's panel. Frosted glass; each alert is its own raised card, unread ones carry a yellow edge and a dot; the settings sit in a
+   recessed box with the switches lined up. */
+.dg-page .dg-bell-pop { padding: 14px; gap: 12px; width: min(400px, calc(100vw - 24px)); background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2); }
+.dg-page .dg-bell-head { padding-bottom: 2px; }
+.dg-page .dg-bell-head > b { font-size: 15px; font-weight: 500; }
+.dg-page .dg-bell-head > span { display: inline-flex; gap: 8px; }
+.dg-page .dg-bell-list { gap: 8px; }
+.dg-page .dg-bell-list li { position: relative; }
+.dg-page .dg-bell-list button {
+  padding: 10px 12px 10px 14px; border-radius: var(--dg-r-btn); background: rgba(255, 255, 255, .62); box-shadow: var(--dg-lift);
+  transition: background-color var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth), transform var(--dg-micro-d) var(--dg-micro);
+}
+.dg-page .dg-bell-list button:hover { background: rgba(255, 255, 255, .85); box-shadow: var(--dg-lift-hover); transform: translateY(-1px); }
+.dg-page .dg-bell-list li[data-read="false"] button { background: linear-gradient(135deg, rgba(255, 210, 31, .26), rgba(255, 241, 168, .42)), var(--dg-glass-strong); }
+.dg-page .dg-bell-list li[data-read="false"]::before { content: ""; position: absolute; left: 5px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--cobalt); z-index: 1; pointer-events: none; }
+.dg-page .dg-bell-list li[data-read="true"] b { font-weight: 400; color: #444; }
+.dg-page .dg-bell-kind { justify-self: start; padding: 1px 8px; border-radius: 999px; background: rgba(25, 58, 112, .1); color: var(--cobalt); font-size: 10.5px; }
+.dg-page .dg-bell-pop .dg-hint { margin: 0; padding: 12px 14px; border-radius: var(--dg-r-btn); background: rgba(255, 255, 255, .5); box-shadow: var(--dg-dent); line-height: 1.45; }
+.dg-page .dg-bell-set { border: 0; padding: 12px 14px; margin: 0; border-radius: var(--dg-r-btn); background: rgba(255, 255, 255, .45); box-shadow: var(--dg-dent); }
+.dg-page .dg-bell-set legend { float: left; width: 100%; padding: 0 0 8px; margin: 0; }
+.dg-page .dg-bell-set legend + * { clear: both; }
+.dg-page .dg-bell-set-body { gap: 10px; }
+.dg-page .dg-bell-set-body label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; line-height: 1.35; }
+.dg-page .dg-bell-set-body input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--cobalt); box-shadow: none; }
+.dg-page .dg-bell-set-body input[type="time"], .dg-page .dg-bell-set-body select { font-size: 13px; padding: 4px 8px; border-radius: var(--dg-r-btn); min-height: 30px; max-width: 100%; }
+.dg-page .dg-bell-set-body .dg-hint { padding: 0; background: none; box-shadow: none; font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { .dg-page .dg-bell-list button { transition: none; transform: none !important; } }
