@@ -3,6 +3,38 @@
 The one list of things we chose to leave for later. Each line says what, why it waits, and where the detail is. Add new
 items here (not in other docs); remove one when it is done, with the commit that did it.
 
+## Decisions
+
+### Open (need the owners)
+
+- **Our agent's strong model.** Recommended: a strong open model (largest GLM / Qwen / DeepSeek) on the same General
+  Compute key, so a user needs one key. An Anthropic API key is optional, and so is Claude Code's headless claude when
+  installed. Never a Claude subscription sign-in inside OpenCode.
+- **Our agent's reviewer** (today Sonnet through headless claude): the same choice as the strong model, configurable.
+- **Our agent's default mode.** Recommended: "session" (the cheap model runs the session, with escalation on failing
+  tests), with "dispatch" (the Claude Code flow) as a setting.
+- **Where a pilot user's model key comes from:** (a) their own General Compute key, or (b) a kell-run organisation they
+  join. Detail: [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md) section 3.
+- **npm:** the first version number, and whether `"license": "UNLICENSED"` stays (Chaitanya publishes).
+- **The app** (our own coding app like Claude Code): desktop (Electron/Tauri over a local OpenCode server), web, or both;
+  the first screens; the website's and console's design system.
+- **Neon storage:** confirm the plan's limit (the local copy of the catalog is about 0.9 GB), and whether to check it
+  through Neon's account API.
+- **Gateway terms review:** who reads each allowlisted server's terms.
+
+### Made (kept here so they aren't reopened by accident)
+
+- **2026-10-31, the harness:** OpenCode (MIT, plugin API 2.2.5 pinned), as a plugin with no fork. DeepSeek Harness was
+  not chosen while it is a preview, but its design (replaceable parts) is the pattern we follow.
+- **2026-10-31, the claude.ai checker:** gemma-4-31b-it checks glm-5.3-flash for now; a stronger checker later
+  (Cost and speed, below).
+- **2026-10-31, the listed MCP tools' token budget:** 2600 (owner: "if no quality loss").
+- **2026-10-31, the gateway, phase 1:** the allowlist is a rule (live with no sign-in, verified publisher, at most 30
+  servers, 20+ stars), not a hand-made list. A one-time consent link per server. Public data and read-only tools only.
+  `kell/images` is free to users, 30 a day, paid by kell.
+- **2026-10-31, tool outcomes:** recorded for every user; the ranking adds them all together for now.
+- **2026-10-31, the one list:** everything we leave for later goes in this file.
+
 ## Cost and speed
 
 - **Hard tasks save money but not time.** When no cheap model solves a hard multi-step fix, the cheap tries cost cents
