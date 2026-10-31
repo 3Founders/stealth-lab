@@ -45,25 +45,36 @@ describe("/account/billing", () => {
 });
 
 describe("/pricing", () => {
-  it("with purchases on, wires Starter, Pro, Plus and the Pilot to their payment blocks and leaves Teams and Enterprise as 'contact us'", async () => {
+  it("with purchases on, each of Starter, Pro and Plus pays inside its own card; Teams and Enterprise stay 'contact us'; nothing is named pilot", async () => {
     vi.stubEnv("NEXT_PUBLIC_KELL_BUY_PLANS", "on");
     await render(<PricingPage />);
     const t = host!.textContent ?? "";
-    for (const id of ["starter", "pro", "plus", "pilot"]) {
-      expect(hrefs()).toContain(`#buy-${id}`);
-      expect(host!.querySelector(`#buy-${id}`)).not.toBeNull();
+    for (const n of ["Starter", "Pro", "Plus"]) {
+      const card = host!.querySelector(`article[aria-label="${n}"]`)!;
+      expect(card.textContent).toContain(`Sign in to buy ${n}`);
+      expect(card.querySelector('a[href="/sign-in?redirect=/pricing"]')).not.toBeNull();
     }
-    expect(t).toContain("Sign in to start the pilot");
-    for (const n of ["Starter", "Pro", "Plus"]) expect(t).toContain(`Sign in to buy ${n}`);
+    for (const id of ["starter", "pro", "plus", "pilot"]) {
+      expect(host!.querySelector(`#buy-${id}`)).toBeNull();                                      // no separate payment blocks
+      expect(hrefs()).not.toContain(`#buy-${id}`);
+    }
     const contacts = [...host!.querySelectorAll("article a")].filter((a) => a.getAttribute("href") === "/contact");
     expect(contacts.length).toBe(2);                                                           // Teams and Enterprise
+    expect(t).not.toMatch(/pilot/i);
     expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude|ChatGPT|Codex|zero.egress|zero data retention|SOC 2 (compliant|certified)/i);
+  });
+
+  it("the page is the plans, the credit packs and the legal links, with no extra blocks and no data-path block", async () => {
+    await render(<PricingPage />);
+    const headings = [...host!.querySelectorAll("h2")].map((h) => h.textContent);
+    expect(headings).toEqual(["Plans", "Additional kell credits"]);
+    expect(host!.textContent).not.toMatch(/Where your data goes|What credits are|SOC 2 report/);
   });
 
   it("the cards end with their button: no status caption and no 'not included' lines", async () => {
     await render(<PricingPage />);
     const cards = [...host!.querySelectorAll("article.plan-card")];
-    expect(cards.length).toBe(6);                                                              // Starter, Pro, Plus, Pilot, Teams, Enterprise
+    expect(cards.length).toBe(5);                                                              // Starter, Pro, Plus, Teams, Enterprise
     for (const c of cards) {
       expect(c.querySelector(".caption")).toBeNull();
       expect(c.querySelector("ul.dim")).toBeNull();
@@ -73,15 +84,12 @@ describe("/pricing", () => {
     expect(t).not.toContain("Not available online yet");
     expect(t).not.toContain("Invoiced directly");
     expect(t).not.toContain("Public or non-sensitive material only");
-    expect(t).not.toMatch(/bring your own key/i);
+    expect(t).not.toMatch(/bring your own key|pilot/i);
   });
 
-  it("by default (purchases off), the cards link to Contact and there are no payment blocks", async () => {
+  it("by default (purchases off), the cards link to Contact and nothing can be bought", async () => {
     await render(<PricingPage />);
-    for (const id of ["starter", "pro", "plus", "pilot"]) {
-      expect(host!.querySelector(`#buy-${id}`)).toBeNull();
-      expect(hrefs()).not.toContain(`#buy-${id}`);
-    }
-    expect([...host!.querySelectorAll("article a")].every((a) => a.getAttribute("href") === "/contact")).toBe(true);
+    expect([...host!.querySelectorAll("article.plan-card a")].every((a) => a.getAttribute("href") === "/contact")).toBe(true);
+    expect(host!.querySelector("button")).toBeNull();
   });
 });

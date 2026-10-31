@@ -28,7 +28,7 @@ export const contactEmail = () => parseContactEmail(process.env.NEXT_PUBLIC_CONT
 
 export const TOPICS = [
   ["general", "Just asking"],
-  ["pilot", "Running a pilot"],
+  ["pilot", "Trying it with a team"],
   ["security", "Security or privacy"],
   ["other", "Something else"],
 ] as const;

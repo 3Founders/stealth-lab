@@ -42,7 +42,7 @@ export type Loaded<T> =
   | { kind: "signed-out" }
   | { kind: "error"; message: string };
 
-// ---- plans (Starter, Pro, Plus and the Pilot): docs/pricing_page.md, Phase 2
+// ---- plans (Starter, Pro and Plus): docs/pricing_page.md, Phase 2
 
 /**
  * Buying a plan online is OFF unless the deployment says "on". The server side is not live until the founders say so; with the flag off the
@@ -52,35 +52,14 @@ export function buyPlansOn(raw: string | undefined = process.env.NEXT_PUBLIC_KEL
   return (raw ?? "").trim().toLowerCase() === "on";
 }
 
-/** A pilot is 1 to 10 seats. One seat is an individual pilot (no team); two or more make a team workspace that needs a name. */
-export const PILOT_MIN_SEATS = 1;
-export const PILOT_MAX_SEATS = 10;
-export const TEAM_FROM_SEATS = 2;
-export const TEAM_NAME_MIN = 2;
-export const TEAM_NAME_MAX = 60;
-
-export function seatsProblem(n: number): string | null {
-  if (!Number.isInteger(n) || n < PILOT_MIN_SEATS || n > PILOT_MAX_SEATS) return `A pilot is for ${PILOT_MIN_SEATS} to ${PILOT_MAX_SEATS} seats.`;
-  return null;
-}
-
-/** The team name is needed only from two seats; for one seat it is not asked for and not sent. */
-export function teamNameProblem(raw: string, seats: number = TEAM_FROM_SEATS): string | null {
-  if (seats < TEAM_FROM_SEATS) return null;
-  const n = raw.trim().length;
-  if (n < TEAM_NAME_MIN) return `Give the team a name of at least ${TEAM_NAME_MIN} characters.`;
-  if (n > TEAM_NAME_MAX) return `The team name can be at most ${TEAM_NAME_MAX} characters.`;
-  return null;
-}
-
-export type PlanName = "starter" | "pro" | "plus" | "pilot";
-const PLAN_NAMES: PlanName[] = ["starter", "pro", "plus", "pilot"];
-export interface PlanState { plan: PlanName | null; seats: number; teamName: string | null; activeUntil: string | null }
+export type PlanName = "starter" | "pro" | "plus";
+const PLAN_NAMES: PlanName[] = ["starter", "pro", "plus"];
+export interface PlanState { plan: PlanName | null; activeUntil: string | null }
 
 export function parsePlan(j: Record<string, unknown>): PlanState {
   const plan = PLAN_NAMES.find((n) => n === j.plan) ?? null;
   const until = typeof j.active_until === "string" && j.active_until ? j.active_until : null;
-  return { plan, seats: Number(j.seats) || 0, teamName: typeof j.team_name === "string" && j.team_name ? j.team_name : null, activeUntil: plan ? until : null };
+  return { plan, activeUntil: plan ? until : null };
 }
 
 /** Whether a plan is running now: it names a plan and its end date has not passed. */
@@ -95,8 +74,8 @@ export function anyPlanActive(s: PlanState | null | undefined, now = new Date())
   return Boolean(s?.plan) && planActive(s, s!.plan!, now);
 }
 
-/** What a plan order asks for: the plan, and for a pilot the seats and (from two seats) the team name. Never an amount. */
-export type PlanOrderRequest = { plan: "starter" | "pro" | "plus" } | { plan: "pilot"; seats: number; teamName?: string };
+/** What a plan order asks for: the plan name. Never an amount. */
+export type PlanOrderRequest = { plan: PlanName };
 
 export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -158,19 +137,12 @@ export function billingApi(deps: BillingDeps) {
       if (r.kind === "error" && /answered 404/.test(r.message)) return { kind: "off" };   // a server that has no plan endpoint yet: plans are not switched on
       return r.kind === "ok" ? { kind: "ok", data: parsePlan(r.data) } : r;
     },
-    /**
-     * An order for a plan. The request names the plan, and for a pilot the seats and (from two seats) the team name; it never carries an
-     * amount, because the server works out what to charge.
-     */
-    async planOrder(req: PlanOrderRequest): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; seats: number; periodDays: number }>> {
-      const body = req.plan === "pilot"
-        ? { plan: "pilot", seats: req.seats, ...(req.seats >= TEAM_FROM_SEATS ? { team_name: (req.teamName ?? "").trim() } : {}) }
-        : { plan: req.plan };
-      const r = await call("POST", "/orders", body);
+        async planOrder(req: PlanOrderRequest): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; periodDays: number }>> {
+      const r = await call("POST", "/orders", { plan: req.plan });
       if (r.kind !== "ok") return r;
       const d = r.data;
       if (typeof d.order_id !== "string" || typeof d.key_id !== "string") return { kind: "error", message: "The payment window could not be prepared." };
-      return { kind: "ok", data: { orderId: d.order_id, amountPaise: Number(d.amount_paise), keyId: d.key_id, plan: String(d.plan ?? req.plan), seats: Number(d.seats) || 0, periodDays: Number(d.period_days) || 0 } };
+      return { kind: "ok", data: { orderId: d.order_id, amountPaise: Number(d.amount_paise), keyId: d.key_id, plan: String(d.plan ?? req.plan), periodDays: Number(d.period_days) || 0 } };
     },
     /**
      * An order for an add-on credit pack. The request names the pack and nothing else: the server holds the price. It refuses (403) a person

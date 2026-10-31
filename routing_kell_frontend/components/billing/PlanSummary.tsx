@@ -32,9 +32,7 @@ export default function PlanSummary({ api, session, returnTo = "/account/billing
       {session && state?.kind === "error" && <p className="small" role="alert">{state.message}</p>}
       {session && current && active && (
         <p className="small" role="status">
-          <b>{planById(current.plan!).name} is active until {plainDate(current.activeUntil!)}</b>
-          {current.plan === "pilot" ? <> for {current.seats} seat{current.seats === 1 ? "" : "s"}{current.teamName ? <> in {current.teamName}</> : null}</> : null}.
-          {" "}<Link href="/pricing" style={link}>Renew or change plan</Link>.
+          <b>{planById(current.plan!).name} is active until {plainDate(current.activeUntil!)}</b>. <Link href="/pricing" style={link}>Renew or change plan</Link>.
         </p>
       )}
       {session && current && !active && (

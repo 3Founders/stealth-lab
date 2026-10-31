@@ -27,18 +27,20 @@ describe("/pricing", () => {
   it("shows the plans with the founders' prices; with purchases off every card goes to Contact", async () => {
     await render();
     const t = host!.textContent ?? "";
-    for (const price of ["₹200", "₹1,200", "₹2,000", "₹649", "₹1,800", "Custom"]) expect(t).toContain(price);
+    for (const price of ["₹200", "₹1,200", "₹2,000", "₹1,800", "Custom"]) expect(t).toContain(price);
+    expect(t).not.toContain("₹649");                                                           // no pilot price
+    expect(t).not.toMatch(/pilot/i);
     expect(t).not.toContain("₹999");                                                            // the old Pro price
     expect(t).toContain("before GST");
     const asks = [...host!.querySelectorAll("article a")].map((a) => a.getAttribute("href"));
-    expect(asks).toEqual(Array(6).fill("/contact"));
+    expect(asks).toEqual(Array(5).fill("/contact"));
   });
 
-  it("with purchases on, the Starter, Pro, Plus and Pilot cards go to their payment blocks", async () => {
+  it("with purchases on, Starter, Pro and Plus are bought in their own cards (no link to a payment block)", async () => {
     vi.stubEnv("NEXT_PUBLIC_KELL_BUY_PLANS", "on");
     await render();
     const asks = [...host!.querySelectorAll("article a")].map((a) => a.getAttribute("href"));
-    expect(asks).toEqual(["#buy-starter", "#buy-pro", "#buy-plus", "#buy-pilot", "/contact", "/contact"]);
+    expect(asks).toEqual(["/sign-in?redirect=/pricing", "/sign-in?redirect=/pricing", "/sign-in?redirect=/pricing", "/contact", "/contact"]);
   });
 
   it("recommends Plus with a plain label, and no other card carries it", async () => {
@@ -57,7 +59,6 @@ describe("/pricing", () => {
     expect(card("Starter")).toContain("$1 of usage included");
     expect(card("Pro")).toContain("$6 of usage included");
     expect(card("Plus")).toContain("$12 of usage included");
-    expect(card("Pilot")).toContain("$4 of usage included per seat");
     for (const p of PLANS.filter((x) => x.includedUsd)) {
       expect(card(p.name)).toContain(perDay(p) ?? "");
       expect(card(p.name)).toContain(usageBuys(p) ?? "");
@@ -95,7 +96,7 @@ describe("/pricing", () => {
     for (const [price, credit] of [["₹500", "$2.50"], ["₹1,000", "$5.25"], ["₹2,500", "$13.50"], ["₹5,000", "$28.00"]]) { expect(t).toContain(price); expect(t).toContain(`${credit} of credit`); }
     expect(t).toContain("Buying credits isn’t switched on yet");
     expect(t).toContain("people with an active plan");
-    expect(t).toContain("never expire");
+    expect(t).toContain("does not expire");
     expect(t).toContain("How GST is applied is being confirmed"); // GST mode unset
     expect(host!.querySelector("button")).toBeNull();            // no Pay or buy button
     expect(host!.querySelector("input")).toBeNull();             // no amount field
@@ -116,6 +117,6 @@ describe("/pricing", () => {
     await render();
     const t = host!.textContent ?? "";
     expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude|ChatGPT|Codex|per developer|zero.egress|zero data retention|no.retention|SOC 2 (compliant|certified)|bring your own key|non-sensitive/i);
-    expect(t).toContain("does not yet have a SOC 2 report");
+    expect(t).not.toMatch(/Where your data goes/);
   });
 });

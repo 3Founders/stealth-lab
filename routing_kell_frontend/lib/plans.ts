@@ -8,12 +8,14 @@
  * other buyers do. Everything derived from the numbers below (the per-day figure, "twice Pro's usage for ₹800 more", the task estimate) is
  * computed here, so a change of price changes every sentence with it.
  *
+ * There is no separate plan for teams to try it and no pilot: discounts will come from referral codes, not from another plan.
+ *
  * Kept off on purpose: comparisons with another company's list prices (no measured saving backs them), any savings percentage, and any
  * claim about data handling or security beyond the data-path sentence on the page. There is no bring-your-own-key plan for now.
  */
-export type PlanId = "starter" | "pro" | "plus" | "pilot" | "teams" | "enterprise";
+export type PlanId = "starter" | "pro" | "plus" | "teams" | "enterprise";
 /** The plans that can be bought online (the server's plan names). */
-export type BuyablePlanId = "starter" | "pro" | "plus" | "pilot";
+export type BuyablePlanId = "starter" | "pro" | "plus";
 
 export interface Plan {
   id: PlanId;
@@ -25,7 +27,7 @@ export interface Plan {
   forWhom: string;
   /** Days one payment covers (30 for every plan that can be bought online). */
   periodDays?: number;
-  /** Dollars of usage included per payment (per seat for the pilot). */
+  /** Dollars of usage included per payment. */
   includedUsd?: number;
   /** The plan the page recommends. */
   recommended?: boolean;
@@ -35,12 +37,6 @@ export interface Plan {
   status: string;
   cta: string;
 }
-
-/**
- * Whether the Pilot card and its purchase block are shown at all. One constant, because the pilot may become reachable only with a code
- * (undecided); flip it here and the page, the buy block and the tests that read it follow.
- */
-export const PILOT_VISIBLE = true;
 
 /** Dollars one delegated task cost on the cheap side: the average of 10 prompts in one small repository (docs/unit_economics_2026-10.md, section 1). */
 export const USD_PER_DELEGATED_TASK_ESTIMATE = 0.052;
@@ -79,17 +75,6 @@ export const PLANS: Plan[] = [
     status: "Not available online yet", cta: "Ask for Plus",
   },
   {
-    id: "pilot", name: "Pilot", price: "₹649", priceInr: 649, per: "per seat for 30 days", periodDays: 30, includedUsd: 4, forWhom: "One person, or a team of up to 10 seats, using the MCP only.",
-    includes: [
-      "An assistant or coding tool connected to the keळ MCP, with recommendations.",
-      `Routine steps on lower-cost models, with $4 of usage included per seat.`,
-      "A kept record of what ran.",
-      "A joint report at the end: cost per solved task, with and without keळ.",
-    ],
-    notIncluded: ["The website assistant room and the team admin pages."],
-    status: "Invoiced directly", cta: "Ask about a pilot",
-  },
-  {
     id: "teams", name: "Teams", price: "₹1,800", priceInr: 1800, per: "per seat a month", forWhom: "Three or more seats.",
     includes: [
       "Everything in Pro.",
@@ -118,8 +103,8 @@ export const planById = (id: PlanId): Plan => PLANS.find((p) => p.id === id)!;
 /** The three passes, cheapest first. */
 export const LADDER: Plan[] = (["starter", "pro", "plus"] as const).map(planById);
 
-export const BUYABLE: BuyablePlanId[] = ["starter", "pro", "plus", "pilot"];
-export const isBuyable = (id: string): id is BuyablePlanId => (BUYABLE as string[]).includes(id) && (id !== "pilot" || PILOT_VISIBLE);
+export const BUYABLE: BuyablePlanId[] = ["starter", "pro", "plus"];
+export const isBuyable = (id: string): id is BuyablePlanId => (BUYABLE as string[]).includes(id);
 
 /** "about ₹67 a day": the price spread over the days it covers. */
 export function perDay(p: Plan): string | null {
@@ -135,7 +120,7 @@ export function tasksEstimate(includedUsd: number): number { return roughly(incl
 /** The small "what the usage buys" line for a plan, marked as an estimate. */
 export function usageBuys(p: Plan): string | null {
   if (!p.includedUsd) return null;
-  return `Estimate: about ${tasksEstimate(p.includedUsd).toLocaleString("en-IN")} delegated tasks${p.id === "pilot" ? " per seat" : ""}. Real tasks vary.`;
+  return `Estimate: about ${tasksEstimate(p.includedUsd).toLocaleString("en-IN")} delegated tasks. Real tasks vary.`;
 }
 
 /** "Plus gives twice Pro's usage for ₹800 more", worked out from the two plans (null if either lacks a number). */

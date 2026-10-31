@@ -25,7 +25,7 @@ const wallet = (over: Partial<Wallet> = {}, credits = 0): Loaded<Wallet> => ({
   kind: "ok",
   data: { purchasedUsd: 0, spentUsd: 0, remainingUsd: 4.25, credits: Array.from({ length: credits }, (_, i) => ({ ref: `p${i}`, source: "razorpay", inr: 1000, at: "2026-10-30T00:00:00Z" })), packs: PACKS, packsNeedPlan: true, freeformTopup: false, ...over },
 });
-const plan = (p: PlanState["plan"], until: string | null): Loaded<PlanState> => ({ kind: "ok", data: { plan: p, seats: 0, teamName: null, activeUntil: until } });
+const plan = (p: PlanState["plan"], until: string | null): Loaded<PlanState> => ({ kind: "ok", data: { plan: p, activeUntil: until } });
 const ACTIVE = plan("pro", "2026-11-20T00:00:00Z");
 const NOPLAN = plan(null, null);
 const ORDER = { kind: "ok" as const, data: { orderId: "order_1", amountPaise: 100000, keyId: "rzp_test", pack: "credits_1000", creditUsd: 5.25 } };
