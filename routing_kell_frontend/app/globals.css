@@ -797,3 +797,36 @@ main, footer { position: relative; z-index: 1; }
 
 /* Selected bars used a 1px ink outline (an outline, so the border pass above missed it): a soft shadow instead. */
 .month-bars button[aria-current="true"] i, .cache-row[data-kel="true"] .cache-bar b { outline: 0; box-shadow: 0 3px 10px rgba(0, 0, 0, .22); }
+
+/* Hero "Get started": white glass with a golden glow instead of the black fill. The glow breathes slowly and brightens on hover. */
+.hero-actions .btn-ink {
+  background: #fff; color: var(--ink);
+  box-shadow: 0 0 0 0 rgba(255, 210, 31, 0), 0 0 22px rgba(255, 210, 31, .55), 0 8px 26px rgba(255, 178, 0, .38), 0 1px 3px rgba(0, 0, 0, .08), inset 0 1px 0 rgba(255, 255, 255, .9);
+  animation: kell-glow 3.2s ease-in-out infinite;
+  transition: box-shadow .3s var(--ease), transform .25s var(--ease);
+}
+.hero-actions .btn-ink:hover {
+  background: #fff; animation: none; transform: translateY(-1px);
+  box-shadow: 0 0 34px rgba(255, 210, 31, .85), 0 12px 34px rgba(255, 178, 0, .5), 0 2px 5px rgba(0, 0, 0, .1), inset 0 1px 0 #fff;
+}
+@keyframes kell-glow {
+  0%, 100% { box-shadow: 0 0 18px rgba(255, 210, 31, .45), 0 8px 24px rgba(255, 178, 0, .32), 0 1px 3px rgba(0, 0, 0, .08), inset 0 1px 0 rgba(255, 255, 255, .9); }
+  50% { box-shadow: 0 0 32px rgba(255, 210, 31, .8), 0 10px 32px rgba(255, 178, 0, .48), 0 1px 3px rgba(0, 0, 0, .08), inset 0 1px 0 rgba(255, 255, 255, .9); }
+}
+@media (prefers-reduced-motion: reduce) { .hero-actions .btn-ink { animation: none; } }
+
+/* Account dropdown: it grows out of the trigger and fades, the items follow one after another, the caret turns, and it eases out when closed. */
+.account-menu { transform-origin: top right; animation: acct-in .22s var(--ease) both; }
+.account-menu[data-closing="true"] { animation: acct-out .14s ease-in both; pointer-events: none; }
+.account-menu > * { animation: acct-item .26s var(--ease) both; }
+.account-menu > *:nth-child(2) { animation-delay: 30ms; } .account-menu > *:nth-child(3) { animation-delay: 60ms; } .account-menu > *:nth-child(4) { animation-delay: 90ms; }
+.account-menu > *:nth-child(5) { animation-delay: 120ms; } .account-menu > *:nth-child(6) { animation-delay: 150ms; } .account-menu > *:nth-child(n+7) { animation-delay: 180ms; }
+.account-menu[data-closing="true"] > * { animation: none; }
+.account-trigger .caret { display: inline-block; transition: transform .22s var(--ease); }
+.account-trigger .caret[data-open="true"] { transform: rotate(180deg); }
+.account-menu a, .account-menu button { transition: background-color .18s var(--ease), transform .18s var(--ease); }
+.account-menu a:hover, .account-menu button:hover { transform: translateX(2px); }
+@keyframes acct-in { from { opacity: 0; transform: translateY(-8px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes acct-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-6px) scale(.97); } }
+@keyframes acct-item { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .account-menu, .account-menu > *, .account-trigger .caret { animation: none !important; transition: none; } .account-menu a:hover, .account-menu button:hover { transform: none; } }

@@ -483,3 +483,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   .dg-page .dg-head, .dg-page .dg-side > *, .dg-page .dg-composer, .dg-page .dg-form, .dg-page .dg-bell-pop, .dg-page .dg-me, .dg-page .dg-signout, .dg-page .back-btn--inline { animation: none !important; }
   .dg-page .dg-room, .dg-page .dg-room:hover, .dg-page .dg-room[aria-current="page"], .dg-page .dg-signout, .dg-page .dg-signout:hover, .dg-page .dg-composer textarea:focus-visible, .dg-page .dg-set-nav button:hover, .dg-page .dg-manage-nav button:hover { transition: none; transform: none !important; }
 }
+
+/* The selected room: a slight yellow tint in the glass (the site's yellow, kept pale so the text stays readable), with a warm shadow. */
+.dg-page .dg-room[aria-current="page"] {
+  background: linear-gradient(135deg, rgba(255, 210, 31, .34), rgba(255, 241, 168, .5)), var(--dg-glass-strong);
+  box-shadow: 0 8px 22px rgba(166, 128, 0, .22), 0 1px 3px rgba(0, 0, 0, .09), inset 0 1px 0 rgba(255, 255, 255, .75);
+}

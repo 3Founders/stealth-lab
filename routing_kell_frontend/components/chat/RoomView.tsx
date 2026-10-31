@@ -699,8 +699,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       <section className="dg-main" aria-label={`Room ${room}`}>
         <header className="dg-head">
           <HamburgerMenu panelOpen={!panelHidden} onTogglePanel={() => { setPanelHidden((h) => !h); setMenuOpen(false); }} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
-          <button type="button" className="dg-menu" onClick={() => { if (panelHidden) setPanelHidden(false); else setMenuOpen(true); }} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open rooms and agents">
-            <span aria-hidden="true">▤</span> <span>Rooms</span>
+          <button type="button" className="dg-menu" onClick={() => { if (panelHidden) setPanelHidden(false); else setMenuOpen(true); }} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
+            <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{room}</h1>
           <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>

@@ -15,6 +15,15 @@ import { orgAdminEnabled } from "@/lib/org-admin";
  */
 export default function AccountMenu({ username }: { username: string }) {
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Close with the exit animation (toggle, Escape, click outside). Choosing an item still closes at once: the page is about to change. */
+  function closeSoft() {
+    if (closeTimer.current) return;
+    setClosing(true);
+    closeTimer.current = setTimeout(() => { closeTimer.current = null; setClosing(false); setOpen(false); }, 140);
+  }
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current); }, []);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const firstItemRef = useRef<HTMLAnchorElement>(null);
@@ -28,13 +37,13 @@ export default function AccountMenu({ username }: { username: string }) {
     firstItemRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setOpen(false);
+        closeSoft();
         triggerRef.current?.focus();
       }
     };
     const onClick = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) setOpen(false);
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) closeSoft();
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onClick);
@@ -59,14 +68,14 @@ export default function AccountMenu({ username }: { username: string }) {
         className="account-trigger"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => { if (open) closeSoft(); else setOpen(true); }}
       >
         {devicePhoto ? <DevicePhoto url={devicePhoto} size={26} /> : <Avatar username={username} size={26} authenticated />}
         <span className="account-name">{username}</span>
-        <span className="caret" aria-hidden="true">▾</span>
+        <span className="caret" data-open={open && !closing ? "true" : undefined} aria-hidden="true">▾</span>
       </button>
       {open && (
-        <div className="account-menu" role="menu" aria-label="Account" ref={menuRef}>
+        <div className="account-menu" data-closing={closing ? "true" : undefined} role="menu" aria-label="Account" ref={menuRef}>
           {PROJECT_SYNC_ENABLED && <Link href="/account" role="menuitem" onClick={() => setOpen(false)}>Projects</Link>}
           <Link ref={firstItemRef} href="/account/profile" role="menuitem" onClick={() => setOpen(false)}>Profile</Link>
           <Link href="/account/connections" role="menuitem" onClick={() => setOpen(false)}>Connected apps</Link>

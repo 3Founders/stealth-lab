@@ -218,7 +218,7 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
       <section className="dg-main" aria-label={roomId}>
         <header className="dg-head">
           <HamburgerMenu paused={paused} panelOpen={!panelHidden} onManageRooms={() => setManageOpen(true)} onTogglePanel={() => setPanelHidden((h) => !h)} onPause={() => broker.setPaused(!paused)} />
-          <button type="button" className="dg-rooms-btn" onClick={() => setPanelHidden(false)} aria-label="Show the room list">▤ Rooms</button>
+          <button type="button" className="dg-rooms-btn" onClick={() => setPanelHidden(false)} aria-label="Open sidebar">▤ Open sidebar</button>
           <h1>{roomId}</h1>
           <span className="dg-limit">Agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
           <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>
