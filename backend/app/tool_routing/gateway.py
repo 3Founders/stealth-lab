@@ -327,6 +327,22 @@ def builtin_entry(name: str) -> dict[str, Any]:
             "available": "runs through kell now: no install, no sign-in"}
 
 
+def image_size(arguments: dict[str, Any]) -> str:
+    """The supported size closest to what was asked: "size", or width/height (claude.ai sent width 2048, height 896)."""
+    size = str(arguments.get("size") or "")
+    if size in IMAGE_SIZES:
+        return size
+    try:
+        w, h = int(arguments.get("width") or 0), int(arguments.get("height") or 0)
+    except (TypeError, ValueError):
+        w = h = 0
+    if not (w > 0 and h > 0):
+        m = re.match(r"^\s*(\d+)\s*[x:*]\s*(\d+)\s*$", size)
+        w, h = (int(m.group(1)), int(m.group(2))) if m else (1, 1)
+    want = w / h
+    return min(IMAGE_SIZES, key=lambda s: abs(int(s.split("x")[0]) / int(s.split("x")[1]) - want))
+
+
 async def generate_image(prompt: str, size: str = "1024x1024") -> tuple[bytes, float]:
     """One image from DeepInfra's OpenAI-compatible images endpoint -> (png bytes, seconds)."""
     from app.tool_routing.providers import BASE, deepinfra_key

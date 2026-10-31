@@ -1344,7 +1344,7 @@ async def _builtin_call(server_name: str, tool: str, arguments: dict, data_class
     if not _gateway.allow_rate(f"images:{owner}", _gateway.IMAGES_PER_DAY, 86400):
         return await done("refused:rate_images", f"REFUSED: the daily limit of {_gateway.IMAGES_PER_DAY} images is reached")
     try:
-        png, secs = await _gateway.generate_image(prompt, str(arguments.get("size") or "1024x1024"))
+        png, secs = await _gateway.generate_image(prompt, _gateway.image_size(arguments))
     except _gateway.GatewayRefused as exc:
         return await done("failed:refused", f"FAILED: {server_name}: {exc}")
     except Exception as exc:  # noqa: BLE001
@@ -2977,8 +2977,21 @@ async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = N
 
     Example: use_tool(name="call_model", arguments={"prompt": "Summarise this log: ...", "model": "glm-5.3-flash", "data_class": "PUBLIC_SOURCE"})
     """
+    # A client that keeps the tool list from when it connected (claude.ai) may not know the `server` argument: it then
+    # sends name="<server>/<tool>", or server inside arguments, or a kell server's bare tool name -- all accepted
+    # (claude.ai tried name="generate_image" and name="kell/images/generate_image" and was refused, 2026-10-31)
+    args = dict(arguments or {})
+    if not server.strip() and name not in V1_TOOLS:
+        if isinstance(args.get("server"), str) and args["server"].strip():
+            server = args.pop("server").strip()
+        elif "/" in name:
+            server, name = name.rsplit("/", 1)
+        else:
+            own = next((b for b, spec in _gateway.BUILTIN.items() if any(t["name"] == name for t in spec["tools"])), None)
+            if own:
+                server = own
     if server.strip():
-        return await _gateway_call(ctx, server.strip(), name, dict(arguments or {}), data_class)
+        return await _gateway_call(ctx, server.strip(), name, args, data_class)
     if name in DISCOVERY_TOOLS:
         return f"REFUSED: {name!r} is called directly, not through use_tool"
     if name not in V1_TOOLS:

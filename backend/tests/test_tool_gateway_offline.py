@@ -176,3 +176,29 @@ def test_kells_own_image_server_needs_no_consent_and_keeps_the_rules(monkeypatch
     assert listed["tools"][0]["name"] == "generate_image"
     entry = gw.builtin_entry("kell/images")
     assert entry["via_kell"] and entry["source"] == "kell" and "generate" in entry["goals"]
+
+
+def test_image_size_follows_what_was_asked():
+    assert gw.image_size({"size": "1280x720"}) == "1280x720"
+    assert gw.image_size({"width": 2048, "height": 896}) == "1280x720"                  # wide -> the widest offered
+    assert gw.image_size({"width": 800, "height": 1200}) == "768x1024"
+    assert gw.image_size({"size": "1920x1080"}) == "1280x720"
+    assert gw.image_size({}) == "1024x1024"
+
+
+def test_use_tool_accepts_the_name_forms_a_client_with_an_old_tool_list_sends(monkeypatch):
+    from app.mcp_server import server as srv
+
+    seen = []
+
+    async def fake_call(ctx, server_name, tool, arguments, data_class):
+        seen.append((server_name, tool, arguments))
+        return "ok"
+    monkeypatch.setattr(srv, "_gateway_call", fake_call)
+    run(srv.use_tool(None, name="kell/images/generate_image", arguments={"prompt": "a lake"}))
+    run(srv.use_tool(None, name="generate_image", arguments={"prompt": "a lake"}))
+    run(srv.use_tool(None, name="resolve-library-id", arguments={"server": "io.github.upstash/context7", "libraryName": "react"}))
+    run(srv.use_tool(None, name="generate_image", arguments={"prompt": "a lake"}, server="kell/images"))
+    assert seen == [("kell/images", "generate_image", {"prompt": "a lake"}), ("kell/images", "generate_image", {"prompt": "a lake"}),
+                    ("io.github.upstash/context7", "resolve-library-id", {"libraryName": "react"}),
+                    ("kell/images", "generate_image", {"prompt": "a lake"})]
