@@ -47,11 +47,29 @@ code, Sonnet reviewed it "good", $0.0236). Two things stopped a clean result:
 | "check that the login page still renders in a real browser" | triage `tool=browser`, `tools goal=browser N found`, a tool note | triage `tool=browser`, log shows `tools goal=browser 5 found`. The model used a built-in browser skill and asked for a URL. 116 s. **As expected for the router; whether the note reached the model was not checked.** |
 | "rename foo to bar in utils.py" | no tool note, no knowledge dump, no long wait | triage `trivial_edit`; renamed correctly. 40 s, of which ~25 s was the kell lookup timing out. **Outcome right, wait not short.** |
 | "thanks, looks good" | nothing added | triage `conversation`; "lookup not_needed, not dispatched"; plain reply. 33 s. **As expected.** |
-| "!opus explain the architecture" | kell skips the prompt | kell triaged it as a normal question (the `!` prefix is not honoured by the hook itself; Claude Code strips it before the hook). 46 s. **Not as expected**, a bridge gap: strip a leading `!model` and skip. |
+| "!opus explain the architecture" | kell skips the prompt | kell triaged it as a normal question (the `!` prefix is not honoured by the hook itself; Claude Code strips it before the hook). 46 s. **Not as expected** in the first pass; fixed by stripping the CLI's quotes (second pass). |
 
 Why the answer and dispatch paths did not fire here: every real prompt shows the same ~25 s "no knowledge added (aborted due to
 timeout)", so kell's lookup against the local server (down at first, then `migrations: behind`) times out and the later
 answer/dispatch steps do not run. That is a local-server problem to separate from the bridge; hosted use needs `kell login`.
+
+### Second pass: hosted server after `kell login`, and a transcript fix (one run each, gemma session)
+
+Two things changed: kell now ran against `https://mcp.kell.org.in/mcp` (lookup in ~3 s, no more 25 s timeouts), and the bridge writes
+a Claude Code-shaped transcript (timestamped user and assistant lines) and strips the CLI's wrapping quotes from the prompt.
+Without those, kell's answer path and `!model` skip could not run.
+
+| Prompt | Wall | What happened |
+|---|---|---|
+| repo question | 50 s | triage `work=answer`; the answer path ran but the reviewer judged the cheap reply "bad" once (standalone check), so the session's model answered. Path works; outcome depends on the reviewer. |
+| failing-test fix | 119 s | **dispatch ran**: brief, locate (`mathx.py`), goal file, then three cheap tries (minimax, glm-5.3-flash, gemma) each "no pass (failed)", then the session's model took over and fixed it; 4 tests pass; `capture-stop reported=true accepted=true`. The cheap tries failing here is unexplained (the fixture sits inside the main repo's tree and Windows worktrees are a suspect). |
+| browser task | 66 s | `tools goal=browser 5 found`; the model still asked for a URL |
+| rename | 77 s | triage `trivial_edit`; dispatch tried the same three cheap models, all failed, the session's model renamed correctly |
+| "thanks" | 11 s | `conversation`, nothing added |
+| "!opus ..." | 22 s | **kell skipped it** (no triage logged), as in Claude Code |
+
+So with the hosted server and a proper transcript, the bridge reproduces kell's flow: triage, lookup, dispatch with fallback, tool
+router, capture, and the `!` skip. What is still unlike Claude Code: no cheap-model win in these runs, and no `kell undo` check.
 
 ## Layer 2: native pieces (`plugin/native.mjs`, `KELL_OC_NATIVE=on`)
 
@@ -105,5 +123,5 @@ Nothing else in Layers 1 and 2 needed a fork. No server change is needed for the
 ## Next, in order
 
 1. `kell login` against the hosted server (no local server), then repeat the six prompts and look for the cheap-model answer and
-   dispatch. 2. Find the cold-start hang. 3. Escalation live: a fixture where the cheap model fails its first fix. 4. The Claude
+   dispatch. 2. Find the cold-start hang. 3. Escalation live (and why the three cheap tries fail in this fixture): a fixture where the cheap model fails its first fix. 4. The Claude
    Code arm of the comparison, once someone decides to spend on it.

@@ -34,6 +34,10 @@ export default Plugin.define({
       try { fs.mkdirSync(dir, { recursive: true }) } catch { /* best effort */ }
       return path.join(dir, `${id}.jsonl`)
     }
+    // A transcript in Claude Code's JSONL shape (timestamped user and assistant lines): kell's hooks read the session start,
+    // the earlier turns and the model from it. Without timestamps its answer path and change tracking did not run.
+    const note = (id, entry) => { try { fs.appendFileSync(transcriptFile(id), JSON.stringify({ sessionId: id, cwd, timestamp: new Date().toISOString(), ...entry }) + "\n") } catch { /* best effort */ } }
+    const unquote = (t) => String(t || "").replace(/^"([\s\S]*)"$/, "$1")      // the CLI passes the message wrapped in quotes
     const base = (id, event) => ({ session_id: id, transcript_path: transcriptFile(id), cwd, hook_event_name: event })
     const env = { ...process.env, CLAUDE_PROJECT_DIR: cwd }
 
@@ -53,12 +57,13 @@ export default Plugin.define({
       const s = state(e.sessionID)
       s.context = []
       s.continued = 0
+      note(e.sessionID, { type: "user", message: { role: "user", content: unquote(e.prompt.text) } })
       if (!s.started) {
         s.started = true
         const start = await fire("SessionStart", "startup", { ...base(e.sessionID, "SessionStart"), source: "startup" })
         if (start) s.context.push(...start.additionalContext)
       }
-      const merged = await fire("UserPromptSubmit", "", { ...base(e.sessionID, "UserPromptSubmit"), prompt: e.prompt.text })
+      const merged = await fire("UserPromptSubmit", "", { ...base(e.sessionID, "UserPromptSubmit"), prompt: unquote(e.prompt.text) })
       if (!merged) return
       if (merged.decision === "deny") {
         // Claude Code shows a block's reason to the person and runs no model. Here a model must speak, so it is told to
@@ -80,7 +85,7 @@ ${merged.reason}`
       if (e.kind !== "primary") return
       const s = state(e.sessionID)
       s.model = e.model.id
-      try { fs.appendFileSync(transcriptFile(e.sessionID), JSON.stringify({ type: "assistant", message: { role: "assistant", model: e.model.id } }) + "\n") } catch { /* best effort */ }
+      note(e.sessionID, { type: "assistant", message: { role: "assistant", model: e.model.id } })
     })
 
     // --- PreToolUse -> tool.execute.before: deny throws (the call fails with the reason); updatedInput rewrites.
