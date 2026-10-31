@@ -1,0 +1,56 @@
+/* Closing the room list, "+ New room", the menu and Manage rooms: the same behaviour as the signed-in chat. */
+.dg-side { position: relative; }
+.dg-close { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; display: grid; place-items: center; font-size: 20px; line-height: 1; background: none; border: 0; color: inherit; opacity: .55; cursor: pointer; border-radius: 8px; }
+.dg-close:hover, .dg-close:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
+.dg-shell { transition: grid-template-columns var(--dg-smooth-d) var(--dg-smooth), box-shadow var(--dg-smooth-d) var(--dg-smooth); }
+.dg-shell[data-panel="closed"] { grid-template-columns: 0 1fr; }
+.dg-shell[data-panel="closed"] .dg-side { visibility: hidden; padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden; transition: visibility 0s linear var(--dg-smooth-d); }
+.dg-rooms-btn { display: none; font: inherit; font-size: 14px; min-height: 36px; padding: 0 12px; background: #fff; color: var(--ink); border: 1px solid var(--rule-strong); border-radius: 8px; cursor: pointer; }
+.dg-shell[data-panel="closed"] .dg-rooms-btn { display: inline-flex; align-items: center; }
+@media (max-width: 760px) { .dg-shell[data-panel="closed"] { grid-template-columns: 1fr; grid-template-rows: 1fr; } .dg-shell[data-panel="closed"] .dg-side, .dg-close, .dg-shell[data-panel="closed"] .dg-rooms-btn { display: none; } }
+.dg-add, .dg-mini { font: inherit; font-size: 14px; min-height: 36px; padding: 0 14px; background: transparent; color: var(--ink); border: 1px solid var(--ink); border-radius: 6px; cursor: pointer; }
+.dg-add { margin: 8px 6px 0; }
+.dg-add:hover, .dg-mini:hover:not(:disabled) { background: var(--yellow); }
+.dg-mini:disabled { opacity: .45; cursor: not-allowed; }
+.dg-danger { color: #b3261e; border-color: #b3261e; }
+.dg-swap { display: grid; }
+.dg-swap-btn, .dg-swap-form { grid-area: 1 / 1; }
+.dg-swap-btn { display: flex; transition: opacity var(--dg-micro-d) var(--dg-micro), visibility 0s linear 0s; }
+.dg-swap-form { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows var(--dg-smooth-d) var(--dg-smooth), opacity var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d); }
+.dg-swap-inner { min-height: 0; overflow: hidden; }
+.dg-swap[data-open="true"] .dg-swap-btn { opacity: 0; visibility: hidden; transition: opacity var(--dg-micro-d) var(--dg-micro), visibility 0s linear var(--dg-micro-d); }
+.dg-swap[data-open="true"] .dg-swap-form { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows var(--dg-bouncy-d) var(--dg-bouncy), opacity var(--dg-smooth-d) var(--dg-smooth), visibility 0s; }
+.dg-form { display: grid; gap: 6px; margin: 8px 6px 0; padding: 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: #fff; font-size: 13.5px; }
+.dg-form input { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
+.dg-form-row { display: flex; gap: 8px; margin-top: 4px; }
+.dg-err { font-size: 12.5px; color: #b3261e; margin: 4px 0 0; }
+.dg-hamburger { position: relative; }
+.dg-burger { width: 36px; height: 36px; display: grid; place-items: center; background: #fff; border: 1px solid var(--rule-strong); border-radius: 8px; cursor: pointer; }
+.dg-burger-bars { display: grid; gap: 3px; }
+.dg-burger-bars i { display: block; width: 16px; height: 2px; background: var(--ink); border-radius: 1px; }
+.dg-menu-pop { animation: dg-pop var(--dg-micro-d) var(--dg-micro) both; transform-origin: top left; position: absolute; top: calc(100% + 6px); left: 0; z-index: 20; min-width: 200px; padding: 4px; display: grid; background: #fff; border: 1px solid var(--rule-strong); border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,.16); }
+.dg-menu-pop button { font: inherit; text-align: left; padding: 8px 10px; background: none; border: 0; border-radius: 5px; color: var(--ink); cursor: pointer; }
+.dg-menu-pop button:hover, .dg-menu-pop button:focus-visible { background: var(--yellow); outline: none; }
+.dg-menu-pop hr { border: 0; border-top: 1px solid var(--rule); margin: 4px 0; width: 100%; }
+.dg-manage { padding: 0; border: 0; background: transparent; max-width: none; width: min(820px, 94vw); height: min(560px, 86vh); margin: auto; overflow: visible; color: var(--ink); font-family: inherit; }
+.dg-manage[open] { display: block; animation: dg-pop var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-manage::backdrop { background: rgba(0,0,0,.4); }
+.dg-manage-frame { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: #fff; border: 1px solid var(--rule-strong); border-radius: 14px; box-shadow: 0 28px 70px rgba(0,0,0,.3); overflow: hidden; }
+.dg-manage-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid var(--rule); }
+.dg-manage-head h2 { font-size: 20px; margin: 0; }
+.dg-manage-x { width: 36px; height: 36px; border: 0; border-radius: 10px; background: transparent; font-size: 24px; cursor: pointer; color: var(--ink); }
+.dg-manage-x:hover { background: var(--paper); }
+.dg-manage-body { display: grid; grid-template-columns: 200px minmax(0, 1fr); min-height: 0; }
+.dg-manage-nav { display: grid; align-content: start; gap: 2px; padding: 10px; border-right: 1px solid var(--rule); background: var(--paper); overflow-y: auto; }
+.dg-manage-nav button { text-align: left; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: var(--ink); cursor: pointer; }
+.dg-manage-nav button[aria-selected="true"] { background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.1); font-weight: 500; }
+.dg-manage-panel { padding: 18px 22px 26px; overflow-y: auto; min-height: 0; }
+.dg-manage-panel h3 { font-size: 20px; margin: 0 0 6px; font-weight: 400; }
+.dg-manage-panel h4 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); font-weight: 400; margin: 18px 0 6px; }
+.dg-manage-lead { color: #444; font-size: 14.5px; line-height: 1.45; margin: 4px 0 8px; }
+.dg-manage-people { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dg-manage-people li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.dg-manage-people .dg-handle { flex: 1; min-width: 0; }
+.dg-manage-people select { font: inherit; font-size: 14px; padding: 4px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
+@media (max-width: 640px) { .dg-manage-body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); } .dg-manage-nav { grid-auto-flow: column; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--rule); } }
+@media (prefers-reduced-motion: reduce) { .dg-shell, .dg-swap-btn, .dg-swap-form, .dg-menu-pop, .dg-manage[open] { animation: none !important; transition: none !important; } }

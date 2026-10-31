@@ -5,6 +5,9 @@ import Composer from "@/components/chat/Composer";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
 import { agentIdentity, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
 import { attachMockAgent } from "@/lib/chat/adapters/mock";
+import HamburgerMenu from "@/components/chat/HamburgerMenu";
+import ManageRooms from "@/components/chat/ManageRooms";
+import { newRoomId, seedRoles, type Roles } from "@/lib/chat/rooms";
 import { Broker } from "@/lib/chat/relay/broker";
 import { openChannel } from "@/lib/chat/relay/channel";
 import type { AgentActivity, AgentIdentity, GroupMessage, Room } from "@/lib/chat/types";
@@ -67,6 +70,13 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   if (!world.current) world.current = makeBroker();
   const { broker, agents } = world.current;
 
+  const [rooms, setRooms] = useState<Room[]>(ROOMS);
+  const [roles, setRoles] = useState<Roles>(() => seedRoles(ROOMS, HUMANS[0].handle));
+  const [manageOpen, setManageOpen] = useState(false);
+  const [panelHidden, setPanelHidden] = useState(false);
+  const [newRoom, setNewRoom] = useState<string | null>(null); // null = closed
+  const [formError, setFormError] = useState("");
+  const roomInput = useRef<HTMLInputElement>(null);
   const [roomId, setRoomId] = useState(ROOMS[0].id);
   const [me, setMe] = useState(HUMANS[0]);
   const [lines, setLines] = useState<Record<string, Line[]>>({});
@@ -116,6 +126,32 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   useEffect(() => { scrollToEnd({ instant: true }); }, [roomId, scrollToEnd]);
   useEffect(() => { follow(); }, [blocks, follow]);
 
+  const createRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    const r = newRoomId(rooms.map((x) => x.id), newRoom ?? "");
+    if ("error" in r) { setFormError(r.error); return; }
+    const room: Room = { id: r.id, title: r.id.slice(1), members: [me.handle] };
+    broker.addRoom(room);
+    setRooms((p) => [...p, room]);
+    setMembers((p) => ({ ...p, [room.id]: room.members }));
+    setRoles((p) => ({ ...p, [room.id]: { [me.handle]: "owner" } }));
+    setRoomId(room.id); setNewRoom(null); setFormError("");
+  };
+  const setRole = (rid: string, handle: string, role: "admin" | "member") => setRoles((p) => ({ ...p, [rid]: { ...p[rid], [handle]: role } }));
+  const removeMember = (rid: string, handle: string) => {
+    broker.removeMember(rid, handle);
+    setRoles((p) => { const { [handle]: _gone, ...rest } = p[rid] ?? {}; return { ...p, [rid]: rest }; }); // eslint-disable-line @typescript-eslint/no-unused-vars
+  };
+  const dissolve = (rid: string) => {
+    if (rooms.length < 2) return;
+    broker.removeRoom(rid);
+    const left = rooms.filter((x) => x.id !== rid);
+    setRooms(left);
+    setRoles((p) => { const { [rid]: _gone, ...rest } = p; return rest; }); // eslint-disable-line @typescript-eslint/no-unused-vars
+    setLines((p) => { const { [rid]: _gone, ...rest } = p; return rest; }); // eslint-disable-line @typescript-eslint/no-unused-vars
+    if (roomId === rid) setRoomId(left[0].id);
+  };
+
   const note = (t: string) => push(roomId, { kind: "notice", id: broker.newId(), text: t });
 
   const submit = async (line: string) => {
@@ -141,17 +177,33 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
   };
 
   return (
-    <div className="dg-shell" data-paused={paused}>
+    <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"}>
       <aside className="dg-side" aria-label="Rooms and members">
+        <button type="button" className="dg-close" onClick={() => setPanelHidden(true)} aria-label="Close the room list" title="Close the room list">×</button>
         {brand && <div className="dg-brand">{brand}</div>}
         <h2>Rooms</h2>
         <nav>
-          {ROOMS.map((r) => (
+          {rooms.map((r) => (
             <button key={r.id} type="button" className="dg-room" aria-current={r.id === roomId ? "page" : undefined} onClick={() => setRoomId(r.id)}>
               <span aria-hidden="true">#</span>{r.id.slice(1)}
             </button>
           ))}
         </nav>
+        <div className="dg-swap" data-open={newRoom !== null}>
+          <div className="dg-swap-btn">
+            <button type="button" className="dg-add" tabIndex={newRoom === null ? 0 : -1} onClick={() => { setNewRoom(""); setFormError(""); setTimeout(() => roomInput.current?.focus(), 0); }}>+ New room</button>
+          </div>
+          <div className="dg-swap-form">
+            <div className="dg-swap-inner">
+              <form className="dg-form" onSubmit={createRoom}>
+                <label htmlFor="dg-room-name">Room name</label>
+                <input ref={roomInput} id="dg-room-name" value={newRoom ?? ""} tabIndex={newRoom === null ? -1 : 0} onChange={(e) => setNewRoom(e.target.value)} placeholder="design-review" maxLength={30} autoComplete="off" />
+                {formError && <p className="dg-err" role="alert">{formError}</p>}
+                <div className="dg-form-row"><button type="submit" className="dg-mini" tabIndex={newRoom === null ? -1 : 0}>Create</button><button type="button" className="dg-mini" tabIndex={newRoom === null ? -1 : 0} onClick={() => { setNewRoom(null); setFormError(""); }}>Cancel</button></div>
+              </form>
+            </div>
+          </div>
+        </div>
         <h2>In this room</h2>
         <ul className="dg-members">
           {roomMembers.map((h) => {
@@ -175,8 +227,15 @@ export default function RoomView({ brand }: { brand?: React.ReactNode }) {
         <p className="dg-note">Runs in this tab only. The relay keeps no history, and nothing leaves this machine.</p>
       </aside>
 
+      <ManageRooms
+        open={manageOpen} onClose={() => setManageOpen(false)} rooms={rooms.map((r) => ({ id: r.id, members: members[r.id] ?? r.members }))} initial={roomId}
+        me={me.handle} roles={roles} isAgent={(h) => broker.isAgent(h)}
+        onSetRole={setRole} onRemove={removeMember} onDissolve={dissolve}
+      />
       <section className="dg-main" aria-label={roomId}>
         <header className="dg-head">
+          <HamburgerMenu paused={paused} panelOpen={!panelHidden} onManageRooms={() => setManageOpen(true)} onTogglePanel={() => setPanelHidden((h) => !h)} onPause={() => broker.setPaused(!paused)} />
+          <button type="button" className="dg-rooms-btn" onClick={() => setPanelHidden(false)} aria-label="Show the room list">▤ Rooms</button>
           <h1>{roomId}</h1>
           <span className="dg-limit">Agents hand off at most {MAX_DEPTH} times before a person must step in.</span>
           <button type="button" className="dg-breaker" aria-pressed={paused} onClick={() => broker.setPaused(!paused)}>

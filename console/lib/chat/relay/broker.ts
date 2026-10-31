@@ -36,6 +36,15 @@ export class Broker {
     this.emit({ kind: "members", roomId, members: [...r.members] });
   }
 
+  removeMember(roomId: string, handle: string) {
+    const r = this.rooms.get(roomId);
+    if (!r || !r.members.includes(handle)) return;
+    r.members = r.members.filter((h) => h !== handle);
+    this.emit({ kind: "members", roomId, members: [...r.members] });
+  }
+  /** Dissolves a room: it is forgotten here, and nothing was ever kept of its messages. */
+  removeRoom(id: string) { this.rooms.delete(id); }
+
   /** Marks a handle as an agent: only agents are held back by the depth guard and the pause. */
   registerAgent(handle: string) { this.agents.add(handle); if (!this.activity.has(handle)) this.activity.set(handle, "idle"); }
   isAgent(handle: string) { return this.agents.has(handle); }

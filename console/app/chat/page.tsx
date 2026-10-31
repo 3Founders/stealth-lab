@@ -1,6 +1,7 @@
 import RoomView from "@/components/chat/RoomView";
 import { springVars } from "@/lib/chat/spring";
 import "./chat.css";
+import "./rooms.css";
 
 export const metadata = { title: "Chat (dev sandbox)" };
 
