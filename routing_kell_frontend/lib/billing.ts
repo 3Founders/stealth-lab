@@ -64,6 +64,50 @@ export type Loaded<T> =
   | { kind: "signed-out" }
   | { kind: "error"; message: string };
 
+// ---- plans (Pilot, Pro): docs/pricing_page.md, Phase 2
+
+/** Buying plans online is off until the founders turn it on (NEXT_PUBLIC_KELL_BUY_PLANS=on) once the server answers. */
+export function buyPlansOn(raw: string | undefined = process.env.NEXT_PUBLIC_KELL_BUY_PLANS): boolean {
+  return (raw ?? "").trim().toLowerCase() === "on";
+}
+
+export const PILOT_MIN_SEATS = 3;
+export const PILOT_MAX_SEATS = 10;
+export const PILOT_DAYS = 14;
+export const PRO_DAYS = 30;
+export const TEAM_NAME_MIN = 2;
+export const TEAM_NAME_MAX = 60;
+
+export function seatsProblem(n: number): string | null {
+  if (!Number.isInteger(n) || n < PILOT_MIN_SEATS || n > PILOT_MAX_SEATS) return `A pilot is for ${PILOT_MIN_SEATS} to ${PILOT_MAX_SEATS} seats.`;
+  return null;
+}
+
+export function teamNameProblem(raw: string): string | null {
+  const n = raw.trim().length;
+  if (n < TEAM_NAME_MIN) return `Give the team a name of at least ${TEAM_NAME_MIN} characters.`;
+  if (n > TEAM_NAME_MAX) return `The team name can be at most ${TEAM_NAME_MAX} characters.`;
+  return null;
+}
+
+export interface PlanState { plan: "pilot" | "pro" | null; seats: number; teamName: string | null; activeUntil: string | null }
+
+export function parsePlan(j: Record<string, unknown>): PlanState {
+  const plan = j.plan === "pilot" || j.plan === "pro" ? j.plan : null;
+  const until = typeof j.active_until === "string" && j.active_until ? j.active_until : null;
+  return { plan, seats: Number(j.seats) || 0, teamName: typeof j.team_name === "string" && j.team_name ? j.team_name : null, activeUntil: plan ? until : null };
+}
+
+/** Whether a plan is running now: it names a plan and its end date has not passed. */
+export function planActive(s: PlanState | null | undefined, plan: "pilot" | "pro", now = new Date()): boolean {
+  if (!s || s.plan !== plan || !s.activeUntil) return false;
+  const t = Date.parse(s.activeUntil);
+  return Number.isFinite(t) && t > now.getTime();
+}
+
+export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
+export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
 export interface BillingDeps { token(): Promise<string | null>; origin?: string; fetchImpl?: typeof fetch }
 
 export function parseWallet(j: Record<string, unknown>): Wallet {
@@ -117,6 +161,23 @@ export function billingApi(deps: BillingDeps) {
       const r = await call("GET", "/wallet");
       return r.kind === "ok" ? { kind: "ok", data: parseWallet(r.data) } : r;
     },
+    /** The plan the signed-in account has bought, if any (docs/pricing_page.md, Phase 2). */
+    async plan(): Promise<Loaded<PlanState>> {
+      const r = await call("GET", "/plan");
+      return r.kind === "ok" ? { kind: "ok", data: parsePlan(r.data) } : r;
+    },
+    /**
+     * An order for a plan. The request names the plan, and for a pilot the seats and the team name; it never carries an amount, because
+     * the server works out what to charge.
+     */
+    async planOrder(req: { plan: "pro" } | { plan: "pilot"; seats: number; teamName: string }): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; seats: number; periodDays: number }>> {
+      const body = req.plan === "pilot" ? { plan: "pilot", seats: req.seats, team_name: req.teamName.trim() } : { plan: "pro" };
+      const r = await call("POST", "/orders", body);
+      if (r.kind !== "ok") return r;
+      const d = r.data;
+      if (typeof d.order_id !== "string" || typeof d.key_id !== "string") return { kind: "error", message: "The payment window could not be prepared." };
+      return { kind: "ok", data: { orderId: d.order_id, amountPaise: Number(d.amount_paise), keyId: d.key_id, plan: String(d.plan ?? req.plan), seats: Number(d.seats) || 0, periodDays: Number(d.period_days) || 0 } };
+    },
     async order(amountInr: number): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string }>> {
       const r = await call("POST", "/orders", { amount_inr: amountInr });
       if (r.kind !== "ok") return r;
@@ -149,12 +210,12 @@ export function loadCheckout(): Promise<RazorpayCtor | null> {
 }
 
 /** Opens the payment window for an order. Resolves "paid" (the window reported success: NOT yet credited), "closed" or "failed". */
-export async function openCheckout(o: { orderId: string; amountPaise: number; keyId: string }): Promise<"paid" | "closed" | "failed"> {
+export async function openCheckout(o: { orderId: string; amountPaise: number; keyId: string }, description = "Prepaid credits"): Promise<"paid" | "closed" | "failed"> {
   const Razorpay = await loadCheckout();
   if (!Razorpay) return "failed";
   return new Promise((resolve) => {
     const rz = new Razorpay({
-      key: o.keyId, order_id: o.orderId, amount: o.amountPaise, currency: "INR", name: "keळ", description: "Prepaid credits",
+      key: o.keyId, order_id: o.orderId, amount: o.amountPaise, currency: "INR", name: "keळ", description,
       handler: () => resolve("paid"), modal: { ondismiss: () => resolve("closed") }, theme: { color: "#193A70" },
     });
     rz.on("payment.failed", () => resolve("failed"));

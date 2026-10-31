@@ -18,6 +18,7 @@ function AccountIndex() {
   const items: [string, string, string][] = [
     ["/account/connections", "Connected apps", "Apps and agents you have allowed to act for you."],
     ["/account/profile", "Profile", "Your photo, username and a line about you."],
+    ["/account/billing", "Billing", "Your plan, prepaid credit and what you have paid."],
   ];
   return (
     <>

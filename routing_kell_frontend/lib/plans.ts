@@ -11,6 +11,8 @@ export interface Plan {
   id: "pro" | "teams" | "enterprise" | "pilot";
   name: string;
   price: string;
+  /** The price in whole rupees, before GST (null for custom). The only numeric copy of the price; the page multiplies it by seats for the live total. */
+  priceInr: number | null;
   per: string;
   forWhom: string;
   includes: string[];
@@ -22,7 +24,7 @@ export interface Plan {
 
 export const PLANS: Plan[] = [
   {
-    id: "pro", name: "Pro", price: "₹999", per: "a month", forWhom: "One person or a small student team.",
+    id: "pro", name: "Pro", price: "₹999", priceInr: 999, per: "a month", forWhom: "One person or a small student team.",
     includes: [
       "Connect an assistant or coding tool.",
       "A recommended plan for each task.",
@@ -33,7 +35,7 @@ export const PLANS: Plan[] = [
     status: "Not available online yet", cta: "Ask for Pro",
   },
   {
-    id: "teams", name: "Teams", price: "₹1,800", per: "per seat a month", forWhom: "Three or more seats.",
+    id: "teams", name: "Teams", price: "₹1,800", priceInr: 1800, per: "per seat a month", forWhom: "Three or more seats.",
     includes: [
       "Everything in Pro.",
       "Usage shared across the team, with per-person and monthly spending limits and one stop-all switch.",
@@ -44,7 +46,7 @@ export const PLANS: Plan[] = [
     status: "Not available online yet", cta: "Ask for Teams",
   },
   {
-    id: "enterprise", name: "Enterprise", price: "Custom", per: "annual contract", forWhom: "Private code or compliance needs.",
+    id: "enterprise", name: "Enterprise", price: "Custom", priceInr: null, per: "annual contract", forWhom: "Private code or compliance needs.",
     includes: [
       "Everything in Teams.",
       "A no-retention provider option under a signed agreement.",
@@ -56,7 +58,7 @@ export const PLANS: Plan[] = [
     status: "Planned", cta: "Talk to us",
   },
   {
-    id: "pilot", name: "Pilot", price: "₹649", per: "per seat for 2 weeks", forWhom: "Teams of 3 to 10 seats, using the MCP only.",
+    id: "pilot", name: "Pilot", price: "₹649", priceInr: 649, per: "per seat for 2 weeks", forWhom: "Teams of 3 to 10 seats, using the MCP only.",
     includes: [
       "An assistant or coding tool connected to the keळ MCP, with recommendations.",
       "Routine steps on lower-cost models, with usage included.",
@@ -67,3 +69,5 @@ export const PLANS: Plan[] = [
     status: "Invoiced directly", cta: "Ask about a pilot",
   },
 ];
+
+export const planById = (id: Plan["id"]): Plan => PLANS.find((p) => p.id === id)!;

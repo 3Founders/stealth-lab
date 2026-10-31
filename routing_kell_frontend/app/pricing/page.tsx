@@ -2,8 +2,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
+import BuyPlan from "@/components/billing/BuyPlan";
 import TopUp from "@/components/billing/TopUp";
-import { DEFAULT_MAX_INR, DEFAULT_MIN_INR, billingApi, gstMode, gstSentence, marginPct, workedExample } from "@/lib/billing";
+import { DEFAULT_MAX_INR, DEFAULT_MIN_INR, billingApi, buyPlansOn, gstMode, gstSentence, marginPct, workedExample } from "@/lib/billing";
 import { PLANS } from "@/lib/plans";
 import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
 
@@ -12,12 +13,14 @@ const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigi
 const link = { textDecoration: "underline" } as const;
 
 /**
- * Plans and prepaid credits (docs/pricing_page.md, docs/billing.md). No plan can be bought online yet; each has a way to ask for it.
+ * Plans and prepaid credits (docs/pricing_page.md, docs/billing.md). Pilot and Pro can be bought online only when NEXT_PUBLIC_KELL_BUY_PLANS=on; otherwise (and for Teams and Enterprise) each plan has a way to ask for it.
  * Credits can be bought by signed-in people once the server has billing switched on, and the page says so plainly while it is off.
  */
 export default function PricingPage() {
   const pct = marginPct();
   const example = workedExample(10, pct);
+  const buy = buyPlansOn();                       // off until the founders turn plan purchases on
+  const buyable = (id: string) => buy && (id === "pilot" || id === "pro");
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
@@ -35,7 +38,7 @@ export default function PricingPage() {
         <div className="profile-wrap" style={{ gridColumn: "1 / span 12", display: "grid", gap: 28 }}>
           <div className="profile-card" aria-labelledby="plans-title">
             <h2 className="h3" id="plans-title">Plans</h2>
-            <p className="small dim">Prices are in rupees, before GST. No plan can be bought online yet: monthly and per-seat billing is still being built. Ask for one and we will set it up with you directly.</p>
+            <p className="small dim">Prices are in rupees, before GST. {buy ? "The Pilot and Pro can be bought below, paid once for their period. Teams and Enterprise are set up with you directly: ask and we will." : "No plan can be bought online yet: monthly and per-seat billing is still being built. Ask for one and we will set it up with you directly."}</p>
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", marginTop: 16 }}>
               {PLANS.map((p) => (
                 <article key={p.id} className="card" aria-label={p.name} style={{ border: "1px solid var(--rule-strong)", borderRadius: 6, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
@@ -44,13 +47,18 @@ export default function PricingPage() {
                   <p className="small dim">{p.forWhom}</p>
                   <ul className="small" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.includes.map((t) => <li key={t}>{t}</li>)}</ul>
                   {p.notIncluded && <ul className="small dim" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.notIncluded.map((t) => <li key={t}>{t}</li>)}</ul>}
-                  <p className="caption" role="status">{p.status}</p>
-                  <Link className="btn-line" href="/contact"><span>{p.cta}</span></Link>
+                  {!buyable(p.id) && <p className="caption" role="status">{p.status}</p>}
+                  {buyable(p.id)
+                    ? <a className="btn-line" href={`#buy-${p.id}`}><span>{p.id === "pilot" ? "Start a pilot" : "Buy Pro"}</span></a>
+                    : <Link className="btn-line" href="/contact"><span>{p.cta}</span></Link>}
                 </article>
               ))}
             </div>
             <p className="small dim" style={{ marginTop: 14 }}>Extra usage on any plan is bought in advance as credits, below.</p>
           </div>
+
+          {buy && <BuyPlan plan="pilot" api={api} session={session} />}
+          {buy && <BuyPlan plan="pro" api={api} session={session} />}
 
           <div className="profile-card">
             <h2 className="h3">Extra usage: prepaid credits</h2>

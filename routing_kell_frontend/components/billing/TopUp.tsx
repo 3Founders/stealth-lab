@@ -23,9 +23,11 @@ export const WAIT_MS = 2500;
  * the balance to change; only the server's signed webhook changes it, so a "paid" message alone never shows a different balance.
  * `session` is undefined while it is being checked, null when signed out.
  */
-export default function TopUp({ api, session, checkout = openCheckout, waitMs = WAIT_MS, looks = WAIT_LOOKS }: {
+export default function TopUp({ api, session, checkout = openCheckout, waitMs = WAIT_MS, looks = WAIT_LOOKS, history = false, returnTo = "/pricing" }: {
   api: Api; session: Session | null | undefined;
   checkout?: typeof openCheckout; waitMs?: number; looks?: number;
+  /** Also list the top-ups so far (the account billing page shows them; /pricing does not). */
+  history?: boolean; returnTo?: string;
 }) {
   const [wallet, setWallet] = useState<Loaded<Wallet> | null>(null);
   const [amount, setAmount] = useState("500");
@@ -78,7 +80,7 @@ export default function TopUp({ api, session, checkout = openCheckout, waitMs = 
       {session === undefined && <p className="small dim" role="status">Checking your session…</p>}
       {session === null && (
         <p className="small">
-          <Link href="/sign-in?redirect=/pricing" style={link}>Sign in to add credit</Link>. You will come back to this page.
+          <Link href={`/sign-in?redirect=${returnTo}`} style={link}>Sign in to add credit</Link>. You will come back to this page.
         </p>
       )}
       {session && wallet === null && <p className="small dim" role="status">Loading your balance…</p>}
@@ -88,7 +90,7 @@ export default function TopUp({ api, session, checkout = openCheckout, waitMs = 
           <p className="small">Paid top-ups open soon. Nothing is charged and no balance changes until then.</p>
         </div>
       )}
-      {session && wallet?.kind === "signed-out" && <p className="small" role="alert">Your session has ended. <Link href="/sign-in?redirect=/pricing" style={link}>Sign in again</Link>.</p>}
+      {session && wallet?.kind === "signed-out" && <p className="small" role="alert">Your session has ended. <Link href={`/sign-in?redirect=${returnTo}`} style={link}>Sign in again</Link>.</p>}
       {session && wallet?.kind === "error" && <p className="small" role="alert">{wallet.message} <button type="button" className="btn-line" onClick={() => void load()}>Try again</button></p>}
       {session && wallet?.kind === "ok" && (
         <>
@@ -96,6 +98,20 @@ export default function TopUp({ api, session, checkout = openCheckout, waitMs = 
             Balance: <b>{remainingInr(wallet.data) !== null ? inr(remainingInr(wallet.data)!) : "—"}</b>
             <span className="dim"> · {wallet.data.credits.length} top-up{wallet.data.credits.length === 1 ? "" : "s"} so far</span>
           </p>
+          {history && (
+            <div style={{ marginTop: 10 }}>
+              <h3 className="h3" style={{ fontSize: 18 }}>Top-ups so far</h3>
+              {wallet.data.credits.length === 0
+                ? <p className="small dim">None yet.</p>
+                : (
+                  <ul className="small" style={{ display: "grid", gap: 4, paddingLeft: 0, listStyle: "none" }} aria-label="Top-ups so far">
+                    {wallet.data.credits.map((c) => (
+                      <li key={c.ref}><b>{inr(c.inr)}</b> <span className="dim">· {c.at ? new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "date unavailable"} · ref {c.ref}</span></li>
+                    ))}
+                  </ul>
+                )}
+            </div>
+          )}
           <form className="cform" onSubmit={(e) => { e.preventDefault(); void pay(); }} style={{ marginTop: 14 }}>
             <div className="cluster" role="group" aria-label="Top-up amount">
               {PRESET_AMOUNTS_INR.map((a) => (
