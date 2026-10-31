@@ -25,12 +25,14 @@ log = logging.getLogger(__name__)
 
 ENV = "KELL_WALLETS"
 LEGACY_ENV = "KELL_PERSONAL_ORGS"
-# what an individual account may call: the public-data pooled models, through the two tools the apps use. Private data
-# classes join this list only on a zero-retention provider, deliberately and per provider, not here.
+# what an individual account may call: the pooled models, through the two tools the apps use.
 PROVIDERS = ("zai", "general_compute")
 MODELS = ("glm-5.3-flash", "gemma-4-31b-it")
 TOOLS = ("call_model", "chat_completions")
-DATA_CLASSES = ("PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE")
+# Private code is allowed because the founders state that every provider key is zero-retention (ZDR) and the connections in
+# deploy/provider_connections.json declare it. That is the owner's declaration, not a proof (docs/provider_catalog.md); the
+# classes above CONFIDENTIAL_DATA and PERSONAL_DATA stay out.
+DATA_CLASSES = ("PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE", "USER_PRIVATE", "ORG_PRIVATE")
 # the wallet is the limiter; these only stop a runaway bug, not a customer
 MONTHLY_USD = "5000.00"
 PER_USER_DAILY_USD = "1000.00"

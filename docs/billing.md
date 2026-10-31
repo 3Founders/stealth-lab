@@ -8,8 +8,8 @@ These are the prices the founders chose. All in rupees, **before GST**. The cred
 
 | Plan | Price | For | Includes |
 |---|---|---|---|
-| **Starter** | ₹200 for 30 days | One person, light use | $1 of usage included; public or non-sensitive material only. |
-| **Pro** | ₹1,200 for 30 days | One person or a small student team | $6 of usage included; connect an assistant or coding tool; a recommended plan per task; a short cost note after each task; public or non-sensitive material only. |
+| **Starter** | ₹200 for 30 days | One person, light use | $1 of usage included. |
+| **Pro** | ₹1,200 for 30 days | One person or a small student team | $6 of usage included; connect an assistant or coding tool; a recommended plan per task; a short cost note after each task. |
 | **Plus** | ₹2,000 for 30 days | One person who uses it daily | $12 of usage included (twice Pro). The tier the page recommends. |
 | **Teams** | ₹1,800 per seat a month | Three or more seats | Everything in Pro; usage shared across the team; per-person and monthly spending limits and one stop-all switch; members, invitations, usage by person, exportable record; a shared library that learns from the team's results. |
 | **Enterprise** | Custom, by annual contract | Private code or compliance needs | Everything in Teams; a no-retention provider option under a signed agreement; runs inside the customer's systems with their sign-in; private tests on their own tasks; security review, DPA and support terms. |

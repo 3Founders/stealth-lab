@@ -87,7 +87,12 @@ def test_the_shipped_connections_file_loads_and_is_platform_owned_with_prices():
     for c in conns.values():
         assert c.owner == "platform" and c.credential_owner == "platform"
         assert c.credential_ref.startswith("env:")                    # a reference, never the secret
-        assert "PUBLIC_SOURCE" in c.allowed_data_classes and "USER_PRIVATE" not in c.allowed_data_classes
+        assert "PUBLIC_SOURCE" in c.allowed_data_classes
+        # private code may go to a connection only if it DECLARES zero retention (the founders' statement, 2026-11-01), and the
+        # classes above that (confidential, personal) never ride the shipped file
+        if {"USER_PRIVATE", "ORG_PRIVATE"} & set(c.allowed_data_classes):
+            assert c.zdr is True
+        assert not {"CONFIDENTIAL_DATA", "PERSONAL_DATA"} & set(c.allowed_data_classes)
         assert all(u.input_per_mtok and u.output_per_mtok for u in c.units)   # priced, so the budget can be held
     assert "glm-5.3-flash|direct" in [u.unit for u in conns["zai-glm"].units]
     assert "sk-" not in path.read_text(encoding="utf-8")

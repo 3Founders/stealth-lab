@@ -122,7 +122,7 @@ How to show it (all of it must stay true and checkable):
 5. Buttons "Buy Starter", "Buy Pro", "Buy Plus": same states and confirmation flow as the Pilot (waiting, active, renew). Active tier
    shows "Active until <date>" and "Renew". If someone has an active lower tier and buys a higher one, both run; `GET /v1/billing/plan`
    returns the active higher tier. Say so in one line under the cards.
-6. Pro and Starter are for public or non-sensitive material only: say so next to the buttons.
+6. Every plan is the same product. Data handling: say only what is true, namely that the model providers kell uses are configured for zero data retention (the founders' statement; DPAs are not all signed yet), and nothing stronger (no SOC 2, no 'we never see your code': prompts and repository facts still go to kell's server). There is no bring-your-own-key option for now; do not mention one.
 7. Tests: the per-day and "twice the usage" sentences come from the data, not hardcoded; the order body for each tier is only the plan
    name; the Plus card carries the recommended label and the others do not.
 

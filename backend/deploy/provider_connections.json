@@ -5,10 +5,11 @@
    "provider": "zai",
    "credential_ref": "env:Z_AI_KEY",
    "credential_owner": "platform",
-   "allowed_data_classes": ["PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE"],
+   "allowed_data_classes": ["PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE", "USER_PRIVATE", "ORG_PRIVATE"],
+   "zdr": true,
    "no_training": true,
    "units": [
-     {"model": "glm-5.3-flash", "provider_model": "glm-5.3-flash", "input_per_mtok": 0.15, "output_per_mtok": 0.5}
+     {"model": "glm-5.3-flash", "provider_model": "glm-5.3-flash", "input_per_mtok": 0.15, "output_per_mtok": 0.5, "cached_input_per_mtok": 0.03}
    ]},
   {"connection_id": "general-compute",
    "kind": "openai_compatible",
@@ -16,7 +17,8 @@
    "provider": "general_compute",
    "credential_ref": "env:GENERAL_COMPUTE_API_KEY",
    "credential_owner": "platform",
-   "allowed_data_classes": ["PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE"],
+   "allowed_data_classes": ["PUBLIC_SOURCE", "PUBLIC_DERIVED", "GLOBAL_PROCEDURE", "USER_PRIVATE", "ORG_PRIVATE"],
+   "zdr": true,
    "units": [
      {"model": "gemma-4-31b-it", "provider_model": "gemma-4-31B-it", "input_per_mtok": 1.0, "output_per_mtok": 3.0}
    ]}
