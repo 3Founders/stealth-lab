@@ -1,0 +1,6 @@
+{ "hooks": {
+  "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "node fake-hook.mjs" } ] } ],
+  "PreToolUse": [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": "node fake-hook.mjs" } ] } ],
+  "PostToolUse": [ { "matcher": "Bash|Read", "hooks": [ { "type": "command", "command": "node fake-hook.mjs" } ] } ],
+  "Stop": [ { "hooks": [ { "type": "command", "command": "node fake-hook.mjs" } ] } ]
+} }

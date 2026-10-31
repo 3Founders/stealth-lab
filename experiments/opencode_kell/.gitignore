@@ -1,0 +1,5 @@
+node_modules/
+sandbox/.xdg/
+sandbox/.state/
+sandbox/*.log
+sandbox/probe.txt

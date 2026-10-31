@@ -1,0 +1,12 @@
+{
+  "name": "opencode-kell-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "kell inside OpenCode as a plugin (spike). Pinned to the V2 plugin API.",
+  "dependencies": {
+    "@opencode/cli": "2.2.5",
+    "@opencode/plugin": "2.2.5",
+    "@opencode/sdk": "2.2.5"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/v2/config.json",
+  "provider": {
+    "gc": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "General Compute",
+      "options": { "baseURL": "https://api.generalcompute.com/v1", "apiKey": "{env:GENERAL_COMPUTE_API_KEY}" },
+      "models": {
+        "gemma-4-31B-it": { "name": "gemma-4-31B-it" },
+        "minimax-m2.7": { "name": "minimax-m2.7" }
+      }
+    }
+  },
+  "model": "gc/gemma-4-31B-it",
+  "plugin": ["../plugin"]
+}
