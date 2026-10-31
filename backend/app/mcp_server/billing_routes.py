@@ -118,6 +118,7 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         out["min_inr"], out["max_inr"] = wallet.MIN_TOPUP_INR, wallet.MAX_TOPUP_INR
         out["packs"] = packs.listing()
         out["packs_need_plan"] = packs.requires_plan()
+        out["freeform_topup"] = packs.freeform_topup_enabled()
         return _json(request, out)
 
     @server.custom_route("/v1/billing/orders", methods=["POST", "OPTIONS"], include_in_schema=False)
@@ -135,6 +136,8 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                 return await plan_order(request, who, org, data)
             if isinstance(data, dict) and "pack" in data:
                 return await pack_order(request, who, org, data)
+            if not packs.freeform_topup_enabled():
+                return _err(request, 400, "buy a plan, or a credit pack with an active plan; free-form top-ups are switched off")
             paise = parse_amount_inr(data.get("amount_inr") if isinstance(data, dict) else None)
             order = await _create_razorpay_order(paise, f"kell-{org[:8]}")
             await wallet.record_order(pool_getter(), org_id=org, order_id=str(order["id"]), amount_paise=paise,

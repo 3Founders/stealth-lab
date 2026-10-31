@@ -46,6 +46,12 @@ def requires_plan(env: Optional[Mapping[str, str]] = None) -> bool:
     return ((os.environ if env is None else env).get("KELL_ADDON_REQUIRES_PLAN") or "on").strip().lower() not in ("off", "0", "false", "no")
 
 
+def freeform_topup_enabled(env: Optional[Mapping[str, str]] = None) -> bool:
+    """The free-form top-up (any amount from Rs 100 at the exchange-rate-and-margin price) is OFF by default: it is cheaper per
+    credit-dollar than the plans and the packs, so it would undercut both. KELL_FREEFORM_TOPUP=on brings it back."""
+    return ((os.environ if env is None else env).get("KELL_FREEFORM_TOPUP") or "off").strip().lower() in ("on", "1", "true", "yes")
+
+
 def listing() -> list[dict[str, Any]]:
     """The price list, for the website: id, price, credit dollars and rupees per credit-dollar."""
     return [{"id": k, "price_inr": inr, "credit_usd": usd, "inr_per_usd": f"{inr / float(usd):.1f}"}

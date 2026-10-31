@@ -112,3 +112,8 @@ async def test_record_order_stores_the_pack_and_its_dollars():
     plain = _Pool()
     await wallet.record_order(plain, org_id=BUYER, order_id="order_8", amount_paise=50_000, created_by="sub")
     assert "pack" not in plain.statements("INSERT INTO billing_orders")[0][0]
+
+
+def test_the_free_form_topup_is_off_unless_switched_on():
+    assert packs.freeform_topup_enabled({}) is False
+    assert packs.freeform_topup_enabled({"KELL_FREEFORM_TOPUP": "on"}) is True
