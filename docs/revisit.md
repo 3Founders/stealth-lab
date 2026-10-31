@@ -9,6 +9,10 @@ items here (not in other docs); remove one when it is done, with the commit that
   but the developer waits (17 minutes in one kell-try run). To do: skip or shorten the tries when a task looks hard and
   the outcome records say cheap models fail on that kind; start the session's model after a few minutes instead of
   after every try. Detail: [cheap_models_notes.md](cheap_models_notes.md), "To revisit" 7.
+- **A check that can't run fails every cheap try.** In the OpenCode spike a leaked `STEALTHLAB_DISPATCH_CHECK` pointed at a
+  test that didn't exist in the checkout, so correct cheap fixes were all judged failed and the session's model did the
+  work. When the check can't run (command not found, no tests collected), say so and skip the cheap tries, rather than
+  failing each one. Detail: [opencode_spike_2026-11.md](opencode_spike_2026-11.md).
 - **Cheap answers are slower than the session's model** (about 215 s vs about 100 s for a repository question). Lever: a
   faster inference provider for the step agents (Cerebras, Groq). Same place.
 - **A stronger checker for claude.ai's `delegate`.** gemma-4-31b checks glm-5.3-flash today; switch `WEB_CHECK_MODEL`
