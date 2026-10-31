@@ -523,3 +523,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-page .dg-bell-set-body input[type="time"], .dg-page .dg-bell-set-body select { font-size: 13px; padding: 4px 8px; border-radius: var(--dg-r-btn); min-height: 30px; max-width: 100%; }
 .dg-page .dg-bell-set-body .dg-hint { padding: 0; background: none; box-shadow: none; font-size: 12.5px; }
 @media (prefers-reduced-motion: reduce) { .dg-page .dg-bell-list button { transition: none; transform: none !important; } }
+
+/* The close button sits in the corner of the room list, over the logo row. The entrance animation on the list's children makes each of them its own
+   layer, and the logo row (later in the page) was painting over the button and taking its clicks. The button goes above them. */
+.dg-page .dg-side > .dg-close { z-index: 5; }
+.dg-brand { pointer-events: none; }
+.dg-brand a, .dg-brand button, .dg-brand img { pointer-events: auto; }
