@@ -74,10 +74,10 @@ it on when the backend answers). With the flag off the cards look as they do now
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 1..10, "team_name": "<2..60 chars, only when seats >= 2>"}` or `{"plan": "pro"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for pro) |
-| `GET /v1/billing/plan` | none | `{"plan": "pilot"\|"pro"\|null, "seats": N, "team_name": "..." or null, "active_until": "ISO date or null"}` |
+| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 1..10, "team_name": "<2..60 chars, only when seats >= 2>"}` or `{"plan": "starter"\|"pro"\|"plus"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for the tiers) |
+| `GET /v1/billing/plan` | none | `{"plan": "pilot"\|"starter"\|"pro"\|"plus"\|null, "seats": N, "team_name": "..." or null, "active_until": "ISO date or null"}` |
 
-The server computes the amount (Pilot: ₹649 per seat times seats; Pro: ₹999). The page never sends an amount for a plan. The
+The server computes the amount (Starter ₹200, Pro ₹1,200, Plus ₹2,000; Pilot ₹649 per seat times seats). The page never sends an amount for a plan. The
 existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use the same shape as today: `503` billing off,
 `401` signed out, `400` with `error.message` for a bad seat count or an unknown plan.
 
@@ -98,15 +98,33 @@ existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use 
 8. If the person already has an active pilot, show "Active until <date>" instead of the buy button (no second pilot from the
    same account).
 
-### Pro card (second)
+### The ladder: Starter, Pro and Plus (second)
 
-A "Buy Pro (30 days)" button. This is a **one-month pass, paid once and renewed by hand**, not a subscription. Label it
-plainly: "30 days of Pro. Renew when it ends." Active Pro shows "Active until <date>" and "Renew". Same states and
-confirmation flow as the Pilot. Pro is for public or non-sensitive material only: say so next to the button.
+Three 30-day passes bought once and renewed by hand (not subscriptions), each with usage included in dollars that the server credits
+at purchase. The founders want a **decoy layout**: Plus is the tier the page recommends, Starter anchors the low end, and Pro is the
+step in between that makes Plus look like the obvious choice.
 
-### Plan prices (from kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; rupees, before GST)
+| Tier | Price | Per day | Included usage | Role |
+|---|---|---|---|---|
+| Starter | ₹200 for 30 days | about ₹7 | $1 | the low anchor |
+| Pro | ₹1,200 for 30 days | about ₹40 | $6 | the step up |
+| **Plus** | ₹2,000 for 30 days | about ₹67 | $12 (twice Pro's) | **recommended** |
 
-Pro ₹999 a month; Pilot ₹649 per seat for 2 weeks (1 to 10 seats); Teams ₹1,800 per seat a month; Enterprise custom. Keep these in `lib/plans.ts` only.
+How to show it (all of it must stay true and checkable):
+1. Three cards side by side on desktop, Plus in the middle or visually raised with a plain "Recommended" label; stacked on a phone with
+   Plus first. The label is a recommendation, never a claim about other buyers ("most popular") unless it is measured.
+2. Under each price show the per-day figure ("about ₹67 a day") and the usage included, both worked out from `lib/plans.ts`. Show
+   "Plus gives twice Pro's usage for ₹800 more" as a plain sentence, computed from the same numbers.
+3. List only features that exist today. The usage included and a short cost note after each task (deck) are real; do NOT list priority
+   routing, extra seats or anything else for Plus until the founders say it is built.
+4. Honest-pricing rules: no countdown timers, no "only N left", no crossed-out price that was never charged, no pre-selected upsell at
+   checkout. India's 2023 consumer dark-pattern guidelines prohibit false urgency and hidden charges (confirm with counsel).
+5. Buttons "Buy Starter", "Buy Pro", "Buy Plus": same states and confirmation flow as the Pilot (waiting, active, renew). Active tier
+   shows "Active until <date>" and "Renew". If someone has an active lower tier and buys a higher one, both run; `GET /v1/billing/plan`
+   returns the active higher tier. Say so in one line under the cards.
+6. Pro and Starter are for public or non-sensitive material only: say so next to the buttons.
+7. Tests: the per-day and "twice the usage" sentences come from the data, not hardcoded; the order body for each tier is only the plan
+   name; the Plus card carries the recommended label and the others do not.
 
 ### Teams and Enterprise
 

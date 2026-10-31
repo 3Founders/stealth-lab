@@ -122,18 +122,18 @@ def _order(plan, seats=1, team=None, period=30, buyer=None, oid=None):
             "order_id": oid or "order_" + uuid.uuid4().hex}
 
 
-def test_a_pro_payment_starts_the_plan_credits_five_dollars_once_and_a_renewal_extends_from_the_end():
+def test_a_pro_payment_starts_the_plan_credits_six_dollars_once_and_a_renewal_extends_from_the_end():
     async def body(pool):
         uid, sub = await _user(pool)
         pay = "pay_" + uuid.uuid4().hex
         order = _order("pro", buyer=uid)
-        assert await plans.activate(pool, order=order, payment_id=pay, amount_paise=99_900)
-        assert not await plans.activate(pool, order=order, payment_id=pay, amount_paise=99_900)       # a repeat does nothing
+        assert await plans.activate(pool, order=order, payment_id=pay, amount_paise=120_000)
+        assert not await plans.activate(pool, order=order, payment_id=pay, amount_paise=120_000)       # a repeat does nothing
         bal = await wallet.balance(pool, uid)
-        assert Decimal(bal["purchased_usd"]) == Decimal("5")
+        assert Decimal(bal["purchased_usd"]) == Decimal("6")
         first = await plans.current(pool, uid)
         assert first["plan"] == "pro" and first["seats"] == 1 and first["team_name"] is None
-        assert await plans.activate(pool, order=_order("pro", buyer=uid), payment_id="pay_" + uuid.uuid4().hex, amount_paise=99_900)
+        assert await plans.activate(pool, order=_order("pro", buyer=uid), payment_id="pay_" + uuid.uuid4().hex, amount_paise=120_000)
         second = await plans.current(pool, uid)
         assert second["active_until"] > first["active_until"]                                          # renewed from the end
         res = await _reserve(pool, uid, sub, 0.5)                                                     # the included usage can be spent
@@ -174,4 +174,50 @@ def test_an_unknown_account_id_is_refused_by_the_database():
             await pool.execute(
                 "INSERT INTO org_wallet_credits (organization_id, payment_ref, amount_paise, amount_usd, created_by) "
                 "VALUES ($1::uuid, $2, 100, 1, 't')", str(uuid.uuid4()), "pay_" + uuid.uuid4().hex)
+    run(body)
+
+
+def test_every_tier_can_be_bought_and_the_page_shows_the_active_higher_tier_before_a_lower_or_ended_one():
+    async def body(pool):
+        uid, _ = await _user(pool)
+        assert await plans.current(pool, uid) is None
+        for plan, inr, usd in (("starter", 200, "1"), ("plus", 2000, "12")):
+            assert await plans.activate(pool, order=_order(plan, buyer=uid), payment_id="pay_" + uuid.uuid4().hex,
+                                        amount_paise=inr * 100)
+        assert (await plans.current(pool, uid))["plan"] == "plus"                       # the higher active tier wins
+        assert Decimal((await wallet.balance(pool, uid))["purchased_usd"]) == Decimal("13")
+    run(body)
+
+
+def test_the_database_refuses_a_plan_name_that_is_not_on_the_ladder():
+    async def body(pool):
+        uid, _ = await _user(pool)
+        with pytest.raises(asyncpg.PostgresError):
+            await pool.execute(
+                "INSERT INTO plan_entitlements (buyer_user_id, account_id, plan, seats, starts_at, ends_at, payment_ref, "
+                "amount_paise) VALUES ($1::uuid, $1::uuid, 'free', 1, now(), now() + interval '1 day', $2, 100)",
+                uid, "pay_" + uuid.uuid4().hex)
+    run(body)
+
+
+def test_reconcile_finds_a_captured_plan_payment_whose_webhook_never_came_and_a_second_run_does_nothing():
+    from app.services import billing_reconcile as rec
+
+    async def body(pool):
+        uid, sub = await _user(pool)
+        oid = "order_" + uuid.uuid4().hex
+        await wallet.record_order(pool, org_id=uid, order_id=oid, amount_paise=200_000, created_by=sub, plan="plus",
+                                  seats=1, team_name=None, buyer_user_id=uid, period_days=30)
+        await pool.execute("UPDATE billing_orders SET created_at = now() - interval '1 hour' WHERE order_id = $1", oid)
+
+        async def fetch(order_id):
+            return [{"id": "pay_" + oid, "status": "captured", "currency": "INR", "amount": 200_000}] if order_id == oid else []
+
+        young = await rec.reconcile(pool, fetch_payments=fetch, apply=True, older_than_minutes=5000)    # nothing is old enough
+        assert young["checked"] == 0
+        first = await rec.reconcile(pool, fetch_payments=fetch, apply=True)
+        assert first["activated"] >= 1 and (await plans.current(pool, uid))["plan"] == "plus"
+        again = await rec.reconcile(pool, fetch_payments=fetch, apply=True)                              # already active: not asked again
+        assert again["activated"] == 0
+        assert Decimal((await wallet.balance(pool, uid))["purchased_usd"]) == Decimal("12")
     run(body)

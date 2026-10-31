@@ -8,7 +8,9 @@ These are the prices the founders chose. All in rupees, **before GST**. The cred
 
 | Plan | Price | For | Includes |
 |---|---|---|---|
-| **Pro** | ₹999 a month | One person or a small student team | Connect an assistant or coding tool; a recommended plan per task; lower-cost models included (about $5 of provider cost) or your own key; a short cost note after each task. Public or non-sensitive material only. |
+| **Starter** | ₹200 for 30 days | One person, light use | $1 of usage included; public or non-sensitive material only. |
+| **Pro** | ₹1,200 for 30 days | One person or a small student team | $6 of usage included; connect an assistant or coding tool; a recommended plan per task; a short cost note after each task; public or non-sensitive material only. |
+| **Plus** | ₹2,000 for 30 days | One person who uses it daily | $12 of usage included (twice Pro). The tier the page recommends. |
 | **Teams** | ₹1,800 per seat a month | Three or more seats | Everything in Pro; usage shared across the team; per-person and monthly spending limits and one stop-all switch; members, invitations, usage by person, exportable record; a shared library that learns from the team's results. |
 | **Enterprise** | Custom, by annual contract | Private code or compliance needs | Everything in Teams; a no-retention provider option under a signed agreement; runs inside the customer's systems with their sign-in; private tests on their own tasks; security review, DPA and support terms. |
 | **Pilot** | ₹649 per seat for 2 weeks | Teams of 3 to 10 seats, MCP only | Assistant or coding tool connected to the kell MCP; recommendations; routine steps on lower-cost models with usage included; a kept record; a joint report (cost per solved task, with and without kell). Not included: the website assistant room and team admin pages. Invoiced directly. |
@@ -46,17 +48,18 @@ People want to pay us while the company is not yet incorporated, so the first ve
   A one-seat Pilot, and Pro, credit the buyer's own account.
 - **Who pays by default.** A person in exactly one team pays through the team; alone, through their own wallet; in several teams
   they must name one (`org_id` / `X-Stealthlab-Org`).
-- **Plans.** Pro Rs 999 for 30 days with $5 included. Pilot Rs 649 per seat for 14 days, 1 to 10 seats, $4 per seat included, one per
-  account. A renewal starts when the current period ends. Included usage is ordinary wallet credit, credited once at purchase, and does not
+- **Plans.** A ladder of three 30-day tiers: Starter Rs 200 ($1 included), Pro Rs 1,200 ($6) and Plus Rs 2,000 ($12; the tier the page
+  recommends: twice Pro's usage for Rs 800 more). Pilot Rs 649 per seat for 14 days, 1 to 10 seats, $4 per seat included, one per
+  account. `GET /v1/billing/plan` shows the active higher tier before a lower or ended one. A renewal starts when the current period ends. Included usage is ordinary wallet credit, credited once at purchase, and does not
   expire when the period ends. The plan is a pass renewed by hand, not a subscription.
-- **Orders.** `POST /v1/billing/orders` with `{"amount_inr": N}` (credit top-up) or `{"plan": "pro"}` or
+- **Orders.** `POST /v1/billing/orders` with `{"amount_inr": N}` (credit top-up) or `{"plan": "starter"|"pro"|"plus"}` or
   `{"plan": "pilot", "seats": 1..10, "team_name": "..."}` (team name only when seats is 2 or more). The server works out the amount.
   `GET /v1/billing/plan` returns `{plan, seats, team_name, active_until}` for the buyer's latest plan (a past date means it ended).
 - **Activation** happens only in the signed webhook, from the order we recorded: idempotent steps with the entitlement row written last,
   so a retry after a failure completes the work. A redelivered event id is acknowledged without work (`billing_webhook_events`).
 - **Not built yet (from the 2026-10-31 review, docs/pricing_page.md and the research notes):** refund and dispute events (a refund is manual in the
-  Razorpay dashboard for now and does not reverse credit or end a plan), a job that fetches unpaid orders from Razorpay when a webhook never
-  arrives, GST receipts, expiry of included usage, and scheduling the abandoned-reservation sweep (`ingestion.admin` settles reservations only
+  Razorpay dashboard for now and does not reverse credit or end a plan), a scheduled run of the reconcile job (`python -m app.services.billing_reconcile --apply` fetches captured payments whose webhook never
+  arrived and activates them; it exists but nothing runs it yet), GST receipts, expiry of included usage, and scheduling the abandoned-reservation sweep (`ingestion.admin` settles reservations only
   when someone runs it).
 
 ## The credit formula
@@ -106,7 +109,7 @@ Backend (hosted MCP service):
 | Variable | Meaning |
 |---|---|
 | `KELL_WALLETS=on` | Turns wallets on. A person's wallet account is their own user id (no hidden organization); its policy needs a positive balance. `KELL_PERSONAL_ORGS=on` still works as the old name. |
-| `KELL_PRO_INCLUDED_USD`, `KELL_PILOT_SEAT_USD` | Usage included with a plan, in dollars: Pro (default 5) and per Pilot seat (default 4). Fixed amounts, independent of the margin. |
+| `KELL_STARTER_INCLUDED_USD`, `KELL_PRO_INCLUDED_USD`, `KELL_PLUS_INCLUDED_USD`, `KELL_PILOT_SEAT_USD` | Usage included with a plan, in dollars: Starter (default 1), Pro (6), Plus (12) and per Pilot seat (4). Fixed amounts, independent of the margin. |
 | `KELL_ORDERS_PER_HOUR` | Payment attempts one account may start an hour (default 10). |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Razorpay API keys. Test-mode keys work with no other change. |
 | `RAZORPAY_WEBHOOK_SECRET` | Needed for the webhook to credit anything. |

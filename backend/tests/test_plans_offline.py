@@ -19,15 +19,22 @@ NOW = datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc)
 
 # ------------------------------------------------------------------ the amount is the server's
 
-def test_pro_costs_999_rupees_for_30_days_and_five_dollars_of_usage():
-    o = plans.parse_plan_order({"plan": "pro"}, env={})
-    assert (o.plan, o.seats, o.amount_paise, o.period_days) == ("pro", 1, 99_900, 30)
-    assert o.included_usd == Decimal("5") and o.team_name is None and not o.creates_team
+def test_the_ladder_is_200_1200_2000_rupees_for_30_days_with_one_six_and_twelve_dollars_of_usage():
+    for plan, inr, usd in (("starter", 200, "1"), ("pro", 1200, "6"), ("plus", 2000, "12")):
+        o = plans.parse_plan_order({"plan": plan}, env={})
+        assert (o.plan, o.seats, o.amount_paise, o.period_days) == (plan, 1, inr * 100, 30)
+        assert o.included_usd == Decimal(usd) and o.team_name is None and not o.creates_team
+
+
+def test_the_recommended_tier_gives_more_usage_per_rupee_than_the_step_below_it_and_the_anchor():
+    per_rupee = {p: plans.included_usd(p, 1, {}) / plans.TIERS[p]["inr"] for p in ("starter", "pro", "plus")}
+    assert per_rupee["plus"] > per_rupee["pro"] and per_rupee["plus"] > per_rupee["starter"]
+    assert plans.included_usd("plus", 1, {}) == 2 * plans.included_usd("pro", 1, {})        # twice Pro's usage for 800 rupees more
 
 
 def test_a_request_cannot_set_the_price():
     o = plans.parse_plan_order({"plan": "pro", "amount_inr": 1, "amount_paise": 100, "price": 1}, env={})
-    assert o.amount_paise == 99_900
+    assert o.amount_paise == 120_000
     p = plans.parse_plan_order({"plan": "pilot", "seats": 3, "team_name": "Acme", "amount_paise": 1}, env={})
     assert p.amount_paise == 3 * 64_900
 
@@ -46,7 +53,7 @@ def test_one_seat_is_an_individual_and_two_or_more_make_a_team():
 
 
 @pytest.mark.parametrize("body", [
-    None, [], "pro", {}, {"plan": "teams"}, {"plan": "enterprise"}, {"plan": "PRO"},
+    None, [], "pro", {}, {"plan": "teams"}, {"plan": "enterprise"}, {"plan": "PRO"}, {"plan": "free"}, 
     {"plan": "pilot"}, {"plan": "pilot", "seats": 0, "team_name": "x1"}, {"plan": "pilot", "seats": 11, "team_name": "Acme"},
     {"plan": "pilot", "seats": -1}, {"plan": "pilot", "seats": "many"}, {"plan": "pilot", "seats": True},
     {"plan": "pilot", "seats": 2}, {"plan": "pilot", "seats": 3, "team_name": ""}, {"plan": "pilot", "seats": 3, "team_name": "a"},
@@ -61,7 +68,7 @@ def test_the_included_usage_is_a_fixed_dollar_figure_set_by_environment_not_by_t
     env = {"KELL_PRO_INCLUDED_USD": "7.5", "KELL_PILOT_SEAT_USD": "3", "KELL_MARGIN": "0.9"}
     assert plans.included_usd("pro", 1, env) == Decimal("7.5") and plans.included_usd("pilot", 4, env) == Decimal("12")
     bad = {"KELL_PRO_INCLUDED_USD": "-1", "KELL_PILOT_SEAT_USD": "nope"}
-    assert plans.included_usd("pro", 1, bad) == Decimal("5") and plans.included_usd("pilot", 2, bad) == Decimal("8")
+    assert plans.included_usd("pro", 1, bad) == Decimal("6") and plans.included_usd("pilot", 2, bad) == Decimal("8")
 
 
 # ------------------------------------------------------------------ renewals and the team slug
@@ -164,13 +171,13 @@ async def test_a_payment_already_processed_changes_nothing():
 
 
 @pytest.mark.asyncio
-async def test_a_pro_credits_the_buyers_own_account_and_makes_no_organization():
+async def test_a_pro_credits_six_dollars_to_the_buyers_own_account_and_makes_no_organization():
     pool = FakePool({"FROM plan_entitlements WHERE payment_ref": None, "INSERT INTO plan_entitlements": 1})
     assert await plans.activate(pool, order=_order("pro"), payment_id="pay_2", amount_paise=99_900, now=NOW,
                                 env={"KELL_WALLETS": "on"})
     assert not pool.statements("INSERT INTO organizations") and not pool.statements("INSERT INTO org_memberships")
     credit = pool.statements("INSERT INTO org_wallet_credits")[0][1]
-    assert credit[0] == BUYER and credit[2] == Decimal("5")
+    assert credit[0] == BUYER and credit[2] == Decimal("6")
     assert pool.statements("INSERT INTO org_policies")                        # the buyer's own policy exists, so the credit can be spent
 
 
@@ -226,3 +233,45 @@ def test_the_provider_path_prefers_the_one_team_over_the_persons_own_wallet_and_
         governing_org(conn, AccessScope.for_org_member("sub", [TEAM, other, BUYER], BUYER), None, governed=True)
     with pytest.raises(ProviderCallDenied):                                                # without an own account nothing is guessed
         governing_org(conn, AccessScope.for_org_member("sub", [TEAM, other]), None, governed=True)
+
+
+# ------------------------------------------------------------------ the reconcile job (a webhook that never arrived)
+
+@pytest.mark.asyncio
+async def test_reconcile_activates_only_captured_inr_payments_for_exactly_the_recorded_amount():
+    from app.services import billing_reconcile as rec
+
+    plan_order = {"order_id": "order_p", "organization_id": BUYER, "amount_paise": 120_000, "plan": "pro", "seats": 1,
+                  "team_name": None, "buyer_user_id": BUYER, "period_days": 30}
+    pool = FakePool({"FROM billing_orders o": [plan_order], "FROM plan_entitlements WHERE payment_ref": None,
+                     "INSERT INTO plan_entitlements": 1})
+
+    async def fetch(order_id):
+        return [{"id": "pay_auth", "status": "authorized", "currency": "INR", "amount": 120_000},
+                {"id": "pay_usd", "status": "captured", "currency": "USD", "amount": 120_000},
+                {"id": "pay_short", "status": "captured", "currency": "INR", "amount": 100},
+                {"id": "pay_ok", "status": "captured", "currency": "INR", "amount": 120_000}]
+
+    dry = await rec.reconcile(pool, fetch_payments=fetch, apply=False)
+    assert dry == {"checked": 1, "found": 1, "activated": 0, "errors": 0} and not pool.statements("INSERT INTO plan_entitlements")
+    done = await rec.reconcile(pool, fetch_payments=fetch, apply=True)
+    assert done["found"] == 1 and done["activated"] == 1 and done["errors"] == 0
+    assert pool.statements("INSERT INTO plan_entitlements")[0][1][7] == "pay_ok"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_survives_a_failed_fetch_and_carries_on_with_the_other_orders():
+    from app.services import billing_reconcile as rec
+
+    orders = [{"order_id": f"order_{i}", "organization_id": BUYER, "amount_paise": 20_000, "plan": None, "seats": None,
+               "team_name": None, "buyer_user_id": None, "period_days": None} for i in range(3)]
+    pool = FakePool({"FROM billing_orders o": orders})
+
+    async def fetch(order_id):
+        if order_id == "order_0":
+            raise RuntimeError("Razorpay is down")
+        return [{"id": f"pay_{order_id}", "status": "captured", "currency": "INR", "amount": 20_000}]
+
+    out = await rec.reconcile(pool, fetch_payments=fetch, apply=True)
+    assert out["checked"] == 3 and out["errors"] == 1 and out["found"] == 2
+    assert len(pool.statements("INSERT INTO org_wallet_credits")) == 2

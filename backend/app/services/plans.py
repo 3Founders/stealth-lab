@@ -1,14 +1,14 @@
-"""The plans a person can buy with Razorpay: Pro (30 days) and the Pilot (14 days, 1 to 10 seats).
+"""The plans a person can buy with Razorpay: Starter, Pro and Plus (30 days each) and the Pilot (14 days, 1 to 10 seats).
 
 Prices are the founders' (kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; docs/billing.md "Plans"), in rupees
 before GST. The browser never sends a price: it sends a plan name, a seat count and a team name, and the server works out
 the amount, records the order, and activates the plan only from a payment Razorpay signed for an order WE recorded.
 
 What a plan is, in money terms: the rupees buy the plan for a period, and the plan comes with included usage credited to a
-wallet once, at purchase (Pro: $5; Pilot: $4 per seat). That credit is ordinary wallet credit: it is spent by calls and
+wallet once, at purchase (Starter $1, Pro $6, Plus $12; Pilot $4 per seat). That credit is ordinary wallet credit: it is spent by calls and
 does not expire when the period ends. Margin plays no part in it (the credit is a fixed dollar amount, not paise run
-through KELL_MARGIN), which is why the two numbers can be set independently (KELL_PRO_INCLUDED_USD,
-KELL_PILOT_SEAT_USD).
+through KELL_MARGIN), which is why the two numbers can be set independently (KELL_STARTER_INCLUDED_USD,
+KELL_PRO_INCLUDED_USD, KELL_PLUS_INCLUDED_USD, KELL_PILOT_SEAT_USD).
 
 Who holds the wallet: a Pro, and a one-seat Pilot, credit the buyer's own account (their user id, services/accounts.py). A
 Pilot of two or more seats creates a real team organization named by the buyer, with the buyer as its owner, and credits
@@ -35,7 +35,15 @@ log = logging.getLogger(__name__)
 
 OWNER_ROLE_ID = "10000000-0000-0000-0000-000000000001"      # db/28_identity.sql
 
-PRO_INR = 999
+# The tier ladder (rupees, before GST). Starter anchors the low end, Pro is the step up, Plus is the one the page recommends:
+# it gives twice Pro's usage for 800 rupees more. Every tier is a real, honestly described option; the page may not invent
+# urgency or strike-through prices. Per-rupee usage: Starter and Pro 0.005 dollars, Plus 0.006.
+TIERS = {
+    "starter": {"inr": 200, "days": 30, "usd": "1", "env": "KELL_STARTER_INCLUDED_USD", "rank": 1},
+    "pro":     {"inr": 1200, "days": 30, "usd": "6", "env": "KELL_PRO_INCLUDED_USD", "rank": 2},
+    "plus":    {"inr": 2000, "days": 30, "usd": "12", "env": "KELL_PLUS_INCLUDED_USD", "rank": 3},
+}
+PRO_INR = TIERS["pro"]["inr"]
 PILOT_SEAT_INR = 649
 PRO_DAYS = 30
 PILOT_DAYS = 14
@@ -58,7 +66,7 @@ class PlanConflict(PlanError):
 
 @dataclass(frozen=True)
 class PlanOrder:
-    plan: str                    # 'pro' | 'pilot'
+    plan: str                    # 'starter' | 'pro' | 'plus' | 'pilot'
     seats: int
     team_name: Optional[str]     # set only for a pilot of two or more seats
     amount_paise: int
@@ -81,9 +89,10 @@ def _usd(name: str, default: str, env: Optional[Mapping[str, str]]) -> Decimal:
 
 
 def included_usd(plan: str, seats: int, env: Optional[Mapping[str, str]] = None) -> Decimal:
-    """Usage that comes with a plan, in dollars: Pro $5; Pilot $4 per seat (founders' starting figures)."""
-    if plan == "pro":
-        return _usd("KELL_PRO_INCLUDED_USD", "5", env)
+    """Usage that comes with a plan, in dollars: Starter $1, Pro $6, Plus $12; Pilot $4 per seat (starting figures)."""
+    tier = TIERS.get(plan)
+    if tier:
+        return _usd(tier["env"], tier["usd"], env)
     return _usd("KELL_PILOT_SEAT_USD", "4", env) * seats
 
 
@@ -101,8 +110,9 @@ def parse_plan_order(data: Any, env: Optional[Mapping[str, str]] = None) -> Plan
     if not isinstance(data, dict):
         raise PlanError("the request body must be a JSON object")
     plan = data.get("plan")
-    if plan == "pro":
-        return PlanOrder("pro", 1, None, PRO_INR * 100, PRO_DAYS, included_usd("pro", 1, env))
+    if plan in TIERS:
+        tier = TIERS[plan]
+        return PlanOrder(plan, 1, None, tier["inr"] * 100, tier["days"], included_usd(plan, 1, env))
     if plan == "pilot":
         raw = data.get("seats")
         if isinstance(raw, bool) or not isinstance(raw, (int, str)):
@@ -115,7 +125,7 @@ def parse_plan_order(data: Any, env: Optional[Mapping[str, str]] = None) -> Plan
             raise PlanError(f"a pilot has {PILOT_MIN_SEATS} to {PILOT_MAX_SEATS} seats")
         team = clean_team_name(data.get("team_name")) if seats >= 2 else None
         return PlanOrder("pilot", seats, team, PILOT_SEAT_INR * seats * 100, PILOT_DAYS, included_usd("pilot", seats, env))
-    raise PlanError("plan must be 'pro' or 'pilot'")
+    raise PlanError("plan must be 'starter', 'pro', 'plus' or 'pilot'")
 
 
 def team_slug(payment_id: str) -> str:
@@ -136,11 +146,13 @@ async def has_pilot(pool: Any, buyer_user_id: str) -> bool:
 
 
 async def current(pool: Any, buyer_user_id: str) -> Optional[dict[str, Any]]:
-    """The buyer's plan with the latest end date (an ended plan is returned with a past end, so the page can say it ended)."""
+    """The plan to show for a buyer: an active plan before an ended one, the higher tier before the lower, then the later end.
+    An ended plan comes back with a past end, so the page can say it ended."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         row = await conn.fetchrow(
             "SELECT plan, seats, team_name, ends_at FROM plan_entitlements WHERE buyer_user_id = $1::uuid "
-            "ORDER BY ends_at DESC LIMIT 1", buyer_user_id)
+            "ORDER BY (ends_at > now()) DESC, CASE plan WHEN 'plus' THEN 3 WHEN 'pro' THEN 2 WHEN 'starter' THEN 1 ELSE 0 END DESC, "
+            "ends_at DESC LIMIT 1", buyer_user_id)
     if row is None:
         return None
     return {"plan": row["plan"], "seats": int(row["seats"]), "team_name": row["team_name"],
