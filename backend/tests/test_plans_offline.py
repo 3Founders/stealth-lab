@@ -40,9 +40,9 @@ def test_a_request_cannot_set_the_price():
 
 
 @pytest.mark.parametrize("seats,total", [(1, 64_900), (2, 129_800), (3, 194_700), (10, 649_000)])
-def test_a_pilot_is_649_rupees_a_seat_for_14_days_with_four_dollars_a_seat(seats, total):
+def test_a_pilot_is_649_rupees_a_seat_for_a_month_with_four_dollars_a_seat(seats, total):
     o = plans.parse_plan_order({"plan": "pilot", "seats": seats, "team_name": "Acme pilot"}, env={})
-    assert o.amount_paise == total and o.period_days == 14 and o.included_usd == Decimal("4") * seats
+    assert o.amount_paise == total and o.period_days == 30 and o.included_usd == Decimal("4") * seats
 
 
 def test_one_seat_is_an_individual_and_two_or_more_make_a_team():
@@ -79,7 +79,7 @@ def test_a_renewal_starts_when_the_current_period_ends_and_never_loses_days():
     assert start == soon and end == soon + timedelta(days=30)
     start, end = plans.period_end(NOW, 30, NOW - timedelta(days=1))               # already ended: starts now
     assert start == NOW and end == NOW + timedelta(days=30)
-    assert plans.period_end(NOW, 14, None) == (NOW, NOW + timedelta(days=14))
+    assert plans.period_end(NOW, 30, None) == (NOW, NOW + timedelta(days=30))
 
 
 def test_the_team_slug_comes_from_the_payment_so_a_retry_finds_the_same_team():
@@ -145,7 +145,7 @@ async def test_a_team_pilot_makes_the_team_then_credits_it_then_writes_the_entit
         "SELECT id::text FROM organizations WHERE slug": TEAM,
         "INSERT INTO plan_entitlements": 1,
     })
-    done = await plans.activate(pool, order=_order("pilot", 3, "Acme pilot", 14), payment_id="pay_1", amount_paise=194_700,
+    done = await plans.activate(pool, order=_order("pilot", 3, "Acme pilot", 30), payment_id="pay_1", amount_paise=194_700,
                                 now=NOW, env={})
     assert done is True
     sql = [s for s, _ in pool.conn.log]
@@ -160,7 +160,7 @@ async def test_a_team_pilot_makes_the_team_then_credits_it_then_writes_the_entit
     assert member_args[0] == TEAM and member_args[1] == BUYER                 # the buyer owns the team
     ent = pool.statements("INSERT INTO plan_entitlements")[0][1]
     assert ent[0] == BUYER and ent[1] == TEAM and ent[2] == "pilot" and ent[3] == 3 and ent[4] == "Acme pilot"
-    assert ent[6] - ent[5] == timedelta(days=14) and ent[7] == "pay_1" and ent[9] == 194_700
+    assert ent[6] - ent[5] == timedelta(days=30) and ent[7] == "pay_1" and ent[9] == 194_700
 
 
 @pytest.mark.asyncio
@@ -184,7 +184,7 @@ async def test_a_pro_credits_six_dollars_to_the_buyers_own_account_and_makes_no_
 @pytest.mark.asyncio
 async def test_a_one_seat_pilot_is_the_buyers_own_account_too():
     pool = FakePool({"FROM plan_entitlements WHERE payment_ref": None, "INSERT INTO plan_entitlements": 1})
-    assert await plans.activate(pool, order=_order("pilot", 1, None, 14), payment_id="pay_3", amount_paise=64_900, now=NOW, env={})
+    assert await plans.activate(pool, order=_order("pilot", 1, None, 30), payment_id="pay_3", amount_paise=64_900, now=NOW, env={})
     assert not pool.statements("INSERT INTO organizations")
     assert pool.statements("INSERT INTO org_wallet_credits")[0][1][2] == Decimal("4")
 

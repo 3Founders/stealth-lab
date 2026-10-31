@@ -1,4 +1,4 @@
-"""The plans a person can buy with Razorpay: Starter, Pro and Plus (30 days each) and the Pilot (14 days, 1 to 10 seats).
+"""The plans a person can buy with Razorpay: Starter, Pro and Plus (30 days each) and the Pilot (30 days, 1 to 10 seats; a one-seat Pilot is the individual pilot).
 
 Prices are the founders' (kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; docs/billing.md "Plans"), in rupees
 before GST. The browser never sends a price: it sends a plan name, a seat count and a team name, and the server works out
@@ -46,7 +46,7 @@ TIERS = {
 PRO_INR = TIERS["pro"]["inr"]
 PILOT_SEAT_INR = 649
 PRO_DAYS = 30
-PILOT_DAYS = 14
+PILOT_DAYS = 30
 PILOT_MIN_SEATS = 1
 PILOT_MAX_SEATS = 10
 TEAM_NAME_MIN, TEAM_NAME_MAX = 2, 60

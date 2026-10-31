@@ -145,7 +145,7 @@ def test_a_team_pilot_creates_a_real_organization_owned_by_the_buyer_and_credits
     async def body(pool):
         uid, _ = await _user(pool)
         pay = "pay_" + uuid.uuid4().hex
-        order = _order("pilot", seats=3, team="Acme pilot", period=14, buyer=uid)
+        order = _order("pilot", seats=3, team="Acme pilot", period=30, buyer=uid)
         assert await plans.activate(pool, order=order, payment_id=pay, amount_paise=3 * 64_900)
         assert not await plans.activate(pool, order=order, payment_id=pay, amount_paise=3 * 64_900)
         cur = await plans.current(pool, uid)
@@ -162,7 +162,7 @@ def test_a_one_seat_pilot_is_an_individual_account_with_no_organization():
     async def body(pool):
         uid, _ = await _user(pool)
         pay = "pay_" + uuid.uuid4().hex
-        assert await plans.activate(pool, order=_order("pilot", seats=1, period=14, buyer=uid), payment_id=pay, amount_paise=64_900)
+        assert await plans.activate(pool, order=_order("pilot", seats=1, period=30, buyer=uid), payment_id=pay, amount_paise=64_900)
         assert Decimal((await wallet.balance(pool, uid))["purchased_usd"]) == Decimal("4")
         assert await pool.fetchval("SELECT 1 FROM organizations WHERE slug = $1", plans.team_slug(pay)) is None
     run(body)

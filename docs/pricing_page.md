@@ -7,7 +7,7 @@ what to build in `routing_kell_frontend` and in what order.
 ## Where we are
 
 - `/pricing` (`app/pricing/page.tsx`) shows four plan cards from `lib/plans.ts`: Pro ₹999 a month, Teams ₹1,800 per seat a
-  month, Enterprise custom, Pilot ₹649 per seat for two weeks. Prices are in rupees, before GST. Every card links to
+  month, Enterprise custom, Pilot ₹649 per seat for a month (30 days). Prices are in rupees, before GST. Every card links to
   `/contact`. There is **no Pay button anywhere**: commit `b7507da0` removed the credit top-up block.
 - `lib/billing.ts` still has `billingApi().wallet()`, `billingApi().order(amountInr)`, `loadCheckout()` and `openCheckout()`.
   Nothing calls them. The old top-up UI is recoverable with
@@ -74,7 +74,7 @@ it on when the backend answers). With the flag off the cards look as they do now
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 1..10, "team_name": "<2..60 chars, only when seats >= 2>"}` or `{"plan": "starter"\|"pro"\|"plus"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for the tiers) |
+| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 1..10, "team_name": "<2..60 chars, only when seats >= 2>"}` or `{"plan": "starter"\|"pro"\|"plus"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (30 for every plan) |
 | `GET /v1/billing/plan` | none | `{"plan": "pilot"\|"starter"\|"pro"\|"plus"\|null, "seats": N, "team_name": "..." or null, "active_until": "ISO date or null"}` |
 
 The server computes the amount (Starter ₹200, Pro ₹1,200, Plus ₹2,000; Pilot ₹649 per seat times seats). The page never sends an amount for a plan. The
@@ -85,7 +85,7 @@ existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use 
 
 1. A seat picker limited to **1 to 10** (a stepper or a select; no free typing). **One seat is an individual pilot** (the buyer's own account; no team name). **Two or more seats make a team**: then show a required **team name** field (2 to 60 characters, "Acme pilot" style); the server creates a real team workspace with that name and makes the buyer its owner, and the other seats are invited into it. Outside 1 to 10, or a missing team name when seats is 2 or more, never sends a request. With one seat do not send `team_name`.
 2. The total, live: `₹649 × seats`, and "before GST" (or the GST sentence from the config).
-3. The two dates: starts today, ends in 14 days (`period_days`), shown as plain dates.
+3. The two dates: starts today, ends in 30 days (`period_days`), shown as plain dates.
 4. A **"Start the pilot"** button. One payment covers the whole team. Signed out: "Sign in to start the pilot", returning to
    `/pricing`.
 5. What the pilot includes and does not include, from `lib/plans.ts` (MCP only; not the website assistant room or the team
@@ -156,5 +156,5 @@ shows an active plan.
 - `tsc` clean and the site's vitest suite passing, with the counts pasted in the commit.
 - With billing off (today's server), the page shows the plans and the "not switched on" message, and no Pay button.
 - With billing on in test mode, a ₹100 test payment raises the balance once, and a repeated webhook does not.
-- With `NEXT_PUBLIC_KELL_BUY_PLANS=on` and the backend live, a test Pilot payment for 3 seats shows the pilot active for 14 days.
+- With `NEXT_PUBLIC_KELL_BUY_PLANS=on` and the backend live, a test Pilot payment for 3 seats shows the pilot active for 30 days.
 - `docs/billing.md`'s "What the website shows" section is updated to match.
