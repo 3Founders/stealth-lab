@@ -74,7 +74,7 @@ it on when the backend answers). With the flag off the cards look as they do now
 
 | Method and path | Body | Returns |
 |---|---|---|
-| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 3..10, "team_name": "<2..60 chars>"}` or `{"plan": "pro"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for pro) |
+| `POST /v1/billing/orders` | `{"plan": "pilot", "seats": 1..10, "team_name": "<2..60 chars, only when seats >= 2>"}` or `{"plan": "pro"}` | `order_id`, `amount_paise`, `key_id`, `plan`, `seats`, `period_days` (14 for pilot, 30 for pro) |
 | `GET /v1/billing/plan` | none | `{"plan": "pilot"\|"pro"\|null, "seats": N, "team_name": "..." or null, "active_until": "ISO date or null"}` |
 
 The server computes the amount (Pilot: ₹649 per seat times seats; Pro: ₹999). The page never sends an amount for a plan. The
@@ -83,7 +83,7 @@ existing credit order (`{"amount_inr": N}`) keeps working unchanged. Errors use 
 
 ### Pilot card (build this first)
 
-1. A **team name** field (2 to 60 characters, required; "Acme pilot" style). The server creates a real team workspace with this name and makes the buyer its owner, so the other seats can be invited into it. Then a seat picker limited to **3 to 10** (a stepper or a select; no free typing). Below 3 or above 10, or a missing team name, never sends a request.
+1. A seat picker limited to **1 to 10** (a stepper or a select; no free typing). **One seat is an individual pilot** (the buyer's own account; no team name). **Two or more seats make a team**: then show a required **team name** field (2 to 60 characters, "Acme pilot" style); the server creates a real team workspace with that name and makes the buyer its owner, and the other seats are invited into it. Outside 1 to 10, or a missing team name when seats is 2 or more, never sends a request. With one seat do not send `team_name`.
 2. The total, live: `₹649 × seats`, and "before GST" (or the GST sentence from the config).
 3. The two dates: starts today, ends in 14 days (`period_days`), shown as plain dates.
 4. A **"Start the pilot"** button. One payment covers the whole team. Signed out: "Sign in to start the pilot", returning to
@@ -106,7 +106,7 @@ confirmation flow as the Pilot. Pro is for public or non-sensitive material only
 
 ### Plan prices (from kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; rupees, before GST)
 
-Pro ₹999 a month; Pilot ₹649 per seat for 2 weeks (3 to 10 seats); Teams ₹1,800 per seat a month; Enterprise custom. Keep these in `lib/plans.ts` only.
+Pro ₹999 a month; Pilot ₹649 per seat for 2 weeks (1 to 10 seats); Teams ₹1,800 per seat a month; Enterprise custom. Keep these in `lib/plans.ts` only.
 
 ### Teams and Enterprise
 

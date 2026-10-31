@@ -426,7 +426,12 @@ async def settle_abandoned(pool: Any, org_id: str, *, older_than_minutes: int = 
 async def settle_abandoned_all(pool: Any, *, older_than_minutes: int = ABANDONED_AFTER_MINUTES,
                                apply: bool = True) -> dict[str, int]:
     """settle_abandoned for every organisation, each under its own tenant scope (the ledger has FORCE RLS)."""
-    org_ids = [r["id"] for r in await pool.fetch("SELECT id::text AS id FROM organizations")]
+    # organizations, plus the accounts people own themselves (migration 164: a user id keys a wallet). The ledger is
+    # row-secured, so the person accounts are found through tables that are not: every account that ever started a payment
+    # (billing_orders) or bought a plan (plan_entitlements).
+    org_ids = [r["id"] for r in await pool.fetch(
+        "SELECT id::text AS id FROM organizations UNION SELECT organization_id::text FROM billing_orders "
+        "UNION SELECT buyer_user_id::text FROM plan_entitlements")]
     out = {}
     for org_id in org_ids:
         n = await settle_abandoned(pool, org_id, older_than_minutes=older_than_minutes, apply=apply)

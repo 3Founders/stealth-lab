@@ -305,12 +305,14 @@ class OidcAwareTokenVerifier(TokenVerifier):
             org_ids = tuple(ctx.org_ids)
             # pilot: a first-time sign-in joins the capped pilot organization (no-op unless KELL_PILOT_ORG_ID is set)
             from app.services import pilot_enrol as _pilot
-            from app.services import personal_org as _personal
+            from app.services import accounts as _personal
             if _personal.enabled():
                 org_ids = await _personal.resolve_orgs(pool, user_id=ctx.user_id, org_ids=org_ids)
             elif await _pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
                 org_ids = (*org_ids, _pilot.pilot_org_id())
             scopes = {"stealthlab:tools", *ctx.scopes, *(f"org:{o}" for o in org_ids)}
+            if _personal.enabled() and ctx.user_id and str(ctx.user_id).lower() in {str(o).lower() for o in org_ids}:
+                scopes.add(f"acct:{str(ctx.user_id).lower()}")          # the person's own wallet account
         return AccessToken(token=token, client_id=actor.subject, scopes=sorted(scopes), subject=actor.subject)
 
     async def _service_token(self, token: str) -> AccessToken | None:
@@ -1697,7 +1699,8 @@ def _scope_from_token(token: AccessToken) -> AccessScope:
     reads see exactly what REST reads see for the same caller. Service tokens
     carry no subject and never reach here (they get anonymous/public)."""
     orgs = [sc[4:] for sc in (token.scopes or []) if sc.startswith("org:")]
-    return AccessScope.for_org_member(token.subject, orgs) if orgs else AccessScope.for_user(token.subject)
+    own = next((sc[5:] for sc in (token.scopes or []) if sc.startswith("acct:")), None)
+    return AccessScope.for_org_member(token.subject, orgs, own) if orgs else AccessScope.for_user(token.subject)
 
 
 class _RepoExecutionRefused(Exception):

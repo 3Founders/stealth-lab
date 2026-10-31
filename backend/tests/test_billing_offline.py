@@ -6,7 +6,7 @@ import json
 import pytest
 
 from app.mcp_server import billing_routes as br
-from app.services import personal_org, wallet
+from app.services import accounts, wallet
 
 
 def _sig(body: bytes, secret: str) -> str:
@@ -49,8 +49,9 @@ def test_only_inr_captured_payments_become_credits():
     assert br.payment_from_event(no_order) is None
 
 
-def test_personal_orgs_are_off_unless_switched_on_and_billing_needs_keys(monkeypatch):
-    assert not personal_org.enabled({}) and personal_org.enabled({"KELL_PERSONAL_ORGS": "on"})
+def test_wallets_are_off_unless_switched_on_and_billing_needs_keys(monkeypatch):
+    assert not accounts.enabled({}) and accounts.enabled({"KELL_WALLETS": "on"})
+    assert accounts.enabled({"KELL_PERSONAL_ORGS": "on"})                    # the old name still switches it on
+    monkeypatch.delenv("KELL_WALLETS", raising=False)
     monkeypatch.delenv("KELL_PERSONAL_ORGS", raising=False)
     assert not br.configured()
-    assert personal_org.slug_for("AAAAAAAA-1111-2222-3333-444444444444") == "personal-aaaaaaaa1111222233334"[:len("personal-") + 20]

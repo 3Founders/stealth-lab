@@ -35,6 +35,30 @@ People want to pay us while the company is not yet incorporated, so the first ve
 - **Interim account.** Razorpay account in a founder's sole-proprietorship name, replaced by a company account once incorporation is confirmed.
 - **Managed tier is open models only.** A person who brings their own provider key is billed by that provider and uses no credit. Nothing on the site mentions reselling any closed model.
 
+## Accounts, plans and the order contract (migration 164)
+
+- **Whose wallet.** A person's wallet account id is their user id. No organization row, no membership, nothing hidden
+  (`app/services/accounts.py`). Migration 164 dropped the foreign keys to `organizations` on the five tables a wallet uses
+  (`org_policies`, `provider_call_ledger`, `org_denials`, `org_wallet_credits`, `billing_orders`) and added a trigger that requires
+  the id to be an organization or a user. Row-level security and every query by `organization_id` are unchanged.
+- **Teams are real organizations.** A Pilot of two or more seats creates an organization named by the buyer, with the buyer as
+  owner, a wallet-required policy and the included usage credited to it. The other seats join with the organization invites.
+  A one-seat Pilot, and Pro, credit the buyer's own account.
+- **Who pays by default.** A person in exactly one team pays through the team; alone, through their own wallet; in several teams
+  they must name one (`org_id` / `X-Stealthlab-Org`).
+- **Plans.** Pro Rs 999 for 30 days with $5 included. Pilot Rs 649 per seat for 14 days, 1 to 10 seats, $4 per seat included, one per
+  account. A renewal starts when the current period ends. Included usage is ordinary wallet credit, credited once at purchase, and does not
+  expire when the period ends. The plan is a pass renewed by hand, not a subscription.
+- **Orders.** `POST /v1/billing/orders` with `{"amount_inr": N}` (credit top-up) or `{"plan": "pro"}` or
+  `{"plan": "pilot", "seats": 1..10, "team_name": "..."}` (team name only when seats is 2 or more). The server works out the amount.
+  `GET /v1/billing/plan` returns `{plan, seats, team_name, active_until}` for the buyer's latest plan (a past date means it ended).
+- **Activation** happens only in the signed webhook, from the order we recorded: idempotent steps with the entitlement row written last,
+  so a retry after a failure completes the work. A redelivered event id is acknowledged without work (`billing_webhook_events`).
+- **Not built yet (from the 2026-10-31 review, docs/pricing_page.md and the research notes):** refund and dispute events (a refund is manual in the
+  Razorpay dashboard for now and does not reverse credit or end a plan), a job that fetches unpaid orders from Razorpay when a webhook never
+  arrives, GST receipts, expiry of included usage, and scheduling the abandoned-reservation sweep (`ingestion.admin` settles reservations only
+  when someone runs it).
+
 ## The credit formula
 
 ```
@@ -81,7 +105,9 @@ Backend (hosted MCP service):
 
 | Variable | Meaning |
 |---|---|
-| `KELL_PERSONAL_ORGS=on` | Gives each person a personal organization (the wallet's owner) whose policy needs a positive balance. |
+| `KELL_WALLETS=on` | Turns wallets on. A person's wallet account is their own user id (no hidden organization); its policy needs a positive balance. `KELL_PERSONAL_ORGS=on` still works as the old name. |
+| `KELL_PRO_INCLUDED_USD`, `KELL_PILOT_SEAT_USD` | Usage included with a plan, in dollars: Pro (default 5) and per Pilot seat (default 4). Fixed amounts, independent of the margin. |
+| `KELL_ORDERS_PER_HOUR` | Payment attempts one account may start an hour (default 10). |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Razorpay API keys. Test-mode keys work with no other change. |
 | `RAZORPAY_WEBHOOK_SECRET` | Needed for the webhook to credit anything. |
 | `KELL_INR_PER_USD` | Rupees per dollar used for pricing (default 90, placeholder). |

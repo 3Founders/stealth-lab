@@ -1,6 +1,6 @@
 """
 The prepaid wallet against a real Postgres with every migration applied (db/156 included): money in, the balance check in
-org_governance.reserve_call, idempotent crediting, personal organizations, and the append-only guard.
+org_governance.reserve_call, idempotent crediting, own-wallet accounts (no organization row), plans, and the append-only guard.
 
 Needs WALLET_TEST_DSN: a database that already has all migrations (python scripts/migrate.py against a scratch database).
 It writes rows with random ids under its own organizations and does not clean up, so point it at a scratch database, never
@@ -20,13 +20,13 @@ asyncpg = pytest.importorskip("asyncpg")
 from dotenv import dotenv_values  # noqa: E402
 
 from app.services import org_governance as gov  # noqa: E402
-from app.services import personal_org, wallet  # noqa: E402
+from app.services import accounts, plans, wallet  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DSN = os.environ.get("WALLET_TEST_DSN") or dotenv_values(ROOT / ".env").get("WALLET_TEST_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="WALLET_TEST_DSN not set")
 
-ENV = {"KELL_PERSONAL_ORGS": "on", "KELL_INR_PER_USD": "100", "KELL_MARGIN": "0.5"}
+ENV = {"KELL_WALLETS": "on", "KELL_INR_PER_USD": "100", "KELL_MARGIN": "0.5"}
 
 
 def run(coro_fn):
@@ -52,12 +52,12 @@ async def _reserve(pool, org, subject, worst=0.01):
                                   data_class="PUBLIC_SOURCE", instance_key=None, worst_case_usd=worst)
 
 
-def test_a_new_person_gets_a_personal_org_that_refuses_until_credit_arrives():
+def test_a_new_person_gets_their_own_wallet_that_refuses_until_credit_arrives():
     async def body(pool):
         uid, sub = await _user(pool)
-        org = await personal_org.ensure_personal_org(pool, user_id=uid, env=ENV)
-        assert org
-        assert await personal_org.ensure_personal_org(pool, user_id=uid, org_ids=(org,), env=ENV) is None   # idempotent
+        assert await accounts.ensure_account(pool, user_id=uid, env=ENV)
+        org = uid                                                    # a person's wallet account id is their user id
+        assert await accounts.ensure_account(pool, user_id=uid, env=ENV)         # idempotent
         with pytest.raises(gov.BudgetExceeded) as refused:
             await _reserve(pool, org, sub)
         assert refused.value.code == "wallet_empty"
@@ -78,7 +78,8 @@ def test_a_new_person_gets_a_personal_org_that_refuses_until_credit_arrives():
 def test_the_same_payment_credits_once_and_the_credits_cannot_be_edited():
     async def body(pool):
         uid, _ = await _user(pool)
-        org = await personal_org.ensure_personal_org(pool, user_id=uid, env=ENV)
+        assert await accounts.ensure_account(pool, user_id=uid, env=ENV)
+        org = uid
         ref = "pay_" + uuid.uuid4().hex
         assert await wallet.credit_payment(pool, org_id=org, payment_ref=ref, amount_paise=15_000, created_by="t", env=ENV)
         assert not await wallet.credit_payment(pool, org_id=org, payment_ref=ref, amount_paise=15_000, created_by="t", env=ENV)
@@ -106,10 +107,71 @@ def test_an_org_without_wallet_required_is_unchanged():
 def test_find_order_matches_only_orders_we_recorded():
     async def body(pool):
         uid, sub = await _user(pool)
-        org = await personal_org.ensure_personal_org(pool, user_id=uid, env=ENV)
+        assert await accounts.ensure_account(pool, user_id=uid, env=ENV)
+        org = uid
         oid = "order_" + uuid.uuid4().hex
         await wallet.record_order(pool, org_id=org, order_id=oid, amount_paise=20_000, created_by=sub)
         found = await wallet.find_order(pool, oid)
         assert found["organization_id"] == org and int(found["amount_paise"]) == 20_000
         assert await wallet.find_order(pool, "order_unknown") is None
+    run(body)
+
+
+def _order(plan, seats=1, team=None, period=30, buyer=None, oid=None):
+    return {"plan": plan, "seats": seats, "team_name": team, "buyer_user_id": buyer, "period_days": period,
+            "order_id": oid or "order_" + uuid.uuid4().hex}
+
+
+def test_a_pro_payment_starts_the_plan_credits_five_dollars_once_and_a_renewal_extends_from_the_end():
+    async def body(pool):
+        uid, sub = await _user(pool)
+        pay = "pay_" + uuid.uuid4().hex
+        order = _order("pro", buyer=uid)
+        assert await plans.activate(pool, order=order, payment_id=pay, amount_paise=99_900)
+        assert not await plans.activate(pool, order=order, payment_id=pay, amount_paise=99_900)       # a repeat does nothing
+        bal = await wallet.balance(pool, uid)
+        assert Decimal(bal["purchased_usd"]) == Decimal("5")
+        first = await plans.current(pool, uid)
+        assert first["plan"] == "pro" and first["seats"] == 1 and first["team_name"] is None
+        assert await plans.activate(pool, order=_order("pro", buyer=uid), payment_id="pay_" + uuid.uuid4().hex, amount_paise=99_900)
+        second = await plans.current(pool, uid)
+        assert second["active_until"] > first["active_until"]                                          # renewed from the end
+        res = await _reserve(pool, uid, sub, 0.5)                                                     # the included usage can be spent
+        assert res.reserved_usd == Decimal("0.5")
+    run(body)
+
+
+def test_a_team_pilot_creates_a_real_organization_owned_by_the_buyer_and_credits_four_dollars_a_seat():
+    async def body(pool):
+        uid, _ = await _user(pool)
+        pay = "pay_" + uuid.uuid4().hex
+        order = _order("pilot", seats=3, team="Acme pilot", period=14, buyer=uid)
+        assert await plans.activate(pool, order=order, payment_id=pay, amount_paise=3 * 64_900)
+        assert not await plans.activate(pool, order=order, payment_id=pay, amount_paise=3 * 64_900)
+        cur = await plans.current(pool, uid)
+        assert cur["plan"] == "pilot" and cur["seats"] == 3 and cur["team_name"] == "Acme pilot"
+        org = await pool.fetchval("SELECT id::text FROM organizations WHERE slug = $1", plans.team_slug(pay))
+        assert org and org != uid
+        assert await pool.fetchval("SELECT 1 FROM org_memberships WHERE organization_id = $1::uuid AND user_id = $2::uuid", org, uid)
+        assert Decimal((await wallet.balance(pool, org))["purchased_usd"]) == Decimal("12")
+        assert await plans.has_pilot(pool, uid)
+    run(body)
+
+
+def test_a_one_seat_pilot_is_an_individual_account_with_no_organization():
+    async def body(pool):
+        uid, _ = await _user(pool)
+        pay = "pay_" + uuid.uuid4().hex
+        assert await plans.activate(pool, order=_order("pilot", seats=1, period=14, buyer=uid), payment_id=pay, amount_paise=64_900)
+        assert Decimal((await wallet.balance(pool, uid))["purchased_usd"]) == Decimal("4")
+        assert await pool.fetchval("SELECT 1 FROM organizations WHERE slug = $1", plans.team_slug(pay)) is None
+    run(body)
+
+
+def test_an_unknown_account_id_is_refused_by_the_database():
+    async def body(pool):
+        with pytest.raises(asyncpg.PostgresError):
+            await pool.execute(
+                "INSERT INTO org_wallet_credits (organization_id, payment_ref, amount_paise, amount_usd, created_by) "
+                "VALUES ($1::uuid, $2, 100, 1, 't')", str(uuid.uuid4()), "pay_" + uuid.uuid4().hex)
     run(body)

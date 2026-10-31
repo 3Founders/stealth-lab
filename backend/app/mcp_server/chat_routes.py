@@ -121,8 +121,9 @@ def _failure(request: Request, exc: Exception) -> JSONResponse:
 class Identity:
     """Who the website request is, as far as the governed path needs it."""
 
-    def __init__(self, actor_id: str, scope: Any, org_ids: tuple[str, ...]) -> None:
+    def __init__(self, actor_id: str, scope: Any, org_ids: tuple[str, ...], user_id: Optional[str] = None) -> None:
         self.actor_id, self.scope, self.org_ids = actor_id, scope, org_ids
+        self.user_id = str(user_id).lower() if user_id else None       # also the id of the person's own wallet account
 
 
 async def resolve_identity(verifier: Any, pool: Any, request: Request, is_local: Callable[[Request], bool]
@@ -162,23 +163,32 @@ async def resolve_identity(verifier: Any, pool: Any, request: Request, is_local:
         return None, ("this account may not run models", 403)
     org_ids = tuple(ctx.org_ids)
     from app.services import pilot_enrol as pilot
-    from app.services import personal_org
-    if personal_org.enabled():
-        org_ids = await personal_org.resolve_orgs(pool, user_id=ctx.user_id, org_ids=org_ids)
+    from app.services import accounts
+    if accounts.enabled():
+        org_ids = await accounts.resolve_orgs(pool, user_id=ctx.user_id, org_ids=org_ids)
     elif await pilot.ensure_pilot_member(pool, user_id=ctx.user_id, org_ids=org_ids):
         org_ids = (*org_ids, pilot.pilot_org_id())
-    scope = AccessScope.for_org_member(actor.subject, list(org_ids)) if org_ids else AccessScope.for_user(actor.subject)
-    return Identity(actor.subject, scope, org_ids), None
+    scope = (AccessScope.for_org_member(actor.subject, list(org_ids), ctx.user_id) if org_ids
+             else AccessScope.for_user(actor.subject))
+    return Identity(actor.subject, scope, org_ids, ctx.user_id), None
 
 
-def paying_org(requested: Optional[str], org_ids: tuple[str, ...], pilot_org: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """(org, error). A named org must be one the person belongs to; unnamed -> the pilot org when configured and they are in it."""
+def paying_org(requested: Optional[str], org_ids: tuple[str, ...], pilot_org: Optional[str],
+               own_account: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+    """(account, error). A named account must be one the person belongs to (their own wallet account counts); unnamed -> the
+    pilot org when configured and they are in it; else a team they belong to when it is the only one, else their own wallet."""
     member = {o.lower() for o in org_ids}
+    own = own_account.lower() if own_account else None
     if requested:
         req = requested.strip().lower()
         return (req, None) if req in member else (None, "you are not a member of that organization")
     if pilot_org and pilot_org in member:
         return pilot_org, None
+    teams = member - ({own} if own else set())
+    if len(teams) == 1:
+        return next(iter(teams)), None
+    if not teams and own in member:
+        return own, None
     if len(member) == 1:
         return next(iter(member)), None
     return None, None
@@ -224,7 +234,7 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         from app.providers.types import ProviderCallDenied, ProviderCallFailed
         from app.services import pilot_enrol as pilot
 
-        org, why = paying_org(request.headers.get("x-stealthlab-org"), who.org_ids, pilot.pilot_org_id())
+        org, why = paying_org(request.headers.get("x-stealthlab-org"), who.org_ids, pilot.pilot_org_id(), who.user_id)
         if why:
             return _error(request, 403, why, "permission_error", "policy_denied")
         try:

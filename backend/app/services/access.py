@@ -46,6 +46,9 @@ class AccessScope:
     viewer_id: Optional[str] = None
     include_private: bool = True
     org_ids: tuple[str, ...] = ()
+    # the id of the viewer's own wallet account (their user id), which is also listed in org_ids so it can pay; it lets the
+    # provider path tell "my own wallet" from "a team I belong to" (providers.service.governing_org)
+    own_account: Optional[str] = None
 
     @classmethod
     def anonymous(cls) -> "AccessScope":
@@ -56,8 +59,9 @@ class AccessScope:
         return cls(viewer_id=viewer_id)
 
     @classmethod
-    def for_org_member(cls, viewer_id: str, org_ids: list[str]) -> "AccessScope":
-        return cls(viewer_id=viewer_id, org_ids=tuple(str(o) for o in org_ids))
+    def for_org_member(cls, viewer_id: str, org_ids: list[str], own_account: Optional[str] = None) -> "AccessScope":
+        return cls(viewer_id=viewer_id, org_ids=tuple(str(o) for o in org_ids),
+                   own_account=str(own_account).lower() if own_account else None)
 
     @classmethod
     def unrestricted(cls) -> "AccessScope":

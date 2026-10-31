@@ -95,6 +95,11 @@ def governing_org(conn: Connection, scope: AccessScope, requested_org: Optional[
     if len(member_orgs) == 1:
         return member_orgs[0]
     if len(member_orgs) > 1:
+        # a team before the person's own wallet account (migration 164), when exactly one team is left
+        own = (getattr(scope, "own_account", None) or "").lower()
+        teams = [o for o in member_orgs if str(o).lower() != own]
+        if own and len(teams) == 1:
+            return teams[0]
         raise ProviderCallDenied("you belong to several organizations; say which one pays with org_id")
     if conn.owner.startswith("user:"):
         return None

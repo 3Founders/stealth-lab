@@ -3,14 +3,17 @@ Buying credits, on the hosted MCP service (the site calls these; Razorpay calls 
 
   GET  /v1/billing/wallet    the person's balance, history and what a rupee buys     (website session)
   POST /v1/billing/orders    {"amount_inr": 500} -> a Razorpay order for Checkout    (website session)
+                             {"plan": "pro"} or {"plan": "pilot", "seats": 1..10, "team_name": "..."} -> a plan order
+  GET  /v1/billing/plan      the buyer's latest plan: plan, seats, team_name, active_until
   POST /v1/billing/webhook   Razorpay's payment.captured / order.paid                (signature, no session)
 
-The money goes to the person's PERSONAL organization (services/personal_org.py), whose policy requires a positive prepaid
-balance. Crediting happens only in the webhook, from a payment Razorpay signed and an order WE recorded; the browser
+The money goes to the person's own wallet account (services/accounts.py: their user id, no hidden organization), whose
+policy requires a positive prepaid balance; a Pilot of two or more seats creates a real team organization instead
+(services/plans.py). Crediting happens only in the webhook, from a payment Razorpay signed and an order WE recorded; the browser
 returning from Checkout credits nothing, so a forged "success" page changes no balance. See services/wallet.py for the
 signature rule, the idempotency key and the pricing rule.
 
-Off (503) unless RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and KELL_PERSONAL_ORGS=on are set; the webhook additionally needs
+Off (503) unless RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and KELL_WALLETS=on are set; the webhook additionally needs
 RAZORPAY_WEBHOOK_SECRET. Test-mode keys work without any other change.
 """
 from __future__ import annotations
@@ -23,11 +26,13 @@ from typing import Any, Callable, Optional
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from app.mcp_server.chat_routes import BY_ADDRESS, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import personal_org, wallet
+from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
+from app.services import accounts, plans, wallet
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
+# a person starting orders over and over is a card-testing signature; a real buyer needs a handful an hour
+ORDERS_PER_ACCOUNT = Window(int(os.environ.get("KELL_ORDERS_PER_HOUR", "10")), 3600.0)
 
 
 def cors_headers(request: Request) -> dict[str, str]:
@@ -46,7 +51,7 @@ def _err(request: Request, status: int, message: str) -> JSONResponse:
 
 
 def configured() -> bool:
-    return bool(personal_org.enabled() and os.environ.get("RAZORPAY_KEY_ID") and os.environ.get("RAZORPAY_KEY_SECRET"))
+    return bool(accounts.enabled() and os.environ.get("RAZORPAY_KEY_ID") and os.environ.get("RAZORPAY_KEY_SECRET"))
 
 
 def parse_amount_inr(value: Any) -> int:
@@ -96,10 +101,9 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         who, refusal = await resolve_identity(verifier, pool_getter(), request, is_local)
         if refusal is not None:
             return None, None, _err(request, refusal[1], refusal[0])
-        org = await personal_org._existing_personal(pool_getter(), who.user_id) if who.user_id else None
-        if not org:
+        if not who.user_id or not await accounts.ensure_account(pool_getter(), user_id=who.user_id):
             return None, None, _err(request, 409, "your account has no wallet yet; try again in a moment")
-        return who, org, None
+        return who, who.user_id, None          # a person's wallet account id is their user id (no hidden organization)
 
     @server.custom_route("/v1/billing/wallet", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def wallet_route(request: Request) -> Response:
@@ -120,8 +124,12 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         who, org, bad = await person(request)
         if bad is not None:
             return bad
+        if not ORDERS_PER_ACCOUNT.allow(org):
+            return _err(request, 429, "too many payment attempts; try again later or contact us")
         try:
             data = await request.json()
+            if isinstance(data, dict) and "plan" in data:
+                return await plan_order(request, who, org, data)
             paise = parse_amount_inr(data.get("amount_inr") if isinstance(data, dict) else None)
             order = await _create_razorpay_order(paise, f"kell-{org[:8]}")
             await wallet.record_order(pool_getter(), org_id=org, order_id=str(order["id"]), amount_paise=paise,
@@ -133,6 +141,34 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         return _json(request, {"order_id": order["id"], "amount_paise": paise, "currency": "INR",
                                "key_id": os.environ["RAZORPAY_KEY_ID"],
                                "credit_usd": str(wallet.usd_for_paise(paise))}, 201)
+
+    async def plan_order(request: Request, who: Any, account: str, data: dict[str, Any]) -> Response:
+        """Pro or Pilot: the amount is worked out here from the plan, never taken from the request."""
+        try:
+            order = plans.parse_plan_order(data)
+            if order.plan == "pilot" and await plans.has_pilot(pool_getter(), account):
+                raise plans.PlanConflict("this account has already had its pilot; contact us to extend it")
+            rz = await _create_razorpay_order(order.amount_paise, f"kell-{order.plan}-{account[:8]}")
+            await wallet.record_order(pool_getter(), org_id=account, order_id=str(rz["id"]), amount_paise=order.amount_paise,
+                                      created_by=who.actor_id, plan=order.plan, seats=order.seats,
+                                      team_name=order.team_name, buyer_user_id=account, period_days=order.period_days)
+        except plans.PlanError as exc:
+            return _err(request, exc.status, str(exc))
+        except wallet.WalletError as exc:
+            return _err(request, exc.status, str(exc))
+        return _json(request, {"order_id": rz["id"], "amount_paise": order.amount_paise, "currency": "INR",
+                               "key_id": os.environ["RAZORPAY_KEY_ID"], "plan": order.plan, "seats": order.seats,
+                               "period_days": order.period_days}, 201)
+
+    @server.custom_route("/v1/billing/plan", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def plan_route(request: Request) -> Response:
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, account, bad = await person(request)
+        if bad is not None:
+            return bad
+        got = await plans.current(pool_getter(), account)
+        return _json(request, got or {"plan": None, "seats": 0, "team_name": None, "active_until": None})
 
     @server.custom_route("/v1/billing/webhook", methods=["POST"], include_in_schema=False)
     async def webhook_route(request: Request) -> Response:
@@ -147,13 +183,22 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         if pay is None:
             return Response(status_code=200)                       # an event we do not act on
         pool = pool_getter()
+        event_id = request.headers.get("x-razorpay-event-id")
+        if await wallet.event_seen(pool, event_id):
+            return Response(status_code=200)                       # a redelivery of work already done
         order = await wallet.find_order(pool, pay["order_id"])
         if order is None or int(order["amount_paise"]) != pay["amount"]:
             log.warning("billing webhook: payment %s does not match a known order", pay["payment_id"])
             return Response(status_code=200)                       # acknowledged, not credited; reconcile by hand
         try:
+            if order.get("plan"):
+                await plans.activate(pool, order={**order, "order_id": pay["order_id"]}, payment_id=pay["payment_id"],
+                                     amount_paise=pay["amount"])
+                await wallet.mark_event(pool, event_id)
+                return Response(status_code=200)
             await wallet.credit_payment(pool, org_id=order["organization_id"], payment_ref=pay["payment_id"],
                                         amount_paise=pay["amount"], created_by="razorpay", order_id=pay["order_id"])
+            await wallet.mark_event(pool, event_id)
         except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a payment
             log.exception("billing webhook: crediting payment %s failed", pay["payment_id"])
             return Response(status_code=500)

@@ -66,7 +66,7 @@ def _scope(org_id: str) -> TenantScope:
 
 
 async def balance(pool: Any, org_id: str) -> dict[str, Any]:
-    """Purchased, spent (settled or held) and remaining dollars for an organization, plus its credit history."""
+    """Purchased, spent (settled or held) and remaining dollars for an account (a person or a team), plus its credit history."""
     async with tenant_transaction(pool, _scope(org_id)) as conn:
         bought = await conn.fetchval("SELECT COALESCE(sum(amount_usd), 0) FROM org_wallet_credits WHERE "
                                      "organization_id = $1::uuid", str(org_id))
@@ -81,19 +81,31 @@ async def balance(pool: Any, org_id: str) -> dict[str, Any]:
                          "amount_usd": str(r["amount_usd"]), "at": r["created_at"].isoformat()} for r in rows]}
 
 
-async def record_order(pool: Any, *, org_id: str, order_id: str, amount_paise: int, created_by: str) -> None:
+async def record_order(pool: Any, *, org_id: str, order_id: str, amount_paise: int, created_by: str,
+                       plan: Optional[str] = None, seats: Optional[int] = None, team_name: Optional[str] = None,
+                       buyer_user_id: Optional[str] = None, period_days: Optional[int] = None) -> None:
+    """Record an order we created. A plan order also records what it is for (plan, seats, team name, buyer, period), so the
+    webhook activates it from this row and never from a field in the webhook body."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
-        await conn.execute("INSERT INTO billing_orders (order_id, organization_id, amount_paise, created_by) "
-                           "VALUES ($1, $2::uuid, $3, $4) ON CONFLICT (order_id) DO NOTHING",
-                           order_id, str(org_id), amount_paise, created_by)
+        if plan is None:
+            await conn.execute("INSERT INTO billing_orders (order_id, organization_id, amount_paise, created_by) "
+                               "VALUES ($1, $2::uuid, $3, $4) ON CONFLICT (order_id) DO NOTHING",
+                               order_id, str(org_id), amount_paise, created_by)
+        else:
+            await conn.execute(
+                "INSERT INTO billing_orders (order_id, organization_id, amount_paise, created_by, plan, seats, team_name, "
+                "buyer_user_id, period_days) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8::uuid, $9) "
+                "ON CONFLICT (order_id) DO NOTHING",
+                order_id, str(org_id), amount_paise, created_by, plan, seats, team_name, buyer_user_id, period_days)
 
 
 async def find_order(pool: Any, order_id: str) -> Optional[dict[str, Any]]:
-    """The organization and amount we recorded for a gateway order (billing_orders is not row-secured: a webhook has no
-    tenant, and an order id is unguessable and only maps to an organization id)."""
+    """The account, amount and (for a plan order) what it is for, as we recorded them for a gateway order (billing_orders is
+    not row-secured: a webhook has no tenant, and an order id is unguessable and only maps to an id)."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
-        row = await conn.fetchrow("SELECT order_id, organization_id::text AS organization_id, amount_paise FROM "
-                                  "billing_orders WHERE order_id = $1", order_id)
+        row = await conn.fetchrow(
+            "SELECT order_id, organization_id::text AS organization_id, amount_paise, plan, seats, team_name, "
+            "buyer_user_id::text AS buyer_user_id, period_days FROM billing_orders WHERE order_id = $1", order_id)
     return dict(row) if row else None
 
 
@@ -121,3 +133,26 @@ async def credit_payment(pool: Any, *, org_id: str, payment_ref: str, amount_pai
         async with tenant_transaction(pool, _scope(org_id)) as conn:
             got = await conn.fetchval(base.format(cols="", vals=""), *args)
     return bool(got)
+
+
+async def event_seen(pool: Any, event_id: Optional[str]) -> bool:
+    """True when this webhook event id was already processed. A missing id or a missing table (migration 164 not applied
+    yet) is "not seen": the payment's own idempotency key still protects the money."""
+    if not event_id:
+        return False
+    try:
+        async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+            return bool(await conn.fetchval("SELECT 1 FROM billing_webhook_events WHERE event_id = $1", event_id))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def mark_event(pool: Any, event_id: Optional[str]) -> None:
+    """Remember a processed event id, only AFTER its work succeeded, so a failed delivery is retried and completes."""
+    if not event_id:
+        return
+    try:
+        async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+            await conn.execute("INSERT INTO billing_webhook_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING", event_id)
+    except Exception:  # noqa: BLE001
+        log.warning("could not record webhook event %s", event_id, exc_info=True)
