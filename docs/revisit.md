@@ -46,6 +46,7 @@ generation). Waiting:
   Research in (Gemini and Perplexity, 2026-10-31): both rank OpenCode first (MIT, client/server with an SDK, plugins
   with hooks before and after tools, 75+ providers, reads AGENTS.md). Next: a small spike, a kell plugin for OpenCode,
   before deciding to fork; check its current plugin hooks in the repo first, since the reports disagree on details.
+- **Our own design app**, in the same look as the website and the console (owner, 2026-10-31). Not started.
 - **The one-line installers run kell through npx** (`install.sh` / `install.ps1` call `npx kell-mcp install`), so
   Claude Code's hooks become `npx -y kell-mcp@latest hook-prompt`: an npx start on every prompt. Make them
   `npm install -g` first. Until then [new_user_setup.md](new_user_setup.md) uses `npm install -g kell-mcp`.
