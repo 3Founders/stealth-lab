@@ -10,7 +10,8 @@ let pathname = "/connect";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 vi.mock("next/link", () => ({ default: ({ href, children, className, ...rest }: { href: string; children: React.ReactNode; className?: string }) => <a href={href} className={className} {...rest}>{children}</a> }));
 
-import ConnectNav, { CONNECT_PAGES } from "@/components/connect/ConnectNav";
+import ConnectNav from "@/components/connect/ConnectNav";
+import { CONNECT_PAGES } from "@/components/connect/pages";
 import Connect from "@/app/connect/page";
 import HelpGuide from "@/app/connect/help/page";
 import ClaudeCodeGuide from "@/app/connect/claude-code/page";

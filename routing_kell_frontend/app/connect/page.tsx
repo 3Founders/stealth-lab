@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CONNECT_PAGES } from "@/components/connect/ConnectNav";
+import { CONNECT_PAGES } from "@/components/connect/pages";
 
 export const metadata: Metadata = { title: "Connect" };
 
