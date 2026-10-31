@@ -145,3 +145,34 @@ def test_consent_then_call_through_the_server_tool(monkeypatch):
     assert run(srv._gateway_call(None, "nope/nope", "x", {}, "PUBLIC_SOURCE")).startswith("REFUSED")
     assert json.loads(run(srv._gateway_call(None, "app.glif/glif", "revoke", {}, "PUBLIC_SOURCE")))["revoked"] is True
     assert "ok" in pool.calls and "refused:tool" in pool.calls and "refused:consent" in pool.calls
+
+
+def test_kells_own_image_server_needs_no_consent_and_keeps_the_rules(monkeypatch):
+    from app.mcp_server import server as srv
+    from app.tool_routing import store as _store
+
+    pool = FakePool()
+    monkeypatch.setitem(srv._LIFESPAN_STATE, "pool", pool)
+    monkeypatch.setattr(srv, "_gateway_owner", lambda: "user-2")
+    monkeypatch.setattr(gw, "builtin_available", lambda name: name == "kell/images")
+    monkeypatch.setattr(_store, "record_outcome", lambda *a, **k: asyncio.sleep(0, 0))
+    calls = []
+
+    async def fake_generate(prompt, size="1024x1024"):
+        calls.append((prompt, size))
+        return b"\x89PNG fox", 1.5
+    monkeypatch.setattr(gw, "generate_image", fake_generate)
+    monkeypatch.setattr(gw, "IMAGES_PER_DAY", 2)
+
+    out = run(srv._gateway_call(None, "kell/images", "generate_image", {"prompt": "a minimal fox logo"}, "PUBLIC_SOURCE"))
+    assert isinstance(out, list) and json.loads(out[0])["images"] == 1 and calls == [("a minimal fox logo", "1024x1024")]
+    assert not pool.links                                                         # no consent link for kell's own
+    assert run(srv._gateway_call(None, "kell/images", "generate_image", {"prompt": "x"}, "USER_PRIVATE")).startswith("REFUSED")
+    assert run(srv._gateway_call(None, "kell/images", "generate_image", {"prompt": "sk-" + "b" * 30}, "PUBLIC_SOURCE")).startswith("REFUSED")
+    assert run(srv._gateway_call(None, "kell/images", "other", {"prompt": "x"}, "PUBLIC_SOURCE")).startswith("REFUSED")
+    run(srv._gateway_call(None, "kell/images", "generate_image", {"prompt": "second"}, "PUBLIC_SOURCE"))
+    assert "daily limit" in run(srv._gateway_call(None, "kell/images", "generate_image", {"prompt": "third"}, "PUBLIC_SOURCE"))
+    listed = json.loads(run(srv._gateway_tools("kell/images")))
+    assert listed["tools"][0]["name"] == "generate_image"
+    entry = gw.builtin_entry("kell/images")
+    assert entry["via_kell"] and entry["source"] == "kell" and "generate" in entry["goals"]

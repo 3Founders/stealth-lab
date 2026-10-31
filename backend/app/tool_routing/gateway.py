@@ -289,3 +289,58 @@ def allow_rate(key: str, limit: int, window_s: float) -> bool:
         return False
     q.append(now)
     return True
+
+
+# --- kell's own servers: capabilities kell runs itself, reached the same way (no consent link: nothing third-party is
+# installed or signed in to; the provider -- DeepInfra -- is kell's own, under its own key) ---------------------------------
+
+IMAGE_MODEL = os.environ.get("TOOL_IMAGE_MODEL", "black-forest-labs/FLUX-1-schnell")
+IMAGES_PER_DAY = int(os.environ.get("TOOL_IMAGES_PER_DAY", "30"))
+IMAGE_SIZES = ("1024x1024", "1024x768", "768x1024", "1280x720", "720x1280", "512x512")
+BUILTIN: dict[str, dict[str, Any]] = {
+    "kell/images": {
+        "title": "Image generation by kell",
+        "summary": "Generate an image from a description -- logos, banners, illustrations, icons, mockup art -- with an "
+                   "open image model (FLUX), run by kell: no install, no sign-in. Images only, not video or audio.",
+        "tools": [{"name": "generate_image",
+                   "description": "Generate one image from a text description. Describe subject, style, colours and "
+                                  "composition; say 'flat vector' or 'photo' for the look. Returns the image.",
+                   "inputSchema": {"type": "object", "required": ["prompt"], "properties": {
+                       "prompt": {"type": "string", "description": "what to draw, in detail"},
+                       "size": {"type": "string", "enum": list(IMAGE_SIZES), "default": "1024x1024"}}}}],
+    },
+}
+
+
+def builtin_available(name: str) -> bool:
+    if name != "kell/images" or os.environ.get("TOOL_GATEWAY", "on").lower() == "off":
+        return False
+    from app.tool_routing.providers import deepinfra_key
+    return bool(deepinfra_key())
+
+
+def builtin_entry(name: str) -> dict[str, Any]:
+    b = BUILTIN[name]
+    return {"name": name, "server": name, "source": "kell", "title": b["title"], "summary": b["summary"],
+            "goals": ["generate"], "tools": [t["name"] for t in b["tools"]], "via_kell": True,
+            "call": f'use_tool(server="{name}", name="{b["tools"][0]["name"]}", arguments={{"prompt": "..."}})',
+            "available": "runs through kell now: no install, no sign-in"}
+
+
+async def generate_image(prompt: str, size: str = "1024x1024") -> tuple[bytes, float]:
+    """One image from DeepInfra's OpenAI-compatible images endpoint -> (png bytes, seconds)."""
+    from app.tool_routing.providers import BASE, deepinfra_key
+
+    if size not in IMAGE_SIZES:
+        size = "1024x1024"
+    t0 = time.monotonic()
+    async with httpx.AsyncClient(timeout=90) as client:
+        r = await client.post(f"{BASE}/openai/images/generations", headers={"authorization": f"Bearer {deepinfra_key()}"},
+                              json={"model": IMAGE_MODEL, "prompt": prompt[:2000], "n": 1, "size": size,
+                                    "response_format": "b64_json"})
+    if r.status_code >= 300:
+        raise GatewayRefused(f"the image model refused the request (HTTP {r.status_code})")
+    data = (r.json().get("data") or [{}])[0]
+    if not data.get("b64_json"):
+        raise GatewayRefused("the image model returned no image")
+    return base64.b64decode(data["b64_json"]), time.monotonic() - t0
