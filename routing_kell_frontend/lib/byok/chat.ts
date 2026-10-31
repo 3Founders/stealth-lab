@@ -6,7 +6,34 @@
 import { readSse } from "@/lib/sse";
 import type { Provider } from "@/lib/byok/providers";
 
-export interface ChatMessage { role: "user" | "assistant"; content: string }
+/** One piece of a message that has a picture in it. `data` is base64 without the "data:" prefix. */
+export type ChatPart = { type: "text"; text: string } | { type: "image"; mime: string; data: string };
+/** `content` is plain text, or a list of parts when the message carries pictures. */
+export interface ChatMessage { role: "user" | "assistant"; content: string | ChatPart[] }
+
+/** The message as one provider wants it: OpenAI-style `image_url` parts, or Anthropic `image` blocks. Plain text passes through unchanged. */
+export function encodeMessage(m: ChatMessage, anthropic: boolean): { role: string; content: unknown } {
+  if (typeof m.content === "string") return { role: m.role, content: m.content };
+  return {
+    role: m.role,
+    content: m.content.map((p) =>
+      p.type === "text" ? { type: "text", text: p.text }
+        : anthropic ? { type: "image", source: { type: "base64", media_type: p.mime, data: p.data } }
+          : { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.data}` } }),
+  };
+}
+
+/** Pictures in a provider's reply (some OpenAI-compatible servers return them beside the text), as markdown the room can draw. */
+function imagesAsMarkdown(list: unknown): string {
+  if (!Array.isArray(list)) return "";
+  let out = "";
+  for (const it of list) {
+    const url = (it as { image_url?: { url?: unknown } | string })?.image_url;
+    const u = typeof url === "string" ? url : typeof url?.url === "string" ? url.url : "";
+    if (u) out += `\n\n![image](${u})\n\n`;
+  }
+  return out;
+}
 export interface ProviderTarget { provider: Provider; baseUrl: string; apiKey: string; extraHeaders?: Record<string, string> }
 
 export class ProviderError extends Error {}
@@ -71,18 +98,27 @@ export async function* streamChat(
   const maxTokens = opts.maxTokens ?? 4096; // never small: a reasoning model (glm-5.3-flash) thinks first and a small limit is spent before any answer appears
   const anthropic = t.provider.kind === "anthropic";
   const body = anthropic
-    ? { model, max_tokens: maxTokens, stream: true, ...(opts.system ? { system: opts.system } : {}), messages }
-    : { model, max_tokens: maxTokens, stream: true, messages: [...(opts.system ? [{ role: "system", content: opts.system }] : []), ...messages] };
+    ? { model, max_tokens: maxTokens, stream: true, ...(opts.system ? { system: opts.system } : {}), messages: messages.map((m) => encodeMessage(m, true)) }
+    : { model, max_tokens: maxTokens, stream: true, messages: [...(opts.system ? [{ role: "system", content: opts.system }] : []), ...messages.map((m) => encodeMessage(m, false))] };
   const res = await send(t, anthropic ? "/v1/messages" : "/chat/completions", { method: "POST", body: JSON.stringify(body), signal: opts.signal }, fetchImpl);
   if (!res.ok || !res.body) await fail(res, t);
 
   // Some servers answer a streaming request with one plain JSON reply. Read that too, instead of showing nothing.
   if (!anthropic && (res.headers.get("content-type") ?? "").includes("application/json")) {
-    let json: { choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>; error?: { message?: unknown } } = {};
+    let json: { choices?: Array<{ message?: { content?: unknown; images?: unknown }; finish_reason?: unknown }>; error?: { message?: unknown } } = {};
     try { json = await res.json(); } catch { throw new ProviderError("The provider's reply could not be read."); }
     if (json.error) throw new ProviderError(scrub(String(json.error.message ?? "The provider returned an error."), t.apiKey));
-    const text = json.choices?.[0]?.message?.content;
-    if (typeof text === "string" && text) { yield text; return; }
+    const msg = json.choices?.[0]?.message as { content?: unknown; images?: unknown } | undefined;
+    let text = "";
+    if (typeof msg?.content === "string") text = msg.content;
+    else if (Array.isArray(msg?.content)) {
+      for (const part of msg.content as Array<{ type?: string; text?: unknown; image_url?: unknown }>) {
+        if (part?.type === "text" && typeof part.text === "string") text += part.text;
+        else if (part?.type === "image_url") text += imagesAsMarkdown([part]);
+      }
+    }
+    text += imagesAsMarkdown(msg?.images);
+    if (text.trim()) { yield text; return; }
     throw new ProviderError(emptyReply(json.choices?.[0]?.finish_reason));
   }
 
@@ -100,6 +136,8 @@ export async function* streamChat(
     if (ev.type === "error" || (!anthropic && ev.error)) error = new ProviderError(scrub(String(ev.error?.message ?? "The provider reported an error."), t.apiKey));
     if (!anthropic && ev.choices?.[0]?.finish_reason) finish = ev.choices[0].finish_reason;
     if (typeof piece === "string" && piece) { produced = true; queue.push(piece); wake?.(); }
+    const pics = !anthropic ? imagesAsMarkdown(ev.choices?.[0]?.delta?.images) : "";
+    if (pics) { produced = true; queue.push(pics); wake?.(); }
   }).catch((err) => { error = err; }).finally(() => { done = true; wake?.(); });
 
   while (true) {

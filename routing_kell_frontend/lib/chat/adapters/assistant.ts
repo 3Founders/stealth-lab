@@ -1,8 +1,9 @@
-import type { ChatMessage } from "@/lib/byok/chat";
+import type { ChatMessage, ChatPart } from "@/lib/byok/chat";
 import { scrub } from "@/lib/byok/chat";
 import { Broker } from "../relay/broker";
 import type { AgentIdentity, GroupMessage, TransportPacket } from "../types";
 import { toMcpPayload } from "./mcp";
+import { MAX_IMAGES_PER_REQUEST, visionHint, withoutDataImages } from "../images";
 
 export const ASSISTANT_HANDLE = "@assistant";
 export const assistantIdentityFor = (handle: string): AgentIdentity => ({ handle, displayName: handle.replace(/^@/, ""), type: "local_agent", status: "online" });
@@ -28,16 +29,37 @@ export interface AssistantDeps {
  * are this agent's own earlier replies; everything else, including other agents, is a user turn labelled with its sender.
  */
 export function toChatTurns(history: GroupMessage[], self: string = ASSISTANT_HANDLE): ChatMessage[] {
-  const turns: ChatMessage[] = [];
-  for (const m of history.slice(-30)) {
+  type Turn = { role: ChatMessage["role"]; parts: ChatPart[] };
+  const turns: Turn[] = [];
+  // Only the newest few pictures go to the model; older ones are named but not sent, so one long chat does not resend every picture each time.
+  let budget = MAX_IMAGES_PER_REQUEST;
+  const recent = history.slice(-30);
+  const sendable = new Map<string, number>();
+  for (let i = recent.length - 1; i >= 0 && budget > 0; i--) {
+    const n = recent[i].sender.handle === self ? 0 : recent[i].payload.attachments?.length ?? 0;
+    if (n) { const take = Math.min(n, budget); sendable.set(recent[i].id, take); budget -= take; }
+  }
+  for (const m of recent) {
     const role: ChatMessage["role"] = m.sender.handle === self ? "assistant" : "user";
-    const content = role === "user" ? `${m.sender.handle}: ${m.payload.text}` : m.payload.text;
+    // A picture a model made earlier is in its text as a data: address: far too big to send back. It becomes a note.
+    const body = withoutDataImages(m.payload.text);
+    const text = role === "user" ? `${m.sender.handle}: ${body}` : body;
+    const parts: ChatPart[] = [{ type: "text", text }];
+    const atts = role === "user" ? m.payload.attachments ?? [] : [];
+    const take = sendable.get(m.id) ?? 0;
+    atts.forEach((a, i) => {
+      if (i >= atts.length - take) parts.push({ type: "image", mime: a.mime, data: a.data });
+      else parts.push({ type: "text", text: "[picture omitted]" });
+    });
     const last = turns.at(-1);
-    if (last && last.role === role) last.content += `\n\n${content}`;
-    else turns.push({ role, content });
+    if (last && last.role === role) { last.parts.push({ type: "text", text: "\n\n" }, ...parts); }
+    else turns.push({ role, parts });
   }
   while (turns.length && turns[0].role !== "user") turns.shift();
-  return turns;
+  // Text-only turns stay plain strings, so a model with no picture support gets exactly what it did before.
+  return turns.map((t) => (t.parts.every((p) => p.type === "text")
+    ? { role: t.role, content: t.parts.map((p) => (p as { text: string }).text).join("") }
+    : { role: t.role, content: t.parts }));
 }
 
 /**
@@ -66,16 +88,21 @@ export function attachAssistant(broker: Broker, deps: AssistantDeps, handle: str
     broker.setActivity(handle, "processing");
     deps.used();
     let text = "";
+    let turns: ChatMessage[] = [];
     try {
       // The message that woke the agent is always part of what it is sent, even if the page's history has not caught up with it.
       const history = deps.history(roomId);
-      const turns = toChatTurns(history.some((m) => m.id === message.id) ? history : [...history, message], handle);
+      turns = toChatTurns(history.some((m) => m.id === message.id) ? history : [...history, message], handle);
       for await (const piece of target.stream(turns, controller.signal)) {
         text += piece;
         deps.onDelta(roomId, handle, text);
       }
     } catch (err) {
-      if ((err as { name?: string })?.name !== "AbortError") broker.notice(roomId, scrub(err instanceof Error ? err.message : "The provider returned an error.", ...target.secrets));
+      if ((err as { name?: string })?.name !== "AbortError") {
+        const said = scrub(err instanceof Error ? err.message : "The provider returned an error.", ...target.secrets);
+        const hint = turns.some((t) => Array.isArray(t.content) && t.content.some((p) => p.type === "image")) ? visionHint(said) : null;
+        broker.notice(roomId, hint ? `${said} ${hint}` : said);
+      }
     } finally {
       deps.onEnd(roomId, handle);
       broker.setActivity(handle, "idle");

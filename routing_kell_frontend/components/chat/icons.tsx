@@ -21,3 +21,23 @@ export function RemoveIcon({ size = 16 }: { size?: number }) {
     </svg>
   );
 }
+
+/** Attach a picture: a frame with a hill and a sun. */
+export function ImageIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" {...base}>
+      <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+      <circle cx="7.2" cy="8" r="1.3" />
+      <path d="m3.5 14.5 4-3.8 3 2.6 2.3-2 3.7 3.2" />
+    </svg>
+  );
+}
+
+/** Take a picture off the message: a plain cross. */
+export function CrossIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" {...base}>
+      <path d="m5.5 5.5 9 9M14.5 5.5l-9 9" />
+    </svg>
+  );
+}

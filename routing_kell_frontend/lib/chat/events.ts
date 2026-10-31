@@ -1,5 +1,6 @@
 /** The mapping between what the room shows (a GroupMessage) and what the server stores (an event), in both directions. */
 import { toMcpPayload } from "./adapters/mcp";
+import { textForSync } from "./images";
 import { HUMAN } from "./agents";
 import type { EventIn, ServerEvent } from "./rooms-api";
 import type { GroupMessage } from "./types";
@@ -12,7 +13,7 @@ import type { GroupMessage } from "./types";
 export function toEvent(m: GroupMessage, deviceId: string, lamport: number): EventIn {
   const agent = m.sender.type !== "human";
   return {
-    id: m.id, kind: "msg", body: m.payload.text, sender_kind: agent ? "agent" : "person",
+    id: m.id, kind: "msg", body: textForSync(m.payload.text, m.payload.attachments), sender_kind: agent ? "agent" : "person",
     ...(agent ? { sender_handle: m.sender.handle, depth: Math.max(0, Math.min(4, m.depthCounter)) } : {}),
     lamport, device_id: deviceId,
   };

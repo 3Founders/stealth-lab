@@ -17,7 +17,7 @@ import { DEFAULT_ROOM, newRoomName, readAgents, readRooms, withoutRoom, writeAge
 import { roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
-import type { AgentActivity, AgentIdentity, GroupMessage } from "@/lib/chat/types";
+import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from "@/lib/chat/types";
 import { MAX_DEPTH } from "@/lib/chat/types";
 import { groupMessages, initials } from "@/lib/chat/ui";
 import { getAccessToken, signOut } from "@/lib/session";
@@ -30,6 +30,8 @@ import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
+import MessageText from "@/components/chat/MessageText";
+import { withoutDataImages } from "@/lib/chat/images";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
@@ -46,7 +48,7 @@ function Avatar({ who }: { who: AgentIdentity }) {
 }
 
 function Body({ m }: { m: GroupMessage }) {
-  return <div className="dg-body"><p>{m.payload.text}</p></div>;
+  return <div className="dg-body"><MessageText text={m.payload.text} attachments={m.payload.attachments} /></div>;
 }
 
 /** Only offered when there is more below the viewport. */
@@ -576,7 +578,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     } catch (err) { note(err instanceof Error ? err.message : "That didn't work."); }
   };
 
-  const submit = async (line: string) => {
+  const submit = async (line: string, pictures?: ImageAttachment[]) => {
     const c = parseCommand(line);
     if (c) {
       if (c.cmd === "error") return note(c.message);
@@ -594,6 +596,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const toRelay = mentionedNames(line).filter((n) => names.has(n));
     const localMentions = mentionsIn(line).filter((h) => agents.includes(h));
     if (toRelay.length) {
+      if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
       try {
         const r = await api.send(line, room);
         setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], r.tasks) }));
@@ -606,7 +609,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
     const m: GroupMessage = {
       id: broker.newId(), roomId: room, sender: HUMAN, recipients: toRelay.length ? localMentions : recipientsFor(line),
-      payload: toMcpPayload(line), timestamp: Date.now(), depthCounter: 0,
+      payload: { ...toMcpPayload(line), ...(pictures?.length ? { attachments: pictures } : {}) }, timestamp: Date.now(), depthCounter: 0,
     };
     await broker.send(m);
   };
@@ -738,7 +741,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     <Avatar who={assistantIdentityFor(h)} />
                     <div className="dg-col">
                       <div className="dg-meta"><b>{h}</b><span className="dg-badge">agent</span></div>
-                      <div className="dg-body"><p><SmoothText text={v.text} /></p></div>
+                      <div className="dg-body"><p><SmoothText text={withoutDataImages(v.text)} /></p></div>
                     </div>
                   </MessageScroller.Item>
                 ))}
@@ -757,7 +760,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
           )}
         </div>
-        <Composer handles={mentionable} onSend={(t) => void submit(t)} enterToSend={chatPrefs.enterToSend} />
+        <Composer handles={mentionable} onSend={(t, a) => void submit(t, a)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <SettingsDialog

@@ -1,5 +1,6 @@
 // @vitest-environment node
 // The built-in assistant: answers when addressed, says why when it cannot, and never lets the key reach the room.
+import type { ChatMessage } from "@/lib/byok/chat";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DAILY_CAP, readCap, recordUse, usedToday, withinCap, writeCap, type KeyValue } from "@/lib/byok/spend";
 import { ASSISTANT_HANDLE, attachAssistant, toChatTurns, type AssistantDeps } from "@/lib/chat/adapters/assistant";
@@ -58,7 +59,7 @@ describe("assistant", () => {
   it("the message that woke it is always sent, even when the page's history has not caught up yet", async () => {
     const { b } = world();
     const seen: string[][] = [];
-    const d = deps({ history: () => [], resolve: async () => ({ secrets: [SECRET], stream: async function* (messages: { role: string; content: string }[]) { seen.push(messages.map((m) => `${m.role}:${m.content}`)); yield "ok"; } }) });
+    const d = deps({ history: () => [], resolve: async () => ({ secrets: [SECRET], stream: async function* (messages: ChatMessage[]) { seen.push(messages.map((m) => `${m.role}:${m.content}`)); yield "ok"; } }) });
     attachAssistant(b, d);
     await b.send(say(b, "@assistant hello there"));
     await new Promise((r) => setTimeout(r, 10));
@@ -161,7 +162,7 @@ describe("several agents", () => {
     const { b, events } = world(["@alice", "@assistant-1", "@assistant-2"]);
     const heard: string[] = [];
     const msg = say(b, "@assistant-2 hello", ["@assistant-2"]);
-    const mk = (name: string) => deps({ history: () => [msg], resolve: async () => ({ secrets: [SECRET], stream: async function* (messages: { role: string; content: string }[]) { heard.push(`${name}:${messages.map((m) => m.role).join(",")}`); yield `hi from ${name}`; } }) });
+    const mk = (name: string) => deps({ history: () => [msg], resolve: async () => ({ secrets: [SECRET], stream: async function* (messages: ChatMessage[]) { heard.push(`${name}:${messages.map((m) => m.role).join(",")}`); yield `hi from ${name}`; } }) });
     attachAssistant(b, mk("one"), "@assistant-1");
     attachAssistant(b, mk("two"), "@assistant-2");
     await b.send(msg);

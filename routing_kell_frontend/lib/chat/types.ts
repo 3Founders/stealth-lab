@@ -9,8 +9,20 @@ export interface AgentIdentity {
   sub?: string;
 }
 
+/** A picture attached to a message. Kept on this device (it is far too big for a room event); other devices and the server see a note instead. */
+export interface ImageAttachment {
+  kind: "image";
+  mime: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  /** base64, no "data:" prefix */
+  data: string;
+  name: string;
+  width: number;
+  height: number;
+}
+
 export interface DualPayload {
   text: string; // Human-readable Markdown
+  attachments?: ImageAttachment[];
   structuredPayload?: {
     protocol: "application/mcp+json";
     action: string;
