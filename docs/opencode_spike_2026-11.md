@@ -235,3 +235,23 @@ What this does and does not say:
   (which reads `~/.stealthlab/config.json`, whose URL is the stopped local server) returned an empty verdict; dispatch then solved it.
   Layer 2 should take its server from `STEALTHLAB_MCP_URL` like the hook does; not yet changed.
 - Claude Code's own kell hook said it "didn't record this in the kell library" — the headless runs carry no kell workflow.
+
+## Phase 1 (2026-10-31): the session runs on the cheap model
+
+- **Server:** Layer 2 now takes the server from `STEALTHLAB_MCP_URL` (then `STEALTHLAB_URL`, then the saved config), as the hook does.
+- **Real `/triage` fields** (three live replies): `{kind, work, confidence, provider, category, needs_retrieval, reason?, tool?}`;
+  kind is `repo_specific | reusable_task | knowledge_question | trivial_edit | conversation`, work is `answer | change |
+  conversation | unclear_change`. There is **no difficulty field**, and `confidence` is confidence in the label (a plain failing-test
+  fix 0.42, a sweeping redesign 0.98). The guess is gone: the strong model is chosen only for no verdict or `work=unclear_change`;
+  everything else starts cheap and the failed-test escalation catches a task that was too hard.
+- **Mode is a setting:** plugin option `mode` or `KELL_OC_MODE`: `session` (default; Layer 2; the hook's dispatch and answer paths are
+  switched off for the hooks it runs: `STEALTHLAB_DISPATCH=off`, `STEALTHLAB_ANSWERS=off`) or `dispatch` (the bridge's earlier flow,
+  Layer 2 off). Dispatch mode was not re-run live after this change.
+- **Live, dispatch off (local server, minimax-m2.7 cheap, gemma-4-31B-it strong):** failing-test fix 66 s, 4 tests pass; two-file bug 58 s,
+  5 tests pass. Each: triage `work=change` -> `-> cheap gc/minimax-m2.7`, the session ran on minimax, ran the project's pytest, edited,
+  re-ran, `record ... accepted check_kind tests`; no dispatch lines in `hooks.log`.
+- **Forced escalation** (`fixtures/weak_provider.mjs`: an OpenAI-compatible endpoint that answers every turn with `python -m pytest -q`
+  and never fixes anything): triage -> `cheap weak/weak-1`; `escalate after 2 failed test runs -> gc/gemma-4-31B-it`; gemma fixed both files;
+  5 tests pass; 163 s; recorded on `gc/gemma-4-31B-it`.
+- Still seen: about one run in four (here two of six) stalls with no output for the whole 280 s, so the earlier fix removed one cause
+  of the cold-start hang, not all of them.

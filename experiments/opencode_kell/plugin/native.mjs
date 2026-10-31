@@ -4,8 +4,7 @@
 //  (c) tools: the tool router's suggestions (POST <server>/tools) for the prompt's tool goal, remote servers only;
 //  (d) recording: per turn, model, tokens, cost, tools used and the test result go to <server>/tools/outcome.
 //
-// What is a guess, not a measurement: which triage fields mark a task "hard" (see isHard), and the remote-server fields the
-// tool router returns (see addableRemote). Both are written to be changed in one place.
+// What is a guess, not a measurement: the remote-server fields the tool router returns (see addableRemote).
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -18,8 +17,9 @@ export function readKellConfig(env = process.env) {
   try {
     const home = env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
     const c = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"))
-    return { url: env.STEALTHLAB_URL || c.url, token: env.STEALTHLAB_TOKEN || c.token }
-  } catch { return { url: env.STEALTHLAB_URL, token: env.STEALTHLAB_TOKEN } }
+    // the server the hook uses: STEALTHLAB_MCP_URL first, then the saved config
+    return { url: env.STEALTHLAB_MCP_URL || env.STEALTHLAB_URL || c.url, token: c.token || env.STEALTHLAB_TOKEN }
+  } catch { return { url: env.STEALTHLAB_MCP_URL || env.STEALTHLAB_URL, token: env.STEALTHLAB_TOKEN } }
 }
 
 const sibling = (mcpUrl, name) => {
@@ -40,10 +40,17 @@ async function post(url, name, body, { token, timeoutMs = 8000, fetchImpl = glob
   } catch { return null }
 }
 
-/** Assumption: triage marks a task hard by `hard: true`, `difficulty: "hard"`, or an architecture/design/security category. */
+/**
+ * What /triage really returns (three live replies, 2026-10-31): {kind, work, confidence, provider, category, needs_retrieval,
+ * reason?, tool?}. kind: repo_specific | reusable_task | knowledge_question | trivial_edit | conversation;
+ * work: answer | change | conversation | unclear_change; category e.g. code_question, repo_change, writing, frontend. There is NO
+ * difficulty field, and confidence is the judge's confidence in the label, not in the task being easy (a plain failing-test fix
+ * came back at 0.42, a sweeping redesign at 0.98). So the only honest "send this to the strong model" signals are: no verdict,
+ * or work === "unclear_change" (the request itself is not clear enough for a cheap model to act on). Everything else starts
+ * cheap, and the failed-test escalation is what catches a task that was too hard.
+ */
 export function isHard(v) {
-  if (!v) return false
-  return v.hard === true || v.difficulty === "hard" || /architect|design|security|migration/i.test(String(v.category || ""))
+  return !v || v.work === "unclear_change"
 }
 
 /** "gc/minimax-m2.7" -> { providerID: "gc", id: "minimax-m2.7" } */

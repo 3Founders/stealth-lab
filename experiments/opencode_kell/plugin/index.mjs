@@ -57,7 +57,12 @@ export default Plugin.define({
     const note = (id, entry) => { try { fs.appendFileSync(transcriptFile(id), JSON.stringify({ sessionId: id, cwd, timestamp: new Date().toISOString(), ...entry }) + "\n") } catch { /* best effort */ } }
     const unquote = (t) => String(t || "").replace(/^"([\s\S]*)"$/, "$1")      // the CLI passes the message wrapped in quotes
     const base = (id, event) => ({ session_id: id, transcript_path: transcriptFile(id), cwd, hook_event_name: event })
-    const env = { ...process.env, CLAUDE_PROJECT_DIR: cwd }
+    // Which mode a session uses is a setting, not code: "session" (default) runs the whole session on the cheap model chosen by
+    // kell's triage and escalates on failed tests (native.mjs); "dispatch" keeps kell's own flow (the hook's dispatch and answer
+    // paths try cheap models in worktrees and the session's model takes over).  plugin option `mode`, or KELL_OC_MODE.
+    const mode = String(ctx.options?.mode || process.env.KELL_OC_MODE || "session").toLowerCase() === "dispatch" ? "dispatch" : "session"
+    debug("mode:", mode)
+    const env = { ...process.env, CLAUDE_PROJECT_DIR: cwd, ...(mode === "session" ? { STEALTHLAB_DISPATCH: "off", STEALTHLAB_ANSWERS: "off" } : {}) }
 
     async function fire(event, subject, payload) {
       const todo = selectHooks(hooks, event, subject)
@@ -142,7 +147,7 @@ ${merged.reason}`
       await ctx.session.synthetic({ sessionID: e.sessionID, text: merged.reason || "Continue.", delivery: "steer" })
     })
 
-    if (process.env.KELL_OC_NATIVE === "on") {
+    if (mode === "session") {
       const { installNative } = await import("./native.mjs")
       await installNative(ctx, { cwd, state, base })
     }

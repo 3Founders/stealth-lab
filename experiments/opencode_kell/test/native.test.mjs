@@ -10,10 +10,11 @@ test("test commands are told apart from other shell commands", () => {
 test("model choice: cheap by default, the session's own model for a hard task or no verdict", () => {
   const m = { cheap: "gc/minimax-m2.7", strong: "gc/gemma-4-31B-it" }
   assert.deepEqual(chooseModel({ work: "change", category: "bugfix" }, m), { which: "cheap", ref: "gc/minimax-m2.7" })
-  assert.equal(chooseModel({ category: "architecture_question" }, m).which, "strong")
-  assert.equal(chooseModel({ difficulty: "hard" }, m).which, "strong")
+  assert.equal(chooseModel({ work: "unclear_change", kind: "repo_specific" }, m).which, "strong")
+  assert.equal(chooseModel({ work: "answer", kind: "repo_specific", confidence: 0.85 }, m).which, "cheap")
+  assert.equal(chooseModel({ work: "change", kind: "reusable_task", confidence: 0.98, category: "repo_change" }, m).which, "cheap")
   assert.equal(chooseModel(null, m).which, "strong")
-  assert.equal(isHard({ hard: true }), true)
+  assert.equal(isHard({ work: "change" }), false)
 })
 
 test("model refs split at the first slash", () => {
