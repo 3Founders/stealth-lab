@@ -13,6 +13,7 @@ export type EventName =
   | "install_copy"       // visitor copied the install command
   | "connector_url_copy"   // visitor copied the connector address on /connect
   | "connector_prompt_copy" // visitor copied the standing instruction on /connect
+  | "connect_guide_copy"  // visitor copied a command or instruction from the setup guide on /connect
   | "sign_in_click"      // visitor clicked Sign in
   | "get_started_click"  // visitor clicked Get started in the hero
   | "contact_click"      // visitor clicked Talk to a founder in the hero

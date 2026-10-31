@@ -616,7 +616,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           {roomList.rooms.map((r) => (
             <li key={r}>
               <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{r.slice(1)}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
-              {roomList.rooms.length > 1 && <button type="button" className="dg-x" onClick={() => void deleteRoom(r)} aria-label={`Remove room ${r}`} title={`Remove ${r}`}>×</button>}
             </li>
           ))}
         </ul>

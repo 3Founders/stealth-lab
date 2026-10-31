@@ -47,3 +47,15 @@ describe("the connect page content", () => {
     }
   });
 });
+
+describe("the setup guide on /connect", () => {
+  it("covers Claude Code and Claude on the web, with the commands the installer actually has", async () => {
+    const g = await import("@/lib/connect-guide");
+    const codes = g.CLAUDE_CODE_STEPS.map((s) => s.code ?? "").join("\n");
+    for (const c of ["npm install -g kell-mcp", "kell setup", "kell login", "kell doctor", "GENERAL_COMPUTE_API_KEY"]) expect(codes).toContain(c);
+    expect(g.CLAUDE_WEB_STEPS.some((s) => s.code === g.CLAUDE_WEB_PROMPT)).toBe(true);
+    expect(g.CLAUDE_WEB_PROMPT).toContain("find_ways");
+    expect(g.CLAUDE_WEB_STEPS.map((s) => s.title).join(" ")).toContain("Let keळ's tools run");
+    expect(g.TROUBLE.length).toBeGreaterThan(5);
+  });
+});
