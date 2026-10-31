@@ -5,6 +5,7 @@ set -u
 here="$(cd "$(dirname "$0")/.." && pwd)"; name="$1"; prompt="$2"
 dir="$here/fixtures/run/$name"
 [ -d "$dir" ] || { echo "no fixture $dir" >&2; exit 2; }
+unset STEALTHLAB_DISPATCH_CHECK   # a Claude Code session in this repo sets it (.claude/settings.local.json) to the repo's own test; it would judge every fixture by that
 export STEALTHLAB_MCP_URL="${STEALTHLAB_MCP_URL:-https://mcp.kell.org.in/mcp}"
 export KELL_OC_DEBUG=1 KELL_OC_STATE_DIR="$here/sandbox/.state" KELL_OC_MIN_TIMEOUT_S="${KELL_OC_MIN_TIMEOUT_S:-90}" STEALTHLAB_ANSWERS="${STEALTHLAB_ANSWERS:-on}"
 hooklog="$HOME/.stealthlab/hooks.log"; before=$(wc -l < "$hooklog" 2>/dev/null || echo 0)

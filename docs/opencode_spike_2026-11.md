@@ -125,3 +125,22 @@ Nothing else in Layers 1 and 2 needed a fork. No server change is needed for the
 1. `kell login` against the hosted server (no local server), then repeat the six prompts and look for the cheap-model answer and
    dispatch. 2. Find the cold-start hang. 3. Escalation live (and why the three cheap tries fail in this fixture): a fixture where the cheap model fails its first fix. 4. The Claude
    Code arm of the comparison, once someone decides to spend on it.
+
+## Why the cheap tries failed (diagnosed 2026-10-31, from the run logs; fixture/bridge not at fault)
+
+Every cheap try on the rename produced the right patch (`~/.stealthlab/runs/r-20261031100701-*/a1.patch`, 220 bytes, `foo`->`bar`)
+and then failed verification: `check_done cmd="node --test packaging/npm/test/hook.test.mjs" exit=1 seconds=0.1`
+(`events.jsonl` of all six tries). That is this repo's own test, which cannot run in a fixture. It came from
+`STEALTHLAB_DISPATCH_CHECK`, set for Claude Code sessions in this repo by `.claude/settings.local.json` and inherited by the
+OpenCode run; kell uses it before any detection (`packaging/npm/lib/dispatch.mjs:87` reads it into `policy.check`, `:899`
+returns it first in `dispatchCheck`). Not dispatch on Windows, not the fixture's location, not the bridge.
+
+Fixes: `fixtures/run_prompt.sh` now unsets that variable. The fixture also needs a check kell can detect:
+`detectCheck` (`lib/detect_check.mjs:70-88`) only finds pytest from a config file or a `tests/` directory, so
+`make_fixture.sh` now puts the tests in `tests/` with a `pytest.ini`. Re-run of the failing-test fix: dispatch passed the
+project's check with `glm-5.3-flash|direct` and `gemma-4-31b-it|stealth` ("1 test already fails on the unchanged code ... judged
+on new failures only"), and the fixture's 4 tests pass. Not done, as instructed: moving the fixture outside the repo and a
+Claude Code run (the cause made them unnecessary; the permission also covered only fixtures under this directory). The
+rename fixture has no tests, so kell correctly says "not dispatched (no check)".
+Note for kell: a leaked `STEALTHLAB_DISPATCH_CHECK` silently judges every repo by one command; a log line naming it when it is
+used would have made this a one-minute diagnosis.

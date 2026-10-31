@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds the small repo the spike runs on: a clamp() with a bug, its tests (one fails), and a git history.
+# Builds the small repo the spike runs on: a clamp() with a bug, its tests under tests/ (one fails; kell finds a pytest check only
+# from a pytest config or a tests/ directory), and a git history.
 # usage: make_fixture.sh <empty-dir>
 set -e
 d="$1"; mkdir -p "$d"; cd "$d"
@@ -20,7 +21,12 @@ def mean(values):
     """Arithmetic mean of a non-empty list."""
     return sum(values) / len(values)
 P
-cat > test_mathx.py <<'P'
+mkdir -p tests
+cat > pytest.ini <<'P'
+[pytest]
+pythonpath = .
+P
+cat > tests/test_mathx.py <<'P'
 from mathx import clamp, mean
 
 
