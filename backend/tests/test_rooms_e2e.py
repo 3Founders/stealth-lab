@@ -56,7 +56,7 @@ def pool():
         await admin.execute(f'CREATE DATABASE "{name}"')
         await admin.close()
         p = await asyncpg.create_pool(_swap_db(ADMIN_DSN, name), min_size=1, max_size=8)
-        for f in ("155_delegate_relay.sql", "157_rooms.sql"):
+        for f in ("155_delegate_relay.sql", "157_rooms.sql", "159_room_admin_role.sql"):
             await p.execute((ROOT / "db" / f).read_text(encoding="utf-8"))
         return p
 
@@ -193,6 +193,33 @@ def test_invite_use_limit_and_removal(pool):
     run(pool, rm.remove_member(pool, BOB, r["id"], BOB))                                                 # or leave on their own
     with pytest.raises(rm.RoomError):
         run(pool, rm.remove_member(pool, BOB, r["id"], ALICE))
+
+
+def test_admin_role_can_invite_and_remove_members_but_not_manage_roles(pool):
+    r = room(pool)
+    join(pool, r, BOB)
+    join(pool, r, CAROL)
+    with pytest.raises(rm.RoomError) as e:
+        run(pool, rm.set_member_role(pool, BOB, r["id"], CAROL, "admin"))
+    assert e.value.status == 403                                                                         # only the owner changes roles
+    with pytest.raises(rm.RoomError):
+        run(pool, rm.set_member_role(pool, ALICE, r["id"], ALICE, "member"))                             # the owner's role is fixed
+    with pytest.raises(rm.RoomError):
+        run(pool, rm.set_member_role(pool, ALICE, r["id"], BOB, "owner"))
+    run(pool, rm.set_member_role(pool, ALICE, r["id"], BOB, "admin"))
+    assert {m["sub"]: m["role"] for m in run(pool, rm.list_members(pool, ALICE, r["id"]))}[BOB] == "admin"
+    run(pool, rm.create_invite(pool, BOB, r["id"]))                                                      # an admin can invite
+    with pytest.raises(rm.RoomError):
+        run(pool, rm.rename_room(pool, BOB, r["id"], "#mine"))                                           # but not rename or delete
+    with pytest.raises(rm.RoomError):
+        run(pool, rm.delete_room(pool, BOB, r["id"]))
+    with pytest.raises(rm.RoomError) as owner:
+        run(pool, rm.remove_member(pool, BOB, r["id"], ALICE))
+    assert owner.value.status == 409
+    run(pool, rm.remove_member(pool, BOB, r["id"], CAROL))                                               # a plain member can be removed
+    run(pool, rm.set_member_role(pool, ALICE, r["id"], BOB, "member"))
+    with pytest.raises(rm.RoomError):
+        run(pool, rm.create_invite(pool, BOB, r["id"]))                                                  # demoted: no more invites
 
 
 def test_unread_counts_follow_the_person_and_own_sends_count_as_read(pool):

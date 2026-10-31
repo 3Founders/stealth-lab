@@ -7,7 +7,7 @@
 import { MCP_ORIGIN } from "@/lib/connector";
 
 export interface ServerRoom {
-  id: string; title: string; mode: "open" | "private"; role: "owner" | "member"; created_at: string; last_seq: number;
+  id: string; title: string; mode: "open" | "private"; role: "owner" | "admin" | "member"; created_at: string; last_seq: number;
   last_read_seq?: number; unread?: number; members?: number;
   last?: { handle: string; kind: "person" | "agent"; preview: string; at: string } | null;
 }
@@ -23,7 +23,7 @@ export interface EventIn {
 }
 export interface AppendResult { accepted: Array<{ id: string; seq: number; duplicate?: boolean }>; rejected: Array<{ id: string | null; reason: string; retry: boolean }> }
 export interface EventsPage { events: ServerEvent[]; next: number; more: boolean; last_seq: number }
-export interface RoomMember { kind: "person" | "agent"; sub: string | null; agent_id: string | null; name: string | null; role: "owner" | "member"; added_at: string; me: boolean }
+export interface RoomMember { kind: "person" | "agent"; sub: string | null; agent_id: string | null; name: string | null; role: "owner" | "admin" | "member"; added_at: string; me: boolean }
 export interface RoomInvite { id: string; code: string; expires_at: string; max_uses: number }
 
 export class RoomsApiError extends Error {
@@ -68,6 +68,7 @@ export function roomsApi(deps: RoomsDeps) {
     renameRoom: (id: string, title: string) => call<ServerRoom>("PATCH", `/${e(id)}`, { title }),
     deleteRoom: (id: string) => call<{ deleted: string; events_removed: number }>("DELETE", `/${e(id)}`),
     members: async (id: string) => (await call<{ members: RoomMember[] }>("GET", `/${e(id)}/members`)).members,
+    setMemberRole: (id: string, sub: string, role: "admin" | "member") => call<{ sub: string; role: string }>("PATCH", `/${e(id)}/members/${e(sub)}`, { role }),
     removeMember: (id: string, sub: string) => call<{ removed: string }>("DELETE", `/${e(id)}/members/${e(sub)}`),
     createInvite: (id: string, days = 7, maxUses = 20) => call<RoomInvite>("POST", `/${e(id)}/invites`, { days, max_uses: maxUses }),
     revokeInvite: (id: string, inviteId: string) => call<{ revoked: string }>("DELETE", `/${e(id)}/invites/${e(inviteId)}`),

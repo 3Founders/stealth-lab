@@ -55,21 +55,24 @@ describe("saved preferences", () => {
 describe("hamburger menu", () => {
   it("opens, lists the options, opens a Settings section, and closes on Escape", async () => {
     const picked: string[] = [];
-    await mount(<HamburgerMenu paused={false} onSettings={(s) => picked.push(s)} onPause={() => picked.push("pause")} onSignOut={() => picked.push("out")} />);
+    await mount(<HamburgerMenu panelOpen onManageRooms={() => picked.push("manage")} onTogglePanel={() => picked.push("panel")} paused={false} onSettings={(s) => picked.push(s)} onPause={() => picked.push("pause")} onSignOut={() => picked.push("out")} />);
     expect(host!.querySelector('[role="menu"]')).toBeNull();
     await act(async () => { (host!.querySelector(".dg-burger") as HTMLButtonElement).click(); });
     const items = [...host!.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent);
-    expect(items).toEqual(["Preferences", "Notifications", "Your data", "Agents and models", "Keyboard shortcuts", "Pause agents", "Help and docs", "Contact", "About and privacy", "Account", "Sign out"]);
+    expect(items).toEqual(["Manage rooms", "Close room list", "Preferences", "Notifications", "Your data", "Agents and models", "Keyboard shortcuts", "Pause agents", "Help and docs", "Contact", "About and privacy", "Account", "Sign out"]);
     await act(async () => { ([...host!.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === "Your data") as HTMLElement).click(); });
     expect(picked).toEqual(["data"]);
     expect(host!.querySelector('[role="menu"]')).toBeNull();
+    await act(async () => { (host!.querySelector(".dg-burger") as HTMLButtonElement).click(); });
+    await act(async () => { ([...host!.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === "Manage rooms") as HTMLElement).click(); });
+    expect(picked).toEqual(["data", "manage"]);
     await act(async () => { (host!.querySelector(".dg-burger") as HTMLButtonElement).click(); });
     await act(async () => { host!.querySelector('[role="menu"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(host!.querySelector('[role="menu"]')).toBeNull();
   });
 
   it("offers Resume when agents are paused", async () => {
-    await mount(<HamburgerMenu paused onSettings={() => {}} onPause={() => {}} onSignOut={() => {}} />);
+    await mount(<HamburgerMenu panelOpen onManageRooms={() => {}} onTogglePanel={() => {}} paused onSettings={() => {}} onPause={() => {}} onSignOut={() => {}} />);
     await act(async () => { (host!.querySelector(".dg-burger") as HTMLButtonElement).click(); });
     expect(host!.textContent).toContain("Resume agents");
   });

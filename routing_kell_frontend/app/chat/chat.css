@@ -164,6 +164,15 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-form legend { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--grey); padding: 0; margin-bottom: 4px; }
 .dg-form fieldset label { display: flex; gap: 8px; align-items: flex-start; line-height: 1.35; }
 .dg-form input[type="text"], .dg-form input:not([type]) { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
+/* "+ New room" and its form share one slot: the form unfolds (grid rows 0fr→1fr) while the button fades, so the sidebar below glides instead of jumping. */
+.dg-swap { display: grid; }
+.dg-swap-btn, .dg-swap-form { grid-area: 1 / 1; }
+.dg-swap-btn { display: flex; transition: opacity var(--dg-micro-d) var(--dg-micro), visibility 0s linear 0s; }
+.dg-swap-form { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows var(--dg-smooth-d) var(--dg-smooth), opacity var(--dg-smooth-d) var(--dg-smooth), visibility 0s linear var(--dg-smooth-d); }
+.dg-swap-inner { min-height: 0; overflow: hidden; }
+.dg-swap[data-open="true"] .dg-swap-btn { opacity: 0; visibility: hidden; transition: opacity var(--dg-micro-d) var(--dg-micro), visibility 0s linear var(--dg-micro-d); }
+.dg-swap[data-open="true"] .dg-swap-form { grid-template-rows: 1fr; opacity: 1; visibility: visible; transition: grid-template-rows var(--dg-bouncy-d) var(--dg-bouncy), opacity var(--dg-smooth-d) var(--dg-smooth), visibility 0s; }
+.dg-rooms li { animation: dg-in var(--dg-smooth-d) var(--dg-smooth) both; }
 .dg-form-row { display: flex; gap: 8px; margin-top: 4px; }
 .dg-mini-btn { min-height: 36px; padding: 0 14px; }
 .dg-err { font-size: 12.5px; color: #b3261e; margin: 4px 6px 0; }
@@ -310,3 +319,23 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-shell[data-times="false"] .dg-meta time { display: none; }
 .dg-shell[data-compact="true"] .dg-run { padding-block: 3px; }
 .dg-shell[data-compact="true"] .dg-body p { line-height: 1.32; }
+
+/* Wide screens: the room list can be closed (the × in its corner, or the menu) and the chat takes the window; "Rooms" in the header brings it back.
+   On phones the list is already a drawer, so none of this applies. */
+@media (min-width: 761px) {
+  .dg-side { position: relative; }
+  .dg-close { display: grid; place-items: center; position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; font-size: 20px; line-height: 1; background: none; border: 0; color: inherit; opacity: .55; cursor: pointer; border-radius: 8px; }
+  .dg-close:hover, .dg-close:focus-visible { opacity: 1; background: rgba(127,127,127,.18); }
+  .dg-shell { transition: grid-template-columns var(--dg-smooth-d) var(--dg-smooth); }
+  .dg-shell[data-panel="closed"] { grid-template-columns: 0 1fr; }
+  .dg-shell[data-panel="closed"] .dg-side { visibility: hidden; padding-left: 0; padding-right: 0; border-right-width: 0; overflow: hidden; transition: visibility 0s linear var(--dg-smooth-d); }
+  .dg-shell[data-panel="closed"] .dg-menu { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; font: inherit; font-size: 14px; background: #fff; color: var(--ink); border: 1px solid var(--rule-strong); border-radius: 8px; cursor: pointer; }
+}
+/* Manage rooms */
+.dg-manage-people { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dg-manage-people li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.dg-manage-people .dg-handle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-manage-people select { font: inherit; font-size: 14px; padding: 4px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; color: var(--ink); }
+.dg-danger { margin-top: 10px; padding-top: 14px !important; border-top: 1px solid var(--rule) !important; }
+.dg-danger-btn { color: #b3261e; border-color: #b3261e; }
+.dg-danger-btn:disabled { opacity: .45; cursor: not-allowed; }

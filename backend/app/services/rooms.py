@@ -56,6 +56,9 @@ class RoomError(Exception):
         self.status = status
 
 
+MANAGERS = ("owner", "admin")  # may invite people, remove plain members and delete other people's messages
+
+
 def _clean(text: str, limit: int) -> str:
     matched: list[str] = []
     return redact_value((text or "").strip()[:limit], matched)
@@ -223,13 +226,35 @@ async def list_members(pool: Any, sub: str, room_id: str) -> list[dict[str, Any]
              "me": r["member_sub"] == sub} for r in rows]
 
 
+async def set_member_role(pool: Any, sub: str, room_id: str, who: str, role: str) -> dict[str, Any]:
+    """Owner only: make a person an admin, or a plain member again. The owner's own role never changes here, and agents have no role."""
+    room = await _member_room(pool, sub, room_id)
+    if room["my_role"] != "owner":
+        raise RoomError("only the owner can change roles", 403)
+    if role not in ("admin", "member"):
+        raise RoomError("role must be admin or member")
+    if who == room["owner_sub"]:
+        raise RoomError("the owner's role can't be changed", 409)
+    row = await pool.fetchrow(
+        "UPDATE room_members SET role = $3 WHERE room_id = $1 AND member_sub = $2 AND removed_at IS NULL RETURNING member_sub",
+        room["id"], who, role)
+    if row is None:
+        raise RoomError("no such member", 404)
+    return {"sub": who, "role": role}
+
+
 async def remove_member(pool: Any, sub: str, room_id: str, who: str) -> dict[str, Any]:
     """The owner removes someone, or anyone leaves (who == their own subject). The owner cannot leave: delete the room instead."""
     room = await _member_room(pool, sub, room_id)
     if who == room["owner_sub"]:
         raise RoomError("the owner can't be removed; delete the room instead", 409)
-    if who != sub and room["my_role"] != "owner":
-        raise RoomError("only the owner can remove someone else", 403)
+    if who != sub and room["my_role"] not in MANAGERS:
+        raise RoomError("only the owner or an admin can remove someone else", 403)
+    if who != sub and room["my_role"] == "admin":
+        target = await pool.fetchrow(
+            "SELECT role FROM room_members WHERE room_id = $1 AND member_sub = $2 AND removed_at IS NULL", room["id"], who)
+        if target is not None and target["role"] != "member":
+            raise RoomError("an admin can only remove plain members", 403)
     row = await pool.fetchrow(
         "UPDATE room_members SET removed_at = now() WHERE room_id = $1 AND member_sub = $2 AND removed_at IS NULL RETURNING id",
         room["id"], who)
@@ -242,8 +267,8 @@ async def remove_member(pool: Any, sub: str, room_id: str, who: str) -> dict[str
 
 async def create_invite(pool: Any, sub: str, room_id: str, days: int = 7, max_uses: int = 20) -> dict[str, Any]:
     room = await _member_room(pool, sub, room_id)
-    if room["my_role"] != "owner":
-        raise RoomError("only the owner can invite people", 403)
+    if room["my_role"] not in MANAGERS:
+        raise RoomError("only the owner or an admin can invite people", 403)
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= INVITE_MAX_DAYS:
         raise RoomError(f"days must be a whole number from 1 to {INVITE_MAX_DAYS}")
     if not isinstance(max_uses, int) or isinstance(max_uses, bool) or not 1 <= max_uses <= INVITE_MAX_USES:
@@ -260,8 +285,8 @@ async def create_invite(pool: Any, sub: str, room_id: str, days: int = 7, max_us
 
 async def list_invites(pool: Any, sub: str, room_id: str) -> list[dict[str, Any]]:
     room = await _member_room(pool, sub, room_id)
-    if room["my_role"] != "owner":
-        raise RoomError("only the owner can see invites", 403)
+    if room["my_role"] not in MANAGERS:
+        raise RoomError("only the owner or an admin can see invites", 403)
     rows = await pool.fetch(
         "SELECT id, created_at, expires_at, max_uses, uses, revoked_at, "
         "(revoked_at IS NULL AND expires_at > now() AND uses < max_uses) AS active "
@@ -272,8 +297,8 @@ async def list_invites(pool: Any, sub: str, room_id: str) -> list[dict[str, Any]
 
 async def revoke_invite(pool: Any, sub: str, room_id: str, invite_id: str) -> dict[str, Any]:
     room = await _member_room(pool, sub, room_id)
-    if room["my_role"] != "owner":
-        raise RoomError("only the owner can revoke an invite", 403)
+    if room["my_role"] not in MANAGERS:
+        raise RoomError("only the owner or an admin can revoke an invite", 403)
     row = await pool.fetchrow(
         "UPDATE room_invites SET revoked_at = now() WHERE id = $1 AND room_id = $2 AND revoked_at IS NULL RETURNING id",
         _uuid(invite_id, "invite id"), room["id"])
@@ -442,7 +467,7 @@ async def append_events(pool: Any, sub: str, room_id: str, events: Any) -> dict[
             if t is None:
                 rejected.append({"id": eid, "reason": "the event you refer to is not in this room", "retry": False})
                 continue
-            if ev["kind"] in ("edit", "delete") and t["sender_sub"] != sub and not (ev["kind"] == "delete" and room["my_role"] == "owner"):
+            if ev["kind"] in ("edit", "delete") and t["sender_sub"] != sub and not (ev["kind"] == "delete" and room["my_role"] in MANAGERS):
                 rejected.append({"id": eid, "reason": "you can only change your own messages", "retry": False})
                 continue
         if not LIMITER.allow(sub):

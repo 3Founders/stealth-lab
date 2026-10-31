@@ -25,10 +25,10 @@ export type SyncStatus = "idle" | "syncing" | "offline" | "error";
 export interface SyncState { status: SyncStatus; pending: number; lastSyncAt: number | null; error: string | null }
 
 export interface RoomsChange {
-  added: Array<{ label: string; id: string; title: string; role: "owner" | "member" }>;
+  added: Array<{ label: string; id: string; title: string; role: "owner" | "admin" | "member" }>;
   removed: string[];
   /** Per room label: what the list says about it right now. */
-  info: Record<string, { unread: number; members: number; last: ServerRoom["last"] | null; role: "owner" | "member" }>;
+  info: Record<string, { unread: number; members: number; last: ServerRoom["last"] | null; role: "owner" | "admin" | "member" }>;
 }
 
 export interface SyncHooks {

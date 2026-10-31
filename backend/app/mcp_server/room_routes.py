@@ -110,9 +110,12 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
     async def members(request: Request, pool: Any, subject: str) -> Response:
         return _json(request, {"members": await rm.list_members(pool, subject, request.path_params["room_id"])})
 
-    @server.custom_route("/v1/rooms/{room_id}/members/{who}", methods=["DELETE", "OPTIONS"], include_in_schema=False)
+    @server.custom_route("/v1/rooms/{room_id}/members/{who}", methods=["PATCH", "DELETE", "OPTIONS"], include_in_schema=False)
     @handler
     async def member_one(request: Request, pool: Any, subject: str) -> Response:
+        if request.method == "PATCH":
+            data = await body_of(request)
+            return _json(request, await rm.set_member_role(pool, subject, request.path_params["room_id"], request.path_params["who"], str(data.get("role", ""))))
         return _json(request, await rm.remove_member(pool, subject, request.path_params["room_id"], request.path_params["who"]))
 
     @server.custom_route("/v1/rooms/{room_id}/invites", methods=["GET", "POST", "OPTIONS"], include_in_schema=False)

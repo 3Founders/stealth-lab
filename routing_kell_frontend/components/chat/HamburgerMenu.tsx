@@ -7,8 +7,9 @@ import type { SectionId } from "@/components/chat/SettingsDialog";
  * The menu button at the left of the room header. It keeps the side panel short: everything that is not a room or a person lives
  * here or in Settings. Opens on click or Enter, closes on Escape or a click outside, and arrow keys move through the items.
  */
-export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut }: {
+export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onManageRooms, onTogglePanel, panelOpen }: {
   paused: boolean; onSettings: (s: SectionId) => void; onPause: () => void; onSignOut: () => void;
+  onManageRooms: () => void; onTogglePanel: () => void; panelOpen: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -41,6 +42,9 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut }
       </button>
       {open && (
         <div className="dg-menu-pop" role="menu" aria-label="Chat menu">
+          <button type="button" role="menuitem" onClick={run(onManageRooms)}>Manage rooms</button>
+          <button type="button" role="menuitem" onClick={run(onTogglePanel)}>{panelOpen ? "Close room list" : "Show room list"}</button>
+          <hr />
           <button type="button" role="menuitem" onClick={run(() => onSettings("preferences"))}>Preferences</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("notifications"))}>Notifications</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("data"))}>Your data</button>

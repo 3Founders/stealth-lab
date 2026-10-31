@@ -24,6 +24,7 @@ import { getAccessToken, signOut } from "@/lib/session";
 import NotificationBell from "@/components/chat/NotificationBell";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
+import ManageRooms from "@/components/chat/ManageRooms";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
@@ -86,9 +87,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const infoRef = useRef(info);
   infoRef.current = info;
   const [members, setMembers] = useState<RoomMember[]>([]);
-  const [invite, setInvite] = useState<{ url: string; days: number; uses: number } | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [peopleError, setPeopleError] = useState("");
 
   const [roomList, setRoomList] = useState<RoomList>(() => readRooms(kv, subject));
   const room = roomList.current;
@@ -108,6 +106,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [paused, setPaused] = useState(false);
   const [backing, setBacking] = useState<Backing | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false); // phones: the sidebar is a drawer
+  const [manageOpen, setManageOpen] = useState(false);
+  const [panelHidden, setPanelHidden] = useState(false); // wide screens: the room list can be closed to give the chat the whole window
   const controllers = useRef(new Map<string, AbortController>());
   const detachers = useRef(new Map<string, () => void>());
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -125,6 +125,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // sidebar forms
   const [newRoom, setNewRoom] = useState<string | null>(null); // null = closed
+  const roomInputRef = useRef<HTMLInputElement | null>(null);
   const [adding, setAdding] = useState(false);
   const [addKind, setAddKind] = useState<"mine" | "tab">("mine");
   const [addName, setAddName] = useState("");
@@ -436,34 +437,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     return () => clearTimeout(t);
   }, [room, itemKeys]);
 
-  // Who is in this room (once it exists on your account), and an invite link for it.
+  // Who is in this room (once it exists on your account). Changing them happens in Manage rooms.
   const synced = info[room] !== undefined;
   useEffect(() => {
-    setInvite(null); setCopied(false); setPeopleError("");
     const sid = engineRef.current?.roomId(room);
     if (!sid) { setMembers([]); return; }
     let live = true;
     rapi.members(sid).then((m) => { if (live) setMembers(m); }).catch(() => { if (live) setMembers([]); });
     return () => { live = false; };
-  }, [room, synced, rapi]);
-  const iAmOwner = (info[room]?.role ?? "owner") !== "member";
-  const makeInvite = async () => {
-    const sid = engineRef.current?.roomId(room);
-    if (!sid) return;
-    setPeopleError("");
-    try {
-      const inv = await rapi.createInvite(sid, 7, 20);
-      setInvite({ url: `${window.location.origin}/room/join?code=${encodeURIComponent(inv.code)}`, days: 7, uses: inv.max_uses });
-      setCopied(false);
-    } catch (err) { setPeopleError(err instanceof Error ? err.message : "That didn't work."); }
-  };
-  const copyInvite = async () => { try { await navigator.clipboard.writeText(invite?.url ?? ""); setCopied(true); } catch { setCopied(false); } };
-  const removePerson = async (m: RoomMember) => {
-    const sid = engineRef.current?.roomId(room);
-    if (!sid || !m.sub) return;
-    try { await rapi.removeMember(sid, m.sub); setMembers((p) => p.filter((x) => x.sub !== m.sub)); }
-    catch (err) { setPeopleError(err instanceof Error ? err.message : "That didn't work."); }
-  };
+  }, [room, synced, rapi, manageOpen]); // reloaded when Manage rooms closes, since roles and people may have changed
 
   // The shell is as tall as what is actually visible (a phone's on-screen keyboard covers part of the layout viewport).
   useEffect(() => {
@@ -505,7 +487,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (next === roomList) return;
     const has = (lineStore.current[r] ?? []).some((l) => l.kind === "msg") || (tasksRef.current[r] ?? []).length > 0;
     const sid = engineRef.current?.roomId(r);
-    const owner = (info[r]?.role ?? "owner") !== "member";
+    const owner = (info[r]?.role ?? "owner") === "owner";
     const ask = sid
       ? owner ? `Delete ${r} for everyone? Its history is removed from your account and from everyone you invited. This can't be undone.` : `Leave ${r}? It is removed from your account.`
       : `Remove ${r}? Its saved history on this device is deleted too.`;
@@ -622,10 +604,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const count = agents.length + relayAgents.length;
 
   return (
-    <div className="dg-shell" data-paused={paused} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
+    <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
-        <button type="button" className="dg-close" onClick={() => setMenuOpen(false)} aria-label="Close the room list">×</button>
+        <button type="button" className="dg-close" onClick={() => { setMenuOpen(false); setPanelHidden(true); }} aria-label="Close the room list" title="Close the room list">×</button>
         {brand && <div className="dg-brand">{brand}</div>}
         {back && <div className="dg-backrow">{back}</div>}
 
@@ -638,16 +620,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             </li>
           ))}
         </ul>
-        {newRoom === null
-          ? <button type="button" className="btn-line dg-add" onClick={() => { setNewRoom(""); setFormError(""); }}>+ New room</button>
-          : (
-            <form className="dg-form" onSubmit={createRoom}>
-              <label htmlFor="dg-room-name">Room name</label>
-              <input id="dg-room-name" autoFocus value={newRoom} onChange={(e) => setNewRoom(e.target.value)} placeholder="design-review" maxLength={30} autoComplete="off" />
-              {formError && <p className="dg-err" role="alert">{formError}</p>}
-              <div className="dg-form-row"><button type="submit" className="btn-ink dg-mini-btn"><span>Create</span></button><button type="button" className="btn-line dg-mini-btn" onClick={() => { setNewRoom(null); setFormError(""); }}>Cancel</button></div>
-            </form>
-          )}
+        <div className="dg-swap" data-open={newRoom !== null}>
+          <div className="dg-swap-btn">
+            <button type="button" className="btn-line dg-add" tabIndex={newRoom === null ? 0 : -1} onClick={() => { setNewRoom(""); setFormError(""); setTimeout(() => roomInputRef.current?.focus(), 0); }}>+ New room</button>
+          </div>
+          <div className="dg-swap-form">
+            <div className="dg-swap-inner">
+              <form className="dg-form" onSubmit={createRoom}>
+                <label htmlFor="dg-room-name">Room name</label>
+                <input ref={roomInputRef} id="dg-room-name" value={newRoom ?? ""} tabIndex={newRoom === null ? -1 : 0} onChange={(e) => setNewRoom(e.target.value)} placeholder="design-review" maxLength={30} autoComplete="off" />
+                {formError && <p className="dg-err" role="alert">{formError}</p>}
+                <div className="dg-form-row"><button type="submit" className="btn-ink dg-mini-btn" tabIndex={newRoom === null ? -1 : 0}><span>Create</span></button><button type="button" className="btn-line dg-mini-btn" tabIndex={newRoom === null ? -1 : 0} onClick={() => { setNewRoom(null); setFormError(""); }}>Cancel</button></div>
+              </form>
+            </div>
+          </div>
+        </div>
 
         <h2>Agents</h2>
         <ul className="dg-members">
@@ -690,20 +677,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                   <PersonAvatar sub={m.sub ?? undefined} mine={m.me} selfSub={subject} initials={initials(`@${m.name ?? "member"}`)} className="dg-avatar dg-avatar-sm" />
                   <span className="dg-handle">{m.me ? "You" : m.name ?? fallbackName(m.sub)}</span>
                   <span className="dg-badge" data-kind="tab">{m.role}</span>
-                  {iAmOwner && !m.me && m.role !== "owner" && <button type="button" className="dg-remove" onClick={() => void removePerson(m)} aria-label={`Remove ${m.name ?? "this person"} from ${room}`} title="Remove from room">×</button>}
                 </li>
               ))}
             </ul>
-            {iAmOwner && !invite && <button type="button" className="btn-line dg-add" onClick={() => void makeInvite()}>Invite someone</button>}
-            {invite && (
-              <div className="dg-form" role="status">
-                <label htmlFor="dg-invite-link">Invite link</label>
-                <input id="dg-invite-link" readOnly value={invite.url} onFocus={(e) => e.currentTarget.select()} />
-                <p className="dg-note" style={{ padding: 0 }}>Anyone with a keळ account who opens this link can join {room}. It works {invite.uses} times and expires in {invite.days} days. Share it only with people you want here.</p>
-                <div className="dg-form-row"><button type="button" className="btn-ink dg-mini-btn" onClick={() => void copyInvite()}><span>{copied ? "Copied" : "Copy link"}</span></button><button type="button" className="btn-line dg-mini-btn" onClick={() => setInvite(null)}>Done</button></div>
-              </div>
-            )}
-            {peopleError && <p className="dg-err" role="alert">{peopleError}</p>}
+            <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage people</button>
           </>
         )}
 
@@ -730,10 +707,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} />
       </aside>
 
+      <ManageRooms
+        open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
+        roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
+        roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }}
+      />
       <section className="dg-main" aria-label={`Room ${room}`}>
         <header className="dg-head">
-          <HamburgerMenu paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
-          <button type="button" className="dg-menu" onClick={() => setMenuOpen(true)} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open rooms and agents">
+          <HamburgerMenu panelOpen={!panelHidden} onTogglePanel={() => { setPanelHidden((h) => !h); setMenuOpen(false); }} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
+          <button type="button" className="dg-menu" onClick={() => { if (panelHidden) setPanelHidden(false); else setMenuOpen(true); }} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open rooms and agents">
             <span aria-hidden="true">▤</span> <span>Rooms</span>
           </button>
           <h1>{room}</h1>
