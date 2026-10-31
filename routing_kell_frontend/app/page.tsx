@@ -53,9 +53,7 @@ export default function Home() {
         </h1>
         <Reveal className="hero-sub stack" delay={250}>
           <p className="lead hero-q">Recall, reuse, route, reduce.</p>
-          <p className="lead">keळ remembers your repo, reuses what&rsquo;s already been solved, and sends each task to the cheapest model that can do it, without breaking your agent&rsquo;s prompt cache. Nothing reaches your code until your own tests pass.</p>
           <HeroActions />
-          <p className="dim small">Works inside Claude Code and Cursor. What it learns stays in your repository.</p>
         </Reveal>
         <InteractiveLogo />
       </section>

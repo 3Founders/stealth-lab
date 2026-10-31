@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import Lenis from "lenis";
 
 declare global {
-  interface Window { __kelScrollTo?: (target: string) => void }
+  interface Window { __kelScrollTo?: (target: string) => void; __kelBooted?: boolean }
 }
 
 const OFFSET = -96; // clears the floating nav
@@ -31,13 +31,22 @@ export default function SmoothScroll() {
       else (el as HTMLElement).scrollIntoView({ behavior: "auto", block: "start" });
     };
 
-    // Arrived from another page via /#about: start at the top, then glide to the section.
+    // Arrived from another page inside the site via /#about (a client navigation): start at the top, then glide to the section.
+    // A fresh load or reload is the main page, not a jump: a leftover "#about" in the address bar (from clicking About earlier) is
+    // dropped and the page stays at the top, instead of scrolling straight to About every time.
     // The URL's hash is committed slightly after this effect runs, so it is read after a short delay.
+    const firstLoad = !window.__kelBooted;
+    window.__kelBooted = true;
     let timer: number | undefined;
     if (pathname === "/") {
       timer = window.setTimeout(() => {
         const hash = window.location.hash;
         if (!hash) return;
+        if (firstLoad) {
+          window.history.replaceState(null, "", window.location.pathname + window.location.search);
+          window.scrollTo(0, 0);
+          return;
+        }
         window.scrollTo(0, 0);
         window.__kelScrollTo?.(hash);
       }, 220);
