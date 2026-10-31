@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import AnimatedHeading from "@/components/AnimatedHeading";
-import BuyPlan from "@/components/billing/BuyPlan";
-import TopUp from "@/components/billing/TopUp";
+import PlanSummary from "@/components/billing/PlanSummary";
+import CreditPacks from "@/components/billing/CreditPacks";
 import { billingApi, buyPlansOn } from "@/lib/billing";
 import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
 
@@ -34,14 +34,14 @@ export default function AccountBillingPage() {
       <section className="frame grid" style={{ paddingBottom: 120 }}>
         <div className="profile-wrap" style={{ gridColumn: "1 / span 12", display: "grid", gap: 28 }}>
           {buyPlansOn() ? (
-            <BuyPlan plan="pro" api={api} session={session} returnTo={back} />
+            <PlanSummary api={api} session={session} returnTo={back} />
           ) : (
             <div className="profile-card">
               <h2 className="h3">Your plan</h2>
               <p className="small">Plans can&rsquo;t be bought online yet. <Link href="/pricing" style={link}>See the plans</Link> and <Link href="/contact" style={link}>ask for one</Link>; we will set it up with you directly.</p>
             </div>
           )}
-          <TopUp api={api} session={session} history returnTo={back} />
+          <CreditPacks api={api} session={session} buy={buyPlansOn()} history returnTo={back} />
           <p className="small dim">
             <Link href="/pricing" style={link}>Plans and pricing</Link> · <Link href="/docs/legal/terms" style={link}>Terms</Link> · <Link href="/docs/legal/privacy" style={link}>Privacy</Link> · <Link href="/legal/refunds" style={link}>Refunds and cancellation</Link> · <Link href="/contact" style={link}>Contact</Link>
           </p>

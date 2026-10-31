@@ -1,38 +1,93 @@
 /**
- * The plans the founders chose (kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; docs/billing.md, "Plans"). Prices are in
- * rupees, before GST. None of them can be bought online yet: monthly and per-seat billing and GST invoices are planned, not built, so
- * every plan is shown with that label and a way to ask for it. Only prepaid credits (the top-up on /pricing) are built, and they are
- * for extra usage on any plan.
+ * The plans the founders chose (kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; docs/billing.md, "Plans";
+ * docs/pricing_page.md for the layout rules). This file is the ONLY place a price is written. Prices are in rupees, before GST. The
+ * server works out every amount: the page sends a plan name (and, for a pilot, seats and a team name), never a price.
  *
- * Kept off on purpose: comparisons with another company's list prices (no measured saving backs them), any savings percentage, and
- * any claim about data handling beyond the data-path sentence on the page.
+ * The ladder: three 30-day passes bought once and renewed by hand (not subscriptions), each with an amount of usage included, in dollars,
+ * that the server credits at purchase. Plus is the plan the page recommends. The recommendation is a plain label, never a claim about what
+ * other buyers do. Everything derived from the numbers below (the per-day figure, "twice Pro's usage for ₹800 more", the task estimate) is
+ * computed here, so a change of price changes every sentence with it.
+ *
+ * Kept off on purpose: comparisons with another company's list prices (no measured saving backs them), any savings percentage, and any
+ * claim about data handling or security beyond the data-path sentence on the page. There is no bring-your-own-key plan for now.
  */
+export type PlanId = "starter" | "pro" | "plus" | "pilot" | "teams" | "enterprise";
+/** The plans that can be bought online (the server's plan names). */
+export type BuyablePlanId = "starter" | "pro" | "plus" | "pilot";
+
 export interface Plan {
-  id: "pro" | "teams" | "enterprise" | "pilot";
+  id: PlanId;
   name: string;
   price: string;
   /** The price in whole rupees, before GST (null for custom). The only numeric copy of the price; the page multiplies it by seats for the live total. */
   priceInr: number | null;
   per: string;
   forWhom: string;
+  /** Days one payment covers (30 for every plan that can be bought online). */
+  periodDays?: number;
+  /** Dollars of usage included per payment (per seat for the pilot). */
+  includedUsd?: number;
+  /** The plan the page recommends. */
+  recommended?: boolean;
   includes: string[];
   notIncluded?: string[];
-  /** The status label shown on the card. */
+  /** The status label shown on a card that is not for sale online. */
   status: string;
   cta: string;
 }
 
+/**
+ * Whether the Pilot card and its purchase block are shown at all. One constant, because the pilot may become reachable only with a code
+ * (undecided); flip it here and the page, the buy block and the tests that read it follow.
+ */
+export const PILOT_VISIBLE = true;
+
+/** Dollars one delegated task cost on the cheap side: the average of 10 prompts in one small repository (docs/unit_economics_2026-10.md, section 1). */
+export const USD_PER_DELEGATED_TASK_ESTIMATE = 0.052;
+
+const usage = (usd: number) => `$${usd} of usage included`;
+
 export const PLANS: Plan[] = [
   {
-    id: "pro", name: "Pro", price: "₹999", priceInr: 999, per: "a month", forWhom: "One person or a small student team.",
+    id: "starter", name: "Starter", price: "₹200", priceInr: 200, per: "for 30 days", periodDays: 30, includedUsd: 1, forWhom: "To try it on real work.",
     includes: [
       "Connect an assistant or coding tool.",
       "A recommended plan for each task.",
-      "Lower-cost models included (about $5 of provider cost), or bring your own key.",
+      `Lower-cost models, with ${usage(1)}.`,
       "A short cost note after each task.",
     ],
-    notIncluded: ["Public or non-sensitive material only."],
+    status: "Not available online yet", cta: "Ask for Starter",
+  },
+  {
+    id: "pro", name: "Pro", price: "₹1,200", priceInr: 1200, per: "for 30 days", periodDays: 30, includedUsd: 6, forWhom: "For regular use by one person.",
+    includes: [
+      "Connect an assistant or coding tool.",
+      "A recommended plan for each task.",
+      `Lower-cost models, with ${usage(6)}.`,
+      "A short cost note after each task.",
+    ],
     status: "Not available online yet", cta: "Ask for Pro",
+  },
+  {
+    id: "plus", name: "Plus", price: "₹2,000", priceInr: 2000, per: "for 30 days", periodDays: 30, includedUsd: 12, recommended: true, forWhom: "For heavy use by one person.",
+    includes: [
+      "Connect an assistant or coding tool.",
+      "A recommended plan for each task.",
+      `Lower-cost models, with ${usage(12)}.`,
+      "A short cost note after each task.",
+    ],
+    status: "Not available online yet", cta: "Ask for Plus",
+  },
+  {
+    id: "pilot", name: "Pilot", price: "₹649", priceInr: 649, per: "per seat for 30 days", periodDays: 30, includedUsd: 4, forWhom: "One person, or a team of up to 10 seats, using the MCP only.",
+    includes: [
+      "An assistant or coding tool connected to the keळ MCP, with recommendations.",
+      `Routine steps on lower-cost models, with $4 of usage included per seat.`,
+      "A kept record of what ran.",
+      "A joint report at the end: cost per solved task, with and without keळ.",
+    ],
+    notIncluded: ["The website assistant room and the team admin pages."],
+    status: "Invoiced directly", cta: "Ask about a pilot",
   },
   {
     id: "teams", name: "Teams", price: "₹1,800", priceInr: 1800, per: "per seat a month", forWhom: "Three or more seats.",
@@ -49,25 +104,60 @@ export const PLANS: Plan[] = [
     id: "enterprise", name: "Enterprise", price: "Custom", priceInr: null, per: "annual contract", forWhom: "Private code or compliance needs.",
     includes: [
       "Everything in Teams.",
-      "A no-retention provider option under a signed agreement.",
       "Runs inside your systems with your sign-in.",
       "Private tests on your own tasks.",
-      "Security review, a data processing agreement and support terms.",
+      "A data processing agreement and support terms.",
     ],
     notIncluded: ["These are planned. None of them is available today."],
     status: "Planned", cta: "Talk to us",
   },
-  {
-    id: "pilot", name: "Pilot", price: "₹649", priceInr: 649, per: "per seat for 2 weeks", forWhom: "Teams of 3 to 10 seats, using the MCP only.",
-    includes: [
-      "An assistant or coding tool connected to the keळ MCP, with recommendations.",
-      "Routine steps on lower-cost models, with usage included.",
-      "A kept record of what ran.",
-      "A joint report at the end: cost per solved task, with and without keळ.",
-    ],
-    notIncluded: ["The website assistant room and the team admin pages."],
-    status: "Invoiced directly", cta: "Ask about a pilot",
-  },
 ];
 
-export const planById = (id: Plan["id"]): Plan => PLANS.find((p) => p.id === id)!;
+export const planById = (id: PlanId): Plan => PLANS.find((p) => p.id === id)!;
+
+/** The three passes, cheapest first. */
+export const LADDER: Plan[] = (["starter", "pro", "plus"] as const).map(planById);
+
+export const BUYABLE: BuyablePlanId[] = ["starter", "pro", "plus", "pilot"];
+export const isBuyable = (id: string): id is BuyablePlanId => (BUYABLE as string[]).includes(id) && (id !== "pilot" || PILOT_VISIBLE);
+
+/** "about ₹67 a day": the price spread over the days it covers. */
+export function perDay(p: Plan): string | null {
+  return p.priceInr && p.periodDays ? `about ₹${Math.round(p.priceInr / p.periodDays).toLocaleString("en-IN")} a day` : null;
+}
+
+/** Rounds to two significant figures: 19.2 becomes 19, 115.4 becomes 120, 230.8 becomes 230. An estimate should not look exact. */
+const roughly = (n: number) => { const d = Math.pow(10, Math.max(0, Math.floor(Math.log10(Math.max(1, n))) - 1)); return Math.round(n / d) * d; };
+
+/** About how many delegated tasks the included usage covers, as a number. An estimate from one small sample, not a promise. */
+export function tasksEstimate(includedUsd: number): number { return roughly(includedUsd / USD_PER_DELEGATED_TASK_ESTIMATE); }
+
+/** The small "what the usage buys" line for a plan, marked as an estimate. */
+export function usageBuys(p: Plan): string | null {
+  if (!p.includedUsd) return null;
+  return `Estimate: about ${tasksEstimate(p.includedUsd).toLocaleString("en-IN")} delegated tasks${p.id === "pilot" ? " per seat" : ""}. Real tasks vary.`;
+}
+
+/** "Plus gives twice Pro's usage for ₹800 more", worked out from the two plans (null if either lacks a number). */
+export function plusVersusPro(plus: Plan = planById("plus"), pro: Plan = planById("pro")): string | null {
+  if (!plus.priceInr || !pro.priceInr || !plus.includedUsd || !pro.includedUsd) return null;
+  const ratio = plus.includedUsd / pro.includedUsd;
+  const more = plus.priceInr - pro.priceInr;
+  const times = ratio === 2 ? "twice" : ratio === 3 ? "three times" : `${Math.round(ratio * 10) / 10} times`;
+  return `${plus.name} gives ${times} ${pro.name}'s usage for ₹${more.toLocaleString("en-IN")} more.`;
+}
+
+/**
+ * The add-on credit packs, shown as INFORMATION only: while billing is off (the server answers 503) or purchases are switched off, the page
+ * has no server list to draw, so it shows these. Once billing is on, the cards are drawn from the wallet answer (GET /v1/billing/wallet,
+ * `packs`) and this list is not used for a purchase: the server holds every price. Keep it in step with the server's pack list.
+ */
+export const PACK_INFO: Array<{ id: string; priceInr: number; creditUsd: number }> = [
+  { id: "credits_500", priceInr: 500, creditUsd: 2.5 },
+  { id: "credits_1000", priceInr: 1000, creditUsd: 5.25 },
+  { id: "credits_2500", priceInr: 2500, creditUsd: 13.5 },
+  { id: "credits_5000", priceInr: 5000, creditUsd: 28 },
+];
+
+/** Rupees per dollar of credit, to one decimal ("178.6"). */
+export const inrPerCreditUsd = (priceInr: number, creditUsd: number): string => (priceInr / creditUsd).toFixed(1);

@@ -832,3 +832,8 @@ main, footer { position: relative; z-index: 1; }
 @keyframes acct-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-6px) scale(.97); } }
 @keyframes acct-item { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .account-menu, .account-menu > *, .account-trigger .caret { animation: none !important; transition: none; } .account-menu a:hover, .account-menu button:hover { transform: none; } }
+
+/* Pricing: Plus is the recommended pass. It is raised, carries a plain "Recommended" label, and comes first on a phone. */
+.plan-ladder .plan-plus { transform: translateY(-8px); box-shadow: 0 18px 44px rgba(0, 0, 0, .16), 0 2px 8px rgba(0, 0, 0, .09) !important; background: linear-gradient(135deg, rgba(255, 210, 31, .16), rgba(255, 241, 168, .3)), rgba(255, 255, 255, .8) !important; }
+.plan-rec { display: inline-block; margin-left: 10px; padding: 2px 10px; border-radius: 999px; background: var(--yellow); color: var(--ink); font-size: 12px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; vertical-align: middle; }
+@media (max-width: 720px) { .plan-ladder .plan-plus { order: -1; transform: none; } }

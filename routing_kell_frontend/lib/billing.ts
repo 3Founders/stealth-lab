@@ -1,24 +1,14 @@
 /**
- * Buying prepaid credits (backend/app/mcp_server/billing_routes.py; plan and open decisions in docs/billing.md).
+ * Buying plans and add-on credit packs (backend/app/mcp_server/billing_routes.py; plan and open decisions in docs/billing.md).
  *
  * Calls carry the website-session token as a Bearer to the hosted MCP origin only, no cookies. Credits are added ONLY by the payment
  * provider's signed webhook; the browser returning from Checkout adds nothing, so after a payment this page waits for the balance
  * to change instead of assuming it did.
  *
- * Nothing here is a price. The margin and the GST wording are deployment settings that are NOT final (docs/billing.md, "Open
- * decisions"), so they come from NEXT_PUBLIC_KELL_MARGIN_PCT and NEXT_PUBLIC_KELL_GST_MODE and the page says "not set" when absent.
+ * Nothing here is a price. The GST wording is a deployment setting that is NOT final (docs/billing.md, "Open decisions"), so it comes from
+ * NEXT_PUBLIC_KELL_GST_MODE and the page says "being confirmed" when absent. Credit packs come from the server's wallet answer.
  */
 import { MCP_ORIGIN } from "@/lib/connector";
-
-export const DEFAULT_MIN_INR = 100;
-export const DEFAULT_MAX_INR = 50_000;
-export const PRESET_AMOUNTS_INR = [100, 500, 1000, 5000] as const;
-
-/** The margin as a whole or decimal percent, or null when the deployment has not set one. */
-export function marginPct(raw: string | undefined = process.env.NEXT_PUBLIC_KELL_MARGIN_PCT): number | null {
-  const n = Number((raw ?? "").trim());
-  return (raw ?? "").trim() !== "" && Number.isFinite(n) && n >= 0 && n <= 1000 ? n : null;
-}
 
 export type GstMode = "inclusive" | "extra" | "undecided";
 export function gstMode(raw: string | undefined = process.env.NEXT_PUBLIC_KELL_GST_MODE): GstMode {
@@ -32,30 +22,18 @@ export function gstSentence(mode: GstMode): string {
   return "How GST is applied is being confirmed. The amount shown in the payment window is the amount you pay.";
 }
 
-/**
- * The worked example: a provider charge of `providerInr` rupees becomes `providerInr` plus the margin. With no margin set it returns
- * null and the page explains the rule in words only, because a number here would read as a price.
- */
-export function workedExample(providerInr: number, pct: number | null): { provider: number; margin: number; total: number } | null {
-  if (pct === null || !(providerInr > 0)) return null;
-  const margin = Math.round(providerInr * pct) / 100;
-  return { provider: providerInr, margin, total: Math.round((providerInr + margin) * 100) / 100 };
-}
-
-export function amountProblem(value: string, min = DEFAULT_MIN_INR, max = DEFAULT_MAX_INR): string | null {
-  if (!/^\d+$/.test(value.trim())) return "Enter a whole number of rupees.";
-  const n = Number(value);
-  if (n < min) return `The smallest top-up is ₹${min}.`;
-  if (n > max) return `The largest top-up is ₹${max.toLocaleString("en-IN")}.`;
-  return null;
-}
+/** An add-on credit pack the server offers. The list comes from GET /v1/billing/wallet; the page never works a price out itself. */
+export interface Pack { id: string; priceInr: number; creditUsd: number; inrPerUsd: number | null }
 
 export interface Wallet {
   purchasedUsd: number; spentUsd: number; remainingUsd: number;
-  /** Dollars of provider usage one top-up rupee buys (server-computed from its rate and margin), or null. */
-  usdPerInr: number | null;
-  minInr: number; maxInr: number;
   credits: Array<{ ref: string; source: string; inr: number; at: string }>;
+  /** The packs on offer, in the server's order. */
+  packs: Pack[];
+  /** True when the server sells packs only to people with an active plan. */
+  packsNeedPlan: boolean;
+  /** Free-form amounts are refused by the server unless this is true (off by default); the page has no such field. */
+  freeformTopup: boolean;
 }
 
 export type Loaded<T> =
@@ -64,20 +42,20 @@ export type Loaded<T> =
   | { kind: "signed-out" }
   | { kind: "error"; message: string };
 
-// ---- plans (Pilot, Pro): docs/pricing_page.md, Phase 2
+// ---- plans (Starter, Pro, Plus and the Pilot): docs/pricing_page.md, Phase 2
 
 /**
- * The Pilot and Pro purchase buttons are wired in by default. While the server does not answer plan requests yet, the payment blocks say
- * "not switched on yet" and no money moves. NEXT_PUBLIC_KELL_BUY_PLANS=off hides them again (the cards then link to Contact).
+ * Buying a plan online is OFF unless the deployment says "on". The server side is not live until the founders say so; with the flag off the
+ * cards on /pricing link to Contact and no payment block is shown. Set NEXT_PUBLIC_KELL_BUY_PLANS=on only when they do.
  */
 export function buyPlansOn(raw: string | undefined = process.env.NEXT_PUBLIC_KELL_BUY_PLANS): boolean {
-  return (raw ?? "").trim().toLowerCase() !== "off";
+  return (raw ?? "").trim().toLowerCase() === "on";
 }
 
-export const PILOT_MIN_SEATS = 3;
+/** A pilot is 1 to 10 seats. One seat is an individual pilot (no team); two or more make a team workspace that needs a name. */
+export const PILOT_MIN_SEATS = 1;
 export const PILOT_MAX_SEATS = 10;
-export const PILOT_DAYS = 14;
-export const PRO_DAYS = 30;
+export const TEAM_FROM_SEATS = 2;
 export const TEAM_NAME_MIN = 2;
 export const TEAM_NAME_MAX = 60;
 
@@ -86,27 +64,39 @@ export function seatsProblem(n: number): string | null {
   return null;
 }
 
-export function teamNameProblem(raw: string): string | null {
+/** The team name is needed only from two seats; for one seat it is not asked for and not sent. */
+export function teamNameProblem(raw: string, seats: number = TEAM_FROM_SEATS): string | null {
+  if (seats < TEAM_FROM_SEATS) return null;
   const n = raw.trim().length;
   if (n < TEAM_NAME_MIN) return `Give the team a name of at least ${TEAM_NAME_MIN} characters.`;
   if (n > TEAM_NAME_MAX) return `The team name can be at most ${TEAM_NAME_MAX} characters.`;
   return null;
 }
 
-export interface PlanState { plan: "pilot" | "pro" | null; seats: number; teamName: string | null; activeUntil: string | null }
+export type PlanName = "starter" | "pro" | "plus" | "pilot";
+const PLAN_NAMES: PlanName[] = ["starter", "pro", "plus", "pilot"];
+export interface PlanState { plan: PlanName | null; seats: number; teamName: string | null; activeUntil: string | null }
 
 export function parsePlan(j: Record<string, unknown>): PlanState {
-  const plan = j.plan === "pilot" || j.plan === "pro" ? j.plan : null;
+  const plan = PLAN_NAMES.find((n) => n === j.plan) ?? null;
   const until = typeof j.active_until === "string" && j.active_until ? j.active_until : null;
   return { plan, seats: Number(j.seats) || 0, teamName: typeof j.team_name === "string" && j.team_name ? j.team_name : null, activeUntil: plan ? until : null };
 }
 
 /** Whether a plan is running now: it names a plan and its end date has not passed. */
-export function planActive(s: PlanState | null | undefined, plan: "pilot" | "pro", now = new Date()): boolean {
+export function planActive(s: PlanState | null | undefined, plan: PlanName, now = new Date()): boolean {
   if (!s || s.plan !== plan || !s.activeUntil) return false;
   const t = Date.parse(s.activeUntil);
   return Number.isFinite(t) && t > now.getTime();
 }
+
+/** Whether any plan is running now (the server returns the active higher tier first). */
+export function anyPlanActive(s: PlanState | null | undefined, now = new Date()): boolean {
+  return Boolean(s?.plan) && planActive(s, s!.plan!, now);
+}
+
+/** What a plan order asks for: the plan, and for a pilot the seats and (from two seats) the team name. Never an amount. */
+export type PlanOrderRequest = { plan: "starter" | "pro" | "plus" } | { plan: "pilot"; seats: number; teamName?: string };
 
 export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -115,22 +105,20 @@ export interface BillingDeps { token(): Promise<string | null>; origin?: string;
 
 export function parseWallet(j: Record<string, unknown>): Wallet {
   const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
-  const per100 = num(j.usd_per_100_inr);
   const credits = Array.isArray(j.credits) ? j.credits : [];
+  const packs = Array.isArray(j.packs) ? j.packs : [];
   return {
     purchasedUsd: num(j.purchased_usd), spentUsd: num(j.spent_usd), remainingUsd: num(j.remaining_usd),
-    usdPerInr: per100 > 0 ? per100 / 100 : null,
-    minInr: num(j.min_inr) || DEFAULT_MIN_INR, maxInr: num(j.max_inr) || DEFAULT_MAX_INR,
     credits: credits.map((c) => {
       const r = c as Record<string, unknown>;
       return { ref: String(r.payment_ref ?? ""), source: String(r.source ?? ""), inr: num(r.amount_paise) / 100, at: String(r.at ?? "") };
     }),
+    packs: packs
+      .map((x) => { const r = x as Record<string, unknown>; const per = num(r.inr_per_usd); return { id: String(r.id ?? ""), priceInr: num(r.price_inr), creditUsd: num(r.credit_usd), inrPerUsd: per > 0 ? per : null }; })
+      .filter((x) => x.id && x.priceInr > 0 && x.creditUsd > 0),
+    packsNeedPlan: j.packs_need_plan === true,
+    freeformTopup: j.freeform_topup === true,
   };
-}
-
-/** Credit left, in the rupees it was bought with (balance in dollars divided by the dollars one rupee buys). */
-export function remainingInr(w: Wallet): number | null {
-  return w.usdPerInr ? Math.max(0, Math.round((w.remainingUsd / w.usdPerInr) * 100) / 100) : null;
 }
 
 export function billingApi(deps: BillingDeps) {
@@ -171,23 +159,29 @@ export function billingApi(deps: BillingDeps) {
       return r.kind === "ok" ? { kind: "ok", data: parsePlan(r.data) } : r;
     },
     /**
-     * An order for a plan. The request names the plan, and for a pilot the seats and the team name; it never carries an amount, because
-     * the server works out what to charge.
+     * An order for a plan. The request names the plan, and for a pilot the seats and (from two seats) the team name; it never carries an
+     * amount, because the server works out what to charge.
      */
-    async planOrder(req: { plan: "pro" } | { plan: "pilot"; seats: number; teamName: string }): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; seats: number; periodDays: number }>> {
-      const body = req.plan === "pilot" ? { plan: "pilot", seats: req.seats, team_name: req.teamName.trim() } : { plan: "pro" };
+    async planOrder(req: PlanOrderRequest): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; seats: number; periodDays: number }>> {
+      const body = req.plan === "pilot"
+        ? { plan: "pilot", seats: req.seats, ...(req.seats >= TEAM_FROM_SEATS ? { team_name: (req.teamName ?? "").trim() } : {}) }
+        : { plan: req.plan };
       const r = await call("POST", "/orders", body);
       if (r.kind !== "ok") return r;
       const d = r.data;
       if (typeof d.order_id !== "string" || typeof d.key_id !== "string") return { kind: "error", message: "The payment window could not be prepared." };
       return { kind: "ok", data: { orderId: d.order_id, amountPaise: Number(d.amount_paise), keyId: d.key_id, plan: String(d.plan ?? req.plan), seats: Number(d.seats) || 0, periodDays: Number(d.period_days) || 0 } };
     },
-    async order(amountInr: number): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string }>> {
-      const r = await call("POST", "/orders", { amount_inr: amountInr });
+    /**
+     * An order for an add-on credit pack. The request names the pack and nothing else: the server holds the price. It refuses (403) a person
+     * with no active plan; that message is passed on as it is.
+     */
+    async packOrder(packId: string): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; pack: string; creditUsd: number }>> {
+      const r = await call("POST", "/orders", { pack: packId });
       if (r.kind !== "ok") return r;
       const d = r.data;
       if (typeof d.order_id !== "string" || typeof d.key_id !== "string") return { kind: "error", message: "The payment window could not be prepared." };
-      return { kind: "ok", data: { orderId: d.order_id, amountPaise: Number(d.amount_paise), keyId: d.key_id } };
+      return { kind: "ok", data: { orderId: d.order_id, amountPaise: Number(d.amount_paise), keyId: d.key_id, pack: String(d.pack ?? packId), creditUsd: Number(d.credit_usd) || 0 } };
     },
   };
 }
