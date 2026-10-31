@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// /pricing: the founders' plans, none buyable online yet, each with a way to ask; no credits, balance or checkout on the page.
+// /pricing: the founders' plans (none buyable online yet, each with a way to ask) and the prepaid-credit top-up beneath them.
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/components/AnimatedHeading", () => ({ default: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("next/link", () => ({ default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => <a href={href} className={className}>{children}</a> }));
+
+vi.mock("@/lib/session", () => ({ getAccessToken: async () => null, getSession: async () => null, onSessionChange: () => () => {} }));
 
 import PricingPage from "@/app/pricing/page";
 
@@ -33,11 +35,22 @@ describe("/pricing", () => {
     expect(host!.querySelector("button")).toBeNull();
   });
 
-  it("has no credits, balance or checkout, and makes no claim it cannot back", async () => {
+  it("explains extra usage and credits, offers sign-in when signed out, and links the legal pages", async () => {
     await render();
     const t = host!.textContent ?? "";
-    expect(t).not.toMatch(/credit|balance|top-up|checkout|razorpay/i);
-    expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude|ChatGPT|per developer|zero.egress|SOC 2 (compliant|certified)/i);
+    expect(t).toContain("Extra usage: prepaid credits");
+    expect(t).toContain("Illustration, not a quote");
+    expect(t).toContain("Sign in to add credit");
+    expect(t).toContain("How GST is applied is being confirmed"); // GST mode unset
+    expect(host!.querySelector("button")).toBeNull();            // no Pay button while signed out
+    const hrefs = [...host!.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    for (const h of ["/docs/legal/terms", "/docs/legal/privacy", "/legal/refunds", "/contact", "/sign-in?redirect=/pricing"]) expect(hrefs).toContain(h);
+  });
+
+  it("makes no claim it cannot back", async () => {
+    await render();
+    const t = host!.textContent ?? "";
+    expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude|ChatGPT|Codex|per developer|zero.egress|SOC 2 (compliant|certified)/i);
     expect(t).toContain("does not yet have a SOC 2 report");
   });
 });
