@@ -38,16 +38,14 @@ export default function PricingPage() {
         <div className="profile-wrap" style={{ gridColumn: "1 / span 12", display: "grid", gap: 28 }}>
           <div className="profile-card" aria-labelledby="plans-title">
             <h2 className="h3" id="plans-title">Plans</h2>
-            <p className="small dim">Prices are in rupees, before GST. {buy ? "The Pilot and Pro can be bought below, paid once for their period. Teams and Enterprise are set up with you directly: ask and we will." : "No plan can be bought online yet: monthly and per-seat billing is still being built. Ask for one and we will set it up with you directly."}</p>
+            <p className="small dim">Prices are in rupees, before GST. {buy ? "The Pilot and Pro are paid once, for their period, in the sections below. Teams and Enterprise are set up with you directly: ask and we will." : "Ask for a plan and we will set it up with you directly."}</p>
             <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", marginTop: 16 }}>
               {PLANS.map((p) => (
-                <article key={p.id} className="card" aria-label={p.name} style={{ border: "1px solid var(--rule-strong)", borderRadius: 6, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
+                <article key={p.id} className="card" aria-label={p.name} style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
                   <h3 className="h3" style={{ fontSize: 22 }}>{p.name}</h3>
                   <p><b style={{ fontSize: 28, fontWeight: 400 }}>{p.price}</b> <span className="small dim">{p.per}</span></p>
                   <p className="small dim">{p.forWhom}</p>
                   <ul className="small" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.includes.map((t) => <li key={t}>{t}</li>)}</ul>
-                  {p.notIncluded && <ul className="small dim" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.notIncluded.map((t) => <li key={t}>{t}</li>)}</ul>}
-                  {!buyable(p.id) && <p className="caption" role="status">{p.status}</p>}
                   {buyable(p.id)
                     ? <a className="btn-line" href={`#buy-${p.id}`}><span>{p.id === "pilot" ? "Start a pilot" : "Buy Pro"}</span></a>
                     : <Link className="btn-line" href="/contact"><span>{p.cta}</span></Link>}

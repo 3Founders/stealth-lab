@@ -7,12 +7,16 @@ import { PLANS } from "@/lib/plans";
 const reply = (status: number, body: unknown = {}) => vi.fn(async (..._a: unknown[]) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
 const api = (fetchImpl: typeof fetch, token: string | null = "tok") => billingApi({ token: async () => token, origin: "https://mcp.test", fetchImpl });
 
-describe("buying plans is off until the founders turn it on", () => {
-  it("is on only for the exact word 'on'", () => {
-    expect(buyPlansOn(undefined)).toBe(false);
-    expect(buyPlansOn("")).toBe(false);
-    expect(buyPlansOn("true")).toBe(false);
-    expect(buyPlansOn(" ON ")).toBe(true);
+describe("the plan purchase buttons are wired in by default", () => {
+  it("are on unless the deployment says 'off'", () => {
+    expect(buyPlansOn(undefined)).toBe(true);
+    expect(buyPlansOn("")).toBe(true);
+    expect(buyPlansOn("on")).toBe(true);
+    expect(buyPlansOn(" OFF ")).toBe(false);
+  });
+  it("treat a server with no plan endpoint yet as 'not switched on', not as an error", async () => {
+    const f = reply(404, {});
+    expect((await api(f as unknown as typeof fetch).plan()).kind).toBe("off");
   });
 });
 

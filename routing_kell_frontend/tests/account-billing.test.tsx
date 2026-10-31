@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// /account/billing (a person's own plan, credit and top-ups) and /pricing with plan purchases switched on.
+// /account/billing (a person's own plan, credit and top-ups) and /pricing with the plan buttons wired to their payment blocks.
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
@@ -24,47 +24,60 @@ afterEach(() => { act(() => root?.unmount()); host?.remove(); vi.unstubAllEnvs()
 const hrefs = () => [...host!.querySelectorAll("a")].map((a) => a.getAttribute("href"));
 
 describe("/account/billing", () => {
-  it("signed out, with plan purchases off: says plans aren't sold online, and offers sign-in back to this page for credit", async () => {
+  it("signed out: the Pro purchase and the credit top-up both offer sign-in back to this page", async () => {
     await render(<AccountBillingPage />);
     const t = host!.textContent ?? "";
     expect(t).toContain("Billing");
-    expect(t).toContain("Your plan");
-    expect(t).toContain("Plans can’t be bought online yet");
+    expect(t).toContain("Sign in to buy Pro");
     expect(t).toContain("Sign in to add credit");
-    expect(hrefs()).toContain("/sign-in?redirect=/account/billing");
+    expect(hrefs().filter((h) => h === "/sign-in?redirect=/account/billing").length).toBe(2);
     for (const h of ["/pricing", "/docs/legal/terms", "/docs/legal/privacy", "/legal/refunds", "/contact"]) expect(hrefs()).toContain(h);
     expect(host!.querySelector("button")).toBeNull();
   });
 
-  it("with plan purchases on, the Pro purchase sits on the page and sends people back here after sign-in", async () => {
-    vi.stubEnv("NEXT_PUBLIC_KELL_BUY_PLANS", "on");
+  it("with plan purchases switched off, it says plans go through Contact", async () => {
+    vi.stubEnv("NEXT_PUBLIC_KELL_BUY_PLANS", "off");
     await render(<AccountBillingPage />);
-    expect(host!.textContent).toContain("Sign in to buy Pro");
-    expect(hrefs().filter((h) => h === "/sign-in?redirect=/account/billing").length).toBe(2);   // Pro and credit
+    expect(host!.textContent).toContain("Plans can’t be bought online yet");
+    expect(host!.textContent).not.toContain("Sign in to buy Pro");
   });
 });
 
-describe("/pricing with plan purchases on", () => {
-  it("keeps the Pilot and Pro labels off, adds the buy blocks, and leaves Teams and Enterprise as 'contact us'", async () => {
-    vi.stubEnv("NEXT_PUBLIC_KELL_BUY_PLANS", "on");
+describe("/pricing", () => {
+  it("wires the Pilot and Pro buttons to their payment blocks and leaves Teams and Enterprise as 'contact us'", async () => {
     await render(<PricingPage />);
     const t = host!.textContent ?? "";
-    expect(t).not.toContain("Invoiced directly");
-    expect(t).toContain("Not available online yet");                                         // Teams
-    expect(t).toContain("Planned");                                                           // Enterprise
-    expect(t).toContain("Sign in to start the pilot");
-    expect(t).toContain("Sign in to buy Pro");
     expect(hrefs()).toContain("#buy-pilot");
     expect(hrefs()).toContain("#buy-pro");
+    expect(host!.querySelector("#buy-pilot")).not.toBeNull();
+    expect(host!.querySelector("#buy-pro")).not.toBeNull();
+    expect(t).toContain("Sign in to start the pilot");
+    expect(t).toContain("Sign in to buy Pro");
     const contacts = [...host!.querySelectorAll("article a")].filter((a) => a.getAttribute("href") === "/contact");
-    expect(contacts.length).toBe(2);                                                          // Teams and Enterprise
+    expect(contacts.length).toBe(2);                                                           // Teams and Enterprise
     expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude|ChatGPT|Codex|zero.egress|SOC 2 (compliant|certified)/i);
   });
 
-  it("with the flag off (the default) the cards look as before", async () => {
+  it("the cards end with their button: no status caption and no 'not included' lines", async () => {
     await render(<PricingPage />);
-    expect(host!.textContent).toContain("Invoiced directly");
+    const cards = [...host!.querySelectorAll("article")];
+    expect(cards.length).toBe(4);
+    for (const c of cards) {
+      expect(c.querySelector(".caption")).toBeNull();
+      expect(c.querySelector("ul.dim")).toBeNull();
+      expect(c.lastElementChild?.tagName).toBe("A");
+    }
+    const t = cards.map((c) => c.textContent).join(" ");
+    expect(t).not.toContain("Not available online yet");
+    expect(t).not.toContain("Invoiced directly");
+    expect(t).not.toContain("Public or non-sensitive material only");
+  });
+
+  it("with purchases switched off, the cards link to Contact and there are no payment blocks", async () => {
+    vi.stubEnv("NEXT_PUBLIC_KELL_BUY_PLANS", "off");
+    await render(<PricingPage />);
     expect(host!.querySelector("#buy-pilot")).toBeNull();
     expect(hrefs()).not.toContain("#buy-pilot");
+    expect([...host!.querySelectorAll("article a")].every((a) => a.getAttribute("href") === "/contact")).toBe(true);
   });
 });

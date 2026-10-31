@@ -23,16 +23,13 @@ async function render() {
 afterEach(() => { act(() => root?.unmount()); host?.remove(); });
 
 describe("/pricing", () => {
-  it("shows the four plans with the founders' prices, none buyable online, and a way to ask", async () => {
+  it("shows the four plans with the founders' prices; Pilot and Pro go to their payment blocks, Teams and Enterprise to Contact", async () => {
     await render();
     const t = host!.textContent ?? "";
     for (const price of ["₹999", "₹1,800", "₹649", "Custom"]) expect(t).toContain(price);
     expect(t).toContain("before GST");
-    expect(t).toContain("Not available online yet");
-    expect(t).toContain("Invoiced directly");
     const asks = [...host!.querySelectorAll("article a")].map((a) => a.getAttribute("href"));
-    expect(asks).toEqual(["/contact", "/contact", "/contact", "/contact"]);
-    expect(host!.querySelector("button")).toBeNull();
+    expect(asks).toEqual(["#buy-pro", "/contact", "/contact", "#buy-pilot"]);
   });
 
   it("explains extra usage and credits, offers sign-in when signed out, and links the legal pages", async () => {
@@ -42,7 +39,7 @@ describe("/pricing", () => {
     expect(t).toContain("Illustration, not a quote");
     expect(t).toContain("Sign in to add credit");
     expect(t).toContain("How GST is applied is being confirmed"); // GST mode unset
-    expect(host!.querySelector("button")).toBeNull();            // no Pay button while signed out
+    expect(host!.querySelector("button")).toBeNull();            // no Pay or buy button while signed out
     const hrefs = [...host!.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     for (const h of ["/docs/legal/terms", "/docs/legal/privacy", "/legal/refunds", "/contact", "/sign-in?redirect=/pricing"]) expect(hrefs).toContain(h);
   });

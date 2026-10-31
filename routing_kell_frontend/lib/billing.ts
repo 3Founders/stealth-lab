@@ -66,9 +66,12 @@ export type Loaded<T> =
 
 // ---- plans (Pilot, Pro): docs/pricing_page.md, Phase 2
 
-/** Buying plans online is off until the founders turn it on (NEXT_PUBLIC_KELL_BUY_PLANS=on) once the server answers. */
+/**
+ * The Pilot and Pro purchase buttons are wired in by default. While the server does not answer plan requests yet, the payment blocks say
+ * "not switched on yet" and no money moves. NEXT_PUBLIC_KELL_BUY_PLANS=off hides them again (the cards then link to Contact).
+ */
 export function buyPlansOn(raw: string | undefined = process.env.NEXT_PUBLIC_KELL_BUY_PLANS): boolean {
-  return (raw ?? "").trim().toLowerCase() === "on";
+  return (raw ?? "").trim().toLowerCase() !== "off";
 }
 
 export const PILOT_MIN_SEATS = 3;
@@ -164,6 +167,7 @@ export function billingApi(deps: BillingDeps) {
     /** The plan the signed-in account has bought, if any (docs/pricing_page.md, Phase 2). */
     async plan(): Promise<Loaded<PlanState>> {
       const r = await call("GET", "/plan");
+      if (r.kind === "error" && /answered 404/.test(r.message)) return { kind: "off" };   // a server that has no plan endpoint yet: plans are not switched on
       return r.kind === "ok" ? { kind: "ok", data: parsePlan(r.data) } : r;
     },
     /**
