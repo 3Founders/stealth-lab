@@ -152,7 +152,11 @@ ${merged.reason}`
     await ctx.session.hook("experimental.idle", async (e) => {
       const s = state(e.sessionID)
       let messages = []
-      try { messages = (await Promise.race([ctx.session.context({ sessionID: e.sessionID }), new Promise((ok) => setTimeout(() => ok(null), 2000))]))?.messages || [] } catch { /* optional */ }
+      try {
+        const res = await Promise.race([ctx.session.context({ sessionID: e.sessionID }), new Promise((ok) => setTimeout(() => ok(null), 2000))])
+        // opencode 2.2.5 returns the messages array itself; older builds returned { messages }.
+        messages = Array.isArray(res) ? res : res?.messages || []
+      } catch { /* optional */ }
       const kell_usage = turnUsage(messages, s.model)
       debug("usage", JSON.stringify(kell_usage))
       const merged = await fire("Stop", "", { ...base(e.sessionID, "Stop"), stop_hook_active: s.continued > 0, kell_usage })
