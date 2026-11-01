@@ -16,6 +16,7 @@ import { runHook, parseOutput, mergeOutputs } from "./lib/run_hook.mjs"
 import { claudeName, claudeInput, openCodeInput, claudeResponse } from "./lib/tool_names.mjs"
 import { turnUsage } from "./lib/usage.mjs"
 import { refreshMcpHeader, opencodeConfigFilePath } from "./lib/mcp_token.mjs"
+import { createWatchdog } from "./lib/watchdog.mjs"
 
 const DEBUG = process.env.KELL_OC_DEBUG === "1"
 const stateDir = () => path.join(process.env.KELL_OC_STATE_DIR || path.join(os.homedir(), ".stealthlab", "opencode"))
@@ -42,6 +43,9 @@ export default Plugin.define({
     const hooks = loadHooks(!process.env.KELL_OC_SETTINGS && Array.isArray(ocConfig.settings) && ocConfig.settings.length ? ocConfig.settings : settingsFiles(cwd))
     const sessions = new Map()                       // sessionID -> { started, context: [], continued, model }
     const state = (id) => { let s = sessions.get(id); if (!s) { s = { started: false, context: [], continued: 0, model: undefined }; sessions.set(id, s) } return s }
+    // The sparse hang guard: arms on every sign of life (prompt, the primary model call, a finished tool), clears when the
+    // turn ends (experimental.idle), and only ever logs. See lib/watchdog.mjs.
+    const watchdog = createWatchdog({ log: debug })
     // Not awaited in setup: asking the host for its MCP servers while plugins are still loading never returned (the cold-start
     // hang, found 2026-10-31: runs with this plugin stalled with no output, the same runs without it took 14 s). Looked up on the
     // first tool call instead, with a time limit; names pass through when it does not answer.
@@ -96,6 +100,7 @@ export default Plugin.define({
       const s = state(e.sessionID)
       s.context = []
       s.continued = 0
+      watchdog.arm(e.sessionID)
       note(e.sessionID, { type: "user", message: { role: "user", content: unquote(e.prompt.text) } })
       if (!s.started) {
         s.started = true
@@ -124,6 +129,7 @@ ${merged.reason}`
       if (e.kind !== "primary") return
       const s = state(e.sessionID)
       s.model = `${e.model.providerID}/${e.model.id}`
+      watchdog.arm(e.sessionID)
       note(e.sessionID, { type: "assistant", message: { role: "assistant", model: e.model.id } })
     })
 
@@ -139,6 +145,7 @@ ${merged.reason}`
 
     // --- PostToolUse -> tool.execute.after: context and block feedback are appended to the tool's result.
     await ctx.tool.hook("execute.after", async (e) => {
+      watchdog.arm(e.sessionID)                 // a finished tool call is progress, however it ended
       if (e.status !== "completed") return
       const name = claudeName(e.tool, await servers())
       const merged = await fire("PostToolUse", name, {
@@ -157,6 +164,7 @@ ${merged.reason}`
     // --- Stop -> experimental.idle: a block keeps the session going with the reason as the next message (twice at most).
     // The turn's model, tokens and cost go along as kell_usage (kell's capture-stop puts them in report_model_run).
     await ctx.session.hook("experimental.idle", async (e) => {
+      watchdog.clear(e.sessionID)               // the turn ended: the timer must not fire between turns
       const s = state(e.sessionID)
       let messages = []
       try {

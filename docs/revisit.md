@@ -38,9 +38,12 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ## Our agent (OpenCode)
 
-- **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start); about 2 runs
-  in 6 still stalled in the spike. Not reproduced on 2026-11-01 (16 runs, 0 hangs); a 60 s no-progress watchdog was being
-  added to the plugin when the session's limit ran out (not committed). Detail: [opencode_spike_2026-11.md](opencode_spike_2026-11.md).
+- **`test/claude_exec.test.mjs` needs real Git Bash on this machine.** When `bash` on PATH is WSL's (`C:\Windows\System32\bash.exe`, as on the 2026-11-01 machine), the test "hook commands run through bash with Windows backslash paths" fails exit 127 (WSL bash cannot run a Windows binary path); it skips only when bash is missing. Install Git Bash ahead of WSL on PATH, or make the test detect and skip a WSL bash.
+- **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start). Not
+  reproduced on 2026-11-01 (16 runs, 0 hangs, including 6 right after a config rewrite), so the cause hunt stopped; a 60 s
+  no-progress watchdog in the plugin logs it if it comes back
+  ([opencode_watchdog.mjs](../packaging/npm/lib/opencode/lib/watchdog.mjs)), after which the user doc's troubleshooting
+  table points at OpenCode's own log.
 - **General Compute's deepseek-v3.2 refuses 8k+ output tokens** (OpenCode asks 32k by default). kell's provider config caps
   it at 4k. Ask General Compute for the real limit, or whether it's a bug.
 - **Not done from the spike plan:** a timing and cost table against Claude Code; re-running dispatch mode in OpenCode;

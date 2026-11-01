@@ -266,6 +266,7 @@ It removes only what kell added to OpenCode's settings; your own settings stay.
 | Claude waits for a click on every kell call | Do B3. |
 | A kell tool call on claude.ai is refused right after an update | Customize → Connectors → kell → Disconnect, then Connect again (B2), so claude.ai sees kell's newest tools. |
 | A cheap model's change in Claude Code looks wrong | `kell undo`. |
+| OpenCode shows nothing for a minute or more on the first run | Wait or run it again. If it repeats, send the kell team the last lines of OpenCode's log (type `kell setup --client opencode` once more first). |
 | OpenCode says "Streaming request failed" | Run `kell setup --client opencode` again (it sets the output limit General Compute needs), then restart OpenCode. |
 | OpenCode shows kell's server as needing a login | Run `kell login`, then `kell setup --client opencode` again. |
 
