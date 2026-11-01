@@ -3,6 +3,51 @@
 For a new coding-agent session (OpenCode or any other) with no memory of earlier work. Read this whole page first,
 then `docs/revisit.md`. Work in the `stealth-lab` repo on `main`.
 
+## Resume here (status 2026-11-01, after the previous session ran out of usage)
+
+**Done and on main:**
+- Part 1 step 4, per-turn tokens and cost (`8264d1a0`).
+- Part 1 step 6, refreshing kell's login token inside OpenCode (`85248c4d`, option A).
+- The full suite passes: `cd packaging/npm && npm test`, 833 pass, 4 skipped.
+
+**Interrupted, Part 1 step 5 (the cold-start hang):**
+- The hang did **not** reproduce. 16 runs on 2026-11-01, including 6 runs right after rewriting
+  `~/.stealthlab/opencode/config.json`, all finished in 11–12 s.
+- The probe script was `.scratch/run_hang_probe.ps1` (not committed).
+  - On Windows, start `opencode.exe` directly: `%APPDATA%\npm\node_modules\@opencode\cli\bin\opencode.exe`.
+    `Start-Process` can't run the npm shim.
+- Following the fallback, the session was adding a **60 s no-progress watchdog** to
+  `packaging/npm/lib/opencode/index.mjs`. It never got committed.
+- **First**, run `git status`. If an uncommitted watchdog edit is there, review it against the design below, finish it,
+  and commit. Otherwise write it fresh.
+
+**The watchdog design** (agreed, not built):
+- Keep one timer per session, in the plugin's `state(id)`.
+- **Arm it (60 s)** in three places:
+  - the `prompt` hook;
+  - `model.request` (primary only);
+  - `tool execute.after`.
+- **Clear it** in `experimental.idle` (the turn ended).
+- **When it fires:** `debug(...)` one line, saying "no progress for 60 s in session <id>; see OpenCode's logs at
+  <XDG_DATA_HOME>/opencode/log". It only logs; it never kills anything.
+- **Call `.unref()` on the timer**, or `opencode run` will wait 60 s before exiting.
+- Add a unit test with fake timers.
+- Add a row to the troubleshooting table in `docs/new_user_setup.md`: "OpenCode shows nothing for a minute or more on
+  the first run → wait or run it again; if it repeats, send the kell team the last lines of OpenCode's log".
+- In `docs/revisit.md`, change the hang item to "not reproduced; watchdog logs it".
+
+**Not done and not written up:**
+- Part 1 step 2, the acceptance table.
+- Part 1 step 3, live escalation.
+
+Ask the owners whether the previous session ran them. If not, do them after the watchdog.
+- They need `kell login` by a person in the isolated profile from step 1.
+- They need `--auto` runs, inside the fixture folders only.
+
+**Then:**
+1. Part 1 step 7 (the final check).
+2. Part 2 (the desktop app). Write `docs/desktop_app_plan.md` and ask about Tauri or Electron before building.
+
 ## Rules (do not break)
 
 - **Never print, paste or commit a key.** Keys live in `backend/.env` (`GENERAL_COMPUTE_API_KEY`, `DEEPINFRA_KEY`) and in
