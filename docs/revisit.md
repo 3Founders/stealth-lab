@@ -10,13 +10,14 @@ items here (not in other docs); remove one when it is done, with the commit that
 - **Where a pilot user's model key comes from:** (a) their own General Compute key, or (b) a kell-run organisation they
   join. Detail: [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md) section 3.
 - **npm:** the first version number, and whether `"license": "UNLICENSED"` stays (Chaitanya publishes).
-- **The app** (our own coding app like Claude Code): desktop (Electron/Tauri over a local OpenCode server), web, or both;
-  the first screens; the website's and console's design system.
 - **Neon storage:** confirm the plan's limit (the local copy of the catalog is about 0.9 GB), and whether to check it
   through Neon's account API.
 - **Gateway terms review:** who reads each allowlisted server's terms.
 
 ### Made (kept here so they aren't reopened by accident)
+
+- **2026-11-01, the desktop app's shell:** Electron (OpenCode's SDK and kell's console helper are Node). Plan:
+  [desktop_app_plan.md](desktop_app_plan.md).
 
 - **2026-10-31, our agent's models:** cheap minimax-m2.7, strong deepseek-v3.2, both on General Compute (one key). Not
   gpt-oss (owner). An Anthropic key is a later option; never a Claude subscription sign-in inside OpenCode.
@@ -38,6 +39,18 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ## Our agent (OpenCode)
 
+- **Models and providers for our agent.** Today everything runs on General Compute (one key): minimax-m2.7 cheap,
+  deepseek-v3.2 strong. Problems seen on 2026-11-01:
+  - deepseek-v3.2 on General Compute rejects OpenCode's requests at random (403/400 or "Streaming request failed"; one
+    run needed 6 tries over about 15 minutes);
+  - deepseek-v3.2 refuses requests that ask for 8k+ output tokens (kell caps it at 4k).
+
+  To do:
+  1. Add a fallback for the strong rung: retry once, then fall back to minimax-m2.7 or gemma-4-31B-it, and log it.
+  2. Ask General Compute about the random blocks and the output limit.
+  3. Add a second provider for the strong model (DeepInfra, already used for embeddings and images, or DeepSeek's own
+     API), so one provider's outage doesn't stop escalation. gpt-oss is out (owner, 2026-10-31).
+  4. Revisit the cheap and strong pair once the routing test prompts (handoff Part 3) have been run on it.
 - **`test/claude_exec.test.mjs` needs real Git Bash on this machine.** When `bash` on PATH is WSL's (`C:\Windows\System32\bash.exe`, as on the 2026-11-01 machine), the test "hook commands run through bash with Windows backslash paths" fails exit 127 (WSL bash cannot run a Windows binary path); it skips only when bash is missing. Install Git Bash ahead of WSL on PATH, or make the test detect and skip a WSL bash.
 - **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start). Not
   reproduced on 2026-11-01 (16 runs, 0 hangs, including 6 right after a config rewrite), so the cause hunt stopped; a 60 s
