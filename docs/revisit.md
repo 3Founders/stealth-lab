@@ -46,9 +46,17 @@ items here (not in other docs); remove one when it is done, with the commit that
   table points at OpenCode's own log.
 - **General Compute's deepseek-v3.2 refuses 8k+ output tokens** (OpenCode asks 32k by default). kell's provider config caps
   it at 4k. Ask General Compute for the real limit, or whether it's a bug.
-- **Not done from the spike plan:** a timing and cost table against Claude Code; re-running dispatch mode in OpenCode;
-  the Anthropic-key option; a full clean-profile acceptance with `kell login` and the six prompts; renaming
-  opencode_spike_2026-11.md to a product doc.
+- **General Compute's deepseek-v3.2 admits OpenCode intermittently (2026-11-01).** Runs 1–3 on minimax-m2.7 passed all
+  morning, while the strong model returns, in turns: the edge's HTML "Blocked" page (HTTP 403, before auth) and
+  `400 "Streaming request failed"`; identical bodies and headers replayed from node fetch pass, min max up to 18 tools and
+  32k `max_completion_tokens`; `Options.headers` in opencode.json does not reach the wire (OpenCode still sends its own
+  `user-agent: opencode/latest/2.2.5/desktop`). Looks like its edge's bot/WAF rules or capacity throttling, not kell's.
+  Owners: ask General Compute to allow OpenCode/agent UA sonsign their deepseek route, or whether admission is throttled.
+  Meanwhile the plan doc's `Options.headers` field is a dead end; a local undici forwarder is a workaround, not shipped.
+- **Not done from the spike plan:** the timing and cost table against Claude Code (the OpenCode leg's table is now in
+  [opencode_spike_2026-11.md](opencode_spike_2026-11.md), the Claude Code/claude.ai legs need the user's own accounts);
+  the Anthropic-key option; renaming opencode_spike_2026-11.md to a product doc. The clean-profile acceptance ran on
+  2026-11-01 (rows in the spike doc; live escalation with the weak-provider fixture still to do).
 - **The plugin needs npm at setup** (`@opencode/plugin` 2.2.5 is installed into `~/.stealthlab/opencode/plugin`); kell-mcp
   itself keeps no dependencies. Publishing the plugin as its own npm package would remove that step.
 

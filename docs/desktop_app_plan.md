@@ -1,0 +1,101 @@
+# The desktop app: kell's own coding app (plan for approval, 2026-11-01)
+
+Status: plan. Nothing here is built. The shell choice (Tauri or Electron) needs the owners before step 2.
+
+## Goal
+
+kell's own coding app, like Claude Code's desktop app, in the look of the website and the console. The engine is OpenCode
+2.2.5 with kell's plugin (part 1); the app is a window onto it.
+
+## What exists to reuse
+
+- **Website** (`routing_kell_frontend/`, Next.js 15, React 19): `app/globals.css` holds the shared design tokens.
+- **Console** (`console/`, Next.js 15, React 19): `app/globals.css`, re-usable components
+  (Header, Footer, AccountMenu, CopyField; Console, ConnectPanel, ModelsPanel, ActivityPanel, PlaygroundPanel, StatusBar,
+  `chat/`), and helpers (`helper.ts`, `sse.ts`, `types.ts`, `words.ts`).
+- **Shared tokens** (identical in both; copy them, do not invent a palette):
+  - colours: `--paper #F8F6EF`, `--ink #171717`, `--yellow #FFD21F`, `--cobalt #193A70`, `--soft #FFF1A8`,
+    `--grey #777773`, `--rule rgba(23,23,23,.13)`, `--rule-strong rgba(23,23,23,.85)`;
+  - font: `"Bahnschrift", "Barlow", "DIN Alternate", "Segoe UI", system-ui` (body weight 300);
+  - code: `"Cascadia Mono", ui-monospace, ...`; buttons: `.btn-ink`, `.copy`.
+- **The connection**: `packaging/npm/lib/console.mjs` (`kell console`) — a loopback HTTP server with a token in its
+  address, routes `GET /health`, `GET /clients`, `POST /install`, `POST /uninstall`, plus keys, local models, streamed
+  replies and an activity feed from the hosted server's `/activity`. Started the way `console_launch.mjs` does.
+
+## Architecture
+
+```
++------------------------------------------+
+| desktop app window                       |
+|   Next.js UI (tokens above, keln visual) |
++------------------------------------------+
+        | @opencode/sdk              | HTTP (tokened loopback)
+        v                            v
++-------------------+      +----------------------+
+| opencode serve    |      | kell console helper  |
+| (pinned 2.2.5,    |      | (sign-in, keys,      |
+|  kell plugin)     |      |  activity feed)      |
++-------------------+      +----------------------+
+        |                            |
+        v                            v
+   min ≤ strong models        https://mcp.kell.org.in (same reporting)
+```
+
+- The app starts (or finds) `opencode serve` as a child process, pinned to 2.2.5, with the plugin installed by
+  `kell setup --client opencode` into the profile the app owns (the isolated-profile pattern).
+- The app also starts (or finds) the console helper, the same way `console_launch.mjs` does, and shares one sign-in
+  with it.
+- The UI talks to OpenCode through `@opencode/sdk` (sessions, prompts, streamed events) and to the helper for keys,
+  models and the activity feed.
+- What the console shows: the app's sessions appear in its Activity panel, because both report to the same hosted
+  server (`report_model_run`, `/tools/outcome`).
+
+## The screens (first build)
+
+1. **Project picker:** open a folder; engine boots inside it.
+2. **Chat:** prompts and streamed answers; tool calls rendered inline (the console's `chat/` components re-used).
+3. **Changes panel:** a diff of what the cheap model changed, with Apply / Undo (`kell undo`).
+4. **Model strip:** which model did each step and its cost — fed by the plugin's `kell_usage` (part 1 step 4, already
+   in the plugin).
+5. **Tool suggestions:** kell's tool note as cards, one click to add, or "use through kell" (the gateway).
+6. **Settings / Account:** the console's panels (connect, models, activity, keys) rendered inside the app;
+   an "Open console" button opens the web console at the helper's tokened address.
+
+## Shell choice (owner decision needed)
+
+- **Tauri (recommended):** small binaries (single-digit MB plus the system webview), Rust side only for the window and
+  process spawning; the Next.js UI and the process management stay ordinary Node work run through the helper or a small
+  sidecar script. Cost: one more toolchain (Rust) at build time.
+- **Electron:** everything is Node; ships a browser; bigger installer. Cost: size and memory.
+- Either way the window loads the same Next.js UI, so the decision can wait until the UI prototype exists — build the UI
+  with `next dev` first, and bolt the shell on after.
+
+## Build order
+
+1. **Skeleton:** `desktop/` with the Next.js UI (token CSS copied into `globals.css`) and a `main` process (or sidecar)
+   that spawns `opencode serve` and the helper, both health-checked before the window opens the UI.
+2. **Chat with streaming:** sessions list + chat view through `@opencode/sdk`; show tool calls as they happen.
+3. **Changes panel:** per session, diff of the session's edits (OpenCode's file-changed events), Apply / Undo via
+   `kell undo`; dry-run first with the fixture.
+4. **Model strip and tool cards:**(simplicity) model + cost per step from `kell_usage` events; kell's tool suggestions
+   from the plugin's existing note path.
+5. **Sign-in:** the app shows "Signed in as ..." from the helper; a "Sign in" button runs `kell login` (browser OAuth).
+6. **Packaging:** installers for Windows and macOS. **Not published without the owners.**
+
+## Later
+
+- Team rooms from the website (`routing_kell_frontend`, rooms API) as a side panel.
+- Session history search; notifications when a long run finishes.
+
+## Opens (for the owners)
+
+- **Shell:** Tauri or Electron (recommended: Tauri). Can be deferred: the UI is the same either way.
+- **Name and window chrome:** "kell" plus own icon; anything else wanted in the title bar (model strip as a status bar
+  is assumed).
+- **Windows first or both at once?** (the fixtures are Windows-tested so far).
+
+## What must not happen
+
+- No keys in the UI, the logs or the installer: the engine runs on the user's own saved key from
+  `~/.stealthlab/config.json`, read by the helper; the app only shows "Signed in as ...".
+- The app never edits `prod_frontend/` and never publishes anything by itself.

@@ -284,3 +284,23 @@ What this does and does not say:
 - Not done: live escalation with deepseek (needs auto-approved test runs, which this session may not start), the
   clean-profile acceptance with `kell login`, the remaining hang. All on [revisit.md](revisit.md).
 
+## Acceptance runs, clean profile (2026-11-01, OpenCode 2.2.5 isolated profile)
+
+All runs in fixture dirs only (`--auto` never outside them), logged in as kell (in-app browser sign-in), plugin from
+`kell setup --client opencode`, dispatch per row. Wall time is wall-clock of `opencode run`.
+
+| # | prompt | mode | model(s) | wall | outcome |
+|---|--------|------|----------|------|---------|
+| 1 | "why do my flags disappear?" (question answer) | session | gc/minimax-m2.7 (cheap rung) | 37.2 s | correct answer; flags still planted the clamp bug (the fixture's seeded state) |
+| 2 | "fix the failing test" | session | gc/minimax-m2.7 | 75.9 s | edit applied; `python -m pytest -q` 4/4 pass |
+| 3 | "knock knock" | session | no model call — answered inline | 13.0 s | smalltalk, no kell run record; cheapness correct |
+| 4 | "fix the failing test" | dispatch | gc/deepseek-v3.2 | ~371 s (the run that worked) | fix applied, 4/4 pass; then `kell undo` restored the bug (`undone u-20261101104836-ecf107: restored mathx.py`) and the test fails again |
+
+- Run 4 needed 6 dispatch attempts over ~15 min because General Compute's deepseek-v3.2 intermittently 403/400s OpenCode's
+  requests from this machine (symptoms and probe set-up on revisit.md); the other attempts died at the provider before
+  doing work.
+- Usage reaches kell's server through the plugin as before (`usage {"scaffold":"opencode","model":"gc/minimax-m2.7",...,"cost_usd":0.003337}` on the first of these runs).
+- The watchdog (part 1 step 5, fallback) is in these runs: armed at prompt, cleared at idle; its own tests are
+  `packaging/npm/test/opencode_watchdog.test.mjs`, and the cold-start watchdog debug lines are debug-only.
+
+
