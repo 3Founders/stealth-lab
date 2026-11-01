@@ -72,6 +72,14 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ## Tool routing
 
+- **Tools in the middle of a task.** claude.ai and the OpenCode agent can call kell's tools at any point (in OpenCode the
+  cheap model too). Gaps:
+  1. Claude Code's default install is hooks only, so Claude can't call kell's tools (`discover_tools`, `use_tool`)
+     mid-task unless it was installed with `--keep-mcp`.
+  2. The cheap step agents in Claude Code's dispatch can't call MCP tools at all (tool routing P4, not built).
+  3. Everywhere, the tool goal is chosen once, from the first message. A need that appears halfway through relies on the
+     model calling `discover_tools` itself. A re-triage on tool failure, or a short reminder after N tool calls, would
+     cover it.
 - **Per-person or per-team outcome ranking.** Every tool outcome row keeps who reported it, but the ranking adds all users
   together. A team's own record could weigh more for that team. Detail: [tool_routing_plan.md](tool_routing_plan.md).
 - **Official vendors with few stars rank low.** ElevenLabs' own server links a 6-star repository, so smaller tools came
