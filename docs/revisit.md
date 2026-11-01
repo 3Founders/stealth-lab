@@ -55,8 +55,8 @@ items here (not in other docs); remove one when it is done, with the commit that
   Meanwhile the plan doc's `Options.headers` field is a dead end; a local undici forwarder is a workaround, not shipped.
 - **Not done from the spike plan:** the timing and cost table against Claude Code (the OpenCode leg's table is now in
   [opencode_spike_2026-11.md](opencode_spike_2026-11.md), the Claude Code/claude.ai legs need the user's own accounts);
-  the Anthropic-key option; renaming opencode_spike_2026-11.md to a product doc. The clean-profile acceptance ran on
-  2026-11-01 (rows in the spike doc; live escalation with the weak-provider fixture still to do).
+  the Anthropic-key option; renaming opencode_spike_2026-11.md to a product doc. The clean-profile acceptance and the
+  live escalation with the weak-provider fixture ran on 2026-11-01 (rows in the spike doc).
 - **The plugin needs npm at setup** (`@opencode/plugin` 2.2.5 is installed into `~/.stealthlab/opencode/plugin`); kell-mcp
   itself keeps no dependencies. Publishing the plugin as its own npm package would remove that step.
 

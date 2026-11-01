@@ -269,6 +269,7 @@ It removes only what kell added to OpenCode's settings; your own settings stay.
 | OpenCode shows nothing for a minute or more on the first run | Wait or run it again. If it repeats, send the kell team the last lines of OpenCode's log (type `kell setup --client opencode` once more first). |
 | OpenCode says "Streaming request failed" | Run `kell setup --client opencode` again (it sets the output limit General Compute needs), then restart OpenCode. |
 | OpenCode shows kell's server as needing a login | Run `kell login`, then `kell setup --client opencode` again. |
+| The first OpenCode run after about an hour from the sign-in shows kell's server rejecting the token, and the turn fails | The saved sign-in token lasts about an hour. The plugin refreshes it on its own and fixes the file to hand for the next connect, so run the prompt again; if it still refuses, run `kell login` and `kell setup --client opencode` again. |
 
 For anything else, send the kell team what you typed, what you saw, and (for Claude Code) the last lines of
 `~/.stealthlab/hooks.log`.

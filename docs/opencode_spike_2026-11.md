@@ -303,4 +303,23 @@ All runs in fixture dirs only (`--auto` never outside them), logged in as kell (
 - The watchdog (part 1 step 5, fallback) is in these runs: armed at prompt, cleared at idle; its own tests are
   `packaging/npm/test/opencode_watchdog.test.mjs`, and the cold-start watchdog debug lines are debug-only.
 
+## Live escalation (2026-11-01, native part 1 step 3)
+
+`experiments/opencode_kell/fixtures/weak_provider.mjs` on 127.0.0.1:8799 as provider `weak` (model `weak-1`), the esc
+fixture (`shop/tax.py` bug: 4 tests fail), `kell` on OpenCode 2.2.5, `--auto`, session mode. `opencode run --standalone
+--auto "fix the failing tests"`:
+
+- Turn 1: triage `{"kind":"reusable_task","work":"change","category":"repo_change"} -> cheap weak/weak-1`; the weak model
+  answers every turn with `python -m pytest -q` and runs it; 4 fail.
+- Turn 2: still `weak-1`; pytest again; 4 fail.
+- Turn 3: the plugin's debug log records `escalate after 2 failed test runs -> gc/deepseek-v3.2` and the run's build line
+  switches to `deepseek-v3.2` — the switch happens exactly on the 2 failed runs, as designed.
+
+- The escalated turn then died at General Compute's intermittent deepseek block ("Streaming request failed"), so the
+  escalation's completion on that provider could not be re-watched live; the switch itself is verified.
+- New pitfall found and noted in new_user_setup.md: the saved MCP sign-in token lasts about an hour; a run that starts
+  after it expired fails its turn at kell's MCP connect while the plugin refreshes the token on the way past.
+  A rerun after the refresh works without any new sign-in.
+
+
 
