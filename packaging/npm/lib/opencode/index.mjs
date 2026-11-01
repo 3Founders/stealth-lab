@@ -15,6 +15,7 @@ import { loadHooks, selectHooks, settingsFiles } from "./lib/settings.mjs"
 import { runHook, parseOutput, mergeOutputs } from "./lib/run_hook.mjs"
 import { claudeName, claudeInput, openCodeInput, claudeResponse } from "./lib/tool_names.mjs"
 import { turnUsage } from "./lib/usage.mjs"
+import { refreshMcpHeader, opencodeConfigFilePath } from "./lib/mcp_token.mjs"
 
 const DEBUG = process.env.KELL_OC_DEBUG === "1"
 const stateDir = () => path.join(process.env.KELL_OC_STATE_DIR || path.join(os.homedir(), ".stealthlab", "opencode"))
@@ -71,6 +72,12 @@ export default Plugin.define({
     // paths try cheap models in worktrees and the session's model takes over).  plugin option `mode`, or KELL_OC_MODE.
     const mode = String(ctx.options?.mode || process.env.KELL_OC_MODE || ocConfig.mode || "session").toLowerCase() === "dispatch" ? "dispatch" : "session"
     debug("mode:", mode)
+    // The MCP header setup wrote grows stale with the saved token; aligned here (lib/mcp_token.mjs). Started during
+    // setup without awaiting: it must never stall the session, and a rewrite helps the next MCP connect (the next
+    // session) anyway. Every result is logged at debug level.
+    refreshMcpHeader({ env: process.env }).then((r) =>
+      debug("mcp token:", r.changed ? `rewrote ${opencodeConfigFilePath(process.env)} (${r.reason})` : `kept (${r.reason})`)
+    ).catch(() => { /* best effort */ })
     const env = { ...process.env, CLAUDE_PROJECT_DIR: cwd, ...(mode === "session" ? { STEALTHLAB_DISPATCH: "off", STEALTHLAB_ANSWERS: "off" } : {}) }
 
     async function fire(event, subject, payload) {
