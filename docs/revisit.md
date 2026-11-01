@@ -39,17 +39,13 @@ items here (not in other docs); remove one when it is done, with the commit that
 ## Our agent (OpenCode)
 
 - **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start); about 2 runs
-  in 6 still stalled in the spike. Not diagnosed. Detail: [opencode_spike_2026-11.md](opencode_spike_2026-11.md).
-- **kell's MCP server in OpenCode uses the saved token as a header**, which isn't refreshed; after it expires, run
-  `kell setup --client opencode` again. Better: OpenCode's own OAuth against kell's server (it supports dynamic client
-  registration; kell's server answered "requires a login before it can register a client").
+  in 6 still stalled in the spike. Not reproduced on 2026-11-01 (16 runs, 0 hangs); a 60 s no-progress watchdog was being
+  added to the plugin when the session's limit ran out (not committed). Detail: [opencode_spike_2026-11.md](opencode_spike_2026-11.md).
 - **General Compute's deepseek-v3.2 refuses 8k+ output tokens** (OpenCode asks 32k by default). kell's provider config caps
   it at 4k. Ask General Compute for the real limit, or whether it's a bug.
 - **Not done from the spike plan:** a timing and cost table against Claude Code; re-running dispatch mode in OpenCode;
   the Anthropic-key option; a full clean-profile acceptance with `kell login` and the six prompts; renaming
   opencode_spike_2026-11.md to a product doc.
-- **Per-turn tokens and cost aren't sent yet.** `session.context` in OpenCode 2.2.5 returns messages without `tokens` or
-  `cost`, so `kell_usage` carries only the model. Read them from the SDK's message events or the session store instead.
 - **The plugin needs npm at setup** (`@opencode/plugin` 2.2.5 is installed into `~/.stealthlab/opencode/plugin`); kell-mcp
   itself keeps no dependencies. Publishing the plugin as its own npm package would remove that step.
 
