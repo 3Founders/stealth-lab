@@ -112,12 +112,12 @@ describe("in the plan's own card", () => {
     expect(host!.querySelector("input")).toBeNull();
   });
 
-  it("the one-person pilot's order carries the applied code and still no amount", async () => {
+  it("the one-person plan's order carries one seat and the applied code, and still no amount", async () => {
     const planOrder = vi.fn(async (_req?: object) => ({ kind: "ok" as const, data: { orderId: "order_9", amountPaise: 64900, keyId: "rzp_test", plan: "pilot", periodDays: 30 } }));
     await mount(<Harness plan="pilot" states={[ok(null)]} planOrder={planOrder} orderCode="FRIEND" checkout={async () => "closed"} />);
-    await click(btn("Buy Pilot"));
-    expect(planOrder).toHaveBeenCalledWith({ plan: "pilot", referralCode: "FRIEND" });
-    expect(Object.keys(planOrder.mock.calls[0][0] as object)).toEqual(["plan", "referralCode"]);
+    await click(btn("Buy First Trial"));
+    expect(planOrder).toHaveBeenCalledWith({ plan: "pilot", seats: 1, referralCode: "FRIEND" });
+    expect(Object.keys(planOrder.mock.calls[0][0] as object)).toEqual(["plan", "seats", "referralCode"]);
     expect(text()).toContain("window was closed");
   });
 

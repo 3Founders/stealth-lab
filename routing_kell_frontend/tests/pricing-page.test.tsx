@@ -172,7 +172,7 @@ describe("/pricing", () => {
     await render();
     await typeCode("friend");
     await submitCode();
-    expect(cards()).toEqual(["Pilot"]);
+    expect(cards()).toEqual(["First Trial"]);
     const t = host!.textContent ?? "";
     expect(t).toContain("Code FRIEND applied.");
     expect(t).toContain("₹649");
@@ -211,7 +211,7 @@ describe("/pricing", () => {
     act(() => root?.unmount()); host?.remove();
     await render();
     await act(async () => {});
-    expect(cards()).toEqual(["Pilot"]);
+    expect(cards()).toEqual(["First Trial"]);
     expect(host!.textContent).toContain("Code FRIEND applied.");
   });
 
@@ -239,8 +239,8 @@ describe("/pricing", () => {
     expect(host!.textContent).toContain("Plus gives twice Pro's usage for ₹700 more.");
     await typeCode("firsttrial");
     await submitCode();
-    expect(card("Pilot")).toContain("₹700");
-    expect(card("Pilot")).toContain("about ₹23 a day");
+    expect(card("First Trial")).toContain("₹700");
+    expect(card("First Trial")).toContain("about ₹23 a day");
     expect(host!.textContent).not.toContain("₹649");
   });
 });

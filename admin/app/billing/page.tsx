@@ -12,6 +12,8 @@ import {
 const TABS = ["Overview", "Payments", "Orders", "Reconcile", "Invoices", "Plans", "Referral codes", "Seller details"] as const;
 type Tab = (typeof TABS)[number];
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+/** The public name of a plan row; the id stays `pilot` in the database and the API. */
+const planLabel = (id: string) => (id === "pilot" ? "First Trial" : id);
 
 /** INR billing for the platform: what was ordered and paid, whether each order was credited, GST invoices and credit notes,
  * and what is sold (the plan numbers and the referral codes, both edited here and audited). */
@@ -285,7 +287,7 @@ function PlansTab() {
         <thead><tr><th>Plan</th><th>Price</th><th>Period</th><th>Usage included</th><th>Status</th><th /></tr></thead>
         <tbody>{s.data.plans.map((p) => (
           <tr key={p.plan}>
-            <td><b>{p.plan}</b></td>
+            <td><b>{planLabel(p.plan)}</b> <span className="dim">({p.plan})</span></td>
             <td>{rupees(p.price_paise)}{p.plan === "pilot" ? " per seat" : ""}</td>
             <td>{p.period_days} days</td>
             <td>${p.included_usd}{p.plan === "pilot" ? " per seat" : ""}</td>
@@ -318,7 +320,7 @@ function PlanEdit({ row, onClose, onDone }: { row: PlanRow; onClose: () => void;
   }
   return (
     <form className="cform profile-card" onSubmit={save} style={{ marginTop: 16, maxWidth: 560 }} aria-label={`Edit the ${row.plan} plan`}>
-      <h2 className="h3">{row.plan}</h2>
+      <h2 className="h3">{planLabel(row.plan)}</h2>
       <p className="small dim">Price is whole rupees before GST. Usage included is in dollars, credited at purchase.</p>
       <div className="cfield"><label htmlFor="p-price">Price (₹, before GST)</label><input id="p-price" inputMode="decimal" value={priceInr} onChange={(e) => setPriceInr(e.target.value)} required /></div>
       <div className="cfield"><label htmlFor="p-days">Period (days)</label><input id="p-days" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} required /></div>
@@ -362,7 +364,7 @@ function ReferralCodesTab() {
   return (
     <>
       <p className="small dim">
-        Every active code unlocks the one-person Pilot - the Rs 649 plan for 30 days with $4 of usage - on /pricing. &ldquo;Issued&rdquo;
+        Every active code unlocks First Trial - the Rs 649 plan for one person, 30 days with $4 of usage - on /pricing. &ldquo;Issued&rdquo;
         codes are made here and handed out (the launch code FIRSTTRIAL is seeded by migration 168; matching ignores case, so
         &ldquo;Firsttrial&rdquo; as typed works); &ldquo;personal&rdquo; codes are made for a buying account when its plan is activated and
         unlock the same plan for whoever the buyer shares it with. Orders record the code they were made with. No reward is paid to

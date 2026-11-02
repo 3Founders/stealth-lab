@@ -72,14 +72,14 @@ export const PLANS: Plan[] = [
     status: "Not available online yet", cta: "Ask for Plus",
   },
   {
-    id: "pilot", name: "Pilot", price: "₹649", priceInr: 649, per: "for 30 days", periodDays: 30, includedUsd: 4,
+    id: "pilot", name: "First Trial", price: "₹649", priceInr: 649, per: "for 30 days", periodDays: 30, includedUsd: 4,
     forWhom: "For one person, unlocked with a referral code.",
     includes: [
       "Assistant or coding tool connected to the keळ MCP.",
       "A recommended plan for each task.",
       "A kept record of what the assistant did.",
     ],
-    status: "Unlocked with a referral code", cta: "Ask for Pilot",
+    status: "Unlocked with a referral code", cta: "Ask for First Trial",
   },
   {
     id: "teams", name: "Teams", price: "₹1,800", priceInr: 1800, per: "per seat a month", forWhom: "Three or more seats.",

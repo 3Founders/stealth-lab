@@ -63,7 +63,11 @@ export default function PlanBuy({ plan, api, session, state, reload, orderCode, 
     if (busy) return;
     setBusy(true); setNote(""); setOrderId("");
     const beforeUntil = current?.plan === plan ? current.activeUntil : null;
-    const order = await api.planOrder(orderCode ? { plan, referralCode: orderCode } : { plan });
+    const order = await api.planOrder({
+      plan,
+      ...(plan === "pilot" ? { seats: 1 } : {}),           // the one-person plan is one seat
+      ...(orderCode ? { referralCode: orderCode } : {}),
+    });
     if (order.kind === "off") { await reload(); setNote("Buying plans isn’t switched on yet. Nothing was charged."); setBusy(false); return; }
     if (order.kind === "signed-out") { setNote("Your session has ended. Sign in again to buy."); setBusy(false); return; }
     if (order.kind === "error") { setNote(order.message); setBusy(false); return; }

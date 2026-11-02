@@ -61,7 +61,7 @@ describe("the referral-code section", () => {
     expect(check).toHaveBeenCalledWith("Firsttrial");                      // sent as typed; the server matches ignoring case
     expect(applied).toHaveBeenCalledWith("FIRSTTRIAL");
     expect(text()).toContain("Code FIRSTTRIAL applied.");
-    expect(text()).toContain("the one plan it unlocks: Pilot, ₹649 for 30 days");
+    expect(text()).toContain("the one plan it unlocks: First Trial, ₹649 for 30 days");
     expect(localStorage.getItem("kel.referral.code")).toBe("FIRSTTRIAL");
     expect(host!.querySelector("input")).toBeNull();                       // the field gives way to the applied state
   });

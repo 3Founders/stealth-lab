@@ -69,7 +69,7 @@ def failure_sentence(given: Any, codes: Collection[str]) -> Optional[str]:
     if not codes:
         return "codes are not open yet; contact us"
     if not isinstance(given, str) or not given.strip():
-        return "the one-person pilot is unlocked with a referral code: enter the code you were given"
+        return "the one-person plan is unlocked with a referral code: enter the code you were given"
     if given.strip().upper() not in codes:
         return "we do not recognise that code; check it and try again"
     return None

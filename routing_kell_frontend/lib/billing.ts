@@ -75,8 +75,8 @@ export function anyPlanActive(s: PlanState | null | undefined, now = new Date())
   return Boolean(s?.plan) && planActive(s, s!.plan!, now);
 }
 
-/** What a plan order asks for: the plan name, plus the referral code that unlocks the one-person Pilot. Never an amount. */
-export type PlanOrderRequest = { plan: PlanName; referralCode?: string };
+/** What a plan order asks for: the plan name, the seats for the one-person/team plan, and the referral code. Never an amount. */
+export type PlanOrderRequest = { plan: PlanName; seats?: number; referralCode?: string };
 
 /** The answer to a code check: a refusal's sentence comes from the server, the same words the order route would use. */
 export type CodeCheck = { kind: "valid" } | { kind: "off" } | { kind: "error"; message: string };
@@ -183,6 +183,7 @@ export function billingApi(deps: BillingDeps) {
     },
         async planOrder(req: PlanOrderRequest): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; periodDays: number }>> {
       const body: Record<string, unknown> = { plan: req.plan };
+      if (req.seats !== undefined) body.seats = req.seats;
       if (req.referralCode) body.referral_code = req.referralCode;
       const r = await call("POST", "/orders", body);
       if (r.kind !== "ok") return r;

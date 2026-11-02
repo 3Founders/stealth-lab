@@ -232,7 +232,7 @@ def parse_plan_order(data: Any, tiers: Optional[Mapping[str, TierRow]] = None, c
             raise PlanError(f"{plan} is not open for buying right now; contact us")
         return PlanOrder(plan, 1, None, tier.price_paise, tier.period_days, tier.included_usd)
     if plan == "pilot":
-        raw = data.get("seats")
+        raw = data.get("seats", 1)          # the one-person plan is one seat; the page need not send it
         if isinstance(raw, bool) or not isinstance(raw, (int, str)):
             raise PlanError("seats must be a whole number")
         try:
@@ -240,10 +240,10 @@ def parse_plan_order(data: Any, tiers: Optional[Mapping[str, TierRow]] = None, c
         except ValueError:
             raise PlanError("seats must be a whole number")
         if not PILOT_MIN_SEATS <= seats <= PILOT_MAX_SEATS:
-            raise PlanError(f"a pilot has {PILOT_MIN_SEATS} to {PILOT_MAX_SEATS} seats")
+            raise PlanError(f"a team plan has {PILOT_MIN_SEATS} to {PILOT_MAX_SEATS} seats")
         tier = t.get("pilot")
         if tier is None:
-            raise PlanError("the pilot is not open for buying right now; contact us")
+            raise PlanError("this plan is not open for buying right now; contact us")
         given = data.get("referral_code")
         if seats == 1:
             why = referrals.failure_sentence(given, codes)
@@ -253,7 +253,7 @@ def parse_plan_order(data: Any, tiers: Optional[Mapping[str, TierRow]] = None, c
         code = given.strip().upper() if isinstance(given, str) and given.strip() else None
         return PlanOrder("pilot", seats, team, tier.price_paise * seats, tier.period_days,
                          tier.included_usd * seats, code)
-    raise PlanError("plan must be 'starter', 'pro', 'plus' or 'pilot'")
+    raise PlanError("unknown plan")
 
 
 def team_slug(payment_id: str) -> str:

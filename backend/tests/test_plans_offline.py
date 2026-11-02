@@ -57,6 +57,8 @@ def test_a_pilot_is_649_rupees_a_seat_for_a_month_with_four_dollars_a_seat(seats
 def test_one_seat_is_an_individual_and_two_or_more_make_a_team():
     one = plans.parse_plan_order({"plan": "pilot", "seats": 1, "referral_code": "friend"} , codes=FRIEND)
     assert one.team_name is None and not one.creates_team
+    default = plans.parse_plan_order({"plan": "pilot", "referral_code": "friend"}, codes=FRIEND)   # the page need not send seats
+    assert (default.seats, default.amount_paise) == (1, 64_900)
     two = plans.parse_plan_order({"plan": "pilot", "seats": 2, "team_name": "  Two   of us "})
     assert two.creates_team and two.team_name == "Two of us"                     # spaces tidied, no code needed
 
@@ -75,7 +77,7 @@ def test_the_one_seat_pilot_is_sold_only_with_an_active_referral_code_and_the_or
 
 
 def test_the_referral_gate_is_the_same_sentence_the_codes_route_and_the_dashboard_show():
-    assert referrals.failure_sentence(None, FRIEND) == "the one-person pilot is unlocked with a referral code: enter the code you were given"
+    assert referrals.failure_sentence(None, FRIEND) == "the one-person plan is unlocked with a referral code: enter the code you were given"
     assert referrals.failure_sentence("nope", FRIEND) == "we do not recognise that code; check it and try again"
     assert referrals.failure_sentence("friend", ()) == "codes are not open yet; contact us"
     assert referrals.failure_sentence("friend", FRIEND) is None and referrals.unlocked(" FRIEND ", FRIEND)

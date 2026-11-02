@@ -74,12 +74,12 @@ describe("plan requests", () => {
     expect(r).toEqual({ kind: "ok", data: { plan: "plus", activeUntil: "2026-12-01T00:00:00Z" } });
     expect((f.mock.calls[0] as [string, RequestInit])[0]).toBe("https://mcp.test/v1/billing/plan");
   });
-  it("the one-person pilot's order carries the code and never an amount", async () => {
+  it("the one-person plan's order carries the seat and the code, and never an amount", async () => {
     const f = reply(200, { order_id: "o3", amount_paise: 64900, key_id: "k", plan: "pilot", period_days: 30 });
-    const r = await api(f as unknown as typeof fetch).planOrder({ plan: "pilot", referralCode: "FRIEND" });
+    const r = await api(f as unknown as typeof fetch).planOrder({ plan: "pilot", seats: 1, referralCode: "FRIEND" });
     expect(r.kind).toBe("ok");
-    expect(bodyOf(f)).toEqual({ plan: "pilot", referral_code: "FRIEND" });
-    expect(Object.keys(bodyOf(f))).toEqual(["plan", "referral_code"]);
+    expect(bodyOf(f)).toEqual({ plan: "pilot", seats: 1, referral_code: "FRIEND" });
+    expect(Object.keys(bodyOf(f))).toEqual(["plan", "seats", "referral_code"]);
   });
   it("the code check needs no session, and its refusal is the server's sentence", async () => {
     const ok = reply(200, { valid: true });

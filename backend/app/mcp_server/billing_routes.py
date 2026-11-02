@@ -182,7 +182,7 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         try:
             order = plans.parse_plan_order(data, await plans.active_map(pool), await referrals.active_codes(pool))
             if order.plan == "pilot" and await plans.has_pilot(pool, account):
-                raise plans.PlanConflict("this account has already had its pilot; contact us to extend it")
+                raise plans.PlanConflict("this account has already had this plan; contact us to extend it")
             rz = await _create_razorpay_order(order.amount_paise, f"kell-{order.plan}-{account[:8]}")
             await wallet.record_order(pool, org_id=account, order_id=str(rz["id"]), amount_paise=order.amount_paise,
                                       created_by=who.actor_id, plan=order.plan, seats=order.seats,
