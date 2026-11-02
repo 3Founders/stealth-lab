@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { ChatGPTLogo, ClaudeLogo, CursorLogo } from "@/components/chat/brand";
+import Popover from "@/components/chat/Popover";
 
 export type OnboardTarget = "code" | "claude-web" | "chatgpt";
 export interface OnboardResult { text: string; openUrl?: string }
@@ -22,11 +23,13 @@ export default function OnboardButton({ onOnboard, className = "" }: { onOnboard
   const [done, setDone] = useState<OnboardTarget | null>(null);
   const [shown, setShown] = useState("");
   const box = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (!menu) return;
-    const off = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setMenu(false); };
+    const off = (e: MouseEvent) => { const t = e.target as Node; if (box.current && !box.current.contains(t) && !pop.current?.contains(t)) setMenu(false); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(false); };
     document.addEventListener("mousedown", off); document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", off); document.removeEventListener("keydown", esc); };
@@ -48,7 +51,7 @@ export default function OnboardButton({ onOnboard, className = "" }: { onOnboard
   const label = state === "copied" ? (done === "code" ? "Copied. Paste it in your agent" : "Copied. Press Connect there") : state === "busy" ? "One moment…" : "Connect agent";
   return (
     <div className={`dg-onboard-wrap ${className}`} ref={box}>
-      <button type="button" className="dg-onboard" onClick={() => setMenu((m) => !m)} data-state={state} aria-haspopup="menu" aria-expanded={menu} aria-live="polite"
+      <button ref={trigger} type="button" className="dg-onboard" onClick={() => setMenu((m) => !m)} data-state={state} aria-haspopup="menu" aria-expanded={menu} aria-live="polite"
         aria-label="Connect an agent such as Claude Code, Cursor, Claude on the web or ChatGPT">
         <span className="dg-onboard-marks" aria-hidden="true"><i><ClaudeLogo size={16} /></i><i><CursorLogo size={16} /></i><i><ChatGPTLogo size={16} /></i></span>
         <span className="dg-onboard-label">{label}</span>
@@ -58,7 +61,7 @@ export default function OnboardButton({ onOnboard, className = "" }: { onOnboard
             : <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />}
         </svg>
       </button>
-      {menu && (
+      <Popover anchor={trigger} open={menu} matchWidth popRef={pop}>
         <div className="dg-onboard-menu" role="menu" aria-label="Which agent?">
           {CHOICES.map((c) => (
             <button key={c.id} type="button" role="menuitem" onClick={() => void go(c.id)}>
@@ -67,7 +70,7 @@ export default function OnboardButton({ onOnboard, className = "" }: { onOnboard
             </button>
           ))}
         </div>
-      )}
+      </Popover>
       {state === "failed" && (
         <label className="dg-onboard-manual small">The browser blocked copying. Select and copy this text, then paste it into your agent:
           <textarea readOnly rows={6} value={shown} onFocus={(e) => e.currentTarget.select()} />

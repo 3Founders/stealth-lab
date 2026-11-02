@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { SettingsIcon } from "@/components/chat/icons";
 import NotificationPanel, { type AlertsProps } from "@/components/chat/NotificationBell";
+import Popover from "@/components/chat/Popover";
 import type { SectionId } from "@/components/chat/SettingsDialog";
 
 /**
@@ -24,12 +25,13 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
   const unread = alerts ? alerts.notes.filter((n) => !n.read).length : 0;
   const box = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const pop = useRef<HTMLDivElement>(null);          // the menu is drawn in a portal (Popover), so it is not inside `box`
 
   useEffect(() => {
     if (!open) return;
-    const off = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false); };
+    const off = (e: MouseEvent) => { const t = e.target as Node; if (box.current && !box.current.contains(t) && !pop.current?.contains(t)) setOpen(false); };
     document.addEventListener("mousedown", off);
-    requestAnimationFrame(() => box.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus());
+    requestAnimationFrame(() => pop.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus());
     return () => document.removeEventListener("mousedown", off);
   }, [open]);
 
@@ -38,7 +40,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
     e.preventDefault();
-    const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const items = [...(pop.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
     const at = items.indexOf(document.activeElement as HTMLElement);
     const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
     items[next]?.focus();
@@ -51,10 +53,11 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
         <SettingsIcon />
         {unread > 0 && <span className="dg-burger-dot" aria-hidden="true">{unread > 9 ? "9+" : unread}</span>}
       </button>
-      {open && alerts && view === "alerts" && (
+      <Popover anchor={button} open={open} popRef={pop}>
+      {alerts && view === "alerts" && (
         <NotificationPanel {...alerts} onClose={() => close(false)} onBack={() => setView("menu")} />
       )}
-      {open && view === "menu" && (
+      {view === "menu" && (
         <div className="dg-menu-pop" role="menu" aria-label="Chat menu">
           {onSearch && <button type="button" role="menuitem" onClick={run(onSearch)}>Search<kbd>Ctrl K</kbd></button>}
           {onTemporary && <button type="button" role="menuitem" onClick={run(onTemporary)}>New temporary room</button>}
@@ -78,6 +81,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
           <button type="button" role="menuitem" onClick={run(onSignOut)}>Sign out</button>
         </div>
       )}
+      </Popover>
     </div>
   );
 }

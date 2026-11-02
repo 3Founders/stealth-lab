@@ -789,3 +789,45 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 }
 
 .dg-temp-note { margin: 6px 18px 0; padding: 6px 12px; border-radius: 8px; font-size: 13px; color: var(--ink); background: linear-gradient(135deg, rgba(255, 210, 31, .3), rgba(255, 241, 168, .2)); box-shadow: var(--dg-lift, 0 4px 12px rgba(0,0,0,.12)); }
+
+/* ---- Glass menus and popups (docs/UIeffects.md) ------------------------------------------------------------------------------
+   Tier 1 everywhere: a translucent tint, blur(12px) saturate(1.4) on the small surface only, a hairline edge and a soft shadow. Never a
+   full-screen glass sheet. Menus are drawn in a portal (components/chat/Popover.tsx), so they are styled by class, not by page position. */
+.dg-page, .dg-portal { --dg-hairline: rgba(255, 255, 255, .55); }
+:root[data-theme="dark"] .dg-page, :root[data-theme="dark"] .dg-portal { --dg-hairline: rgba(255, 255, 255, .09); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .dg-page, :root:not([data-theme="light"]) .dg-portal { --dg-hairline: rgba(255, 255, 255, .09); } }
+.dg-page .dg-menu-pop, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-onboard-menu, .dg-page .dg-search, .dg-page .dg-form, .dg-page .dg-me {
+  background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(12px) saturate(1.4); backdrop-filter: blur(12px) saturate(1.4);
+  border: 1px solid var(--dg-hairline); box-shadow: var(--dg-float);
+}
+/* In the portal the menu sits in a fixed box that Popover positions: the old absolute offsets do not apply. */
+.dg-portal { padding: 0 !important; margin: 0 !important; width: 0 !important; height: 0 !important; overflow: visible; }
+.dg-pop .dg-menu-pop, .dg-pop .dg-bell-pop, .dg-pop .dg-bell-pop--menu, .dg-pop .dg-onboard-menu { position: static; left: auto; right: auto; top: auto; }
+.dg-pop .dg-onboard-menu { width: 100%; }
+.dg-pop[data-up] .dg-menu-pop, .dg-pop[data-up] .dg-bell-pop, .dg-pop[data-up] .dg-onboard-menu { transform-origin: bottom left; }
+/* The dialogs' dim layer is a plain scrim: a blur over the whole window is the costly kind of glass. */
+.dg-settings[open]::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(0, 0, 0, .45); }
+
+/* Paint rules: while something animates, only transform and opacity change. These replace effects that repainted every frame. */
+@keyframes dg-tok-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes dg-glow { 0%, 100% { opacity: .75; transform: rotate(-4deg); } 50% { opacity: 1; transform: rotate(4deg); } }
+@keyframes dg-breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.dg-think-label { color: var(--grey); background: none; -webkit-background-clip: border-box; background-clip: border-box; animation: dg-breathe 1.8s var(--dg-apple, ease-in-out) infinite; }
+[data-mid][data-found] { position: relative; animation: none; background: none; }
+[data-mid][data-found]::before { content: ""; position: absolute; inset: -4px -8px; border-radius: 8px; background: rgba(255, 210, 31, .4); pointer-events: none; animation: dg-found-fade 2.2s var(--dg-apple, ease) both; }
+@keyframes dg-found-fade { 0%, 55% { opacity: 1; } 100% { opacity: 0; } }
+
+/* People who ask the system for less transparency get the same colour, opaque, with no blur. */
+@media (prefers-reduced-transparency: reduce) {
+  .dg-page, .dg-portal { --dg-glass: var(--paper); --dg-glass-strong: var(--surface); }
+  .dg-page .dg-menu-pop, .dg-page .dg-bell-pop, .dg-page .dg-mentions, .dg-page .dg-onboard-menu, .dg-page .dg-search, .dg-page .dg-form, .dg-page .dg-me,
+  .dg-page .dg-head, .dg-page .dg-composer textarea, .dg-page .dg-set-frame, .dg-page .dg-manage-frame, .dg-page .btn-line, .dg-page .dg-room[aria-current="page"],
+  .dg-page .back-btn--inline, .dg-page .dg-burger, .dg-page .dg-close {
+    -webkit-backdrop-filter: none !important; backdrop-filter: none !important; background-color: var(--surface) !important;
+  }
+}
+/* People who ask for less motion get menus that open at once. */
+@media (prefers-reduced-motion: reduce) {
+  .dg-pop *, .dg-search-wrap, .dg-onboard-menu, .dg-mentions, .dg-bell-pop { animation: none !important; transition: none !important; }
+  .dg-think .kell-mark, .dg-think-label { animation: none !important; }
+}
