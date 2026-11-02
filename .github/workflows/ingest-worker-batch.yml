@@ -131,7 +131,7 @@ jobs:
           ARGS="--once"
           if [ -n "${{ inputs.job_types }}" ]; then ARGS="$ARGS --job-types ${{ inputs.job_types }}"; fi
           python -m app.ingestion.worker $ARGS | tee "worker-${{ matrix.worker }}.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: worker-summary-${{ matrix.worker }}
