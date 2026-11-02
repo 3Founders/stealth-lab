@@ -19,7 +19,7 @@ import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from "@/lib/chat/types";
 import { MAX_DEPTH } from "@/lib/chat/types";
-import { groupMessages, initials } from "@/lib/chat/ui";
+import { groupMessages, initials, routeMessage } from "@/lib/chat/ui";
 import { getAccessToken, signOut } from "@/lib/session";
 import NotificationBell from "@/components/chat/NotificationBell";
 import PersonAvatar from "@/components/chat/PersonAvatar";
@@ -642,32 +642,27 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       addAgent(r.handle);
       return note(`${r.handle} joined the room.`);
     }
-    const names = new Set(relayAgents.map((a) => a.name));
-    const toRelay = mentionedNames(line).filter((n) => names.has(n));
-    const localMentions = mentionsIn(line).filter((h) => agents.includes(h));
-    const anyMention = mentionsIn(line).length > 0;
-    // A room with one person and no agent named goes to @kell: the in-tab agents do not get a broadcast.
-    const defaultToKell = !anyMention && peopleHandles.length === 0;
-    const asksKell = defaultToKell || /(^|\s)@kell\b/i.test(line);
-    if (toRelay.length) {
+    const route = routeMessage(line, { local: agents, relay: relayAgents.map((a) => a.name), people: peopleHandles });
+    if (route.toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
       try {
         const r = await api.send(line, room);
         setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], r.tasks) }));
       } catch (err) { note(err instanceof Error ? err.message : "That didn't send."); }
-      if (!localMentions.length && !asksKell) return;
-    } else {
-      const people = new Set(peopleHandles.map((h) => h.slice(1)));
-      const unknown = mentionedNames(line).filter((n) => n !== "kell" && !agents.includes(`@${n}`) && !names.has(n) && !people.has(n));
-      if (unknown.length && !localMentions.length) note(`No agent named ${unknown.map((n) => `@${n}`).join(", ")}. Add one with + Add agent.`);
+      const offline = route.toRelay.filter((n) => !relayAgents.find((a) => a.name.toLowerCase() === n)?.online);
+      if (offline.length) note(`${offline.map((n) => `@${n}`).join(", ")} ${offline.length === 1 ? "is" : "are"} offline; the message waits in the inbox for when it starts.`);
+      if (!route.localMentions.length && !route.asksKell) return;
+    } else if (route.unknown.length && !route.localMentions.length) {
+      note(`No agent named ${route.unknown.map((n) => `@${n}`).join(", ")}. Add one with + Add agent.`);
+      return;                                        // an unknown @name is never handed to @kell
     }
     const m: GroupMessage = {
       id: broker.newId(), roomId: room, sender: HUMAN,
-      recipients: toRelay.length ? localMentions : defaultToKell ? ["@kell"] : recipientsFor(line),
+      recipients: route.toRelay.length ? route.localMentions : route.defaultToKell ? ["@kell"] : recipientsFor(line),
       payload: { ...toMcpPayload(line), ...(pictures?.length ? { attachments: pictures } : {}) }, timestamp: Date.now(), depthCounter: 0,
     };
     await broker.send(m);
-    if (asksKell) void askKell(room, line);
+    if (route.asksKell) void askKell(room, line);
   };
 
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);

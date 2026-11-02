@@ -1,12 +1,16 @@
 "use client";
 import { marked, type Token } from "marked";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 
 /**
  * Markdown from a model, rendered as React elements - never as raw HTML. Fenced code, inline code, headings, lists,
  * quotes, tables, emphasis, strikethrough and links are supported. A link becomes a link only for http(s); anything else
  * (javascript:, data:, a file) stays text. Pictures stay a labelled link rather than being fetched (a picture request is
  * how data leaves), matching the click-to-load rule in MessageText.
+ *
+ * Streaming: a reply is re-rendered on every token. Each completed block is memoized by its source text, so only the block
+ * still arriving is parsed/rendered again; finished paragraphs, code and tables keep the same React nodes (this is the
+ * blockMemo approach that makes streaming markdown cheap). The cache is per message and bounded.
  */
 type Tok = Token & {
   text?: string; raw?: string; href?: string; depth?: number; ordered?: boolean; start?: number;
@@ -52,46 +56,63 @@ function inline(tokens: Token[] | undefined): ReactNode {
 }
 
 function blocks(tokens: Token[]): ReactNode {
-  return tokens.map((t, i) => {
-    const x = t as Tok;
-    switch (x.type) {
-      case "space": return null;
-      case "heading": {
-        const body = <>{inline(x.tokens)}</>;
-        return (x.depth ?? 1) <= 1 ? <h3 key={i} className="dg-md-h">{body}</h3>
-          : (x.depth ?? 1) === 2 ? <h4 key={i} className="dg-md-h">{body}</h4>
-            : <h5 key={i} className="dg-md-h">{body}</h5>;
-      }
-      case "paragraph": return <p key={i}>{inline(x.tokens)}</p>;
-      case "text": return <p key={i}>{inline(x.tokens) ?? x.text}</p>;
-      case "code": return <pre key={i} className="dg-md-pre"><code>{x.text ?? ""}</code></pre>;
-      case "blockquote": return <blockquote key={i}>{blocks(x.tokens ?? [])}</blockquote>;
-      case "list": {
-        const items = (x.items ?? []).map((it, j) => {
-          const only = it.tokens?.length === 1 && it.tokens[0].type === "text" ? (it.tokens[0] as Tok) : null;
-          return <li key={j}>{only ? inline(only.tokens) : blocks(it.tokens ?? [])}</li>;
-        });
-        return x.ordered
-          ? <ol key={i} className="dg-md-list" start={x.start}>{items}</ol>
-          : <ul key={i} className="dg-md-list">{items}</ul>;
-      }
-      case "hr": return <hr key={i} />;
-      case "table": {
-        const head = x.header ?? [];
-        return (
-          <table key={i} className="dg-md-table">
-            <thead><tr>{head.map((c, j) => <th key={j}>{inline(c.tokens)}</th>)}</tr></thead>
-            <tbody>{(x.rows ?? []).map((row, r) => <tr key={r}>{row.map((c, j) => <td key={j}>{inline(c.tokens)}</td>)}</tr>)}</tbody>
-          </table>
-        );
-      }
-      case "html": return <p key={i} className="dg-md-raw">{x.text ?? ""}</p>;
-      default: return x.raw ? <p key={i}>{x.raw}</p> : null;
+  return tokens.map((t, i) => block(t as Tok, i));
+}
+
+function block(x: Tok, i: number): ReactNode {
+  switch (x.type) {
+    case "space": return null;
+    case "heading": {
+      const body = <>{inline(x.tokens)}</>;
+      return (x.depth ?? 1) <= 1 ? <h3 key={i} className="dg-md-h">{body}</h3>
+        : (x.depth ?? 1) === 2 ? <h4 key={i} className="dg-md-h">{body}</h4>
+          : <h5 key={i} className="dg-md-h">{body}</h5>;
     }
-  });
+    case "paragraph": return <p key={i}>{inline(x.tokens)}</p>;
+    case "text": return <p key={i}>{inline(x.tokens) ?? x.text}</p>;
+    case "code": return <pre key={i} className="dg-md-pre"><code>{x.text ?? ""}</code></pre>;
+    case "blockquote": return <blockquote key={i}>{blocks(x.tokens ?? [])}</blockquote>;
+    case "list": {
+      const items = (x.items ?? []).map((it, j) => {
+        const only = it.tokens?.length === 1 && it.tokens[0].type === "text" ? (it.tokens[0] as Tok) : null;
+        return <li key={j}>{only ? inline(only.tokens) : blocks(it.tokens ?? [])}</li>;
+      });
+      return x.ordered
+        ? <ol key={i} className="dg-md-list" start={x.start}>{items}</ol>
+        : <ul key={i} className="dg-md-list">{items}</ul>;
+    }
+    case "hr": return <hr key={i} />;
+    case "table": {
+      const head = x.header ?? [];
+      return (
+        <table key={i} className="dg-md-table">
+          <thead><tr>{head.map((c, j) => <th key={j}>{inline(c.tokens)}</th>)}</tr></thead>
+          <tbody>{(x.rows ?? []).map((row, r) => <tr key={r}>{row.map((c, j) => <td key={j}>{inline(c.tokens)}</td>)}</tr>)}</tbody>
+        </table>
+      );
+    }
+    case "html": return <p key={i} className="dg-md-raw">{x.text ?? ""}</p>;
+    default: return x.raw ? <p key={i}>{x.raw}</p> : null;
+  }
 }
 
 export default function Markdown({ text }: { text: string }) {
+  const cache = useRef<Map<string, ReactNode>>(new Map());
   if (!text.trim()) return null;
-  return <div className="dg-md">{blocks(marked.lexer(text, { gfm: true, breaks: true }))}</div>;
+  const tokens = marked.lexer(text, { gfm: true, breaks: true }) as Token[];
+  const nodes = tokens.map((t, i) => {
+    const x = t as Tok;
+    if (x.type === "space") return null;
+    const key = `${i}:${x.raw ?? JSON.stringify(x)}`;
+    const hit = cache.current.get(key);
+    if (hit !== undefined) return hit;
+    const node = block(x, i);
+    cache.current.set(key, node);
+    if (cache.current.size > 400) {                       // a long-lived message cannot grow it without bound
+      const oldest = cache.current.keys().next().value;
+      if (oldest !== undefined) cache.current.delete(oldest);
+    }
+    return node;
+  });
+  return <div className="dg-md">{nodes}</div>;
 }
