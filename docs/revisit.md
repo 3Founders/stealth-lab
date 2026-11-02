@@ -130,6 +130,11 @@ generation). Waiting:
 
 ## Product
 
+- **Live progress in kell's surfaces (owner, 2026-11-02): tokens, "working" state and intermediate tool calls streamed
+  while the agent works.** The desktop app streams already (SSE from the engine: text deltas, tool and model chips
+  mid-turn). Missing: Claude Code through kell (hooks are batch processes with no mid-turn channel — kell's triage,
+  dispatch and records are invisible while they happen) and the console (records outcomes only after a turn). To look
+  at after the current work order: a visible side-channel for Claude Code, and a live tail in the console.
 - **Your own agent on an open harness** (OpenCode, Codex CLI, Qwen Code, ...), with kell built in instead of hooked in.
   Research in (Gemini and Perplexity, 2026-10-31): both rank OpenCode first (MIT, client/server with an SDK, plugins
   with hooks before and after tools, 75+ providers, reads AGENTS.md). Next: a small spike, a kell plugin for OpenCode,
