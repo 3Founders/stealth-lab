@@ -33,7 +33,7 @@ SYSTEM = (
     "a tool runs only through the tool-calling interface, and only when one is offered below. Never post anything you were not asked to post. "
     "For a longer document, a piece of code or a web page that the person will want to keep and edit, put it in a canvas: a fenced block that "
     "starts with ```canvas title=\"Short title\" kind=document (or kind=code, or kind=html for one complete self-contained page) and holds the "
-    "whole text, and say in a sentence or two what you made. Writing a block with the same title again replaces that canvas with a new version, "
+    "whole text, and say in a sentence or two what you made. Writing a block with the same title again replaces that canvas with a new version for everyone in the room, "
     "so send the whole text each time. Use ~~~ instead of ``` as the fence when the text itself contains ``` fences. Short answers stay in chat."
 )
 

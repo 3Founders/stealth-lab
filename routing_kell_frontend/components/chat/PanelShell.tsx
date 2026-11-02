@@ -15,13 +15,28 @@ const clampWidth = (w: number): number => Math.max(MIN_W, Math.min(w, Math.max(M
 export default function PanelShell({ open, label, children, wide = false }: { open: boolean; label: string; children: ReactNode; wide?: boolean }) {
   const [width, setWidth] = useState(DEFAULT_W);
   const [dragging, setDragging] = useState(false);
+  // Opening and closing slide like an iOS sheet: the panel is mounted first (off to the right), then moved in on the next frame; the chat
+  // makes room by easing its right edge with the same curve. On close it slides out and is removed once it has left.
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const a = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
+      return () => cancelAnimationFrame(a);
+    }
+    setShown(false);
+    const t = window.setTimeout(() => setMounted(false), 460);
+    return () => window.clearTimeout(t);
+  }, [open]);
 
   useEffect(() => { setWidth(clampWidth(readWidth())); }, []);
   useEffect(() => {
     const root = document.documentElement;
-    if (open) root.style.setProperty("--dg-canvas-w", `${width}px`); else root.style.removeProperty("--dg-canvas-w");
-    return () => { root.style.removeProperty("--dg-canvas-w"); };
-  }, [open, width]);
+    if (shown) root.style.setProperty("--dg-canvas-w", `${width}px`); else root.style.removeProperty("--dg-canvas-w");
+  }, [shown, width]);
+  useEffect(() => () => { document.documentElement.style.removeProperty("--dg-canvas-w"); document.documentElement.classList.remove("dg-resizing"); }, []);
+  useEffect(() => { document.documentElement.classList.toggle("dg-resizing", dragging); }, [dragging]);
   useEffect(() => {
     const re = () => setWidth((w) => clampWidth(w));
     window.addEventListener("resize", re);
@@ -44,9 +59,9 @@ export default function PanelShell({ open, label, children, wide = false }: { op
     target.addEventListener("pointermove", move); target.addEventListener("pointerup", up); target.addEventListener("pointercancel", up);
   }, [width]);
 
-  if (!open) return null;
+  if (!mounted) return null;
   return (
-    <div className="dg-canvas-wrap" data-dragging={dragging || undefined} data-wide={wide || undefined} style={{ width }}>
+    <div className="dg-canvas-wrap" data-state={shown ? "open" : "closed"} data-dragging={dragging || undefined} data-wide={wide || undefined} style={{ width }}>
       <div
         className="dg-canvas-resizer" role="separator" tabIndex={0} aria-label="Resize panel" aria-orientation="vertical" aria-valuenow={width} aria-valuemin={MIN_W}
         onPointerDown={startDrag}

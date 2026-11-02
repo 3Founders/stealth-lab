@@ -1087,3 +1087,78 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   background: rgba(255, 255, 255, .17); color: var(--ink);
 }
 :root[data-theme="dark"] .dg-page .dg-composer button:not(:disabled):hover { background: var(--yellow); color: #171717; }
+
+/* ===== canvas, smooth and complete ===== */
+/* The panel slides in like an iOS sheet (transform only), and the chat eases its right edge with the same curve. */
+.dg-canvas-wrap { animation: none; transform: translate3d(100%, 0, 0); transition: transform .46s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)), box-shadow .46s var(--dg-apple, ease); will-change: transform; box-shadow: none; }
+.dg-canvas-wrap[data-state="open"] { transform: none; box-shadow: -18px 0 48px rgba(0, 0, 0, .16); }
+.dg-canvas-wrap[data-dragging] { transition: none; }
+.dg-shell { transition: margin-right .46s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
+.dg-resizing .dg-shell { transition: none; }
+@media (prefers-reduced-motion: reduce) { .dg-canvas-wrap, .dg-shell { transition: none; } }
+
+/* The page viewers fill the panel (an iframe cannot take its height from a flex parent by percentage, so it is placed to fill). */
+.dg-canvas-body, .dg-doc-body { position: relative; }
+.dg-viewer, .dg-viewer-page { flex: 1; min-height: 0; width: 100%; }
+.dg-doc-body > .dg-viewer, .dg-doc-body > .dg-viewer-page { height: 100%; }
+.dg-viewer-page { position: relative; }
+.dg-viewer-page .dg-canvas-frame, .dg-browser-body .dg-canvas-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+.dg-browser-body { position: relative; flex: 1; min-height: 200px; }
+.dg-browser { min-height: 280px; }
+
+/* Side by side: the text you write and the page it makes. */
+.dg-doc-pane { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.dg-doc-pane[data-split] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.dg-doc-pane[data-split] > .dg-doc-text { border-right: 1px solid var(--rule); }
+.dg-doc-pane[data-split] > .dg-doc-read, .dg-doc-pane[data-split] > .dg-viewer { overflow: auto; min-width: 0; height: 100%; }
+@media (max-width: 1100px) { .dg-doc-pane[data-split] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } .dg-doc-pane[data-split] > .dg-doc-text { border-right: 0; border-bottom: 1px solid var(--rule); } }
+
+/* Bigger, easier controls: the Write / Side by side / Read tabs, the formatting buttons, the picker and the action chips. */
+.dg-doc-seg--big { padding: 3px; border-radius: 11px; }
+.dg-doc-seg--big button { font-size: 14px; padding: 8px 16px; min-height: 36px; border-radius: 9px; }
+.dg-doc-fmt button { min-width: 36px; height: 36px; font-size: 15px; border-radius: 9px; }
+.dg-doc-bar { padding: 4px 14px 10px; }
+.dg-doc-head { padding: 12px 14px 8px; }
+.dg-cv-big, .dg-doc-foot .dg-cv-chip { font-size: 13.5px; padding: 7px 13px; min-height: 34px; border-radius: 9px; }
+.dg-doc-foot { padding: 10px 14px 12px; }
+.dg-doc-status { font-size: 13px; }
+.dg-doc-people i { width: 26px; height: 26px; font-size: 12px; }
+.dg-doc-people i[data-editing] { animation: dg-doc-pulse 1.2s ease-in-out infinite; }
+@keyframes dg-doc-pulse { 0%, 100% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px transparent; } 50% { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px color-mix(in srgb, var(--yellow) 70%, transparent); } }
+
+/* The canvas picker: a button that opens a list, in place of the plain browser dropdown. */
+.dg-picker { position: relative; min-width: 0; }
+.dg-picker-btn { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 8px 12px; border: 0; border-radius: 10px; background: color-mix(in srgb, currentColor 7%, transparent); color: inherit; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; transition: background-color .18s; }
+.dg-picker-btn:hover:not(:disabled) { background: color-mix(in srgb, currentColor 13%, transparent); }
+.dg-picker-btn svg { flex: none; transition: transform .25s var(--dg-apple, ease); }
+.dg-picker-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+.dg-picker-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-picker-list { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: 260px; max-width: min(360px, 80vw); max-height: 320px; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 6px; list-style: none; border-radius: 14px; background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4); box-shadow: 0 18px 48px rgba(0, 0, 0, .28), 0 0 0 1px var(--rule); animation: dg-pick-in .22s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; transform-origin: top left; }
+.dg-picker-list li { margin: 0; }
+.dg-picker-list button { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 10px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background-color .15s; }
+.dg-picker-list button:hover, .dg-picker-list li[aria-selected="true"] button { background: var(--yellow); color: #171717; }
+.dg-picker-list li[aria-selected="true"] button { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #171717 25%, transparent); }
+.dg-picker-kind { font-size: 10px; letter-spacing: .06em; font-weight: 600; padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, currentColor 12%, transparent); }
+.dg-picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes dg-pick-in { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dg-picker-list { animation: none; } }
+
+/* Copy and retry sit under the message, in view, and brighten when you point at it. */
+.dg-col > .dg-acts { margin: 4px 0 0 -4px; align-self: start; opacity: .55; }
+.dg-run:hover .dg-col > .dg-acts, .dg-col > .dg-acts:focus-within { opacity: 1; }
+.dg-col > .dg-acts .dg-act { width: 30px; height: 30px; border-radius: 8px; }
+.dg-col > .dg-acts .dg-act svg { width: 16px; height: 16px; }
+
+/* More air around what an agent hands over: a page, a canvas, a file. */
+.dg-artifact, .dg-canvas-card, .dg-files, .dg-md > .dg-md-pre { margin-top: 16px; margin-bottom: 16px; }
+.dg-body .dg-artifact + .dg-artifact, .dg-body .dg-canvas-card + .dg-canvas-card { margin-top: 4px; }
+
+/* Connect agent: one explicit look per theme, nothing left to inheritance. Light: dark pill, light words. Dark: light pill, dark words. */
+.dg-onboard-wrap, .dg-onboard-side { background: transparent !important; }
+.dg-page .dg-onboard, .dg-page button.dg-onboard { background: #171717 !important; color: #f8f6ef !important; }
+.dg-page .dg-onboard .dg-onboard-label, .dg-page .dg-onboard .dg-onboard-copy { color: #f8f6ef !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard, :root[data-theme="dark"] .dg-page button.dg-onboard { background: #f1eee5 !important; color: #171717 !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard .dg-onboard-label, :root[data-theme="dark"] .dg-page .dg-onboard .dg-onboard-copy { color: #171717 !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard:hover:not(:disabled) { background: #ffffff !important; }
+.dg-page .dg-onboard-marks i { background: #fff !important; color: #171717 !important; box-shadow: 0 0 0 2px #171717 !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard-marks i { box-shadow: 0 0 0 2px #f1eee5 !important; }

@@ -50,6 +50,7 @@ describe("canvas panel", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText: write }, configurable: true });
     await mount(<CanvasPanel open onClose={onClose} canvases={[c]} room="#r" selectedId="1" />);
     expect(host!.querySelector("pre.dg-canvas-pre")?.textContent).toBe("let x = 1");
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });          // the panel slides in on the next frames
     expect(document.documentElement.style.getPropertyValue("--dg-canvas-w")).toMatch(/px$/);
     await act(async () => { (host!.querySelector(".dg-cv-copy") as HTMLElement).click(); });
     expect(write).toHaveBeenCalledWith("let x = 1");

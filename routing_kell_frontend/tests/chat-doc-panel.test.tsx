@@ -20,8 +20,8 @@ function fakeApi(over: Partial<DocsApi> = {}) {
   const api = {
     list: vi.fn(async () => [{ id: "d1", title: "Plan", kind: "document" as const, version, updated_by: "Asha", updated_at: null, size: body.length }]),
     get: vi.fn(async (_r: string, _id: string, since?: number) => since === version
-      ? { id: "d1", version, present: ["Asha"], unchanged: true as const }
-      : { id: "d1", version, present: ["Asha"], title: "Plan", kind: "document" as const, body, updated_by: "Asha", updated_at: null }),
+      ? { id: "d1", version, present: ["Asha"], editing: [], unchanged: true as const }
+      : { id: "d1", version, present: ["Asha"], editing: [], title: "Plan", kind: "document" as const, body, updated_by: "Asha", updated_at: null }),
     save: vi.fn(async (_r: string, _id: string, text: string, base: number) => { body = text; version = base + 1; return { version, merged: false }; }),
     create: vi.fn(async () => ({ id: "d2", title: "New", kind: "document" as const, version: 1 })),
     remove: vi.fn(async () => ({ deleted: true })),

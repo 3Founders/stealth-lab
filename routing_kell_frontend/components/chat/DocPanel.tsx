@@ -22,6 +22,13 @@ const LIST_MS = 5000;
 
 type Status = "saved" | "saving" | "typing" | "merged" | "offline" | "error";
 
+/** A steady colour for a person's initial, from their name. */
+const personColor = (name: string): string => {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h} 70% 62%)`;
+};
+
 export const editRequest = (title: string, kind: DocKind, text: string): string => {
   const fence = text.includes("```") ? "~~~" : "```";
   return `@kell Edit the document "${title}". What to change: \n\n${fence}canvas title="${title}" kind=${kind}\n${text}\n${fence}`;
@@ -44,7 +51,7 @@ function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, timing }: {
+export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, onContext, timing }: {
   open: boolean; onClose: () => void; api: DocsApi; roomId: string;
   /** A document to show first (the title on the card the person pressed). */
   wantedTitle: string | null;
@@ -54,6 +61,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   onDocs?: (docs: DocInfo[]) => void;
   /** This version of this document is on screen: it no longer counts as new. */
   onSeen?: (id: string, version: number) => void;
+  /** What is open (title, kind, text), so the agent can be given it when you ask for a change. */
+  onContext?: (c: { title: string; kind: string; text: string } | null) => void;
   /** Shorter waits for tests. */
   timing?: { poll: number; save: number };
 }) {
@@ -66,7 +75,9 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const [status, setStatus] = useState<Status>("saved");
   const [note, setNote] = useState("");
   const [present, setPresent] = useState<string[]>([]);
-  const [mode, setMode] = useState<"write" | "browser" | "page">("write");
+  const [mode, setMode] = useState<"write" | "split" | "read" | "browser" | "page">("split");
+  const [editing, setEditing] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [history, setHistory] = useState<DocVersion[] | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -129,8 +140,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       if (!live || !("body" in d)) return;
       base.current = { body: d.body, version: d.version };
       textRef.current = d.body;
-      setText(d.body); setKind(d.kind); setTitle(d.title); setPresent(d.present);
-      setMode(d.kind === "html" ? "browser" : "write");
+      setText(d.body); setKind(d.kind); setTitle(d.title); setPresent(d.present); setEditing(d.editing ?? []);
+      setMode(d.kind === "html" ? "browser" : d.kind === "document" ? "split" : "write");
     }).catch((e) => { if (live) setError(e instanceof Error ? e.message : "Couldn't open that document."); });
     return () => { live = false; };
   }, [open, activeId, api, roomId]);
@@ -184,7 +195,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       try {
         const d = await api.get(roomId, id, base.current.version);
         if (activeRef.current !== id) return;
-        setPresent(d.present);
+        setPresent(d.present); setEditing(d.editing ?? []);
         if ("unchanged" in d) return;
         const mine = textRef.current;
         const next = mine === base.current.body ? d.body : merge3(base.current.body, mine, d.body).text;   // typing in the meantime is kept
@@ -199,7 +210,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   }, [open, activeId, api, roomId, adopt, flash, pollMs]);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
-  useEffect(() => { if (open && activeId) onSeen?.(activeId, base.current.version); }, [open, activeId, text, onSeen]);   // what is on screen is no longer new
+  useEffect(() => { if (open && activeId) onSeen?.(activeId, base.current.version); }, [open, activeId, text, onSeen]);
+  useEffect(() => { onContext?.(open && activeId ? { title, kind, text } : null); }, [open, activeId, title, kind, text, onContext]);   // what is on screen is no longer new
 
   // a last save when the panel closes or the page is left
   useEffect(() => {
@@ -244,26 +256,39 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
 
-  if (!open) return null;
   const statusText = status === "saving" ? "Saving…" : status === "typing" ? "Editing…" : status === "merged" ? "Merged" : status === "offline" ? "Offline" : status === "error" ? "Not saved" : "Saved";
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
 
   return (
-    <PanelShell open label="Docs">
+    <PanelShell open={open} label="Canvas">
       <div className="dg-doc-head">
         <div className="dg-doc-pick">
-          {docs.length > 0 ? (
-            <select value={activeId ?? ""} onChange={(e) => setActiveId(e.target.value)} aria-label="Document">
-              {docs.map((d) => <option key={d.id} value={d.id}>{d.title}</option>)}
-            </select>
-          ) : <b>Docs</b>}
-          <button type="button" className="dg-cv-chip" onClick={() => setCreating((c) => !c)} aria-expanded={creating}>+ New</button>
+          <div className="dg-picker">
+            <button type="button" className="dg-picker-btn" aria-haspopup="listbox" aria-expanded={pickerOpen} onClick={() => setPickerOpen((o) => !o)} disabled={docs.length === 0}>
+              <span className="dg-picker-title">{docs.length > 0 ? (docs.find((d) => d.id === activeId)?.title ?? title) : "Canvas"}</span>
+              {docs.length > 1 && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
+            </button>
+            {pickerOpen && docs.length > 1 && (
+              <ul className="dg-picker-list" role="listbox" aria-label="Canvas" onMouseLeave={() => undefined}>
+                {docs.map((d) => (
+                  <li key={d.id} role="option" aria-selected={d.id === activeId}>
+                    <button type="button" onClick={() => { setActiveId(d.id); setPickerOpen(false); }}>
+                      <span className="dg-picker-kind" aria-hidden="true">{d.kind === "html" ? "PAGE" : d.kind === "code" ? "CODE" : "DOC"}</span>
+                      <span className="dg-picker-name">{d.title}</span>
+                      <span className="dg-picker-by small dim">{d.updated_by}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <button type="button" className="dg-cv-chip dg-cv-big" onClick={() => setCreating((c) => !c)} aria-expanded={creating}>+ New</button>
         </div>
         <div className="dg-doc-meta">
           {present.length > 0 && (
             <span className="dg-doc-people" title={`${present.join(", ")} ${present.length === 1 ? "is" : "are"} here`}>
-              {present.slice(0, 4).map((n) => <i key={n} aria-hidden="true">{n.slice(0, 1).toUpperCase()}</i>)}
-              <span className="dg-doc-here">{present.length === 1 ? `${present[0]} is here` : `${present.length} people here`}</span>
+              {present.slice(0, 4).map((n) => <i key={n} data-editing={editing.includes(n) || undefined} style={{ background: personColor(n) }} aria-hidden="true">{n.slice(0, 1).toUpperCase()}</i>)}
+              <span className="dg-doc-here">{editing.length > 0 ? `${editing.join(", ")} ${editing.length === 1 ? "is" : "are"} editing…` : present.length === 1 ? `${present[0]} is here` : `${present.length} people here`}</span>
             </span>
           )}
           <span className="dg-doc-status" data-s={status} role="status" aria-live="polite"><i aria-hidden="true" />{statusText}</span>
@@ -275,7 +300,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
 
       {creating && (
         <form className="dg-doc-new" onSubmit={(e) => { e.preventDefault(); void create(); }}>
-          <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Document title" maxLength={120} autoFocus aria-label="Document title" />
+          <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Canvas title" maxLength={120} autoFocus aria-label="Canvas title" />
           <button type="submit" className="btn-ink dg-mini-btn" disabled={!newTitle.trim()}><span>Create</span></button>
         </form>
       )}
@@ -283,20 +308,30 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
 
       {!activeId ? (
         <div className="dg-doc-empty">
-          <p><b>No documents here yet.</b></p>
+          <p><b>Nothing on the canvas yet.</b></p>
           <p className="small dim">Make one to write in together, or ask an agent to write one: it appears here for everyone in the room.</p>
-          <button type="button" className="btn-ink dg-mini-btn" onClick={() => setCreating(true)}><span>New document</span></button>
+          <button type="button" className="btn-ink dg-mini-btn" onClick={() => setCreating(true)}><span>New canvas</span></button>
         </div>
       ) : (
         <>
           <div className="dg-doc-bar">
-            <div className="dg-doc-seg" role="tablist" aria-label="View">
-              <button type="button" role="tab" aria-selected={mode === "write"} onClick={() => setMode("write")}>{kind === "html" ? "Code" : "Write"}</button>
-              {kind === "html" && <button type="button" role="tab" aria-selected={mode === "browser"} onClick={() => setMode("browser")}>Browser</button>}
-              {kind === "html" && <button type="button" role="tab" aria-selected={mode === "page"} onClick={() => setMode("page")}>Page</button>}
-              {kind === "document" && <button type="button" role="tab" aria-selected={mode === "browser"} onClick={() => setMode("browser")}>Read</button>}
+            <div className="dg-doc-seg dg-doc-seg--big" role="tablist" aria-label="View">
+              {kind === "document" ? (
+                <>
+                  <button type="button" role="tab" aria-selected={mode === "write"} onClick={() => setMode("write")}>Write</button>
+                  <button type="button" role="tab" aria-selected={mode === "split"} onClick={() => setMode("split")}>Side by side</button>
+                  <button type="button" role="tab" aria-selected={mode === "read"} onClick={() => setMode("read")}>Read</button>
+                </>
+              ) : kind === "html" ? (
+                <>
+                  <button type="button" role="tab" aria-selected={mode === "write"} onClick={() => setMode("write")}>Code</button>
+                  <button type="button" role="tab" aria-selected={mode === "split"} onClick={() => setMode("split")}>Side by side</button>
+                  <button type="button" role="tab" aria-selected={mode === "browser"} onClick={() => setMode("browser")}>Browser</button>
+                  <button type="button" role="tab" aria-selected={mode === "page"} onClick={() => setMode("page")}>Page</button>
+                </>
+              ) : <button type="button" role="tab" aria-selected="true">Code</button>}
             </div>
-            {mode === "write" && kind === "document" && (
+            {(mode === "write" || mode === "split") && kind === "document" && (
               <div className="dg-doc-fmt" role="toolbar" aria-label="Formatting">
                 <button type="button" title="Bold" aria-label="Bold" onClick={() => area.current && wrapSelection(area.current, "**")}><b>B</b></button>
                 <button type="button" title="Italic" aria-label="Italic" onClick={() => area.current && wrapSelection(area.current, "*")}><i>I</i></button>
@@ -309,16 +344,18 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
           </div>
 
           <div className="dg-doc-body">
-            {mode === "write" ? (
-              <textarea
-                ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)}
-                spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
-              />
-            ) : kind === "html" ? (
-              <HtmlViewer html={text} title={title} mode={mode === "page" ? "page" : "browser"} />
-            ) : (
-              <div className="dg-canvas-doc" tabIndex={0}><Markdown text={text} /></div>
+            {(mode === "write" || mode === "split" || (kind === "code")) && (
+              <div className="dg-doc-pane" data-split={mode === "split" && kind !== "code" || undefined}>
+                <textarea
+                  ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)}
+                  spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
+                />
+                {mode === "split" && kind === "document" && <div className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview"><Markdown text={text} /></div>}
+                {mode === "split" && kind === "html" && <HtmlViewer html={text} title={title} mode="browser" />}
+              </div>
             )}
+            {mode === "read" && kind === "document" && <div className="dg-canvas-doc" tabIndex={0}><Markdown text={text} /></div>}
+            {(mode === "browser" || mode === "page") && kind === "html" && <HtmlViewer html={text} title={title} mode={mode === "page" ? "page" : "browser"} />}
             {history && (
               <div className="dg-doc-history" role="dialog" aria-label="History">
                 <div className="dg-doc-history-head"><b>History</b><button type="button" className="dg-cv-icon" aria-label="Close history" onClick={() => setHistory(null)}>×</button></div>

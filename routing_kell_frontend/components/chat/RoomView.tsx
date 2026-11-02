@@ -250,7 +250,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: ((p[who]?.text) ?? "") + delta } }));
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
       }, ctl.signal, who, presetsRef.current[who],
-      temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined);
+      temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined,
+      canvasOpenRef.current && r === roomRef.current ? canvasContextRef.current : null);   // the canvas you have open, so "make it shorter" edits it
       if (out.memory.remembered.length) note(`Remembered: ${out.memory.remembered.map((l) => l.replace(/^- /, "").replace(/ \[source:.*$/, "")).join("; ")}. Settings, Memory and knowledge, to edit or undo.`, r);
       else if (out.memory.used.length) note(`Used your memory: ${out.memory.used.join(", ")}`, r);
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
@@ -568,15 +569,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <b>{nameOf(run.sender.handle)}</b>
                 {agentRun && <span className="dg-badge">agent</span>}
                 <time>{time(run.messages[0].timestamp)}</time>
-                <MessageActions
+              </div>
+              {run.messages.map((m) => <Body key={m.id} m={m} />)}
+              <MessageActions
                   copyText={texts.join("\n\n")}
                   retryText={prompt || undefined}
                   onCopy={(t) => copyRoomText(t)}
                   onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
                   retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
                 />
-              </div>
-              {run.messages.map((m) => <Body key={m.id} m={m} />)}
             </div>
           </MessageScroller.Item>
         ),
@@ -686,6 +687,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   canvasesRef.current = canvases;
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasId, setCanvasId] = useState<string | null>(null);
+  const canvasContextRef = useRef<{ title: string; kind: string; text: string } | null>(null);
+  const canvasOpenRef = useRef(false);
+  canvasOpenRef.current = canvasOpen;
   const [docTitle, setDocTitle] = useState<string | null>(null);   // the document to show first in the shared docs panel
   const [docList, setDocList] = useState<DocInfo[]>([]);
   // What you have already looked at, so the count beside "Docs" is only what is new to you. Kept on this device, per account.
@@ -712,6 +716,28 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const c of changed) storeCanvas(c);
     if (changed.length) { setCanvasId(changed[0].id); setDocTitle(changed[0].title); if (live && m.roomId === roomRef.current) setCanvasOpen(true); } // a canvas an agent just wrote opens beside the chat
   };
+  // Canvases kept only on this device (made before shared canvas existed) are copied to the room on your account once, so clearing this
+  // browser never loses them. A title the room already has is left alone.
+  useEffect(() => {
+    const sid = info[room]?.id;
+    if (!sid || tempRef.current.has(room) || !canvases.length) return;
+    const key = `kell:docs-copied:${subject}`;
+    let done: string[] = [];
+    try { done = JSON.parse(window.localStorage.getItem(key) ?? "[]") as string[]; } catch { done = []; }
+    const todo = canvases.filter((c) => c.room === room && !done.includes(c.id));
+    if (!todo.length) return;
+    let live = true;
+    void (async () => {
+      for (const c of todo) {
+        const last = c.versions[c.versions.length - 1];
+        try { await dapi.create(sid, c.title, c.kind, last.text); } catch (e) { if (!(e as { status?: number }).status || (e as { status?: number }).status !== 409) continue; }
+        done = [...done, c.id];
+        if (live) try { window.localStorage.setItem(key, JSON.stringify(done)); } catch { /* storage blocked */ }
+      }
+    })();
+    return () => { live = false; };
+  }, [info, room, canvases, dapi, subject]);
+
   const syncedRoomRef = useRef<string | undefined>(undefined);
   syncedRoomRef.current = info[room]?.id;
   const canvasCtx = useMemo(() => ({
@@ -1061,7 +1087,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       </aside>
 
       {info[room]?.id && !tempRef.current.has(room)
-        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} wantedTitle={docTitle} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
+        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms

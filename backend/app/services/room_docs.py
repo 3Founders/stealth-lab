@@ -31,6 +31,8 @@ KINDS = ("document", "code", "html")
 PRESENCE_SECONDS = 12.0
 NL = chr(10)
 _PRESENCE: dict[str, dict[str, tuple[str, float]]] = {}      # doc id -> {sub: (name, last seen)}
+_TYPING: dict[str, dict[str, float]] = {}                    # doc id -> {sub: when they last saved a change}
+TYPING_SECONDS = 6.0
 
 
 def _iso(v: Any) -> Optional[str]:
@@ -112,12 +114,21 @@ async def _doc(pool: Any, room: Any, doc_id: Any) -> Any:
     return row
 
 
-def _touch(doc_id: str, sub: str, name: str) -> None:
+def _touch(doc_id: str, sub: str, name: str, typing: bool = False) -> None:
     now = time.monotonic()
+    if typing:
+        _TYPING.setdefault(doc_id, {})[sub] = now
     people = _PRESENCE.setdefault(doc_id, {})
     people[sub] = (name, now)
     for s in [s for s, (_n, t) in people.items() if now - t > PRESENCE_SECONDS * 3]:
         del people[s]
+
+
+def _editing(doc_id: str, me: str) -> list[str]:
+    """Names of the others who changed this document in the last few seconds (shown as "is editing")."""
+    now = time.monotonic()
+    names = {s: n for s, (n, _t) in _PRESENCE.get(doc_id, {}).items()}
+    return sorted(names[s] for s, t in _TYPING.get(doc_id, {}).items() if s != me and s in names and now - t <= TYPING_SECONDS)
 
 
 def _peers(doc_id: str, me: str) -> list[str]:
@@ -136,7 +147,7 @@ async def get_doc(pool: Any, sub: str, room_id: str, doc_id: str, since: Optiona
     d = await _doc(pool, room, doc_id)
     did = str(d["id"])
     _touch(did, sub, await _display(pool, sub))
-    base = {"id": did, "version": d["version"], "present": _peers(did, sub)}
+    base = {"id": did, "version": d["version"], "present": _peers(did, sub), "editing": _editing(did, sub)}
     if since is not None and since == d["version"]:
         return {**base, "unchanged": True}
     return {**base, "title": d["title"], "kind": d["kind"], "body": d["body"], "updated_by": d["updated_by"], "updated_at": _iso(d["updated_at"])}
@@ -182,7 +193,7 @@ async def save_doc(pool: Any, sub: str, room_id: str, doc_id: str, body: str, ba
     who = by or await _display(pool, sub)
     mine = _text(body)
     did = str(d["id"])
-    _touch(did, sub, who)
+    _touch(did, sub, who, typing=True)
     if base_version == d["version"]:
         if mine == d["body"]:
             return {"version": d["version"], "unchanged": True}

@@ -6,8 +6,8 @@ import { MCP_ORIGIN } from "@/lib/connector";
 
 export type DocKind = "document" | "code" | "html";
 export interface DocInfo { id: string; title: string; kind: DocKind; version: number; updated_by: string; updated_at: string | null; size: number | null }
-export interface DocFull { id: string; version: number; present: string[]; title: string; kind: DocKind; body: string; updated_by: string; updated_at: string | null }
-export interface DocUnchanged { id: string; version: number; present: string[]; unchanged: true }
+export interface DocFull { id: string; version: number; present: string[]; editing: string[]; title: string; kind: DocKind; body: string; updated_by: string; updated_at: string | null }
+export interface DocUnchanged { id: string; version: number; present: string[]; editing: string[]; unchanged: true }
 export interface SaveResult { version: number; unchanged?: boolean; merged?: boolean; clash?: boolean; body?: string }
 export interface DocVersion { version: number; by: string; note: string; size: number; at: string | null }
 

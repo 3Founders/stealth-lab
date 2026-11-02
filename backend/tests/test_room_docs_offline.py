@@ -143,3 +143,13 @@ def test_canvas_blocks_in_a_message_become_versions_once():
     assert run(rd.capture(p, ROOM, "alice", "@kell", "msg-2", text2)) == 1                 # a new message with the same title is a new version
     d = next(iter(p.docs.values()))
     assert d["version"] == 2 and "revised" in d["body"]
+
+
+def test_who_is_editing_is_shown_to_others_briefly_and_never_stored_in_the_document():
+    p = Pool()
+    doc = run(rd.create_doc(p, "alice", str(ROOM), "Plan", "document", BASE))
+    run(rd.get_doc(p, "bob", str(ROOM), doc["id"]))                                   # bob has it open
+    run(rd.save_doc(p, "bob", str(ROOM), doc["id"], BASE + "x\n", 1))                # and just typed
+    seen = run(rd.get_doc(p, "alice", str(ROOM), doc["id"]))
+    assert seen["present"] == ["Someone"] and seen["editing"] == ["Someone"]
+    assert "editing" not in p.docs[uuid.UUID(doc["id"])]                              # presence is not part of the document

@@ -64,7 +64,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
       {view === "menu" && (
         <div className="dg-menu-pop" role="menu" aria-label="Chat menu" ref={slide('[role="menuitem"]', '[role="menuitem"]:focus')}>
           {onSearch && <button type="button" role="menuitem" onClick={run(onSearch)}>Search<kbd>Ctrl K</kbd></button>}
-          {onCanvas && <button type="button" role="menuitem" onClick={run(onCanvas)}>Docs{canvasCount > 0 && <span className="dg-unread" aria-label={`${canvasCount} in this room`}>{canvasCount}</span>}</button>}
+          {onCanvas && <button type="button" role="menuitem" onClick={run(onCanvas)}>Canvas{canvasCount > 0 && <span className="dg-unread" aria-label={`${canvasCount} in this room`}>{canvasCount}</span>}</button>}
           {onTemporary && <button type="button" role="menuitem" onClick={run(onTemporary)}>New temporary room</button>}
           <button type="button" role="menuitem" onClick={run(onManageRooms)}>Manage rooms</button>
           <button type="button" role="menuitem" onClick={run(onTogglePanel)}>{panelOpen ? "Close room list" : "Show room list"}</button>

@@ -41,7 +41,7 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId,
   useEffect(() => { if (open && shown) onSeen?.(shown.canvas.id, shown.v.n); }, [open, shown, onSeen]);
   useEffect(() => { setEditing(false); }, [shown?.canvas.id, shown?.v.n]);
 
-  if (!open || count === 0) return null;
+  if (count === 0) return null;
   const cur = entries[Math.min(idx, count - 1)];
   const newest = cur.v.n === cur.canvas.versions[cur.canvas.versions.length - 1].n;
   const text = cur.v.text;
@@ -56,7 +56,7 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId,
   };
 
   return (
-    <PanelShell open label="Canvas">
+    <PanelShell open={open} label="Canvas">
       <div className="dg-canvas-head">
         <div className="dg-canvas-headrow">
           <div className="dg-canvas-ver" dir="ltr">
