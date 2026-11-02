@@ -11,10 +11,13 @@ export type KellCommand = { cmd: string; args: string[]; shell: boolean }
 
 export function kellCommand(args: string[]): KellCommand {
   const resources = (process as unknown as { resourcesPath?: string }).resourcesPath || ""
+  const cwd = process.cwd()
+  // Prefer the unpacked copy: a file inside app.asar is not executable by a child process.
+  const unpacked = cwd.replace(/app\.asar$/, "app.asar.unpacked")
   const candidates = [
     process.env.KELL_CLI || "",
-    path.join(process.cwd(), "vendor", "kell-mcp", "bin", "kell.mjs"),
-    path.join(process.cwd().replace(/app\.asar$/, "app.asar.unpacked"), "vendor", "kell-mcp", "bin", "kell.mjs"),
+    path.join(unpacked, "vendor", "kell-mcp", "bin", "kell.mjs"),
+    path.join(cwd, "vendor", "kell-mcp", "bin", "kell.mjs"),
     resources ? path.join(resources, "app.asar.unpacked", "vendor", "kell-mcp", "bin", "kell.mjs") : "",
   ].filter(Boolean)
   const found = candidates.find((p) => { try { return fs.statSync(p).isFile() } catch { return false } })

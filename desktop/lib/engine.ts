@@ -31,11 +31,12 @@ const exes = () => [
   // `kell setup --client opencode` (isolated profile) and the global install, both Windows and unix layouts
   path.join(process.env.KELL_OC_PROFILE || path.join(process.env.HOME || process.env.USERPROFILE || "", ".stealthlab", "opencode"), "cli", "node_modules", "@opencode", "cli", "bin", platformBin()),
   path.join(process.env.APPDATA || "", "npm", "node_modules", "@opencode", "cli", "bin", platformBin()),
-  // the copy this app ships: the launcher package in the dev tree, the platform binary beside the asar when packaged
-  path.join(process.cwd(), "node_modules", "@opencode", "cli", "bin", platformBin()),
-  path.join(process.cwd(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
-  path.join(unpackedRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
+  // the copy this app ships: the platform binary beside the asar when packaged (preferred), the launcher package in the
+  // dev tree
   path.join(unpackedRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
+  path.join(unpackedRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
+  path.join(process.cwd(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
+  path.join(process.cwd(), "node_modules", "@opencode", "cli", "bin", platformBin()),
 ].filter(Boolean)
 
 export const findEngineExe = () => exes().find((e) => { try { return fs.statSync(e).isFile() } catch { return false } }) || ""
