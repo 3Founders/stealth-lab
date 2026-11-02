@@ -21,6 +21,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
   /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
   draft?: { text: string; n: number }; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
+  const [big, setBig] = useState(false);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
@@ -156,7 +157,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         </ul>
       )}
       <textarea
-        ref={ref} rows={1} value={text} disabled={disabled} maxLength={MAX_MESSAGE}
+        ref={ref} rows={1} data-big={big || undefined} value={text} disabled={disabled} maxLength={MAX_MESSAGE}
         role="combobox" aria-label="Message" aria-autocomplete="list" aria-expanded={open}
         aria-controls={open ? listId : undefined} aria-activedescendant={open ? `${listId}-${idx}` : undefined}
         placeholder="Message the room. @ to mention a person or an agent, /add-agent to add one, /stop to pause"
@@ -166,6 +167,9 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         onKeyDown={onKeyDown}
       />
       {text.trim() && <span className="dg-count" aria-live="off">{wordCount(text)} {wordCount(text) === 1 ? "word" : "words"}{text.length >= MAX_MESSAGE - 1000 ? ` · ${text.length} / ${MAX_MESSAGE}` : ""}</span>}
+      <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
+      </button>
       <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
       <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy} aria-label="Attach a file" title="Attach a picture or a file (or paste or drop one)"><ImageIcon /></button>
       <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>Send</button>

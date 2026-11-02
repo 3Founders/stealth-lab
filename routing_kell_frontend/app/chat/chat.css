@@ -735,7 +735,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-me-plan { color: var(--cobalt); }
 
 /* Search (Cmd+K): a centred glass panel over a dimmed page. */
-.dg-search-wrap { position: fixed; inset: 0; z-index: 60; display: grid; justify-items: center; align-items: start; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .32); animation: dg-glass-in 220ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-search-wrap { position: fixed; inset: 0; z-index: 60; display: grid; justify-items: center; align-items: start; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .3); -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15); animation: dg-glass-in 220ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
 .dg-search { width: min(620px, 100%); max-height: 70vh; overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; display: grid; gap: 8px; padding: 14px; border-radius: var(--dg-r-dialog, 10px); background: var(--dg-glass-strong, #fff); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); box-shadow: var(--dg-float, 0 28px 70px rgba(0, 0, 0, .3)); }
 .dg-search > input { font: inherit; font-size: 16px; padding: 11px 14px; border: 0; border-radius: var(--dg-r-btn, 6px); background: rgba(255, 255, 255, .8); box-shadow: var(--dg-dent, inset 0 1px 3px rgba(0, 0, 0, .14)); outline: none; }
 .dg-search-here { display: flex; align-items: center; gap: 6px; color: var(--grey); }
@@ -806,7 +806,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-pop .dg-onboard-menu { width: 100%; }
 .dg-pop[data-up] .dg-menu-pop, .dg-pop[data-up] .dg-bell-pop, .dg-pop[data-up] .dg-onboard-menu { transform-origin: bottom left; }
 /* The dialogs' dim layer is a plain scrim: a blur over the whole window is the costly kind of glass. */
-.dg-settings[open]::backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(0, 0, 0, .45); }
+/* The dim layer behind every popup is blurred (Settings, Manage rooms, Add agent, search, photo, organisation dialogs). */
+.dg-settings[open]::backdrop { -webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15); background: rgba(0, 0, 0, .34); }
 
 /* Paint rules: while something animates, only transform and opacity change. These replace effects that repainted every frame. */
 @keyframes dg-tok-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
@@ -959,3 +960,12 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 :root[data-theme="dark"] .dg-onboard-marks i { background: #fff; color: #171717; box-shadow: 0 0 0 2px #f1eee5; }
 :root[data-theme="dark"] .dg-page .dg-onboard:hover .dg-onboard-marks i { box-shadow: 0 0 0 2px #fff; }
 :root[data-theme="dark"] .dg-onboard-copy { color: #171717; }
+
+/* The message box: it scrolls inside itself when long, and a button makes it taller (and back). */
+.dg-composer textarea { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.dg-composer textarea[data-big] { min-height: 38vh; max-height: 68vh; }
+.dg-composer .dg-expand { position: absolute; right: 94px; top: -2px; transform: translateY(-100%); height: 26px; width: 26px; min-width: 0; padding: 0; border-radius: 6px; display: inline-grid; place-items: center; background: var(--dg-glass, var(--surface)); color: var(--ink); box-shadow: var(--dg-lift, 0 2px 8px rgba(0, 0, 0, .14)); }
+.dg-composer .dg-expand:hover:not(:disabled) { background: var(--yellow); color: var(--on-yellow, #171717); }
+:root[data-theme="dark"] .dg-composer .dg-expand:hover:not(:disabled) { background: rgba(255, 255, 255, .92); color: #171717; }
+@media (max-width: 760px) { .dg-composer .dg-expand { right: 80px; } .dg-composer textarea[data-big] { min-height: 32vh; } }
+@media (prefers-reduced-transparency: reduce) { .dg-settings[open]::backdrop, .dg-search-wrap { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(0, 0, 0, .55); } }
