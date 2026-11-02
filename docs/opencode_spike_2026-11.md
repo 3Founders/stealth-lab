@@ -368,5 +368,13 @@ Scorecard against the handoff's "what good looks like":
 
 The two outright failures (11, 14) are provider/environment, not routing — see revisit.md.
 
+**Prompt 9 re-run (2026-11-02, after `experimental.image_generate: false` was added to the config kell writes).** Two
+live runs on a fresh fixture under `experiments/opencode_kell/fixtures/`: the built-in image tool never appears (it is
+in the 2026-11-01 runs' `used` lists, never in these), and routing names and calls kell/images both times
+(`kell_discover_tools` → `kell_use_tool ... server: kell/images`). No image came back: the first run was killed by
+General Compute's flake (the new fallback fired correctly — minimax failed twice, the session switched to
+gc/deepseek-v3.2, and the loop guard held when deepseek flaked too), and kell/images' OpenRouter account has no credits
+anyway (owner item). So: routing confirmed, image still needs the owners.
+
 
 
