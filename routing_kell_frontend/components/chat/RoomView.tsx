@@ -959,13 +959,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
-      <CanvasPanel
-        open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onSelect={setCanvasId}
-        onChange={storeCanvas}
-        onDelete={(id) => { const c = canvasesRef.current.find((x) => x.id === id); const next = canvasesRef.current.filter((x) => x.id !== id); canvasesRef.current = next; setCanvases(next); setCanvasId(null); if (c) void history.deleteDoc("canvas", id).catch(() => {}); }}
-        onCreate={() => { const n = canvasesRef.current.filter((c) => c.room === room).length + 1; const c = newCanvas(crypto.randomUUID(), room, `Untitled ${n}`, "document", "", "you"); storeCanvas(c); setCanvasId(c.id); }}
-        onRevise={(text) => setDraft((d) => ({ text, n: d.n + 1 }))}
-      />
+      <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} />
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
