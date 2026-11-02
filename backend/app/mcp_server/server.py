@@ -626,13 +626,13 @@ _TOOL_SCOPES: dict[str, str] = {
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
         "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync",
         # rooms are read through the signed-in person's own membership
-        "room_list", "room_read", "room_members")},
+        "room_list", "room_read", "room_members", "memory_read", "memory_search")},
     **{n: _WRITE for n in (
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
         "report_discovery", "submit_way", "submit", "report_model_run", "report_result", "report_audit", "report_check_evidence",
-        "report_tools", "room_post",
+        "report_tools", "room_post", "memory_write",
         "delegate_inbox", "delegate_result")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
@@ -658,7 +658,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "submit", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
-    "delegate_result", "room_list", "room_read", "room_post", "room_members"})
+    "delegate_result", "room_list", "room_read", "room_post", "room_members", "memory_read", "memory_search", "memory_write"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -701,6 +701,11 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     "room_post": {"title": "Post to a kell room", "read_only_hint": False, "destructive_hint": False,
                   "idempotent_hint": False, "open_world_hint": False},
     "room_members": {"title": "Who is in a kell room", "read_only_hint": True, "open_world_hint": False},
+    # the person's memory (db/173_memory.sql): only when they turned memory on and let their connected agents use it
+    "memory_read": {"title": "Read my kell memory", "read_only_hint": True, "open_world_hint": False},
+    "memory_search": {"title": "Search my kell memory", "read_only_hint": True, "open_world_hint": False},
+    "memory_write": {"title": "Write to my kell memory", "read_only_hint": False, "destructive_hint": False,
+                     "idempotent_hint": False, "open_world_hint": False},
     # stores a private candidate for the signed-in caller; nothing is published
     "submit": {"title": "Submit a tool, prompt or tip", "read_only_hint": False, "destructive_hint": False,
                "idempotent_hint": False, "open_world_hint": False},
@@ -1169,6 +1174,15 @@ _room_agent_routes.register(
     model_call=_room_agent_model, model_stream=_room_agent_model_stream,
     find_tools=_room_agent_find, use_tool=_room_agent_use,
     discover=_room_agent_discover, tools_of=_room_agent_tools_of,
+)
+
+from app.mcp_server import memory_routes as _memory_routes  # noqa: E402 -- kell's memory, notes and knowledge (db/173_memory.sql)
+
+_memory_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+    model_call=_room_agent_model,
 )
 
 from app.mcp_server import photo_routes as _photo_routes  # noqa: E402 -- the profile photo that follows a person across devices (db/159_profile_photos.sql)
@@ -3308,6 +3322,86 @@ async def room_post(ctx: Context, room: str, text: str, reply_to: str | None = N
         return json.dumps(await _rooms.append_events(pool, _kell_owner(), room, [event]), default=str)
     except _rooms.RoomError as exc:
         return f"REFUSED: {exc}"
+
+
+async def _memory_gate(ctx: Context) -> tuple[Any, str]:
+    """The pool and the person, once memory is on AND they let their connected agents use it; otherwise a refusal that says how to allow it."""
+    from app.services import memory as _mem
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    owner = _kell_owner()
+    cfg = await _mem.settings(pool, owner)
+    if not cfg["enabled"]:
+        raise _mem.MemoryError_("the person has not turned on kell memory (Settings, Memory, in the chat)", 403)
+    if not cfg["share_agents"]:
+        raise _mem.MemoryError_("the person keeps their memory to kell in the chat: it is not shared with connected agents (Settings, Memory)", 403)
+    return pool, owner
+
+
+@server.tool()
+@_activity.traced
+async def memory_read(ctx: Context, path: str = "MEMORY.md") -> str:
+    """
+    Read one file of the person's kell memory. Start with MEMORY.md (a short index of what is known, one fact per line, with links
+    to topic files). Paths are MEMORY.md or folder/name.md (people, projects, preferences, notes, knowledge, topics). The reply has the
+    text and its `version`: pass it back as expected_version to memory_write so you never overwrite a change made in between.
+
+    Example: memory_read(path="projects/atlas.md") -> {"path": "...", "body": "...", "version": 3}
+    """
+    from app.services import memory as _mem
+
+    try:
+        pool, owner = await _memory_gate(ctx)
+        out = await _mem.read_file(pool, owner, path)
+        return json.dumps(out if out else {"path": path, "body": "", "version": 0}, default=str)
+    except _mem.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def memory_search(ctx: Context, query: str, limit: int = 5) -> str:
+    """
+    Search the person's kell memory (notes, knowledge files and what kell has remembered) by keyword. Returns the best matches with a
+    short snippet each; read a whole file with memory_read.
+
+    Example: memory_search(query="atlas deadline") -> {"hits": [{"path": "projects/atlas.md", "snippet": "..."}]}
+    """
+    from app.services import memory as _mem
+
+    try:
+        pool, owner = await _memory_gate(ctx)
+        return json.dumps({"hits": await _mem.search(pool, owner, query, max(1, min(int(limit), 10)), skip_index=False)}, default=str)
+    except _mem.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def memory_write(ctx: Context, path: str, text: str, expected_version: int | None = None, reason: str = "") -> str:
+    """
+    Write a file in the person's kell memory (the whole new text; it replaces the file as a new version, so the person can undo it).
+    Keep MEMORY.md short (at most 2,000 characters: it is read in every conversation) and one fact per line with a source and date,
+    for example "- Prefers short answers [source: claude; added: 2026-11-02]"; put detail in topic files. Pass expected_version from
+    memory_read: if the file changed since, the write is refused and you must merge. Never write keys, tokens or passwords.
+
+    Example: memory_write(path="projects/atlas.md", text="Atlas: migration to Postgres...", expected_version=3)
+    """
+    from app.services import memory as _mem
+
+    token = get_access_token()
+    try:
+        pool, owner = await _memory_gate(ctx)
+        by = _rooms_handle(token.client_id if token else None)
+        return json.dumps(await _mem.write_file(pool, owner, path, text, by=by, reason=reason, expected_version=expected_version), default=str)
+    except _mem.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+def _rooms_handle(client_id: str | None) -> str:
+    from app.services import rooms as _rooms
+
+    return _rooms.agent_handle(client_id)
 
 
 @server.tool()

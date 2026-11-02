@@ -28,6 +28,7 @@ from app.mcp_server.room_routes import _error, _json, cors_headers
 from app.services import room_agent as agent
 from app.services.rooms import _Limiter
 from app.services.trace_redaction import redact_value
+from app.services import memory as mem
 from app.services import rooms as rm
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,11 @@ def clean_history(raw: Any) -> list[dict[str, Any]]:
 
 
 _RUNNING: set[Any] = set()
+
+# Added to the memory block: how kell may save something worth keeping. The person sees what was saved and can undo it.
+MEMORY_HINT = ("\nIf the person tells you something durable about themselves (a preference, a person, a project, a decision) that is not already above, "
+               "you may end your reply with a fenced block: a line ```memory, one fact per line starting with '- ', then a line ```. "
+               "Never save secrets, keys or small talk.")
 
 
 def _sse(obj: Any) -> str:
@@ -98,6 +104,16 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if instructions:                                  # a key pasted into "what should it do?" must not reach the model
             instructions = redact_value(instructions.strip()[:1500], [])
         tz = data.get("tz") if isinstance(data.get("tz"), str) else ""
+        # What kell knows about this person (only when they turned memory on). A missing table or any failure means no memory, never a failed chat.
+        mem_used: list[str] = []
+        mem_on = False
+        try:
+            mem_block, mem_used = await mem.context(pool, subject, text)
+            mem_on = bool(mem_block)
+            if mem_block:
+                instructions = (instructions + "\n\n" if instructions else "") + mem_block + MEMORY_HINT
+        except Exception:  # noqa: BLE001
+            mem_used = []
         try:
             history = agent.transcript(await rm.recent_events(pool, subject, room_id, recent), self_handle=handle)
         except rm.RoomError as exc:
@@ -105,17 +121,26 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
 
         bearer = request.headers.get("authorization", "")
 
-        async def finish(outcome: agent.AgentOutcome) -> tuple[str, Any, str | None, list[str]]:
+        async def finish(outcome: agent.AgentOutcome) -> tuple[str, Any, str | None, list[str], list[str]]:
             reply = outcome.text.strip() or "I do not have an answer for that."
+            remembered: list[str] = []
+            if mem_on:
+                reply, facts = mem.extract_memory_blocks(reply)
+                if facts:
+                    try:
+                        remembered = await mem.remember(pool, subject, facts, source=f"room/{str(room_id)[:8]}")
+                    except Exception:  # noqa: BLE001 -- memory trouble must not lose the answer
+                        log.exception("memory: could not save facts for %s", subject)
+                reply = reply.strip() or ("Noted." if remembered else "I do not have an answer for that.")
             # Consent links go back to the person who asked, never into the room, where every member and connector would read them.
             links = list(dict.fromkeys(outcome.consent_links))
             try:
                 events = rm.agent_events(handle, reply)
                 appended = await rm.append_events(pool, subject, room_id, events)
             except rm.RoomError as exc:
-                return reply, None, str(exc), links
+                return reply, None, str(exc), links, remembered
             # A reply longer than one message is posted as several; the first is returned here, the rest arrive through sync.
-            return events[0]["body"], (appended["accepted"][0] if appended["accepted"] else None), None, links
+            return events[0]["body"], (appended["accepted"][0] if appended["accepted"] else None), None, links, remembered
 
         if model_stream is not None and "text/event-stream" in (request.headers.get("accept") or ""):
             queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -137,11 +162,12 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                             queue.put_nowait(_sse({"delta": value}))
                         else:
                             final = value
-                    reply, accepted, why, links = await finish(final or agent.AgentOutcome(text=""))
+                    reply, accepted, why, links, remembered = await finish(final or agent.AgentOutcome(text=""))
                     if why is not None:
                         queue.put_nowait(_sse({"error": why}))
                     else:
                         queue.put_nowait(_sse({"done": True, "text": reply, "event": accepted, "consent": links,
+                                               "memory": {"used": mem_used, "remembered": remembered},
                                                "tools": (final.tools_used if final else [])}))
                 except RuntimeError as exc:          # the model endpoint's own refusal
                     log.exception("room agent: the model refused the answer for room %s", room_id)
@@ -185,10 +211,11 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             log.exception("room agent: the answer failed for room %s", room_id)
             return _error(request, "the room agent could not answer just now; nothing was posted", 502)
 
-        reply, accepted, why, links = await finish(outcome)
+        reply, accepted, why, links, remembered = await finish(outcome)
         if why is not None:
             return _error(request, why, 400)
-        return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted, "consent": links})
+        return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted, "consent": links,
+                               "memory": {"used": mem_used, "remembered": remembered}})
 
     @server.custom_route("/v1/agent/ephemeral", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def ephemeral_agent_route(request: Request) -> Response:
