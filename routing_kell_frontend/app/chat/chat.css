@@ -733,3 +733,19 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-onboard-choice { display: grid; min-width: 0; line-height: 1.3; }
 .dg-onboard-choice b { font-weight: 500; font-size: 13.5px; }
 .dg-me-plan { color: var(--cobalt); }
+
+/* Search (Cmd+K): a centred glass panel over a dimmed page. */
+.dg-search-wrap { position: fixed; inset: 0; z-index: 60; display: grid; justify-items: center; align-items: start; padding: 12vh 16px 16px; background: rgba(0, 0, 0, .32); animation: dg-glass-in 220ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-search { width: min(620px, 100%); max-height: 70vh; overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; display: grid; gap: 8px; padding: 14px; border-radius: var(--dg-r-dialog, 10px); background: var(--dg-glass-strong, #fff); -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2); box-shadow: var(--dg-float, 0 28px 70px rgba(0, 0, 0, .3)); }
+.dg-search > input { font: inherit; font-size: 16px; padding: 11px 14px; border: 0; border-radius: var(--dg-r-btn, 6px); background: rgba(255, 255, 255, .8); box-shadow: var(--dg-dent, inset 0 1px 3px rgba(0, 0, 0, .14)); outline: none; }
+.dg-search-here { display: flex; align-items: center; gap: 6px; color: var(--grey); }
+.dg-search-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.dg-search-list li { display: grid; gap: 2px; padding: 8px 10px; border-radius: var(--dg-r-btn, 6px); cursor: pointer; transition: background-color var(--dg-micro-d, 160ms) var(--dg-micro, ease); overflow-wrap: anywhere; }
+.dg-search-list li[data-active="true"] { background: rgba(255, 210, 31, .3); }
+.dg-search-list mark { background: rgba(255, 190, 0, .55); color: inherit; border-radius: 3px; padding: 0 1px; }
+.dg-search-none { margin: 0; padding: 4px 10px; }
+[data-mid][data-found] { animation: dg-found 2.2s var(--dg-apple, ease) both; border-radius: 8px; }
+@keyframes dg-found { 0%, 60% { background: rgba(255, 210, 31, .45); box-shadow: 0 0 0 6px rgba(255, 210, 31, .45); } 100% { background: transparent; box-shadow: 0 0 0 6px transparent; } }
+.dg-menu-pop > button kbd { margin-left: auto; padding-left: 14px; font-size: 11px; color: var(--grey); background: none; box-shadow: none; }
+.dg-menu-pop > button:has(kbd) { display: flex; align-items: center; }
+@media (prefers-reduced-motion: reduce) { [data-mid][data-found] { animation: none; background: rgba(255, 210, 31, .45); } }

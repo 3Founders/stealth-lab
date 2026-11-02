@@ -89,7 +89,7 @@ export function roomsApi(deps: RoomsDeps) {
         res = await doFetch(`${base}/v1/rooms/${e(id)}/agent`, {
           method: "POST", signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "text/event-stream" },
-          body: JSON.stringify({ text, ...(agentName && agentName !== "@kell" ? { agent: agentName.replace(/^@/, "") } : {}), ...(instructions ? { instructions } : {}) }),
+          body: JSON.stringify({ text, ...(agentName && agentName !== "@kell" ? { agent: agentName.replace(/^@/, "") } : {}), ...(instructions ? { instructions } : {}), tz: localZone() }),
         });
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") throw err;
@@ -120,3 +120,8 @@ export function roomsApi(deps: RoomsDeps) {
   };
 }
 export type RoomsApi = ReturnType<typeof roomsApi>;
+
+/** This device's time zone name (Asia/Kolkata), so the agent can be told today's date where the person is. */
+function localZone(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; }
+}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
+import SearchPalette from "@/components/chat/SearchPalette";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
@@ -59,7 +60,7 @@ function Avatar({ who }: { who: AgentIdentity }) {
 }
 
 function Body({ m }: { m: GroupMessage }) {
-  return <div className="dg-body"><MessageText text={m.payload.text} attachments={m.payload.attachments} /></div>;
+  return <div className="dg-body" data-mid={m.id}><MessageText text={m.payload.text} attachments={m.payload.attachments} /></div>;
 }
 
 /** Only offered when there is more below the viewport. */
@@ -600,6 +601,32 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const toggleSidebar = () => { if (isWide()) setPanelHidden((h) => !h); else setMenuOpen((o) => !o); };
   const chooseRoom = (r: string) => { setRoomList((l) => ({ ...l, current: r })); setMenuOpen(false); };
   openRoomRef.current = (r) => { if (r && roomList.rooms.includes(r)) chooseRoom(r); };
+
+  // Search (Cmd+K or Ctrl+K, or the menu): reads the messages saved on this device, and opens a room at the message found.
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setSearchOpen((o) => !o); } };
+    window.addEventListener("keydown", k);
+    return () => window.removeEventListener("keydown", k);
+  }, []);
+  const loadForSearch = useCallback(async () => {
+    const seen = new Set<string>();
+    const out: Array<{ room: string; m: GroupMessage }> = [];
+    const add = (room: string, m: GroupMessage) => { const key = `${room}:${m.id}`; if (!seen.has(key)) { seen.add(key); out.push({ room, m }); } };
+    for (const [room, lines] of Object.entries(lineStore.current)) for (const l of lines) if (l.kind === "msg") add(room, l.m);
+    try { for (const room of await history.rooms()) for (const m of (await history.load(room)).messages) add(room, m); } catch { /* storage blocked: search what is on screen */ }
+    return out;
+  }, [history]);
+  const pickSearch = (r: string, id: string | null) => {
+    if (r !== roomRef.current) chooseRoom(r);
+    if (!id) return;
+    const find = (tries: number) => {
+      const el = document.querySelector<HTMLElement>(`[data-mid="${CSS.escape(id)}"]`);
+      if (el) { el.scrollIntoView({ block: "center", behavior: "smooth" }); el.setAttribute("data-found", ""); window.setTimeout(() => el.removeAttribute("data-found"), 2400); }
+      else if (tries > 0) window.setTimeout(() => find(tries - 1), 150);
+    };
+    window.setTimeout(() => find(10), 120);
+  };
   useEffect(() => { setNotes((p) => (p.some((n) => !n.read && n.room === room) ? p.map((n) => (n.room === room ? { ...n, read: true } : n)) : p)); }, [room]);
   const unreadTotal = Object.entries(info).reduce((a, [r, v]) => a + (r === room ? 0 : v.unread), 0);
   useEffect(() => {
@@ -861,6 +888,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
         roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
@@ -868,7 +896,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onSearch={() => setSearchOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">

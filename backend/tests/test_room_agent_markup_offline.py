@@ -106,3 +106,13 @@ def test_discover_tools_runs_the_search_and_a_server_listing_and_use_tool_still_
     assert seen == [("discover", "edit a pdf"), ("tools_of", "pdf-tools"), ("use", "pdf-tools", "merge", {"a": 1}), ("use", "pdf-tools", "merge", {})]
     assert r[2] == "merged" and r[4].startswith("REFUSED") and r[5].startswith("REFUSED")
     assert used == ["discover_tools", "discover_tools", "pdf-tools/merge", "pdf-tools/merge", "discover_tools"]
+
+
+def test_the_agent_is_told_todays_date_in_the_persons_time_zone() -> None:
+    from datetime import datetime, timezone
+
+    moment = datetime(2026, 11, 2, 23, 30, tzinfo=timezone.utc)
+    assert ra.now_line("", moment) == "Today is Monday, 02 November 2026; the time is 23:30 (UTC)."
+    assert ra.now_line("Asia/Kolkata", moment) == "Today is Tuesday, 03 November 2026; the time is 05:00 (Asia/Kolkata)."
+    assert "(UTC)" in ra.now_line("Not/AZone", moment) and "(UTC)" in ra.now_line("x" * 80, moment)
+    assert "Today is" in ra._system([], "@kell", "", "Asia/Kolkata")

@@ -47,10 +47,29 @@ TOOLS_ON = (
 TOOLS_OFF = TOOLS_ON      # kept as a name for older callers: there is no "no tools" prompt any more, the tools are always offered
 
 
-def _system(candidates: list[dict[str, Any]], handle: str = SELF_HANDLE, instructions: str = "") -> str:
+def now_line(tz: str = "", now: Any = None) -> str:
+    """Today's date and time for the system prompt, in the person's time zone when the page sent a valid one (a model that is not told the
+    date will guess an old one). Falls back to UTC."""
+    from datetime import datetime, timezone
+
+    moment = now or datetime.now(timezone.utc)
+    zone = "UTC"
+    try:
+        from zoneinfo import ZoneInfo
+
+        if tz and len(tz) <= 64 and all(c.isalnum() or c in "/_+-" for c in tz):
+            moment = moment.astimezone(ZoneInfo(tz))
+            zone = tz
+    except Exception:  # noqa: BLE001 -- an unknown zone name: stay in UTC
+        pass
+    return f"Today is {moment:%A, %d %B %Y}; the time is {moment:%H:%M} ({zone})."
+
+
+def _system(candidates: list[dict[str, Any]], handle: str = SELF_HANDLE, instructions: str = "", tz: str = "") -> str:
     """The system prompt. Every agent in a room is kell: @kell is the default one, and any other name is another instance of it
     (same model, tools and rules), so the only difference is the name it answers to."""
     base = SYSTEM if handle == SELF_HANDLE else SYSTEM.replace("You are @kell, the built-in agent", f"You are {handle}, an instance of kell,", 1)
+    base = f"{base}\n\n{now_line(tz)}"
     mine = instructions.strip()[:1500]
     if mine:
         base = (f"{base}\n\nThe person who added you asked you to do this (follow it unless it conflicts with the rules above):\n"
@@ -254,7 +273,7 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
 
 
 async def converse(text: str, history: list[dict[str, Any]], *, model_call: ModelCall, find_tools: FindTools,
-                   use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "",
+                   use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "", tz: str = "",
                    discover: "DiscoverTools | None" = None, tools_of: "ToolsOf | None" = None) -> AgentOutcome:
     """One answer for `text`, with up to `max_rounds` rounds of tools. `history` comes from transcript()."""
     try:
@@ -262,7 +281,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
     except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
         candidates = []
 
-    system = _system(candidates, handle, instructions)
+    system = _system(candidates, handle, instructions, tz)
     turns = list(history)
     if turns and turns[-1].get("role") == "user" and str(turns[-1].get("content") or "").endswith(text.strip()):
         turns.pop()                                  # the message is already the last turn (it synced before this call)
@@ -290,7 +309,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
 
 
 async def stream_answer(text: str, history: list[dict[str, Any]], *, model_stream: ModelStream, find_tools: FindTools,
-                        use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "",
+                        use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "", tz: str = "",
                    discover: "DiscoverTools | None" = None, tools_of: "ToolsOf | None" = None) -> AsyncIterator[tuple[str, Any]]:
     """The same answer as converse(), streamed: yields ("delta", piece) as the model produces it, then exactly one
     ("final", AgentOutcome). A tool round is buffered (the model's content before a tool call is normally empty), then the
@@ -300,7 +319,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
         candidates = []
 
-    system = _system(candidates, handle, instructions)
+    system = _system(candidates, handle, instructions, tz)
     turns = list(history)
     if turns and turns[-1].get("role") == "user" and str(turns[-1].get("content") or "").endswith(text.strip()):
         turns.pop()
