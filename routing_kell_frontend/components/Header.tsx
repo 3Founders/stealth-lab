@@ -1,5 +1,6 @@
 "use client";
 import Wordmark from "@/components/Wordmark";
+import ThemeToggle from "@/components/ThemeToggle";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -140,6 +141,7 @@ export default function Header() {
             <Wordmark priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{navLinks.map(item)}</nav>
+          <ThemeToggle className="nav-theme" />
           {signedIn === undefined || (signedIn && username === undefined) ? (
             // Session resolution is async (Supabase's own session read, then a
             // real network round trip to fetch the profile that decides

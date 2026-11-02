@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { roomName } from "@/components/chat/bare";
+import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
 import { searchMessages, snippet } from "@/lib/chat/search";
 import type { GroupMessage } from "@/lib/chat/types";
 
@@ -19,6 +20,7 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
+  const slide = useSlideHighlight();
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +56,7 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
           role="combobox" aria-expanded aria-controls={listId} aria-activedescendant={count ? `${listId}-${idx}` : undefined} aria-autocomplete="list" autoComplete="off"
         />
         <label className="dg-search-here small"><input type="checkbox" checked={here} onChange={(e) => { setHere(e.target.checked); setActive(0); }} /> Only {roomName(currentRoom)}</label>
-        <ul id={listId} role="listbox" className="dg-search-list">
+        <ul id={listId} role="listbox" className="dg-search-list" ref={slide('li[role="option"]')}>
           {q.trim() === "" && roomRows.map((r, i) => (
             <li key={r} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx} onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
               <b>{roomName(r)}</b><span className="dim small">Open room</span>

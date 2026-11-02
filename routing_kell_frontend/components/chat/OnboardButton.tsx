@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatGPTLogo, ClaudeLogo, CursorLogo } from "@/components/chat/brand";
 import Popover from "@/components/chat/Popover";
+import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
 
 export type OnboardTarget = "code" | "claude-web" | "chatgpt";
 export interface OnboardResult { text: string; openUrl?: string }
@@ -23,6 +24,7 @@ export default function OnboardButton({ onOnboard, className = "" }: { onOnboard
   const [done, setDone] = useState<OnboardTarget | null>(null);
   const [shown, setShown] = useState("");
   const box = useRef<HTMLDivElement>(null);
+  const slide = useSlideHighlight();
   const trigger = useRef<HTMLButtonElement>(null);
   const pop = useRef<HTMLDivElement>(null);
   const timer = useRef<number | undefined>(undefined);
@@ -62,7 +64,7 @@ export default function OnboardButton({ onOnboard, className = "" }: { onOnboard
         </svg>
       </button>
       <Popover anchor={trigger} open={menu} matchWidth popRef={pop}>
-        <div className="dg-onboard-menu" role="menu" aria-label="Which agent?">
+        <div className="dg-onboard-menu" role="menu" aria-label="Which agent?" ref={slide('button[role="menuitem"]', 'button[role="menuitem"]:focus')}>
           {CHOICES.map((c) => (
             <button key={c.id} type="button" role="menuitem" onClick={() => void go(c.id)}>
               <span className="dg-onboard-logos" aria-hidden="true">{c.logos}</span>

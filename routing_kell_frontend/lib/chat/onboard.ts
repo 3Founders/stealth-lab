@@ -9,7 +9,7 @@ export type OnboardKind = "code" | "claude-web" | "chatgpt";
 
 /** The pages where each web tool adds a custom connector (the same links /connect uses). */
 export const CONNECTOR_PAGES: Record<"claude-web" | "chatgpt", string> = {
-  "claude-web": "https://claude.ai/settings/connectors",
+  "claude-web": "https://claude.ai/new#customize/connectors",
   "chatgpt": "https://chatgpt.com/#settings/Connectors",
 };
 
@@ -31,13 +31,13 @@ export function onboardPrompt(a: { name: string; room: string; url?: string | nu
         `   - Cursor and others: add a remote MCP server named kell with that address.\n` +
         `   Sign in when asked (the same Google or GitHub account as the kell website), and allow the room tools.`
       : "1. Connect the kell MCP server if it is not connected yet (the address is on the Connect page of the kell website), and sign in.")
-    : `1. kell's connector should already be added in ${kind === "claude-web" ? "Claude" : "ChatGPT"} (Settings, Connectors) and switched on for this chat. If it is not, tell me and stop.`;
+    : `1. kell's connector should already be added in ${kind === "claude-web" ? "Claude" : "ChatGPT"} (${kind === "claude-web" ? "Customize, Connectors" : "Settings, Connectors"}) and switched on for this chat. If it is not, tell me and stop.`;
   return [
     `You are being onboarded as an agent in a kell room. Do these steps yourself, then tell me when you are ready.`,
     ``,
     connect,
     `2. Your name is "${a.name}" and the room is "${a.room}". Check your kell inbox as ${a.name} (the tool is delegate_inbox, with agent="${a.name}") and keep checking it for work. People wake you by writing @${a.name} in the room.`,
-    `3. Read the room with room_list and room_read, and reply with room_post. Do not post anything yet; wait to be mentioned.`,
+    `3. Find the room with room_list, read it with room_read, then post one line with room_post: "${a.name} is connected." so I can see it worked. After that, speak only when mentioned.`,
     ``,
     ROOM_PROMPT,
   ].join("\n");
@@ -46,7 +46,7 @@ export function onboardPrompt(a: { name: string; room: string; url?: string | nu
 /** For Claude on the web and ChatGPT: the connector address to paste into their "Add custom connector" form, and what to say after. */
 export function connectorInstructions(a: { name: string; room: string; url?: string | null; kind: "claude-web" | "chatgpt" }): string {
   const url = a.url === undefined ? connectorUrl() : a.url;
-  const where = a.kind === "claude-web" ? "Claude: Settings, Connectors, Add custom connector" : "ChatGPT: Settings, Connectors (turn on developer mode), Add a connector";
+  const where = a.kind === "claude-web" ? "Claude: Customize, Connectors, Add custom connector" : "ChatGPT: Settings, Connectors (turn on developer mode), Add a connector";
   return [
     `kell connector address: ${url ?? "(open the Connect page on the kell website for the address)"}`,
     ``,

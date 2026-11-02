@@ -6,6 +6,7 @@ import { ACCEPT, dataUrlOf, prepareImage, whyNotImage } from "@/lib/chat/images"
 import type { ImageAttachment } from "@/lib/chat/types";
 import { CrossIcon, ImageIcon } from "@/components/chat/icons";
 import { KellMark } from "@/components/chat/brand";
+import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
 import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
 
 /**
@@ -27,6 +28,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
   const listId = useId();
+  const slide = useSlideHighlight();
   useEffect(() => {
     if (!draft || draft.n === 0) return;
     setText(draft.text); setCaret(draft.text.length); setActive(0); setDismissed(true);
@@ -130,7 +132,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         </div>
       )}
       {slashOpen && (
-        <ul id={listId} role="listbox" aria-label="Commands" className="dg-mentions dg-commands">
+        <ul id={listId} role="listbox" aria-label="Commands" className="dg-mentions dg-commands" ref={slide('li[role="option"]')}>
           {cmds.map((c, i) => (
             <li key={c.name} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx}
                 onMouseDown={(e) => { e.preventDefault(); pickCommand(c.name); }}>
@@ -140,7 +142,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         </ul>
       )}
       {!slashOpen && open && (
-        <ul id={listId} role="listbox" aria-label="Mention a member" className="dg-mentions">
+        <ul id={listId} role="listbox" aria-label="Mention a member" className="dg-mentions" ref={slide('li[role="option"]')}>
           {options.map((h, i) => (
             <li key={h} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx}
                 onMouseDown={(e) => { e.preventDefault(); pick(h); }}>

@@ -8,6 +8,7 @@ import SearchPalette from "@/components/chat/SearchPalette";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
 import CanvasPanel from "@/components/chat/CanvasPanel";
+import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
 import { captureFrom, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
 import { FilesContext } from "@/components/chat/FileCard";
@@ -131,6 +132,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const streamingRef = useRef(streaming);
   streamingRef.current = streaming;
   const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
   const [backing, setBacking] = useState<Backing | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false); // phones: the sidebar is a drawer
   const [manageOpen, setManageOpen] = useState(false);
@@ -196,10 +199,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [queueView, setQueueView] = useState<Queues>({});
   const askKellRef = useRef<((r: string, text: string, who?: string) => Promise<void>) | null>(null);
   /** Copy a message's text: to the clipboard, with a small notice as feedback. */
-  const copyRoomText = useCallback(async (t: string) => {
-    if (!t) return;
-    try { await navigator.clipboard.writeText(t); note("Copied."); }
-    catch { note("Copying was blocked by the browser."); }
+  const copyRoomText = useCallback(async (t: string): Promise<boolean> => {
+    if (!t) return true;
+    try { await navigator.clipboard.writeText(t); return true; }       // success is shown by the button itself (tick); no room notice
+    catch { note("Copying was blocked by the browser."); return false; }
   }, [note]);
   /** Ask a relay agent the same task again: a new task, the old one stays as it ended. */
   const resendTask = useCallback(async (t: RelayTask) => {
@@ -212,6 +215,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, [api, note]);
   /** Asks an agent to answer in this room. Every agent is kell: "@kell" is the default one, any other handle is an instance of it. */
   const askKell = useCallback(async (r: string, text: string, who: string = "@kell") => {
+    if (pausedRef.current) { note("Agents are paused. Resume them from the menu to get an answer.", r); return; }
     const key = `${r}|${who}`;
     if (askingKell.current.has(key)) {                 // still answering: keep what was sent and ask once it has finished
       queues.current = enqueue(queues.current, key, text);
@@ -525,7 +529,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <MessageActions
                   copyText={texts.join("\n\n")}
                   retryText={prompt || undefined}
-                  onCopy={(t) => void copyRoomText(t)}
+                  onCopy={(t) => copyRoomText(t)}
                   onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
                   retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
                 />
@@ -558,7 +562,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               <div className="dg-result">
                 <div className="dg-meta">
                   <b>{nameOf(handle)}</b><span className="dg-badge">agent</span>
-                  <MessageActions copyText={task.result} onCopy={(t) => void copyRoomText(t)} />
+                  <MessageActions copyText={task.result} onCopy={(t) => copyRoomText(t)} />
                 </div>
                 <div className="dg-body"><Markdown text={task.result} /></div>
               </div>
@@ -978,6 +982,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{shownName(room)}</h1>
+          <ThemeToggle className="dg-theme" />
         </header>
         {tempRef.current.has(room) && <div className="dg-temp-note" role="status">Temporary chat: not saved, not synced, and gone when you close this page.</div>}
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}

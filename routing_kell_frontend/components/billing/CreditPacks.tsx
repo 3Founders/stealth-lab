@@ -141,7 +141,7 @@ export default function CreditPacks({ api, session, buy = true, checkout = openC
         <div className="pack-grid" style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", marginTop: 14 }} role="group" aria-label="Credit packs">
           {cards.map((p) => (
             <article key={p.id} className="card pack-card" aria-label={`${inr(p.priceInr)} pack`} data-pack={p.id}
-              style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "16px 18px", display: "grid", gap: 6, alignContent: "start" }}>
+              style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "var(--glass)", borderRadius: 10, padding: "16px 18px", display: "grid", gap: 6, alignContent: "start" }}>
               <p><b style={{ fontSize: 24, fontWeight: 400 }}>{inr(p.priceInr)}</b></p>
               {buy && ok && !showInfoOnly && (
                 <button type="button" className="btn-line" disabled={Boolean(busy) || locked} onClick={() => void purchase(p)} aria-label={`Add ${credits(p.creditUsd)} for ${inr(p.priceInr)}`}>

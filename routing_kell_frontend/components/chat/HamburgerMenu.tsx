@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { SettingsIcon } from "@/components/chat/icons";
 import NotificationPanel, { type AlertsProps } from "@/components/chat/NotificationBell";
 import Popover from "@/components/chat/Popover";
+import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
 import type { SectionId } from "@/components/chat/SettingsDialog";
 
 /**
@@ -27,6 +28,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
   const unread = alerts ? alerts.notes.filter((n) => !n.read).length : 0;
   const box = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const slide = useSlideHighlight();
   const pop = useRef<HTMLDivElement>(null);          // the menu is drawn in a portal (Popover), so it is not inside `box`
 
   useEffect(() => {
@@ -60,7 +62,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
         <NotificationPanel {...alerts} onClose={() => close(false)} onBack={() => setView("menu")} />
       )}
       {view === "menu" && (
-        <div className="dg-menu-pop" role="menu" aria-label="Chat menu">
+        <div className="dg-menu-pop" role="menu" aria-label="Chat menu" ref={slide('[role="menuitem"]', '[role="menuitem"]:focus')}>
           {onSearch && <button type="button" role="menuitem" onClick={run(onSearch)}>Search<kbd>Ctrl K</kbd></button>}
           {onCanvas && <button type="button" role="menuitem" onClick={run(onCanvas)}>Canvas{canvasCount > 0 && <span className="dg-unread" aria-label={`${canvasCount} in this room`}>{canvasCount}</span>}</button>}
           {onTemporary && <button type="button" role="menuitem" onClick={run(onTemporary)}>New temporary room</button>}

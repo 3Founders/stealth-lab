@@ -18,7 +18,7 @@ function PlanCard({ p, buy, session, state, reload, orderCode }: { p: Plan; buy:
   const full = Boolean(p.maxRedemptions && (p.sold ?? 0) >= p.maxRedemptions);
   return (
     <article className={`card plan-card${p.recommended ? " plan-plus" : ""}`} aria-label={p.name} data-recommended={p.recommended ? "true" : undefined}
-      style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
+      style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "var(--glass)", borderRadius: 10, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
       <h3 className="h3" style={{ fontSize: 22 }}>{p.name}{p.recommended && <span className="plan-rec">Recommended</span>}</h3>
       <p><b style={{ fontSize: 28, fontWeight: 400 }}>{p.price}</b> <span className="small dim">{p.per}</span></p>
       {day && <p className="small dim">{day}</p>}

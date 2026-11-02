@@ -1,7 +1,9 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { applyTheme, readTheme, saveTheme, type Theme } from "@/lib/theme";
+import { useTheme } from "@/components/ThemeToggle";
+import { useSlideHighlight } from "@/components/chat/useSlideHighlight";
+import type { Theme } from "@/lib/theme";
 import NotificationSettings from "@/components/chat/NotificationSettings";
 import { DEFAULT_CHAT_PREFS, type ChatPrefs, type TextSize } from "@/lib/chat/prefs";
 import type { Prefs } from "@/lib/chat/notify";
@@ -9,16 +11,15 @@ import type { Prefs } from "@/lib/chat/notify";
 import { usePlan } from "@/components/billing/PlanBadge";
 import { planText } from "@/lib/chat/plan";
 
-const THEMES: Array<[Theme, string]> = [["system", "Same as device"], ["light", "Light"], ["dark", "Dark"]];
+const THEMES: Array<[Theme, string]> = [["auto", "Automatic"], ["light", "Light"], ["dark", "Dark"]];
 
-/** Light, dark, or the device's own setting. Applies at once and is remembered on this device. */
+/** Automatic (by the time of day where you are), light, or dark. Applies at once and is remembered on this device. */
 function ThemeChoice() {
-  const [theme, setTheme] = useState<Theme>("system");
-  useEffect(() => { setTheme(readTheme()); }, []);
-  const choose = (t: Theme) => { setTheme(t); applyTheme(t); saveTheme(t); };
+  const { mode: theme, set: choose } = useTheme();
   return (
     <fieldset className="dg-set-group">
       <legend>Appearance</legend>
+      <p className="small dim" style={{ margin: "0 0 6px" }}>Automatic follows the time where you are: dark from 7 in the evening until 7 in the morning.</p>
       <div className="dg-seg" role="radiogroup" aria-label="Appearance">
         {THEMES.map(([v, l]) => (
           <label key={v} data-on={theme === v}><input type="radio" name="dg-theme" checked={theme === v} onChange={() => choose(v)} />{l}</label>
@@ -62,6 +63,7 @@ export interface SettingsProps {
  * profile-photo question (the iOS sheet curve in globals.css).
  */
 export default function SettingsDialog(p: SettingsProps) {
+  const slide = useSlideHighlight();
   const dialog = useRef<HTMLDialogElement>(null);
   const tabs = useRef<Record<string, HTMLButtonElement | null>>({});
 
@@ -100,7 +102,7 @@ export default function SettingsDialog(p: SettingsProps) {
           <button type="button" className="dg-set-x" onClick={close} aria-label="Close settings">Done</button>
         </header>
         <div className="dg-set-body">
-          <nav className="dg-set-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+          <nav className="dg-set-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical" ref={slide('button[role="tab"]', 'button[role="tab"]:focus-visible')}>
             {SECTIONS.map((s, i) => (
               <button key={s.id} ref={(el) => { tabs.current[s.id] = el; }} type="button" role="tab" id={`dg-tab-${s.id}`} aria-selected={p.section === s.id} aria-controls={`dg-panel-${s.id}`}
                 tabIndex={p.section === s.id ? 0 : -1} onClick={() => p.onSection(s.id)} onKeyDown={(e) => tabKey(e, i)}>{s.label}</button>
@@ -147,9 +149,10 @@ export default function SettingsDialog(p: SettingsProps) {
               <section>
                 <h3>Agents and models</h3>
                 <p className="dg-set-lead">{p.agents.count} agent{p.agents.count === 1 ? "" : "s"} in your rooms.</p>
-                <p className="small"><b>Model for agents in this tab:</b> {p.agents.modelReady ? p.agents.modelText : "none set up yet"}. Change it in Chat with <b>+ Add agent</b>.</p>
-                <label className="dg-set-row"><input type="checkbox" checked={p.agents.paused} onChange={(e) => p.agents.onPause(e.target.checked)} /><span><b>Pause agents in this tab</b><small>They will not be woken until you resume.</small></span></label>
-                <p className="small dim">Agents in this tab hand off to each other at most {p.agents.maxHops} times before a person must step in. Agents on the relay stay on your account and keep working with this page closed.</p>
+                <p className="small"><b>Kell</b> is the default agent. An agent you add is another instance of Kell: the same models and tools, with its own name and, if you gave it any, its own instructions. They answer through keळ's server when you ask them.</p>
+                <p className="small"><b>Agents you connect</b> (Claude Code, Cursor, Claude on the web, ChatGPT) run on your side. They show as online for a minute after each time they check their keळ inbox, and as not connected until they do.</p>
+                <label className="dg-set-row"><input type="checkbox" checked={p.agents.paused} onChange={(e) => p.agents.onPause(e.target.checked)} /><span><b>Pause agents</b><small>Kell and its instances will not answer until you resume. Messages you send are still saved.</small></span></label>
+                <p className="small dim">Agents hand off to each other at most {p.agents.maxHops} times before a person must step in.</p>
               </section>
             )}
             {p.section === "account" && (

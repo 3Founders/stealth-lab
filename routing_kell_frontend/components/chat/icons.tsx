@@ -65,6 +65,25 @@ export function CopyIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+/** Copy worked: a tick (drawn in the success colour by the button that shows it). */
+export function CheckIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...base}>
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+/** Copy was refused: a ring with an exclamation mark (drawn in the critical colour by the button that shows it). */
+export function AlertIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...base}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4M12 16h.01" />
+    </svg>
+  );
+}
+
 /** Retry a message: an anticlockwise arrow re-entering the circle. */
 export function RetryIcon({ size = 14 }: { size?: number }) {
   return (

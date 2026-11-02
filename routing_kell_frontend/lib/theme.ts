@@ -1,23 +1,46 @@
-// Light, dark, or follow the device. The choice is kept on this device (localStorage) and applied as data-theme on <html>; with
-// "system" no attribute is set and the stylesheet follows prefers-color-scheme.
-export type Theme = "system" | "light" | "dark";
+// Light or dark. The default is automatic: dark in the evening and at night where the person is, light in the day, by the clock of the
+// device. They can pick Light or Dark instead; that choice is kept on this device (localStorage). The page always carries the theme
+// in effect as data-theme on <html>; the stylesheet reads only that.
+export type Theme = "auto" | "light" | "dark";
+export type Effective = "light" | "dark";
 export const THEME_KEY = "kell:theme";
+export const THEME_EVENT = "kell-theme";
 
-export const isTheme = (v: unknown): v is Theme => v === "system" || v === "light" || v === "dark";
+/** Dark from this hour in the evening until the morning hour, in the device's local time. */
+export const DARK_FROM_HOUR = 19;
+export const DARK_UNTIL_HOUR = 7;
 
+export const isTheme = (v: unknown): v is Theme => v === "auto" || v === "light" || v === "dark";
+
+/** The theme the clock asks for: 19:00 to 06:59 is dark. */
+export function autoTheme(now: Date = new Date()): Effective {
+  const h = now.getHours();
+  return h >= DARK_FROM_HOUR || h < DARK_UNTIL_HOUR ? "dark" : "light";
+}
+
+export function effectiveTheme(t: Theme, now: Date = new Date()): Effective {
+  return t === "auto" ? autoTheme(now) : t;
+}
+
+/** What is saved: "light", "dark", or "auto" for nothing saved or anything else (an older "system" choice counts as automatic). */
 export function readTheme(storage: Pick<Storage, "getItem"> | null = typeof localStorage === "undefined" ? null : localStorage): Theme {
-  try { const v = storage?.getItem(THEME_KEY); return isTheme(v) ? v : "system"; } catch { return "system"; }
+  try { const v = storage?.getItem(THEME_KEY); return v === "light" || v === "dark" ? v : "auto"; } catch { return "auto"; }
 }
 
-/** Puts the theme on <html>. "system" removes the attribute so the device's setting decides. */
-export function applyTheme(t: Theme, root: HTMLElement | null = typeof document === "undefined" ? null : document.documentElement): void {
-  if (!root) return;
-  if (t === "system") root.removeAttribute("data-theme"); else root.setAttribute("data-theme", t);
+/** Puts the theme in effect on <html>. */
+export function applyTheme(t: Theme, root: HTMLElement | null = typeof document === "undefined" ? null : document.documentElement, now: Date = new Date()): Effective {
+  const e = effectiveTheme(t, now);
+  root?.setAttribute("data-theme", e);
+  return e;
 }
 
-export function saveTheme(t: Theme, storage: Pick<Storage, "setItem"> | null = typeof localStorage === "undefined" ? null : localStorage): void {
-  try { storage?.setItem(THEME_KEY, t); } catch { /* storage blocked: the choice lasts until the page closes */ }
+export function saveTheme(t: Theme, storage: Pick<Storage, "setItem" | "removeItem"> | null = typeof localStorage === "undefined" ? null : localStorage): void {
+  try { if (t === "auto") storage?.removeItem(THEME_KEY); else storage?.setItem(THEME_KEY, t); } catch { /* storage blocked: the choice lasts until the page closes */ }
 }
 
-/** Runs in <head> before the page paints, so a dark page never flashes light first. Must stay in step with readTheme and applyTheme. */
-export const THEME_INIT = `try{var t=localStorage.getItem('${THEME_KEY}');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`;
+/** Runs in <head> before the page paints, so a dark page never flashes light first. ?theme=dark or ?theme=light shows that theme for this
+ * visit only. Must stay in step with readTheme and autoTheme. */
+export const THEME_INIT =
+  `try{var q=new URLSearchParams(location.search).get('theme'),t=localStorage.getItem('${THEME_KEY}'),h=new Date().getHours();` +
+  `var e=(q==='light'||q==='dark')?q:(t==='light'||t==='dark')?t:(h>=${DARK_FROM_HOUR}||h<${DARK_UNTIL_HOUR})?'dark':'light';` +
+  `document.documentElement.setAttribute('data-theme',e)}catch(e){}`;

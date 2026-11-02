@@ -11,6 +11,7 @@ import Footer from "@/components/Footer";
 import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
 import { THEME_INIT } from "@/lib/theme";
+import { ThemeWatcher } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
   title: { default: "keळ: Cut LLM API bills by 50% with cache retention and tool search.", template: "%s · keळ" },
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="frame"><i /><i /><i /><i /><i /></div>
         </div>
         <SmoothScroll />
+        <ThemeWatcher />
         <Telemetry />
         <OnboardingGate />
         <PhotoPrompt />

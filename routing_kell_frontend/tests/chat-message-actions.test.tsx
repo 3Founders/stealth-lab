@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// The copy/retry icon actions on a chat message: copy always offered, retry only when a re-run makes sense, and the
-// icons come from one family (components/chat/icons.tsx, Lucide's copy and rotate-ccw on the house stroke).
+// The copy/retry icon actions on a chat message: copy always offered, retry only when a re-run makes sense, the icons come from one family
+// (components/chat/icons.tsx), and copy turns into a tick (or an alert when refused) in place, announced to screen readers, then reverts.
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
@@ -21,7 +21,9 @@ async function mount(node: React.ReactNode) {
 }
 const click = async (el: Element) => { await act(async () => { (el as HTMLElement).click(); }); await flush(); };
 const byLabel = (t: string) => host!.querySelector(`button[aria-label="${t}"]`);
+const stateOf = () => byLabel("Copy message")!.getAttribute("data-state");
 
+const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; });
 
 describe("message actions (copy / retry)", () => {
@@ -47,5 +49,29 @@ describe("message actions (copy / retry)", () => {
     expect(byLabel("Ask again")).toBeNull();
     await click(byLabel("Copy message")!);
     expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("turns into a tick, announces it, and reverts after a moment", async () => {
+    await mount(<MessageActions copyText="x" onCopy={() => true} holdMs={60} />);
+    expect(stateOf()).toBe("idle");
+    await click(byLabel("Copy message")!);
+    expect(stateOf()).toBe("copied");
+    expect(host!.querySelector('[role="status"]')!.textContent).toBe("Copied");
+    await wait(120);
+    expect(stateOf()).toBe("idle");
+    expect(host!.querySelector('[role="status"]')!.textContent).toBe("");
+  });
+
+  it("shows an alert, and says so, when the copy was refused (returned false or threw)", async () => {
+    await mount(<MessageActions copyText="x" onCopy={() => false} holdMs={60} />);
+    await click(byLabel("Copy message")!);
+    expect(stateOf()).toBe("failed");
+    expect(host!.querySelector('[role="status"]')!.textContent).toBe("Copying failed");
+    await wait(120);
+    expect(stateOf()).toBe("idle");
+
+    await mount(<MessageActions copyText="y" onCopy={() => { throw new Error("blocked"); }} />);
+    await click(byLabel("Copy message")!);
+    expect(stateOf()).toBe("failed");
   });
 });

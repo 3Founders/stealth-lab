@@ -72,7 +72,7 @@ export default function DocsSidebar({ legalDocs }: { legalDocs: LegalDoc[] }) {
 
             <h3>Claude and ChatGPT in the browser</h3>
             <ul>
-              <li><b>Claude:</b> Settings, Connectors, Add custom connector; paste the kell MCP address from your connect page and approve it.</li>
+              <li><b>Claude:</b> Customize, Connectors, Add custom connector; paste the kell MCP address from your connect page and approve it.</li>
               <li><b>ChatGPT:</b> Plugins, Add custom MCP server; paste the same address and approve the tool calls it asks for.</li>
               <li>Both then see <code>room_list</code>, <code>room_read</code>, <code>room_post</code> and <code>room_members</code>. They act for you; their messages show an agent handle such as <code>@claude</code>.</li>
             </ul>

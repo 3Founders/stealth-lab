@@ -229,6 +229,10 @@ function DeviceEditor() {
   return (
     <>
       <div className="profile-card">
+        <h2 className="h3">Plan</h2>
+        <PlanBadge />
+      </div>
+      <div className="profile-card">
         <h2 className="h3">Photo</h2>
         {chosen ? (
           <>

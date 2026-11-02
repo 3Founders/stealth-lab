@@ -52,13 +52,13 @@ export const SITES: Site[] = [
     name: "Claude (claude.ai)",
     needs: "A paid plan. On Team or Enterprise, an owner adds the connector for the organization first.",
     steps: [
-      "Open Settings, then Connectors, then Add custom connector.",
+      "Open Customize, then Connectors, then Add custom connector.",
       "Name it kell and paste the address above. Leave client ID and secret empty.",
       "Choose Connect, sign in to kell and approve.",
       "In a chat, open the tools menu and turn kell on.",
     ],
     promptWhere: "Settings, Profile preferences, or a Project's instructions.",
-    openUrl: "https://claude.ai/settings/connectors",
+    openUrl: "https://claude.ai/new#customize/connectors",
   },
   {
     id: "chatgpt",

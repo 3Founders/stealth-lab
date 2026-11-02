@@ -802,7 +802,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 }
 /* In the portal the menu sits in a fixed box that Popover positions: the old absolute offsets do not apply. */
 .dg-portal { padding: 0 !important; margin: 0 !important; width: 0 !important; height: 0 !important; overflow: visible; }
-.dg-pop .dg-menu-pop, .dg-pop .dg-bell-pop, .dg-pop .dg-bell-pop--menu, .dg-pop .dg-onboard-menu { position: static; left: auto; right: auto; top: auto; }
+.dg-pop .dg-menu-pop, .dg-pop .dg-bell-pop, .dg-pop .dg-bell-pop--menu, .dg-pop .dg-onboard-menu { position: relative; left: auto; right: auto; top: auto; }
 .dg-pop .dg-onboard-menu { width: 100%; }
 .dg-pop[data-up] .dg-menu-pop, .dg-pop[data-up] .dg-bell-pop, .dg-pop[data-up] .dg-onboard-menu { transform-origin: bottom left; }
 /* The dialogs' dim layer is a plain scrim: a blur over the whole window is the costly kind of glass. */
@@ -851,3 +851,67 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-canvas-card .dg-file-kind { background: #b97700; }
 @media (prefers-reduced-motion: reduce) { .dg-canvas { animation: none; } }
 @media (prefers-reduced-transparency: reduce) { .dg-canvas { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); } }
+
+/* ---- Menus and popups: the row under the pointer or the keyboard is yellow, the same everywhere (the slash menu's look) -------- */
+.dg-page .dg-mentions li:hover, .dg-page .dg-mentions li[data-active="true"],
+.dg-page .dg-search-list li:hover, .dg-page .dg-search-list li[data-active="true"],
+.dg-page .dg-menu-pop > button:hover, .dg-page .dg-menu-pop > a:hover, .dg-page .dg-menu-pop > button:focus-visible, .dg-page .dg-menu-pop > a:focus-visible,
+.dg-page .dg-onboard-menu button:hover, .dg-page .dg-onboard-menu button:focus-visible,
+.dg-page .dg-set-nav button:hover, .dg-page .dg-set-nav button:focus-visible, .dg-page .dg-manage-nav button:hover, .dg-page .dg-manage-nav button:focus-visible,
+.dg-page .dg-bell-list button:hover, .dg-page .dg-bell-list button:focus-visible {
+  background: var(--yellow); color: var(--on-yellow, #171717); box-shadow: none; transform: none; outline: none;
+}
+/* what sits inside a yellow row stays readable in either theme */
+.dg-page .dg-mentions li:hover *, .dg-page .dg-mentions li[data-active="true"] *, .dg-page .dg-search-list li:hover *, .dg-page .dg-search-list li[data-active="true"] *,
+.dg-page .dg-menu-pop > button:hover *, .dg-page .dg-menu-pop > a:hover *, .dg-page .dg-onboard-menu button:hover *, .dg-page .dg-set-nav button:hover *,
+.dg-page .dg-bell-list button:hover * { color: var(--on-yellow, #171717); }
+.dg-page .dg-menu-pop > button:hover kbd, .dg-page .dg-menu-pop > button:focus-visible kbd { color: #4a4a45; }
+/* the selected item in the Settings and Manage rooms lists keeps its glass pill, with a yellow edge */
+.dg-page .dg-set-nav button[aria-selected="true"], .dg-page .dg-manage-nav button[aria-selected="true"] { background: var(--dg-glass-strong); color: var(--ink); box-shadow: 0 0 0 2px var(--yellow), var(--dg-lift); }
+.dg-page .dg-set-nav button[aria-selected="true"]:hover, .dg-page .dg-manage-nav button[aria-selected="true"]:hover { background: var(--yellow); color: var(--on-yellow, #171717); }
+
+/* ---- Glass on the slash menu and the dialogs ----------------------------------------------------------------------------------- */
+.dg-page .dg-mentions, .dg-page .dg-commands { background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(12px) saturate(1.4); backdrop-filter: blur(12px) saturate(1.4); border: 1px solid var(--dg-hairline); box-shadow: var(--dg-float); }
+.dg-page .dg-set-frame, .dg-page .dg-manage-frame { background: var(--dg-glass-strong); -webkit-backdrop-filter: blur(12px) saturate(1.4); backdrop-filter: blur(12px) saturate(1.4); border: 1px solid var(--dg-hairline); box-shadow: var(--dg-float); color: var(--ink); }
+.dg-page .dg-set-nav, .dg-page .dg-set-head, .dg-page .dg-manage-nav, .dg-page .dg-manage-head { background: transparent; }
+.dg-page .dg-set-panel, .dg-page .dg-set-cards > div, .dg-page .dg-set-panel .dg-bell-set-body { background: transparent; color: var(--ink); }
+.dg-page .dg-set-cards > div, .dg-page .dg-set-panel .dg-bell-set-body { background: var(--dg-glass); }
+.dg-settings { color: var(--ink); background: transparent; }
+.dg-page .dg-seg label { color: var(--ink); }
+.dg-page .dg-seg label[data-on="true"] { background: var(--yellow); color: var(--on-yellow, #171717); box-shadow: var(--dg-lift); }
+
+/* ---- The sliding highlight (components/chat/useSlideHighlight.ts) -------------------------------------------------------------
+   One yellow shape moves between rows on the Apple ease. The rows themselves stay transparent; only the shape is yellow. The move is a
+   transform transition (cheap); the size and the first placement are not animated. */
+.dg-page .dg-slide { position: relative; isolation: isolate; }
+.dg-pop .dg-slide { position: relative; }
+.dg-slide::before {
+  content: ""; position: absolute; left: 0; top: 0; z-index: -1; pointer-events: none;
+  width: var(--hl-w, 0); height: var(--hl-h, 0); border-radius: var(--dg-r-btn, 6px); background: var(--yellow);
+  transform: translate(var(--hl-x, 0), var(--hl-y, 0)); opacity: var(--hl-on, 0);
+  transition: transform 240ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)), opacity 140ms ease;
+}
+.dg-slide[data-snap]::before { transition: none; }
+/* rows over the moving shape: transparent, with the dark text a yellow shape needs */
+.dg-page .dg-slide > li, .dg-page .dg-slide > button, .dg-page .dg-slide > a { position: relative; background: transparent; }
+.dg-page .dg-slide > li:hover, .dg-page .dg-slide > li[data-active="true"], .dg-page .dg-slide > button:hover, .dg-page .dg-slide > button:focus-visible, .dg-page .dg-slide > a:hover,
+.dg-page .dg-menu-pop.dg-slide > button:hover, .dg-page .dg-onboard-menu.dg-slide button:hover, .dg-page .dg-set-nav.dg-slide button:hover, .dg-page .dg-mentions.dg-slide li:hover {
+  background: transparent !important; box-shadow: none; color: var(--on-yellow, #171717);
+}
+.dg-page .dg-set-nav.dg-slide button[aria-selected="true"]:hover { background: var(--dg-glass-strong) !important; }
+.dg-page .dg-set-nav.dg-slide button { position: relative; }
+.dg-page .dg-onboard-menu.dg-slide button { position: relative; background: transparent; }
+@media (prefers-reduced-motion: reduce) { .dg-slide::before { transition: none; } }
+
+/* The copy icon becomes a tick (success colour) or an alert (critical colour) in place: three icons stacked, one visible, cross-faded with
+   opacity and a small scale (transform), instantly with reduced motion. The button never changes size. */
+.dg-act-copy { position: relative; }
+.dg-act-copy .dg-act-ico { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; transform: scale(.7); transition: opacity 160ms ease, transform 200ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
+.dg-act-copy[data-state="idle"] .dg-act-ico[data-for="idle"], .dg-act-copy[data-state="copied"] .dg-act-ico[data-for="copied"], .dg-act-copy[data-state="failed"] .dg-act-ico[data-for="failed"] { opacity: 1; transform: none; }
+.dg-act-copy[data-state="copied"] { color: #2e9e5b; }
+.dg-act-copy[data-state="failed"] { color: #b3261e; }
+:root[data-theme="dark"] .dg-act-copy[data-state="copied"] { color: #6ee7a0; }
+:root[data-theme="dark"] .dg-act-copy[data-state="failed"] { color: #ff8a80; }
+@media (prefers-reduced-motion: reduce) { .dg-act-copy .dg-act-ico { transition: none; transform: none; } }
+.dg-onboard[data-state="copied"] .dg-onboard-copy { color: #6ee7a0; }
+.dg-onboard[data-state="failed"] .dg-onboard-copy { color: #ff8a80; }

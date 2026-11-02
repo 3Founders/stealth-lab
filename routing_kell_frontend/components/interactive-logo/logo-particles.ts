@@ -2,6 +2,9 @@ import type { LogoGeometry } from "./types";
 import { buildLocalEdges, type Edges } from "./spatial-grid";
 
 const ALPHA_BUCKETS = 6;
+/** The glow around a golden dot: a soft radial sprite, drawn once and stamped under each dot (cheap: no per-frame blur filter). */
+const GLOW_SPRITE_PX = 64;
+const GLOW_RADIUS_FACTOR = 6;
 // Minimum divisor for the cursor's push direction -- see step()'s comment.
 const DIRECTION_FLOOR = 10;
 
@@ -27,6 +30,29 @@ export interface ParticleConfig {
  * from that target -- the geometry itself never changes after init/resize.
  */
 export class LogoParticleSystem {
+  private glowSprite: HTMLCanvasElement | null = null;
+  private glowFor = "";
+
+  /** A yellow radial glow, rebuilt only when the yellow changes (a theme switch does not change it, but a different --yellow would). */
+  private glow(): HTMLCanvasElement | null {
+    if (typeof document === "undefined") return null;
+    if (this.glowSprite && this.glowFor === this.cfg.yellowRGB) return this.glowSprite;
+    const c = document.createElement("canvas");
+    c.width = c.height = GLOW_SPRITE_PX;
+    const g = c.getContext("2d");
+    if (!g) return null;
+    const mid = GLOW_SPRITE_PX / 2;
+    const grad = g.createRadialGradient(mid, mid, 0, mid, mid, mid);
+    grad.addColorStop(0, `rgba(${this.cfg.yellowRGB},0.75)`);
+    grad.addColorStop(0.35, `rgba(${this.cfg.yellowRGB},0.28)`);
+    grad.addColorStop(1, `rgba(${this.cfg.yellowRGB},0)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, GLOW_SPRITE_PX, GLOW_SPRITE_PX);
+    this.glowSprite = c;
+    this.glowFor = this.cfg.yellowRGB;
+    return c;
+  }
+
   readonly count: number;
   x: Float32Array;
   y: Float32Array;
@@ -224,6 +250,19 @@ export class LogoParticleSystem {
     }
     ctx.fillStyle = `rgba(${this.cfg.inkRGB},0.9)`;
     ctx.fill();
+
+    // A glow under every golden dot; it brightens a little when the cursor stirs the dot.
+    const sprite = this.glow();
+    if (sprite) {
+      const prev = ctx.globalAlpha;
+      for (let i = 0; i < this.count; i++) {
+        if (!this.isAccent[i]) continue;
+        const gr = (this.radius[i] + this.activation[i] * 0.6) * GLOW_RADIUS_FACTOR;
+        ctx.globalAlpha = Math.min(1, 0.7 + this.activation[i] * 0.3);
+        ctx.drawImage(sprite, x[i] - gr, y[i] - gr, gr * 2, gr * 2);
+      }
+      ctx.globalAlpha = prev;
+    }
 
     ctx.beginPath();
     for (let i = 0; i < this.count; i++) {

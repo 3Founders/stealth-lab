@@ -21,7 +21,7 @@ describe("Connect agent", () => {
     expect(t.startsWith(`kell connector address: ${URL}`)).toBe(true);
     expect(t).toContain("developer mode");
     expect(t).toContain("kell's connector should already be added in ChatGPT");
-    expect(connectorInstructions({ name: "a", room: "#r", url: URL, kind: "claude-web" })).toContain("Claude: Settings, Connectors, Add custom connector");
+    expect(connectorInstructions({ name: "a", room: "#r", url: URL, kind: "claude-web" })).toContain("Claude: Customize, Connectors, Add custom connector");
   });
 });
 
