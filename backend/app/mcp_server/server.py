@@ -1733,6 +1733,14 @@ app = _oauth.wrap_app(
     server.streamable_http_app(transport_security=_transport_security(), stateless_http=MCP_STATELESS),
     settings, server_origin=_ISSUER_URL, public_origin=_PUBLIC_ORIGIN)
 
+# Live editing of room documents over a WebSocket (services/room_docs.py, mcp_server/room_doc_ws.py). Only the socket path is handled
+# here; every other request goes to the app unchanged.
+from app.mcp_server import room_doc_ws as _room_doc_ws  # noqa: E402
+
+app = _room_doc_ws.DocsSocketGate(
+    app, _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"))
+
 
 def _resolve_caller_identity(fallback: str) -> str:
     """Real caller-identity resolution for write-path attribution

@@ -38,3 +38,15 @@ describe("HTML artifacts", () => {
     expect(artifactTitle("<p>x</p>", "  title=Deck  ")).toBe("Deck");
   });
 });
+
+describe("artifact names", () => {
+  it("never shows a number or a key as the name; it reads the page's own title or heading instead", async () => {
+    const { artifactTitle, isRealName } = await import("@/lib/chat/artifacts");
+    for (const bad of ["3", "12", "1-2", "1.html", "9f8b2c1d-1111-4222-8333-444455556666", "a3f9c2d4e5b6a7c8d9e0"]) expect(isRealName(bad)).toBe(false);
+    for (const good of ["Launch deck", "Pricing page", "index.html landing"]) expect(isRealName(good)).toBe(true);
+    expect(artifactTitle("<html><head><title>Q3 Review</title></head></html>", "3")).toBe("Q3 Review");
+    expect(artifactTitle("<h1>Welcome <b>home</b></h1>", "")).toBe("Welcome home");
+    expect(artifactTitle("<div>hi</div>", "7")).toBe("HTML artifact");
+    expect(artifactTitle("<div>hi</div>", 'title="Sales deck"')).toBe("Sales deck");
+  });
+});

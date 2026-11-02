@@ -30,7 +30,8 @@ describe("merge3 (the same merge the server does)", () => {
   });
   it("an enormous document falls back to yours instead of freezing the page", () => {
     const big = Array.from({ length: 2500 }, (_, i) => `line ${i}\n`).join("");
-    expect(merge3(big, big + "mine\n", big + "theirs\n")).toEqual({ text: big + "mine\n", clash: true });
+    const mine = big.replace("line 0\n", "mine\n"), theirs = big.replace("line 0\n", "theirs\n");   // both rewrote the same first line
+    expect(merge3(big, mine, theirs)).toEqual({ text: mine, clash: true });
   });
 });
 
@@ -39,5 +40,18 @@ describe("mapCaret", () => {
     expect(mapCaret("hello world", "hello brave world", 3)).toBe(3);
     expect(mapCaret("hello world", "hello brave world", 11)).toBe(17);
     expect(mapCaret("abc", "abc", 2)).toBe(2);
+  });
+});
+
+describe("character-level merge (two people typing in one paragraph)", () => {
+  const b = "The quick brown fox jumps.";
+  it("changes in different places of one line both apply", () => {
+    expect(merge3(b, "The quick red fox jumps.", "The quick brown fox jumps over.")).toEqual({ text: "The quick red fox jumps over.", clash: false });
+  });
+  it("two insertions at the same point keep both, theirs first", () => {
+    expect(merge3(b, "AB" + b, "CD" + b)).toEqual({ text: "CDAB" + b, clash: false });
+  });
+  it("changes to the same word are a clash and yours wins that line", () => {
+    expect(merge3("one two\n", "one red\n", "one green\n").clash).toBe(true);
   });
 });

@@ -23,9 +23,25 @@ const FENCE = /```html[ \t]*([^\n]*)\n([\s\S]*?)```/g;
 /** The card's title: a label after the ```html fence (title="Deck"), else the page's <title>, else a plain name. */
 export function artifactTitle(html: string, label = ""): string {
   const named = label.trim().replace(/^title\s*=\s*["']?/i, "").replace(/["']$/, "").trim();
-  if (named) return named.slice(0, 80);
+  if (isRealName(named)) return named.slice(0, 80);
   const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  return m && m[1].trim() ? m[1].trim().replace(/\s+/g, " ").slice(0, 80) : "HTML artifact";
+  const fromTitle = m ? m[1].replace(/<[^>]*>/g, "").trim().replace(/\s+/g, " ") : "";
+  if (isRealName(fromTitle)) return fromTitle.slice(0, 80);
+  const h = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+  const fromHeading = h ? h[1].replace(/<[^>]*>/g, "").trim().replace(/\s+/g, " ") : "";
+  return isRealName(fromHeading) ? fromHeading.slice(0, 80) : "HTML artifact";
+}
+
+/** A label that reads as a name. A bare number, a file name like 1.html, or a key-looking string (hex, a UUID, a long token) is not one. */
+export function isRealName(s: string): boolean {
+  const t = s.trim();
+  if (t.length < 2) return false;
+  if (/^[\d\s._-]+$/.test(t)) return false;                                  // 3, 12, 1-2
+  if (/^[\w-]+\.(html?|txt|md)$/i.test(t) && !/[a-z]{3}/i.test(t.replace(/\.[a-z]+$/i, ""))) return false;
+  if (/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(t)) return false;  // a UUID
+  if (/^[0-9a-f]{16,}$/i.test(t)) return false;                              // a hash
+  if (/^[A-Za-z0-9_-]{20,}$/.test(t) && !/[aeiou]{1}[^aeiou]{0,4}[aeiou]/i.test(t.slice(0, 6))) return false; // a long token with no word in it
+  return true;
 }
 
 /** The message split into ordinary text and the HTML artifacts it carries. Everything else is left exactly as written. */

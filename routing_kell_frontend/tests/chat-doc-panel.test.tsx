@@ -65,7 +65,7 @@ describe("docs panel", () => {
     expect(editor().value).toBe("# Plan\n\nIntro, mine.\n\nStep one.\n\nStep two, theirs.\n");
   });
 
-  it("when the server merged two saves it shows the merged text and says so", async () => {
+  it("when the server merged two saves it shows the merged text quietly (status only, no banner)", async () => {
     const f = fakeApi();
     f.api.save = vi.fn(async () => { f.set("# Plan\n\nMerged text.\n", 3); return { version: 3, merged: true, clash: false, body: "# Plan\n\nMerged text.\n" }; }) as never;
     const { api } = f;
@@ -73,7 +73,8 @@ describe("docs panel", () => {
     await type("# Plan\n\nMy text.\n");
     await wait(80);
     expect(editor().value).toBe("# Plan\n\nMerged text.\n");
-    expect(host!.querySelector(".dg-doc-note")?.textContent).toContain("Merged with someone else");
+    expect(host!.querySelector(".dg-doc-note")).toBeNull();                       // no banner pops up while others edit
+    expect(host!.querySelector(".dg-doc-status")?.textContent).toBe("Saved");
   });
 
   it("makes a new document, restores a version and asks kell to edit with the current text", async () => {
@@ -109,5 +110,42 @@ describe("docs panel", () => {
     await wait(60);
     expect(host!.querySelector(".dg-doc-status")?.textContent).toBe("Offline");
     expect(editor().value).toBe("# Plan\n\nKept.\n");
+  });
+});
+
+describe("docs panel over a live socket", () => {
+  class FakeWs {
+    static last: FakeWs | null = null;
+    readyState = 0; sent: Array<Record<string, unknown>> = [];
+    onopen: (() => void) | null = null; onmessage: ((e: { data: string }) => void) | null = null; onclose: (() => void) | null = null; onerror: (() => void) | null = null;
+    constructor(public url: string) { FakeWs.last = this; setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0); }
+    send(d: string) { this.sent.push(JSON.parse(d)); }
+    close() { this.readyState = 3; this.onclose?.(); }
+    push(m: Record<string, unknown>) { this.onmessage?.({ data: JSON.stringify(m) }); }
+  }
+
+  it("sends edits over the socket with the version it was typing on, and folds in what others save around your typing", async () => {
+    const { api } = fakeApi();
+    await mount(api, { timing: { poll: 4000, save: 30 }, socket: { token: async () => "tok", origin: "https://mcp.example", socketFactory: (u) => new FakeWs(u) as unknown as WebSocket } });
+    await wait(10);
+    const ws = FakeWs.last!;
+    expect(ws.url).toBe("https://mcp.example/v1/rooms/r1/docs/d1/ws".replace("https", "wss"));
+    expect(ws.sent[0]).toEqual({ type: "auth", token: "tok" });
+    await act(async () => { ws.push({ type: "hello", id: "d1", version: 1, title: "Plan", kind: "document", body: "# Plan\n\nIntro.\n\nStep one.\n", present: ["Asha", "Bo"], editing: [] }); });
+    expect(host!.querySelector(".dg-doc-here")?.textContent).toBe("2 people here");
+
+    await type("# Plan\n\nIntro, mine.\n\nStep one.\n");
+    await wait(220);                                                                     // sent soon after typing, not after a long pause
+    const edit = ws.sent.find((m) => m.type === "edit")!;
+    expect(edit).toEqual({ type: "edit", body: "# Plan\n\nIntro, mine.\n\nStep one.\n", base: 1 });
+    expect((api.save as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();               // the HTTP route was not used
+
+    // while that edit is in flight, Bo saves a change at the end: it is folded in without losing the typing
+    await act(async () => { ws.push({ type: "doc", version: 2, body: "# Plan\n\nIntro.\n\nStep one, by Bo.\n", by: "Bo" }); });
+    expect(editor().value).toBe("# Plan\n\nIntro, mine.\n\nStep one, by Bo.\n");
+    expect(host!.querySelector(".dg-doc-note")).toBeNull();                              // and nothing pops up about it
+    await act(async () => { ws.push({ type: "ack", version: 3, body: "# Plan\n\nIntro, mine.\n\nStep one, by Bo.\n" }); });
+    expect(editor().value).toBe("# Plan\n\nIntro, mine.\n\nStep one, by Bo.\n");
+    expect(host!.querySelector(".dg-doc-status")?.textContent).toBe("Saved");
   });
 });

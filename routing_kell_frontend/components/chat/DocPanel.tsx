@@ -5,6 +5,7 @@ import PanelShell from "@/components/chat/PanelShell";
 import HtmlViewer from "@/components/chat/HtmlViewer";
 import { DocsApiError, type DocInfo, type DocKind, type DocVersion, type DocsApi } from "@/lib/chat/docs-api";
 import { mapCaret, merge3 } from "@/lib/chat/merge3";
+import { openDocSocket, socketsAvailable, type DocSocket, type SocketMessage } from "@/lib/chat/docs-socket";
 
 /**
  * The docs of a room: the canvas everyone in the room sees and edits at the same time, like a shared document. You type; it saves a moment
@@ -51,7 +52,7 @@ function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, onContext, timing }: {
+export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, onContext, timing, socket }: {
   open: boolean; onClose: () => void; api: DocsApi; roomId: string;
   /** A document to show first (the title on the card the person pressed). */
   wantedTitle: string | null;
@@ -65,6 +66,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   onContext?: (c: { title: string; kind: string; text: string } | null) => void;
   /** Shorter waits for tests. */
   timing?: { poll: number; save: number };
+  /** How to open the live connection. Without it the panel uses the plain HTTP routes and polls. */
+  socket?: { token(): Promise<string | null>; origin?: string; socketFactory?: (url: string) => WebSocket };
 }) {
   const pollMs = timing?.poll ?? POLL_MS, saveMs = timing?.save ?? SAVE_AFTER_MS;
   const [docs, setDocs] = useState<DocInfo[]>([]);
@@ -78,6 +81,11 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const [mode, setMode] = useState<"write" | "split" | "read" | "browser" | "page">("split");
   const [editing, setEditing] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [linked, setLinked] = useState(true);                 // the two halves of Side by side scroll together
+  const sock = useRef<DocSocket | null>(null);
+  const readPane = useRef<HTMLDivElement>(null);
+  const syncing = useRef(false);
+  const inflight = useRef<string | null>(null);              // the text sent over the socket and not yet acknowledged
   const [history, setHistory] = useState<DocVersion[] | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -146,24 +154,46 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     return () => { live = false; };
   }, [open, activeId, api, roomId]);
 
-  // ---- save what you typed, a moment after you stop
+  // ---- Side by side: scrolling one half scrolls the other to the same place (proportionally; the half being touched leads)
+  const tie = useCallback((from: HTMLElement | null, to: HTMLElement | null) => {
+    if (!linked || !from || !to || syncing.current) return;
+    const max = from.scrollHeight - from.clientHeight;
+    const ratio = max > 0 ? from.scrollTop / max : 0;
+    syncing.current = true;
+    to.scrollTop = ratio * Math.max(0, to.scrollHeight - to.clientHeight);
+    requestAnimationFrame(() => { syncing.current = false; });
+  }, [linked]);
+
+  // ---- what the server tells us (live socket or polling): fold it into what is on screen without moving your cursor
+  const applyRemote = useCallback((version: number, body: string) => {
+    if (version <= base.current.version) return;
+    const mine = textRef.current;
+    const next = mine === base.current.body ? body : merge3(base.current.body, mine, body).text;   // typing in the meantime is kept
+    base.current = { body, version };
+    adopt(next);
+    if (next !== body) setStatus((st) => (st === "saving" ? st : "typing"));
+  }, [adopt]);
+
+  // ---- save what you typed. Over the socket every few keystrokes; over HTTP a moment after you stop.
   const save = useCallback(async () => {
     const id = activeRef.current;
     if (!id || saving.current) return;
     const sent = textRef.current;
     if (sent === base.current.body) { setStatus("saved"); return; }
+    if (sock.current?.connected) {
+      if (inflight.current !== null) return;                      // one edit at a time; the acknowledgement sends the next
+      if (sock.current.send({ type: "edit", body: sent, base: base.current.version })) { inflight.current = sent; setStatus("saving"); return; }
+    }
     saving.current = true;
     setStatus("saving");
     try {
       const r = await api.save(roomId, id, sent, base.current.version);
       if (activeRef.current !== id) return;
       if (r.body !== undefined && r.body !== sent) {
-        // someone else saved at the same time and the server merged: show the merged text, keeping anything typed since
         const keep = textRef.current === sent ? r.body : merge3(sent, textRef.current, r.body).text;
         base.current = { body: r.body, version: r.version };
         adopt(keep);
-        setStatus("merged");
-        flash(r.clash ? "Merged with someone's edit. You both changed the same line, so yours was kept; theirs is in History." : "Merged with someone else's edit.");
+        setStatus(keep === r.body ? "saved" : "typing");
       } else {
         base.current = { body: r.body ?? sent, version: r.version };
         setStatus(textRef.current === base.current.body ? "saved" : "typing");
@@ -176,38 +206,75 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       setError(err.offline ? "Offline: your changes are kept here and saved when you are back." : err.message);
       timer.current = window.setTimeout(() => void save(), 4000);
     } finally { saving.current = false; }
-  }, [api, roomId, adopt, flash, saveMs]);
+  }, [api, roomId, adopt, saveMs]);
 
   const onType = (v: string) => {
     textRef.current = v;
     setText(v);
     setStatus("typing");
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => void save(), saveMs);
+    timer.current = window.setTimeout(() => void save(), sock.current?.connected ? Math.min(saveMs, 140) : saveMs);
   };
 
-  // ---- see what others save
+  // ---- the live connection for the open document
+  useEffect(() => {
+    if (!open || !activeId || !socket || !socketsAvailable()) return;
+    const id = activeId;
+    const onMessage = (m: SocketMessage) => {
+      if (activeRef.current !== id) return;
+      if (m.type === "hello") {
+        setPresent(m.present); setEditing(m.editing ?? []);
+        applyRemote(m.version, m.body);
+        if (m.version === base.current.version && textRef.current === base.current.body) setStatus("saved");
+      } else if (m.type === "doc") {
+        applyRemote(m.version, m.body);
+      } else if (m.type === "presence") {
+        setPresent(m.present); setEditing(m.editing ?? []);
+      } else if (m.type === "ack") {
+        const sent = inflight.current ?? textRef.current;
+        inflight.current = null;
+        if (m.body !== undefined && m.body !== sent) {
+          const keep = textRef.current === sent ? m.body : merge3(sent, textRef.current, m.body).text;
+          base.current = { body: m.body, version: m.version };
+          adopt(keep);
+          setStatus(keep === m.body ? "saved" : "typing");
+        } else {
+          base.current = { body: m.body ?? sent, version: m.version };
+          setStatus(textRef.current === base.current.body ? "saved" : "typing");
+        }
+        setError("");
+        if (textRef.current !== base.current.body) timer.current = window.setTimeout(() => void save(), 60);
+      } else if (m.type === "error") {
+        inflight.current = null;
+        if (m.status !== 429) setError(m.error);
+        timer.current = window.setTimeout(() => void save(), 1500);
+      }
+    };
+    const s = openDocSocket({ room: roomId, doc: id, ...socket }, {
+      onMessage,
+      onState: (up) => { if (!up) inflight.current = null; },
+    });
+    sock.current = s;
+    return () => { s.close(); if (sock.current === s) sock.current = null; inflight.current = null; };
+  }, [open, activeId, roomId, socket, applyRemote, adopt, save]);
+
+  // ---- without a live connection: see what others save by asking now and then
   useEffect(() => {
     if (!open || !activeId) return;
     const id = activeId;
     const t = window.setInterval(async () => {
-      if (document.visibilityState === "hidden" || saving.current) return;
+      if (document.visibilityState === "hidden" || saving.current || sock.current?.connected) return;
       try {
         const d = await api.get(roomId, id, base.current.version);
         if (activeRef.current !== id) return;
         setPresent(d.present); setEditing(d.editing ?? []);
         if ("unchanged" in d) return;
-        const mine = textRef.current;
-        const next = mine === base.current.body ? d.body : merge3(base.current.body, mine, d.body).text;   // typing in the meantime is kept
-        base.current = { body: d.body, version: d.version };
         setTitle(d.title); setKind(d.kind);
-        adopt(next);
-        if (next !== d.body) setStatus("typing");
-        flash(`${d.updated_by || "Someone"} updated this.`);
+        applyRemote(d.version, d.body);
       } catch { /* the next round tries again */ }
     }, pollMs);
     return () => window.clearInterval(t);
-  }, [open, activeId, api, roomId, adopt, flash, pollMs]);
+  }, [open, activeId, api, roomId, applyRemote, pollMs]);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
   useEffect(() => { if (open && activeId) onSeen?.(activeId, base.current.version); }, [open, activeId, text, onSeen]);
@@ -331,6 +398,9 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
                 </>
               ) : <button type="button" role="tab" aria-selected="true">Code</button>}
             </div>
+            {mode === "split" && kind === "document" && (
+              <button type="button" className="dg-cv-chip dg-cv-big" aria-pressed={linked} onClick={() => setLinked((l) => !l)} title="Scroll both halves together">{linked ? "Scrolling linked" : "Scrolling free"}</button>
+            )}
             {(mode === "write" || mode === "split") && kind === "document" && (
               <div className="dg-doc-fmt" role="toolbar" aria-label="Formatting">
                 <button type="button" title="Bold" aria-label="Bold" onClick={() => area.current && wrapSelection(area.current, "**")}><b>B</b></button>
@@ -347,10 +417,10 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
             {(mode === "write" || mode === "split" || (kind === "code")) && (
               <div className="dg-doc-pane" data-split={mode === "split" && kind !== "code" || undefined}>
                 <textarea
-                  ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)}
+                  ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)} onScroll={() => tie(area.current, readPane.current)}
                   spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
                 />
-                {mode === "split" && kind === "document" && <div className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview"><Markdown text={text} /></div>}
+                {mode === "split" && kind === "document" && <div ref={readPane} className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview" onScroll={() => tie(readPane.current, area.current)}><Markdown text={text} /></div>}
                 {mode === "split" && kind === "html" && <HtmlViewer html={text} title={title} mode="browser" />}
               </div>
             )}

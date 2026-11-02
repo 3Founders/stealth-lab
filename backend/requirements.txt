@@ -37,6 +37,7 @@ reportlab
 scipy
 tree-sitter-language-pack
 uvicorn
+websockets  # WebSocket support for live document editing (mcp_server/room_doc_ws.py); plain uvicorn cannot upgrade a connection
 voyageai
 z3-solver
 google-genai

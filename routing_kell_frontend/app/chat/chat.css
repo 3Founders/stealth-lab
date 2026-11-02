@@ -1162,3 +1162,43 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 :root[data-theme="dark"] .dg-page .dg-onboard:hover:not(:disabled) { background: #ffffff !important; }
 .dg-page .dg-onboard-marks i { background: #fff !important; color: #171717 !important; box-shadow: 0 0 0 2px #171717 !important; }
 :root[data-theme="dark"] .dg-page .dg-onboard-marks i { box-shadow: 0 0 0 2px #f1eee5 !important; }
+
+/* ===== scaled page, canvas button, aesthetic scrollbars, Connect agent in both themes ===== */
+.dg-canvas-frame.dg-scaled { position: absolute; inset: auto; top: 0; left: 0; max-width: none; }
+.dg-browser-body { overflow: hidden; }
+.dg-browser { transition: width .3s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
+.dg-canvas-wrap[data-dragging] .dg-browser { transition: none; }
+
+.dg-canvas-btn { position: relative; display: inline-grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; transition: background-color .16s, transform .16s; flex: none; }
+.dg-canvas-btn:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.dg-canvas-btn:active { transform: scale(.94); }
+.dg-canvas-btn[aria-pressed="true"] { background: var(--yellow); color: #171717; }
+.dg-canvas-dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: #e5484d; box-shadow: 0 0 0 2px var(--surface); }
+.dg-doc-head .dg-cv-chip[aria-pressed], .dg-doc-bar .dg-cv-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--yellow) 55%, transparent); }
+
+/* Scrollbars: thin, rounded, and quiet until you reach for them (the standard scrollbar-width / scrollbar-color, with the WebKit fallback). */
+.dg-page, .dg-canvas-wrap, .dg-settings, .dg-pop, .dg-search { --sb-thumb: color-mix(in srgb, currentColor 22%, transparent); --sb-thumb-hover: color-mix(in srgb, currentColor 42%, transparent); }
+.dg-page *, .dg-canvas-wrap *, .dg-settings *, .dg-pop *, .dg-search * { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) transparent; }
+@supports not (scrollbar-color: auto) {
+  .dg-page *::-webkit-scrollbar, .dg-canvas-wrap *::-webkit-scrollbar, .dg-settings *::-webkit-scrollbar { width: 10px; height: 10px; }
+  .dg-page *::-webkit-scrollbar-track, .dg-canvas-wrap *::-webkit-scrollbar-track, .dg-settings *::-webkit-scrollbar-track { background: transparent; }
+  .dg-page *::-webkit-scrollbar-thumb, .dg-canvas-wrap *::-webkit-scrollbar-thumb, .dg-settings *::-webkit-scrollbar-thumb { background: var(--sb-thumb); border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+  .dg-page *::-webkit-scrollbar-thumb:hover, .dg-canvas-wrap *::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); background-clip: padding-box; }
+}
+.dg-page *:hover { scrollbar-color: var(--sb-thumb-hover) transparent; }
+.dg-viewport { scrollbar-gutter: stable; }
+
+/* Connect agent: dark mode = a black pill with white words and a pale glow; light mode = a white pill with dark words and a dark shadow.
+   Written for both ways dark mode can be on (the saved choice, or the device's setting while nothing is saved). */
+.dg-page .dg-onboard, .dg-page button.dg-onboard { background: #ffffff !important; color: #171717 !important; box-shadow: 0 6px 18px rgba(0, 0, 0, .22), 0 1px 3px rgba(0, 0, 0, .18), 0 0 0 1px rgba(0, 0, 0, .06) !important; }
+.dg-page .dg-onboard .dg-onboard-label, .dg-page .dg-onboard .dg-onboard-copy { color: #171717 !important; }
+.dg-page .dg-onboard-marks i { background: #fff !important; box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0, 0, 0, .25) !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard, :root[data-theme="dark"] .dg-page button.dg-onboard { background: #000000 !important; color: #ffffff !important; box-shadow: 0 6px 20px rgba(255, 255, 255, .14), 0 0 0 1px rgba(255, 255, 255, .22) !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard .dg-onboard-label, :root[data-theme="dark"] .dg-page .dg-onboard .dg-onboard-copy { color: #ffffff !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard-marks i { box-shadow: 0 0 0 2px #000 !important; }
+:root[data-theme="dark"] .dg-page .dg-onboard:hover:not(:disabled) { background: #111111 !important; box-shadow: 0 8px 24px rgba(255, 255, 255, .2), 0 0 0 1px rgba(255, 255, 255, .32) !important; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dg-page .dg-onboard, :root:not([data-theme="light"]) .dg-page button.dg-onboard { background: #000000 !important; color: #ffffff !important; box-shadow: 0 6px 20px rgba(255, 255, 255, .14), 0 0 0 1px rgba(255, 255, 255, .22) !important; }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard .dg-onboard-label, :root:not([data-theme="light"]) .dg-page .dg-onboard .dg-onboard-copy { color: #ffffff !important; }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard-marks i { box-shadow: 0 0 0 2px #000 !important; }
+}

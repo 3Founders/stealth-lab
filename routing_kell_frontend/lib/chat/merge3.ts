@@ -38,10 +38,40 @@ const touches = (x: Hunk, y: Hunk): boolean => {
   return x.a1 < y.a2 && y.a1 < x.a2;
 };
 
+/** The one stretch of `a` that, replaced by `text`, turns it into `b` (the common start and end are kept). */
+function span(a: string, b: string): { s: number; e: number; text: string } {
+  const n = Math.min(a.length, b.length);
+  let p = 0;
+  while (p < n && a[p] === b[p]) p++;
+  let q = 0;
+  while (q < n - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+  return { s: p, e: a.length - q, text: b.slice(p, b.length - q) };
+}
+
+/**
+ * Character-level merge, like two people typing in different places of one paragraph: each side's change is one replaced stretch of `base`;
+ * when the stretches do not overlap, both apply exactly (two insertions at one point: theirs first, then yours). Null when they overlap.
+ * The server does the same (backend room_docs.merge_chars), so the screen and the saved text agree.
+ */
+export function mergeChars(base: string, mine: string, theirs: string): string | null {
+  const m = span(base, mine), t = span(base, theirs);
+  const mi = m.s === m.e, ti = t.s === t.e;
+  if (mi && ti) { /* two insertions: both fit */ }
+  else if (mi) { if (t.s < m.s && m.s < t.e) return null; }
+  else if (ti) { if (m.s < t.s && t.s < m.e) return null; }
+  else if (m.s < t.e && t.s < m.e) return null;
+  const edits = [{ ...m, r: 0 }, { ...t, r: 1 }].sort((x, y) => y.s - x.s || x.r - y.r);
+  let out = base;
+  for (const e of edits) out = out.slice(0, e.s) + e.text + out.slice(e.e);
+  return out;
+}
+
 export function merge3(base: string, mine: string, theirs: string): { text: string; clash: boolean } {
   if (mine === theirs) return { text: mine, clash: false };
   if (base === theirs) return { text: mine, clash: false };
   if (base === mine) return { text: theirs, clash: false };
+  const exact = mergeChars(base, mine, theirs);
+  if (exact !== null) return { text: exact, clash: false };
   const b = lines(base), m = lines(mine), t = lines(theirs);
   if (b.length > MAX_LINES || m.length > MAX_LINES || t.length > MAX_LINES) return { text: mine, clash: true };
   const hm = hunks(b, m), ht = hunks(b, t);

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
  * The right-hand panel frame shared by the canvas and the docs: a hairline divider you drag to resize (arrow keys too, at least 300 px,
@@ -44,24 +44,32 @@ export default function PanelShell({ open, label, children, wide = false }: { op
   }, []);
 
   const save = (w: number) => { try { window.localStorage.setItem(KEY, String(Math.round(w))); } catch { /* storage blocked */ } };
+  const wrap = useRef<HTMLDivElement>(null);
   const startDrag = useCallback((e: React.PointerEvent<HTMLElement>) => {
     e.preventDefault();
     const start = e.clientX, from = width, target = e.currentTarget;
     target.setPointerCapture(e.pointerId);
     setDragging(true);
     document.body.style.userSelect = "none";
-    let last = from;
-    const move = (ev: PointerEvent) => { last = clampWidth(from - (ev.clientX - start)); setWidth(last); };
+    let last = from, frame = 0;
+    // The width is written straight to the panel and the page's right edge in an animation frame, so dragging costs no React render.
+    const paint = () => {
+      frame = 0;
+      if (wrap.current) wrap.current.style.width = `${last}px`;
+      document.documentElement.style.setProperty("--dg-canvas-w", `${last}px`);
+    };
+    const move = (ev: PointerEvent) => { last = clampWidth(from - (ev.clientX - start)); if (!frame) frame = requestAnimationFrame(paint); };
     const up = () => {
       target.removeEventListener("pointermove", move); target.removeEventListener("pointerup", up); target.removeEventListener("pointercancel", up);
-      document.body.style.userSelect = ""; setDragging(false); save(last);
+      if (frame) cancelAnimationFrame(frame);
+      document.body.style.userSelect = ""; setDragging(false); setWidth(last); save(last);
     };
     target.addEventListener("pointermove", move); target.addEventListener("pointerup", up); target.addEventListener("pointercancel", up);
   }, [width]);
 
   if (!mounted) return null;
   return (
-    <div className="dg-canvas-wrap" data-state={shown ? "open" : "closed"} data-dragging={dragging || undefined} data-wide={wide || undefined} style={{ width }}>
+    <div ref={wrap} className="dg-canvas-wrap" data-state={shown ? "open" : "closed"} data-dragging={dragging || undefined} data-wide={wide || undefined} style={{ width }}>
       <div
         className="dg-canvas-resizer" role="separator" tabIndex={0} aria-label="Resize panel" aria-orientation="vertical" aria-valuenow={width} aria-valuemin={MIN_W}
         onPointerDown={startDrag}

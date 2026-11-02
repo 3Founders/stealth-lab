@@ -30,6 +30,8 @@ MAX_DOCS_PER_ROOM = 50
 KINDS = ("document", "code", "html")
 PRESENCE_SECONDS = 12.0
 NL = chr(10)
+# Called after every new version (doc id, version, body, who made it, their display name): the live socket hub fans it out to everyone with the document open.
+LISTENERS: list[Any] = []
 _PRESENCE: dict[str, dict[str, tuple[str, float]]] = {}      # doc id -> {sub: (name, last seen)}
 _TYPING: dict[str, dict[str, float]] = {}                    # doc id -> {sub: when they last saved a change}
 TYPING_SECONDS = 6.0
@@ -57,6 +59,41 @@ def _blocks(text: str) -> list[str]:
     return text.splitlines(keepends=True)
 
 
+def _span(a: str, b: str) -> tuple[int, int, str]:
+    """The one stretch of `a` that, replaced by the returned text, turns it into `b` (common start and end are kept)."""
+    n = min(len(a), len(b))
+    p = 0
+    while p < n and a[p] == b[p]:
+        p += 1
+    s = 0
+    while s < n - p and a[len(a) - 1 - s] == b[len(b) - 1 - s]:
+        s += 1
+    return p, len(a) - s, b[p:len(b) - s]
+
+
+def merge_chars(base: str, mine: str, theirs: str) -> Optional[str]:
+    """Character-level merge, like typing in two places of one paragraph: each side's change is one replaced stretch of `base`. When the
+    two stretches do not overlap both apply exactly (two insertions at one point: theirs first, then yours). Returns None when they
+    overlap, and the caller falls back to the line merge."""
+    a1, a2, at = _span(base, mine)
+    b1, b2, bt = _span(base, theirs)
+    if a1 == a2 and b1 == b2:
+        pass                                                         # two insertions: at one point or apart, both fit
+    elif a1 == a2:
+        if b1 < a1 < b2:
+            return None
+    elif b1 == b2:
+        if a1 < b1 < a2:
+            return None
+    elif a1 < b2 and b1 < a2:
+        return None
+    edits = sorted([(a1, a2, at, 0), (b1, b2, bt, 1)], key=lambda e: (-e[0], e[3]))
+    out = base
+    for s, e, t, _r in edits:
+        out = out[:s] + t + out[e:]
+    return out
+
+
 def merge3(base: str, mine: str, theirs: str) -> tuple[str, bool]:
     """Three-way merge of `mine` (what the saver wrote) onto `theirs` (what is stored now), both made from `base`. Returns the merged
     text and whether any line was changed by both (in which case `mine`, the later save, wins that line)."""
@@ -66,6 +103,9 @@ def merge3(base: str, mine: str, theirs: str) -> tuple[str, bool]:
         return mine, False
     if base == mine:
         return theirs, False
+    exact = merge_chars(base, mine, theirs)
+    if exact is not None:
+        return exact, False
     b, m, t = _blocks(base), _blocks(mine), _blocks(theirs)
     ops_m = [o for o in difflib.SequenceMatcher(None, b, m, autojunk=False).get_opcodes() if o[0] != "equal"]
     ops_t = [o for o in difflib.SequenceMatcher(None, b, t, autojunk=False).get_opcodes() if o[0] != "equal"]
@@ -162,6 +202,11 @@ async def _write_version(pool: Any, doc: Any, body: str, by: str, note: str = ""
         raise RoomError("the document changed while you were saving; try again", 409)
     await pool.execute("INSERT INTO room_doc_versions (id, doc_id, version, body, by_handle, note, src) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                        uuid7(), doc["id"], version, body, by[:80], note[:200], src)
+    for fn in list(LISTENERS):
+        try:
+            await fn(str(doc["id"]), version, body, by[:128], by[:80])
+        except Exception:  # noqa: BLE001 -- a listener must never fail a save
+            log.exception("room docs: a listener failed")
     return version
 
 

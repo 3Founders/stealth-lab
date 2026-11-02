@@ -42,7 +42,7 @@ import { getAccessToken, signOut } from "@/lib/session";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
 import ManageRooms from "@/components/chat/ManageRooms";
-import { PanelCloseIcon, RemoveIcon } from "@/components/chat/icons";
+import { PanelCloseIcon, RemoveIcon, CanvasIcon } from "@/components/chat/icons";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
@@ -1087,7 +1087,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       </aside>
 
       {info[room]?.id && !tempRef.current.has(room)
-        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
+        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms
@@ -1104,6 +1104,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{shownName(room)}</h1>
+          <button type="button" className="dg-canvas-btn" aria-pressed={canvasOpen} aria-label={canvasOpen ? "Close the canvas" : "Open the canvas"} title="Canvas" onClick={() => setCanvasOpen((o) => !o)}>
+            <CanvasIcon size={18} />
+            {(info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length) > 0 && <span className="dg-canvas-dot" aria-hidden="true" />}
+          </button>
           <ThemeToggle className="dg-theme" />
         </header>
         {tempRef.current.has(room) && <div className="dg-temp-note" role="status">Temporary chat: not saved, not synced, and gone when you close this page.</div>}

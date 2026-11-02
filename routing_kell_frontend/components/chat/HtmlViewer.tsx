@@ -1,5 +1,5 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { pageDoc } from "@/components/chat/pageDoc";
 
 /**
@@ -9,7 +9,8 @@ import { pageDoc } from "@/components/chat/pageDoc";
  */
 export type ViewerMode = "browser" | "page";
 type Device = "desktop" | "tablet" | "phone";
-const WIDTHS: Record<Device, number | null> = { desktop: null, tablet: 768, phone: 390 };
+/** The width each screen is shown at. A page is laid out at this width and scaled to fit the panel, so a desktop page looks like a desktop page. */
+const WIDTHS: Record<Device, number> = { desktop: 1280, tablet: 768, phone: 390 };
 
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "page";
 
@@ -17,20 +18,47 @@ export default function HtmlViewer({ html, title, mode }: { html: string; title:
   const [device, setDevice] = useState<Device>("desktop");
   const [reloads, setReloads] = useState(0);
   const frame = useRef<HTMLIFrameElement>(null);
+  const area = useRef<HTMLDivElement>(null);
+  const bodyBox = useRef<HTMLDivElement>(null);
+  const [avail, setAvail] = useState(0);        // room for the browser window, from the panel
+  const [bodyH, setBodyH] = useState(0);        // height of the window's page area
+  useEffect(() => {
+    const watch = (el: Element | null, set: (n: number, h: number) => void) => {
+      if (!el || typeof ResizeObserver === "undefined") return () => {};
+      const ro = new ResizeObserver(() => set((el as HTMLElement).clientWidth, (el as HTMLElement).clientHeight));
+      ro.observe(el);
+      set((el as HTMLElement).clientWidth, (el as HTMLElement).clientHeight);
+      return () => ro.disconnect();
+    };
+    const a = watch(area.current, (w) => setAvail(w));
+    const b = watch(bodyBox.current, (_w, h) => setBodyH(h));
+    return () => { a(); b(); };
+  }, [mode, device]);
   const full = () => { const f = frame.current as (HTMLIFrameElement & { webkitRequestFullscreen?: () => void }) | null; if (f?.requestFullscreen) void f.requestFullscreen(); else f?.webkitRequestFullscreen?.(); };
 
-  const iframe = (
+  const fill = (
     <iframe
       ref={frame} key={reloads} title={title} className="dg-canvas-frame" srcDoc={pageDoc(html)}
       sandbox="allow-scripts allow-downloads allow-forms" referrerPolicy="no-referrer"
     />
   );
-  if (mode === "page") return <div className="dg-viewer-page">{iframe}</div>;
+  if (mode === "page") return <div className="dg-viewer-page">{fill}</div>;
 
-  const w = WIDTHS[device];
+  const deviceW = WIDTHS[device];
+  const pad = 24;                                              // the viewer's side padding
+  const room = Math.max(240, (avail || 0) - pad);
+  const winW = device === "desktop" ? room : Math.min(room, deviceW);
+  const scale = Math.min(1, winW / deviceW);
+  const iframe = (
+    <iframe
+      ref={frame} key={reloads} title={title} className="dg-canvas-frame dg-scaled" srcDoc={pageDoc(html)}
+      sandbox="allow-scripts allow-downloads allow-forms" referrerPolicy="no-referrer"
+      style={{ width: deviceW, height: bodyH && scale ? Math.ceil(bodyH / scale) : "100%", transform: `scale(${scale})`, transformOrigin: "0 0" }}
+    />
+  );
   return (
-    <div className="dg-viewer">
-      <div className="dg-browser" style={w ? { width: w, maxWidth: "100%" } : undefined} data-device={device}>
+    <div className="dg-viewer" ref={area}>
+      <div className="dg-browser" style={{ width: avail ? winW : "100%" }} data-device={device}>
         <div className="dg-browser-bar">
           <span className="dg-browser-dots" aria-hidden="true"><i /><i /><i /></span>
           <button type="button" className="dg-browser-btn" disabled aria-label="Back"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg></button>
@@ -39,7 +67,7 @@ export default function HtmlViewer({ html, title, mode }: { html: string; title:
           <span className="dg-browser-url" title={`${slug(title)}.html`}><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>kell://{slug(title)}.html</span>
           <button type="button" className="dg-browser-btn" aria-label="Open in full screen" title="Open in full screen" onClick={full}><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg></button>
         </div>
-        <div className="dg-browser-body">{iframe}</div>
+        <div className="dg-browser-body" ref={bodyBox}>{iframe}</div>
       </div>
       <div className="dg-viewer-devices" role="group" aria-label="Screen size">
         {(["desktop", "tablet", "phone"] as Device[]).map((d) => <button key={d} type="button" aria-pressed={device === d} onClick={() => setDevice(d)}>{d[0].toUpperCase() + d.slice(1)}</button>)}
