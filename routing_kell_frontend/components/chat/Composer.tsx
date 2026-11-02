@@ -15,6 +15,7 @@ import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
  */
 /** The server keeps at most this many characters of a message; the box stops here so nothing is cut off silently. */
 const MAX_MESSAGE = 8000;
+const wordCount = (t: string): number => (t.trim() ? t.trim().split(/\s+/).length : 0);
 
 export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft }: { handles: string[]; agentHandles?: string[];
   /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
@@ -164,7 +165,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         onPaste={(e) => { const f = pastedImages(e.clipboardData.items); if (f.length) { e.preventDefault(); void addFiles(f); } }}
         onKeyDown={onKeyDown}
       />
-      {text.length >= MAX_MESSAGE - 1000 && <span className="dg-count" role="status" aria-live="polite">{text.length} / {MAX_MESSAGE}</span>}
+      {text.trim() && <span className="dg-count" aria-live="off">{wordCount(text)} {wordCount(text) === 1 ? "word" : "words"}{text.length >= MAX_MESSAGE - 1000 ? ` · ${text.length} / ${MAX_MESSAGE}` : ""}</span>}
       <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
       <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy} aria-label="Attach a file" title="Attach a picture or a file (or paste or drop one)"><ImageIcon /></button>
       <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>Send</button>
