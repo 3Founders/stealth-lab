@@ -203,8 +203,10 @@ async def check_recursion_limits(
                 f"at or over configured procedure_run_max_tool_calls={max_tool_calls}"
             )
         if max_cost_usd is not None and float(usage["cost_usd"]) >= max_cost_usd:
+            # kell credits, never $: one credit is a dollar's worth of provider spend; the config name stays procedure_run_max_cost_usd.
+            s = f"{float(usage['cost_usd']):.4f}".rstrip("0").rstrip(".") or "0"
             raise CostBudgetExceeded(
-                f"chain rooted at {chain.root_run_id} has used ${usage['cost_usd']:.4f}, "
+                f"chain rooted at {chain.root_run_id} has used {s} kell credits, "
                 f"at or over configured procedure_run_max_cost_usd={max_cost_usd}"
             )
 

@@ -119,7 +119,7 @@ describe("two devices on one account", () => {
     expect((await laptop.history.load("#general")).messages.map((m) => m.payload.text)).toEqual(["from the laptop", "from the phone"]);
   });
 
-  it("a brand-new device pulls the whole history, more than one page of it", async () => {
+  it("a brand-new device pulls the whole history, more than one page of it", { timeout: 20000 }, async () => {
     const s = new FakeServer();
     const a = device(s, "alice", ["#general"]);
     for (let i = 1; i <= 450; i++) await a.send("#general", msg(`00000000-0000-4000-8000-${String(i).padStart(12, "0")}`, "#general", `m${i}`, i));

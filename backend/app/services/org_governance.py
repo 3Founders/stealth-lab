@@ -265,6 +265,13 @@ class Reservation:
     reserved_usd: Decimal
 
 
+def _credits(amount: Any) -> str:
+    """A money amount as kell credits (one credit is a dollar's worth of provider spend). A user is never shown a $ figure;
+    the internal ledger stays in dollars and the translation happens only where a sentence reaches a person."""
+    s = f"{Decimal(str(amount)):.4f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
 async def reserve_call(pool: Any, *, org_id: str, actor_subject: str, tool: str, unit: str, connection_id: str,
                        provider: str, model: str, scaffold: str, data_class: str, instance_key: Optional[str],
                        worst_case_usd: Optional[float]) -> Reservation:
@@ -281,11 +288,16 @@ async def reserve_call(pool: Any, *, org_id: str, actor_subject: str, tool: str,
             raise PolicyDenied(f"{unit!r} has no price, so its cost cannot be held against the budget",
                                code="unpriced_unit")
         worst = Decimal(str(worst_case_usd))
+        # Whose wallet is this? A person's own account (services/accounts.py) has no organization row and no membership;
+        # a team always has at least the buyer. The wording of every money refusal follows: "your ..." vs "the organization's".
+        people = await conn.fetchval("SELECT count(*) FROM org_memberships WHERE organization_id = $1::uuid "
+                                     "AND t_expired IS NULL", str(org_id))
+        owner = "your" if not int(people or 0) else "this organization's"
         if policy.monthly_budget_usd <= 0:
-            raise BudgetExceeded("this organization's monthly budget is 0: no spend is allowed",
+            raise BudgetExceeded(f"{owner} monthly budget is 0: no spend is allowed",
                                  code="monthly_budget_zero")
         if policy.per_user_daily_budget_usd <= 0:
-            raise BudgetExceeded("this organization's per-user daily budget is 0: no spend is allowed",
+            raise BudgetExceeded(f"{owner} per-user daily budget is 0: no spend is allowed",
                                  code="user_daily_budget_zero")
         held = ("COALESCE(sum(CASE WHEN status = 'settled' THEN cost_usd WHEN status = 'reserved' THEN reserved_usd "
                 "ELSE 0 END), 0)")
@@ -293,15 +305,22 @@ async def reserve_call(pool: Any, *, org_id: str, actor_subject: str, tool: str,
             f"SELECT {held} FROM provider_call_ledger WHERE organization_id = $1::uuid AND created_at >= "
             "date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'", str(org_id))
         if Decimal(str(month)) + worst > policy.monthly_budget_usd:
+            if owner == "your":
+                raise BudgetExceeded(f"this call could take you past your monthly budget of "
+                                     f"{_credits(policy.monthly_budget_usd)} kell credits "
+                                     f"({_credits(month)} already used or held)",
+                                     code="monthly_budget_exceeded")
             raise BudgetExceeded(f"this call could take the organization past its monthly budget of "
-                                 f"${policy.monthly_budget_usd} (${Decimal(str(month))} already used or held)",
+                                 f"{_credits(policy.monthly_budget_usd)} kell credits "
+                                 f"({_credits(month)} already used or held)",
                                  code="monthly_budget_exceeded")
         day = await conn.fetchval(
             f"SELECT {held} FROM provider_call_ledger WHERE organization_id = $1::uuid AND actor_subject = $2 AND "
             "created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'", str(org_id), actor_subject)
         if Decimal(str(day)) + worst > policy.per_user_daily_budget_usd:
             raise BudgetExceeded(f"this call could take you past your daily budget of "
-                                 f"${policy.per_user_daily_budget_usd} (${Decimal(str(day))} already used or held)",
+                                 f"{_credits(policy.per_user_daily_budget_usd)} kell credits "
+                                 f"({_credits(day)} already used or held)",
                                  code="user_daily_budget_exceeded")
         if row["wallet_required"]:
             # prepaid: money in minus everything held or settled since the beginning (the ledger is the debit record)
@@ -311,8 +330,8 @@ async def reserve_call(pool: Any, *, org_id: str, actor_subject: str, tool: str,
                                         str(org_id))
             balance = Decimal(str(bought)) - Decimal(str(spent))
             if balance < worst:
-                raise BudgetExceeded(f"this organization's prepaid balance (${balance:.4f}) is too low for this call; "
-                                     "buy credits to continue", code="wallet_empty")
+                raise BudgetExceeded(f"{owner} prepaid balance ({_credits(balance)} kell credits) is too low for this "
+                                     "call; buy credits to continue", code="wallet_empty")
         ledger_id = str(uuid.uuid4())
         await conn.execute(
             "INSERT INTO provider_call_ledger (id, organization_id, actor_subject, tool, unit, connection_id, provider, "

@@ -69,7 +69,9 @@ async function fail(res: Response, t: ProviderTarget): Promise<never> {
   try { body = (await res.text()).slice(0, 600); } catch { /* none */ }
   // An OpenAI-style error envelope carries a sentence meant for people; show that, not the raw JSON.
   try { const m = (JSON.parse(body) as { error?: { message?: unknown } })?.error?.message; if (typeof m === "string" && m) body = m; } catch { /* not JSON */ }
-  throw new ProviderError(scrub(`The provider answered ${res.status}${body ? `: ${body}` : "."}`, t.apiKey), res.status);
+  // A 403 that talks about buying credits is kell's own wallet policy, not the model provider's answer: say whose refusal it is.
+  const ours = res.status === 403 && /buy credits/i.test(body);
+  throw new ProviderError(scrub(`${ours ? "keळ refused this call (403)" : `The provider answered ${res.status}`}${body ? `: ${body}` : "."}`, t.apiKey), res.status);
 }
 
 async function send(t: ProviderTarget, path: string, init: RequestInit, fetchImpl: typeof fetch): Promise<Response> {

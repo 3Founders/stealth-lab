@@ -87,7 +87,7 @@ describe("with purchases on", () => {
     expect(text()).not.toContain("of credit");
     expect(text()).toContain("₹3,000");
     expect(text()).not.toContain("₹500");
-    expect(text()).toContain("Balance: $4.25");
+    expect(text()).toContain("Balance: 4.25 credits");
   });
 
   it("with no active plan the cards are disabled with 'Available with an active plan' and a link to the plans", async () => {
@@ -142,7 +142,7 @@ describe("buying a pack", () => {
     expect(packOrder).toHaveBeenCalledWith("credits_1000");
     expect(packOrder.mock.calls[0]).toHaveLength(1);                              // only the pack id
     expect(text()).toContain("window was closed");
-    expect(text()).toContain("Balance: $4.25");
+    expect(text()).toContain("Balance: 4.25 credits");
   });
 
   it("a failed payment says no credit was bought", async () => {
@@ -175,14 +175,14 @@ describe("buying a pack", () => {
     await mount(<CreditPacks api={{ wallet: walletFn, plan: async () => ACTIVE, packOrder: async () => ORDER }} session={SESSION} checkout={async () => "paid"} waitMs={1000} looks={5} now={NOW} />);
     await click(buyButtons()[1]);
     expect(text()).toContain("Waiting for it to be confirmed");
-    expect(text()).toContain("Balance: $4.25");
+    expect(text()).toContain("Balance: 4.25 credits");
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(text()).toContain("Waiting for it to be confirmed");
     expect(text()).not.toContain("Payment confirmed");
     credits = 1; remaining = 9.5;                                                  // the signed webhook arrives
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(text()).toContain("Payment confirmed");
-    expect(text()).toContain("Balance: $9.50");
+    expect(text()).toContain("Balance: 9.5 credits");
   });
 
   it("if confirmation never arrives it says so and offers Contact with the order id", async () => {

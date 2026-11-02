@@ -79,6 +79,14 @@ describe("a reply never ends in silence", () => {
     expect(err.message).toContain("bad key");
     expect(err.message).not.toContain("SECRET");
   });
+  it("a 403 that is kell's own wallet policy is named as kell's refusal, and carries no $ figure", async () => {
+    const f = async () => new Response(JSON.stringify({ error: { message: "your prepaid balance (0 kell credits) is too low for this call; buy credits to continue" } }), { status: 403 });
+    const err = (await collect(streamChat(openai, "m", [], { fetchImpl: f as unknown as typeof fetch })).catch((e) => e)) as Error;
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as Error).message).toMatch(/keळ refused this call \(403\)/);
+    expect((err as Error).message).toMatch(/buy credits/);
+    expect((err as Error).message).not.toMatch(/\$/);
+  });
 });
 
 describe("a key never leaks", () => {

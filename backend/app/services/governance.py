@@ -546,19 +546,24 @@ class CostGovernor:
         """Raise BudgetExceeded if either the global or per-viewer cap is hit."""
         since = datetime.now(timezone.utc) - timedelta(days=1)
 
+        def credits(value: float) -> str:
+            # A money amount as kell credits (one credit is a dollar's worth of provider spend); no $ figure reaches a person.
+            s = f"{float(value):.4f}".rstrip("0").rstrip(".")
+            return s or "0"
+
         try:
             total = await self.spend_since(since)
             if total >= self._daily_cap:
                 raise BudgetExceeded(
-                    f"daily LLM budget of ${self._daily_cap:.2f} reached "
-                    f"(estimated ${total:.2f} spent in the last 24h)"
+                    f"daily LLM budget of {credits(self._daily_cap)} kell credits reached "
+                    f"(estimated {credits(total)} spent in the last 24h)"
                 )
             if scope_key:
                 viewer_total = await self.spend_since(since, scope_key)
                 if viewer_total >= self._per_viewer_cap:
                     raise BudgetExceeded(
-                        f"your daily budget of ${self._per_viewer_cap:.2f} is reached "
-                        f"(estimated ${viewer_total:.2f} spent in the last 24h)"
+                        f"your daily budget of {credits(self._per_viewer_cap)} kell credits is reached "
+                        f"(estimated {credits(viewer_total)} spent in the last 24h)"
                     )
         except BudgetExceeded:
             raise

@@ -553,7 +553,6 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 @media (prefers-reduced-motion: reduce) { .dg-pic, .dg-img img { animation: none; transition: none; } }
 
 /* An HTML artifact (a slide deck, a small site) posted as a fenced ```html block: a card; Render opens a sandboxed frame. */
-.dg-settings.dg-addagent { width: min(760px, 96vw); }
 .dg-agent-models { border-top: 1px solid var(--rule, #e5e5e5); padding-top: 10px; margin-top: 4px; }
 .dg-agent-models summary { cursor: pointer; }
 .dg-agent-models .models-note { margin-top: 10px; }
@@ -570,7 +569,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-artifact-src code { white-space: pre-wrap; word-break: break-word; }
 
 /* "+ Add agent": a small popup over the chat. It reuses the Settings dialog's frame, animation and backdrop, at a smaller size. */
-.dg-settings.dg-addagent { width: min(440px, 94vw); height: auto; max-height: 92dvh; }
+.dg-settings.dg-addagent { width: min(760px, 96vw); height: auto; max-height: 92dvh; }
+/* The model-key panel can outgrow the max-height, and the base .dg-settings sets overflow: visible, which left the
+   overflow unreachable (no scroll). The dialog itself scrolls; scrolling is kept inside it. */
+.dg-settings.dg-addagent { overflow: auto; overscroll-behavior: contain; }
 .dg-addagent .dg-set-frame { height: auto; display: block; }
 .dg-addagent .dg-set-head { padding: 14px 18px; }
 .dg-addagent .dg-set-head h2 { font-size: 19px; }

@@ -249,8 +249,12 @@ async def pre_checks(pool: Any, unit: str, conn: Connection, spec: UnitSpec, req
         if worst is None:
             raise ProviderCallDenied(f"{unit!r} has no price, so max_cost_usd cannot be enforced")
         if worst > max_cost_usd:
-            raise ProviderCallDenied(f"worst-case cost ${worst:.4f} exceeds max_cost_usd ${max_cost_usd:.4f}; "
-                                     "lower max_tokens or raise the cap")
+            # kell credits, never $: one credit is a dollar's worth of provider spend; the field name stays max_cost_usd.
+            def credits(value: float) -> str:
+                s = f"{float(value):.4f}".rstrip("0").rstrip(".")
+                return s or "0"
+            raise ProviderCallDenied(f"worst-case cost {credits(worst)} kell credits exceeds max_cost_usd "
+                                     f"{credits(max_cost_usd)} kell credits; lower max_tokens or raise the cap")
     adapter = adapters.ADAPTERS.get(conn.kind)
     if adapter is None:
         raise ProviderCallDenied(f"connection {conn.connection_id!r} has unsupported kind {conn.kind!r}")

@@ -6,7 +6,9 @@ import { anyPlanActive, openCheckout, type Loaded, type Pack, type PlanState, ty
 import { PACK_INFO, inrPerCreditUsd } from "@/lib/plans";
 
 const inr = (n: number) => `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-const usd = (n: number) => `$${n.toFixed(2)}`;
+/** An amount as kell credits (one credit is a dollar's worth of provider spend). A person never sees a $ figure. */
+const num = (n: number) => n.toFixed(2).replace(/\.00$/, "").replace(/0$/, "");
+const credits = (n: number) => `${num(n)} credits`;
 const link = { textDecoration: "underline" } as const;
 
 type Api = Pick<ReturnType<typeof billingApi>, "wallet" | "plan" | "packOrder">;
@@ -78,7 +80,7 @@ export default function CreditPacks({ api, session, buy = true, checkout = openC
     if (order.kind === "off") { setWallet({ kind: "off" }); setBusy(""); return; }
     if (order.kind === "signed-out") { setWallet({ kind: "signed-out" }); setBusy(""); return; }
     if (order.kind === "error") { setNote(order.message); setBusy(""); return; }
-    const result = await checkout(order.data, `keळ credit ${usd(p.creditUsd)}`);
+    const result = await checkout(order.data, `keळ credit pack: ${credits(p.creditUsd)}`);
     if (!live.current) return;
     setBusy("");
     if (result === "paid") { setNote("Payment received. Waiting for it to be confirmed…"); waitForCredit(before, order.data.orderId); }
@@ -114,7 +116,7 @@ export default function CreditPacks({ api, session, buy = true, checkout = openC
 
       {session && ok && (
         <p className="small">
-          Balance: <b>{usd(ok.remainingUsd)}</b>
+          Balance: <b>{credits(ok.remainingUsd)}</b>
           <span className="dim"> · {ok.credits.length} credit{ok.credits.length === 1 ? "" : "s"} added so far</span>
         </p>
       )}
@@ -142,7 +144,7 @@ export default function CreditPacks({ api, session, buy = true, checkout = openC
               style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "16px 18px", display: "grid", gap: 6, alignContent: "start" }}>
               <p><b style={{ fontSize: 24, fontWeight: 400 }}>{inr(p.priceInr)}</b></p>
               {buy && ok && !showInfoOnly && (
-                <button type="button" className="btn-line" disabled={Boolean(busy) || locked} onClick={() => void purchase(p)} aria-label={`Add ${usd(p.creditUsd)} for ${inr(p.priceInr)}`}>
+                <button type="button" className="btn-line" disabled={Boolean(busy) || locked} onClick={() => void purchase(p)} aria-label={`Add ${credits(p.creditUsd)} for ${inr(p.priceInr)}`}>
                   <span>{busy === p.id ? "Opening payment…" : locked ? "Available with an active plan" : "Add credit"}</span>
                 </button>
               )}
