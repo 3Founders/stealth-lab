@@ -32,6 +32,26 @@ const MODELS = {
   "gemma-4-31B-it": { name: "gemma-4-31B-it", cost: { input: 0.09, output: 0.34 } },
 };
 
+// A second provider for the strong rung (setup option --strong-key-env, default key variable DEEPINFRA_KEY). DeepInfra's
+// OpenAI-compatible endpoint; its DeepSeek-V3.2 is the same model General Compute serves. Output limit checked on
+// 2026-11-02 (api.deepinfra.com/models/deepseek-ai/DeepSeek-V3.2): max_output_tokens 163840, so OpenCode's 32k default
+// output request passes and no limit cap is needed (the cap is General Compute's quirk). Prices that day: $0.26/M in, $0.38/M out.
+export const DI_PROVIDER = "di";
+export const DI_MODEL = "deepseek-ai/DeepSeek-V3.2";
+export const DI_BASE_URL = "https://api.deepinfra.com/v1/openai";
+const DI_MODELS = { [DI_MODEL]: { name: "DeepSeek V3.2", cost: { input: 0.26, output: 0.38 } } };
+
+/**
+ * The strong model and the provider-failure fallback (the plugin's retry hook reads config.json's fallback): with a second
+ * provider's key the strong rung moves there and gc/deepseek-v3.2 becomes its fallback; otherwise today's setup -- the strong
+ * model on General Compute, the cheap model as the fallback.
+ */
+export function modelPlan({ strongKeyEnv } = {}) {
+  return strongKeyEnv
+    ? { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL }
+    : { strong: STRONG_MODEL, fallback: CHEAP_MODEL };
+}
+
 export function opencodeDir(env = process.env) {
   return path.join(configDir(env), "opencode");
 }
@@ -47,7 +67,7 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, "utf8
 const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(obj, null, 2) + "\n"); };
 
 /** Adds kell's keys to an OpenCode config object (pure; for tests). -> { config, owned } */
-export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE_API_KEY", owned: before = [] }) {
+export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE_API_KEY", strongKeyEnv, owned: before = [] }) {
   const c = { ...(cfg || {}) };
   const owned = new Set(before);
   if (!c.$schema) { c.$schema = "https://opencode.ai/v2/config.json"; owned.add("schema"); }
@@ -56,6 +76,13 @@ export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE
     c.provider[PROVIDER] = { npm: "@ai-sdk/openai-compatible", name: "General Compute",
                              options: { baseURL: "https://api.generalcompute.com/v1", apiKey: `{env:${keyEnv}}` }, models: MODELS };
     owned.add("provider.gc");
+  }
+  // The second provider for the strong rung is added when setup was given its key variable and the variable is set;
+  // uninstall removes it by the same "provider.di" owned flag.
+  if (strongKeyEnv) {
+    c.provider[DI_PROVIDER] = { npm: "@ai-sdk/openai-compatible", name: "DeepInfra",
+                                options: { baseURL: DI_BASE_URL, apiKey: `{env:${strongKeyEnv}}` }, models: DI_MODELS };
+    owned.add("provider.di");
   }
   const plug = pluginDir.replace(/\\/g, "/");
   c.plugin = [...(Array.isArray(c.plugin) ? c.plugin : []).filter((p) => p !== plug), plug];
@@ -81,6 +108,7 @@ export function withoutKell(cfg, { pluginDir, owned: list = [] }) {
     if (!Object.keys(c.mcp).length) delete c.mcp;
   }
   if (owned.has("provider.gc") && c.provider) { const p = { ...c.provider }; delete p[PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
+  if (owned.has("provider.di") && c.provider) { const p = { ...c.provider }; delete p[DI_PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
   if (owned.has("model") && c.model === STRONG_MODEL) delete c.model;
   if (owned.has("schema")) delete c.$schema;
   return c;
@@ -99,8 +127,10 @@ export function opencodeVersion() {
   return r.status === 0 ? String(r.stdout || "").trim().split(/\s+/).pop() : null;
 }
 
-/** The whole install. launch: how hooks start kell (clients.mjs launchSpec). -> a one-line description. */
-export async function installOpenCode({ url, token, launch, env = process.env, npm = "npm", installDeps = true }) {
+/** The whole install. launch: how hooks start kell (clients.mjs launchSpec). strongKeyEnv: the environment variable that
+ * holds a second provider's key (default DEEPINFRA_KEY); when it is set, the strong rung moves to DeepInfra's DeepSeek
+ * (modelPlan) and gc/deepseek-v3.2 becomes its fallback. -> a one-line description. */
+export async function installOpenCode({ url, token, launch, env = process.env, npm = "npm", installDeps = true, strongKeyEnv }) {
   const dir = opencodeDir(env);
   const pluginDir = path.join(dir, "plugin");
   copyDir(path.join(HERE, "opencode"), pluginDir);
@@ -114,12 +144,15 @@ export async function installOpenCode({ url, token, launch, env = process.env, n
   const hooksFile = path.join(dir, "hooks.json");
   const { installClaudeDispatch } = await import("./clients.mjs");
   installClaudeDispatch({ settingsFile: hooksFile, launch, env });
+  const strongEnv = strongKeyEnv || "DEEPINFRA_KEY";
+  const useDi = Boolean(env[strongEnv]);
   const file = opencodeConfigFile(env);
   const before = readJson(path.join(dir, "config.json"))?.owned || [];
-  const { config, owned } = withKell(readJson(file), { pluginDir, url, token, owned: before });
+  const { config, owned } = withKell(readJson(file), { pluginDir, url, token, strongKeyEnv: useDi ? strongEnv : undefined, owned: before });
   writeJson(file, config);
-  writeJson(path.join(dir, "config.json"), { mode: "session", cheap: CHEAP_MODEL, strong: STRONG_MODEL, settings: [hooksFile], owned });
-  return `plugin + hooks in ${dir}; provider, plugin and MCP server in ${file}`;
+  const plan = modelPlan({ strongKeyEnv: useDi ? strongEnv : undefined });
+  writeJson(path.join(dir, "config.json"), { mode: "session", cheap: CHEAP_MODEL, strong: plan.strong, fallback: plan.fallback, settings: [hooksFile], owned });
+  return `plugin + hooks in ${dir}; provider${useDi ? "s (General Compute + DeepInfra for the strong model)" : ""}, plugin and MCP server in ${file}`;
 }
 
 export function uninstallOpenCode({ env = process.env } = {}) {

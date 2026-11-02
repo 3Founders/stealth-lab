@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { withKell, withoutKell, opencodeConfigFile, uninstallOpenCode, CHEAP_MODEL, STRONG_MODEL } from "../lib/opencode_setup.mjs";
+import { withKell, withoutKell, opencodeConfigFile, uninstallOpenCode, CHEAP_MODEL, STRONG_MODEL, modelPlan, DI_PROVIDER, DI_MODEL, DI_BASE_URL } from "../lib/opencode_setup.mjs";
 
 const pluginDir = path.join(os.tmpdir(), "kell-oc-plugin");
 
@@ -36,4 +36,23 @@ test("uninstall does not rewrite an OpenCode config kell never touched", () => {
   fs.writeFileSync(file, text);
   assert.equal(uninstallOpenCode({ env }), false);
   assert.equal(fs.readFileSync(file, "utf8"), text);
+});
+
+test("the second provider (di) is added only when its key variable is given, and uninstall removes it too", () => {
+  const plain = withKell(null, { pluginDir, url: "https://h/mcp" });
+  assert.ok(!plain.config.provider.di, "no di provider without strongKeyEnv");
+  const { config, owned } = withKell(null, { pluginDir, url: "https://h/mcp", strongKeyEnv: "DEEPINFRA_KEY" });
+  assert.equal(config.provider.di.options.baseURL, DI_BASE_URL);
+  assert.equal(config.provider.di.options.apiKey, "{env:DEEPINFRA_KEY}");
+  assert.ok(config.provider.di.models[DI_MODEL], "the DeepSeek model is listed");
+  assert.ok(DI_MODEL.includes("deepseek-ai/"), "a DeepInfra-listed DeepSeek id");
+  assert.equal(withoutKell(config, { pluginDir, owned }).provider, undefined, "uninstall removes both providers");
+});
+
+test("model plan: with the second provider the strong rung moves there and gc/deepseek becomes its fallback; otherwise today's setup", () => {
+  assert.deepEqual(modelPlan({}), { strong: STRONG_MODEL, fallback: CHEAP_MODEL });
+  assert.deepEqual(modelPlan({ strongKeyEnv: "DEEPINFRA_KEY" }),
+                   { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL });
+  assert.equal(STRONG_MODEL.startsWith("gc/"), true);
+  assert.equal(CHEAP_MODEL.startsWith("gc/"), true);
 });

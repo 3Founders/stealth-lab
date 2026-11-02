@@ -120,6 +120,8 @@ Usage:
 Setup options (setup also takes the install options below):
   --token-file <f>   read the bearer token from a file (no pasting a long token onto a command line)
   --key-env <NAME>   the environment variable that holds YOUR provider key (default: GENERAL_COMPUTE_API_KEY)
+  --strong-key-env <name>  a second provider's key variable for the strong model (default: DEEPINFRA_KEY). When it is set,
+                     the OpenCode agent's strong rung moves to DeepInfra's DeepSeek and gc/deepseek-v3.2 becomes its fallback
   --cursor-model <m> the model you picked in Cursor (it is not "auto"); saved in config.json
   --answers on|off   let a cheap model answer questions and chat (default on); saved in config.json
   --env-file <path>  read provider keys from this dotenv file (e.g. backend/.env) when they are not in the environment;
@@ -175,7 +177,8 @@ async function cmdInstall(v) {
   const { chosen } = await pickClients(v.client);
   const { launchSpec, SERVER_NAME } = await lazy.clients();
   const ctx = { url, token: settings.token, stdio: { ...launchSpec(), args: [...launchSpec().args, "--url", url] },
-                hooks: !v["no-hooks"], dispatch: Boolean(v["with-exec"]), keepMcp: Boolean(v["keep-mcp"]), launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] } };
+                hooks: !v["no-hooks"], dispatch: Boolean(v["with-exec"]), keepMcp: Boolean(v["keep-mcp"]), launch: launchSpec(), hookCommand: { ...launchSpec(), args: [...launchSpec().args, "hook-prompt"] },
+                strongKeyEnv: v["strong-key-env"] };
 
   if (!v["dry-run"]) writeConfig({ url, ...(v.token ? { token: v.token } : {}) });
 
@@ -529,6 +532,7 @@ async function main() {
         "token-file": { type: "string" },
         api: { type: "string" },
         "key-env": { type: "string" },
+        "strong-key-env": { type: "string" },
         "cursor-model": { type: "string" },
         "env-file": { type: "string" },
         answers: { type: "string" },

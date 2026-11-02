@@ -377,7 +377,7 @@ export function clients({ env = process.env, platform = process.platform } = {})
       label: "OpenCode",
       detect: () => false,
       where: () => "kell's OpenCode plugin, hooks and MCP server (~/.stealthlab/opencode, OpenCode's opencode.json)",
-      install: async ({ url, token, launch }) => (await import("./opencode_setup.mjs")).installOpenCode({ url, token, launch, env }),
+      install: async ({ url, token, launch, strongKeyEnv }) => (await import("./opencode_setup.mjs")).installOpenCode({ url, token, launch, env, strongKeyEnv }),
       uninstall: async () => (await import("./opencode_setup.mjs")).uninstallOpenCode({ env }),
     },
     {
