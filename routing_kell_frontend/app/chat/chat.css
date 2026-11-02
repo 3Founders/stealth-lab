@@ -915,3 +915,15 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 @media (prefers-reduced-motion: reduce) { .dg-act-copy .dg-act-ico { transition: none; transform: none; } }
 .dg-onboard[data-state="copied"] .dg-onboard-copy { color: #6ee7a0; }
 .dg-onboard[data-state="failed"] .dg-onboard-copy { color: #ff8a80; }
+
+/* Agents list: dot, mark, name, badge are four items, so rows with a mark get four columns (the name was landing in the narrow right column
+   and the badge wrapped under it). The badge text is dark on the light dark-mode blue so "default" is readable. */
+.dg-members li:has(.kell-mark) { grid-template-columns: 10px 16px minmax(0, 1fr) auto; }
+.dg-members li:has(.kell-mark) .dg-state { grid-column: 3 / -1; }
+:root[data-theme="dark"] .dg-badge { color: #171717; }
+:root[data-theme="dark"] .dg-badge[data-kind="tab"] { color: #171717; }
+
+/* Dark mode: the chat's buttons (Manage rooms, Connect agent, Add agent, mini buttons) light up white on hover, with dark text, instead of going black. */
+:root[data-theme="dark"] .dg-page :is(.btn-line, .dg-add, .dg-mini, .dg-breaker, .dg-stop, .dg-burger, .dg-menu, .dg-rooms-btn, .dg-set-x, .dg-manage-x, .dg-onboard-side, .dg-onboard):hover:not(:disabled) {
+  background: rgba(255, 255, 255, .92); color: #171717;
+}

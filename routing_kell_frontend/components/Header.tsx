@@ -141,7 +141,8 @@ export default function Header() {
             <Wordmark priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{navLinks.map(item)}</nav>
-          <ThemeToggle className="nav-theme" />
+          <div className="nav-right">
+            <ThemeToggle className="nav-theme" />
           {signedIn === undefined || (signedIn && username === undefined) ? (
             // Session resolution is async (Supabase's own session read, then a
             // real network round trip to fetch the profile that decides
@@ -158,6 +159,7 @@ export default function Header() {
               <Link href="/sign-in" className="btn-ink desk" onClick={() => track("sign_in_click", { where: "header" })}>Sign in <Arrow /></Link>
             </div>
           )}
+          </div>
           <button className="btn-ink menu-btn" aria-expanded={open} aria-controls="nav-panel" onClick={() => setOpen(!open)}>
             {open ? "Close" : "Menu"}
           </button>

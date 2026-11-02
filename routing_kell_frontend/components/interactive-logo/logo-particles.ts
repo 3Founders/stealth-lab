@@ -32,6 +32,30 @@ export interface ParticleConfig {
 export class LogoParticleSystem {
   private glowSprite: HTMLCanvasElement | null = null;
   private glowFor = "";
+  private silverSprite: HTMLCanvasElement | null = null;
+  private silverFor = "";
+
+  /** Light dots (dark mode) shine silver. Dark dots (light mode) get no glow: a dark halo would read as a smudge. */
+  private silver(): HTMLCanvasElement | null {
+    if (typeof document === "undefined") return null;
+    const [r, g2, b] = this.cfg.inkRGB.split(",").map((n) => Number(n));
+    if (!(0.2126 * r + 0.7152 * g2 + 0.0722 * b > 140)) return null;
+    if (this.silverSprite && this.silverFor === this.cfg.inkRGB) return this.silverSprite;
+    const c = document.createElement("canvas");
+    c.width = c.height = GLOW_SPRITE_PX;
+    const g = c.getContext("2d");
+    if (!g) return null;
+    const mid = GLOW_SPRITE_PX / 2;
+    const grad = g.createRadialGradient(mid, mid, 0, mid, mid, mid);
+    grad.addColorStop(0, "rgba(226,231,240,0.55)");
+    grad.addColorStop(0.4, "rgba(190,198,212,0.18)");
+    grad.addColorStop(1, "rgba(190,198,212,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, GLOW_SPRITE_PX, GLOW_SPRITE_PX);
+    this.silverSprite = c;
+    this.silverFor = this.cfg.inkRGB;
+    return c;
+  }
 
   /** A yellow radial glow, rebuilt only when the yellow changes (a theme switch does not change it, but a different --yellow would). */
   private glow(): HTMLCanvasElement | null {
@@ -239,6 +263,18 @@ export class LogoParticleSystem {
         ctx.lineTo(x[edges.b[e]], y[edges.b[e]]);
       }
       ctx.stroke();
+    }
+
+    const silver = this.silver();
+    if (silver) {
+      const prev = ctx.globalAlpha;
+      for (let i = 0; i < this.count; i++) {
+        if (this.isAccent[i]) continue;
+        const gr = (this.radius[i] + this.activation[i] * 0.5) * 4;
+        ctx.globalAlpha = Math.min(1, 0.6 + this.activation[i] * 0.4);
+        ctx.drawImage(silver, x[i] - gr, y[i] - gr, gr * 2, gr * 2);
+      }
+      ctx.globalAlpha = prev;
     }
 
     ctx.beginPath();
