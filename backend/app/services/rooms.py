@@ -558,6 +558,10 @@ async def append_events(pool: Any, sub: str, room_id: str, events: Any) -> dict[
             continue
         accepted.append({"id": eid, "seq": row["seq"]})
         top = max(top, row["seq"])
+        if ev["kind"] == "msg" and "canvas" in (ev["body"] or ""):          # a canvas block in a message becomes a version of the room's document
+            from app.services import room_docs as _docs
+
+            await _docs.capture(pool, room["id"], sub, ev["handle"] or "someone", eid or "", ev["body"])
     if top:  # what you send is read by you
         await pool.execute(
             "INSERT INTO room_reads (room_id, member_sub, last_read_seq) VALUES ($1, $2, $3) "

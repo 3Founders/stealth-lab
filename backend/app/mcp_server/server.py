@@ -1176,6 +1176,14 @@ _room_agent_routes.register(
     discover=_room_agent_discover, tools_of=_room_agent_tools_of,
 )
 
+from app.mcp_server import room_doc_routes as _room_doc_routes  # noqa: E402 -- shared documents in a room (db/174_room_docs.sql)
+
+_room_doc_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+)
+
 from app.mcp_server import memory_routes as _memory_routes  # noqa: E402 -- kell's memory, notes and knowledge (db/173_memory.sql)
 
 _memory_routes.register(
