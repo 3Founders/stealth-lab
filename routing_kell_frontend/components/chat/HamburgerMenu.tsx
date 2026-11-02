@@ -83,6 +83,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
           <Link role="menuitem" href="/contact" onClick={() => close(false)}>Contact</Link>
           <button type="button" role="menuitem" onClick={run(() => onSettings("about"))}>About and privacy</button>
           <hr />
+          <button type="button" role="menuitem" onClick={run(() => onSettings("plan"))}>Plan and billing</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("account"))}>Account</button>
           <button type="button" role="menuitem" onClick={run(onSignOut)}>Sign out</button>
         </div>

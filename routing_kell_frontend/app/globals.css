@@ -934,3 +934,16 @@ main, footer { position: relative; z-index: 1; }
 
 /* Five link columns and the mark fit one row: the mark takes two of twelve columns, so Company is not pushed under the tagline. */
 @media (min-width: 901px) { .footer-mark { grid-column: span 2; } .footer-col { grid-column: span 2; } .footer-mark p { max-width: 14em; } }
+
+/* Reading rhythm on Docs and Connect: the text had been drawn tight (and, with the soft drop shadow on the page's text, a little cramped).
+   A steady line height and clear space between a heading, its paragraph and the boxes under it. */
+.doc-sec p, .doc-sec li, main section > p, main section > ol li, main section > ul li { line-height: 1.62; }
+.doc-sec li + li, main section ol li + li { margin-top: 6px; }
+main section > h2 { margin-bottom: 12px; }
+main section > h2 + p { margin-top: 0; }
+main section > p { margin-block: 0 14px; max-width: 46em; }
+main section > p + .install, main section > .install { margin-top: 18px; margin-bottom: 14px; }
+main section > .install + p { margin-top: 14px; }
+.install-body { line-height: 1.7; }
+/* the active docs link: the highlight sits behind the whole row, not as a loose band under the text */
+.docs-nav a[aria-current="page"], .docs-nav a:hover { background: linear-gradient(var(--soft), var(--soft)) 0 0 / 100% 100% no-repeat; padding-inline: 8px; margin-inline: -8px; border-radius: 6px; }

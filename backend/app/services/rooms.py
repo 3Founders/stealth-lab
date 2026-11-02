@@ -44,7 +44,7 @@ INVITE_MAX_DAYS = 30
 INVITE_MAX_USES = 100
 EVENTS_PER_MINUTE = 120
 TITLE_RE = re.compile(r"^#[a-z0-9][a-z0-9_.-]{0,78}$")
-HANDLE_RE = re.compile(r"^@[a-z0-9][a-z0-9_.-]{0,38}$", re.I)
+HANDLE_RE = re.compile(r"^@[a-z0-9][a-z0-9_.-]{0,38}(?:/[a-z0-9][a-z0-9_.-]{0,38})?$", re.I)   # @name, or @person/tool for a connector
 KINDS = ("msg", "edit", "delete", "react", "system", "task", "task_update", "note")
 NEEDS_TEXT = ("msg", "edit", "system")
 NEEDS_TARGET = ("edit", "delete", "react")
@@ -355,6 +355,43 @@ def agent_handle(client_id: Optional[str]) -> str:
     if not cleaned or re.fullmatch(r"[0-9a-f-]{20,}", cleaned):
         cleaned = "agent"
     return ("@" + cleaned)[:39]
+
+
+_TOOL_LABELS = (("claude-code", "claude-code"), ("claudecode", "claude-code"), ("claude", "claude"), ("chatgpt", "chatgpt"), ("openai", "chatgpt"),
+                ("cursor", "cursor"), ("codex", "codex"), ("gemini", "gemini"), ("windsurf", "windsurf"), ("vscode", "vscode"))
+_TOOL_NAMES = {"claude": "Claude", "claude-code": "Claude Code", "chatgpt": "ChatGPT", "cursor": "Cursor", "codex": "Codex", "gemini": "Gemini",
+               "windsurf": "Windsurf", "vscode": "VS Code", "agent": "an agent"}
+
+
+def connector_tool(client_id: Optional[str]) -> str:
+    """Which tool a connector is, from its OAuth client id: claude, claude-code, chatgpt, cursor ... or "agent" when it cannot be told."""
+    raw = (client_id or "").lower()
+    for needle, label in _TOOL_LABELS:
+        if needle in raw:
+            return label
+    return "agent"
+
+
+def connector_tool_name(tool: str) -> str:
+    return _TOOL_NAMES.get(tool, tool)
+
+
+async def connector_handle(pool: Any, sub: str, client_id: Optional[str]) -> str:
+    """How a person's connected agent is named in a room: ``@username/claude``, ``@username/chatgpt``, ``@username/claude-code``, so everyone
+    can tell whose agent it is and which tool it is. Without a username on the account it is ``@name/tool`` from the display name, else
+    ``@agent/tool``."""
+    tool = connector_tool(client_id)
+    owner = ""
+    try:
+        row = await pool.fetchrow(
+            "SELECT cp.username FROM contributor_profiles cp JOIN users u ON u.id = cp.user_id WHERE u.external_subject = $1", sub)
+        owner = (row["username"] if row else "") or ""
+    except Exception:  # noqa: BLE001 -- no profile tables here: fall back to the display name
+        owner = ""
+    if not owner:
+        owner = (await _names(pool, [sub])).get(sub, "")
+    owner = re.sub(r"[^a-z0-9_.-]", "-", owner.lower()).strip(".-_")[:30] or "agent"
+    return f"@{owner}/{tool}"
 
 
 def agent_event(handle: str, text: str, reply_to: Optional[str] = None) -> dict[str, Any]:

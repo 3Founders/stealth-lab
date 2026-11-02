@@ -35,7 +35,7 @@ function PlanText() {
   return <b>{planText(usePlan())}</b>;
 }
 
-export type SectionId = "preferences" | "notifications" | "data" | "memory" | "agents" | "account" | "shortcuts" | "about";
+export type SectionId = "preferences" | "notifications" | "data" | "memory" | "agents" | "plan" | "account" | "shortcuts" | "about";
 
 export const SECTIONS: Array<{ id: SectionId; label: string }> = [
   { id: "preferences", label: "Preferences" },
@@ -43,6 +43,7 @@ export const SECTIONS: Array<{ id: SectionId; label: string }> = [
   { id: "data", label: "Your data" },
   { id: "memory", label: "Memory and knowledge" },
   { id: "agents", label: "Agents and models" },
+  { id: "plan", label: "Plan and billing" },
   { id: "account", label: "Account" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "about", label: "About and privacy" },
@@ -56,6 +57,8 @@ export interface SettingsProps {
   chatPrefs: ChatPrefs; onChatPrefs: (p: ChatPrefs) => void;
   notifyPrefs: Prefs; onNotifyPrefs: (p: Prefs) => void;
   data: { onDownload: () => void; onImport: () => void; onDelete: () => void;
+    /** An encrypted copy protected by a passphrase only you know, and bringing one back. */
+    encrypted?: { onDownload: () => void; onImport: () => void };
     /** A folder on this computer that keeps a copy (only where the browser allows it). */
     folder?: { supported: boolean; name: string | null; onChoose: () => void; onRestore: () => void; onStop: () => void } };
   agents: { modelText: string; modelReady: boolean; count: number; paused: boolean; onPause: (p: boolean) => void; maxHops: number };
@@ -148,6 +151,12 @@ export default function SettingsDialog(p: SettingsProps) {
                 <div className="dg-set-cards">
                   <div><b>Download</b><small>Keep a copy of your own, as a file.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onDownload}>Download</button></div>
                   <div><b>Import</b><small>Bring a downloaded copy back in.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onImport}>Import</button></div>
+                  {p.data.encrypted && (
+                    <div><b>Encrypted backup</b>
+                      <small>A file protected by a passphrase only you know, in an open format you can keep anywhere (your computer, a drive). It survives clearing this browser or losing a device. kell can&rsquo;t open it or reset the passphrase.</small>
+                      <span><button type="button" className="btn-line dg-mini-btn" onClick={p.data.encrypted.onDownload}>Download encrypted</button> <button type="button" className="btn-line dg-mini-btn" onClick={p.data.encrypted.onImport}>Restore encrypted</button></span>
+                    </div>
+                  )}
                   {p.data.folder && (
                     <div><b>Folder on this computer</b>
                       <small>{!p.data.folder.supported ? "This browser can't save to a folder. Use Download." : p.data.folder.name ? `Keeping a copy in "${p.data.folder.name}", updated as you chat. Plain files: one readable page per room, and one file to restore from.` : "Pick a folder and kell keeps a copy of your chats there, so they are on your computer and not only in this browser."}</small>
@@ -171,13 +180,21 @@ export default function SettingsDialog(p: SettingsProps) {
                 <p className="small dim">Agents hand off to each other at most {p.agents.maxHops} times before a person must step in.</p>
               </section>
             )}
+            {p.section === "plan" && (
+              <section>
+                <h3>Plan and billing</h3>
+                <p className="dg-set-lead">Your plan: <PlanText /></p>
+                <ul className="dg-set-links">
+                  <li><Link href="/account/billing">Manage your plan and payments</Link></li>
+                  <li><Link href="/pricing">See the plans</Link></li>
+                </ul>
+              </section>
+            )}
             {p.section === "account" && (
               <section>
                 <h3>Account</h3>
                 <p className="dg-set-lead">Signed in as <b>{p.account.name || "you"}</b>.</p>
-                <p className="dg-set-lead">Your plan: <PlanText /></p>
                 <ul className="dg-set-links">
-                  <li><Link href="/account/billing">Plan and billing</Link></li>
                   <li><Link href="/account/profile">Profile and photo</Link></li>
                   <li><Link href="/account/connections">Connected apps</Link></li>
                 </ul>

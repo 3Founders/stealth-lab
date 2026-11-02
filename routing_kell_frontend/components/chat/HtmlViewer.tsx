@@ -44,9 +44,10 @@ export default function HtmlViewer({ html, title, mode }: { html: string; title:
   );
   if (mode === "page") return <div className="dg-viewer-page">{fill}</div>;
 
-  const deviceW = WIDTHS[device];
   const pad = 24;                                              // the viewer's side padding
   const room = Math.max(240, (avail || 0) - pad);
+  // A desktop page is laid out wide, but not so wide that a narrow panel shrinks it to specks: about 1.8 times the room, between 720 and 1280.
+  const deviceW = device === "desktop" ? Math.round(Math.min(1280, Math.max(720, room * 1.8))) : WIDTHS[device];
   const winW = device === "desktop" ? room : Math.min(room, deviceW);
   const scale = Math.min(1, winW / deviceW);
   const iframe = (

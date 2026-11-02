@@ -38,8 +38,7 @@ export default function RoomSection({ surface }: { surface: "claude-code" | "cla
       <CopyField label="Room instruction" value={ROOM_PROMPT} event="connect_guide_copy" />
       <p>
         To show a slide deck or a small page, the agent posts a fenced <code>```html</code> block; it appears as a card and renders only
-        when you click Render, in a sandbox. Rooms are open today - kell&rsquo;s server can read them, which is what lets connectors
-        join - and end-to-end encrypted rooms are in design, not shipped. The full guide is at{" "}
+        when you click Render, in a sandbox. The full guide is at{" "}
         <a href="/docs#agents" style={underline}>Docs, Agents in rooms</a>.
       </p>
     </section>

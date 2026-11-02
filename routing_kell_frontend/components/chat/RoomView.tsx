@@ -34,6 +34,7 @@ import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import { memoryApi } from "@/lib/chat/memory-api";
+import { decryptBackup, encryptBackup, MIN_PASSPHRASE } from "@/lib/chat/backup-crypto";
 import { chooseFolder, folderBackupSupported, folderName, forgetFolder, readBackup, writeBackup } from "@/lib/chat/folder-backup";
 import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from "@/lib/chat/types";
 import { MAX_DEPTH } from "@/lib/chat/types";
@@ -570,14 +571,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 {agentRun && <span className="dg-badge">agent</span>}
                 <time>{time(run.messages[0].timestamp)}</time>
               </div>
-              {run.messages.map((m) => <Body key={m.id} m={m} />)}
-              <MessageActions
-                  copyText={texts.join("\n\n")}
-                  retryText={prompt || undefined}
-                  onCopy={(t) => copyRoomText(t)}
-                  onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
-                  retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
-                />
+              {run.messages.map((m) => (
+                <div key={m.id} className="dg-msg">
+                  <Body m={m} />
+                  {m.payload.text ? (
+                    <MessageActions
+                      copyText={m.payload.text}
+                      retryText={(mine ? m.payload.text : agentRun ? lastHuman : "") || undefined}
+                      onCopy={(t) => copyRoomText(t)}
+                      onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
+                      retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
+                    />
+                  ) : null}
+                </div>
+              ))}
             </div>
           </MessageScroller.Item>
         ),
@@ -860,6 +867,34 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     } catch { note("Couldn't read your saved history."); }
+  };
+  const encFile = useRef<HTMLInputElement>(null);
+  const downloadEncrypted = async () => {
+    const pass = window.prompt(`Choose a passphrase for this backup (at least ${MIN_PASSPHRASE} characters). Write it down: nobody, including kell, can recover it.`);
+    if (!pass) return;
+    if (pass !== window.prompt("Type the passphrase again.")) { note("The passphrases did not match, so no backup was made."); return; }
+    try {
+      const file = await encryptBackup(await history.exportAll(), pass);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(file)], { type: "application/json" }));
+      a.download = `kell-backup-${new Date().toISOString().slice(0, 10)}.kellbackup`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      note("Saved an encrypted backup. Keep the file and the passphrase safe.");
+    } catch (err) { note(err instanceof Error ? err.message : "Couldn't make the backup."); }
+  };
+  const restoreEncrypted = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (encFile.current) encFile.current.value = "";
+    if (!f) return;
+    const pass = window.prompt("The passphrase for this backup:");
+    if (!pass) return;
+    try {
+      const bundle = await decryptBackup(JSON.parse(await f.text()), pass);
+      const r = await history.importAll(bundle);
+      await hydrate(room);
+      note(`Restored ${r.messages} message${r.messages === 1 ? "" : "s"} from the encrypted backup.`);
+    } catch (err) { note(err instanceof Error ? err.message : "Couldn't restore that backup."); }
   };
   const importHistory = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -1167,12 +1202,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <Composer draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
+      <input ref={encFile} type="file" accept=".kellbackup,application/json" hidden onChange={(e) => void restoreEncrypted(e)} />
       <SettingsDialog
         open={settings.open} section={settings.section} room={room}
         onSection={(section) => setSettings((x) => ({ ...x, section }))} onClose={() => setSettings((x) => ({ ...x, open: false }))}
         chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} notifyPrefs={prefs} onNotifyPrefs={setPrefs}
         memory={{ api: mapi }}
-        data={{ onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
+        data={{ encrypted: { onDownload: () => void downloadEncrypted(), onImport: () => encFile.current?.click() }, onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
           folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
         agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH }}
         account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}

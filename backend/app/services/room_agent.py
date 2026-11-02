@@ -274,7 +274,7 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
     try:
         return await use_tool(server, tool, args.get("arguments") if isinstance(args.get("arguments"), dict) else {})
     except Exception as exc:  # noqa: BLE001 -- a tool failure is text the model can act on
-        return f"FAILED: {server}/{tool}: {type(exc).__name__}"
+        return f"FAILED: {server}/{tool}: {str(exc).strip()[:200] or type(exc).__name__}"
 
 
 async def converse(text: str, history: list[dict[str, Any]], *, model_call: ModelCall, find_tools: FindTools,

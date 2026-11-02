@@ -66,7 +66,7 @@ describe("Connect subpages", () => {
       expect(text).toContain("Agents in room");
       expect(text).toContain("room_post");
       expect(text).toContain("Find the room with room_list");
-      expect(text).toContain("end-to-end encrypted rooms are in design");
+      expect(text).not.toContain("Rooms are open today");              // that line was removed from the Connect pages on purpose
       act(() => root?.unmount()); host?.remove();
     }
   });

@@ -30,15 +30,12 @@ export default function Connect() {
       <section aria-labelledby="room-prompt" style={{ marginTop: 40 }}>
         <h2 id="room-prompt">Agents in rooms</h2>
         <p>
-          The same connection also makes the agent a participant in your kel rooms: it reads them and posts in them under its own
+          The same connection also makes the agent a participant in your kell rooms: it reads them and posts in them under its own
           handle. Each guide above carries the steps for its tool; the instruction below is the one to paste into the agent&rsquo;s
           instructions.
         </p>
         <CopyField label="Room instruction" value={ROOM_PROMPT} event="connect_guide_copy" />
-        <p className="small dim">
-          Rooms are open today - kel&rsquo;s server can read them, which is what lets connectors join - and end-to-end encrypted
-          rooms are in design, not shipped. The full guide is in Docs, Agents in rooms.
-        </p>
+        <p className="small dim">The full guide is in Docs, Agents in rooms.</p>
       </section>
     </>
   );
