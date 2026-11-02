@@ -185,3 +185,16 @@ describe("history store safety", () => {
     expect(after.keyReplaced).toBe(false);
   });
 });
+
+describe("backup carries your canvases too", () => {
+  it("exports documents and restores them on another device without overwriting ones already there", async () => {
+    const a = new HistoryStore(mapStore(), "u1");
+    await a.putDoc("canvas", "c1", { title: "Plan" }, 5);
+    const bundle = await a.exportAll();
+    expect(bundle.docs).toEqual([{ kind: "canvas", id: "c1", t: 5, value: { title: "Plan" } }]);
+    const b = new HistoryStore(mapStore(), "u1");
+    await b.putDoc("canvas", "c2", { title: "Mine" });
+    await b.importAll(JSON.parse(JSON.stringify(bundle)));
+    expect((await b.listDocs<{ title: string }>("canvas")).map((d) => d.value.title).sort()).toEqual(["Mine", "Plan"]);
+  });
+});

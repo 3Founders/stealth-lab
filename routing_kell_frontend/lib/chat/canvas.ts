@@ -104,7 +104,7 @@ export function reviseRequest(c: Canvas, who = "@kell"): string {
 export type CanvasView = "page" | "markdown" | "code";
 export function viewOf(kind: CanvasKind, text: string): CanvasView {
   const t = text.trimStart().slice(0, 600).toLowerCase();
-  if (kind === "html" || t.startsWith("<!doctype html") || t.startsWith("<html") || /^<(svg|body|head|div|main|section|style|script)[\s>]/.test(t)) return "page";
+  if (kind === "html" || t.startsWith("<!doctype html") || /^<([a-z][a-z0-9-]*)[\s>/]/.test(t)) return "page"; // starts with an HTML tag: it is a page or a fragment of one
   return kind === "code" ? "code" : "markdown";
 }
 

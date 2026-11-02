@@ -36,6 +36,8 @@ export interface HistoryExport {
   version: 1;
   exportedAt: string;
   rooms: Record<string, { messages: GroupMessage[]; tasks: RelayTask[] }>;
+  /** Canvases (and later notes) kept on this device. Absent in older exports. */
+  docs?: Array<{ kind: DocKind; id: string; t: number; value: unknown }>;
 }
 
 const b64 = (bytes: Uint8Array) => { let s = ""; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); };
@@ -257,7 +259,9 @@ export class HistoryStore {
   async exportAll(): Promise<HistoryExport> {
     const rooms: HistoryExport["rooms"] = {};
     for (const r of await this.rooms()) { const { messages, tasks } = await this.load(r); rooms[r] = { messages, tasks }; }
-    return { version: 1, exportedAt: new Date().toISOString(), rooms };
+    const docs: NonNullable<HistoryExport["docs"]> = [];
+    for (const kind of ["canvas", "note", "memory", "knowledge"] as DocKind[]) for (const d of await this.listDocs<unknown>(kind)) docs.push({ kind, id: d.id, t: d.t, value: d.value });
+    return { version: 1, exportedAt: new Date().toISOString(), rooms, ...(docs.length ? { docs } : {}) };
   }
 
   /** Adds an export's contents (never removes anything). Returns how many messages and tasks were read. */
@@ -272,6 +276,9 @@ export class HistoryStore {
       for (const t of v?.tasks ?? []) {
         if (t && typeof t.id === "string" && t.room === room) { await this.saveTask(t); tasks++; }
       }
+    }
+    for (const d of b.docs ?? []) {
+      if (d && typeof d.id === "string" && ["canvas", "note", "memory", "knowledge"].includes(d.kind) && typeof d.t === "number" && !(await this.getDoc(d.kind, d.id))) await this.putDoc(d.kind, d.id, d.value, d.t);
     }
     return { messages, tasks };
   }

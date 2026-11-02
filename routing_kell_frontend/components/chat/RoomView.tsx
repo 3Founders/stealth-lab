@@ -155,7 +155,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // Temporary rooms live in memory only: never saved to this device, never synced (lib/chat/temporary.ts).
   const tempRef = useRef<Set<string>>(new Set());
   // An agent's canvas blocks become versions of canvases kept on this device (lib/chat/canvas.ts); set below, called from push().
-  const captureRef = useRef<(m: GroupMessage) => void>(() => {});
+  const captureRef = useRef<(m: GroupMessage, live?: boolean) => void>(() => {});
 
   // sidebar forms
   const [adding, setAdding] = useState(false);
@@ -436,6 +436,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const have = new Set(cur.flatMap((l) => (l.kind === "msg" ? [l.m.id] : [])));
       const add: Line[] = saved.messages.filter((m) => !have.has(m.id)).map((m) => ({ kind: "msg", m }));
       if (add.length) { lineStore.current = { ...lineStore.current, [r]: [...add, ...cur].sort((a, b) => lineTime(a) - lineTime(b)) }; bump((n) => n + 1); }
+      for (const l of add) if (l.kind === "msg" && l.m.sender.type !== "human") captureRef.current(l.m, false); // rebuild canvases from saved history (a version already made from a message is not added twice)
       if (saved.tasks.length) setTasksByRoom((p) => ({ ...p, [r]: mergeTasks(saved.tasks, p[r] ?? []) }));
     } catch { /* nothing saved, or storage blocked: the room simply starts empty */ }
   }, [history]);
@@ -673,10 +674,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     canvasesRef.current = next; setCanvases(next);
     if (!tempRef.current.has(c.room)) void history.putDoc("canvas", c.id, c).catch(() => {});
   };
-  captureRef.current = (m) => {
+  captureRef.current = (m, live = true) => {
     const changed = captureFrom(canvasesRef.current, { id: m.id, room: m.roomId, by: m.sender.handle, text: m.payload.text, at: m.timestamp }, () => crypto.randomUUID());
     for (const c of changed) storeCanvas(c);
-    if (changed.length) setCanvasId(changed[0].id);
+    if (changed.length) { setCanvasId(changed[0].id); if (live && m.roomId === roomRef.current) setCanvasOpen(true); } // a canvas an agent just wrote opens beside the chat
   };
   const canvasCtx = useMemo(() => ({
     open: (title: string) => {
