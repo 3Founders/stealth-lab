@@ -7,6 +7,19 @@ import pytest
 from app.services import rooms
 
 
+def test_the_gateway_owner_is_the_signed_in_person_not_a_stale_name():
+    """_gateway_owner is what attributes (and audits) every gateway call; it must resolve the current actor."""
+    from app.services.authn import Actor, reset_current_actor, set_current_actor
+
+    import app.mcp_server.server as srv
+
+    tok = set_current_actor(Actor(subject="person-1"))
+    try:
+        assert srv._gateway_owner() == "person-1"
+    finally:
+        reset_current_actor(tok)
+
+
 def test_a_connector_posts_under_a_handle_from_its_client_id():
     assert rooms.agent_handle("claude-ai") == "@claude-ai"
     assert rooms.agent_handle("Claude Web") == "@claude-web"

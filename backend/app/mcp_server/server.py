@@ -1280,7 +1280,7 @@ async def triage_route(request: Request) -> JSONResponse:
 
 def _gateway_owner() -> str | None:
     try:
-        return _delegate_owner()
+        return _kell_owner()
     except PermissionError:
         return None
 
