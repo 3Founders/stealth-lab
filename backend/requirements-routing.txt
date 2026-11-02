@@ -1,4 +1,4 @@
 # Model recommender inference (app/routing/model.py, fit.py). WORKER image only:
 # the API / MCP process decides from stored draws with numpy and never imports JAX.
-jax>=0.11.2
+jax>=0.12.0.1
 numpyro>=0.22.0
