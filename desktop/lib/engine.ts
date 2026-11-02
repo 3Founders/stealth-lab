@@ -1,13 +1,14 @@
 // The engine: a local `opencode serve` child with kell's plugin on its config, found the way `kell setup --client opencode`
-// installs it. The prototype talks to it through the tokened HTTP API (@opencode/client); the desktop shells (Tauri or
-// Electron, docs/desktop_app_plan.md) will call this same module for their main process.
+// installs it. The prototype talks to it through the tokened HTTP API (@opencode/client); the Electron main process also
+// loads this module (for engineStop), so the client is required lazily: its package has no CJS "exports" main and a raw
+// require from the main process would die with ERR_PACKAGE_PATH_NOT_EXPORTED (the Next server bundle imports it fine).
 import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import { OpenCode } from "@opencode/client"
 
 export type Engine = { baseUrl: string; password: string; directory: string }
-export type Client = ReturnType<typeof OpenCode.make>
+type OC = typeof import("@opencode/client")
+export type Client = ReturnType<OC["OpenCode"]["make"]>
 
 const exes = () => [
   process.env.KELL_OC_ENGINE || "",
@@ -23,6 +24,8 @@ export const findEngineExe = () => exes().find((e) => { try { return fs.statSync
 type State = { child?: ChildProcess; engine?: Engine }
 const g = globalThis as typeof globalThis & { __kellEngineState?: State }
 const state: State = g.__kellEngineState || (g.__kellEngineState = {})
+
+let OpenCodeCtor: (typeof import("@opencode/client"))["OpenCode"] | undefined
 
 export const engineStatus = () => (state.engine && state.child && !state.child.killed ? state.engine : undefined)
 
@@ -66,5 +69,7 @@ export function engineStop() {
 export const authHeader = (e: Engine): string =>
   "Basic " + Buffer.from(`opencode:${e.password}`, "utf8").toString("base64")
 
-export const clientFor = (e: Engine): Client =>
-  OpenCode.make({ baseUrl: e.baseUrl, headers: { authorization: authHeader(e) } })
+export const clientFor = (e: Engine): Client => {
+  const C = OpenCodeCtor ?? (OpenCodeCtor = (require("@opencode/client") as OC).OpenCode)
+  return C.make({ baseUrl: e.baseUrl, headers: { authorization: authHeader(e) } })
+}

@@ -1,0 +1,18 @@
+// Compiles only the Electron main to CommonJS in electron/dist/. The desktop tsconfig excludes electron/ so Next's
+// typecheck never sees it. (lib/engine.ts is not compiled here: the main process no longer loads it — the engine is
+// owned by the Next child and dies with its tree.)
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "rootDir": ".",
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": ["./main.ts"]
+}

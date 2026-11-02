@@ -3,6 +3,13 @@
 Status: plan, with steps 1–2 built as a prototype (`desktop/`, commit `4504eeb3`, verified end to end 2026-11-02). The
 shell is Electron (owner decision); steps 3–6 can go ahead. Verified facts: "Prototype built" below.
 
+**Shell built (2026-11-02, step 7).** `desktop/electron/main.ts`: single instance; the Next UI runs as a child
+(`next start` on the production build, `ELECTRON_RUN_AS_NODE=1` so the child is plain node) because next's programmatic
+`prepare()` hangs inside the Electron main (its render-server fork resolves to electron.exe); the port is OS-picked
+(port 0 probed, the 28894 guard kept); the window loads it; on quit the child's whole tree dies (taskkill /T) — the
+opencode engine it started through lib/engine.ts goes with it. Smoke (KELL_SMOKE=1): window up, engine 200 up:true on
+its own OS-picked port, tree killed, no orphans. macOS not added: dmg + signing is extra work (owner item).
+
 ## Goal
 
 kell's own coding app, like Claude Code's desktop app, in the look of the website and the console. The engine is OpenCode
