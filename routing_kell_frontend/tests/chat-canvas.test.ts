@@ -84,3 +84,13 @@ describe("canvas helpers", () => {
     expect(fileNameFor(newCanvas("c", "#a", "Page!", "html", "x", "@kell"))).toBe("page.html");
   });
 });
+
+describe("canvas text while it streams", () => {
+  const F = "```";
+  it("hides a finished block and an unfinished one behind a short line", async () => {
+    const { hideCanvasWhileStreaming } = await import("@/lib/chat/canvas");
+    expect(hideCanvasWhileStreaming(`Done.\n\n${F}canvas title="Plan"\nbody\n${F}\n\nBye`)).toBe("Done.\n\nCanvas: Plan\n\nBye");
+    expect(hideCanvasWhileStreaming(`Working.\n\n${F}canvas title="Plan" kind=document\nline one\nline tw`)).toBe('Working.\n\nWriting the canvas "Plan"…');
+    expect(hideCanvasWhileStreaming("no canvas here")).toBe("no canvas here");
+  });
+});

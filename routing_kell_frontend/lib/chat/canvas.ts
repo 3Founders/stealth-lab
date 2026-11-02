@@ -104,3 +104,16 @@ export function fileNameFor(c: Canvas): string {
   const ext = c.kind === "html" ? "html" : c.kind === "code" ? "txt" : "md";
   return `${c.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "canvas"}.${ext}`;
 }
+
+/** For text still arriving: a canvas block (finished or not yet closed) is shown as one short line, not as the whole document scrolling by. */
+export function hideCanvasWhileStreaming(text: string): string {
+  const FENCE_OPEN = /(^|\n)(```|~~~)canvas([^\n]*)(\n|$)/;
+  let out = text;
+  for (const b of [...extractCanvasBlocks(text)].reverse()) out = `${out.slice(0, b.start)}Canvas: ${b.title}${out.slice(b.end)}`;
+  const open = FENCE_OPEN.exec(out);
+  if (open) {
+    const title = /title\s*=\s*"([^"\n]{1,120})"/i.exec(open[3] ?? "")?.[1];
+    out = `${out.slice(0, (open.index ?? 0) + open[1].length)}Writing the canvas${title ? ` "${title}"` : ""}…`;
+  }
+  return out;
+}

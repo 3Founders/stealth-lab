@@ -123,3 +123,9 @@ def test_a_key_pasted_into_instructions_is_redacted_before_it_reaches_the_prompt
 
     clean = redact_value("Use this key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA when reviewing", [])
     assert "sk-ant-api03-AAAA" not in clean
+
+
+
+def test_the_prompt_teaches_the_canvas_block_the_page_understands() -> None:
+    s = ra._system([], "@kell")
+    assert "```canvas title=" in s and "kind=document" in s and "~~~" in s

@@ -1,5 +1,5 @@
 "use client";
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { sends } from "@/lib/chat/prefs";
 import { applyMention, matchCommands, matchHandles, mentionQuery, slashQuery } from "@/lib/chat/ui";
 import { ACCEPT, dataUrlOf, prepareImage, whyNotImage } from "@/lib/chat/images";
@@ -12,7 +12,9 @@ import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
  * The message box. Typing "@" opens a list of the room's handles. It follows the W3C combobox pattern: focus stays in
  * the text box, the list is a listbox, and aria-activedescendant names the highlighted option.
  */
-export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true }: { handles: string[]; agentHandles?: string[]; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
+export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft }: { handles: string[]; agentHandles?: string[];
+  /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
+  draft?: { text: string; n: number }; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -25,6 +27,11 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
   const listId = useId();
+  useEffect(() => {
+    if (!draft || draft.n === 0) return;
+    setText(draft.text); setCaret(draft.text.length); setActive(0); setDismissed(true);
+    requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(0, 0); });
+  }, [draft?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const q = mentionQuery(text, caret);
   const options = useMemo(() => (q && !dismissed ? matchHandles(handles, q.query) : []), [q, dismissed, handles]);

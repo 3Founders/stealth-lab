@@ -7,6 +7,9 @@ import OnboardButton from "@/components/chat/OnboardButton";
 import SearchPalette from "@/components/chat/SearchPalette";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
+import CanvasPanel from "@/components/chat/CanvasPanel";
+import { CanvasContext } from "@/components/chat/CanvasCard";
+import { captureFrom, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
@@ -148,6 +151,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // Temporary rooms live in memory only: never saved to this device, never synced (lib/chat/temporary.ts).
   const tempRef = useRef<Set<string>>(new Set());
+  // An agent's canvas blocks become versions of canvases kept on this device (lib/chat/canvas.ts); set below, called from push().
+  const captureRef = useRef<(m: GroupMessage) => void>(() => {});
 
   // sidebar forms
   const [adding, setAdding] = useState(false);
@@ -170,6 +175,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (l.kind === "msg" && cur.some((x) => x.kind === "msg" && x.m.id === l.m.id)) return;
     lineStore.current = { ...lineStore.current, [r]: [...cur, l] }; // read straight away by the agents' history, before any re-render
     bump((n) => n + 1);
+    if (l.kind === "msg" && l.m.sender.type !== "human") captureRef.current(l.m);
     if (l.kind === "msg" && !tempRef.current.has(r)) {
       history.appendMessage(l.m).catch(() => warnHistory());
       if (!remote) void engineRef.current?.enqueue(r, l.m); // typed or produced on this device: it goes to your account
@@ -627,6 +633,32 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // Search (Cmd+K or Ctrl+K, or the menu): reads the messages saved on this device, and opens a room at the message found.
   const [searchOpen, setSearchOpen] = useState(false);
+
+  // Canvas: documents, code and pages the agents wrote, with their versions, on this device (encrypted).
+  const [canvases, setCanvases] = useState<Canvas[]>([]);
+  const canvasesRef = useRef<Canvas[]>([]);
+  canvasesRef.current = canvases;
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [canvasId, setCanvasId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ text: string; n: number }>({ text: "", n: 0 });
+  useEffect(() => { void history.listDocs<Canvas>("canvas").then((l) => setCanvases(l.map((d) => d.value))).catch(() => {}); }, [history]);
+  const storeCanvas = (c: Canvas) => {
+    const next = canvasesRef.current.some((x) => x.id === c.id) ? canvasesRef.current.map((x) => (x.id === c.id ? c : x)) : [...canvasesRef.current, c];
+    canvasesRef.current = next; setCanvases(next);
+    if (!tempRef.current.has(c.room)) void history.putDoc("canvas", c.id, c).catch(() => {});
+  };
+  captureRef.current = (m) => {
+    const changed = captureFrom(canvasesRef.current, { id: m.id, room: m.roomId, by: m.sender.handle, text: m.payload.text, at: m.timestamp }, () => crypto.randomUUID());
+    for (const c of changed) storeCanvas(c);
+    if (changed.length) setCanvasId(changed[0].id);
+  };
+  const canvasCtx = useMemo(() => ({
+    open: (title: string) => {
+      const c = canvasesRef.current.find((x) => x.room === roomRef.current && x.title.toLowerCase() === title.toLowerCase());
+      if (c) setCanvasId(c.id);
+      setCanvasOpen(true);
+    },
+  }), []);
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setSearchOpen((o) => !o); } };
     window.addEventListener("keydown", k);
@@ -851,6 +883,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   return (
     <FilesContext.Provider value={filesCtx}>
+    <CanvasContext.Provider value={canvasCtx}>
     <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
@@ -923,6 +956,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
+      <CanvasPanel
+        open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onSelect={setCanvasId}
+        onChange={storeCanvas}
+        onDelete={(id) => { const c = canvasesRef.current.find((x) => x.id === id); const next = canvasesRef.current.filter((x) => x.id !== id); canvasesRef.current = next; setCanvases(next); setCanvasId(null); if (c) void history.deleteDoc("canvas", id).catch(() => {}); }}
+        onCreate={() => { const n = canvasesRef.current.filter((c) => c.room === room).length + 1; const c = newCanvas(crypto.randomUUID(), room, `Untitled ${n}`, "document", "", "you"); storeCanvas(c); setCanvasId(c.id); }}
+        onRevise={(text) => setDraft((d) => ({ text, n: d.n + 1 }))}
+      />
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
@@ -931,7 +971,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu onSearch={() => setSearchOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={canvases.filter((c) => c.room === room).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
@@ -955,7 +995,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     <Avatar who={assistantIdentityFor(h)} />
                     <div className="dg-col">
                       <div className="dg-meta"><b>{nameOf(h)}</b><span className="dg-badge">agent</span></div>
-                      <div className="dg-body"><p><SmoothText text={withoutDataImages(v.text)} onRevealed={v.final ? () => flushFinal(h) : undefined} /></p></div>
+                      <div className="dg-body"><p><SmoothText text={hideCanvasWhileStreaming(withoutDataImages(v.text))} onRevealed={v.final ? () => flushFinal(h) : undefined} /></p></div>
                     </div>
                   </MessageScroller.Item>
                 ))}
@@ -993,7 +1033,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
           )}
         </div>
-        <Composer handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
+        <Composer draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <SettingsDialog
@@ -1005,6 +1045,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
       />
     </div>
+    </CanvasContext.Provider>
     </FilesContext.Provider>
   );
 }

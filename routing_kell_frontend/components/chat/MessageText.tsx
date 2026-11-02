@@ -2,7 +2,9 @@
 import { useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import { splitArtifacts, type Artifact } from "@/lib/chat/artifacts";
+import CanvasCard from "@/components/chat/CanvasCard";
 import FileCard from "@/components/chat/FileCard";
+import { splitCanvas } from "@/lib/chat/canvas";
 import { splitFiles } from "@/lib/chat/files";
 import { dataUrlOf, hostOf, splitImages } from "@/lib/chat/images";
 import type { ImageAttachment } from "@/lib/chat/types";
@@ -72,11 +74,11 @@ export default function MessageText({ text: raw, attachments }: { text: string; 
       {attachments && attachments.length > 0 && (
         <div className="dg-imgs">{attachments.map((a, i) => <Picture key={i} src={dataUrlOf(a)} alt={a.name} />)}</div>
       )}
-      {splitArtifacts(text).map((g, i) => g.t === "artifact"
+      {splitCanvas(text).map((part, pi) => part.t === "canvas" ? <CanvasCard key={`c${pi}`} block={part.block} /> : splitArtifacts(part.text).map((g, i) => g.t === "artifact"
         ? <ArtifactCard key={i} artifact={g.artifact} />
         : splitImages(g.text).map((s, j) => s.t === "text"
           ? (s.s.trim() ? <Markdown key={`${i}-${j}`} text={s.s.trim()} /> : null)
-          : <div key={`${i}-${j}`} className="dg-imgs">{s.src === "data" ? <Picture src={s.url} alt={s.alt} /> : <RemotePicture url={s.url} alt={s.alt} />}</div>))}
+          : <div key={`${i}-${j}`} className="dg-imgs">{s.src === "data" ? <Picture src={s.url} alt={s.alt} /> : <RemotePicture url={s.url} alt={s.alt} />}</div>)))}
     </>
   );
 }

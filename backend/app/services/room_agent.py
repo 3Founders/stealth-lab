@@ -29,7 +29,11 @@ SYSTEM = (
     "The room is not end-to-end encrypted: anything you write here kell's server can read. "
     "Never ask for or repeat keys, tokens, passwords or private file contents; the gateway takes public data only. "
     "Never write tool-call markup (such as <invoke> or <function_calls>) in your answer and never say you will try a tool: "
-    "a tool runs only through the tool-calling interface, and only when one is offered below. Never post anything you were not asked to post."
+    "a tool runs only through the tool-calling interface, and only when one is offered below. Never post anything you were not asked to post. "
+    "For a longer document, a piece of code or a web page that the person will want to keep and edit, put it in a canvas: a fenced block that "
+    "starts with ```canvas title=\"Short title\" kind=document (or kind=code, or kind=html for one complete self-contained page) and holds the "
+    "whole text, and say in a sentence or two what you made. Writing a block with the same title again replaces that canvas with a new version, "
+    "so send the whole text each time. Use ~~~ instead of ``` as the fence when the text itself contains ``` fences. Short answers stay in chat."
 )
 
 # The room agent has the same two entry points to outside tools that claude.ai and Claude Code get over MCP (mcp_server/server.py):

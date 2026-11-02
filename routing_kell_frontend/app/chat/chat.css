@@ -831,3 +831,23 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   .dg-pop *, .dg-search-wrap, .dg-onboard-menu, .dg-mentions, .dg-bell-pop { animation: none !important; transition: none !important; }
   .dg-think .kell-mark, .dg-think-label { animation: none !important; }
 }
+
+/* The canvas: a glass panel at the right edge, over the chat. */
+.dg-canvas { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; width: min(560px, 100vw); display: grid; grid-template-rows: auto auto auto minmax(0, 1fr) auto; gap: 8px; padding: 14px; background: var(--dg-glass-strong, var(--surface)); -webkit-backdrop-filter: blur(12px) saturate(1.4); backdrop-filter: blur(12px) saturate(1.4); box-shadow: var(--dg-float, -20px 0 52px rgba(0, 0, 0, .22)); animation: dg-canvas-in 300ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+@keyframes dg-canvas-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+.dg-canvas-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dg-canvas-actions { display: inline-flex; gap: 8px; align-items: center; }
+.dg-canvas-empty { margin: 0; padding: 8px 4px; }
+.dg-canvas-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dg-canvas-bar select { font: inherit; font-size: 14px; padding: 6px 8px; border: 0; border-radius: var(--dg-r-btn, 6px); background: var(--dg-glass-strong, var(--surface)); color: var(--ink); box-shadow: var(--dg-dent, inset 0 1px 3px rgba(0, 0, 0, .14)); min-width: 0; }
+.dg-canvas-tabs { display: flex; gap: 6px; }
+.dg-canvas-tabs button { font: inherit; font-size: 13px; padding: 4px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; }
+.dg-canvas-tabs button[aria-selected="true"] { background: rgba(255, 210, 31, .35); }
+.dg-canvas-text, .dg-canvas-frame { width: 100%; height: 100%; min-height: 0; border: 0; border-radius: var(--dg-r-btn, 6px); padding: 12px; background: var(--dg-glass-strong, var(--surface)); color: var(--ink); box-shadow: var(--dg-dent, inset 0 1px 3px rgba(0, 0, 0, .14)); resize: none; overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+.dg-canvas-text { font: inherit; font-size: 15px; line-height: 1.5; }
+.dg-canvas-text[data-kind="code"], .dg-canvas-text[data-kind="html"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; white-space: pre; }
+.dg-canvas-frame { background: #fff; padding: 0; }
+.dg-canvas-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dg-canvas-card .dg-file-kind { background: #b97700; }
+@media (prefers-reduced-motion: reduce) { .dg-canvas { animation: none; } }
+@media (prefers-reduced-transparency: reduce) { .dg-canvas { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); } }
