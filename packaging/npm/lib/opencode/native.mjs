@@ -1,6 +1,8 @@
 // Layer 2: what hooks cannot do. Loaded by index.mjs when KELL_OC_NATIVE=on.
 //  (a) triage + model: kell's own triage (POST <server>/triage, the call `kell hook-prompt` makes) picks the model per prompt;
 //  (b) escalation: two failed test runs on the cheap model switch the session to the strong one;
+//  (b2) fallback: a provider failure (the model never answered) is retried once on the same model, then the session switches
+//       to the fallback model (config.json's fallback, default gc/minimax-m2.7) -- at most one switch per turn, never a loop;
 //  (c) tools: the tool router's suggestions (POST <server>/tools) for the prompt's tool goal, remote servers only;
 //  (d) recording: per turn, model, tokens, cost, tools used and the test result go to <server>/tools/outcome.
 //
@@ -75,6 +77,34 @@ export function nextEscalation(s, { isTest, failed }, limit = 2) {
   return { escalate: s.which === "cheap" && s.testFails >= limit }
 }
 
+/**
+ * Provider-side failures (the model never answered) told apart from every other error. OpenCode's retry hook hands over a
+ * SessionError; classify on the text, because the shapes vary (message strings, HTTP status objects, AbortError...).
+ * Covers the failures seen live: "Provider request failed with HTTP 403", "Streaming request failed" (a 400 body),
+ * 5xx, and timeouts. Not covered on purpose: everything a model or a tool decided by itself.
+ */
+export function isProviderFailure(err) {
+  if (!err) return false
+  let text = ""
+  try { text = JSON.stringify(err?.error ?? err) } catch { text = "" }
+  text += " " + String(err?.message || err?.name || "")
+  return /streaming request failed|http \d{3}|status[: ]?\d{3}|timeout|timed ?out|abort|econn|socket hang up|fetch failed|network/i.test(text)
+}
+
+/**
+ * What to do after a provider failure, from OpenCode's retry hook. One failure is tolerated (the same model is retried
+ * once); the second one in a turn switches the session to the fallback. Never loops: the fallback itself is never switched
+ * away from, and at most one switch happens per turn (the prompt hook resets fallbackDone).
+ */
+export function nextFallback(s, { attempt, model, fallback, failing }) {
+  if (!failing) return { switch: false, reason: "not a provider failure" }
+  if (!parseModel(fallback)) return { switch: false, reason: "no fallback model" }
+  if (model === fallback) return { switch: false, reason: "already on the fallback" }
+  if (s.fallbackDone) return { switch: false, reason: "already switched this turn" }
+  if (Number(attempt || 0) < 2) return { switch: false, reason: "first failure: the same model is retried once" }
+  return { switch: true }
+}
+
 /** Remote MCP servers from the router's answer that can be added with no sign-in. Field names are an assumption. */
 export function addableRemote(reply, installed = []) {
   const have = new Set(installed)
@@ -83,18 +113,19 @@ export function addableRemote(reply, installed = []) {
     && !t.requires_auth && !t.oauth && !t.needs_key && !have.has(t.name)).slice(0, 2)
 }
 
-export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg } = {}) {
+export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: strongCfg, fallback: fallbackCfg } = {}) {
   const cfg = readKellConfig()
   const cheap = process.env.KELL_OC_CHEAP_MODEL || cheapCfg || "gc/minimax-m2.7"
   const strong = process.env.KELL_OC_STRONG_MODEL || process.env.KELL_OC_DEFAULT_MODEL || strongCfg || null
+  const fallback = process.env.KELL_OC_FALLBACK_MODEL || fallbackCfg || "gc/minimax-m2.7"
   const addRemote = process.env.KELL_OC_ADD_REMOTE === "on"
   const log = (...a) => { if (process.env.KELL_OC_DEBUG === "1") try { fs.appendFileSync(path.join(process.env.KELL_OC_STATE_DIR || os.tmpdir(), "native.log"), `${new Date().toISOString()} ${a.join(" ")}\n`) } catch { /* best effort */ } }
-  const turns = new Map()            // sessionID -> { which, strongRef, testFails, lastTest, tools: Set, goal, tokens, cost, model }
+  const turns = new Map()            // sessionID -> { which, strongRef, testFails, lastTest, tools: Set, goal, tokens, cost, model, fallbackDone }
   const turn = (id) => { let t = turns.get(id); if (!t) { t = { which: "strong", testFails: 0, tools: new Set() }; turns.set(id, t) } return t }
 
   await ctx.session.hook("prompt", async (e) => {
     const t = turn(e.sessionID)
-    Object.assign(t, { testFails: 0, lastTest: undefined, tools: new Set(), tokens: undefined, cost: undefined })
+    Object.assign(t, { testFails: 0, lastTest: undefined, tools: new Set(), tokens: undefined, cost: undefined, fallbackDone: false })
     const verdict = await post(cfg.url, "/triage", { query: String(e.prompt.text).slice(0, 6000) }, { token: cfg.token })
     t.goal = verdict?.tool && verdict.tool !== "-" ? String(verdict.tool) : undefined
     if (strong) t.strongRef = strong            // the session's own model, kept before the switch so escalation can go back to it
@@ -134,6 +165,27 @@ export async function installNative(ctx, { cwd, state, cheap: cheapCfg, strong: 
       log("escalate after", t.testFails, "failed test runs ->", t.strongRef)
       if (ref) await ctx.session.switchModel({ sessionID: e.sessionID, model: ref })
     }
+  })
+
+  // (b2) Provider failures. OpenCode retries a failed model request by itself and hands each attempt to the retry hook;
+  // kell lets the first failure retry on the same model, and on the second one switches the session to the fallback so
+  // the retry continues on a model that answers. At most one switch per turn, and the fallback is never switched away from.
+  await ctx.session.hook("retry", async (e) => {
+    const t = turn(e.sessionID)
+    const model = `${e.model?.providerID ?? "?"}/${e.model?.id ?? "?"}`
+    const failing = isProviderFailure(e.error)
+    const verdict = nextFallback(t, { attempt: e.attempt, model, fallback, failing })
+    if (!verdict.switch) {
+      if (failing) log("provider failure on", model, "attempt", e.attempt, "-", verdict.reason)
+      return
+    }
+    const ref = parseModel(fallback)
+    t.fallbackDone = true
+    log("provider failure on", model, "attempt", e.attempt, "-> fallback", fallback)
+    try {
+      await ctx.session.switchModel({ sessionID: e.sessionID, model: ref })
+      e.decision = { retry: true, delay: 250 }      // the retry now goes out on the fallback model
+    } catch (err) { log("switchModel to the fallback failed:", String(err?.message || err)) }
   })
 
   // (d) one record per finished turn. Tokens and cost come from the assistant message when the host exposes it.
