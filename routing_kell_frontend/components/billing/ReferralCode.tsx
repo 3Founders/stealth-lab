@@ -20,7 +20,6 @@ type Api = Pick<ReturnType<typeof billingApi>, "checkCode">;
 export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
   api: Api; pilot: Plan | null; onApplied: (code: string) => void; onCleared: () => void;
 }) {
-  const usage = pilot?.includedUsd ? `, with $${pilot.includedUsd} of usage included, which does not expire when the plan period ends` : "";
   const [value, setValue] = useState("");
   const [applied, setApplied] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,12 +58,6 @@ export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
   return (
     <div className="profile-card" aria-labelledby="code-title">
       <h2 className="h3" id="code-title">Have a code?</h2>
-      <p className="small">
-        {pilot
-          ? <>A code unlocks one plan for one person: <b>{pilot.name}</b>, {pilot.price} {pilot.per}{usage}.</>
-          : <>A code unlocks the one-person pilot, when it is on sale.</>}{" "}
-        Without a code the plans below are the ones everyone sees.
-      </p>
 
       {applied ? (
         <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
@@ -80,8 +73,8 @@ export default function ReferralCode({ api, pilot, onApplied, onCleared }: {
         <form className="cform" onSubmit={apply} style={{ marginTop: 10 }}>
           <div className="cfield">
             <label htmlFor="referral-code">Your code</label>
-            <input id="referral-code" type="text" value={value} onChange={(e) => setValue(e.target.value.toUpperCase())}
-              placeholder="For example FRIEND7" autoComplete="off" spellCheck={false} maxLength={32} />
+            <input id="referral-code" type="text" value={value} onChange={(e) => setValue(e.target.value)}
+              placeholder="The code you were given" autoComplete="off" spellCheck={false} maxLength={32} />
           </div>
           <div className="cform-submit">
             <button className="btn-ink" type="submit" disabled={busy || !value.trim()}>

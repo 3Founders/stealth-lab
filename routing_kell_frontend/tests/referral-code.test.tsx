@@ -44,25 +44,25 @@ async function submit() {
 }
 
 describe("the referral-code section", () => {
-  it("states the plan, price, period and usage before the code is used - from the plan data, not typed", async () => {
+  it("asks for a code, with no pre-use paragraph, and keeps Apply off until something is typed", async () => {
     await mount();
     expect(text()).toContain("Have a code?");
-    expect(text()).toContain("A code unlocks one plan for one person: Pilot, ₹649 for 30 days, with $4 of usage included");
-    expect(text()).toContain("Without a code the plans below are the ones everyone sees.");
+    expect(text()).not.toContain("A code unlocks one plan for one person");
+    expect(text()).not.toContain("Without a code the plans below");
     expect(host!.querySelector("input#referral-code")).not.toBeNull();
     expect(button("Apply")!.disabled).toBe(true);                          // nothing to check until something is typed
   });
 
-  it("a valid code is applied, remembered and handed to the page", async () => {
+  it("a valid code is applied, remembered and handed to the page (the field keeps the case as typed)", async () => {
     const check = vi.fn(async (_code: string) => ({ kind: "valid" } as CodeCheck));
     await mount(check);
-    await type("friend");
+    await type("Firsttrial");
     await submit();
-    expect(check).toHaveBeenCalledWith("FRIEND");                          // the field upper-cases as you type
-    expect(applied).toHaveBeenCalledWith("FRIEND");
-    expect(text()).toContain("Code FRIEND applied.");
+    expect(check).toHaveBeenCalledWith("Firsttrial");                      // sent as typed; the server matches ignoring case
+    expect(applied).toHaveBeenCalledWith("FIRSTTRIAL");
+    expect(text()).toContain("Code FIRSTTRIAL applied.");
     expect(text()).toContain("the one plan it unlocks: Pilot, ₹649 for 30 days");
-    expect(localStorage.getItem("kel.referral.code")).toBe("FRIEND");
+    expect(localStorage.getItem("kel.referral.code")).toBe("FIRSTTRIAL");
     expect(host!.querySelector("input")).toBeNull();                       // the field gives way to the applied state
   });
 

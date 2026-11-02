@@ -48,9 +48,8 @@ describe("with purchases off: the packs are information, nothing can be bought",
     await mount(<CreditPacks api={{ wallet: none, plan: none, packOrder: none }} session={SESSION} buy={false} />);
     expect(host!.querySelectorAll("article").length).toBe(4);
     expect(text()).toContain("₹500");
-    expect(text()).toContain("$2.50 of credit");
-    expect(text()).toContain("$28.00 of credit");
-    expect(text()).toContain("₹178.6 per dollar of credit");
+    expect(text()).not.toContain("of credit");
+    expect(text()).not.toContain("per dollar of credit");
     expect(text()).toContain("Buying credits isn’t switched on yet");
     expect(host!.querySelector("button")).toBeNull();
     expect(text()).not.toContain("Sign in to add credit");
@@ -85,7 +84,7 @@ describe("with purchases on", () => {
     await mount(<CreditPacks api={{ wallet: async () => wallet({ packs: two }), plan: async () => ACTIVE, packOrder: none }} session={SESSION} now={NOW} />);
     expect(host!.querySelectorAll("article").length).toBe(2);
     expect(text()).toContain("₹750");
-    expect(text()).toContain("$4.00 of credit");
+    expect(text()).not.toContain("of credit");
     expect(text()).toContain("₹3,000");
     expect(text()).not.toContain("₹500");
     expect(text()).toContain("Balance: $4.25");

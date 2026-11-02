@@ -72,13 +72,13 @@ describe("/pricing", () => {
     expect(asks).toEqual(Array(5).fill("/contact"));
   });
 
-  it("the code section above the plans states the code's exact effect in advance, and shows no card until a code is applied", async () => {
+  it("the code section above the plans asks for a code and shows no card until one is applied", async () => {
     stubServer();
     await render();
     const t = host!.textContent ?? "";
     expect(t).toContain("Have a code?");
-    expect(t).toContain("A code unlocks one plan for one person: Pilot, ₹649 for 30 days, with $4 of usage included");
-    expect(t).toContain("Without a code the plans below are the ones everyone sees.");
+    expect(t).not.toContain("A code unlocks one plan for one person");
+    expect(t).not.toContain("Without a code the plans below");
     expect(host!.querySelector("input#referral-code")).not.toBeNull();
     expect(button("Apply")).toBeDefined();
     expect(cards()).toEqual(["Starter", "Pro", "Plus", "Teams", "Enterprise"]);
@@ -134,7 +134,9 @@ describe("/pricing", () => {
     await render();
     const t = host!.textContent ?? "";
     expect(t).toContain("Additional kell credits");
-    for (const [price, credit] of [["₹500", "$2.50"], ["₹1,000", "$5.25"], ["₹2,500", "$13.50"], ["₹5,000", "$28.00"]]) { expect(t).toContain(price); expect(t).toContain(`${credit} of credit`); }
+    for (const [price] of [["₹500"], ["₹1,000"], ["₹2,500"], ["₹5,000"]]) expect(t).toContain(price);
+    expect(t).not.toContain("of credit");
+    expect(t).not.toContain("per dollar of credit");
     expect(t).toContain("Buying credits isn’t switched on yet");
     expect(t).toContain("people with an active plan");
     expect(t).toContain("does not expire");
@@ -229,13 +231,16 @@ describe("/pricing", () => {
       { plan: "pro", inr: 1300, days: 30, included_usd: "6" },
       { plan: "plus", inr: 2000, days: 30, included_usd: "12" },
       { plan: "pilot", inr: 700, days: 30, included_usd: "5" },
-    ] });
+    ], codeStatus: 200 });
     await render();
     expect(card("Pro")).toContain("₹1,300");
     expect(card("Pro")).toContain("about ₹43 a day");
     expect(host!.textContent).not.toContain("₹1,200");
     expect(host!.textContent).toContain("Plus gives twice Pro's usage for ₹700 more.");
-    expect(host!.textContent).toContain("A code unlocks one plan for one person: Pilot, ₹700 for 30 days, with $5 of usage included");
+    await typeCode("firsttrial");
+    await submitCode();
+    expect(card("Pilot")).toContain("₹700");
+    expect(card("Pilot")).toContain("about ₹23 a day");
     expect(host!.textContent).not.toContain("₹649");
   });
 });

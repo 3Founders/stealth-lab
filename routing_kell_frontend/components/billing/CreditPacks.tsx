@@ -141,8 +141,6 @@ export default function CreditPacks({ api, session, buy = true, checkout = openC
             <article key={p.id} className="card pack-card" aria-label={`${inr(p.priceInr)} pack`} data-pack={p.id}
               style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "16px 18px", display: "grid", gap: 6, alignContent: "start" }}>
               <p><b style={{ fontSize: 24, fontWeight: 400 }}>{inr(p.priceInr)}</b></p>
-              <p className="small"><b>{usd(p.creditUsd)}</b> of credit</p>
-              {p.inrPerUsd !== null && <p className="small dim">₹{p.inrPerUsd.toFixed(1)} per dollar of credit</p>}
               {buy && ok && !showInfoOnly && (
                 <button type="button" className="btn-line" disabled={Boolean(busy) || locked} onClick={() => void purchase(p)} aria-label={`Add ${usd(p.creditUsd)} for ${inr(p.priceInr)}`}>
                   <span>{busy === p.id ? "Opening payment…" : locked ? "Available with an active plan" : "Add credit"}</span>
