@@ -71,3 +71,24 @@ def test_a_stranger_or_a_bad_token_is_refused():
             assert m["type"] == "error" and m["status"] == 401
         finally:
             c.__exit__(None, None, None)
+
+
+def test_a_selection_is_relayed_to_the_other_person_and_dropped_when_they_leave():
+    pool = Pool()
+    doc = run(rd.create_doc(pool, "alice", str(ROOM), "Plan", "document", "The quick brown fox jumps."))
+    with make(pool) as client:
+        ca, a = open_ws(client, doc["id"], "alice")
+        cb, b = open_ws(client, doc["id"], "bob")
+        try:
+            recv_until(a, "hello"), recv_until(b, "hello")
+            a.send_text(json.dumps({"type": "cursor", "from": 9, "to": 4}))
+            for _ in range(12):
+                m = json.loads(b.receive_text())
+                if m["type"] == "cursors" and m["cursors"]:
+                    got = m
+                    break
+            assert got and got["cursors"][0]["from"] == 4 and got["cursors"][0]["to"] == 9      # ordered, and not echoed to alice
+            a.send_text(json.dumps({"type": "cursor", "from": -3, "to": "x"}))                    # junk is ignored, not fatal
+        finally:
+            ca.__exit__(None, None, None)
+            cb.__exit__(None, None, None)

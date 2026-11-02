@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import PanelShell from "@/components/chat/PanelShell";
 import HtmlViewer from "@/components/chat/HtmlViewer";
+import CursorLayer, { type RemoteCursor } from "@/components/chat/CursorLayer";
 import { DocsApiError, type DocInfo, type DocKind, type DocVersion, type DocsApi } from "@/lib/chat/docs-api";
 import { mapCaret, merge3 } from "@/lib/chat/merge3";
 import { openDocSocket, socketsAvailable, type DocSocket, type SocketMessage } from "@/lib/chat/docs-socket";
@@ -102,6 +103,10 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const [copied, setCopied] = useState(false);
 
   const area = useRef<HTMLTextAreaElement>(null);
+  const [remote, setRemote] = useState<RemoteCursor[]>([]);          // other people's carets and selections
+  const prevForCursors = useRef("");
+  const cursorTimer = useRef<number | undefined>(undefined);
+  const lastCursor = useRef("");
   const textRef = useRef("");                                   // what is in the editor now
   const base = useRef({ body: "", version: 0 });                // the last text and version we know the server has
   const saving = useRef(false);
@@ -239,6 +244,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
         applyRemote(m.version, m.body);
       } else if (m.type === "presence") {
         setPresent(m.present); setEditing(m.editing ?? []);
+      } else if (m.type === "cursors") {
+        setRemote(m.cursors);
       } else if (m.type === "ack") {
         const sent = inflight.current ?? textRef.current;
         inflight.current = null;
@@ -266,6 +273,28 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     sock.current = s;
     return () => { s.close(); if (sock.current === s) sock.current = null; inflight.current = null; };
   }, [open, activeId, roomId, socket, applyRemote, adopt, save]);
+
+  // Carets that belong to other people move with the words around them when the text changes (theirs fix themselves a moment later).
+  useEffect(() => {
+    const prev = prevForCursors.current;
+    prevForCursors.current = text;
+    if (prev !== text) setRemote((r) => (r.length ? r.map((c) => ({ ...c, from: mapCaret(prev, text, c.from), to: mapCaret(prev, text, c.to) })) : r));
+  }, [text]);
+  useEffect(() => { setRemote([]); lastCursor.current = ""; }, [activeId]);
+
+  /** Tell the others where my caret or selection is (at most about 15 times a second, and only when it changed). */
+  const shareCursor = () => {
+    window.clearTimeout(cursorTimer.current);
+    cursorTimer.current = window.setTimeout(() => {
+      const el = area.current;
+      if (!el || !sock.current?.connected) return;
+      const key = `${el.selectionStart}:${el.selectionEnd}`;
+      if (key === lastCursor.current) return;
+      lastCursor.current = key;
+      sock.current.send({ type: "cursor", from: el.selectionStart, to: el.selectionEnd });
+    }, 60);
+  };
+  useEffect(() => () => window.clearTimeout(cursorTimer.current), []);
 
   // ---- without a live connection: see what others save by asking now and then
   useEffect(() => {
@@ -426,9 +455,10 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
             {(mode === "write" || mode === "split" || (kind === "code")) && (
               <div className="dg-doc-pane" data-split={mode === "split" && kind !== "code" || undefined}>
                 <textarea
-                  ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)} onScroll={() => tie(area.current, readPane.current)}
+                  ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)} onScroll={() => tie(area.current, readPane.current)} onSelect={shareCursor} onFocus={shareCursor}
                   spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
                 />
+                <CursorLayer area={area} text={text} cursors={remote} color={personColor} />
                 {mode === "split" && kind === "document" && <div ref={readPane} className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview" onScroll={() => tie(readPane.current, area.current)}><Markdown text={text} /></div>}
                 {mode === "split" && kind === "html" && <HtmlViewer html={text} title={title} mode="browser" />}
               </div>

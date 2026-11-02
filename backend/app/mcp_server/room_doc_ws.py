@@ -7,11 +7,11 @@ next version, and pushes it to everyone with the document open the moment it is 
 others' changes in around its cursor. Who is here and who is typing travel on the same socket and are never written to the document.
 
 Messages (JSON). Client to server: ``{"type":"auth","token":...}`` first; then ``{"type":"edit","body":...,"base":N}``, ``{"type":"ping"}``.
-Server to client: ``hello`` (the document and who is here), ``ack`` (your edit's version, and the merged text if it changed), ``doc`` (a new
+Also ``{"type":"cursor","from":i,"to":j}`` (your caret or selection; the server sends everyone else's as ``cursors``). Server to client: ``hello`` (the document and who is here), ``ack`` (your edit's version, and the merged text if it changed), ``doc`` (a new
 version from anyone), ``presence``, ``error``.
 
 Honest limits: one process holds the sockets (the server runs with one worker); a client that cannot open a socket keeps working through
-the plain HTTP routes, which poll. There are no remote cursors, only who is here and who is typing.
+the plain HTTP routes, which poll. Carets and selections are relayed as the sender's positions in the sender's own text; they are never stored, and a client re-maps them as text changes.
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ PATH = re.compile(r"^/v1/rooms/([^/]+)/docs/([^/]+)/ws$")
 MAX_MESSAGE = 420_000
 MAX_SOCKETS_PER_PERSON = 12
 IDLE_SECONDS = 70.0
+CURSORS = _Limiter(1500, 60.0)         # caret moves per person per minute
 EDITS = _Limiter(600, 60.0)            # edits per person per minute (a socket sends one every ~100 ms while typing)
 
 
@@ -41,6 +42,7 @@ class _Conn:
     def __init__(self, ws: WebSocket, sub: str, name: str) -> None:
         self.ws, self.sub, self.name = ws, sub, name
         self.last_edit = 0.0
+        self.cursor: tuple[int, int] | None = None     # the caret or selection (start, end) in this person's text; never written to the document
 
 
 _DOCS: dict[str, set[_Conn]] = {}      # doc id -> open sockets
@@ -65,6 +67,20 @@ async def _broadcast_presence(doc_id: str) -> None:
     msg = _presence(doc_id)
     for c in list(_DOCS.get(doc_id, ())):
         await _send(c, msg)
+
+
+def _cursors_for(doc_id: str, me: "_Conn") -> dict[str, Any]:
+    """Everyone else's caret or selection in this document, one per person (their newest), as the client draws them."""
+    out: dict[str, dict[str, Any]] = {}
+    for c in _DOCS.get(doc_id, ()):
+        if c is not me and c.sub != me.sub and c.cursor is not None:
+            out[c.name] = {"name": c.name, "from": c.cursor[0], "to": c.cursor[1]}
+    return {"type": "cursors", "cursors": list(out.values())}
+
+
+async def _broadcast_cursors(doc_id: str) -> None:
+    for c in list(_DOCS.get(doc_id, ())):
+        await _send(c, _cursors_for(doc_id, c))
 
 
 async def _on_version(doc_id: str, version: int, body: str, by_sub: str, by_name: str) -> None:
@@ -123,6 +139,7 @@ async def handle(scope: dict[str, Any], receive: Any, send: Any, gate: Any, pool
         _PER_PERSON[subject] = _PER_PERSON.get(subject, 0) + 1
         await _send(conn, {**_presence(doc_id), **{k: v for k, v in doc.items() if k in ("id", "version", "title", "kind", "body")}, "type": "hello"})
         await _broadcast_presence(doc_id)
+        await _send(conn, _cursors_for(doc_id, conn))
 
         while True:
             try:
@@ -143,6 +160,12 @@ async def handle(scope: dict[str, Any], receive: Any, send: Any, gate: Any, pool
             if kind == "ping":
                 rd._touch(doc_id, subject, name)
                 await _send(conn, {"type": "pong"})
+            elif kind == "cursor":
+                a, b = msg.get("from"), msg.get("to")
+                if isinstance(a, int) and isinstance(b, int) and not isinstance(a, bool) and not isinstance(b, bool) and 0 <= a <= 10_000_000 and 0 <= b <= 10_000_000:
+                    conn.cursor = (min(a, b), max(a, b))
+                    if CURSORS.allow(subject):
+                        await _broadcast_cursors(doc_id)
             elif kind == "edit":
                 base = msg.get("base")
                 if not isinstance(base, int) or not isinstance(msg.get("body"), str):
@@ -169,6 +192,7 @@ async def handle(scope: dict[str, Any], receive: Any, send: Any, gate: Any, pool
                 _DOCS.pop(doc_id, None)
             _PER_PERSON[conn.sub] = max(0, _PER_PERSON.get(conn.sub, 1) - 1)
             await _broadcast_presence(doc_id)
+            await _broadcast_cursors(doc_id)
 
 
 class DocsSocketGate:

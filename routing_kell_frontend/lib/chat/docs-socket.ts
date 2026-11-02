@@ -11,6 +11,7 @@ export type SocketMessage =
   | { type: "ack"; version: number; body?: string; merged?: boolean; clash?: boolean; unchanged?: boolean }
   | { type: "doc"; version: number; body: string; by: string }
   | { type: "presence"; present: string[]; editing: string[] }
+  | { type: "cursors"; cursors: Array<{ name: string; from: number; to: number }> }
   | { type: "error"; error: string; status?: number }
   | { type: "pong" };
 
@@ -20,7 +21,7 @@ export interface DocSocketHandlers {
   onState(connected: boolean): void;
 }
 
-export interface DocSocket { send(m: { type: "edit"; body: string; base: number } | { type: "ping" }): boolean; close(): void; readonly connected: boolean }
+export interface DocSocket { send(m: { type: "edit"; body: string; base: number } | { type: "cursor"; from: number; to: number } | { type: "ping" }): boolean; close(): void; readonly connected: boolean }
 
 export const socketsAvailable = (): boolean => typeof WebSocket !== "undefined";
 

@@ -1235,8 +1235,18 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-canvas-doc .dg-md ul, .dg-canvas-doc .dg-md ol { padding-left: 24px; }
 .dg-canvas-doc .dg-md .dg-md-table th { font-weight: 650; background: color-mix(in srgb, currentColor 7%, transparent); }
 
-/* Documents and chat text use the system's own sans, which has every weight (regular, medium, bold, italic), so headings, bold, italic and body text differ. */
-.dg-canvas-doc, .dg-canvas-doc .dg-md, .dg-md { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Roboto, sans-serif; }
+/* Only the rendered markdown in the canvas uses the system's own sans, which has every weight (regular, bold, italic), so headings, bold, italic and body text differ. Chat keeps the site font. */
+.dg-canvas-doc, .dg-canvas-doc .dg-md { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Roboto, sans-serif; }
 .dg-canvas-doc .dg-md p, .dg-canvas-doc .dg-md li { font-weight: 400; }
 .dg-canvas-doc .dg-md strong, .dg-canvas-doc .dg-md b { font-weight: 700; }
 .dg-canvas-doc .dg-md .dg-md-h { font-weight: 600; }
+
+/* Other people's carets and selections over the editor (CursorLayer): painted in each person's colour, never catching the pointer. */
+.dg-doc-pane { position: relative; }
+.dg-rl-box { position: absolute; pointer-events: none; overflow: hidden; z-index: 2; }
+.dg-rl { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; margin: 0; color: transparent; pointer-events: none; }
+.dg-rl-t { color: transparent; }
+.dg-rs { background: color-mix(in srgb, var(--c) 30%, transparent); color: transparent; border-radius: 2px; }
+.dg-rc { position: relative; display: inline-block; width: 0; height: 1em; vertical-align: text-bottom; }
+.dg-rc::before { content: ""; position: absolute; left: -1px; top: -.1em; width: 2px; height: 1.25em; background: var(--c); border-radius: 1px; }
+.dg-rc-name { position: absolute; left: -1px; bottom: 1.1em; transform: translateY(-1px); background: var(--c); color: #fff; font: 600 10px/1.5 ui-sans-serif, system-ui, sans-serif; padding: 0 5px; border-radius: 4px 4px 4px 0; white-space: nowrap; opacity: .95; letter-spacing: 0; }
