@@ -52,7 +52,9 @@ export interface SettingsProps {
   onSection: (s: SectionId) => void; onClose: () => void;
   chatPrefs: ChatPrefs; onChatPrefs: (p: ChatPrefs) => void;
   notifyPrefs: Prefs; onNotifyPrefs: (p: Prefs) => void;
-  data: { onDownload: () => void; onImport: () => void; onDelete: () => void };
+  data: { onDownload: () => void; onImport: () => void; onDelete: () => void;
+    /** A folder on this computer that keeps a copy (only where the browser allows it). */
+    folder?: { supported: boolean; name: string | null; onChoose: () => void; onRestore: () => void; onStop: () => void } };
   agents: { modelText: string; modelReady: boolean; count: number; paused: boolean; onPause: (p: boolean) => void; maxHops: number };
   account: { name: string; onSignOut: () => void };
 }
@@ -141,6 +143,14 @@ export default function SettingsDialog(p: SettingsProps) {
                 <div className="dg-set-cards">
                   <div><b>Download</b><small>Keep a copy of your own, as a file.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onDownload}>Download</button></div>
                   <div><b>Import</b><small>Bring a downloaded copy back in.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onImport}>Import</button></div>
+                  {p.data.folder && (
+                    <div><b>Folder on this computer</b>
+                      <small>{!p.data.folder.supported ? "This browser can't save to a folder. Use Download." : p.data.folder.name ? `Keeping a copy in "${p.data.folder.name}", updated as you chat. Plain files: one readable page per room, and one file to restore from.` : "Pick a folder and kell keeps a copy of your chats there, so they are on your computer and not only in this browser."}</small>
+                      {p.data.folder.supported && (p.data.folder.name
+                        ? <span><button type="button" className="btn-line dg-mini-btn" onClick={p.data.folder.onRestore}>Restore from it</button> <button type="button" className="btn-line dg-mini-btn" onClick={p.data.folder.onStop}>Stop</button></span>
+                        : <button type="button" className="btn-line dg-mini-btn" onClick={p.data.folder.onChoose}>Choose folder</button>)}
+                    </div>
+                  )}
                   <div><b>Delete history</b><small>Removes the saved chats from this browser. Rooms on your account stay.</small><button type="button" className="btn-line dg-mini-btn" onClick={p.data.onDelete}>Delete history</button></div>
                 </div>
               </section>

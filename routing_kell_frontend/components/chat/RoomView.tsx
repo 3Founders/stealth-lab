@@ -31,6 +31,7 @@ import { DEFAULT_ROOM, newRoomName, readAgents, readPresets, readRooms, withoutR
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
+import { chooseFolder, folderBackupSupported, folderName, forgetFolder, readBackup, writeBackup } from "@/lib/chat/folder-backup";
 import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from "@/lib/chat/types";
 import { MAX_DEPTH } from "@/lib/chat/types";
 import { groupMessages, initials, routeMessage } from "@/lib/chat/ui";
@@ -749,6 +750,31 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // ---- your data
   const importFile = useRef<HTMLInputElement>(null);
+  // A copy in a folder on this computer: chosen once, then kept up to date a little after each change.
+  const folderStore = useMemo(() => idbStore("kel-folder"), []);
+  const [folder, setFolder] = useState<string | null>(null);
+  useEffect(() => { void folderName(folderStore, subject).then(setFolder).catch(() => {}); }, [folderStore, subject]);
+  const lastBackup = useRef(0);
+  useEffect(() => {
+    if (!folder) return;
+    const t = window.setInterval(async () => {
+      if (document.visibilityState === "hidden" || Date.now() - lastBackup.current < 25_000) return;
+      lastBackup.current = Date.now();
+      try { await writeBackup(folderStore, subject, await history.exportAll()); } catch { /* the next round tries again */ }
+    }, 30_000);
+    return () => window.clearInterval(t);
+  }, [folder, folderStore, subject, history]);
+  const chooseBackupFolder = async () => {
+    const n = await chooseFolder(folderStore, subject);
+    if (!n) return;
+    setFolder(n);
+    note((await writeBackup(folderStore, subject, await history.exportAll(), true)) ? `Keeping a copy of your chats in "${n}".` : "Couldn't write to that folder.");
+  };
+  const restoreFromFolder = async () => {
+    const b = await readBackup(folderStore, subject);
+    if (!b) { note("Couldn't find a backup in that folder."); return; }
+    try { const r = await history.importAll(b); await hydrate(room); note(`Restored ${r.messages} message${r.messages === 1 ? "" : "s"} from the folder.`); } catch (err) { note(err instanceof Error ? err.message : "Couldn't restore from that folder."); }
+  };
   const download = async () => {
     try {
       const blob = new Blob([JSON.stringify(await history.exportAll(), null, 2)], { type: "application/json" });
@@ -1063,7 +1089,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         open={settings.open} section={settings.section} room={room}
         onSection={(section) => setSettings((x) => ({ ...x, section }))} onClose={() => setSettings((x) => ({ ...x, open: false }))}
         chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} notifyPrefs={prefs} onNotifyPrefs={setPrefs}
-        data={{ onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe() }}
+        data={{ onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
+          folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
         agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH }}
         account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
       />
