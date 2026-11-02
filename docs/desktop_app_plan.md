@@ -1,7 +1,7 @@
 # The desktop app: kell's own coding app (plan for approval, 2026-11-01)
 
 Status: plan, with steps 1–2 built as a prototype (`desktop/`, commit `4504eeb3`, verified end to end 2026-11-02). The
-shell choice (Tauri or Electron) still needs the owners before steps 3–6. Verified facts: "Prototype built" below.
+shell is Electron (owner decision); steps 3–6 can go ahead. Verified facts: "Prototype built" below.
 
 ## Goal
 
@@ -110,7 +110,7 @@ live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts
 
 ## Opens (for the owners)
 
-- **Shell:** Tauri or Electron (recommended: Tauri). Can be deferred: the UI is the same either way.
+- **Shell:** Electron (decided 2026-11-01).
 - **Name and window chrome:** "kell" plus own icon; anything else wanted in the title bar (model strip as a status bar
   is assumed).
 - **Windows first or both at once?** (the fixtures are Windows-tested so far).
