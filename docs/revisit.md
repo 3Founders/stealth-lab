@@ -7,6 +7,10 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ### Open (need the owners)
 
+- **The desktop app's shell:** Tauri or Electron. The plan doc recommends Tauri (small binary; the Node work stays in
+  the helper); an earlier note argued Electron because OpenCode's SDK and kell's console helper are Node. The prototype
+  runs the same Next.js UI either way, so steps 3–6 (changes panel, tool cards, sign-in UI, packaging) wait on this plus
+  "Windows first, or Windows and macOS at once?". Detail: [desktop_app_plan.md](desktop_app_plan.md).
 - **Where a pilot user's model key comes from:** (a) their own General Compute key, or (b) a kell-run organisation they
   join. Detail: [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md) section 3.
 - **npm:** the first version number, and whether `"license": "UNLICENSED"` stays (Chaitanya publishes).
@@ -15,9 +19,6 @@ items here (not in other docs); remove one when it is done, with the commit that
 - **Gateway terms review:** who reads each allowlisted server's terms.
 
 ### Made (kept here so they aren't reopened by accident)
-
-- **2026-11-01, the desktop app's shell:** Electron (OpenCode's SDK and kell's console helper are Node). Plan:
-  [desktop_app_plan.md](desktop_app_plan.md).
 
 - **2026-10-31, our agent's models:** cheap minimax-m2.7, strong deepseek-v3.2, both on General Compute (one key). Not
   gpt-oss (owner). An Anthropic key is a later option; never a Claude subscription sign-in inside OpenCode.
