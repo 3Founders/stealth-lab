@@ -749,3 +749,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-menu-pop > button kbd { margin-left: auto; padding-left: 14px; font-size: 11px; color: var(--grey); background: none; box-shadow: none; }
 .dg-menu-pop > button:has(kbd) { display: flex; align-items: center; }
 @media (prefers-reduced-motion: reduce) { [data-mid][data-found] { animation: none; background: rgba(255, 210, 31, .45); } }
+
+/* Lines sent while an agent is still answering wait above the message box. */
+.dg-queued { display: flex; align-items: center; gap: 6px; margin: 0 18px 4px; padding: 5px 10px; border-radius: 8px; background: var(--dg-glass-strong, #fff); box-shadow: var(--dg-lift, 0 4px 12px rgba(0, 0, 0, .12)); min-width: 0; }
+.dg-queued-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-queued button { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink); font-size: 16px; line-height: 1; cursor: pointer; opacity: .6; }
+.dg-queued button:hover { opacity: 1; background: rgba(127, 127, 127, .18); }

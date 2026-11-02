@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import SearchPalette from "@/components/chat/SearchPalette";
+import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
@@ -181,6 +182,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const filesClient = useMemo(() => filesApi({ token: getAccessToken }), []);
   const [sendingFiles, setSendingFiles] = useState("");
   const askingKell = useRef<Set<string>>(new Set());
+  const queues = useRef<Queues>({});
+  const [queueView, setQueueView] = useState<Queues>({});
+  const askKellRef = useRef<((r: string, text: string, who?: string) => Promise<void>) | null>(null);
   /** Copy a message's text: to the clipboard, with a small notice as feedback. */
   const copyRoomText = useCallback(async (t: string) => {
     if (!t) return;
@@ -199,7 +203,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   /** Asks an agent to answer in this room. Every agent is kell: "@kell" is the default one, any other handle is an instance of it. */
   const askKell = useCallback(async (r: string, text: string, who: string = "@kell") => {
     const key = `${r}|${who}`;
-    if (askingKell.current.has(key)) return;
+    if (askingKell.current.has(key)) {                 // still answering: keep what was sent and ask once it has finished
+      queues.current = enqueue(queues.current, key, text);
+      setQueueView(queues.current);
+      return;
+    }
     askingKell.current.add(key);
     if (who === "@kell") setKellBusy((p) => ({ ...p, [r]: true }));
     const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
@@ -225,7 +233,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         setStreaming((p) => ({ ...p, [who]: { room: r, text: out.text, final: m } }));
       } else if (!out.posted) note(`${nameOf(who)} answered but could not post it in the room.`, r);
     } catch (err) {
-      if ((err as { name?: string })?.name === "AbortError") note("Stopped.", r);
+      if ((err as { name?: string })?.name === "AbortError") { queues.current = drain(queues.current, key).rest; setQueueView(queues.current); note("Stopped.", r); }
       else if (err instanceof RoomsApiError && err.status === 401) note(`Sign in to ask ${nameOf(who)}.`, r);
       else if (err instanceof RoomsApiError && err.status === 404) note("This room is still syncing. Try again in a moment.", r);
       else note(err instanceof Error ? err.message : `${nameOf(who)} could not answer just now.`, r);
@@ -233,8 +241,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       controllers.current.delete(who);
       if (!held) setStreaming((p) => { const n = { ...p }; delete n[who]; return n; });
       done();
+      const next = drain(queues.current, key);
+      if (next.text !== null) {                        // everything sent meanwhile goes in one follow-up, oldest first
+        const followUp = next.text;
+        queues.current = next.rest;
+        setQueueView(queues.current);
+        window.setTimeout(() => void askKellRef.current?.(r, followUp, who), 0);
+      }
     }
   }, [roomsAgent, note, push]);
+  askKellRef.current = askKell;
   /** The streamed bubble has been fully revealed: the posted message takes its place. Safe to call twice. */
   const flushFinal = useCallback((who: string) => {
     const e = streamingRef.current[who];
@@ -939,6 +955,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         </MessageScroller.Provider>
 
         {sendingFiles && <div className="dg-sending" role="status" aria-live="polite"><span className="dg-pulse" aria-hidden="true" /> {sendingFiles}</div>}
+        {inRoom(queueView, room).map((q) => (
+          <div key={`${q.key}:${q.index}`} className="dg-queued small" role="status">
+            <span className="dim">Waiting for {nameOf(q.who)}:</span> <span className="dg-queued-text">{q.text}</span>
+            <button type="button" aria-label="Don't ask for this one" title="Don't ask for this one" onClick={() => { queues.current = removeAt(queues.current, q.key, q.index); setQueueView(queues.current); }}>×</button>
+          </div>))}
         <div className="dg-typing" role="status" aria-live="polite">
           {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere) && <>
             <span className="dg-pulse" aria-hidden="true" />
