@@ -40,6 +40,40 @@ async def _never(server, name, args):
 
 
 @pytest.mark.asyncio
+async def test_stream_answer_yields_the_text_as_it_arrives_then_the_final_answer():
+    async def model_stream(messages, tools):
+        for piece in ["Hel", "lo", " there"]:
+            yield {"choices": [{"delta": {"content": piece}}]}
+
+    events = [e async for e in room_agent.stream_answer(
+        "hi", [], model_stream=model_stream, find_tools=_no_tools, use_tool=_never)]
+    assert [k for k, _ in events] == ["delta", "delta", "delta", "final"]
+    assert "".join(v for k, v in events if k == "delta") == "Hello there"
+    final = events[-1][1]
+    assert final.text == "Hello there" and final.tools_used == []
+
+
+@pytest.mark.asyncio
+async def test_stream_answer_runs_a_tool_round_then_streams_the_next_round():
+    rounds = {"n": 0}
+
+    async def model_stream(messages, tools):
+        rounds["n"] += 1
+        if rounds["n"] == 1:
+            yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "use_tool", "arguments": json.dumps({"server": "io.github.upstash/context7", "name": "get_docs", "arguments": {}})}}]}}]}
+        else:
+            yield {"choices": [{"delta": {"content": "From the docs: v15."}}]}
+
+    async def use_tool(server, name, args):
+        return json.dumps({"result": "v15 notes"})
+
+    events = [e async for e in room_agent.stream_answer(
+        "latest next docs?", [], model_stream=model_stream, find_tools=_some_tools, use_tool=use_tool)]
+    assert events[-1][0] == "final" and events[-1][1].text == "From the docs: v15."
+    assert events[-1][1].tools_used == ["io.github.upstash/context7/get_docs"]
+
+
+@pytest.mark.asyncio
 async def test_a_plain_answer_needs_no_tools_and_sends_no_tool_spec():
     model = Model(_reply("three ways to do it: ..."))
     out = await room_agent.converse("how do I do x?", [], model_call=model, find_tools=_no_tools, use_tool=_never)

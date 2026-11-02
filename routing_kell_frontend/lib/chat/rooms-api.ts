@@ -5,6 +5,7 @@
  * not end-to-end encrypted, and the room says so.
  */
 import { MCP_ORIGIN } from "@/lib/connector";
+import { readSse } from "@/lib/sse";
 
 export interface ServerRoom {
   id: string; title: string; mode: "open" | "private"; role: "owner" | "admin" | "member"; created_at: string; last_seq: number;
@@ -79,6 +80,43 @@ export function roomsApi(deps: RoomsDeps) {
     /** Ask the built-in room agent (@kell) to answer in this room. The server posts the answer as a room event, so it
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null }>("POST", `/${e(id)}/agent`, { text }),
+    /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
+    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal) => {
+      const token = await deps.token();
+      if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
+      let res: Response;
+      try {
+        res = await doFetch(`${base}/v1/rooms/${e(id)}/agent`, {
+          method: "POST", signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "text/event-stream" },
+          body: JSON.stringify({ text }),
+        });
+      } catch (err) {
+        if ((err as { name?: string })?.name === "AbortError") throw err;
+        throw new RoomsApiError("Couldn't reach the keळ server.");
+      }
+      if (!res.ok || !res.body) {
+        let json: unknown = null;
+        try { json = await res.json(); } catch { /* no body */ }
+        const msg = (json as { error?: unknown } | null)?.error;
+        throw new RoomsApiError(typeof msg === "string" && msg ? msg : `The server answered ${res.status}.`, res.status);
+      }
+      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null } | null = null;
+      let failure: RoomsApiError | null = null;
+      await readSse(res.body, (event) => {
+        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown };
+        if (typeof o.error === "string" && o.error) failure = new RoomsApiError(o.error);
+        if (typeof o.delta === "string" && o.delta) onDelta(o.delta);
+        if (o.done === true) {
+          final = { posted: Boolean(o.event), text: String(o.text ?? ""), tools: Array.isArray(o.tools) ? o.tools.map(String) : [],
+                    event: (o.event as { id: string; seq: number } | null) ?? null };
+        }
+      });
+      if (failure) throw failure;
+      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null } | null;
+      if (done === null) throw new RoomsApiError("The answer ended before it was posted.");
+      return done;
+    },
   };
 }
 export type RoomsApi = ReturnType<typeof roomsApi>;

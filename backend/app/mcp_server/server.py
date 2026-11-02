@@ -1036,11 +1036,64 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
 
 
 async def _room_agent_find(need: str) -> list[dict]:
-    """The router's short list for this message: the same code the hook and claude.ai get (find_ways/discover_tools)."""
+    """The router's short list for this message: the same code the hook and claude.ai get (find_ways/discover_tools).
+    Bounded in time: a slow router must not delay the answer; without a list the model simply has no outside tools."""
+    import asyncio as _asyncio
+    import os as _os
+
     from app.mcp_server import find_ways_triage as _ft
 
-    ext = await _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 3)
+    try:
+        ext = await _asyncio.wait_for(
+            _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 3),
+            timeout=float(_os.environ.get("KELL_ROOM_AGENT_TOOL_WAIT", "2.0")))
+    except Exception:  # noqa: BLE001 -- timeout or router failure: answer without tools
+        return []
     return [t for t in (ext or {}).get("tools") or [] if isinstance(t, dict)][:3]
+
+
+async def _room_agent_model_stream(authorization: str, messages: list[dict], tools: list[dict]):
+    """The same completion, streamed: yields the OpenAI SSE chunks as they arrive. A model that refuses tools (400/422) is
+    retried once without them; any other refusal raises RuntimeError carrying the endpoint's own sentence."""
+    import os as _os
+
+    from app.providers.adapters import http_client
+
+    base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
+    body: dict[str, Any] = {"model": _os.environ.get("KELL_ROOM_AGENT_MODEL", "gemma-4-31b-it"),
+                            "messages": messages, "stream": True}
+    headers = {"authorization": authorization, "content-type": "application/json",
+               "accept": "text/event-stream", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
+
+    async def frames(with_tools: bool):
+        payload = {**body, **({"tools": tools, "tool_choice": "auto"} if with_tools else {})}
+        async with http_client(timeout=180.0) as client:
+            async with client.stream("POST", f"{base}/v1/chat/completions", headers=headers, json=payload) as r:
+                if r.status_code >= 300:
+                    raw = await r.aread()
+                    why = ""
+                    try:
+                        why = str(((json.loads(raw) or {}).get("error") or {}).get("message") or "")[:200]
+                    except Exception:  # noqa: BLE001
+                        why = ""
+                    if with_tools and r.status_code in (400, 422):
+                        async for chunk in frames(False):
+                            yield chunk
+                        return
+                    raise RuntimeError(why or f"the model endpoint answered {r.status_code}")
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        yield json.loads(data)
+                    except ValueError:
+                        continue
+
+    async for chunk in frames(bool(tools)):
+        yield chunk
 
 
 async def _room_agent_use(subject: str, server_name: str, tool: str, arguments: dict) -> Any:
@@ -1064,7 +1117,8 @@ _room_agent_routes.register(
     server,
     _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
     lambda: _LIFESPAN_STATE.get("pool"),
-    model_call=_room_agent_model, find_tools=_room_agent_find, use_tool=_room_agent_use,
+    model_call=_room_agent_model, model_stream=_room_agent_model_stream,
+    find_tools=_room_agent_find, use_tool=_room_agent_use,
 )
 
 from app.mcp_server import photo_routes as _photo_routes  # noqa: E402 -- the profile photo that follows a person across devices (db/159_profile_photos.sql)

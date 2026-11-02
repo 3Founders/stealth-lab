@@ -12,10 +12,10 @@ import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
 
 export const metadata: Metadata = {
-  title: { default: "keळ: Cut LLM API bills by 50% with cache retention, with tool search.", template: "%s · keळ" },
+  title: { default: "keळ: Cut LLM API bills by 50% with cache retention and tool search.", template: "%s · keळ" },
   description:
     "keळ gives your coding agent a memory of your repo, reuses what's already been solved, and hands each task to the cheapest model that can do it. Nothing reaches your code until your own tests pass.",
-  icons: { icon: "/kel-mark.png" },
+  icons: { icon: "/kel-icon.png", apple: "/kel-icon.png" },
 };
 
 // On Android the on-screen keyboard resizes the page (the Chat composer stays visible); iOS is handled by the Chat itself.

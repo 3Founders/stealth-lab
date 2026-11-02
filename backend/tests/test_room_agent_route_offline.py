@@ -85,23 +85,25 @@ def _pool(room=ROOM):
     })
 
 
-def _request(body: dict, room: str = ROOM) -> Request:
+def _request(body: dict, room: str = ROOM, accept: str | None = None) -> Request:
     raw = json.dumps(body).encode()
 
     async def receive():
         return {"type": "http.request", "body": raw, "more_body": False}
 
-    return Request({"type": "http", "method": "POST", "path": f"/v1/rooms/{room}/agent", "headers": [(b"authorization", b"Bearer t")],
+    headers = [(b"authorization", b"Bearer t")] + ([(b"accept", accept.encode())] if accept else [])
+    return Request({"type": "http", "method": "POST", "path": f"/v1/rooms/{room}/agent", "headers": headers,
                     "path_params": {"room_id": room}, "client": ("127.0.0.1", 1), "query_string": b"", "server": ("t", 80)}, receive)
 
 
-def _route(model_call, pool=None, gate=None, find_tools=None, use_tool=None):
+def _route(model_call=None, pool=None, gate=None, find_tools=None, use_tool=None, model_stream=None):
     server = FakeServer()
     room_agent_routes.register(
         server, gate or Gate(), lambda: pool or _pool(),
-        model_call=model_call,
+        model_call=model_call or (lambda authorization, messages, tools: _none()),
         find_tools=find_tools or (lambda need: _none()),
         use_tool=use_tool or (lambda subject, server_name, tool, args: _none()),
+        model_stream=model_stream,
     )
     return server.routes["/v1/rooms/{room_id}/agent"]
 
@@ -145,6 +147,24 @@ async def test_the_models_own_refusal_is_shown_not_a_generic_failure():
 async def test_a_title_instead_of_a_room_id_is_refused_with_its_sentence():
     r = await _route(lambda a, m, t: None)(_request({"text": "hello"}, room="#general"))
     assert r.status_code == 400 and "not a valid room id" in _body(r)["error"]
+
+
+@pytest.mark.asyncio
+async def test_the_stream_sends_deltas_then_done_and_posts_once():
+    async def model_stream(authorization, messages, tools):
+        for piece in ["Hi", " there"]:
+            yield {"choices": [{"delta": {"content": piece}}]}
+
+    pool = _pool()
+    route = _route(pool=pool, model_stream=model_stream)
+    r = await route(_request({"text": "hi"}, accept="text/event-stream"))
+    frames = []
+    async for chunk in r.body_iterator:
+        frames.append(chunk if isinstance(chunk, str) else chunk.decode())
+    payload = "".join(frames)
+    assert '"delta": "Hi"' in payload and '"delta": " there"' in payload and '"done": true' in payload
+    inserts = [a for s, a in pool.conn.log if "WITH bump AS" in s]
+    assert len(inserts) == 1
 
 
 @pytest.mark.asyncio

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 MAX_ROUNDS = 3
 MAX_TRANSCRIPT_TURNS = 30
@@ -50,6 +50,7 @@ USE_TOOL = {
 }
 
 ModelCall = Callable[[list[dict[str, Any]], list[dict[str, Any]]], Awaitable[dict[str, Any]]]
+ModelStream = Callable[[list[dict[str, Any]], list[dict[str, Any]]], AsyncIterator[dict[str, Any]]]
 FindTools = Callable[[str], Awaitable[list[dict[str, Any]]]]
 UseTool = Callable[[str, str, dict[str, Any]], Awaitable[Any]]
 
@@ -122,7 +123,6 @@ def _consent(result: Any) -> str | None:
 async def converse(text: str, history: list[dict[str, Any]], *, model_call: ModelCall, find_tools: FindTools,
                    use_tool: UseTool, max_rounds: int = MAX_ROUNDS) -> AgentOutcome:
     """One answer for `text`, with up to `max_rounds` rounds of tools. `history` comes from transcript()."""
-    candidates: list[dict[str, Any]] = []
     try:
         candidates = await find_tools(text) or []
     except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
@@ -166,3 +166,69 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": str(result)[:8000]})
 
     return AgentOutcome(text="", tools_used=used, consent_links=links)      # unreachable; the loop returns on its last pass
+
+
+async def stream_answer(text: str, history: list[dict[str, Any]], *, model_stream: ModelStream, find_tools: FindTools,
+                        use_tool: UseTool, max_rounds: int = MAX_ROUNDS) -> AsyncIterator[tuple[str, Any]]:
+    """The same answer as converse(), streamed: yields ("delta", piece) as the model produces it, then exactly one
+    ("final", AgentOutcome). A tool round is buffered (the model's content before a tool call is normally empty), then the
+    next round streams again."""
+    try:
+        candidates = await find_tools(text) or []
+    except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
+        candidates = []
+
+    system = SYSTEM
+    if candidates:
+        system = f"{SYSTEM}\n\nTools the router offers for this message (use one only if it helps):\n{_tool_brief(candidates)}"
+    turns = list(history)
+    if turns and turns[-1].get("role") == "user" and str(turns[-1].get("content") or "").endswith(text.strip()):
+        turns.pop()
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *turns, {"role": "user", "content": text}]
+    tools = tool_specs(candidates)
+    used: list[str] = []
+    links: list[str] = []
+
+    for round_no in range(max_rounds + 1):
+        parts: list[str] = []
+        calls: dict[int, dict[str, Any]] = {}
+        async for chunk in model_stream(messages, tools):
+            choice = (chunk.get("choices") or [{}])[0] or {}
+            delta = choice.get("delta") or {}
+            piece = delta.get("content")
+            if isinstance(piece, str) and piece:
+                parts.append(piece)
+                yield ("delta", piece)
+            for tc in delta.get("tool_calls") or []:
+                idx = int(tc.get("index") or 0)
+                slot = calls.setdefault(idx, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                if tc.get("id"):
+                    slot["id"] = str(tc["id"])
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["function"]["name"] += str(fn["name"])
+                if fn.get("arguments"):
+                    slot["function"]["arguments"] += str(fn["arguments"])
+        content = "".join(parts).strip()
+        tool_calls = [calls[i] for i in sorted(calls)]
+        if not tool_calls or round_no >= max_rounds:
+            yield ("final", AgentOutcome(text=content, tools_used=used, consent_links=links))
+            return
+        messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
+        for call in tool_calls:
+            fn = (call or {}).get("function") or {}
+            name = str(fn.get("name") or "")
+            args = _args(fn.get("arguments"))
+            server, tool = str(args.get("server") or "").strip(), str(args.get("name") or "").strip()
+            if name != "use_tool" or not server or not tool:
+                result: Any = "REFUSED: use use_tool with server, name and arguments"
+            else:
+                used.append(f"{server}/{tool}")
+                try:
+                    result = await use_tool(server, tool, args.get("arguments") if isinstance(args.get("arguments"), dict) else {})
+                except Exception as exc:  # noqa: BLE001 -- a tool failure is text the model can act on
+                    result = f"FAILED: {server}/{tool}: {type(exc).__name__}"
+            link = _consent(result)
+            if link:
+                links.append(link)
+            messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": str(result)[:8000]})

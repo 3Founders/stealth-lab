@@ -171,26 +171,39 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (askingKell.current.has(r)) return;
     askingKell.current.add(r);
     setKellBusy((p) => ({ ...p, [r]: true }));
+    const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    if (!id) {
+      note("This room is still syncing. Give it a second, then send again.", r);
+      askingKell.current.delete(r); setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; });
+      return;
+    }
+    const ctl = new AbortController();
+    controllers.current.set("@kell", ctl);
+    setStreaming((p) => ({ ...p, "@kell": { room: r, text: "" } }));
     try {
-      const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
-      if (!id) { note("This room is still syncing. Give it a second, then send again.", r); return; }
-      try {
-        const out = await roomsAgent.agent(id, text);
-        if (!out.posted) note("@kell answered but could not post it in the room.", r);
-      } catch (err) {
-        if (err instanceof RoomsApiError && err.status === 404) {      // the room may have just been created by sync
-          await new Promise((res) => setTimeout(res, 1500));
-          const out = await roomsAgent.agent(id, text);
-          if (!out.posted) note("@kell answered but could not post it in the room.", r);
-          return;
-        }
-        throw err;
-      }
+      const out = await roomsAgent.agentStream(id, text, (delta) => {
+        setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
+      }, ctl.signal);
+      if (out.event?.id) {
+        // Already on the server: show it now, and the sync pull will find the same id and not add it twice.
+        const m: GroupMessage = {
+          id: out.event.id, roomId: r, sender: assistantIdentityFor("@kell"), recipients: [],
+          payload: toMcpPayload(out.text), timestamp: Date.now(), depthCounter: 0,
+        };
+        push(r, { kind: "msg", m }, true);
+      } else if (!out.posted) note("@kell answered but could not post it in the room.", r);
     } catch (err) {
-      if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask @kell.", r);
+      if ((err as { name?: string })?.name === "AbortError") note("Stopped.", r);
+      else if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask @kell.", r);
+      else if (err instanceof RoomsApiError && err.status === 404) note("This room is still syncing. Try again in a moment.", r);
       else note(err instanceof Error ? err.message : "@kell could not answer just now.", r);
-    } finally { askingKell.current.delete(r); setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); }
-  }, [roomsAgent, note]);
+    } finally {
+      controllers.current.delete("@kell");
+      setStreaming((p) => { const n = { ...p }; delete n["@kell"]; return n; });
+      askingKell.current.delete(r);
+      setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; });
+    }
+  }, [roomsAgent, note, push]);
 
   // Notifications (lib/chat/notify.ts): what reaches you, in the bell, the tab title, the app badge, a chime and, in the background, an OS alert.
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);

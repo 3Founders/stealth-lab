@@ -12,7 +12,7 @@ import MfaGate from "@/components/MfaGate";
 export const metadata: Metadata = {
   title: { default: "keळ admin", template: "%s · keळ admin" },
   description: "Operations console for keळ.",
-  icons: { icon: "/kel-mark.png" },
+  icons: { icon: "/kel-icon.png", apple: "/kel-icon.png" },
   robots: { index: false, follow: false },
 };
 
