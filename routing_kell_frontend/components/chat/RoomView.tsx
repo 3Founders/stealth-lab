@@ -24,7 +24,6 @@ import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from
 import { MAX_DEPTH } from "@/lib/chat/types";
 import { groupMessages, initials, routeMessage } from "@/lib/chat/ui";
 import { getAccessToken, signOut } from "@/lib/session";
-import NotificationBell from "@/components/chat/NotificationBell";
 import PersonAvatar from "@/components/chat/PersonAvatar";
 import ProfileWidget from "@/components/chat/ProfileWidget";
 import ManageRooms from "@/components/chat/ManageRooms";
@@ -835,13 +834,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${room}`}>
         <header className="dg-head">
-          <HamburgerMenu panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
+          <HamburgerMenu panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+            alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
+            onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{room}</h1>
-          <NotificationBell notes={notes} prefs={prefs} room={room} onPrefs={setPrefs} onOpen={(r) => openRoomRef.current(r)}
-            onReadAll={() => setNotes((p) => p.map((n) => ({ ...n, read: true })))} onClear={() => setNotes([])} />
           <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>
             {sync.status === "syncing" ? "Syncing…" : sync.status === "offline" ? `Offline${sync.pending ? ` · ${sync.pending} waiting` : ""}` : sync.status === "error" ? "Not syncing" : sync.pending ? `${sync.pending} sending` : "Synced"}
           </span>

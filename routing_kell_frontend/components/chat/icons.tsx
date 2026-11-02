@@ -12,6 +12,16 @@ export function PanelCloseIcon({ size = 18 }: { size?: number }) {
   );
 }
 
+/** The settings gear: the chat menu's button. */
+export function SettingsIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" {...base}>
+      <circle cx="10" cy="10" r="2.6" />
+      <path d="M10 2.2v1.9M10 15.9v1.9M2.2 10h1.9M15.9 10h1.9M4.5 4.5l1.35 1.35M14.15 14.15l1.35 1.35M15.5 4.5l-1.35 1.35M5.85 14.15 4.5 15.5" />
+    </svg>
+  );
+}
+
 /** Takes an agent out of the room: a ring with a bar through it. */
 export function RemoveIcon({ size = 16 }: { size?: number }) {
   return (

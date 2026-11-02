@@ -1,17 +1,23 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { SettingsIcon } from "@/components/chat/icons";
+import NotificationPanel, { type AlertsProps } from "@/components/chat/NotificationBell";
 import type { SectionId } from "@/components/chat/SettingsDialog";
 
 /**
  * The menu button at the left of the room header. It keeps the side panel short: everything that is not a room or a person lives
  * here or in Settings. Opens on click or Enter, closes on Escape or a click outside, and arrow keys move through the items.
  */
-export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onManageRooms, onTogglePanel, panelOpen }: {
+export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, onManageRooms, onTogglePanel, panelOpen, alerts }: {
   paused: boolean; onSettings: (s: SectionId) => void; onPause: () => void; onSignOut: () => void;
   onManageRooms: () => void; onTogglePanel: () => void; panelOpen: boolean;
+  /** The alerts list and its settings. Given, the menu has an Alerts item (with the unread count) and the button carries a dot. */
+  alerts?: AlertsProps;
 }) {
   const [open, setOpen] = useState(false);
+  const [view, setView] = useState<"menu" | "alerts">("menu");
+  const unread = alerts ? alerts.notes.filter((n) => !n.read).length : 0;
   const box = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
 
@@ -23,7 +29,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
     return () => document.removeEventListener("mousedown", off);
   }, [open]);
 
-  function close(refocus = true) { setOpen(false); if (refocus) button.current?.focus(); }
+  function close(refocus = true) { setOpen(false); setView("menu"); if (refocus) button.current?.focus(); }
   function key(e: React.KeyboardEvent) {
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
@@ -37,14 +43,19 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
 
   return (
     <div className="dg-hamburger" ref={box} onKeyDown={key}>
-      <button ref={button} type="button" className="dg-burger" aria-haspopup="menu" aria-expanded={open} aria-label="Menu" onClick={() => setOpen((o) => !o)}>
-        <span aria-hidden="true" className="dg-burger-bars"><i /><i /><i /></span>
+      <button ref={button} type="button" className="dg-burger" aria-haspopup="menu" aria-expanded={open} aria-label={unread ? `Menu, ${unread} unread alert${unread === 1 ? "" : "s"}` : "Menu"} onClick={() => { if (open) close(false); else setOpen(true); }}>
+        <SettingsIcon />
+        {unread > 0 && <span className="dg-burger-dot" aria-hidden="true">{unread > 9 ? "9+" : unread}</span>}
       </button>
-      {open && (
+      {open && alerts && view === "alerts" && (
+        <NotificationPanel {...alerts} onClose={() => close(false)} onBack={() => setView("menu")} />
+      )}
+      {open && view === "menu" && (
         <div className="dg-menu-pop" role="menu" aria-label="Chat menu">
           <button type="button" role="menuitem" onClick={run(onManageRooms)}>Manage rooms</button>
           <button type="button" role="menuitem" onClick={run(onTogglePanel)}>{panelOpen ? "Close room list" : "Show room list"}</button>
           <hr />
+          {alerts && <button type="button" role="menuitem" onClick={() => setView("alerts")}>Alerts{unread > 0 && <span className="dg-unread" aria-label={`${unread} unread`}>{unread > 99 ? "99+" : unread}</span>}</button>}
           <button type="button" role="menuitem" onClick={run(() => onSettings("preferences"))}>Preferences</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("notifications"))}>Notifications</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("data"))}>Your data</button>
