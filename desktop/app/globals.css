@@ -40,7 +40,7 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 }
 .copy:hover { background: var(--soft); }
 
-.shell { display: grid; grid-template-columns: 300px 1fr; gap: var(--gap); padding-top: var(--pad); }
+.shell { display: grid; grid-template-columns: 360px 1fr; gap: var(--gap); padding-top: var(--pad); }
 .side { border-right: 1px solid var(--rule); padding-right: var(--gap); }
 .side h2, .main h2 { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--grey); font-weight: 400; }
 
@@ -64,3 +64,45 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 .banner { border: 1px solid var(--rule-strong); background: var(--soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .modelstrip { color: var(--grey); font-size: 12px; display: flex; gap: 14px; align-items: baseline; margin-top: 6px; }
 .modelstrip .spend { color: var(--ink); border-bottom: 2px solid var(--yellow); font-weight: 400; }
+
+/* The model strip's per-step rows: model, which rung, tokens, cost. */
+.ledger { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; font-size: 12px; max-width: 640px; }
+.ledger .row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 84px; gap: 10px; align-items: baseline; color: var(--grey); }
+.ledger .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger .row > span:nth-child(2) { text-align: right; }
+.ledger .row b { font-weight: 400; color: var(--ink); }
+.ledger .rung { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.ledger .rung.cheap { color: var(--cobalt); }
+.ledger .rung.strong { color: var(--ink); }
+
+/* The changes panel: file headers and the diffs, muted green/red on the paper. */
+.changes { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.filecard { border: 1px solid var(--rule); border-radius: 10px; background: #fff; overflow: hidden; }
+.filecard summary { cursor: pointer; padding: 8px 10px; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
+.filecard .path { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.filecard .stat { margin-left: auto; font-size: 12px; white-space: nowrap; }
+.filecard .stat .add { color: #1F6B3A; }
+.filecard .stat .del { color: #9B2C2C; }
+.diff { margin: 0; border-top: 1px solid var(--rule); font-size: 12px; line-height: 1.45; overflow-x: auto; }
+.diff div { white-space: pre; padding: 0 10px; }
+.diff .add { background: rgba(31, 107, 58, 0.08); color: #1F4F30; }
+.diff .del { background: rgba(155, 44, 44, 0.07); color: #6E2323; }
+.diff .hunk { color: var(--grey); background: rgba(23, 23, 23, 0.03); }
+
+/* Tool suggestion cards: the note the session gets, as cards. Registry ids are long, so the name truncates (full id on
+   hover) and the pill keeps its own column instead of being pushed out of the card. */
+.cards { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.toolcard { border: 1px solid var(--rule-strong); border-radius: 10px; padding: 10px 12px; background: #fff; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
+.toolcard .body { min-width: 0; }
+.toolcard .name { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolcard .meta { font-size: 12px; color: var(--grey); }
+.pillrow { display: flex; gap: 6px; align-items: center; }
+.pill { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.pill.installed { background: var(--soft); border: 1px solid var(--yellow); }
+.pill.outline { border: 1px solid var(--rule); color: var(--grey); }
+
+/* Settings: label/value rows in the sidebar. */
+.kv { display: grid; grid-template-columns: 74px 1fr; gap: 4px 8px; font-size: 13px; margin-top: 8px; }
+.kv dt { color: var(--grey); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv dd .mono { font-size: 12px; }

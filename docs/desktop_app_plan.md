@@ -69,8 +69,29 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
 6. **Settings / Account:** the console's panels (connect, models, activity, keys) rendered inside the app;
    an "Open console" button opens the web console at the helper's tokened address.
 
-## Shell: Electron (owner decision, 2026-11-01)
+**Screens built (2026-11-02, step 8).** The changes panel, the model strip, the tool cards and settings are live, verified on
+the `rich-proj` fixture with real turns:
 
+- **Changes panel** (`GET /api/diff?sessionID=`): the turn's diff, read from OpenCode's own snapshot of that turn, so the
+  panel and Undo cannot disagree. Build noise (`__pycache__`, `node_modules`, `*.pyc`) is filtered out. Fills itself when a
+  turn ends (polls after the stream closes; the snapshot record is written a moment later).
+- **Undo** (`POST /api/undo`): OpenCode snapshots the tree around each turn into a shadow git
+  (`data/opencode/snapshot/<project>/<repo>`) as TREE objects, and every assistant message in `opencode.db` records
+  `snapshot: { start, end, files }` — one turn is "everything after the last user message", first step's start tree to last
+  step's end tree. Undo writes each changed file's before-blob back (byte-exact). Verified round trip: edit → undo → the
+  file is identical to before → the panel reports nothing left to undo. A file edited since the turn asks first.
+  - **The engine's own revert does not work here**: `session.revert.stage` reports `files: []` and changes nothing (the
+    shadow repo has no commits or refs to walk). kell's app reads the trees itself instead. Recorded in revisit.md.
+  - `kell undo` is kept for its own case — a dispatched cheap model's applied answer — and runs when there is no session.
+- **Model strip**: `session.step.started` names the model (keyed by `assistantMessageID`), `session.step.ended` carries
+  tokens and cost for the same message; rows pair them by that id. Neither event carries a rung, so the rung is the model
+  compared with `config.json`'s `cheap` — shown as cheap/strong, and proven on live turns of both.
+- **Tool cards** (`POST /api/tools`): kell's tool router, the same call the plugin's native layer makes, same config file.
+- **Settings** (`GET /api/settings`): sign-in from the token's presence (never the token), models and mode from
+  `opencode/config.json`, engine found/not found. "Open console" runs `kell console open`. Read-only: no key or flag is
+  written by the app.
+
+## Shell: Electron (owner decision, 2026-11-01)
 Electron: OpenCode's SDK and kell's console helper are Node, so the main process runs them directly. The window loads
 the prototype's Next.js UI. Still open: Windows first, or Windows and macOS together.
 

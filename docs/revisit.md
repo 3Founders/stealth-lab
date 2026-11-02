@@ -135,6 +135,12 @@ generation). Waiting:
   mid-turn). Missing: Claude Code through kell (hooks are batch processes with no mid-turn channel — kell's triage,
   dispatch and records are invisible while they happen) and the console (records outcomes only after a turn). To look
   at after the current work order: a visible side-channel for Claude Code, and a live tail in the console.
+- **OpenCode's session revert is a no-op in serve mode (found 2026-11-02, step 8).** `session.revert.stage` accepts
+  `{ sessionID, messageID, files: true }`, answers a snapshot id, and reports `files: []` while the working tree is
+  untouched (tried on two anchors of the same turn). The shadow git has the before- and after-trees, but no commits or
+  refs, so the engine has nothing to walk. kell's desktop app reads the trees itself (`desktop/lib/snapshots.ts`: the
+  turn's range from `opencode.db`'s per-message `snapshot: {start, end, files}`, then writes the before-blobs back) and
+  this works byte-exactly. Worth reporting upstream; no server change needed on kell's side.
 - **Your own agent on an open harness** (OpenCode, Codex CLI, Qwen Code, ...), with kell built in instead of hooked in.
   Research in (Gemini and Perplexity, 2026-10-31): both rank OpenCode first (MIT, client/server with an SDK, plugins
   with hooks before and after tools, 75+ providers, reads AGENTS.md). Next: a small spike, a kell plugin for OpenCode,

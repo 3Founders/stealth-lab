@@ -1,14 +1,16 @@
 // The engine: a local `opencode serve` child with kell's plugin on its config, found the way `kell setup --client opencode`
-// installs it. The prototype talks to it through the tokened HTTP API (@opencode/client); the Electron main process also
-// loads this module (for engineStop), so the client is required lazily: its package has no CJS "exports" main and a raw
-// require from the main process would die with ERR_PACKAGE_PATH_NOT_EXPORTED (the Next server bundle imports it fine).
+// installs it. The server routes talk to it through the tokened HTTP API (@opencode/client), required lazily: its package is
+// ESM-only with no CJS "." export, so a top-level require fails from a CJS context (the Electron main process does not load
+// this module: the engine is owned by the Next child and dies with its tree). The client's types live in oc-types.d.ts, which
+// keeps the type reference out of webpack's resolution.
 import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import type { OC, Client } from "./oc-types"
+
+export type { Client }
 
 export type Engine = { baseUrl: string; password: string; directory: string }
-type OC = typeof import("@opencode/client")
-export type Client = ReturnType<OC["OpenCode"]["make"]>
 
 const exes = () => [
   process.env.KELL_OC_ENGINE || "",
@@ -25,7 +27,7 @@ type State = { child?: ChildProcess; engine?: Engine }
 const g = globalThis as typeof globalThis & { __kellEngineState?: State }
 const state: State = g.__kellEngineState || (g.__kellEngineState = {})
 
-let OpenCodeCtor: (typeof import("@opencode/client"))["OpenCode"] | undefined
+let OpenCodeCtor: OC["OpenCode"] | undefined
 
 export const engineStatus = () => (state.engine && state.child && !state.child.killed ? state.engine : undefined)
 
@@ -69,7 +71,10 @@ export function engineStop() {
 export const authHeader = (e: Engine): string =>
   "Basic " + Buffer.from(`opencode:${e.password}`, "utf8").toString("base64")
 
-export const clientFor = (e: Engine): Client => {
-  const C = OpenCodeCtor ?? (OpenCodeCtor = (require("@opencode/client") as OC).OpenCode)
-  return C.make({ baseUrl: e.baseUrl, headers: { authorization: authHeader(e) } })
+// The client loads through `import()`, not `require`: inside Next's bundle a `require("@opencode/client")` bare is marked
+// weakly and webpack must resolve it, which it cannot (the package's "." export is import-only). On the Electron path
+// (plain CJS, no webpack) `import()` compiles to a require anyway.
+export const clientFor = async (e: Engine): Promise<Client> => {
+  if (!OpenCodeCtor) OpenCodeCtor = (await import("@opencode/client")).OpenCode
+  return OpenCodeCtor.make({ baseUrl: e.baseUrl, headers: { authorization: authHeader(e) } })
 }

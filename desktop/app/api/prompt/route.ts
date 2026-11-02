@@ -9,10 +9,10 @@ export async function POST(req: Request) {
   if (!e) return new Response("engine is down; open a project first", { status: 502 })
   try {
     const body = await req.json()
-    const client = clientFor(e)
     const stream = new ReadableStream({
       async start(ctrl) {
         const enc = (obj: any) => ctrl.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(obj)}\n\n`))
+        const client = await clientFor(e)                 // async: loads the ESM-only client via import()
         // Subscribe before prompting: otherwise the turn's session.idle can fire before the stream starts.
         const sessionID: string = body.sessionID ||
           (await client.session.create({ location: { directory: e.directory } })).id
