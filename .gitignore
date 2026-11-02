@@ -160,3 +160,4 @@ backend/conflict_candidates.json
 
 # outreach prospect data, contact list and send log (local only)
 /outreach/
+node_modules

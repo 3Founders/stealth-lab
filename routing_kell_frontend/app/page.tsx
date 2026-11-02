@@ -49,8 +49,8 @@ export default function Home() {
         <h1 id="h-hero" className="display">
           <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Cut LLM API bills by <span className="hl">50%</span></span></span>
           <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>with cache</span></span>
-          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>retention,</span></span>
-          <span className="ln l2" style={{ "--d": "270ms" } as React.CSSProperties}><span>with tool search.</span></span>
+          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>retention</span></span>
+          <span className="ln l2" style={{ "--d": "270ms" } as React.CSSProperties}><span>and tool search.</span></span>
         </h1>
         <Reveal className="hero-sub stack" delay={250}>
           <HeroActions />

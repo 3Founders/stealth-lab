@@ -19,8 +19,9 @@ Extra usage on every plan: bought in advance as credits at the provider's cost p
 
 **What is actually live, which the website must say plainly:**
 
-- Buying credits in advance: built and tested, not yet switched on.
-- Pro and Teams monthly/per-seat billing and GST invoices: **planned, not built**. Until they are, the page shows the plans with "Not yet available online" and a contact route. The one-seat pilot is bought online behind a referral code; a team pilot is invoiced directly.
+- Buying plans and credit packs online: built and switched on in production on 2026-11-02 with live Razorpay keys (see "Live payments: current state"). Packs need an active plan; the server enforces it.
+- GST invoices: the endpoints exist (migration 161), but the admin console is not deployed, so issuing one is manual today.
+- The one-seat pilot behind a referral code, and the dashboard that edits plans and codes: built in this working tree (migrations 167 and 168), not committed or deployed. A team pilot is invoiced directly.
 - Teams admin pages: built but off in production.
 - Enterprise items: planned; none is available today.
 
@@ -115,7 +116,7 @@ Copy rules kept: no savings numbers or headline claims, no comparison with anyon
 | `POST /v1/billing/codes/check` `{"code": ...}` | `{"valid": true}`, or a 400 with the same sentence the order route would use. No session; limited per address (`KELL_CODE_CHECKS_PER_MIN`, default 10 a minute). |
 | `POST /v1/billing/webhook` | Razorpay's `payment.captured` / `order.paid`. HMAC-SHA256 of the raw body with the webhook secret; matched to an organization by the order **we** recorded; `payment_ref` is unique so a repeat credits once. |
 
-All of them return 503 until the environment below is set. The website's origin must be in `DELEGATE_ALLOWED_ORIGINS` (same allow-list as rooms and chat).
+They answer 503 only while the environment below is unset; in production the billing routes are configured (verified 2026-11-02). The website's origin must be in `DELEGATE_ALLOWED_ORIGINS` (same allow-list as rooms and chat).
 
 ## Environment
 
@@ -143,12 +144,36 @@ Website (build-time, public):
 
 The Razorpay webhook URL to register is `https://<mcp origin>/v1/billing/webhook`, with the events `payment.captured` and `order.paid`.
 
+## Live payments: current state (2026-11-02)
+
+Production is selling: `NEXT_PUBLIC_KELL_BUY_PLANS=on` and the Razorpay keys on the hosted server are LIVE (founder decision, 2026-11-02). A click on Buy opens a real Checkout. This is ahead of the go-live steps below; the decision is to stay live, so the checklist after this section is the work to do now.
+
+Verified from outside on 2026-11-02:
+
+- `GET /v1/billing/wallet` answers 401 (not 503): the deployed billing routes are configured with keys and `KELL_WALLETS=on`.
+- `POST /v1/billing/webhook` with no signature answers 400: the route is live. Whether the secret matches and the endpoint is registered with Razorpay is **not** verified.
+- `/readyz` reports `migrations: ok` for the deployed build; it cannot show which migrations are in it.
+- `/legal/refunds` still says "not published yet".
+- The admin console is not deployed (no Administrator link on `/sign-in`), so GST invoices and order records have no UI yet, and the reconcile job is manual.
+- The referral section, the individual Pilot, `billing_plan_rows`/`billing_referral_codes` (167/168) and the dashboard tabs are in the working tree only; the live site has no referral section.
+
+Not verified, and each can cost a buyer their plan or their money: the webhook registration and secret, a first live payment activating a plan, GST mode, the margin, and the refund policy.
+
+## Pre-flight checklist (do now, while live is on)
+
+1. Razorpay Dashboard -> Webhooks: endpoint `https://mcp.kell.org.in/v1/billing/webhook`, events `payment.captured` and `order.paid`, signing secret equal to `RAZORPAY_WEBHOOK_SECRET`. Check recent deliveries: a 400 is a payment that will not activate a plan.
+2. One small live payment (Starter, ₹200): the plan appears on `/pricing` within about a minute. If it does not, stop selling until the webhook is fixed and run the reconcile job (`python -m app.services.billing_reconcile --apply`) for that payment. Refund it from the dashboard if it was only a test.
+3. Publish `/legal/refunds` (Razorpay requires it; the page is a placeholder today) and have Terms and Privacy reviewed.
+4. Set `NEXT_PUBLIC_KELL_GST_MODE`; confirm the margin and `KELL_INR_PER_USD`; decide who issues GST invoices (the endpoints exist; the console is not deployed).
+5. Schedule the reconcile job and write down who refunds and how (refund events are not handled; every refund is manual).
+6. Deploy migrations 167/168, the backend endpoints, the referral frontend and the dashboard tabs when the local work is ready; the live site does not have them yet.
+
 ## Go-live steps
 
-1. Apply migrations 165, 166, 167 and 168; set the backend variables in test mode; in the admin dashboard's Billing page check the four plan rows and that the seeded FIRSTTRIAL code is listed; place a ₹100 test order and a one-seat pilot order with that code from `/pricing`; confirm the webhook credits once, a repeat delivery credits nothing, and the order row shows the code.
-2. Confirm the margin and GST decisions below; set the website variables to match; redeploy both.
-3. Publish Terms, Privacy and Refund/Cancellation (lawyer-reviewed) at the footer links.
-4. Switch Razorpay to live keys on the interim account.
+1. Apply migrations 165, 166, 167 and 168; in the admin dashboard's Billing page check the four plan rows and that the seeded FIRSTTRIAL code is listed; place a ₹100 test order and a one-seat pilot order with that code from `/pricing`; confirm the webhook credits once, a repeat delivery credits nothing, and the order row shows the code. **Not done:** 167/168 and the dashboard are local, and no test order is recorded.
+2. Confirm the margin and GST decisions below; set the website variables to match; redeploy both. **Not done.**
+3. Publish Terms, Privacy and Refund/Cancellation (lawyer-reviewed) at the footer links. **Not done:** the refund page is a placeholder.
+4. Switch Razorpay to live keys on the interim account. **Done 2026-11-02, before 1-3:** live keys and the buy flag are on in production.
 
 ## Open decisions
 
