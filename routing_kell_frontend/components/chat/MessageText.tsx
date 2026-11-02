@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Markdown from "@/components/chat/Markdown";
 import { splitArtifacts, type Artifact } from "@/lib/chat/artifacts";
 import { dataUrlOf, hostOf, splitImages } from "@/lib/chat/images";
 import type { ImageAttachment } from "@/lib/chat/types";
@@ -70,7 +71,7 @@ export default function MessageText({ text, attachments }: { text: string; attac
       {splitArtifacts(text).map((g, i) => g.t === "artifact"
         ? <ArtifactCard key={i} artifact={g.artifact} />
         : splitImages(g.text).map((s, j) => s.t === "text"
-          ? (s.s.trim() ? <p key={`${i}-${j}`}>{s.s.trim()}</p> : null)
+          ? (s.s.trim() ? <Markdown key={`${i}-${j}`} text={s.s.trim()} /> : null)
           : <div key={`${i}-${j}`} className="dg-imgs">{s.src === "data" ? <Picture src={s.url} alt={s.alt} /> : <RemotePicture url={s.url} alt={s.alt} />}</div>))}
     </>
   );

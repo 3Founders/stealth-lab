@@ -592,3 +592,31 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   .dg-page .dg-side { position: fixed; z-index: 40; box-shadow: 12px 0 40px rgba(0, 0, 0, .25); }
 }
 .dg-addagent .dg-set-head h2 { font-size: 19px; text-transform: none; letter-spacing: -.01em; color: var(--ink); margin: 0; font-weight: 400; }
+
+/* Markdown in a message (components/chat/Markdown.tsx): rendered as elements, never raw HTML. */
+.dg-md { display: grid; gap: 6px; }
+.dg-md p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-weight: 300; }
+.dg-md .dg-md-h { font-size: 1.05em; line-height: 1.3; margin: 2px 0 0; }
+.dg-md ul, .dg-md ol { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
+.dg-md li { line-height: 1.42; font-weight: 300; }
+.dg-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: rgba(0,0,0,.06); border-radius: 4px; padding: 0 4px; }
+.dg-md pre.dg-md-pre { margin: 0; padding: 10px 12px; background: #f4f5f7; border: 1px solid var(--rule); border-radius: 8px; overflow-x: auto; }
+.dg-md pre.dg-md-pre code { background: none; padding: 0; font-size: .9em; }
+.dg-md blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--rule-strong); color: #555; }
+.dg-md a { color: var(--cobalt); text-decoration: underline; }
+.dg-md hr { border: 0; border-top: 1px solid var(--rule); margin: 2px 0; }
+.dg-md .dg-md-table { border-collapse: collapse; font-size: .95em; }
+.dg-md th, .dg-md td { border: 1px solid var(--rule); padding: 3px 6px; text-align: left; }
+.dg-md .dg-md-raw { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+
+/* Working indicators: the server agent (@kell) and connector tasks animate while they work. */
+.dg-thinking { display: flex; gap: 5px; align-items: center; min-height: 22px; }
+.dg-thinking .dg-pulse:nth-child(2) { animation-delay: .18s; }
+.dg-thinking .dg-pulse:nth-child(3) { animation-delay: .36s; }
+.dg-working { display: flex; gap: 7px; align-items: center; font-size: 12.5px; color: var(--cobalt); margin: 0; }
+.dg-status[data-status="queued"], .dg-status[data-status="claimed"] { animation: dg-blink 1.1s ease-in-out infinite; }
+.dg-result { animation: dg-rise var(--dg-smooth-d) var(--dg-smooth) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dg-thinking .dg-pulse, .dg-working .dg-pulse, .dg-status { animation: none !important; }
+}

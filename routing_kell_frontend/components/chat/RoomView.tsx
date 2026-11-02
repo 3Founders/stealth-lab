@@ -31,6 +31,7 @@ import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
 import MessageText from "@/components/chat/MessageText";
+import Markdown from "@/components/chat/Markdown";
 import AddAgentDialog from "@/components/chat/AddAgentDialog";
 import { withoutDataImages } from "@/lib/chat/images";
 import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
@@ -111,6 +112,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const lineStore = useRef<Record<string, Line[]>>({});
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
   const [streaming, setStreaming] = useState<Record<string, { room: string; text: string }>>({});
+  const [kellBusy, setKellBusy] = useState<Record<string, boolean>>({});
   const streamingRef = useRef(streaming);
   streamingRef.current = streaming;
   const [paused, setPaused] = useState(false);
@@ -168,9 +170,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const askKell = useCallback(async (r: string, text: string) => {
     if (askingKell.current.has(r)) return;
     askingKell.current.add(r);
+    setKellBusy((p) => ({ ...p, [r]: true }));
     try {
       const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
-      if (!id) { note("This room is still syncing. Give it a second, then mention @kell again.", r); return; }
+      if (!id) { note("This room is still syncing. Give it a second, then send again.", r); return; }
       try {
         const out = await roomsAgent.agent(id, text);
         if (!out.posted) note("@kell answered but could not post it in the room.", r);
@@ -186,7 +189,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     } catch (err) {
       if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask @kell.", r);
       else note(err instanceof Error ? err.message : "@kell could not answer just now.", r);
-    } finally { askingKell.current.delete(r); }
+    } finally { askingKell.current.delete(r); setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); }
   }, [roomsAgent, note]);
 
   // Notifications (lib/chat/notify.ts): what reaches you, in the bell, the tab title, the app badge, a chime and, in the background, an OS alert.
@@ -444,10 +447,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             </div>
             <div className="dg-body"><p>{task.text}</p></div>
             {task.status === "queued" && ag && !ag.online && <p className="dg-hint">{handle} is offline. It will pick this up the next time it checks its inbox.</p>}
+            {(task.status === "queued" || task.status === "claimed") && (
+              <p className="dg-working"><span className="dg-pulse" aria-hidden="true" /> {handle} is working…</p>
+            )}
             {task.result && (
               <div className="dg-result">
                 <div className="dg-meta"><b>{handle}</b><span className="dg-badge">agent</span></div>
-                <div className="dg-body"><p>{task.result}</p></div>
+                <div className="dg-body"><Markdown text={task.result} /></div>
               </div>
             )}
             {!isFinished(task) && (
@@ -464,6 +470,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   })();
 
   const streamingHere = Object.entries(streaming).filter(([, v]) => v.room === room);
+  const kellHere = kellBusy[room] === true;
   const liveText = JSON.stringify(streaming);
   useEffect(() => { scrollToEnd({ instant: true }); }, [scrollToEnd, room]);
   const itemKeys = items.map((i) => i.key).join("|");
@@ -625,7 +632,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const names = new Set(relayAgents.map((a) => a.name));
     const toRelay = mentionedNames(line).filter((n) => names.has(n));
     const localMentions = mentionsIn(line).filter((h) => agents.includes(h));
-    const asksKell = /(^|\s)@kell\b/i.test(line);
+    const anyMention = mentionsIn(line).length > 0;
+    // A room with one person and no agent named goes to @kell: the in-tab agents do not get a broadcast.
+    const defaultToKell = !anyMention && peopleHandles.length === 0;
+    const asksKell = defaultToKell || /(^|\s)@kell\b/i.test(line);
     if (toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
       try {
@@ -639,7 +649,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (unknown.length && !localMentions.length) note(`No agent named ${unknown.map((n) => `@${n}`).join(", ")}. Add one with + Add agent.`);
     }
     const m: GroupMessage = {
-      id: broker.newId(), roomId: room, sender: HUMAN, recipients: toRelay.length ? localMentions : recipientsFor(line),
+      id: broker.newId(), roomId: room, sender: HUMAN,
+      recipients: toRelay.length ? localMentions : defaultToKell ? ["@kell"] : recipientsFor(line),
       payload: { ...toMcpPayload(line), ...(pictures?.length ? { attachments: pictures } : {}) }, timestamp: Date.now(), depthCounter: 0,
     };
     await broker.send(m);
@@ -647,6 +658,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   };
 
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);
+  const relayWorkingHandles = tasks
+    .filter((t) => t.status === "queued" || t.status === "claimed")
+    .map((t) => relayAgents.find((a) => a.id === t.agent_id)?.handle ?? "@agent");
   const mentionable = [...new Set([...agents, "@kell", ...relayAgents.map((a) => a.handle), ...peopleHandles])];
   const full = agents.length >= MAX_AGENTS;
   const count = agents.length + relayAgents.length;
@@ -759,8 +773,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           <MessageScroller.Root className="dg-scroll">
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>
               <MessageScroller.Content ref={contentRef} className="dg-content">
-                {items.length === 0 && streamingHere.length === 0 && (
-                  <p className="dg-empty">No messages in {room} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}Ask <b>@kell</b>, the built-in agent, by mentioning it; add your own agents with <b>+ Add agent</b>.</p>
+                {items.length === 0 && streamingHere.length === 0 && !kellHere && (
+                  <p className="dg-empty">No messages in {room} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no @mention goes to <b>@kell</b>; add your own agents with <b>+ Add agent</b>.</p>
                 )}
                 {items.map((i) => i.node)}
                 {streamingHere.map(([h, v]) => (
@@ -772,6 +786,17 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     </div>
                   </MessageScroller.Item>
                 ))}
+                {kellHere && (
+                  <MessageScroller.Item className="dg-run" data-agent="true">
+                    <Avatar who={assistantIdentityFor("@kell")} />
+                    <div className="dg-col">
+                      <div className="dg-meta"><b>@kell</b><span className="dg-badge">agent</span></div>
+                      <div className="dg-body dg-thinking" role="status" aria-label="@kell is working">
+                        <span className="dg-pulse" /><span className="dg-pulse" /><span className="dg-pulse" />
+                      </div>
+                    </div>
+                  </MessageScroller.Item>
+                )}
               </MessageScroller.Content>
             </MessageScroller.Viewport>
             <JumpToLatest onJump={() => scrollToEnd()} />
@@ -779,9 +804,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         </MessageScroller.Provider>
 
         <div className="dg-typing" role="status" aria-live="polite">
-          {working.length > 0 && <>
+          {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere) && <>
             <span className="dg-pulse" aria-hidden="true" />
-            {working.map((h) => `${h} is working`).join(" · ")}
+            {[
+              ...working.map((h) => `${h} is working`),
+              ...relayWorkingHandles.map((h) => `${h} is working`),
+              ...(kellHere ? ["@kell is working"] : []),
+            ].join(" · ")}
           </>}
           {streamingHere.length > 0 && (
             <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
