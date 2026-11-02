@@ -133,7 +133,8 @@ async def cancel(pool: Any, buyer_user_id: str) -> dict[str, Any]:
 
 
 async def on_event(pool: Any, event: str, body: dict[str, Any]) -> None:
-    """A subscription webhook. Activation is idempotent by payment id, so an authenticated+charged pair credits once."""
+    """A subscription webhook. Activation is idempotent by payment id, so an authenticated+charged pair credits once.
+    Razorpay's `authenticated` event often carries no payment (and can arrive after `charged`), so it only marks the row."""
     payload = body.get("payload") or {}
     sub = ((payload.get("subscription") or {}).get("entity")) or {}
     sid = sub.get("id")
@@ -142,7 +143,10 @@ async def on_event(pool: Any, event: str, body: dict[str, Any]) -> None:
     sid = str(sid)
     if event in ("subscription.authenticated", "subscription.charged"):
         pay = ((payload.get("payment") or {}).get("entity")) or {}
-        await _activate_charge(pool, sid, pay)
+        if pay:
+            await _activate_charge(pool, sid, pay)
+        elif event == "subscription.charged":
+            log.warning("billing: subscription %s charge event carried no payment", sid)
         if event == "subscription.authenticated":
             await _mark(pool, sid, "authenticated")
         return
@@ -154,6 +158,9 @@ async def on_event(pool: Any, event: str, body: dict[str, Any]) -> None:
 
 
 async def _mark(pool: Any, sid: str, status: str) -> None:
+    row = await _row(pool, sid)
+    if row and row["status"] == "active" and status == "authenticated":
+        return                                                       # a late authenticated event never downgrades
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         await conn.execute(
             "UPDATE billing_subscriptions SET status = $2, cancelled_at = CASE WHEN $2 = 'cancelled' THEN now() "

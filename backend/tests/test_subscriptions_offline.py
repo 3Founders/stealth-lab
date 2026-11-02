@@ -168,3 +168,18 @@ async def test_the_first_authorisation_payment_activates_once_and_marks_the_subs
     await subscriptions.on_event(pool, "subscription.authenticated", _body(120_000, "subscription.authenticated"))
     assert len(pool.statements("INSERT INTO plan_entitlements")) == 1
     assert pool.statements("UPDATE billing_subscriptions SET status = $2")
+
+
+@pytest.mark.asyncio
+async def test_an_authenticated_event_without_a_payment_marks_only_and_never_downgrades_an_active_row():
+    # Razorpay's authenticated payload usually has no payment entity (docs sample), and may arrive after charged.
+    pool = _charge_pool(120_000)
+    await subscriptions.on_event(pool, "subscription.authenticated", {"event": "subscription.authenticated", "payload": {"subscription": {"entity": {"id": "sub_x"}}}})
+    assert not pool.statements("INSERT INTO plan_entitlements")
+    assert pool.statements("UPDATE billing_subscriptions SET status = $2")
+
+    active = _charge_pool(120_000)
+    active.conn.answers["FROM billing_subscriptions WHERE razorpay_subscription_id"] = {
+        "buyer_user_id": BUYER, "plan": "pro", "seats": 1, "amount_paise": 120_000, "period_days": 30, "status": "active"}
+    await subscriptions.on_event(active, "subscription.authenticated", {"event": "subscription.authenticated", "payload": {"subscription": {"entity": {"id": "sub_x"}}}})
+    assert not active.statements("UPDATE billing_subscriptions SET status = $2")
