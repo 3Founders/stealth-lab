@@ -1,22 +1,15 @@
 "use client";
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import ModelKeys from "@/components/models/ModelKeys";
+import { useEffect, useRef } from "react";
 import OnboardButton from "@/components/chat/OnboardButton";
 
 export interface AddAgentDialogProps {
   open: boolean; onClose: () => void;
-  /** The room already has as many in-tab agents as it can run. */
+  /** The room already has as many added agents as it can have. */
   full: boolean;
-  /** The signed-in account: its model keys live in this browser, per account. */
-  subject: string;
-  kind: "mine" | "tab"; onKind: (k: "mine" | "tab") => void;
   name: string; onName: (n: string) => void;
   error: string;
   onSubmit: (e: React.FormEvent) => void;
-  /** A model or key changed here: refresh what backs the in-tab agents. */
-  onModelChanged?: () => void;
-  /** Registers a new agent name and returns the text to paste into the agent. */
+  /** Registers a new name for an agent that runs on the person's own machine and returns the text to paste into it. */
   onOnboard?: () => Promise<string>;
 }
 
@@ -24,7 +17,6 @@ export interface AddAgentDialogProps {
 export default function AddAgentDialog(p: AddAgentDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
-  const [modelsOpen, setModelsOpen] = useState(false);
 
   useEffect(() => {
     const d = dialog.current;
@@ -49,30 +41,21 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
           <button type="button" className="dg-set-x" onClick={close} aria-label="Close">Close</button>
         </div>
         <div className="dg-addagent-body">
-          <label htmlFor="dg-agent-name">Name{p.kind === "tab" ? " (optional)" : ""}</label>
-          <input id="dg-agent-name" ref={input} value={p.name} onChange={(e) => p.onName(e.target.value)} placeholder={p.kind === "mine" ? "web-chat" : "reviewer"} maxLength={40} autoComplete="off" />
-          <fieldset>
-            <legend>What kind of agent?</legend>
-            <label><input type="radio" name="dg-kind" checked={p.kind === "tab"} onChange={() => p.onKind("tab")} disabled={p.full} /> Kell agent</label>
-            <label><input type="radio" name="dg-kind" checked={p.kind === "mine"} onChange={() => p.onKind("mine")} /> My own agent</label>
-          </fieldset>
-          {p.kind === "mine" && p.onOnboard && <OnboardButton onOnboard={p.onOnboard} />}
-          {p.kind === "mine" && (
-            <p className="small dim" style={{ margin: 0 }}>
-              Your agent joins through kell&rsquo;s MCP (Claude Code, Cursor and the like). It can read and post in this room with
-              room_list, room_read and room_post, and shows slides or a small page when it posts a fenced <code>```html</code> block.{" "}
-              <Link href="/docs#agents" style={{ textDecoration: "underline" }}>How to connect it</Link>.
-            </p>
-          )}
-          {p.kind === "tab" && (
-            <details className="dg-agent-models" open={modelsOpen} onToggle={(e) => setModelsOpen((e.currentTarget as HTMLDetailsElement).open)}>
-              <summary><b>Model key and model</b> <span className="dim small">- your key, or kell&rsquo;s hosted models</span></summary>
-              <ModelKeys subject={p.subject} onDone={p.onModelChanged} />
-            </details>
+          <label htmlFor="dg-agent-name">Name (optional)</label>
+          <input id="dg-agent-name" ref={input} value={p.name} onChange={(e) => p.onName(e.target.value)} placeholder="reviewer" maxLength={40} autoComplete="off" />
+          <p className="small dim" style={{ margin: 0 }}>
+            Every agent is kell. A new one is another instance of it: same models and tools, a name of its own. Mention it with <code>@name</code> and it answers in this room.
+          </p>
+          {p.full && <p className="small dim" style={{ margin: 0 }}>This room has the most added agents it can have. Remove one to add another.</p>}
+          {p.onOnboard && (
+            <div className="dg-addagent-connect">
+              <span className="small dim">Already have an agent, such as Claude Code or Cursor? Let it join by itself:</span>
+              <OnboardButton onOnboard={p.onOnboard} />
+            </div>
           )}
           {p.error && <p className="dg-err" role="alert">{p.error}</p>}
           <div className="dg-form-row">
-            <button type="submit" className="btn-ink dg-mini-btn"><span>Add</span></button>
+            <button type="submit" className="btn-ink dg-mini-btn" disabled={p.full}><span>Add</span></button>
             <button type="button" className="btn-line dg-mini-btn" onClick={close}>Cancel</button>
           </div>
         </div>

@@ -18,7 +18,9 @@ describe("SmoothText", () => {
     await act(async () => { root.render(<SmoothText text="" />); });
     expect(host.querySelector(".dg-think")).not.toBeNull();
     expect(host.textContent).toContain("Thinking");
-    await act(async () => { root.render(<SmoothText text="hello there" />); await new Promise((r) => setTimeout(r, 400)); });
+    await act(async () => { root.render(<SmoothText text="hello there" />); });
+    // The reveal is paced by animation frames; wait (up to 3 s) for the first words rather than for a fixed time.
+    for (let i = 0; i < 30 && !host.querySelector(".dg-tok"); i++) await act(async () => { await new Promise((r) => setTimeout(r, 100)); });
     expect(host.querySelector(".dg-think")).toBeNull();
     expect(host.querySelectorAll(".dg-tok").length).toBeGreaterThan(0);
     expect(host.querySelectorAll(".dg-tok").length).toBeLessThanOrEqual(FADE_WINDOW);

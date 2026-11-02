@@ -674,3 +674,19 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-onboard[data-state="busy"] { opacity: .7; cursor: progress; }
 .dg-onboard-manual { display: grid; gap: 6px; }
 .dg-onboard-manual textarea { font: inherit; font-size: 12.5px; width: 100%; border-radius: 6px; padding: 8px; resize: vertical; }
+
+/* Onboard Your Agent must never be wider than its column: the grid column is allowed to shrink below the nowrap label, and the label
+   is cut with an ellipsis. */
+.dg-onboard-wrap { grid-template-columns: minmax(0, 1fr); min-width: 0; max-width: 100%; }
+.dg-page .dg-onboard { box-sizing: border-box; min-width: 0; max-width: 100%; }
+.dg-addagent-connect { display: grid; gap: 8px; min-width: 0; padding-top: 4px; }
+.dg-commands code { margin-right: 8px; }
+
+/* The close button is exactly as tall as the logo beside it (the logo is 38px) and lines up with its top edge. */
+@media (min-width: 761px) {
+  .dg-page .dg-close { height: 38px; width: 38px; top: 16px; right: 12px; }
+}
+.dg-onboard-marks i { width: 22px; height: 22px; }
+.dg-onboard-marks i + i { margin-left: -6px; }
+.dg-onboard-marks svg { width: 13px; height: 13px; }
+.dg-page .dg-onboard { gap: 8px; padding: 6px 12px 6px 8px; font-size: 13.5px; }

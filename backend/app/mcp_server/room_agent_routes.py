@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from starlette.requests import Request
@@ -27,6 +28,8 @@ from app.services import room_agent as agent
 from app.services import rooms as rm
 
 log = logging.getLogger(__name__)
+
+_INSTANCE_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
 
 ModelCall = Callable[[str, list[dict[str, Any]], list[dict[str, Any]]], Awaitable[dict[str, Any]]]
 ModelStream = Callable[[str, list[dict[str, Any]], list[dict[str, Any]]], AsyncIterator[dict[str, Any]]]
@@ -58,8 +61,13 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if not isinstance(text, str) or not text.strip():
             return _error(request, "send the message in `text`", 400)
         room_id = request.path_params["room_id"]
+        # Every agent is kell: the default one is @kell, any other name is another instance of it.
+        raw_name = str(data.get("agent") or "kell").strip().lstrip("@").lower()
+        if not _INSTANCE_NAME.match(raw_name):
+            return _error(request, "an agent name is 1 to 40 letters, numbers, dots, dashes or underscores", 400)
+        handle = f"@{raw_name}"
         try:
-            history = agent.transcript(await rm.recent_events(pool, subject, room_id, recent))
+            history = agent.transcript(await rm.recent_events(pool, subject, room_id, recent), self_handle=handle)
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
 
@@ -71,7 +79,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                 reply += f"\n\nAllow kell to use that tool here (15 minutes): {link}"
             try:
                 appended = await rm.append_events(pool, subject, room_id,
-                                                  [rm.agent_event(agent.SELF_HANDLE, reply)])
+                                                  [rm.agent_event(handle, reply)])
             except rm.RoomError as exc:
                 return reply, None, str(exc)
             return reply, (appended["accepted"][0] if appended["accepted"] else None), None
@@ -85,6 +93,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         model_stream=lambda messages, tools: model_stream(bearer, messages, tools),
                         find_tools=find_tools,
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
+                        handle=handle,
                     ):
                         if kind == "delta":
                             yield _sse({"delta": value})
@@ -92,7 +101,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                             final = value
                 except RuntimeError as exc:          # the model endpoint's own refusal
                     log.exception("room agent: the model refused the answer for room %s", room_id)
-                    yield _sse({"error": f"@kell could not answer: {str(exc).strip()[:300]}"})
+                    yield _sse({"error": f"{handle} could not answer: {str(exc).strip()[:300]}"})
                     return
                 except rm.RoomError as exc:
                     yield _sse({"error": str(exc)})
@@ -115,13 +124,14 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         try:
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=lambda m, t: model_call(bearer, m, t),
                                            find_tools=find_tools,
-                                           use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args))
+                                           use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
+                                           handle=handle)
         except rm.RoomError:
             raise
         except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)
             log.exception("room agent: the model refused the answer for room %s", room_id)
             why = str(exc).strip()[:300] or "the model did not answer"
-            return _error(request, f"@kell could not answer: {why}", 502)
+            return _error(request, f"{handle} could not answer: {why}", 502)
         except Exception:  # noqa: BLE001 -- a failed answer posts nothing, rather than half a reply
             log.exception("room agent: the answer failed for room %s", room_id)
             return _error(request, "the room agent could not answer just now; nothing was posted", 502)

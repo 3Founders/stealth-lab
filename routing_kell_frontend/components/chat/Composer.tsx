@@ -1,7 +1,7 @@
 "use client";
 import { useId, useMemo, useRef, useState } from "react";
 import { sends } from "@/lib/chat/prefs";
-import { applyMention, matchHandles, mentionQuery } from "@/lib/chat/ui";
+import { applyMention, matchCommands, matchHandles, mentionQuery, slashQuery } from "@/lib/chat/ui";
 import { ACCEPT, dataUrlOf, prepareImage, whyNotImage } from "@/lib/chat/images";
 import type { ImageAttachment } from "@/lib/chat/types";
 import { CrossIcon, ImageIcon } from "@/components/chat/icons";
@@ -25,8 +25,18 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
 
   const q = mentionQuery(text, caret);
   const options = useMemo(() => (q && !dismissed ? matchHandles(handles, q.query) : []), [q, dismissed, handles]);
-  const open = options.length > 0;
-  const idx = Math.min(active, Math.max(0, options.length - 1));
+  const sq = slashQuery(text, caret);
+  const cmds = useMemo(() => (sq !== null && !dismissed ? matchCommands(sq) : []), [sq, dismissed]);
+  const slashOpen = cmds.length > 0;
+  const open = slashOpen || options.length > 0;
+  const count = slashOpen ? cmds.length : options.length;
+  const idx = Math.min(active, Math.max(0, count - 1));
+
+  const pickCommand = (name: string) => {
+    const next = name === "/stop" ? name : `${name} `;
+    setText(next); setCaret(next.length); setActive(0);
+    requestAnimationFrame(() => { ref.current?.focus(); ref.current?.setSelectionRange(next.length, next.length); });
+  };
 
   const pick = (h: string) => {
     const r = applyMention(text, caret, h);
@@ -66,9 +76,9 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
-      if (e.key === "ArrowDown") { e.preventDefault(); setActive((idx + 1) % options.length); return; }
-      if (e.key === "ArrowUp") { e.preventDefault(); setActive((idx - 1 + options.length) % options.length); return; }
-      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pick(options[idx]); return; }
+      if (e.key === "ArrowDown") { e.preventDefault(); setActive((idx + 1) % count); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setActive((idx - 1 + count) % count); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); if (slashOpen) pickCommand(cmds[idx].name); else pick(options[idx]); return; }
       if (e.key === "Escape") { e.preventDefault(); setDismissed(true); return; }
     }
     if (sends({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, composing: e.nativeEvent.isComposing }, enterToSend)) { e.preventDefault(); send(); }
@@ -93,7 +103,17 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
           {picError && <span className="dg-pic-err" role="status">{picError}</span>}
         </div>
       )}
-      {open && (
+      {slashOpen && (
+        <ul id={listId} role="listbox" aria-label="Commands" className="dg-mentions dg-commands">
+          {cmds.map((c, i) => (
+            <li key={c.name} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx}
+                onMouseDown={(e) => { e.preventDefault(); pickCommand(c.name); }}>
+              <code>{c.name}</code> <span className="dim small">{c.hint}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!slashOpen && open && (
         <ul id={listId} role="listbox" aria-label="Mention a member" className="dg-mentions">
           {options.map((h, i) => (
             <li key={h} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx}

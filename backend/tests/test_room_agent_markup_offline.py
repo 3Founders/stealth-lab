@@ -50,3 +50,13 @@ def test_stream_answer_drops_markup_but_keeps_prose() -> None:
     shown, final = asyncio.run(go())
     assert "<invoke" not in shown and "invoke" not in final.text
     assert final.text == "Looking. Nothing to run."
+
+
+def test_another_agent_is_an_instance_of_kell() -> None:
+    s = ra._system([], "@scout")
+    assert s.startswith("You are @scout, an instance of kell,") and "@kell, the built-in" not in s
+    assert ra._system([], "@kell").startswith("You are @kell, the built-in agent")
+    # its own earlier answers are its assistant turns; another instance's are not
+    events = [{"kind": "msg", "body": "hi", "sender": {"kind": "agent", "handle": "@scout"}},
+              {"kind": "msg", "body": "yo", "sender": {"kind": "agent", "handle": "@kell"}}]
+    assert [t["role"] for t in ra.transcript(events, "@scout")] == ["assistant", "user"]

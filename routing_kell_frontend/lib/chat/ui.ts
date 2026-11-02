@@ -25,6 +25,25 @@ export function matchHandles(handles: string[], query: string, limit = 6): strin
   return [...starts, ...inside].slice(0, limit);
 }
 
+/** The slash commands the message box understands (parseCommand in lib/chat/adapters/mcp.ts runs them). */
+export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
+  { name: "/add-agent", hint: "Add another kell agent to this room (--name=scout)" },
+  { name: "/stop", hint: "Pause every agent until you resume" },
+];
+
+/** The command being typed: the line starts with "/" and the caret is still inside that first word. */
+export function slashQuery(text: string, caret: number): string | null {
+  const m = /^\/([\w-]*)$/.exec(text.slice(0, caret));
+  return m && !/\s/.test(text.slice(0, caret)) ? m[1] : null;
+}
+
+/** Commands that match what was typed. A command typed in full matches nothing, so Enter sends it instead of re-picking it. */
+export function matchCommands(query: string): Array<{ name: string; hint: string }> {
+  const q = query.toLowerCase();
+  if (SLASH_COMMANDS.some((c) => c.name.slice(1) === q)) return [];
+  return SLASH_COMMANDS.filter((c) => c.name.slice(1).startsWith(q));
+}
+
 export const GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 /**

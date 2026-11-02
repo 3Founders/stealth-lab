@@ -8,14 +8,14 @@ import { newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { bare } from "@/components/chat/bare";
 import SmoothText, { Thinking } from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
-import { recordUse, withinCap, type KeyValue } from "@/lib/byok/spend";
+import type { KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore } from "@/lib/byok/vault";
 import { HUMAN, MAX_AGENTS, newAgentHandle } from "@/lib/chat/agents";
-import { assistantIdentityFor, attachAssistant, type AssistantDeps } from "@/lib/chat/adapters/assistant";
+import { assistantIdentityFor } from "@/lib/chat/adapters/assistant";
 import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
-import { describeBacking, makeResolver, type Backing } from "@/lib/chat/adapters/resolve";
+import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
-import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, validAgentName, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
+import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
@@ -124,7 +124,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [manageOpen, setManageOpen] = useState(false);
   const [panelHidden, setPanelHidden] = useState(false); // wide screens: the room list can be closed to give the chat the whole window
   const controllers = useRef(new Map<string, AbortController>());
-  const detachers = useRef(new Map<string, () => void>());
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const { scrollToEnd, follow } = useSpringScroll(viewportRef, contentRef, room);
@@ -140,10 +139,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // sidebar forms
   const [adding, setAdding] = useState(false);
-  const [addKind, setAddKind] = useState<"mine" | "tab">("tab");
   const [addName, setAddName] = useState("");
   const [formError, setFormError] = useState("");
-  const [justAdded, setJustAdded] = useState("");
 
   const warnHistory = () => {
     if (historyWarned.current) return;
@@ -185,41 +182,40 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       note("Asked the agent again.", r);
     } catch (err) { note(err instanceof Error ? err.message : "That didn't send.", r); }
   }, [api, note]);
-  const askKell = useCallback(async (r: string, text: string) => {
-    if (askingKell.current.has(r)) return;
-    askingKell.current.add(r);
-    setKellBusy((p) => ({ ...p, [r]: true }));
+  /** Asks an agent to answer in this room. Every agent is kell: "@kell" is the default one, any other handle is an instance of it. */
+  const askKell = useCallback(async (r: string, text: string, who: string = "@kell") => {
+    const key = `${r}|${who}`;
+    if (askingKell.current.has(key)) return;
+    askingKell.current.add(key);
+    if (who === "@kell") setKellBusy((p) => ({ ...p, [r]: true }));
     const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
-    if (!id) {
-      note("This room is still syncing. Give it a second, then send again.", r);
-      askingKell.current.delete(r); setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; });
-      return;
-    }
+    const done = () => { askingKell.current.delete(key); if (who === "@kell") setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); };
+    if (!id) { note("This room is still syncing. Give it a second, then send again.", r); done(); return; }
     const ctl = new AbortController();
-    controllers.current.set("@kell", ctl);
-    setStreaming((p) => ({ ...p, "@kell": { room: r, text: "" } }));
+    controllers.current.set(who, ctl);
+    if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: "" } }));
     try {
       const out = await roomsAgent.agentStream(id, text, (delta) => {
-        setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
-      }, ctl.signal);
+        if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: ((p[who]?.text) ?? "") + delta } }));
+        else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
+      }, ctl.signal, who);
       if (out.event?.id) {
         // Already on the server: show it now, and the sync pull will find the same id and not add it twice.
         const m: GroupMessage = {
-          id: out.event.id, roomId: r, sender: assistantIdentityFor("@kell"), recipients: [],
+          id: out.event.id, roomId: r, sender: assistantIdentityFor(who), recipients: [],
           payload: toMcpPayload(out.text), timestamp: Date.now(), depthCounter: 0,
         };
         push(r, { kind: "msg", m }, true);
-      } else if (!out.posted) note("kell answered but could not post it in the room.", r);
+      } else if (!out.posted) note(`${bare(who)} answered but could not post it in the room.`, r);
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") note("Stopped.", r);
-      else if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask kell.", r);
+      else if (err instanceof RoomsApiError && err.status === 401) note(`Sign in to ask ${bare(who)}.`, r);
       else if (err instanceof RoomsApiError && err.status === 404) note("This room is still syncing. Try again in a moment.", r);
-      else note(err instanceof Error ? err.message : "kell could not answer just now.", r);
+      else note(err instanceof Error ? err.message : `${bare(who)} could not answer just now.`, r);
     } finally {
-      controllers.current.delete("@kell");
-      setStreaming((p) => { const n = { ...p }; delete n["@kell"]; return n; });
-      askingKell.current.delete(r);
-      setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; });
+      controllers.current.delete(who);
+      setStreaming((p) => { const n = { ...p }; delete n[who]; return n; });
+      done();
     }
   }, [roomsAgent, note, push]);
 
@@ -247,26 +243,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (d.os) showOs(n, (x) => openRoomRef.current(x));
   }, []);
 
-  const deps = useMemo<AssistantDeps>(() => ({
-    resolve: makeResolver({ vault, token: getAccessToken, kv, subject }),
-    shared: (r) => (infoRef.current[r]?.members ?? 1) > 1,
-    allowed: () => withinCap(kv, subject),
-    used: () => void recordUse(kv, subject),
-    history: (r) => (lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])),
-    onStart: (r, handle, c) => { controllers.current.set(handle, c); setStreaming((p) => ({ ...p, [handle]: { room: r, text: "" } })); },
-    onDelta: (r, handle, text) => setStreaming((p) => ({ ...p, [handle]: { room: r, text } })),
-    onEnd: (_r, handle) => { controllers.current.delete(handle); setStreaming((p) => { const n = { ...p }; delete n[handle]; return n; }); },
-  }), [vault, kv, subject]);
-
   // Every room you have exists in the in-tab relay with the in-tab agents as members.
   useEffect(() => {
     for (const r of roomList.rooms) if (!broker.room(r)) broker.addRoom({ id: r, title: r, members: [HUMAN.handle, ...agentsRef.current] });
     writeRooms(kv, subject, roomList);
   }, [broker, kv, subject, roomList]);
 
+  // An added agent is another instance of kell: just a name. It answers through the same server agent as @kell.
   const addAgent = (handle: string) => {
-    for (const r of roomList.rooms) broker.addMember(r, handle);
-    detachers.current.set(handle, attachAssistant(broker, deps, handle));
+    if (agentsRef.current.includes(handle)) return;
     agentsRef.current = [...agentsRef.current, handle];
     setAgents(agentsRef.current);
     writeAgents(kv, subject, agentsRef.current);
@@ -274,9 +259,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   const removeAgent = (handle: string) => {
     controllers.current.get(handle)?.abort();
-    detachers.current.get(handle)?.();
-    detachers.current.delete(handle);
-    for (const r of roomList.rooms) broker.removeMember(r, handle);
     agentsRef.current = agentsRef.current.filter((h) => h !== handle);
     setAgents(agentsRef.current);
     writeAgents(kv, subject, agentsRef.current);
@@ -298,10 +280,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const started = useRef(false);
   useEffect(() => {
     if (!started.current) { started.current = true; for (const h of readAgents(kv, subject, MAX_AGENTS)) addAgent(h); }
-    const all = detachers.current;
-    return () => { all.forEach((d) => d()); all.clear(); started.current = false; agentsRef.current = []; setAgents([]); };
+    return () => { started.current = false; agentsRef.current = []; setAgents([]); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [broker, deps]);
+  }, [broker]);
 
   useEffect(() => {
     let live = true;
@@ -657,21 +638,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const submitAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
-    if (addKind === "tab") {
-      const r = newAgentHandle(agents, addName.trim() || undefined);
-      if ("error" in r) return setFormError(r.error);
-      addAgent(r.handle);
-      note(`${bare(r.handle)} joined the room.`);
-      setAdding(false); setAddName(""); return;
-    }
-    const v = validAgentName(addName);
-    if ("error" in v) return setFormError(v.error);
-    try {
-      const a = await api.addAgent(v.name);
-      setRelayAgents((p) => [...p.filter((x) => x.id !== a.id), a]);
-      setJustAdded(a.name);
-      setAdding(false); setAddName("");
-    } catch (err) { setFormError(err instanceof Error ? err.message : "That didn't work."); }
+    if (full) return setFormError(`A room can have ${MAX_AGENTS} added agents. Remove one first.`);
+    const r = newAgentHandle(agents, addName.trim() || undefined);
+    if ("error" in r) return setFormError(r.error);
+    addAgent(r.handle);
+    note(`${bare(r.handle)} joined the room.`);
+    setAdding(false); setAddName("");
   };
   /** "Onboard Your Agent": registers a fresh agent name on the account and returns the text the person pastes into their agent. */
   const onboardAgent = async (): Promise<string> => {
@@ -692,7 +664,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const r = await api.removeAgent(a.id);
       setRelayAgents((p) => p.filter((x) => x.id !== a.id));
       note(`${bare(a.handle)} was removed${r.cancelled ? ` and ${r.cancelled} unfinished task${r.cancelled === 1 ? "" : "s"} cancelled` : ""}.`);
-      if (justAdded === a.name) setJustAdded("");
     } catch (err) { note(err instanceof Error ? err.message : "That didn't work."); }
   };
 
@@ -731,6 +702,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     };
     await broker.send(m);
     if (route.asksKell) void askKell(room, line);
+    for (const h of route.localMentions) if (h !== "@kell") void askKell(room, line, h);
   };
 
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);
@@ -739,7 +711,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     .map((t) => relayAgents.find((a) => a.id === t.agent_id)?.handle ?? "@agent");
   const mentionable = [...new Set([...agents, "@kell", ...relayAgents.map((a) => a.handle), ...peopleHandles])];
   const full = agents.length >= MAX_AGENTS;
-  const count = agents.length + relayAgents.length;
+  const count = 1 + agents.length + relayAgents.length;   // kell itself, its instances, and connected agents: all agents
 
   return (
     <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
@@ -767,32 +739,29 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span className="dg-handle">{bare(HUMAN.handle)}</span>
           </li>
           <li>
-            <span className="dg-dot" data-a="idle" aria-hidden="true" />
-            <span className="dg-handle">kell</span> <span className="dim small">built-in</span>
+            <span className="dg-dot" data-a={kellBusy[room] ? "processing" : "online"} aria-hidden="true" />
+            <span className="dg-handle">kell</span><span className="dg-badge">default</span>
+            {kellBusy[room] && <span className="dg-state" data-a="processing">working</span>}
           </li>
-          {relayAgents.map((a) => (
-            <li key={a.id}>
-              <span className="dg-dot" data-a={a.online ? "human" : "idle"} aria-hidden="true" />
-              <span className="dg-handle">{bare(a.handle)}</span>
-              <span className="dg-badge">agent</span>
-              <span className="dg-state" data-a="idle">{a.online ? "online" : "offline"}</span>
-              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${bare(a.handle)}`} title={`Remove ${bare(a.handle)}`}><RemoveIcon /></button>
-            </li>
-          ))}
           {agents.map((h) => {
-            const a = streaming[h] !== undefined ? "processing" : (activity[h] ?? "idle");
+            const a = streaming[h] !== undefined ? "processing" : "online";
             return (
               <li key={h}>
                 <span className="dg-dot" data-a={a} aria-hidden="true" />
-                <span className="dg-handle">{bare(h)}</span>
-                <span className="dg-badge" data-kind="tab">in this tab</span>
-                {backing && !backing.ready
-                  ? <button type="button" className="dg-state dg-addkey" onClick={() => { setAddKind("tab"); setAdding(true); setFormError(""); }}>Add a key</button>
-                  : <span className="dg-state" data-a={a}>{a === "idle" ? "" : LABEL[a]}</span>}
+                <span className="dg-handle">{bare(h)}</span><span className="dg-badge">kell</span>
+                {a === "processing" && <span className="dg-state" data-a={a}>working</span>}
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${bare(h)} from the room`} title={`Remove ${bare(h)}`}><RemoveIcon /></button>
               </li>
             );
           })}
+          {relayAgents.map((a) => (
+            <li key={a.id}>
+              <span className="dg-dot" data-a={a.online ? "online" : "idle"} aria-hidden="true" />
+              <span className="dg-handle">{bare(a.handle)}</span><span className="dg-badge">connected</span>
+              {!a.online && <span className="dg-state" data-a="idle">offline</span>}
+              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${bare(a.handle)}`} title={`Remove ${bare(a.handle)}`}><RemoveIcon /></button>
+            </li>
+          ))}
         </ul>
         {relayError && <p className="dg-err" role="status">{relayError}</p>}
 
@@ -814,17 +783,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
         <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
         <AddAgentDialog
-          open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full} subject={subject}
-          kind={addKind} onKind={setAddKind} name={addName} onName={setAddName} error={formError} onSubmit={(e) => void submitAgent(e)}
+          open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
+          name={addName} onName={setAddName} error={formError} onSubmit={(e) => void submitAgent(e)}
           onOnboard={onboardAgent}
-          onModelChanged={() => { describeBacking({ vault, kv, subject }).then(setBacking).catch(() => {}); }}
         />
-        {justAdded && (
-          <p className="dg-note dg-connect" role="status">
-            <b>{bare(justAdded)} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
-          </p>
-        )}
-        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
+        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
       <ManageRooms
@@ -841,9 +804,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
           <h1>{room}</h1>
-          <span className="dg-sync" data-status={sync.status} role="status" title={sync.error ?? "Your rooms sync to your account, so they follow you to other devices."}>
-            {sync.status === "syncing" ? "Syncing…" : sync.status === "offline" ? `Offline${sync.pending ? ` · ${sync.pending} waiting` : ""}` : sync.status === "error" ? "Not syncing" : sync.pending ? `${sync.pending} sending` : "Synced"}
-          </span>
         </header>
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
 
