@@ -8,6 +8,8 @@ import SearchPalette from "@/components/chat/SearchPalette";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
 import CanvasPanel from "@/components/chat/CanvasPanel";
+import DocPanel from "@/components/chat/DocPanel";
+import { docsApi } from "@/lib/chat/docs-api";
 import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
 import { captureFrom, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
@@ -105,6 +107,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const historyWarned = useRef(false);
   const rapi = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const mapi = useMemo(() => memoryApi({ token: getAccessToken }), []);
+  const dapi = useMemo(() => docsApi({ token: getAccessToken }), []);
   const engineRef = useRef<SyncEngine | null>(null);
   const [sync, setSync] = useState<SyncState>({ status: "idle", pending: 0, lastSyncAt: null, error: null });
   const [info, setInfo] = useState<RoomsChange["info"]>({});
@@ -678,6 +681,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   canvasesRef.current = canvases;
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasId, setCanvasId] = useState<string | null>(null);
+  const [docTitle, setDocTitle] = useState<string | null>(null);   // the document to show first in the shared docs panel
+  const [docsCount, setDocsCount] = useState(0);
   const [draft, setDraft] = useState<{ text: string; n: number }>({ text: "", n: 0 });
   useEffect(() => { void history.listDocs<Canvas>("canvas").then((l) => setCanvases(l.map((d) => d.value))).catch(() => {}); }, [history]);
   const storeCanvas = (c: Canvas) => {
@@ -688,12 +693,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   captureRef.current = (m, live = true) => {
     const changed = captureFrom(canvasesRef.current, { id: m.id, room: m.roomId, by: m.sender.handle, text: m.payload.text, at: m.timestamp }, () => crypto.randomUUID());
     for (const c of changed) storeCanvas(c);
-    if (changed.length) { setCanvasId(changed[0].id); if (live && m.roomId === roomRef.current) setCanvasOpen(true); } // a canvas an agent just wrote opens beside the chat
+    if (changed.length) { setCanvasId(changed[0].id); setDocTitle(changed[0].title); if (live && m.roomId === roomRef.current) setCanvasOpen(true); } // a canvas an agent just wrote opens beside the chat
   };
   const canvasCtx = useMemo(() => ({
     open: (title: string) => {
       const c = canvasesRef.current.find((x) => x.room === roomRef.current && x.title.toLowerCase() === title.toLowerCase());
       if (c) setCanvasId(c.id);
+      setDocTitle(title);
       setCanvasOpen(true);
     },
   }), []);
@@ -1020,7 +1026,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : sync.live ? "Live" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
-      <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} />
+      {info[room]?.id && !tempRef.current.has(room)
+        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} wantedTitle={docTitle} onCount={setDocsCount} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
+        : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} />}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
@@ -1029,7 +1037,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={canvases.filter((c) => c.room === room).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docsCount : canvases.filter((c) => c.room === room).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">

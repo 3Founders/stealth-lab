@@ -980,3 +980,56 @@ body:has(.dg-shell) { overscroll-behavior: none; }
    squeezed the text box wider or narrower when a list opened). The text box keeps its own size. */
 .dg-page .dg-composer > .dg-mentions, .dg-page .dg-composer > .dg-commands { position: absolute !important; }
 .dg-composer textarea { flex: 1 1 0; min-width: 0; }
+
+/* ---- Docs: the shared, editable canvas of a room ---- */
+.dg-doc-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 10px 12px 6px; }
+.dg-doc-pick { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dg-doc-pick select { font: inherit; font-size: 14px; font-weight: 500; max-width: 100%; min-width: 0; padding: 5px 26px 5px 10px; border: 0; border-radius: 8px; background: rgba(0, 0, 0, .04); color: inherit; cursor: pointer; text-overflow: ellipsis; transition: background-color .15s; }
+.dg-doc-pick select:hover { background: rgba(0, 0, 0, .07); }
+.dg-doc-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.dg-doc-people { display: inline-flex; align-items: center; }
+.dg-doc-people i { width: 22px; height: 22px; margin-left: -6px; border-radius: 50%; display: inline-grid; place-items: center; font: 600 11px/1 inherit; font-style: normal; background: var(--yellow); color: #171717; box-shadow: 0 0 0 2px #fff; animation: dg-doc-pop .3s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-doc-people i:first-child { margin-left: 0; }
+.dg-doc-here { margin-left: 8px; color: var(--grey); }
+.dg-doc-status { display: inline-flex; align-items: center; gap: 6px; color: var(--grey); transition: color .2s; }
+.dg-doc-status i { width: 7px; height: 7px; border-radius: 50%; background: #2e9e5b; transition: background-color .25s, transform .25s; }
+.dg-doc-status[data-s="saving"] i, .dg-doc-status[data-s="typing"] i { background: var(--yellow); animation: dg-blink 1s ease-in-out infinite; }
+.dg-doc-status[data-s="merged"] i { background: #5b8def; transform: scale(1.25); }
+.dg-doc-status[data-s="offline"] i, .dg-doc-status[data-s="error"] i { background: #b3261e; }
+.dg-doc-new { display: flex; gap: 8px; padding: 4px 12px 8px; animation: dg-doc-rise .25s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-doc-new input { flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 7px 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: transparent; color: inherit; }
+.dg-doc-err, .dg-doc-note { margin: 0 12px 6px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; animation: dg-doc-rise .25s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-doc-err { background: rgba(179, 38, 30, .1); color: #b3261e; }
+.dg-doc-note { background: rgba(91, 141, 239, .12); }
+.dg-doc-empty { display: grid; gap: 8px; justify-items: start; padding: 24px 20px; }
+.dg-doc-empty p { margin: 0; }
+.dg-doc-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 12px 8px; flex-wrap: wrap; }
+.dg-doc-seg { display: inline-flex; padding: 2px; border-radius: 9px; background: rgba(0, 0, 0, .05); }
+.dg-doc-seg button { font: inherit; font-size: 12.5px; padding: 4px 12px; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; transition: background-color .2s, box-shadow .2s; }
+.dg-doc-seg button[aria-selected="true"] { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .14); }
+.dg-doc-fmt { display: inline-flex; gap: 2px; }
+.dg-doc-fmt button { min-width: 28px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; transition: background-color .15s, transform .15s; }
+.dg-doc-fmt button:hover { background: rgba(0, 0, 0, .06); transform: translateY(-1px); }
+.dg-doc-body { position: relative; flex: 1; min-height: 0; display: flex; }
+.dg-doc-text { flex: 1; width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 14px 22px 28px; font: inherit; font-size: 15.5px; line-height: 1.7; background: transparent; color: inherit; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; caret-color: var(--yellow); }
+.dg-doc-text[data-kind="code"], .dg-doc-text[data-kind="html"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.55; white-space: pre; tab-size: 2; }
+.dg-doc-history { position: absolute; inset: 0 0 0 auto; width: min(320px, 92%); z-index: 5; display: flex; flex-direction: column; background: rgba(255, 255, 255, .86); -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3); box-shadow: -12px 0 32px rgba(0, 0, 0, .14); animation: dg-doc-slide .28s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-doc-history-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 6px; }
+.dg-doc-history ul { list-style: none; margin: 0; padding: 4px 8px 12px; overflow: auto; overscroll-behavior: contain; }
+.dg-doc-history li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 6px; border-radius: 8px; font-size: 13px; transition: background-color .15s; }
+.dg-doc-history li:hover { background: rgba(0, 0, 0, .05); }
+.dg-doc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px 12px 10px; border-top: 1px solid var(--rule); }
+.dg-doc-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+@keyframes dg-doc-rise { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes dg-doc-slide { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes dg-doc-pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+:root[data-theme="dark"] .dg-doc-pick select { background: rgba(255, 255, 255, .07); }
+:root[data-theme="dark"] .dg-doc-pick select:hover { background: rgba(255, 255, 255, .12); }
+:root[data-theme="dark"] .dg-doc-people i { box-shadow: 0 0 0 2px #262626; }
+:root[data-theme="dark"] .dg-doc-seg { background: rgba(255, 255, 255, .07); }
+:root[data-theme="dark"] .dg-doc-seg button[aria-selected="true"] { background: rgba(255, 255, 255, .16); box-shadow: none; }
+:root[data-theme="dark"] .dg-doc-fmt button:hover { background: rgba(255, 255, 255, .1); }
+:root[data-theme="dark"] .dg-doc-history { background: rgba(38, 38, 38, .86); }
+:root[data-theme="dark"] .dg-doc-history li:hover { background: rgba(255, 255, 255, .07); }
+@media (prefers-reduced-motion: reduce) { .dg-doc-new, .dg-doc-err, .dg-doc-note, .dg-doc-history, .dg-doc-people i { animation: none; } }
+@media (prefers-reduced-transparency: reduce) { .dg-doc-history { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); } }
