@@ -15,17 +15,21 @@ const link = { textDecoration: "underline" } as const;
 /** One plan card. Everything shown comes from lib/plans.ts (with the server's current numbers merged in): the price and the per-day figure are not typed here. */
 function PlanCard({ p, buy, session, state, reload, orderCode }: { p: Plan; buy: boolean; session: Session | null | undefined; state: Loaded<PlanState> | null; reload: () => Promise<Loaded<PlanState>>; orderCode?: string }) {
   const day = perDay(p);
+  const full = Boolean(p.maxRedemptions && (p.sold ?? 0) >= p.maxRedemptions);
   return (
     <article className={`card plan-card${p.recommended ? " plan-plus" : ""}`} aria-label={p.name} data-recommended={p.recommended ? "true" : undefined}
       style={{ border: "1px solid transparent", boxShadow: "var(--sh-float)", background: "rgba(255,255,255,.72)", borderRadius: 10, padding: "18px 20px", display: "grid", gap: 10, alignContent: "start" }}>
       <h3 className="h3" style={{ fontSize: 22 }}>{p.name}{p.recommended && <span className="plan-rec">Recommended</span>}</h3>
       <p><b style={{ fontSize: 28, fontWeight: 400 }}>{p.price}</b> <span className="small dim">{p.per}</span></p>
       {day && <p className="small dim">{day}</p>}
+      {p.maxRedemptions ? <p className="small dim">This launch is limited to {p.maxRedemptions.toLocaleString("en-IN")} people.</p> : null}
       <p className="small dim">{p.forWhom}</p>
       <ul className="small" style={{ paddingLeft: 18, display: "grid", gap: 4 }}>{p.includes.map((t) => <li key={t}>{t}</li>)}</ul>
-      {buy && isBuyable(p.id)
-        ? <PlanBuy plan={p.id as BuyablePlanId} api={api} session={session} state={state} reload={reload} orderCode={orderCode} />
-        : <Link className="btn-line" href="/contact"><span>{p.cta}</span></Link>}
+      {full
+        ? <p className="small"><b>This launch is full.</b> <Link href="/contact" style={link}>Contact us</Link> to hear when it opens again.</p>
+        : buy && isBuyable(p.id)
+          ? <PlanBuy plan={p.id as BuyablePlanId} api={api} session={session} state={state} reload={reload} orderCode={orderCode} />
+          : <Link className="btn-line" href="/contact"><span>{p.cta}</span></Link>}
     </article>
   );
 }

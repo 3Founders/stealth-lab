@@ -34,10 +34,10 @@ export interface Invoice {
 }
 export interface BuyerInput { name: string; gstin?: string; state_code?: string; address?: string }
 
-/** A plan row the dashboard edits (db/167). The Pilot's price and usage are per seat. */
+/** A plan row the dashboard edits (db/167, db/170). The Pilot's price and usage are per seat. */
 export interface PlanRow {
   plan: string; price_paise: number; period_days: number; included_usd: string; active: boolean;
-  updated_by: string | null; updated_at: string;
+  max_redemptions: number | null; sold: number; updated_by: string | null; updated_at: string;
 }
 /** A referral code: issued by the founders here, or personal to a buying account. `uses` is how many orders carried it. */
 export interface ReferralCodeRow {
@@ -58,7 +58,7 @@ export const issueCreditNote = (invoiceId: string) => apiPost<Invoice>(`${B}/inv
 
 /** What is sold: the plan numbers. A change applies to orders made after it, never to an order already started. */
 export const getPlans = (s?: AbortSignal) => apiGet<{ plans: PlanRow[] }>(`${B}/plans`, s);
-export const savePlan = (plan: string, body: { price_paise?: number; period_days?: number; included_usd?: string; active?: boolean }) =>
+export const savePlan = (plan: string, body: { price_paise?: number; period_days?: number; included_usd?: string; active?: boolean; max_redemptions?: number | null }) =>
   apiPut<{ row: PlanRow; note: string }>(`${B}/plans/${encodeURIComponent(plan)}`, body);
 
 /** Referral codes: issued here, plus the personal ones made for buying accounts. No reward is paid for any of them. */

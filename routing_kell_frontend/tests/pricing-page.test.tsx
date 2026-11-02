@@ -225,6 +225,34 @@ describe("/pricing", () => {
     expect(recallCode()).toBeNull();
   });
 
+  it("states a plan's launch limit, and a full launch cannot be bought", async () => {
+    stubServer({ plans: [
+      { plan: "starter", inr: 200, days: 30, included_usd: "1" },
+      { plan: "pro", inr: 1200, days: 30, included_usd: "6" },
+      { plan: "plus", inr: 2000, days: 30, included_usd: "12" },
+      { plan: "pilot", inr: 649, days: 30, included_usd: "4", max_redemptions: 100, sold: 0 },
+    ], codeStatus: 200 });
+    await render();
+    await typeCode("firsttrial");
+    await submitCode();
+    expect(card("First Trial")).toContain("This launch is limited to 100 people.");
+    expect(card("First Trial")).toContain("Ask for First Trial");
+
+    act(() => root?.unmount()); host?.remove();
+    localStorage.clear();                                                  // the first half remembered the code
+    stubServer({ plans: [
+      { plan: "starter", inr: 200, days: 30, included_usd: "1" },
+      { plan: "pro", inr: 1200, days: 30, included_usd: "6" },
+      { plan: "plus", inr: 2000, days: 30, included_usd: "12" },
+      { plan: "pilot", inr: 649, days: 30, included_usd: "4", max_redemptions: 100, sold: 100 },
+    ], codeStatus: 200 });
+    await render();
+    await typeCode("firsttrial");
+    await submitCode();
+    expect(card("First Trial")).toContain("This launch is full.");
+    expect(host!.querySelector('article[aria-label="First Trial"] button')).toBeNull();
+  });
+
   it("the server's current numbers replace the built-in ones, and the derived sentences follow them", async () => {
     stubServer({ plans: [
       { plan: "starter", inr: 200, days: 30, included_usd: "1" },

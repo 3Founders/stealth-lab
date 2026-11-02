@@ -167,7 +167,10 @@ export function billingApi(deps: BillingDeps) {
         const d = x as Record<string, unknown>;
         const inr = Number(d.inr), days = Number(d.days), usd = Number(d.included_usd);
         if (typeof d.plan === "string" && Number.isFinite(inr) && inr > 0 && Number.isFinite(days) && days > 0 && Number.isFinite(usd) && usd > 0) {
-          out.push({ plan: d.plan, inr, days, includedUsd: usd });
+          const max = Number(d.max_redemptions);
+          out.push({ plan: d.plan, inr, days, includedUsd: usd,
+                     maxRedemptions: Number.isFinite(max) && max > 0 ? max : null,
+                     sold: Number.isFinite(Number(d.sold)) ? Number(d.sold) : 0 });
         }
       }
       return { kind: "ok", data: out };

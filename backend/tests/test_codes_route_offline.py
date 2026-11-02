@@ -136,12 +136,14 @@ async def test_billing_off_is_503(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_plan_list_carries_the_active_rows_and_needs_no_session(billing_on):
-    rows = [{"plan": "pro", "price_paise": 139_900, "period_days": 45, "included_usd": Decimal("6.5"), "active": True},
-            {"plan": "plus", "price_paise": 200_000, "period_days": 30, "included_usd": Decimal("12"), "active": True}]
-    s = registered(FakePool({"FROM billing_plan_rows": rows}))
+    rows = [{"plan": "pro", "price_paise": 139_900, "period_days": 45, "included_usd": Decimal("6.5"), "active": True, "max_redemptions": None},
+            {"plan": "plus", "price_paise": 200_000, "period_days": 30, "included_usd": Decimal("12"), "active": True, "max_redemptions": None},
+            {"plan": "pilot", "price_paise": 64_900, "period_days": 30, "included_usd": Decimal("4"), "active": True, "max_redemptions": 100}]
+    s = registered(FakePool({"FROM billing_plan_rows": rows, "AS n": {"n": 5}}))
     r = await s.handlers["/v1/billing/plans"](req(method="GET"))
     assert r.status_code == 200
     assert json.loads(r.body)["plans"] == [
-        {"plan": "plus", "inr": 2000, "days": 30, "included_usd": "12"},
-        {"plan": "pro", "inr": 1399, "days": 45, "included_usd": "6.5"},
+        {"plan": "pilot", "inr": 649, "days": 30, "included_usd": "4", "max_redemptions": 100, "sold": 5},
+        {"plan": "plus", "inr": 2000, "days": 30, "included_usd": "12", "max_redemptions": None, "sold": None},
+        {"plan": "pro", "inr": 1399, "days": 45, "included_usd": "6.5", "max_redemptions": None, "sold": None},
     ]

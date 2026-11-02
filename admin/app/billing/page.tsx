@@ -284,13 +284,14 @@ function PlansTab() {
       </p>
       {msg && <p className="notice-ok" role="status">{msg}</p>}
       <div className="table-wrap"><table className="table">
-        <thead><tr><th>Plan</th><th>Price</th><th>Period</th><th>Usage included</th><th>Status</th><th /></tr></thead>
+        <thead><tr><th>Plan</th><th>Price</th><th>Period</th><th>Usage included</th><th>Sold / limit</th><th>Status</th><th /></tr></thead>
         <tbody>{s.data.plans.map((p) => (
           <tr key={p.plan}>
             <td><b>{planLabel(p.plan)}</b> <span className="dim">({p.plan})</span></td>
             <td>{rupees(p.price_paise)}{p.plan === "pilot" ? " per seat" : ""}</td>
             <td>{p.period_days} days</td>
             <td>${p.included_usd}{p.plan === "pilot" ? " per seat" : ""}</td>
+            <td>{p.sold}{p.max_redemptions ? ` of ${p.max_redemptions}` : ""}</td>
             <td>{!p.active ? "Not sold" : p.plan === "pilot" ? "On sale - code needed" : "On sale"}</td>
             <td><button type="button" className="btn-line" onClick={() => setEditing(p)}>Edit</button></td>
           </tr>
@@ -306,6 +307,7 @@ function PlanEdit({ row, onClose, onDone }: { row: PlanRow; onClose: () => void;
   const [days, setDays] = useState(String(row.period_days));
   const [usd, setUsd] = useState(row.included_usd);
   const [active, setActive] = useState(row.active);
+  const [limit, setLimit] = useState(row.max_redemptions ? String(row.max_redemptions) : "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function save(e: React.FormEvent) {
@@ -313,6 +315,7 @@ function PlanEdit({ row, onClose, onDone }: { row: PlanRow; onClose: () => void;
     setBusy(true); setError("");
     const r = await savePlan(row.plan, {
       price_paise: Math.round(Number(priceInr) * 100), period_days: Math.round(Number(days)), included_usd: usd.trim(), active,
+      max_redemptions: limit.trim() ? Math.round(Number(limit)) : null,
     });
     setBusy(false);
     if (r.kind === "ok") onDone(r.data.note);
@@ -321,10 +324,11 @@ function PlanEdit({ row, onClose, onDone }: { row: PlanRow; onClose: () => void;
   return (
     <form className="cform profile-card" onSubmit={save} style={{ marginTop: 16, maxWidth: 560 }} aria-label={`Edit the ${row.plan} plan`}>
       <h2 className="h3">{planLabel(row.plan)}</h2>
-      <p className="small dim">Price is whole rupees before GST. Usage included is in dollars, credited at purchase.</p>
+      <p className="small dim">Price is whole rupees before GST. Usage included is in dollars, credited at purchase. The limit is how many people may ever buy this plan; blank means no limit.</p>
       <div className="cfield"><label htmlFor="p-price">Price (₹, before GST)</label><input id="p-price" inputMode="decimal" value={priceInr} onChange={(e) => setPriceInr(e.target.value)} required /></div>
       <div className="cfield"><label htmlFor="p-days">Period (days)</label><input id="p-days" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} required /></div>
       <div className="cfield"><label htmlFor="p-usd">Usage included ($)</label><input id="p-usd" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} required /></div>
+      <div className="cfield"><label htmlFor="p-limit">Limit (people; blank = no limit)</label><input id="p-limit" inputMode="numeric" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="No limit" /></div>
       <div className="cfield"><label htmlFor="p-active"><input id="p-active" type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> On sale</label></div>
       <div className="cluster"><button className="btn-ink" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button><button type="button" className="btn-line" onClick={onClose} disabled={busy}>Cancel</button></div>
       {error && <p className="small" role="alert">{error}</p>}

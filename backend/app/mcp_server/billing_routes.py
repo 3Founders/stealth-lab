@@ -184,7 +184,10 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         request. The one-seat Pilot (the individual pilot) is sold only with a referral code the server recognises."""
         pool = pool_getter()
         try:
-            order = plans.parse_plan_order(data, await plans.active_map(pool), await referrals.active_codes(pool))
+            tiers = await plans.active_map(pool)
+            order = plans.parse_plan_order(data, tiers, await referrals.active_codes(pool))
+            if await plans.cap_reached(pool, order.plan, tiers.get(order.plan)):
+                raise plans.PlanConflict("this launch has reached its limit; contact us")
             if order.plan == "pilot" and await plans.has_pilot(pool, account):
                 raise plans.PlanConflict("this account has already had this plan; contact us to extend it")
             if data.get("autopay") is True:
@@ -216,9 +219,14 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return Response(status_code=204, headers=cors_headers(request))
         if not configured():
             return _err(request, 503, "buying credits is not switched on yet")
-        rows = await plans.active_map(pool_getter())
-        return _json(request, {"plans": [{"plan": r.plan, "inr": r.price_paise // 100, "days": r.period_days,
-                                          "included_usd": str(r.included_usd)} for r in sorted(rows.values(), key=lambda t: t.plan)]})
+        pool = pool_getter()
+        rows = await plans.active_map(pool)
+        out = []
+        for r in sorted(rows.values(), key=lambda t: t.plan):
+            sold = await plans.redeemed(pool, r.plan) if r.max_redemptions is not None else None
+            out.append({"plan": r.plan, "inr": r.price_paise // 100, "days": r.period_days,
+                        "included_usd": str(r.included_usd), "max_redemptions": r.max_redemptions, "sold": sold})
+        return _json(request, {"plans": out})
 
     @server.custom_route("/v1/billing/referral", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def referral_route(request: Request) -> Response:

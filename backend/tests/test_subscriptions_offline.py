@@ -12,7 +12,7 @@ from app.services import subscriptions
 
 BUYER = "11111111-1111-4111-8111-111111111111"
 NOW = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
-ROWS = [{"plan": "pro", "price_paise": 120_000, "period_days": 30, "included_usd": Decimal("6"), "active": True}]
+ROWS = [{"plan": "pro", "price_paise": 120_000, "period_days": 30, "included_usd": Decimal("6"), "active": True, "max_redemptions": None}]
 
 
 class FakeConn:

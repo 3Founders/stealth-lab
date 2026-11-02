@@ -107,8 +107,8 @@ def test_the_included_usage_is_the_fixed_dollar_figure_the_dashboard_set():
 
 @pytest.mark.asyncio
 async def test_active_map_reads_the_rows_and_falls_back_only_when_the_table_is_not_there():
-    rows = [{"plan": "pro", "price_paise": 139_900, "period_days": 45, "included_usd": Decimal("6.5"), "active": True},
-            {"plan": "plus", "price_paise": 200_000, "period_days": 30, "included_usd": Decimal("12"), "active": False}]
+    rows = [{"plan": "pro", "price_paise": 139_900, "period_days": 45, "included_usd": Decimal("6.5"), "active": True, "max_redemptions": None},
+            {"plan": "plus", "price_paise": 200_000, "period_days": 30, "included_usd": Decimal("12"), "active": False, "max_redemptions": None}]
     got = await plans.active_map(FakePool({"FROM billing_plan_rows": rows}))
     assert got["pro"] == plans.TierRow("pro", 139_900, 45, Decimal("6.5"), True) and set(got) == {"pro"}
     every = await plans.every_map(FakePool({"FROM billing_plan_rows": rows}))
@@ -122,9 +122,12 @@ def test_the_dashboard_can_change_only_numbers_and_the_active_flag():
     assert plans.row_fields({"price_paise": 130_000, "period_days": 31, "included_usd": "7", "active": False}) == {
         "price_paise": 130_000, "period_days": 31, "included_usd": Decimal("7"), "active": False}
     assert plans.row_fields({"plan": "teams"}) == {}                    # unknown fields are not data; save_row refuses an empty edit
+    assert plans.row_fields({"max_redemptions": 100}) == {"max_redemptions": 100}
+    assert plans.row_fields({"max_redemptions": None}) == {"max_redemptions": None}      # clearing the limit
     for bad in ({"price_paise": 649.5}, {"price_paise": 64999}, {"price_paise": 0}, {"price_paise": True},
                 {"period_days": 0}, {"period_days": "30"}, {"included_usd": "nope"}, {"included_usd": 0},
-                {"active": "yes"}):
+                {"active": "yes"}, {"max_redemptions": 0}, {"max_redemptions": -1}, {"max_redemptions": 1.5},
+                {"max_redemptions": "100"}, {"max_redemptions": True}):
         with pytest.raises(plans.PlanError):
             plans.row_fields(bad)
 
@@ -132,15 +135,30 @@ def test_the_dashboard_can_change_only_numbers_and_the_active_flag():
 @pytest.mark.asyncio
 async def test_a_saved_row_is_what_the_order_then_uses():
     row = {"plan": "plus", "price_paise": 250_000, "period_days": 30, "included_usd": Decimal("15"), "active": True,
-           "updated_by": "admin@example", "updated_at": NOW}
+           "max_redemptions": None, "updated_by": "admin@example", "updated_at": NOW}
     pool = FakePool({"UPDATE billing_plan_rows": row})
     saved = await plans.save_row(pool, "plus", {"price_paise": 250_000, "included_usd": Decimal("15")}, "admin@example")
     assert saved == plans.TierRow("plus", 250_000, 30, Decimal("15"), True)
     _sql, args = pool.statements("UPDATE billing_plan_rows")[0]
-    assert args[0] == "plus" and args[-1] == "admin@example"
+    assert args[0] == "plus" and args[1] == "admin@example"
+    capped = await plans.save_row(FakePool({"UPDATE billing_plan_rows": {**row, "max_redemptions": 25}}),
+                                  "plus", {"max_redemptions": 25}, "admin@example")
+    assert capped is not None and capped.max_redemptions == 25
     assert await plans.save_row(FakePool({}), "teams", {"active": False}, "admin@example") is None
     with pytest.raises(plans.PlanError):
         await plans.save_row(FakePool({}), "plus", {}, "admin@example")
+
+
+@pytest.mark.asyncio
+async def test_a_plan_limit_counts_people_and_open_checkouts_and_no_limit_is_never_reached():
+    pool = FakePool({"AS n": {"n": 3}})
+    assert await plans.redeemed(pool, "pilot") == 3
+    full = plans.TierRow("pilot", 64_900, 30, Decimal("4"), True, 3)
+    room = plans.TierRow("pilot", 64_900, 30, Decimal("4"), True, 4)
+    open_ended = plans.TierRow("pilot", 64_900, 30, Decimal("4"), True, None)
+    assert await plans.cap_reached(pool, "pilot", full) is True
+    assert await plans.cap_reached(pool, "pilot", room) is False
+    assert await plans.cap_reached(pool, "pilot", open_ended) is False
 
 
 # ------------------------------------------------------------------ renewals and the team slug

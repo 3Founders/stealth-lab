@@ -93,7 +93,7 @@ describe("plan requests", () => {
   it("the plan numbers come from the server without a session, and a bad row is dropped", async () => {
     const f = reply(200, { plans: [{ plan: "pro", inr: 1300, days: 45, included_usd: "6.5" }, { plan: "bad", inr: "x" }] });
     const r = await api(f as unknown as typeof fetch, null).plans();
-    expect(r).toEqual({ kind: "ok", data: [{ plan: "pro", inr: 1300, days: 45, includedUsd: 6.5 }] });
+    expect(r).toEqual({ kind: "ok", data: [{ plan: "pro", inr: 1300, days: 45, includedUsd: 6.5, maxRedemptions: null, sold: 0 }] });
     expect((f.mock.calls[0] as [string, RequestInit])[0]).toBe("https://mcp.test/v1/billing/plans");
     expect((await api(reply(503) as unknown as typeof fetch, null).plans()).kind).toBe("off");
   });
@@ -152,6 +152,12 @@ describe("plan prices live in lib/plans.ts (built-in copy) and in the server's r
     expect(merged.some((p) => p.id === "enterprise")).toBe(true);
     expect(by("pro").includes).toEqual(PLANS.find((p) => p.id === "pro")!.includes);   // sentences never come from the server
     expect(withRows(null)).toEqual(PLANS);                                 // billing off: the built-in copy
+  });
+  it("a plan's redemption limit and sold count come from the server; no limit is null", () => {
+    const capped = withRows([{ plan: "pilot", inr: 649, days: 30, includedUsd: 4, maxRedemptions: 100, sold: 37 }]).find((p) => p.id === "pilot")!;
+    expect([capped.maxRedemptions, capped.sold]).toEqual([100, 37]);
+    const open = withRows([{ plan: "pro", inr: 1200, days: 30, includedUsd: 6 }]).find((p) => p.id === "pro")!;
+    expect([open.maxRedemptions, open.sold]).toEqual([null, 0]);
   });
   it("says nothing the founders ruled out: no bring-your-own-key, no public-only restriction, no retention or security claim, no other company's prices", () => {
     const all = JSON.stringify(PLANS);

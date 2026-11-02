@@ -92,17 +92,19 @@ class PlanOrder:
 
 class TierRow(NamedTuple):
     """One row of billing_plan_rows, as the server computes an order or the dashboard edits it. The Pilot's price and
-    usage are PER SEAT. `active` false means the plan is not being sold (an order already made for it still activates)."""
+    usage are PER SEAT. `active` false means the plan is not being sold (an order already made for it still activates).
+    `max_redemptions` caps how many people may ever buy it (None = no limit)."""
     plan: str
     price_paise: int
     period_days: int
     included_usd: Decimal
     active: bool = True
+    max_redemptions: Optional[int] = None
 
 
 def _defaults() -> dict[str, TierRow]:
     d = {p: TierRow(p, t["inr"] * 100, t["days"], Decimal(t["usd"])) for p, t in TIERS.items()}
-    d["pilot"] = TierRow("pilot", PILOT_SEAT_INR * 100, PILOT_DAYS, Decimal("4"))
+    d["pilot"] = TierRow("pilot", PILOT_SEAT_INR * 100, PILOT_DAYS, Decimal("4"), max_redemptions=100)
     return d
 
 
@@ -113,14 +115,15 @@ async def _rows(pool: Any) -> Optional[Mapping[str, TierRow]]:
     """Every plan row, or None when the table is not there yet (a deploy before migration 167): never a crashed request."""
     try:
         async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
-            rows = await conn.fetch("SELECT plan, price_paise, period_days, included_usd, active FROM billing_plan_rows")
+            rows = await conn.fetch("SELECT plan, price_paise, period_days, included_usd, active, max_redemptions FROM billing_plan_rows")
     except Exception:  # noqa: BLE001
         log.exception("billing: reading plan rows failed; using the built-in tiers")
         return None
     if not rows:
         return None
     return {r["plan"]: TierRow(r["plan"], int(r["price_paise"]), int(r["period_days"]), Decimal(str(r["included_usd"])),
-                               bool(r["active"])) for r in rows}
+                               bool(r["active"]),
+                               int(r["max_redemptions"]) if r["max_redemptions"] is not None else None) for r in rows}
 
 
 async def active_map(pool: Any) -> Mapping[str, TierRow]:
@@ -140,10 +143,14 @@ async def every_map(pool: Any) -> Mapping[str, TierRow]:
 
 
 async def all_rows(pool: Any) -> list[dict[str, Any]]:
-    """Every plan row including inactive ones, for the dashboard."""
+    """Every plan row including inactive ones, with how many people have it, for the dashboard."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
-        rows = await conn.fetch("SELECT plan, price_paise, period_days, included_usd, active, updated_by, updated_at FROM billing_plan_rows ORDER BY plan")
-    return [{**dict(r), "included_usd": str(r["included_usd"]), "updated_at": r["updated_at"].isoformat()} for r in rows]
+        rows = await conn.fetch(
+            "SELECT r.plan, r.price_paise, r.period_days, r.included_usd, r.active, r.max_redemptions, r.updated_by, r.updated_at, "
+            "(SELECT count(*) FROM plan_entitlements e WHERE e.plan = r.plan) AS sold "
+            "FROM billing_plan_rows r ORDER BY r.plan")
+    return [{**dict(r), "included_usd": str(r["included_usd"]), "sold": int(r["sold"]),
+             "updated_at": r["updated_at"].isoformat()} for r in rows]
 
 
 def row_fields(body: Any) -> dict[str, Any]:
@@ -174,26 +181,54 @@ def row_fields(body: Any) -> dict[str, Any]:
         if not isinstance(body["active"], bool):
             raise PlanError("active must be true or false")
         out["active"] = body["active"]
+    if "max_redemptions" in body:
+        v = body["max_redemptions"]
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 1):
+            raise PlanError("max_redemptions must be a whole number of people, or null for no limit")
+        out["max_redemptions"] = v
     return out
 
 
 async def save_row(pool: Any, plan: str, fields: Mapping[str, Any], updated_by: str) -> Optional[TierRow]:
     """Apply a dashboard edit to one plan row. None when there is no such row (the dashboard gets a 404)."""
     if not fields:
-        raise PlanError("send what changes: price_paise, period_days, included_usd, active")
-    known = ("price_paise", "period_days", "included_usd", "active")
+        raise PlanError("send what changes: price_paise, period_days, included_usd, active, max_redemptions")
+    known = ("price_paise", "period_days", "included_usd", "active", "max_redemptions")
     if [k for k in fields if k not in known]:
-        raise PlanError("only price_paise, period_days, included_usd and active can be edited")
+        raise PlanError("only price_paise, period_days, included_usd, active and max_redemptions can be edited")
+    sets = ["updated_by = $2", "updated_at = now()"]
+    args: list[Any] = [plan, updated_by]
+    for name in known:
+        if name in fields:
+            args.append(fields[name])
+            sets.append(f"{name} = ${len(args)}")
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         row = await conn.fetchrow(
-            "UPDATE billing_plan_rows SET price_paise = COALESCE($2, price_paise), period_days = COALESCE($3, period_days), "
-            "included_usd = COALESCE($4, included_usd), active = COALESCE($5, active), updated_by = $6, updated_at = now() "
-            "WHERE plan = $1 RETURNING plan, price_paise, period_days, included_usd, active, updated_by, updated_at",
-            plan, fields.get("price_paise"), fields.get("period_days"), fields.get("included_usd"), fields.get("active"), updated_by)
+            f"UPDATE billing_plan_rows SET {', '.join(sets)} WHERE plan = $1 "
+            "RETURNING plan, price_paise, period_days, included_usd, active, max_redemptions", *args)
     if row is None:
         return None
     return TierRow(row["plan"], int(row["price_paise"]), int(row["period_days"]), Decimal(str(row["included_usd"])),
-                   bool(row["active"]))
+                   bool(row["active"]),
+                   int(row["max_redemptions"]) if row["max_redemptions"] is not None else None)
+
+
+async def redeemed(pool: Any, plan: str) -> int:
+    """People who have the plan plus orders started in the last hour that are not activated yet: a slot is held while
+    Checkout is open, and an abandoned order frees its slot after the hour."""
+    async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+        row = await conn.fetchrow(
+            "SELECT (SELECT count(*) FROM plan_entitlements WHERE plan = $1) + "
+            "(SELECT count(*) FROM billing_orders o WHERE o.plan = $1 AND o.created_at > now() - interval '1 hour' "
+            "AND NOT EXISTS (SELECT 1 FROM plan_entitlements e WHERE e.order_id = o.order_id)) AS n", plan)
+    return int(row["n"]) if row else 0
+
+
+async def cap_reached(pool: Any, plan: str, tier: Optional[TierRow]) -> bool:
+    """True when the plan's redemption limit has no room left. No limit (or no row) is never reached."""
+    if tier is None or tier.max_redemptions is None:
+        return False
+    return await redeemed(pool, plan) >= tier.max_redemptions
 
 
 def _ti(tiers: Optional[Mapping[str, TierRow]]) -> Mapping[str, TierRow]:

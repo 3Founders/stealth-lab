@@ -34,6 +34,9 @@ export interface Plan {
   periodDays?: number;
   /** Dollars of usage included per payment. */
   includedUsd?: number;
+  /** How many people may ever buy this plan (null/absent = no limit); `sold` is how many already have it, from the server. */
+  maxRedemptions?: number | null;
+  sold?: number;
   /** The plan the page recommends. */
   recommended?: boolean;
   includes: string[];
@@ -114,7 +117,7 @@ export const BUYABLE: BuyablePlanId[] = ["starter", "pro", "plus", "pilot"];
 export const isBuyable = (id: string): id is BuyablePlanId => (BUYABLE as string[]).includes(id);
 
 /** One plan as the server sells it now (GET /v1/billing/plans, from the dashboard-edited billing_plan_rows). */
-export interface PlanRow { plan: string; inr: number; days: number; includedUsd: number }
+export interface PlanRow { plan: string; inr: number; days: number; includedUsd: number; maxRedemptions?: number | null; sold?: number }
 
 /**
  * The plans with the server's current numbers, or the built-in copy when it does not answer (`rows` null). A buyable plan the
@@ -128,7 +131,8 @@ export function withRows(rows: PlanRow[] | null): Plan[] {
     const row = by.get(p.id);
     if (!row) return isBuyable(p.id) ? [] : [p];
     const priceInr = row.inr;
-    return [{ ...p, price: `₹${priceInr.toLocaleString("en-IN")}`, priceInr, periodDays: row.days, includedUsd: row.includedUsd }];
+    return [{ ...p, price: `₹${priceInr.toLocaleString("en-IN")}`, priceInr, periodDays: row.days, includedUsd: row.includedUsd,
+              maxRedemptions: row.maxRedemptions ?? null, sold: row.sold ?? 0 }];
   });
 }
 
