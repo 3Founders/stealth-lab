@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { validAgentName } from "@/lib/chat/relay-client";
-import { planLine } from "@/lib/chat/plan";
+import { planLine, planText } from "@/lib/chat/plan";
 
 const URL = "https://mcp.example.org/mcp";
 
@@ -32,5 +32,17 @@ describe("the plan line in the profile", () => {
     expect(planLine({ plan: "plus", activeUntil: "2026-10-01T00:00:00Z" }, now)).toBe("Plus plan ended");
     expect(planLine({ plan: null, activeUntil: null }, now)).toBe("No plan yet");
     expect(planLine(null, now)).toBe("");
+  });
+});
+
+describe("the plan text covers every outcome", () => {
+  const now = new Date("2026-11-02T00:00:00Z");
+  it("never leaves the line blank", () => {
+    expect(planText(null, now)).toBe("Checking your plan…");
+    expect(planText({ kind: "ok", data: { plan: "pro", activeUntil: "2026-11-28T00:00:00Z" } }, now)).toBe("Pro plan · until 28 November 2026");
+    expect(planText({ kind: "ok", data: { plan: null, activeUntil: null } }, now)).toBe("No plan yet");
+    expect(planText({ kind: "off" }, now)).toBe("Plans aren't switched on yet");
+    expect(planText({ kind: "signed-out" }, now)).toBe("Sign in to see your plan");
+    expect(planText({ kind: "error", message: "x" }, now)).toBe("Couldn't load your plan");
   });
 });

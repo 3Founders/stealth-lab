@@ -9,6 +9,7 @@ import { ABOUT_MAX, NAME_MAX, loadDeviceProfile, removeDevicePhoto, saveDevicePr
 import { getMyProfile, removeAvatar, updateMyProfile, uploadAvatar, type MyProfileResult } from "@/lib/kel-api";
 import type { ApiState } from "@/lib/api";
 import { AVATAR_MAX_BYTES, AVATAR_TYPES, TAGLINE_MAX, avatarProblem, profileChanges } from "@/lib/profile-form";
+import PlanBadge from "@/components/billing/PlanBadge";
 import { getSession, onSessionChange, type Session } from "@/lib/session";
 
 /** Your profile: a photo, your username, a short line about you, and who can see it. Signed-in only. */
@@ -126,6 +127,10 @@ function Editor() {
   return (
     <>
       <div className="profile-card">
+        <h2 className="h3">Plan</h2>
+        <PlanBadge />
+      </div>
+      <div className="profile-card">
         <h2 className="h3">Photo</h2>
         <div className="profile-photo">
           <Avatar key={photoKey} username={saved.username} size={96} authenticated alt="Your profile photo" />
@@ -240,7 +245,6 @@ function DeviceEditor() {
               {photo && <button type="button" className="btn-line" onClick={() => void adjustSaved()}>Resize or crop</button>}
               {photo && <button type="button" className="btn-line" onClick={() => void removeDevicePhoto(p.subject)}>Remove</button>}
             </div>
-            <p className="small dim">PNG, JPEG or WebP. It is shrunk, then saved on your keळ account so it shows on every device you sign in on.</p>
             {photoError && <p className="small" role="alert">{photoError}</p>}
           </div>
         </div>

@@ -5,6 +5,13 @@ import NotificationSettings from "@/components/chat/NotificationSettings";
 import { DEFAULT_CHAT_PREFS, type ChatPrefs, type TextSize } from "@/lib/chat/prefs";
 import type { Prefs } from "@/lib/chat/notify";
 
+import { usePlan } from "@/components/billing/PlanBadge";
+import { planText } from "@/lib/chat/plan";
+
+function PlanText() {
+  return <b>{planText(usePlan())}</b>;
+}
+
 export type SectionId = "preferences" | "notifications" | "data" | "agents" | "account" | "shortcuts" | "about";
 
 export const SECTIONS: Array<{ id: SectionId; label: string }> = [
@@ -128,7 +135,9 @@ export default function SettingsDialog(p: SettingsProps) {
               <section>
                 <h3>Account</h3>
                 <p className="dg-set-lead">Signed in as <b>{p.account.name || "you"}</b>.</p>
+                <p className="dg-set-lead">Your plan: <PlanText /></p>
                 <ul className="dg-set-links">
+                  <li><Link href="/account/billing">Plan and billing</Link></li>
                   <li><Link href="/account/profile">Profile and photo</Link></li>
                   <li><Link href="/account/connections">Connected apps</Link></li>
                 </ul>
