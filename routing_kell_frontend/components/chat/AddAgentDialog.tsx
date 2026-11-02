@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import OnboardButton from "@/components/chat/OnboardButton";
+import OnboardButton, { type OnboardResult, type OnboardTarget } from "@/components/chat/OnboardButton";
 
 export interface AddAgentDialogProps {
   open: boolean; onClose: () => void;
@@ -12,7 +12,7 @@ export interface AddAgentDialogProps {
   error: string;
   onSubmit: (e: React.FormEvent) => void;
   /** Registers a new name for an agent that runs on the person's own machine and returns the text to paste into it. */
-  onOnboard?: () => Promise<string>;
+  onOnboard?: (target: OnboardTarget) => Promise<OnboardResult>;
 }
 
 /** "+ Add agent": a popup over the chat, not a form squeezed into the side panel. Same native <dialog> as Settings and Manage rooms. */
@@ -53,7 +53,7 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
           {p.full && <p className="small dim" style={{ margin: 0 }}>This room has the most added agents it can have. Remove one to add another.</p>}
           {p.onOnboard && (
             <div className="dg-addagent-connect">
-              <span className="small dim">Already have an agent, such as Claude Code or Cursor? Let it join by itself:</span>
+              <span className="small dim">Already use Claude, Cursor or ChatGPT? Connect it here:</span>
               <OnboardButton onOnboard={p.onOnboard} />
             </div>
           )}

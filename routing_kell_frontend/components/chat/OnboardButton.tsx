@@ -1,41 +1,73 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ChatGPTLogo, ClaudeLogo, CursorLogo } from "@/components/chat/brand";
 
-/** "Onboard Your Agent": one pill. Pressing it registers a new agent name, and copies the instructions to paste into the agent, which then
- * connects itself. The three round marks are plain shapes, not any company's logo. */
-export default function OnboardButton({ onOnboard, className = "" }: { onOnboard: () => Promise<string>; className?: string }) {
+export type OnboardTarget = "code" | "claude-web" | "chatgpt";
+export interface OnboardResult { text: string; openUrl?: string }
+
+const CHOICES: Array<{ id: OnboardTarget; label: string; hint: string; logos: React.ReactNode }> = [
+  { id: "code", label: "Claude Code or Cursor", hint: "Copies one message. Paste it into your agent and it connects itself.", logos: <><ClaudeLogo size={18} /><CursorLogo size={18} /></> },
+  { id: "claude-web", label: "Claude on the web", hint: "Copies the connector address and opens Claude's connector page. You press Connect there.", logos: <ClaudeLogo size={18} /> },
+  { id: "chatgpt", label: "ChatGPT", hint: "Copies the connector address and opens ChatGPT's connector page. You press Connect there.", logos: <ChatGPTLogo size={18} /> },
+];
+
+/**
+ * "Connect agent": one small pill with the logos of the tools it works with. Pressing it asks which tool, registers a new agent name
+ * on the account, and copies what to paste (or, for Claude on the web and ChatGPT, the connector address, and opens their page).
+ * The two web tools cannot be connected without the person pressing Connect inside them and signing in: that approval is theirs.
+ */
+export default function OnboardButton({ onOnboard, className = "" }: { onOnboard: (target: OnboardTarget) => Promise<OnboardResult>; className?: string }) {
+  const [menu, setMenu] = useState(false);
   const [state, setState] = useState<"idle" | "busy" | "copied" | "failed">("idle");
+  const [done, setDone] = useState<OnboardTarget | null>(null);
   const [shown, setShown] = useState("");
+  const box = useRef<HTMLDivElement>(null);
   const timer = useRef<number | undefined>(undefined);
 
-  async function go() {
+  useEffect(() => {
+    if (!menu) return;
+    const off = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setMenu(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(false); };
+    document.addEventListener("mousedown", off); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", off); document.removeEventListener("keydown", esc); };
+  }, [menu]);
+
+  async function go(target: OnboardTarget) {
     if (state === "busy") return;
-    setState("busy"); setShown("");
+    setMenu(false); setState("busy"); setShown(""); setDone(target);
     try {
-      const text = await onOnboard();
-      try { await navigator.clipboard.writeText(text); setState("copied"); }
-      catch { setShown(text); setState("failed"); }   // the browser refused the clipboard: show the text to copy by hand
-    } catch { setState("idle"); return; }              // onOnboard reports its own error in the room
+      const r = await onOnboard(target);
+      try { await navigator.clipboard.writeText(r.text); setState("copied"); }
+      catch { setShown(r.text); setState("failed"); }   // the browser refused the clipboard: show the text to copy by hand
+      if (r.openUrl) window.open(r.openUrl, "_blank", "noopener");
+    } catch { setState("idle"); return; }               // onOnboard reports its own error in the room
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setState((s) => (s === "copied" ? "idle" : s)), 2400);
+    timer.current = window.setTimeout(() => setState((s) => (s === "copied" ? "idle" : s)), 3200);
   }
 
+  const label = state === "copied" ? (done === "code" ? "Copied. Paste it in your agent" : "Copied. Press Connect there") : state === "busy" ? "One moment…" : "Connect agent";
   return (
-    <div className={`dg-onboard-wrap ${className}`}>
-      <button type="button" className="dg-onboard" onClick={() => void go()} data-state={state} aria-live="polite"
-        aria-label="Onboard your agent: copies instructions to paste into it">
-        <span className="dg-onboard-marks" aria-hidden="true">
-          <i><svg viewBox="0 0 16 16"><path d="M8 1.5l1.4 4.1 4.1 1.4-4.1 1.4L8 12.5 6.6 8.4 2.5 7l4.1-1.4z" fill="currentColor" /></svg></i>
-          <i><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" /></svg></i>
-          <i><svg viewBox="0 0 16 16"><path d="M3 4l4 4-4 4M8.5 12.5h4.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg></i>
-        </span>
-        <span className="dg-onboard-label">{state === "copied" ? "Copied. Paste it into your agent" : state === "busy" ? "Setting up…" : "Onboard Your Agent"}</span>
+    <div className={`dg-onboard-wrap ${className}`} ref={box}>
+      <button type="button" className="dg-onboard" onClick={() => setMenu((m) => !m)} data-state={state} aria-haspopup="menu" aria-expanded={menu} aria-live="polite"
+        aria-label="Connect an agent such as Claude Code, Cursor, Claude on the web or ChatGPT">
+        <span className="dg-onboard-marks" aria-hidden="true"><i><ClaudeLogo size={16} /></i><i><CursorLogo size={16} /></i><i><ChatGPTLogo size={16} /></i></span>
+        <span className="dg-onboard-label">{label}</span>
         <svg className="dg-onboard-copy" viewBox="0 0 16 16" aria-hidden="true">
           {state === "copied"
             ? <path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-            : <><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="M10.5 3.5v-.4A1.6 1.6 0 008.9 1.5H3.6A1.6 1.6 0 002 3.1v5.3a1.6 1.6 0 001.6 1.6h.4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></>}
+            : <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />}
         </svg>
       </button>
+      {menu && (
+        <div className="dg-onboard-menu" role="menu" aria-label="Which agent?">
+          {CHOICES.map((c) => (
+            <button key={c.id} type="button" role="menuitem" onClick={() => void go(c.id)}>
+              <span className="dg-onboard-logos" aria-hidden="true">{c.logos}</span>
+              <span className="dg-onboard-choice"><b>{c.label}</b><span className="small dim">{c.hint}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
       {state === "failed" && (
         <label className="dg-onboard-manual small">The browser blocked copying. Select and copy this text, then paste it into your agent:
           <textarea readOnly rows={6} value={shown} onFocus={(e) => e.currentTarget.select()} />

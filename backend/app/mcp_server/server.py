@@ -1013,6 +1013,16 @@ _room_file_routes.register(
 from app.mcp_server import room_agent_routes as _room_agent_routes  # noqa: E402 -- needs the room gate and the gateway
 
 
+def _room_agent_model_name() -> str:
+    """One model for the room agent whether the answer streams or not (they used to differ: glm-5.3-flash buffered, gemma-4-31b-it
+    streamed, so the same question could behave differently). glm-5.3-flash thinks before it answers, which for a streamed reply
+    means a long wait and then everything at once; gemma-4-31b-it starts at once, so it is the default. KELL_ROOM_AGENT_MODEL
+    overrides it."""
+    import os as _os
+
+    return _os.environ.get("KELL_ROOM_AGENT_MODEL") or "gemma-4-31b-it"
+
+
 async def _room_agent_model(authorization: str, messages: list[dict], tools: list[dict]) -> dict:
     """One chat completion from this deployment's own OpenAI-compatible endpoint, with the caller's bearer, so the pilot's
     policy, budget, ledger and data-class checks apply unchanged. KELL_API_BASE names that endpoint's origin when it is not
@@ -1022,7 +1032,7 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
     from app.providers.adapters import http_client
 
     base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
-    body: dict[str, Any] = {"model": _os.environ.get("KELL_ROOM_AGENT_MODEL", "glm-5.3-flash"),
+    body: dict[str, Any] = {"model": _room_agent_model_name(),
                             "messages": messages, "stream": False}
     headers = {"authorization": authorization, "content-type": "application/json",
                "x-stealthlab-data-class": "PUBLIC_SOURCE"}
@@ -1068,7 +1078,7 @@ async def _room_agent_model_stream(authorization: str, messages: list[dict], too
     from app.providers.adapters import http_client
 
     base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
-    body: dict[str, Any] = {"model": _os.environ.get("KELL_ROOM_AGENT_MODEL", "gemma-4-31b-it"),
+    body: dict[str, Any] = {"model": _room_agent_model_name(),
                             "messages": messages, "stream": True}
     headers = {"authorization": authorization, "content-type": "application/json",
                "accept": "text/event-stream", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
@@ -1104,6 +1114,37 @@ async def _room_agent_model_stream(authorization: str, messages: list[dict], too
         yield chunk
 
 
+async def _room_agent_discover(need: str) -> str:
+    """discover_tools(need) for the room agent: the same router call and the same answer shape MCP clients get (`external`, with
+    via_kell marks and install hints), with a longer wait than the prefetch because the model asked for it on purpose."""
+    import asyncio as _asyncio
+    import os as _os
+
+    from app.mcp_server import find_ways_triage as _ft
+
+    try:
+        ext = await _asyncio.wait_for(
+            _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 6),
+            timeout=float(_os.environ.get("KELL_ROOM_AGENT_DISCOVER_WAIT", "8.0")))
+    except Exception:  # noqa: BLE001 -- the model is told, and answers without a tool
+        return json.dumps({"tools": [], "note": "tool search did not answer in time; answer without it and say so"})
+    if not ext:
+        return json.dumps({"tools": [], "note": "no tool found for that"})
+    return json.dumps({"external": ext, "next": "use_tool(server=<name>, name=<tool>, arguments=...) for tools marked via_kell; "
+                                                "discover_tools(server=<name>) lists a server's tools"}, default=str)
+
+
+async def _room_agent_tools_of(subject: str, server_name: str) -> str:
+    """discover_tools(server=...) for the room agent, attributed to the person like use_tool is."""
+    from app.services.authn import Actor, reset_current_actor, set_current_actor
+
+    token = set_current_actor(Actor(subject=subject))
+    try:
+        return await _gateway_tools(server_name)
+    finally:
+        reset_current_actor(token)
+
+
 async def _room_agent_use(subject: str, server_name: str, tool: str, arguments: dict) -> Any:
     """Run one gateway tool for this person: exactly use_tool's checks, audit and consent, without an MCP session. The actor
     context makes the gateway attribute it to the person (owner, consent grant, audit row)."""
@@ -1127,6 +1168,7 @@ _room_agent_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
     model_call=_room_agent_model, model_stream=_room_agent_model_stream,
     find_tools=_room_agent_find, use_tool=_room_agent_use,
+    discover=_room_agent_discover, tools_of=_room_agent_tools_of,
 )
 
 from app.mcp_server import photo_routes as _photo_routes  # noqa: E402 -- the profile photo that follows a person across devices (db/159_profile_photos.sql)

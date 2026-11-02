@@ -706,3 +706,30 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-file .dg-artifact-btn { flex: none; }
 .dg-file-err { flex-basis: 100%; color: #b3261e; }
 .dg-sending { display: flex; align-items: center; gap: 8px; padding: 4px 18px; font-size: 13px; color: var(--cobalt); }
+
+/* kell's mark: a golden banana with a soft glow, worn by every agent. */
+.kell-mark { flex: none; display: block; }
+.kell-mark--glow { filter: drop-shadow(0 0 3px rgba(255, 205, 40, .85)) drop-shadow(0 0 8px rgba(255, 190, 0, .45)); }
+.dg-avatar-kell { background: rgba(255, 224, 120, .35); display: grid; place-items: center; overflow: visible; }
+.dg-members .kell-mark { margin-right: 2px; }
+.dg-mentions .kell-mark { display: inline-block; vertical-align: -2px; margin-right: 6px; }
+.dg-think .kell-mark { margin-right: 4px; animation: dg-glow 1.8s var(--dg-apple, ease-in-out) infinite; }
+@keyframes dg-glow { 0%, 100% { filter: drop-shadow(0 0 2px rgba(255, 205, 40, .6)); transform: rotate(-4deg); } 50% { filter: drop-shadow(0 0 9px rgba(255, 190, 0, .95)); transform: rotate(4deg); } }
+@media (prefers-reduced-motion: reduce) { .dg-think .kell-mark { animation: none; } }
+
+/* The collapse-sidebar button has the same glass and drop shadow as the settings button. */
+.dg-page .dg-close { background: var(--dg-glass-strong); box-shadow: var(--dg-lift); opacity: 1; color: var(--ink); }
+.dg-page .dg-close:hover, .dg-page .dg-close:focus-visible { box-shadow: var(--dg-lift-hover); transform: translateY(-1px); background: var(--dg-glass-strong); }
+.dg-page .dg-close:active { transform: none; }
+
+/* Connect agent: a shorter pill with the tools' own colours, and a small menu of which tool. */
+.dg-onboard-wrap { position: relative; }
+.dg-page .dg-onboard { min-height: 40px; font-size: 13.5px; }
+.dg-onboard-marks i { background: #fff; box-shadow: 0 0 0 2px #171717; }
+.dg-onboard-menu { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20; display: grid; gap: 2px; padding: 6px; border-radius: var(--dg-r-pop, 8px); background: var(--dg-glass-strong, #fff); box-shadow: var(--dg-float, 0 18px 44px rgba(0, 0, 0, .2)); -webkit-backdrop-filter: blur(16px) saturate(1.2); backdrop-filter: blur(16px) saturate(1.2); animation: dg-glass-in 260ms var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-page .dg-onboard-menu button { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; box-shadow: none; }
+.dg-page .dg-onboard-menu button:hover, .dg-page .dg-onboard-menu button:focus-visible { background: rgba(255, 255, 255, .7); outline: none; box-shadow: none; }
+.dg-onboard-logos { display: inline-flex; gap: 2px; flex: none; padding-top: 2px; }
+.dg-onboard-choice { display: grid; min-width: 0; line-height: 1.3; }
+.dg-onboard-choice b { font-weight: 500; font-size: 13.5px; }
+.dg-me-plan { color: var(--cobalt); }

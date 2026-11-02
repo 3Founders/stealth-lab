@@ -6,7 +6,9 @@ import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
-import { newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
+import { CONNECTOR_PAGES, connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
+import { KellMark } from "@/components/chat/brand";
+import type { OnboardResult, OnboardTarget } from "@/components/chat/OnboardButton";
 import { cap, nameOf, roomName } from "@/components/chat/bare";
 import SmoothText, { Thinking } from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
@@ -51,7 +53,9 @@ type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; tex
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 function Avatar({ who }: { who: AgentIdentity }) {
-  return <span className="dg-avatar" data-kind={who.type === "human" ? "human" : "agent"} aria-hidden="true">{initials(who.handle)}</span>;
+  // Every agent is kell, so every agent wears kell's mark; a person keeps their initials.
+  if (who.type !== "human") return <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>;
+  return <span className="dg-avatar" data-kind="human" aria-hidden="true">{initials(who.handle)}</span>;
 }
 
 function Body({ m }: { m: GroupMessage }) {
@@ -676,13 +680,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setAdding(false); setAddName(""); setAddAbout("");
   };
   /** "Onboard Your Agent": registers a fresh agent name on the account and returns the text the person pastes into their agent. */
-  const onboardAgent = async (): Promise<string> => {
+  const onboardAgent = async (target: OnboardTarget = "code"): Promise<OnboardResult> => {
     for (let tries = 0; tries < 3; tries++) {
       const name = newOnboardName();
       try {
         const a = await api.addAgent(name);
         setRelayAgents((p) => [...p.filter((x) => x.id !== a.id), a]);
-        return onboardPrompt({ name: a.name, room });
+        if (target === "code") return { text: onboardPrompt({ name: a.name, room, kind: "code" }) };
+        return { text: connectorInstructions({ name: a.name, room, kind: target }), openUrl: CONNECTOR_PAGES[target] };
       } catch (err) {
         if (tries === 2 || (err instanceof RelayError && err.status !== 409)) { setFormError(""); note(err instanceof Error ? err.message : "That didn't work."); throw err; }
       }
@@ -806,7 +811,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-members">
           <li>
             <span className="dg-dot" data-a={kellBusy[room] ? "processing" : "online"} aria-hidden="true" />
-            <span className="dg-handle">Kell</span><span className="dg-badge">default</span>
+            <KellMark size={16} /><span className="dg-handle">Kell</span><span className="dg-badge">default</span>
             {kellBusy[room] && <span className="dg-state" data-a="processing">working</span>}
           </li>
           {agents.map((h) => {
@@ -814,7 +819,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             return (
               <li key={h}>
                 <span className="dg-dot" data-a={a} aria-hidden="true" />
-                <span className="dg-handle">{nameOf(h)}</span><span className="dg-badge">kell</span>
+                <KellMark size={16} /><span className="dg-handle">{nameOf(h)}</span><span className="dg-badge">kell</span>
                 {a === "processing" && <span className="dg-state" data-a={a}>working</span>}
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${nameOf(h)} from the room`} title={`Remove ${nameOf(h)}`}><RemoveIcon /></button>
               </li>
@@ -823,8 +828,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           {relayAgents.map((a) => (
             <li key={a.id}>
               <span className="dg-dot" data-a={a.online ? "online" : "idle"} aria-hidden="true" />
-              <span className="dg-handle">{nameOf(a.handle)}</span><span className="dg-badge">connected</span>
-              {!a.online && <span className="dg-state" data-a="idle">offline</span>}
+              <span className="dg-handle">{nameOf(a.handle)}</span><span className="dg-badge">your agent</span>
+              <span className="dg-state" data-a={a.online ? "online" : "idle"} title={a.online ? "It checked its inbox in the last minute." : "Not connected yet. Paste the message into your agent, or ask it to check its kell inbox."}>{a.online ? "online" : "not connected"}</span>
               <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${nameOf(a.handle)}`} title={`Remove ${nameOf(a.handle)}`}><RemoveIcon /></button>
             </li>
           ))}
@@ -919,7 +924,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
           )}
         </div>
-        <Composer handles={mentionable} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
+        <Composer handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <SettingsDialog

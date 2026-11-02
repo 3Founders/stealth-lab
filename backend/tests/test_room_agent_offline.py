@@ -74,12 +74,12 @@ async def test_stream_answer_runs_a_tool_round_then_streams_the_next_round():
 
 
 @pytest.mark.asyncio
-async def test_a_plain_answer_needs_no_tools_and_sends_no_tool_spec():
+async def test_a_plain_answer_uses_no_tool_but_the_tools_are_still_offered():
     model = Model(_reply("three ways to do it: ..."))
     out = await room_agent.converse("how do I do x?", [], model_call=model, find_tools=_no_tools, use_tool=_never)
     assert out.text.startswith("three ways") and out.tools_used == [] and out.consent_links == []
     messages, tools = model.seen[0]
-    assert tools == [] and messages[0]["role"] == "system" and messages[-1] == {"role": "user", "content": "how do I do x?"}
+    assert [t["function"]["name"] for t in tools] == ["discover_tools", "use_tool"] and messages[0]["role"] == "system" and messages[-1] == {"role": "user", "content": "how do I do x?"}
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_a_router_candidate_is_offered_and_the_answer_follows_the_tool_res
     assert out.text == "Context7 says: use the v15 API." and used == [("io.github.upstash/context7", "get_docs", {})]
     assert out.tools_used == ["io.github.upstash/context7/get_docs"]
     first_messages, first_tools = model.seen[0]
-    assert first_tools and first_tools[0]["function"]["name"] == "use_tool"
+    assert "use_tool" in [t["function"]["name"] for t in first_tools]
     assert "context7" in first_messages[0]["content"].lower()                  # the router's short list is in the prompt
     tool_message = model.seen[1][0][-1]
     assert tool_message["role"] == "tool" and "v15 notes" in tool_message["content"]

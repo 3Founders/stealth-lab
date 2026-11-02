@@ -5,13 +5,14 @@ import { applyMention, matchCommands, matchHandles, mentionQuery, slashQuery } f
 import { ACCEPT, dataUrlOf, prepareImage, whyNotImage } from "@/lib/chat/images";
 import type { ImageAttachment } from "@/lib/chat/types";
 import { CrossIcon, ImageIcon } from "@/components/chat/icons";
+import { KellMark } from "@/components/chat/brand";
 import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
 
 /**
  * The message box. Typing "@" opens a list of the room's handles. It follows the W3C combobox pattern: focus stays in
  * the text box, the list is a listbox, and aria-activedescendant names the highlighted option.
  */
-export default function Composer({ handles, onSend, disabled, enterToSend = true }: { handles: string[]; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
+export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true }: { handles: string[]; agentHandles?: string[]; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -135,7 +136,7 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
           {options.map((h, i) => (
             <li key={h} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx}
                 onMouseDown={(e) => { e.preventDefault(); pick(h); }}>
-              <code>{h}</code>
+              {agentHandles.includes(h) && <KellMark size={14} />}<code>{h}</code>
             </li>
           ))}
         </ul>

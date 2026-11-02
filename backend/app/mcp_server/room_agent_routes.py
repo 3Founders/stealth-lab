@@ -42,7 +42,8 @@ def _sse(obj: Any) -> str:
 
 
 def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_call: ModelCall,
-             find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12) -> None:
+             find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12,
+             discover: Any = None, tools_of: Any = None) -> None:
     @server.custom_route("/v1/rooms/{room_id}/agent", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_route(request: Request) -> Response:
         if request.method == "OPTIONS":
@@ -95,6 +96,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         find_tools=find_tools,
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                         handle=handle, instructions=instructions,
+                        discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                     ):
                         if kind == "delta":
                             yield _sse({"delta": value})
@@ -126,7 +128,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=lambda m, t: model_call(bearer, m, t),
                                            find_tools=find_tools,
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
-                                           handle=handle, instructions=instructions)
+                                           handle=handle, instructions=instructions, discover=discover,
+                                           tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None)
         except rm.RoomError:
             raise
         except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)

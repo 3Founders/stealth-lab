@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { KellMark } from "@/components/chat/brand";
 import { revealStep, visiblePrefix } from "@/lib/chat/smooth";
 
 /** The newest words are their own spans, so each one fades in once, when it first appears. Older words fold into one plain string. */
@@ -12,7 +13,7 @@ export const wordsOf = (s: string): string[] => s.match(/\S+\s*|\s+/g) ?? [];
 export function Thinking({ label = "Thinking" }: { label?: string }) {
   return (
     <span className="dg-thinking dg-think" role="status" aria-label={label}>
-      <span className="dg-pulse" /><span className="dg-pulse" /><span className="dg-pulse" />
+      <KellMark size={18} /><span className="dg-pulse" /><span className="dg-pulse" /><span className="dg-pulse" />
       <span className="dg-think-label" aria-hidden="true">{label}</span>
     </span>
   );
