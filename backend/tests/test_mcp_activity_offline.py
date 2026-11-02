@@ -25,20 +25,32 @@ def test_traced_records_result_and_keeps_signature():
     assert ev["args"]["query"].startswith("q" * 300) and "+200 chars" in ev["args"]["query"]
 
 
-def test_failure_is_recorded_and_reraised():
+def test_failure_is_recorded_and_answered_as_text():
+    """An unexpected error is logged and reaches the agent as text naming the tool, not as a bare JSON-RPC internal error."""
     _reset()
 
     @activity.traced
     async def call_model(prompt: str) -> str:
         raise ValueError("boom")
 
-    try:
-        asyncio.run(call_model(prompt="x"))
-        raise AssertionError("should raise")
-    except ValueError:
-        pass
+    out = asyncio.run(call_model(prompt="x"))
+    assert out.startswith("FAILED: call_model: ValueError: boom")
     ev = activity.recent()[0]
     assert not ev["ok"] and "boom" in ev["output"]
+
+
+def test_a_permission_error_still_propagates():
+    _reset()
+
+    @activity.traced
+    async def room_list() -> str:
+        raise PermissionError("sign in")
+
+    try:
+        asyncio.run(room_list())
+        raise AssertionError("should raise")
+    except PermissionError:
+        pass
 
 
 def test_output_is_cut_and_ring_is_bounded():

@@ -32,14 +32,18 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
   }, [open, load]);
 
   const hits = useMemo(() => (all ? searchMessages(all, q, { room: here ? currentRoom : undefined, limit: 30 }) : []), [all, q, here, currentRoom]);
-  const roomRows = useMemo(() => (q.trim() ? [] : rooms), [q, rooms]);
-  const count = q.trim() ? hits.length : roomRows.length;
+  // Rooms whose name matches come first, then the messages that match; with nothing typed, every room.
+  const roomRows = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    return t ? rooms.filter((r) => roomName(r).toLowerCase().includes(t)) : rooms;
+  }, [q, rooms]);
+  const count = roomRows.length + (q.trim() ? hits.length : 0);
   const idx = Math.min(active, Math.max(0, count - 1));
 
   if (!open) return null;
   const pick = (i: number) => {
-    if (q.trim()) { const h = hits[i]; if (h) { onPick(h.room, h.id); onClose(); } }
-    else { const r = roomRows[i]; if (r) { onPick(r, null); onClose(); } }
+    if (i < roomRows.length) { const r = roomRows[i]; if (r) { onPick(r, null); onClose(); } }
+    else { const h = hits[i - roomRows.length]; if (h) { onPick(h.room, h.id); onClose(); } }
   };
   const key = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { e.preventDefault(); onClose(); }
@@ -59,19 +63,19 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
           <span className="dg-switch" aria-hidden="true"><i /></span>Only {roomName(currentRoom)}
         </button>
         <ul id={listId} role="listbox" className="dg-search-list" ref={slide('li[role="option"]')}>
-          {q.trim() === "" && roomRows.map((r, i) => (
+          {roomRows.map((r, i) => (
             <li key={r} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx} onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
               <b>{roomName(r)}</b><span className="dim small">Open room</span>
             </li>
           ))}
-          {q.trim() !== "" && hits.map((h, i) => (
+          {q.trim() !== "" && hits.map((h, k) => { const i = roomRows.length + k; return (
             <li key={`${h.room}:${h.id}`} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx} onMouseDown={(e) => { e.preventDefault(); pick(i); }}>
               <span className="dim small">{roomName(h.room)} · {h.who} · {new Date(h.t).toLocaleDateString()}</span>
               <span>{snippet(h.text, q).map((p, j) => (p.hit ? <mark key={j}>{p.s}</mark> : <span key={j}>{p.s}</span>))}</span>
             </li>
-          ))}
+          ); })}
         </ul>
-        {q.trim() !== "" && all !== null && hits.length === 0 && <p className="dg-search-none small dim" role="status">Nothing matches. Only messages saved on this device are searched.</p>}
+        {q.trim() !== "" && all !== null && hits.length === 0 && roomRows.length === 0 && <p className="dg-search-none small dim" role="status">Nothing matches. Only messages saved on this device are searched.</p>}
         {all === null && <p className="dg-search-none small dim" role="status">Reading your rooms…</p>}
       </div>
     </div>

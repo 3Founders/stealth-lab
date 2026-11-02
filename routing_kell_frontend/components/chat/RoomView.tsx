@@ -15,7 +15,7 @@ import { CanvasContext } from "@/components/chat/CanvasCard";
 import { captureFrom, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
-import { CONNECTOR_PAGES, connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
+import { CONNECTOR_PAGES, connectorInstructions, onboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { KellMark } from "@/components/chat/brand";
 import type { OnboardResult, OnboardTarget } from "@/components/chat/OnboardButton";
 import { cap, nameOf, roomName } from "@/components/chat/bare";
@@ -929,18 +929,19 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   };
   /** "Onboard Your Agent": registers a fresh agent name on the account and returns the text the person pastes into their agent. */
   const onboardAgent = async (target: OnboardTarget = "code"): Promise<OnboardResult> => {
-    for (let tries = 0; tries < 3; tries++) {
-      const name = newOnboardName();
-      try {
-        const a = await api.addAgent(name);
-        setRelayAgents((p) => [...p.filter((x) => x.id !== a.id), a]);
-        if (target === "code") return { text: onboardPrompt({ name: a.name, room, kind: "code" }) };
-        return { text: connectorInstructions({ name: a.name, room, kind: target }), openUrl: CONNECTOR_PAGES[target] };
-      } catch (err) {
-        if (tries === 2 || (err instanceof RelayError && err.status !== 409)) { setFormError(""); note(err instanceof Error ? err.message : "That didn't work."); throw err; }
-      }
+    const name = onboardName(target === "code" ? "code" : target);
+    const text = (n: string) => target === "code" ? onboardPrompt({ name: n, room, kind: "code" }) : connectorInstructions({ name: n, room, kind: target });
+    const done = (n: string) => ({ text: text(n), ...(target === "code" ? {} : { openUrl: CONNECTOR_PAGES[target] }) });
+    // The agent is the tool it is: one claude-code, one claude, one chatgpt per account. Already there: reuse it, nothing new to register.
+    if (relayAgentsRef.current.some((x) => x.name === name)) return done(name);
+    try {
+      const a = await api.addAgent(name);
+      setRelayAgents((p) => [...p.filter((x) => x.id !== a.id), a]);
+      return done(a.name);
+    } catch (err) {
+      if (err instanceof RelayError && err.status === 409) return done(name);       // registered elsewhere already
+      setFormError(""); note(err instanceof Error ? err.message : "That didn't work."); throw err;
     }
-    throw new Error("unreachable");
   };
   const removeRelayAgent = async (a: RelayAgent) => {
     try {
@@ -1007,11 +1008,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       addAgent(r.handle, c.about);
       return note(`${nameOf(r.handle)} joined the room.`);
     }
-    const route = routeMessage(line, { local: agents, relay: relayAgents.map((a) => a.name), people: peopleHandles });
+    // The agent that spoke last, if the last message in the room was an agent's: an answer with no @name continues with it.
+    const lastLine = [...lines].reverse().find((l) => l.kind === "msg");
+    const lastFrom = lastLine && lastLine.kind === "msg" && lastLine.m.sender.type !== "human" ? lastLine.m.sender.handle : "";
+    const lastSeg = lastFrom.split("/").pop() ?? "";
+    const follow = !lastFrom ? null
+      : lastFrom === "@kell" ? "kell"
+      : agents.includes(lastFrom) ? lastFrom
+      : relayAgents.find((a) => a.name.toLowerCase() === lastSeg.toLowerCase())?.name
+        ?? (lastFrom.includes("/") ? relayAgents.find((a) => a.online)?.name ?? null : null);   // a connector whose messages carry the chat's own name
+    const route = routeMessage(line, { local: agents, relay: relayAgents.map((a) => a.name), people: peopleHandles, follow });
+    const toAgent = route.toRelay.length && !/@[a-z0-9]/i.test(line) ? `@${route.toRelay[0]} ${line}` : line;
     if (route.toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
       try {
-        const r = await api.send(line, room);
+        const r = await api.send(toAgent, room);
         setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], r.tasks) }));
       } catch (err) { note(err instanceof Error ? err.message : "That didn't send."); }
       const offline = route.toRelay.filter((n) => !relayAgents.find((a) => a.name.toLowerCase() === n)?.online);

@@ -57,12 +57,29 @@ def denylist() -> set[str]:
     return {x.strip() for x in os.environ.get("TOOL_GATEWAY_DENY", "").split(",") if x.strip()}
 
 
+def own_domain(card: ToolCard) -> bool:
+    """A server that runs on the publisher's own, registry-verified domain: com.pdfoven/pdfoven served from pdfoven.com. The company
+    that owns the name is the one that answers, so a lack of GitHub stars (many company servers have none) says nothing against it.
+    A GitHub namespace (io.github.<user>) proves little and still needs stars."""
+    name = card.name.lower()
+    ns = name.split("/")[0]
+    if ns.startswith("io.github."):
+        return False
+    labels = ns.split(".")
+    if len(labels) < 2:
+        return False
+    domain = ".".join(reversed(labels[:2]))
+    host = (urlsplit(str((card.extra or {}).get("connector_url") or "")).hostname or "").lower()
+    return bool(host) and (host == domain or host.endswith("." + domain))
+
+
 def gateway_allowed(card: ToolCard) -> bool:
-    """Phase 1: a remote server, live without a sign-in, verified publisher, not bulk, some use, not denied."""
+    """A remote server, live without a sign-in, verified publisher, not bulk, not archived, not denied, and either used (stars) or served
+    from its publisher's own verified domain."""
     ex = card.extra or {}
     return (card.source == "registry" and bool(ex.get("connector_url")) and ex.get("probe") == "live"
             and bool(ex.get("verified")) and int(ex.get("owner_count") or 1) <= BULK_PUBLISHER
-            and int(ex.get("stars") or 0) >= MIN_STARS and not ex.get("archived")
+            and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card)) and not ex.get("archived")
             and card.name not in denylist() and os.environ.get("TOOL_GATEWAY", "on").lower() != "off")
 
 

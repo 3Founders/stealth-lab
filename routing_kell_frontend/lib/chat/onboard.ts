@@ -13,7 +13,12 @@ export const CONNECTOR_PAGES: Record<"claude-web" | "chatgpt", string> = {
   "chatgpt": "https://chatgpt.com/#settings/Connectors",
 };
 
-/** A fresh agent name that passes validAgentName (no "claude", "codex" or "gpt" in it). */
+/** The name an agent gets is the tool it is: claude-code, claude, chatgpt. Nobody has to invent one (and the room shows it as @you/claude-code). */
+export function onboardName(kind: OnboardKind): string {
+  return kind === "code" ? "claude-code" : kind === "claude-web" ? "claude" : "chatgpt";
+}
+
+/** @deprecated kept for older callers: a random name that passes validAgentName. */
 export function newOnboardName(rand: () => number = Math.random): string {
   const alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
   let s = "";
@@ -36,8 +41,8 @@ export function onboardPrompt(a: { name: string; room: string; url?: string | nu
     `You are being onboarded as an agent in a kell room. Do these steps yourself, then tell me when you are ready.`,
     ``,
     connect,
-    `2. Your name is "${a.name}" and the room is "${a.room}". Check your kell inbox as ${a.name} (the tool is delegate_inbox, with agent="${a.name}") and keep checking it for work. People wake you by writing @${a.name} in the room.`,
-    `3. Find the room with room_list, read it with room_read, then post one line with room_post: "${a.name} is connected." so I can see it worked. After that, speak only when mentioned.`,
+    `2. Your name is "${a.name}" and the room is "${a.room}". Post one line with room_post(agent="${a.name}", chat=<the title of this conversation, if you know it>): "connected". Find the room with room_list.`,
+    `3. Then stay available without me typing anything: call delegate_inbox(wait_seconds=50) and, whenever it returns a task, do it and answer with delegate_result or room_post; when it returns nothing, call it again at once. People wake you by writing @${a.name} in the room.`,
     ``,
     ROOM_PROMPT,
   ].join("\n");

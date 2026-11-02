@@ -44,7 +44,7 @@ INVITE_MAX_DAYS = 30
 INVITE_MAX_USES = 100
 EVENTS_PER_MINUTE = 120
 TITLE_RE = re.compile(r"^#[a-z0-9][a-z0-9_.-]{0,78}$")
-HANDLE_RE = re.compile(r"^@[a-z0-9][a-z0-9_.-]{0,38}(?:/[a-z0-9][a-z0-9_.-]{0,38})?$", re.I)   # @name, or @person/tool for a connector
+HANDLE_RE = re.compile(r"^@[a-z0-9][a-z0-9_.-]{0,38}(?:/[^\s@/<>][^@/<>\r\n]{0,58})?$", re.I)   # @name, or @person/tool for a connector; after the slash a chat's own name, spaces and all
 KINDS = ("msg", "edit", "delete", "react", "system", "task", "task_update", "note")
 NEEDS_TEXT = ("msg", "edit", "system")
 NEEDS_TARGET = ("edit", "delete", "react")
@@ -357,30 +357,42 @@ def agent_handle(client_id: Optional[str]) -> str:
     return ("@" + cleaned)[:39]
 
 
-_TOOL_LABELS = (("claude-code", "claude-code"), ("claudecode", "claude-code"), ("claude", "claude"), ("chatgpt", "chatgpt"), ("openai", "chatgpt"),
-                ("cursor", "cursor"), ("codex", "codex"), ("gemini", "gemini"), ("windsurf", "windsurf"), ("vscode", "vscode"))
+_TOOL_LABELS = (("claude-code", "claude-code"), ("claudecode", "claude-code"), ("claude-cli", "claude-code"), ("claude code", "claude-code"),
+                ("chatgpt", "chatgpt"), ("openai", "chatgpt"), ("claude", "claude"), ("anthropic", "claude"),
+                ("cursor", "cursor"), ("codex", "codex"), ("gemini", "gemini"), ("windsurf", "windsurf"), ("vscode", "vscode"),
+                ("visual studio code", "vscode"))
 _TOOL_NAMES = {"claude": "Claude", "claude-code": "Claude Code", "chatgpt": "ChatGPT", "cursor": "Cursor", "codex": "Codex", "gemini": "Gemini",
                "windsurf": "Windsurf", "vscode": "VS Code", "agent": "an agent"}
+KNOWN_TOOLS = frozenset(_TOOL_NAMES) - {"agent"}
 
 
-def connector_tool(client_id: Optional[str]) -> str:
-    """Which tool a connector is, from its OAuth client id: claude, claude-code, chatgpt, cursor ... or "agent" when it cannot be told."""
-    raw = (client_id or "").lower()
-    for needle, label in _TOOL_LABELS:
-        if needle in raw:
-            return label
+def connector_tool(*hints: Optional[str]) -> str:
+    """Which tool a connector is: claude, claude-code, chatgpt, cursor ... or "agent" when nothing says. The hints are tried in order and the
+    first that names a tool wins: what the agent said of itself, the name it gave in the MCP handshake (clientInfo.name), its User-Agent,
+    last the OAuth client id (which is usually a random id and tells nothing)."""
+    for hint in hints:
+        raw = (hint or "").lower()
+        for needle, label in _TOOL_LABELS:
+            if needle in raw:
+                return label
     return "agent"
+
+
+def chat_label(raw: Optional[str]) -> str:
+    """A chat's own title as the agent gives it, spaces and capitals kept ("Q4 plan review"); only what could break a handle is removed."""
+    t = re.sub(r"[@/<>\x00-\x1f]", " ", str(raw or ""))
+    return re.sub(r"\s+", " ", t).strip()[:58]
 
 
 def connector_tool_name(tool: str) -> str:
     return _TOOL_NAMES.get(tool, tool)
 
 
-async def connector_handle(pool: Any, sub: str, client_id: Optional[str]) -> str:
+async def connector_handle(pool: Any, sub: str, *hints: Optional[str], chat: str = "") -> str:
     """How a person's connected agent is named in a room: ``@username/claude``, ``@username/chatgpt``, ``@username/claude-code``, so everyone
     can tell whose agent it is and which tool it is. Without a username on the account it is ``@name/tool`` from the display name, else
     ``@agent/tool``."""
-    tool = connector_tool(client_id)
+    tool = connector_tool(*hints)
     owner = ""
     try:
         row = await pool.fetchrow(
@@ -391,7 +403,8 @@ async def connector_handle(pool: Any, sub: str, client_id: Optional[str]) -> str
     if not owner:
         owner = (await _names(pool, [sub])).get(sub, "")
     owner = re.sub(r"[^a-z0-9_.-]", "-", owner.lower()).strip(".-_")[:30] or "agent"
-    return f"@{owner}/{tool}"
+    name = chat_label(chat)
+    return f"@{owner}/{name or tool}"
 
 
 def agent_event(handle: str, text: str, reply_to: Optional[str] = None) -> dict[str, Any]:

@@ -13,6 +13,7 @@ import asyncio
 import functools
 import itertools
 import json
+import logging
 import time
 from collections import deque
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -77,6 +78,11 @@ def traced(fn: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
             result = await fn(*a, **kw)
         except BaseException as exc:  # a cancelled call (the caller hung up) is recorded too, then propagates
             finish(ev, f"{type(exc).__name__}: {exc}", int((time.monotonic() - t0) * 1000), False)
+            if isinstance(exc, Exception) and not isinstance(exc, PermissionError):
+                # An unexpected error used to reach the agent as a bare JSON-RPC -32603 with nothing in the logs. It is logged with its
+                # traceback here, and the agent gets the tool's name and the error as text it can pass on.
+                logging.getLogger(__name__).exception("tool %s failed", fn.__name__)
+                return f"FAILED: {fn.__name__}: {type(exc).__name__}: {str(exc)[:300]}"
             raise
         finish(ev, result if isinstance(result, str) else json.dumps(result, default=str),
                int((time.monotonic() - t0) * 1000), True)

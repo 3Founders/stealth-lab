@@ -1,4 +1,5 @@
 "use client";
+import { isRealName } from "@/lib/chat/artifacts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import PanelShell from "@/components/chat/PanelShell";
@@ -50,6 +51,14 @@ function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
   el.focus();
   el.setRangeText(block, start, e, "end");
   el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/** What a canvas is called in the picker: its title, or - when the title is only a number or a key - "Page 2" / "Document 1" by its place in the list. */
+function shown(d: { title: string; kind: string; id: string }, all: { id: string; kind: string }[]): string {
+  if (isRealName(d.title)) return d.title;
+  const same = all.filter((x) => x.kind === d.kind);
+  const n = Math.max(1, same.findIndex((x) => x.id === d.id) + 1);
+  return `${d.kind === "html" ? "Page" : d.kind === "code" ? "Code" : "Document"} ${n}`;
 }
 
 export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, onContext, timing, socket }: {
@@ -332,7 +341,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
         <div className="dg-doc-pick">
           <div className="dg-picker">
             <button type="button" className="dg-picker-btn" aria-haspopup="listbox" aria-expanded={pickerOpen} onClick={() => setPickerOpen((o) => !o)} disabled={docs.length === 0}>
-              <span className="dg-picker-title">{docs.length > 0 ? (docs.find((d) => d.id === activeId)?.title ?? title) : "Canvas"}</span>
+              <span className="dg-picker-title">{docs.length > 0 ? shown(docs.find((d) => d.id === activeId) ?? { title, kind, id: activeId ?? "" }, docs) : "Canvas"}</span>
               {docs.length > 1 && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
             </button>
             {pickerOpen && docs.length > 1 && (
@@ -341,7 +350,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
                   <li key={d.id} role="option" aria-selected={d.id === activeId}>
                     <button type="button" onClick={() => { setActiveId(d.id); setPickerOpen(false); }}>
                       <span className="dg-picker-kind" aria-hidden="true">{d.kind === "html" ? "PAGE" : d.kind === "code" ? "CODE" : "DOC"}</span>
-                      <span className="dg-picker-name">{d.title}</span>
+                      <span className="dg-picker-name">{shown(d, docs)}</span>
                       <span className="dg-picker-by small dim">{d.updated_by}</span>
                     </button>
                   </li>

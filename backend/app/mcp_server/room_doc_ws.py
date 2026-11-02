@@ -130,6 +130,8 @@ async def handle(scope: dict[str, Any], receive: Any, send: Any, gate: Any, pool
             except asyncio.TimeoutError:
                 await ws.close(code=4408)
                 return
+            except RuntimeError:                      # the browser went away between frames ("not connected"): an ordinary close, not a failure
+                return
             if len(raw) > MAX_MESSAGE:
                 await _send(conn, {"type": "error", "error": "that message is too large", "status": 413})
                 continue

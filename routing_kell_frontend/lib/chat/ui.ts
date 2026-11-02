@@ -63,18 +63,24 @@ export interface RouteDecision {
   defaultToKell: boolean;   // the untagged solo-room rule, for the recipients list
 }
 
-export function routeMessage(line: string, opts: { local: string[]; relay: string[]; people: string[] }): RouteDecision {
+/**
+ * Who a message without an @name goes to. `follow` is the agent that spoke last in the room ("kell", a connected agent's name, or a local
+ * agent's @handle): a reply with no @ continues that conversation, so nobody types @kell or @claude-code before every answer.
+ */
+export function routeMessage(line: string, opts: { local: string[]; relay: string[]; people: string[]; follow?: string | null }): RouteDecision {
   const handles = mentionsIn(line).map((h) => h.toLowerCase());
   const names = handles.map((h) => h.replace(/^@/, ""));
   const local = new Set(opts.local.map((h) => h.toLowerCase()));
   const relay = new Set(opts.relay.map((n) => n.toLowerCase()));
   const people = new Set(opts.people.map((h) => h.replace(/^@/, "").toLowerCase()));
   const anyAt = handles.length > 0 || /(^|\s)@[a-z0-9]/i.test(line);
-  const toRelay = names.filter((n) => relay.has(n));
-  const localMentions = handles.filter((h) => local.has(h));
+  const follow = (opts.follow ?? "").replace(/^@/, "").toLowerCase();
+  const sticky = !anyAt && follow !== "";
+  const toRelay = sticky && relay.has(follow) ? [follow] : names.filter((n) => relay.has(n));
+  const localMentions = sticky && local.has(`@${follow}`) && follow !== "kell" ? [`@${follow}`] : handles.filter((h) => local.has(h));
   const unknown = names.filter((n) => n !== "kell" && !local.has(`@${n}`) && !relay.has(n) && !people.has(n));
   const defaultToKell = !anyAt && opts.people.length === 0;
-  const asksKell = defaultToKell || handles.includes("@kell");
+  const asksKell = defaultToKell || handles.includes("@kell") || (sticky && follow === "kell");
   return { toRelay, localMentions, unknown, asksKell, defaultToKell };
 }
 

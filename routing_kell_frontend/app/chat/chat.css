@@ -1208,10 +1208,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 }
 
 /* Dark mode: the canvas casts a white glow (it was a black shadow on a dark page), and the small notices ("... was removed", "Copied" ...) are a light yellow pill with dark words, not dark yellow. */
-:root[data-theme="dark"] .dg-canvas-wrap[data-state="open"] { box-shadow: -14px 0 44px rgba(255, 255, 255, .13), -1px 0 0 rgba(255, 255, 255, .12); }
+:root[data-theme="dark"] .dg-canvas-wrap[data-state="open"] { box-shadow: -10px 0 40px rgba(255, 255, 255, .035), -1px 0 0 rgba(255, 255, 255, .06); }
 :root[data-theme="dark"] .dg-notice { background: #ffe58a; color: #171717; box-shadow: 0 4px 16px rgba(255, 255, 255, .12); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .dg-canvas-wrap[data-state="open"] { box-shadow: -14px 0 44px rgba(255, 255, 255, .13), -1px 0 0 rgba(255, 255, 255, .12); }
+  :root:not([data-theme="light"]) .dg-canvas-wrap[data-state="open"] { box-shadow: -10px 0 40px rgba(255, 255, 255, .035), -1px 0 0 rgba(255, 255, 255, .06); }
   :root:not([data-theme="light"]) .dg-notice { background: #ffe58a; color: #171717; box-shadow: 0 4px 16px rgba(255, 255, 255, .12); }
 }
 :root[data-theme="dark"] .dg-picker-list, :root[data-theme="dark"] .dg-doc-history { box-shadow: 0 18px 48px rgba(255, 255, 255, .1), 0 0 0 1px rgba(255, 255, 255, .14); }

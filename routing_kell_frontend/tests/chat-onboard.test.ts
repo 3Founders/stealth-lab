@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
+import { connectorInstructions, newOnboardName, onboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { validAgentName } from "@/lib/chat/relay-client";
 import { planLine, planText } from "@/lib/chat/plan";
 
@@ -9,10 +9,14 @@ describe("Connect agent", () => {
   it("a new name is always one the server accepts", () => {
     for (let i = 0; i < 200; i++) expect("error" in validAgentName(newOnboardName())).toBe(false);
   });
+  it("an agent is named for the tool it is", () => {
+    expect([onboardName("code"), onboardName("claude-web"), onboardName("chatgpt")]).toEqual(["claude-code", "claude", "chatgpt"]);
+  });
   it("the message for Claude Code and Cursor names the address, the agent, its inbox tool and the room", () => {
     const t = onboardPrompt({ name: "agent-ab12", room: "#general", url: URL });
     expect(t).toContain(`claude mcp add --transport http kell ${URL}`);
-    expect(t).toContain('delegate_inbox, with agent="agent-ab12"');
+    expect(t).toContain("delegate_inbox(wait_seconds=50)");
+    expect(t).toContain('room_post(agent="agent-ab12"');
     expect(t).toContain("#general");
     expect(t).toContain("@agent-ab12");
   });
