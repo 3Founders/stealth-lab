@@ -24,10 +24,13 @@ const DEVICE_KEY = "device-key";
 
 export type HistoryLine = { kind: "msg"; m: GroupMessage };
 
+/** The things you write or keep yourself, stored like messages (encrypted on this device): canvas documents, notes, memories, knowledge files. */
+export type DocKind = "canvas" | "note" | "memory" | "knowledge";
+
 /** A message waiting to be sent to the server (kept encrypted until it is accepted, so it survives a reload while offline). */
 export interface OutboxItem { id: string; room: string; event: EventIn; at: number }
 
-interface Sealed { v: 1; kind: "msg" | "task" | "meta" | "out"; room: string; id: string; t: number; iv: string; cipher: string }
+interface Sealed { v: 1; kind: "msg" | "task" | "meta" | "out" | "doc"; room: string; id: string; t: number; iv: string; cipher: string }
 
 export interface HistoryExport {
   version: 1;
@@ -53,6 +56,7 @@ export class HistoryStore {
   private outKey = (id: string) => `out:${this.subject}:${id}`;
   private taskKey = (room: string, id: string) => `task:${this.subject}:${room}:${id}`;
   private taskPrefix = (room?: string) => `task:${this.subject}:${room ?? ""}`;
+  private docKey = (kind: DocKind, id: string) => `doc:${this.subject}:${kind}:${id}`;
 
   private async deviceKey(): Promise<CryptoKey> {
     const existing = await this.store.get(DEVICE_KEY);
@@ -64,7 +68,7 @@ export class HistoryStore {
 
   private aad = (kind: string, room: string, id: string) => te.encode(`${this.subject}|${kind}|${room}|${id}`);
 
-  private async seal(kind: "msg" | "task" | "meta" | "out", room: string, id: string, t: number, value: unknown): Promise<Sealed> {
+  private async seal(kind: "msg" | "task" | "meta" | "out" | "doc", room: string, id: string, t: number, value: unknown): Promise<Sealed> {
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const cipher = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: this.aad(kind, room, id) }, await this.deviceKey(), te.encode(JSON.stringify(value)));
     return { v: 1, kind, room, id, t, iv: b64(iv), cipher: b64(new Uint8Array(cipher)) };
@@ -193,6 +197,32 @@ export class HistoryStore {
       if (k.startsWith(`ev:${this.subject}:`) || k.startsWith(`task:${this.subject}:`) || k.startsWith(`idx:${this.subject}:`)) await this.store.delete(k);
     }
     await this.setMeta("cursors", {}); // the next sync downloads everything again from your account
+  }
+
+  // ---- your own documents (canvas, notes, ...): one encrypted record each, bound to this account and kind by the authenticated data
+  async putDoc(kind: DocKind, id: string, value: unknown, t = Date.now()): Promise<void> {
+    await this.store.set(this.docKey(kind, id), await this.seal("doc", kind, id, t, value));
+  }
+
+  async getDoc<T>(kind: DocKind, id: string): Promise<T | null> {
+    const s = (await this.store.get(this.docKey(kind, id))) as Sealed | undefined;
+    return s && s.room === kind ? this.open<T>(s) : null;
+  }
+
+  /** Every document of a kind, newest change first. A record that fails to decrypt is skipped, never shown. */
+  async listDocs<T>(kind: DocKind): Promise<Array<{ id: string; t: number; value: T }>> {
+    const out: Array<{ id: string; t: number; value: T }> = [];
+    const p = `doc:${this.subject}:${kind}:`;
+    for (const k of (await this.store.keys()).filter((x) => x.startsWith(p))) {
+      const s = (await this.store.get(k)) as Sealed | undefined;
+      const v = s && s.room === kind ? await this.open<T>(s) : null;
+      if (v) out.push({ id: s!.id, t: s!.t, value: v });
+    }
+    return out.sort((a, b) => b.t - a.t);
+  }
+
+  async deleteDoc(kind: DocKind, id: string): Promise<void> {
+    await this.store.delete(this.docKey(kind, id));
   }
 
   /** A readable copy of everything, for you to keep. */

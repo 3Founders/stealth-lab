@@ -114,3 +114,40 @@ describe("in-tab agents survive a reload", () => {
     expect(readAgents(s, "u2")).toEqual(["@ok"]);
   });
 });
+
+describe("your own documents (canvas, notes)", () => {
+  it("are encrypted at rest, survive a reload, list newest first, and can be deleted", async () => {
+    const s = mapStore();
+    const a = new HistoryStore(s, "u1");
+    await a.putDoc("canvas", "c1", { title: "Launch plan", text: "the secret is swordfish" }, 1000);
+    await a.putDoc("canvas", "c2", { title: "Other", text: "hello" }, 2000);
+    await a.putDoc("note", "n1", { title: "A note" }, 1500);
+    const dump = JSON.stringify([...s.map.entries()].filter(([k]) => k !== "device-key"));
+    expect(dump).not.toContain("swordfish");
+    expect(dump).not.toContain("Launch plan");
+    const b = new HistoryStore(s, "u1");
+    expect((await b.listDocs<{ title: string }>("canvas")).map((d) => d.value.title)).toEqual(["Other", "Launch plan"]);
+    expect((await b.getDoc<{ title: string }>("note", "n1"))?.title).toBe("A note");
+    await b.deleteDoc("canvas", "c1");
+    expect((await b.listDocs("canvas")).length).toBe(1);
+  });
+  it("belong to one account and one kind: a record moved to another kind or account is not shown", async () => {
+    const s = mapStore();
+    const a = new HistoryStore(s, "u1");
+    await a.putDoc("canvas", "c1", { title: "mine" });
+    const moved = (s.map.get("doc:u1:canvas:c1")) as unknown;
+    s.map.set("doc:u1:note:c1", moved);
+    s.map.set("doc:u2:canvas:c1", moved);
+    expect(await a.getDoc("note", "c1")).toBeNull();
+    expect(await new HistoryStore(s, "u2").getDoc("canvas", "c1")).toBeNull();
+  });
+  it("are not removed by clearing the room history, and the history list does not show them as rooms", async () => {
+    const s = mapStore();
+    const h = new HistoryStore(s, "u1");
+    await h.putDoc("note", "n1", { title: "keep me" });
+    await h.appendMessage(msg("m1", "#general", 1000, "hi"));
+    await h.clearAll();
+    expect((await h.getDoc<{ title: string }>("note", "n1"))?.title).toBe("keep me");
+    expect(await h.rooms()).toEqual([]);
+  });
+});
