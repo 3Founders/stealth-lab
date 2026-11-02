@@ -2,9 +2,27 @@
 import { useEffect, useRef, useState } from "react";
 import { revealStep, visiblePrefix } from "@/lib/chat/smooth";
 
+/** The newest words are their own spans, so each one fades in once, when it first appears. Older words fold into one plain string. */
+export const FADE_WINDOW = 28;
+
+/** Splits revealed text into words (each with its trailing space). */
+export const wordsOf = (s: string): string[] => s.match(/\S+\s*|\s+/g) ?? [];
+
+/** Shown while the first words have not arrived yet: three pulses and a shimmering label. The same indicator @kell shows. */
+export function Thinking({ label = "Thinking" }: { label?: string }) {
+  return (
+    <span className="dg-thinking dg-think" role="status" aria-label={label}>
+      <span className="dg-pulse" /><span className="dg-pulse" /><span className="dg-pulse" />
+      <span className="dg-think-label" aria-hidden="true">{label}</span>
+    </span>
+  );
+}
+
 /**
- * The text of a reply that is still arriving, revealed at a steady pace (lib/chat/smooth.ts). With "reduce motion" on, or in a
- * background tab, it shows what has been received as it is. A text that is not an extension of the last one starts over.
+ * The text of a reply that is still arriving, revealed at a steady pace (lib/chat/smooth.ts) with each new word fading in
+ * (a short ease-out, like iOS sheets; no motion with "reduce motion"). With "reduce motion" on, or in a background tab, it shows
+ * what has been received as it is. A text that is not an extension of the last one starts over. Before any text has arrived it
+ * shows the thinking indicator.
  */
 export default function SmoothText({ text }: { text: string }) {
   const [shown, setShown] = useState(0);
@@ -37,5 +55,13 @@ export default function SmoothText({ text }: { text: string }) {
   }, []);
 
   const out = visiblePrefix(text, Math.min(shown, text.length));
-  return <>{out || "…"}</>;
+  if (!out) return <Thinking />;
+  const words = wordsOf(out);
+  const base = Math.max(0, words.length - FADE_WINDOW);
+  return (
+    <>
+      {words.slice(0, base).join("")}
+      {words.slice(base).map((w, i) => <span key={base + i} className="dg-tok">{w}</span>)}
+    </>
+  );
 }

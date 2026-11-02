@@ -6,7 +6,7 @@ import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import { newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { bare } from "@/components/chat/bare";
-import SmoothText from "@/components/chat/SmoothText";
+import SmoothText, { Thinking } from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
 import { recordUse, withinCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore } from "@/lib/byok/vault";
@@ -869,9 +869,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     <Avatar who={assistantIdentityFor("@kell")} />
                     <div className="dg-col">
                       <div className="dg-meta"><b>kell</b><span className="dg-badge">agent</span></div>
-                      <div className="dg-body dg-thinking" role="status" aria-label="kell is working">
-                        <span className="dg-pulse" /><span className="dg-pulse" /><span className="dg-pulse" />
-                      </div>
+                      <div className="dg-body" role="status" aria-label="kell is working"><Thinking /></div>
                     </div>
                   </MessageScroller.Item>
                 )}
