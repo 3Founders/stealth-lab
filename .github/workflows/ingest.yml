@@ -63,7 +63,7 @@ jobs:
           ls -lh config/skill_sources.yaml
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -146,7 +146,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -278,7 +278,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
