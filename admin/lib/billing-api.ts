@@ -61,6 +61,14 @@ export const getPlans = (s?: AbortSignal) => apiGet<{ plans: PlanRow[] }>(`${B}/
 export const savePlan = (plan: string, body: { price_paise?: number; period_days?: number; included_usd?: string; active?: boolean; max_redemptions?: number | null }) =>
   apiPut<{ row: PlanRow; note: string }>(`${B}/plans/${encodeURIComponent(plan)}`, body);
 
+/** Someone on a plan: bought, or added by the founders. */
+export interface PlanPerson { user_id: string; display_name: string | null; email: string | null; since: string; until: string; source: "grant" | "paid" }
+export const getPlanPeople = (plan: string, s?: AbortSignal) =>
+  apiGet<{ people: PlanPerson[] }>(`${B}/plans/${encodeURIComponent(plan)}/people`, s);
+export const grantPlan = (plan: string, email: string) =>
+  apiPost<{ user_id: string; display_name: string | null; email: string | null; plan: string; since: string; until: string; included_usd: string }>(
+    `${B}/plans/${encodeURIComponent(plan)}/grant`, { email });
+
 /** Referral codes: issued here, plus the personal ones made for buying accounts. No reward is paid for any of them. */
 export const getReferralCodes = (s?: AbortSignal) => apiGet<{ codes: ReferralCodeRow[] }>(`${B}/referral-codes?limit=500`, s);
 export const createReferralCode = (code: string, note: string) =>

@@ -159,6 +159,55 @@ async def test_a_plan_limit_counts_people_and_open_checkouts_and_no_limit_is_nev
     assert await plans.cap_reached(pool, "pilot", full) is True
     assert await plans.cap_reached(pool, "pilot", room) is False
     assert await plans.cap_reached(pool, "pilot", open_ended) is False
+    assert plans.DEFAULT_TIERS["pilot"].max_redemptions == 101
+
+
+def _pilot_row(**over):
+    row = {"plan": "pilot", "price_paise": 64_900, "period_days": 30, "included_usd": Decimal("4"), "active": True, "max_redemptions": 101}
+    row.update(over)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_granting_a_plan_adds_one_period_and_its_usage_and_counts_against_the_limit():
+    pool = FakePool({
+        "SELECT plan, price_paise": [_pilot_row()],
+        "AS n": {"n": 5},
+        "FROM users": {"user_id": BUYER, "display_name": "Ada", "email": "ada@example.com"},
+        "FROM plan_entitlements WHERE buyer_user_id": None,
+        "INSERT INTO plan_entitlements": 1,
+    })
+    out = await plans.grant(pool, plan="pilot", email="Ada@Example.com", granted_by="admin@example")
+    assert out["user_id"] == BUYER and out["plan"] == "pilot" and out["included_usd"] == "4"
+    _sql, args = pool.statements("INSERT INTO org_wallet_credits")[0]
+    assert args[0] == BUYER and args[2] == Decimal("4") and args[3] == "admin@example"
+    ent = pool.statements("INSERT INTO plan_entitlements")[0][1]
+    assert ent[0] == BUYER and ent[1] == "pilot" and str(ent[4]).startswith("grant:")   # no payment: a grant
+
+
+@pytest.mark.asyncio
+async def test_a_grant_is_refused_when_the_launch_is_full_or_the_person_is_unknown_or_already_has_it():
+    full = FakePool({"SELECT plan, price_paise": [_pilot_row()], "AS n": {"n": 101}})
+    with pytest.raises(plans.PlanError):
+        await plans.grant(full, plan="pilot", email="a@b.co", granted_by="admin")
+    unknown = FakePool({"SELECT plan, price_paise": [_pilot_row()], "AS n": {"n": 5}, "FROM users": None})
+    with pytest.raises(plans.PlanError):
+        await plans.grant(unknown, plan="pilot", email="nobody@example.com", granted_by="admin")
+    held = FakePool({"SELECT plan, price_paise": [_pilot_row()], "AS n": {"n": 5},
+                     "FROM users": {"user_id": BUYER, "display_name": "Ada", "email": "ada@example.com"},
+                     "FROM plan_entitlements WHERE buyer_user_id": 1})
+    with pytest.raises(plans.PlanError):
+        await plans.grant(held, plan="pilot", email="ada@example.com", granted_by="admin")
+
+
+@pytest.mark.asyncio
+async def test_the_people_on_a_plan_are_listed_with_how_they_got_it():
+    rows = [{"user_id": BUYER, "display_name": "Ada", "email": "ada@x.io", "starts_at": NOW,
+             "ends_at": NOW + timedelta(days=30), "payment_ref": "grant:abc"},
+            {"user_id": "u2", "display_name": None, "email": None, "starts_at": NOW,
+             "ends_at": NOW + timedelta(days=30), "payment_ref": "pay_1"}]
+    got = await plans.holders(FakePool({"FROM plan_entitlements e": rows}), "pilot")
+    assert [p["source"] for p in got] == ["grant", "paid"]
 
 
 # ------------------------------------------------------------------ renewals and the team slug

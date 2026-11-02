@@ -33,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -104,7 +105,7 @@ class TierRow(NamedTuple):
 
 def _defaults() -> dict[str, TierRow]:
     d = {p: TierRow(p, t["inr"] * 100, t["days"], Decimal(t["usd"])) for p, t in TIERS.items()}
-    d["pilot"] = TierRow("pilot", PILOT_SEAT_INR * 100, PILOT_DAYS, Decimal("4"), max_redemptions=100)
+    d["pilot"] = TierRow("pilot", PILOT_SEAT_INR * 100, PILOT_DAYS, Decimal("4"), max_redemptions=101)
     return d
 
 
@@ -231,6 +232,68 @@ async def cap_reached(pool: Any, plan: str, tier: Optional[TierRow]) -> bool:
     if tier is None or tier.max_redemptions is None:
         return False
     return await redeemed(pool, plan) >= tier.max_redemptions
+
+
+async def user_by_email(pool: Any, email: str) -> Optional[dict[str, Any]]:
+    """The account with this email, or None. Only people who have signed in at least once exist here; a grant cannot
+    create an account."""
+    addr = str(email or "").strip()
+    if "@" not in addr or len(addr) > 254:
+        raise PlanError("enter the email they signed up with")
+    async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+        row = await conn.fetchrow(
+            "SELECT id::text AS user_id, display_name, email FROM users WHERE lower(email) = lower($1) AND is_active "
+            "ORDER BY t_created DESC LIMIT 1", addr)
+    return dict(row) if row else None
+
+
+async def holders(pool: Any, plan: str) -> list[dict[str, Any]]:
+    """Who has the one-person plan, newest first: bought or added by the founders, and until when."""
+    async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+        rows = await conn.fetch(
+            "SELECT e.buyer_user_id::text AS user_id, u.display_name, u.email, e.starts_at, e.ends_at, e.payment_ref "
+            "FROM plan_entitlements e LEFT JOIN users u ON u.id = e.buyer_user_id "
+            "WHERE e.plan = $1 AND e.seats = 1 ORDER BY e.starts_at DESC LIMIT 200", plan)
+    return [{"user_id": r["user_id"], "display_name": r["display_name"], "email": r["email"],
+             "since": r["starts_at"].isoformat(), "until": r["ends_at"].isoformat(),
+             "source": "grant" if str(r["payment_ref"] or "").startswith("grant:") else "paid"} for r in rows]
+
+
+async def grant(pool: Any, *, plan: str, email: str, granted_by: str) -> dict[str, Any]:
+    """Put a person on a plan for one period, at no charge, with the included usage. The dashboard states exactly what
+    this does before confirming; the audit log records who did it. It uses one place in a capped launch."""
+    tier = (await every_map(pool)).get(plan)
+    if tier is None:
+        raise PlanError("no such plan")
+    if await cap_reached(pool, plan, tier):
+        raise PlanError("this launch is full; raise the limit first")
+    user = await user_by_email(pool, email)
+    if user is None:
+        raise PlanError("no account with that email yet; they need to sign in once first")
+    buyer = str(user["user_id"])
+    async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+        already = await conn.fetchval(
+            "SELECT 1 FROM plan_entitlements WHERE buyer_user_id = $1::uuid AND plan = $2 AND ends_at > now() LIMIT 1",
+            buyer, plan)
+    if already or (plan == "pilot" and await has_pilot(pool, buyer)):
+        raise PlanError("they have already had this plan")
+    if not await accounts.ensure_account(pool, user_id=buyer, env={"KELL_WALLETS": "on"}):
+        raise PlanError("their wallet account could not be set up; try again in a moment")
+    now = datetime.now(timezone.utc)
+    ends = now + timedelta(days=int(tier.period_days))
+    ref = "grant:" + uuid.uuid4().hex
+    async with tenant_transaction(pool, TenantScope.for_tenant(buyer)) as conn:
+        await conn.execute(
+            "INSERT INTO org_wallet_credits (organization_id, payment_ref, source, amount_paise, amount_usd, created_by) "
+            "VALUES ($1::uuid, $2, 'grant_included', 0, $3, $4)",
+            buyer, f"{ref}:included", tier.included_usd, granted_by)
+    async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
+        await conn.execute(
+            "INSERT INTO plan_entitlements (buyer_user_id, account_id, plan, seats, team_name, starts_at, ends_at, "
+            "payment_ref, order_id, amount_paise) VALUES ($1::uuid, $1::uuid, $2, 1, NULL, $3, $4, $5, NULL, 0)",
+            buyer, plan, now, ends, ref)
+    return {"user_id": buyer, "display_name": user["display_name"], "email": user["email"], "plan": plan,
+            "since": now.isoformat(), "until": ends.isoformat(), "included_usd": str(tier.included_usd)}
 
 
 def _ti(tiers: Optional[Mapping[str, TierRow]]) -> Mapping[str, TierRow]:

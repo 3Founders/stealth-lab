@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { AdminNotice, Hero, Stat } from "@/components/Admin";
 import { CsvButton } from "@/components/Widgets";
 import {
-  STATES, createReferralCode, deleteReferralCode, getInvoices, getOrders, getOverview, getPayments, getPlans, getReconciliation,
-  getReferralCodes, getSeller, issueCreditNote, issueInvoice, rupees, savePlan, saveSeller, setReferralCode, stateName,
-  type ApiState, type BillingOverview, type Invoice, type OrderRow, type PaymentRow, type PlanRow, type Reconciliation,
+  STATES, createReferralCode, deleteReferralCode, getInvoices, getOrders, getOverview, getPayments, getPlanPeople, getPlans, getReconciliation,
+  getReferralCodes, getSeller, grantPlan, issueCreditNote, issueInvoice, rupees, savePlan, saveSeller, setReferralCode, stateName,
+  type ApiState, type BillingOverview, type Invoice, type OrderRow, type PaymentRow, type PlanPerson, type PlanRow, type Reconciliation,
   type ReferralCodeRow, type SellerState,
 } from "@/lib/billing-api";
 
@@ -298,6 +298,7 @@ function PlansTab() {
         ))}</tbody>
       </table></div>
       {editing && <PlanEdit row={editing} onClose={() => setEditing(null)} onDone={(m) => { setEditing(null); setMsg(m); reload(); }} />}
+      <PlanPeople plan="pilot" />
     </>
   );
 }
@@ -333,6 +334,54 @@ function PlanEdit({ row, onClose, onDone }: { row: PlanRow; onClose: () => void;
       <div className="cluster"><button className="btn-ink" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button><button type="button" className="btn-line" onClick={onClose} disabled={busy}>Cancel</button></div>
       {error && <p className="small" role="alert">{error}</p>}
     </form>
+  );
+}
+
+/** Add a person to a plan by email: one period and its included usage, at no charge, counted against the launch limit. */
+function PlanPeople({ plan }: { plan: string }) {
+  const [s, reload] = useLoad<{ people: PlanPerson[] }>((sig) => getPlanPeople(plan, sig));
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    const who = email.trim();
+    if (!who || busy) return;
+    if (!window.confirm(`Add ${who} to ${planLabel(plan)}? One period and its included usage, at no charge. This uses one place in the launch limit.`)) return;
+    setBusy(true); setMsg("");
+    const r = await grantPlan(plan, who);
+    setBusy(false);
+    setMsg(r.kind === "ok" ? `Added ${r.data.email ?? who}; the plan runs to ${new Date(r.data.until).toLocaleDateString("en-GB")}.`
+      : r.kind === "error" ? r.message : `Not added (${r.kind}).`);
+    if (r.kind === "ok") { setEmail(""); reload(); }
+  }
+  if (s.kind !== "ok") return <AdminNotice state={s} />;
+  return (
+    <div className="profile-card" style={{ marginTop: 20 }} aria-labelledby="plan-people-title">
+      <h2 className="h3" id="plan-people-title">People on {planLabel(plan)}</h2>
+      <p className="small dim">
+        Add someone by the email they signed up with. They get one period and its included usage at no charge; it counts against
+        the launch limit. They must have signed in once so an account exists.
+      </p>
+      <form className="cform" onSubmit={add} style={{ maxWidth: 560 }}>
+        <div className="cfield"><label htmlFor="g-email">Their email</label><input id="g-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></div>
+        <div className="cluster"><button className="btn-ink" type="submit" disabled={busy || !email.trim()}>{busy ? "Adding…" : "Add person"}</button></div>
+        {msg && <p className="small" role="status">{msg}</p>}
+      </form>
+      {s.data.people.length === 0 ? <div className="empty"><b>No one yet.</b></div> : (
+        <div className="table-wrap"><table className="table">
+          <thead><tr><th>Person</th><th>From</th><th>Until</th><th>How</th></tr></thead>
+          <tbody>{s.data.people.map((p) => (
+            <tr key={`${p.user_id}-${p.until}`}>
+              <td>{p.display_name || p.email || p.user_id.slice(0, 8)}</td>
+              <td>{when(p.since)}</td>
+              <td>{when(p.until)}</td>
+              <td>{p.source === "grant" ? "Added by us" : "Bought"}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+    </div>
   );
 }
 

@@ -198,6 +198,23 @@ async def plan_save(plan: str, body: dict, ctx=Depends(billing_admin), pool=Depe
     return {"row": {**row._asdict(), "included_usd": str(row.included_usd)}, "note": "Applies to orders made after this moment."}
 
 
+@router.get("/plans/{plan}/people")
+async def plan_people(plan: str, ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    """Who has the one-person plan, bought or added by the founders, and until when."""
+    return {"people": await plans.holders(pool, plan)}
+
+
+@router.post("/plans/{plan}/grant", status_code=201)
+async def plan_grant(plan: str, body: dict, ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    """Add a person by email: one period and its included usage, at no charge, counted against the plan's limit."""
+    try:
+        out = await plans.grant(pool, plan=plan, email=str(body.get("email") or ""), granted_by=ctx.subject)
+    except plans.PlanError as exc:
+        raise _service_problem(exc) from exc
+    await _audit(pool, ctx, "billing.plan_granted", out["user_id"], {"plan": plan, "until": out["until"], "included_usd": out["included_usd"]})
+    return out
+
+
 @router.get("/referral-codes")
 async def codes_all(limit: int = Query(500, ge=1, le=1000), ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
     """Every code with how many orders it has been made with. Referrer rewards are not built; this list is the record."""
