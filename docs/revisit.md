@@ -39,27 +39,21 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ## Our agent (OpenCode)
 
-- **Models and providers for our agent.** Today everything runs on General Compute (one key): minimax-m2.7 cheap,
-  deepseek-v3.2 strong. Problems seen on 2026-11-01:
-  - deepseek-v3.2 on General Compute rejects OpenCode's requests at random (403/400 or "Streaming request failed"; one
-    run needed 6 tries over about 15 minutes);
-  - deepseek-v3.2 refuses requests that ask for 8k+ output tokens (kell caps it at 4k).
-
-  To do:
-  1. Add a fallback for the strong rung: retry once, then fall back to minimax-m2.7 or gemma-4-31B-it, and log it.
-  2. Ask General Compute about the random blocks and the output limit.
-  3. Add a second provider for the strong model (DeepInfra, already used for embeddings and images, or DeepSeek's own
-     API), so one provider's outage doesn't stop escalation. gpt-oss is out (owner, 2026-10-31).
-  4. Revisit the cheap and strong pair once the routing test prompts (handoff Part 3) have been run on it. (OpenCode leg
-      ran 2026-11-02: minimax-m2.7 carried all 18 prompts that completed; the strong rung only fired through escalation
-      and was killed by the provider both times. The pair stands until the strong rung has a fallback.)
+- **Models and providers for our agent.** Cheap minimax-m2.7 and strong deepseek-v3.2, both on General Compute (one
+  key); a second provider (DeepInfra, `--strong-key-env`, default `DEEPINFRA_KEY`) moves the strong rung to its
+  DeepSeek-V3.2 with gc/deepseek-v3.2 as the fallback, and the provider-failure fallback (retry once, then the
+  fallback, once per turn) is in the plugin (2026-11-02, both live-verified). Remaining:
+  1. Ask General Compute about the random blocks, the "Streaming request failed" 400s, and the output limit.
+  2. A GC-wide outage still kills a turn even with the fallback (both providers went down in the same window on
+     2026-11-02); a third provider or queueing would soften it.
 - **The Part 3 fixture is too small to observe the routing of web, browser, docs and image tools.** Prompts 7, 10, 12, 19
   and 20 ended in correct "not applicable" refusals (no React project, one commit, no login page, no README, no email
   code), so those expectations could not be checked. A richer fixture (a web page, a stale README, several commits, email
   code) would make them real. Table: [opencode_spike_2026-11.md](opencode_spike_2026-11.md) Part 3.
-- **The agent's shell tool inherits PowerShell 5 on Windows.** Models write bash-style `&&` chains, which PS 5 rejects
-  ("The token '&&' is not a valid statement separator"), costing retries (prompt 14). Setups on Windows should put a bash
-  (Git Bash) first on PATH for the agent's shell, or document the limitation.
+- **The agent's shell tool inherits PowerShell 5 on Windows.** Models write bash-style `&&` chains, which PS 5 rejects.
+  Mitigated and verified 2026-11-02: telling the model in the prompt that the shell is PS 5 removed the `&&` failures
+  (prompt 14 re-run); the user doc should keep that tip, and a setup option to put Git Bash first on PATH remains an
+  option.
 - **`test/claude_exec.test.mjs` needs real Git Bash on this machine.** When `bash` on PATH is WSL's (`C:\Windows\System32\bash.exe`, as on the 2026-11-01 machine), the test "hook commands run through bash with Windows backslash paths" fails exit 127 (WSL bash cannot run a Windows binary path); it skips only when bash is missing. Install Git Bash ahead of WSL on PATH, or make the test detect and skip a WSL bash.
 - **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start). Not
   reproduced on 2026-11-01 (16 runs, 0 hangs, including 6 right after a config rewrite), so the cause hunt stopped; a 60 s
@@ -145,3 +139,21 @@ generation). Waiting:
   Claude Code's hooks become `npx -y kell-mcp@latest hook-prompt`: an npx start on every prompt. Make them
   `npm install -g` first. Until then [new_user_setup.md](new_user_setup.md) uses `npm install -g kell-mcp`.
 - **npm publish and the first real users** (Chaitanya): [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md).
+
+## Needs the owners
+
+Steps that need a person (money, a sign-in, an account, a decision outside the repo). Nothing else blocks on them; each
+is skipped in the current work and recorded here.
+
+- **kell/images has no credits on its image provider (OpenRouter)** — top the account up or switch providers
+  (DeepInfra already serves images elsewhere). Detail: "The tool gateway" above. Until then no user-visible image has
+  come out of kell/images end to end.
+- **The npm publish** (Chaitanya): the first version number, whether `"license": "UNLICENSED"` stays, and the push.
+- **Where a pilot user's model key comes from:** their own General Compute key or a kell-run organisation. Detail:
+  [handoff_claude_code_launch_2026-10-30.md](handoff_claude_code_launch_2026-10-30.md) section 3.
+- **Claude Code and claude.ai runs of the 20 Part 3 prompts** — needs those accounts; the OpenCode leg is done
+  ([opencode_spike_2026-11.md](opencode_spike_2026-11.md)).
+- **Code signing for the Windows installer** — without a certificate, SmartScreen warns on first install.
+- **macOS build of the desktop app** — only if it needs no extra work beyond the Windows build; else it waits.
+- **Asking General Compute about deepseek** — the random 403/400 blocks, the "Streaming request failed" 400s, and the
+  8k+ output-token refusal (kell caps it at 4k today).
