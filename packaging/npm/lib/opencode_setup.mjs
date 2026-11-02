@@ -84,6 +84,11 @@ export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE
                                 options: { baseURL: DI_BASE_URL, apiKey: `{env:${strongKeyEnv}}` }, models: DI_MODELS };
     owned.add("provider.di");
   }
+  // The built-in image tool would race kell's own images tool for image prompts; kell/images is the one routed and
+  // recorded, so OpenCode's experimental generator is switched off in the config kell writes (2.2.5:
+  // config.experimental.image_generate, a boolean or { model }).
+  c.experimental = { ...(c.experimental || {}), image_generate: false };
+  owned.add("experimental.image_generate");
   const plug = pluginDir.replace(/\\/g, "/");
   c.plugin = [...(Array.isArray(c.plugin) ? c.plugin : []).filter((p) => p !== plug), plug];
   owned.add("plugin");
@@ -109,6 +114,9 @@ export function withoutKell(cfg, { pluginDir, owned: list = [] }) {
   }
   if (owned.has("provider.gc") && c.provider) { const p = { ...c.provider }; delete p[PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
   if (owned.has("provider.di") && c.provider) { const p = { ...c.provider }; delete p[DI_PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
+  if (owned.has("experimental.image_generate") && c.experimental?.image_generate === false) {
+    const e = { ...c.experimental }; delete e.image_generate; c.experimental = e; if (!Object.keys(e).length) delete c.experimental;
+  }
   if (owned.has("model") && c.model === STRONG_MODEL) delete c.model;
   if (owned.has("schema")) delete c.$schema;
   return c;

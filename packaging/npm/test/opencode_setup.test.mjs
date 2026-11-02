@@ -15,6 +15,7 @@ test("withKell adds the provider, plugin, MCP server and model; withoutKell remo
   assert.equal(config.mcp.servers.kell.codemode, false);
   assert.equal(config.mcp.servers.kell.headers.Authorization, "Bearer t");
   assert.equal(config.model, "anthropic/claude", "the user's own default model is kept");
+  assert.equal(config.experimental.image_generate, false, "the built-in image generator is off; kell/images is the image tool");
   assert.ok(!("kell_owned" in config));
   assert.deepEqual(withoutKell(config, { pluginDir, owned }), mine);
 });
