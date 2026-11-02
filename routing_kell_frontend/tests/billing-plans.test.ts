@@ -103,6 +103,17 @@ describe("plan requests", () => {
     expect(await api(reply(200, { code: null, kind: null }) as unknown as typeof fetch).myReferral()).toEqual({ kind: "ok", data: { code: null } });
     expect((await api(reply(200) as unknown as typeof fetch, null).myReferral()).kind).toBe("signed-out");
   });
+  it("auto-renew asks for a subscription, reads it back, and can be cancelled", async () => {
+    const f = reply(200, { subscription_id: "sub_9", key_id: "k", plan: "plus", period_days: 30, amount_paise: 200000, autopay: true });
+    const r = await api(f as unknown as typeof fetch).autopayOrder({ plan: "plus" });
+    expect(r).toEqual({ kind: "ok", data: { subscriptionId: "sub_9", keyId: "k", plan: "plus", periodDays: 30, amountPaise: 200000 } });
+    expect(bodyOf(f)).toEqual({ plan: "plus", autopay: true });
+    const s = reply(200, { plan: "plus", seats: 1, status: "active", current_end: "2026-12-02T00:00:00Z", amount_paise: 200000, period_days: 30 });
+    expect(await api(s as unknown as typeof fetch).mySubscription()).toEqual({ kind: "ok", data: { plan: "plus", seats: 1, status: "active", currentEnd: "2026-12-02T00:00:00Z", amountPaise: 200000, periodDays: 30 } });
+    const c = reply(200, { cancelled: true });
+    expect(await api(c as unknown as typeof fetch).cancelSubscription()).toEqual({ kind: "ok", data: { cancelled: true } });
+    expect((c.mock.calls[0] as [string, RequestInit])[0]).toBe("https://mcp.test/v1/billing/subscription/cancel");
+  });
 });
 
 describe("plan prices live in lib/plans.ts (built-in copy) and in the server's rows when it answers", () => {

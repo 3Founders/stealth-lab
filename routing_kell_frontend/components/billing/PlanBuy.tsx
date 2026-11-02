@@ -2,12 +2,12 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "@/lib/session";
-import { anyPlanActive, openCheckout, plainDate, planActive, type Loaded, type PlanState, type billingApi } from "@/lib/billing";
+import { anyPlanActive, openCheckout, openSubscriptionCheckout, plainDate, planActive, type Loaded, type PlanState, type billingApi } from "@/lib/billing";
 import { planById, type BuyablePlanId } from "@/lib/plans";
 
 const link = { textDecoration: "underline" } as const;
 
-type Api = Pick<ReturnType<typeof billingApi>, "planOrder">;
+type Api = Pick<ReturnType<typeof billingApi>, "planOrder" | "autopayOrder">;
 
 /** About a minute: 24 looks, 2.5 s apart. */
 export const PLAN_WAIT_LOOKS = 24;
@@ -26,16 +26,17 @@ export const PLAN_WAIT_MS = 2500;
  * `orderCode` is the referral code a person applied above the plans; it is sent with a pilot order (the server checks it again) and
  * never for another plan, whose price the code does not change.
  */
-export default function PlanBuy({ plan, api, session, state, reload, orderCode, returnTo = "/pricing", checkout = openCheckout, waitMs = PLAN_WAIT_MS, looks = PLAN_WAIT_LOOKS, now }: {
+export default function PlanBuy({ plan, api, session, state, reload, orderCode, returnTo = "/pricing", checkout = openCheckout, subscribe = openSubscriptionCheckout, waitMs = PLAN_WAIT_MS, looks = PLAN_WAIT_LOOKS, now }: {
   plan: BuyablePlanId; api: Api; session: Session | null | undefined;
   state: Loaded<PlanState> | null; reload: () => Promise<Loaded<PlanState>>;
   orderCode?: string;
-  returnTo?: string; checkout?: typeof openCheckout; waitMs?: number; looks?: number; now?: () => Date;
+  returnTo?: string; checkout?: typeof openCheckout; subscribe?: typeof openSubscriptionCheckout; waitMs?: number; looks?: number; now?: () => Date;
 }) {
   const p = planById(plan);
   const days = p.periodDays ?? 30;
   const clock = now ?? (() => new Date());
   const [busy, setBusy] = useState(false);
+  const [autopay, setAutopay] = useState(false);
   const [note, setNote] = useState("");
   const [orderId, setOrderId] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,6 +64,19 @@ export default function PlanBuy({ plan, api, session, state, reload, orderCode, 
     if (busy) return;
     setBusy(true); setNote(""); setOrderId("");
     const beforeUntil = current?.plan === plan ? current.activeUntil : null;
+    if (autopay && plan !== "pilot") {
+      const sub = await api.autopayOrder({ plan });
+      if (sub.kind === "off") { await reload(); setNote("Buying plans isn’t switched on yet. Nothing was charged."); setBusy(false); return; }
+      if (sub.kind === "signed-out") { setNote("Your session has ended. Sign in again to buy."); setBusy(false); return; }
+      if (sub.kind === "error") { setNote(sub.message); setBusy(false); return; }
+      const paid = await subscribe({ subscriptionId: sub.data.subscriptionId, keyId: sub.data.keyId }, `keळ ${p.name}, every ${days} days`);
+      if (!live.current) return;
+      setBusy(false);
+      if (paid === "paid") { setNote("Payment received. Auto-renew is on; waiting for the bank to confirm the mandate…"); waitForPlan(beforeUntil, ""); }
+      else if (paid === "closed") setNote("The payment window was closed. You haven't been charged.");
+      else setNote("The payment didn't go through. You haven't been charged; try again.");
+      return;
+    }
     const order = await api.planOrder({
       plan,
       ...(plan === "pilot" ? { seats: 1 } : {}),           // the one-person plan is one seat
@@ -95,6 +109,12 @@ export default function PlanBuy({ plan, api, session, state, reload, orderCode, 
           {active && current && <p className="small" role="status"><b>{p.name} active until {plainDate(current.activeUntil!)}.</b></p>}
           {otherActive && current?.plan && <p className="small dim" role="status">{planById(current.plan).name} is active until {plainDate(current.activeUntil!)}. If you buy {p.name} too, both run, and the higher plan applies.</p>}
           {ended && current?.activeUntil && <p className="small" role="status">Your {p.name} ended on {plainDate(current.activeUntil)}.</p>}
+          {plan !== "pilot" && (
+            <label className="small" style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <input type="checkbox" checked={autopay} onChange={(e) => setAutopay(e.target.checked)} disabled={busy} />
+              <span>Renew automatically every {days} days. Your bank authorises a recurring payment; cancel from Billing before the next charge.</span>
+            </label>
+          )}
           {/* Reserved: referral codes have their own section above the plans (components/billing/ReferralCode.tsx), so this stays empty and hidden. */}
           <div data-slot="have-a-code" hidden />
           <button className="btn-ink" type="button" disabled={busy} onClick={() => void buy()}>

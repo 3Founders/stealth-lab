@@ -31,14 +31,15 @@ const btn = (label: string) => [...host!.querySelectorAll("button")].find((b) =>
 const click = async (el: Element | undefined) => { await act(async () => { (el as HTMLElement).click(); }); };
 
 /** The card's controls with a state that can change when reload() is called, as the page does. */
-function Harness({ plan, states, planOrder = vi.fn(async (_req?: object) => orderFor(plan)), session = SESSION, checkout, waitMs = 1000, looks = 5, orderCode }: {
-  plan: BuyablePlanId; states: Array<Loaded<PlanState> | null>; planOrder?: ReturnType<typeof vi.fn>; session?: Session | null | undefined;
-  checkout?: () => Promise<"paid" | "closed" | "failed">; waitMs?: number; looks?: number; orderCode?: string;
+function Harness({ plan, states, planOrder = vi.fn(async (_req?: object) => orderFor(plan)), autopayOrder = vi.fn(none), session = SESSION, checkout, subscribe, waitMs = 1000, looks = 5, orderCode }: {
+  plan: BuyablePlanId; states: Array<Loaded<PlanState> | null>; planOrder?: ReturnType<typeof vi.fn>; autopayOrder?: ReturnType<typeof vi.fn>;
+  session?: Session | null | undefined; checkout?: () => Promise<"paid" | "closed" | "failed">;
+  subscribe?: () => Promise<"paid" | "closed" | "failed">; waitMs?: number; looks?: number; orderCode?: string;
 }) {
   const [i, setI] = React.useState(0);
   const idx = React.useRef(0);
   const reload = async () => { idx.current = Math.min(idx.current + 1, states.length - 1); setI(idx.current); return states[idx.current] ?? states[0]!; };
-  return <PlanBuy plan={plan} api={{ planOrder: planOrder as never }} session={session} state={states[i]} reload={reload} checkout={checkout} waitMs={waitMs} looks={looks} now={NOW} orderCode={orderCode} />;
+  return <PlanBuy plan={plan} api={{ planOrder: planOrder as never, autopayOrder: autopayOrder as never }} session={session} state={states[i]} reload={reload} checkout={checkout} subscribe={subscribe} waitMs={waitMs} looks={looks} now={NOW} orderCode={orderCode} />;
 }
 const at = (state: Loaded<PlanState> | null, over: Partial<React.ComponentProps<typeof Harness>> = {}) => <Harness plan="plus" states={[state]} {...over} />;
 
@@ -51,7 +52,7 @@ describe("in the plan's own card", () => {
   });
 
   it("checking the session and the plan show a plain status, with no buy button", async () => {
-    await mount(<PlanBuy plan="plus" api={{ planOrder: none }} session={undefined} state={null} reload={async () => ok(null)} />);
+    await mount(<PlanBuy plan="plus" api={{ planOrder: none, autopayOrder: none }} session={undefined} state={null} reload={async () => ok(null)} />);
     expect(text()).toContain("Checking your session");
     act(() => root?.unmount()); host?.remove();
     await mount(at(null));
@@ -109,7 +110,26 @@ describe("in the plan's own card", () => {
     expect(slot.hidden).toBe(true);
     expect(slot.childElementCount).toBe(0);
     expect(text()).not.toMatch(/have a code|promo|referral|discount/i);
-    expect(host!.querySelector("input")).toBeNull();
+    expect(host!.querySelector('input[type="text"]')).toBeNull();
+    expect(host!.querySelectorAll("input").length).toBe(1);                    // only the auto-renew checkbox
+    expect((host!.querySelector("input") as HTMLInputElement).type).toBe("checkbox");
+  });
+
+  it("auto-renew is opt-in: the checkbox starts a subscription and the mandate is confirmed like a payment", async () => {
+    const autopayOrder = vi.fn(async (_req?: object) => ({ kind: "ok" as const, data: { subscriptionId: "sub_9", keyId: "rzp_test", plan: "plus", periodDays: 30, amountPaise: 200000 } }));
+    const subscribe = vi.fn(async (_o?: object, _d?: string) => "paid" as const);
+    await mount(<Harness plan="plus" states={[ok(null), ok(null)]} autopayOrder={autopayOrder} subscribe={subscribe} waitMs={1000} looks={1} />);
+    await act(async () => { (host!.querySelector('input[type="checkbox"]') as HTMLInputElement).click(); });
+    await click(btn("Buy Plus"));
+    expect(autopayOrder).toHaveBeenCalledWith({ plan: "plus" });
+    expect(subscribe).toHaveBeenCalledWith({ subscriptionId: "sub_9", keyId: "rzp_test" }, expect.stringContaining("every 30 days"));
+    expect(text()).toContain("Auto-renew is on");
+  });
+
+  it("the one-person plan has no auto-renew: no checkbox, and the order stays one-time", async () => {
+    await mount(<Harness plan="pilot" states={[ok(null)]} orderCode="FRIEND" />);
+    expect(host!.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(text()).toContain("Buy First Trial");
   });
 
   it("the one-person plan's order carries one seat and the applied code, and still no amount", async () => {

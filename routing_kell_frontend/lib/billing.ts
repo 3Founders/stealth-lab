@@ -86,6 +86,14 @@ export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("e
 
 export interface BillingDeps { token(): Promise<string | null>; origin?: string; fetchImpl?: typeof fetch }
 
+/** Auto-renew: the plan and (optionally) seats. The server starts a Razorpay Subscription; Checkout authorises the mandate. */
+export type AutopayOrderRequest = { plan: PlanName; seats?: number; referralCode?: string };
+
+/** The account's running auto-renew, as GET /v1/billing/subscription answers it. */
+export interface SubscriptionState {
+  plan: string | null; seats: number; status: string | null; currentEnd: string | null; amountPaise: number; periodDays: number;
+}
+
 export function parseWallet(j: Record<string, unknown>): Wallet {
   const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
   const credits = Array.isArray(j.credits) ? j.credits : [];
@@ -181,6 +189,37 @@ export function billingApi(deps: BillingDeps) {
       if (r.kind !== "ok") return r;
       return { kind: "ok", data: { code: typeof r.data.code === "string" && r.data.code ? r.data.code : null } };
     },
+    /** Start an opt-in auto-renew. Nothing is charged until Checkout authorises the mandate. */
+    async autopayOrder(req: AutopayOrderRequest): Promise<Loaded<{ subscriptionId: string; keyId: string; plan: string; periodDays: number; amountPaise: number }>> {
+      const body: Record<string, unknown> = { plan: req.plan, autopay: true };
+      if (req.seats !== undefined) body.seats = req.seats;
+      if (req.referralCode) body.referral_code = req.referralCode;
+      const r = await call("POST", "/orders", body);
+      if (r.kind !== "ok") return r;
+      const d = r.data;
+      if (typeof d.subscription_id !== "string" || typeof d.key_id !== "string") return { kind: "error", message: "The payment window could not be prepared." };
+      return { kind: "ok", data: { subscriptionId: d.subscription_id, keyId: d.key_id, plan: String(d.plan ?? req.plan), periodDays: Number(d.period_days) || 0, amountPaise: Number(d.amount_paise) || 0 } };
+    },
+    /** The account's running auto-renew, if any (docs/autopay.md). */
+    async mySubscription(): Promise<Loaded<SubscriptionState>> {
+      const r = await call("GET", "/subscription");
+      if (r.kind !== "ok") return r;
+      const d = r.data;
+      return { kind: "ok", data: {
+        plan: typeof d.plan === "string" && d.plan ? d.plan : null,
+        seats: Number(d.seats) || 0,
+        status: typeof d.status === "string" && d.status ? d.status : null,
+        currentEnd: typeof d.current_end === "string" && d.current_end ? d.current_end : null,
+        amountPaise: Number(d.amount_paise) || 0,
+        periodDays: Number(d.period_days) || 0,
+      } };
+    },
+    /** Stop future auto-renew charges; the plan already paid for keeps running. */
+    async cancelSubscription(): Promise<Loaded<{ cancelled: boolean }>> {
+      const r = await call("POST", "/subscription/cancel", {});
+      if (r.kind !== "ok") return r;
+      return { kind: "ok", data: { cancelled: r.data.cancelled === true } };
+    },
         async planOrder(req: PlanOrderRequest): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; periodDays: number }>> {
       const body: Record<string, unknown> = { plan: req.plan };
       if (req.seats !== undefined) body.seats = req.seats;
@@ -208,7 +247,7 @@ export function billingApi(deps: BillingDeps) {
 export const CHECKOUT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
 
 interface RazorpayOptions {
-  key: string; order_id: string; amount: number; currency: "INR"; name: string; description: string;
+  key: string; order_id?: string; subscription_id?: string; amount?: number; currency: "INR"; name: string; description: string;
   handler: () => void; modal: { ondismiss: () => void }; theme: { color: string };
 }
 type RazorpayCtor = new (o: RazorpayOptions) => { open(): void; on(ev: string, cb: (r: unknown) => void): void };
@@ -233,6 +272,20 @@ export async function openCheckout(o: { orderId: string; amountPaise: number; ke
   return new Promise((resolve) => {
     const rz = new Razorpay({
       key: o.keyId, order_id: o.orderId, amount: o.amountPaise, currency: "INR", name: "keळ", description,
+      handler: () => resolve("paid"), modal: { ondismiss: () => resolve("closed") }, theme: { color: "#193A70" },
+    });
+    rz.on("payment.failed", () => resolve("failed"));
+    rz.open();
+  });
+}
+
+/** Opens the payment window to authorise an auto-renew mandate. Resolves like openCheckout; nothing is charged here beyond the first cycle. */
+export async function openSubscriptionCheckout(o: { subscriptionId: string; keyId: string }, description = "Auto-renew"): Promise<"paid" | "closed" | "failed"> {
+  const Razorpay = await loadCheckout();
+  if (!Razorpay) return "failed";
+  return new Promise((resolve) => {
+    const rz = new Razorpay({
+      key: o.keyId, subscription_id: o.subscriptionId, currency: "INR", name: "keळ", description,
       handler: () => resolve("paid"), modal: { ondismiss: () => resolve("closed") }, theme: { color: "#193A70" },
     });
     rz.on("payment.failed", () => resolve("failed"));

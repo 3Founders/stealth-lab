@@ -9,7 +9,11 @@ Buying credits, on the hosted MCP service (the site calls these; Razorpay calls 
                              {"plan": "pro"} or {"plan": "pilot", "seats": 1..10, "team_name": "..."} -> a plan order
                              {"plan": "pilot", "seats": 1, "referral_code": ...} -> the individual pilot, sold only with
                              a referral code the server recognises; the code is recorded on the order (never a price)
+                             {"plan": "starter"|"pro"|"plus", "autopay": true} -> a Razorpay Subscription (auto-renew,
+                             charged every period_days); the first charge is the authorisation payment
   GET  /v1/billing/plan      the buyer's latest plan: plan, seats, team_name, active_until
+  GET  /v1/billing/subscription  the buyer's running auto-renew (plan, status, next charge), if any   (website session)
+  POST /v1/billing/subscription/cancel  stop future auto-renew charges                                (website session)
   GET  /v1/billing/referral  the buyer's own personal referral code, if any - rewards are NOT built               (session)
   POST /v1/billing/codes/check  {"code": ...} -> {"valid": true} or a 400 saying why. No session, limited per IP.
   POST /v1/billing/webhook   Razorpay's payment.captured / order.paid                (signature, no session)
@@ -35,7 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import accounts, packs, plans, referrals, wallet
+from app.services import accounts, packs, plans, referrals, subscriptions, wallet
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
@@ -183,11 +187,19 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             order = plans.parse_plan_order(data, await plans.active_map(pool), await referrals.active_codes(pool))
             if order.plan == "pilot" and await plans.has_pilot(pool, account):
                 raise plans.PlanConflict("this account has already had this plan; contact us to extend it")
+            if data.get("autopay") is True:
+                sub = await subscriptions.create(pool, buyer_user_id=account, plan=order.plan, seats=order.seats,
+                                                 referral_code=order.referral_code)
+                return _json(request, {"subscription_id": sub["subscription_id"], "key_id": os.environ["RAZORPAY_KEY_ID"],
+                                       "plan": sub["plan"], "seats": sub["seats"], "period_days": sub["period_days"],
+                                       "amount_paise": sub["amount_paise"], "autopay": True}, 201)
             rz = await _create_razorpay_order(order.amount_paise, f"kell-{order.plan}-{account[:8]}")
             await wallet.record_order(pool, org_id=account, order_id=str(rz["id"]), amount_paise=order.amount_paise,
                                       created_by=who.actor_id, plan=order.plan, seats=order.seats,
                                       team_name=order.team_name, buyer_user_id=account, period_days=order.period_days,
                                       referral_code=order.referral_code)
+        except subscriptions.SubscriptionError as exc:
+            return _err(request, exc.status, str(exc))
         except plans.PlanError as exc:
             return _err(request, exc.status, str(exc))
         except wallet.WalletError as exc:
@@ -219,6 +231,31 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
             return bad
         mine = await referrals.mine(pool_getter(), account)
         return _json(request, mine or {"code": None, "kind": None})
+
+    @server.custom_route("/v1/billing/subscription", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def subscription_route(request: Request) -> Response:
+        """The buyer's running auto-renew, for /account/billing (plan, status, about when the next charge is)."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, account, bad = await person(request)
+        if bad is not None:
+            return bad
+        got = await subscriptions.by_buyer(pool_getter(), account)
+        return _json(request, got or {"plan": None, "seats": 0, "status": None, "current_end": None,
+                                      "amount_paise": 0, "period_days": 0})
+
+    @server.custom_route("/v1/billing/subscription/cancel", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def subscription_cancel_route(request: Request) -> Response:
+        """Stop future charges. The plan already paid for keeps running to its end."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, account, bad = await person(request)
+        if bad is not None:
+            return bad
+        try:
+            return _json(request, await subscriptions.cancel(pool_getter(), account))
+        except subscriptions.SubscriptionError as exc:
+            return _err(request, exc.status, str(exc))
 
     @server.custom_route("/v1/billing/codes/check", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def codes_check_route(request: Request) -> Response:
@@ -256,15 +293,27 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                                        os.environ.get("RAZORPAY_WEBHOOK_SECRET")):
             return Response(status_code=400)                       # not from Razorpay: credit nothing
         try:
-            pay = payment_from_event(json.loads(raw))
+            body = json.loads(raw)
         except ValueError:
             return Response(status_code=400)
-        if pay is None:
-            return Response(status_code=200)                       # an event we do not act on
         pool = pool_getter()
         event_id = request.headers.get("x-razorpay-event-id")
         if await wallet.event_seen(pool, event_id):
             return Response(status_code=200)                       # a redelivery of work already done
+        event = body.get("event") if isinstance(body, dict) else None
+        if not isinstance(body, dict):
+            return Response(status_code=200)                       # not an object: nothing to act on
+        if isinstance(event, str) and event.startswith("subscription."):
+            try:
+                await subscriptions.on_event(pool, event, body)
+                await wallet.mark_event(pool, event_id)
+            except Exception:  # noqa: BLE001 - tell Razorpay to retry rather than lose a charge
+                log.exception("billing webhook: subscription event %s failed", event)
+                return Response(status_code=500)
+            return Response(status_code=200)
+        pay = payment_from_event(body)
+        if pay is None:
+            return Response(status_code=200)                       # an event we do not act on
         order = await wallet.find_order(pool, pay["order_id"])
         if order is None or int(order["amount_paise"]) != pay["amount"]:
             log.warning("billing webhook: payment %s does not match a known order", pay["payment_id"])

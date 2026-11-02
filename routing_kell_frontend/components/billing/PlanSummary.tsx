@@ -1,8 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { anyPlanActive, plainDate, type Loaded, type PlanState, type billingApi } from "@/lib/billing";
-import { planById } from "@/lib/plans";
+import { anyPlanActive, plainDate, type Loaded, type PlanState, type SubscriptionState, type billingApi } from "@/lib/billing";
+import { planById, type PlanId } from "@/lib/plans";
 import type { Session } from "@/lib/session";
 
 const link = { textDecoration: "underline" } as const;
@@ -11,17 +11,29 @@ const link = { textDecoration: "underline" } as const;
  * A buying account also has a personal referral code (made when its plan was activated): it unlocks the one-person Pilot for
  * whoever uses it. No reward is paid for sharing it (docs/referral_legality_2026-11.md). */
 export default function PlanSummary({ api, session, returnTo = "/account/billing", now }: {
-  api: Pick<ReturnType<typeof billingApi>, "plan" | "myReferral">; session: Session | null | undefined; returnTo?: string; now?: () => Date;
+  api: Pick<ReturnType<typeof billingApi>, "plan" | "myReferral" | "mySubscription" | "cancelSubscription">;
+  session: Session | null | undefined; returnTo?: string; now?: () => Date;
 }) {
   const [state, setState] = useState<Loaded<PlanState> | null>(null);
   const [referral, setReferral] = useState<string | null>(null);
+  const [sub, setSub] = useState<Loaded<SubscriptionState> | null>(null);
+  const [msg, setMsg] = useState("");
   useEffect(() => {
     if (!session) return;
     let live = true;
     api.plan().then((s) => { if (live) setState(s); });
     api.myReferral().then((r) => { if (live && r.kind === "ok") setReferral(r.data.code); });
+    api.mySubscription().then((r) => { if (live) setSub(r); });
     return () => { live = false; };
   }, [session, api]);
+  const subscription = sub?.kind === "ok" && sub.data.plan ? sub.data : null;
+
+  async function cancel() {
+    if (!window.confirm("Cancel auto-renew? The plan you have paid for keeps running to its end; no further charges are made.")) return;
+    const r = await api.cancelSubscription();
+    setMsg(r.kind === "ok" ? "Auto-renew cancelled. No further charges." : r.kind === "error" ? r.message : `Not cancelled (${r.kind}).`);
+    if (r.kind === "ok") setSub(await api.mySubscription());
+  }
   const current = state?.kind === "ok" ? state.data : null;
   const active = anyPlanActive(current, now ? now() : new Date());
 
@@ -49,6 +61,15 @@ export default function PlanSummary({ api, session, returnTo = "/account/billing
         <p className="small" role="status" style={{ marginTop: 10 }}>
           Your code to share: <code>{referral}</code>. Someone who uses it unlocks the one-person {planById("pilot").name} plan on
           the pricing page. No reward is paid for sharing it.
+        </p>
+      )}
+      {session && subscription && (
+        <p className="small" role="status" style={{ marginTop: 10 }}>
+          Auto-renew: <b>{planById(subscription.plan as PlanId).name}</b> every {subscription.periodDays} days
+          {subscription.currentEnd ? <>, next charge about {plainDate(subscription.currentEnd)}</> : null}
+          {subscription.status && subscription.status !== "active" ? ` (${subscription.status})` : ""}.{" "}
+          <button type="button" className="btn-line" onClick={() => void cancel()}>Cancel auto-renew</button>
+          {msg && <> {msg}</>}
         </p>
       )}
     </div>
