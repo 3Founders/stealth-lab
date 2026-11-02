@@ -321,5 +321,52 @@ fixture (`shop/tax.py` bug: 4 tests fail), `kell` on OpenCode 2.2.5, `--auto`, s
   after it expired fails its turn at kell's MCP connect while the plugin refreshes the token on the way past.
   A rerun after the refresh works without any new sign-in.
 
+## Part 3 (2026-11-01/02): the 20 routing prompts on the OpenCode agent
+
+Setup: the clean-profile CLI (2.2.5) with the productised plugin, the `gc` provider (cheap `minimax-m2.7`, strong
+`deepseek-v3.2`), `--auto` only inside the `proj` fixture, `git checkout -- .` between prompts, and one retry when General
+Compute failed a run (`Streaming request failed` / `HTTP 403`). Driver and raw outputs are scratch
+(`.scratch/ocprof/run_p3.ps1`, `p3/pNN.out`, `p3/results.csv`), not committed. The Claude Code and claude.ai arms need the
+person's own accounts and did not run.
+
+Wall is the sum over attempts (a GC flake inside an attempt costs its full wall). "Image" = the built-in image tool,
+attempted through kell.
+
+| # | prompt (short) | model(s) | tools | wall | outcome |
+|---|---|---|---|---|---|
+| 1 | `==` vs `is` | minimax | – | 24 s | correct, two sentences, cheap, no tools |
+| 2 | explain the regex | minimax | – | 31 s | correct breakdown |
+| 3 | rename `calc_total` | minimax | read, grep | 27 s | right: the function does not exist; no tool suggested |
+| 4 | "thanks, that's all" | minimax | – | 26 s | pleasantry only |
+| 5 | failing test | minimax (one escalated turn → deepseek, killed by GC 403) | read, edit, shell | 84 s (2 att.) | `clamp` `lo`→`hi`, 4/4 pass |
+| 6 | signup validation | minimax | write, shell | 69 s | validators + 9 tests pass |
+| 7 | React 18→19 | minimax | read, glob | 35 s | right refusal: no React in the fixture; the docs tool could not be observed |
+| 8 | left-pad safety | minimax | webfetch | 36 s | correct: deprecated, supply-chain risk, use `padStart` |
+| 9 | 'k' logo | minimax | kell_discover_tools, image | 46 s (2 att.) | image tool named and attempted; OpenRouter account has no credits → no image; SVG offered |
+| 10 | changelog, 10 commits | minimax | shell | 21 s | right: the repo has 1 commit |
+| 11 | API 500 on empty body | minimax → deepseek | read, glob, grep, edit, write, shell | 189 s (2 att.) | **failed**: both attempts died at GC 403; had reproduced 3 test failures, fix never landed |
+| 12 | login page in a browser | minimax | read, glob, grep, shell | 40 s | right: no login page in the fixture; no browser tool installed |
+| 13 | jsonargparse issues | minimax | kell_discover_tools, webfetch | 67 s | found #880 (repo moved to `mauvilsa/`), drafted a fix plan; public API, no sign-in needed |
+| 14 | 4-min suite under 1 min | minimax → deepseek | read, glob, grep, edit, write, shell | 769 s (2 att.) | **failed**: the fixture's PowerShell 5 shell rejects the model's `&&` chains, then the escalated deepseek turn died at GC |
+| 15 | `/health` + mocked DB failure | minimax (one deepseek turn in the killed attempt) | read, glob, edit, write, shell | 262 s (2 att.) | 503-on-db-down, tests pass; final work on the cheap model |
+| 16 | hero banner + image | minimax | image | 59 s | three ideas; image blocked (no credits); HTML/SVG alternative offered |
+| 17 | error tracking | minimax | kell_discover_tools, read, glob, edit, shell | 247 s (2 att.) | SDK init wired + setup steps; finishing needs a real Sentry project/DSN (a person) |
+| 18 | `deleted_at` migration | minimax | read, glob, grep, write, shell | 317 s (2 att.) | alembic migration, queries filter deleted rows, 5 tests pass; no escalation needed |
+| 19 | README vs code | minimax | read, glob | 33 s | right: no README exists; no outside tool |
+| 20 | duplicate emails | minimax | read, glob, grep, skill, shell | 157 s (2 att.) | right: no email code in the repo; systematic elimination |
+
+Scorecard against the handoff's "what good looks like":
+
+- 1–4 and 10 never reach the strong model and cost under a cent each (usage lines ran ~$0.004–0.005): **yes**.
+- 5–6 and 15 finish on the cheap model with tests passing: **yes** (each needed one retry after a GC flake).
+- 7–9, 12–13 and 16–17 name the right tool once at the start: **yes where observable** (8 webfetch, 9 image, 13
+  GitHub/webfetch, 17 observability); 7, 12 and 16 could not be observed on this fixture (no React project, no login
+  page, no image credits).
+- 11, 14, 18 and 20 may escalate: **14 escalated on cue** (and 5 did too, unprompted); 11 escalated but died at the
+  provider; 18 and 20 never needed it.
+- Nothing suggested for 3, 4 or 19: **yes**.
+
+The two outright failures (11, 14) are provider/environment, not routing — see revisit.md.
+
 
 

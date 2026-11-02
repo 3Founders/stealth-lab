@@ -50,7 +50,16 @@ items here (not in other docs); remove one when it is done, with the commit that
   2. Ask General Compute about the random blocks and the output limit.
   3. Add a second provider for the strong model (DeepInfra, already used for embeddings and images, or DeepSeek's own
      API), so one provider's outage doesn't stop escalation. gpt-oss is out (owner, 2026-10-31).
-  4. Revisit the cheap and strong pair once the routing test prompts (handoff Part 3) have been run on it.
+  4. Revisit the cheap and strong pair once the routing test prompts (handoff Part 3) have been run on it. (OpenCode leg
+      ran 2026-11-02: minimax-m2.7 carried all 18 prompts that completed; the strong rung only fired through escalation
+      and was killed by the provider both times. The pair stands until the strong rung has a fallback.)
+- **The Part 3 fixture is too small to observe the routing of web, browser, docs and image tools.** Prompts 7, 10, 12, 19
+  and 20 ended in correct "not applicable" refusals (no React project, one commit, no login page, no README, no email
+  code), so those expectations could not be checked. A richer fixture (a web page, a stale README, several commits, email
+  code) would make them real. Table: [opencode_spike_2026-11.md](opencode_spike_2026-11.md) Part 3.
+- **The agent's shell tool inherits PowerShell 5 on Windows.** Models write bash-style `&&` chains, which PS 5 rejects
+  ("The token '&&' is not a valid statement separator"), costing retries (prompt 14). Setups on Windows should put a bash
+  (Git Bash) first on PATH for the agent's shell, or document the limitation.
 - **`test/claude_exec.test.mjs` needs real Git Bash on this machine.** When `bash` on PATH is WSL's (`C:\Windows\System32\bash.exe`, as on the 2026-11-01 machine), the test "hook commands run through bash with Windows backslash paths" fails exit 127 (WSL bash cannot run a Windows binary path); it skips only when bash is missing. Install Git Bash ahead of WSL on PATH, or make the test detect and skip a WSL bash.
 - **The remaining cold-start hang.** One cause is fixed (the plugin no longer waits on the MCP list at start). Not
   reproduced on 2026-11-01 (16 runs, 0 hangs, including 6 right after a config rewrite), so the cause hunt stopped; a 60 s
@@ -66,10 +75,10 @@ items here (not in other docs); remove one when it is done, with the commit that
   `user-agent: opencode/latest/2.2.5/desktop`). Looks like its edge's bot/WAF rules or capacity throttling, not kell's.
   Owners: ask General Compute to allow OpenCode/agent UA sonsign their deepseek route, or whether admission is throttled.
   Meanwhile the plan doc's `Options.headers` field is a dead end; a local undici forwarder is a workaround, not shipped.
-- **Not done from the spike plan:** the timing and cost table against Claude Code (the OpenCode leg's table is now in
-  [opencode_spike_2026-11.md](opencode_spike_2026-11.md), the Claude Code/claude.ai legs need the user's own accounts);
-  the Anthropic-key option; renaming opencode_spike_2026-11.md to a product doc. The clean-profile acceptance and the
-  live escalation with the weak-provider fixture ran on 2026-11-01 (rows in the spike doc).
+- **Not done from the spike plan:** the timing and cost table against Claude Code (the OpenCode leg's tables are now in
+  [opencode_spike_2026-11.md](opencode_spike_2026-11.md); Part 3's OpenCode leg ran 2026-11-02, the Claude Code/claude.ai
+  legs need the user's own accounts); the Anthropic-key option; renaming opencode_spike_2026-11.md to a product doc. The
+  clean-profile acceptance and the live escalation with the weak-provider fixture ran on 2026-11-01 (rows in the spike doc).
 - **The plugin needs npm at setup** (`@opencode/plugin` 2.2.5 is installed into `~/.stealthlab/opencode/plugin`); kell-mcp
   itself keeps no dependencies. Publishing the plugin as its own npm package would remove that step.
 
@@ -121,6 +130,9 @@ generation). Waiting:
 - **Tools that act for the user** (send, post, pay, delete) through the gateway, with a confirmation step.
 - **Terms review** of each allowlisted server's terms (owner decision: who does it).
 - **More of kell's own capabilities** like `kell/images`: voice (text to speech), video, if users ask for them.
+- **kell/images has no credits on its image provider (OpenRouter).** Both image prompts in Part 3 named the right tool
+  and tried it, and both got back "the account has no credits available" — so no user-visible image has ever been
+  produced end to end. Owner: top the account up or switch the provider (DeepInfra is already used for images elsewhere).
 
 ## Product
 

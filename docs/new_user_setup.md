@@ -270,6 +270,7 @@ It removes only what kell added to OpenCode's settings; your own settings stay.
 | OpenCode says "Streaming request failed" | Run `kell setup --client opencode` again (it sets the output limit General Compute needs), then restart OpenCode. |
 | OpenCode shows kell's server as needing a login | Run `kell login`, then `kell setup --client opencode` again. |
 | The first OpenCode run after about an hour from the sign-in shows kell's server rejecting the token, and the turn fails | The saved sign-in token lasts about an hour. The plugin refreshes it on its own and fixes the file to hand for the next connect, so run the prompt again; if it still refuses, run `kell login` and `kell setup --client opencode` again. |
+| OpenCode says "Managed service port 28894 ... already in use" | Another OpenCode app on this machine (for example the OpenCode desktop app) already runs the shared service. Give your setup its own port: `opencode service set port 28941` (any free port), then start again. |
 
 For anything else, send the kell team what you typed, what you saw, and (for Claude Code) the last lines of
 `~/.stealthlab/hooks.log`.

@@ -1,6 +1,7 @@
 # The desktop app: kell's own coding app (plan for approval, 2026-11-01)
 
-Status: plan. Nothing here is built. The shell choice (Tauri or Electron) needs the owners before step 2.
+Status: plan, with steps 1–2 built as a prototype (`desktop/`, commit `4504eeb3`, verified end to end 2026-11-02). The
+shell choice (Tauri or Electron) still needs the owners before steps 3–6. Verified facts: "Prototype built" below.
 
 ## Goal
 
@@ -45,8 +46,8 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
   `kell setup --client opencode` into the profile the app owns (the isolated-profile pattern).
 - The app also starts (or finds) the console helper, the same way `console_launch.mjs` does, and shares one sign-in
   with it.
-- The UI talks to OpenCode through `@opencode/sdk` (sessions, prompts, streamed events) and to the helper for keys,
-  models and the activity feed.
+- The UI talks to OpenCode through `@opencode/client` (the generated typed HTTP client; the SDK's in-process Effect host
+  is not used) for sessions, prompts and streamed events, and to the helper for keys, models and the activity feed.
 - What the console shows: the app's sessions appear in its Activity panel, because both report to the same hosted
   server (`report_model_run`, `/tools/outcome`).
 
@@ -74,13 +75,37 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
 
 1. **Skeleton:** `desktop/` with the Next.js UI (token CSS copied into `globals.css`) and a `main` process (or sidecar)
    that spawns `opencode serve` and the helper, both health-checked before the window opens the UI.
-2. **Chat with streaming:** sessions list + chat view through `@opencode/sdk`; show tool calls as they happen.
+2. **Chat with streaming:** sessions list + chat view through `@opencode/client`; show tool calls as they happen.
 3. **Changes panel:** per session, diff of the session's edits (OpenCode's file-changed events), Apply / Undo via
    `kell undo`; dry-run first with the fixture.
 4. **Model strip and tool cards:**(simplicity) model + cost per step from `kell_usage` events; kell's tool suggestions
    from the plugin's existing note path.
 5. **Sign-in:** the app shows "Signed in as ..." from the helper; a "Sign in" button runs `kell login` (browser OAuth).
 6. **Packaging:** installers for Windows and macOS. **Not published without the owners.**
+
+## Prototype built (2026-11-02, `desktop/`)
+
+Steps 1–2 of the build order exist as a Next.js 15 app (`desktop/`): `POST /api/engine` boots the engine, the page is the
+chat with streamed events, `POST /api/undo` runs `kell undo`. `npm run build` is green; the flow boot → prompt → undo ran
+live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts, for whoever builds steps 3–6:
+
+- **Engine process:** one `opencode serve --hostname 127.0.0.1 --port 0` child per Next server, spawned by
+  `lib/engine.ts` with the isolated profile's env; the singleton lives on `globalThis.__kellEngineState` because Next
+  bundles each route with its own module instance.
+- **Auth is Basic on `/api/*`:** the engine answers `WWW-Authenticate: Basic realm="Secure Area"` there and wants
+  `base64("opencode:<password>")`; the printed password as a bearer token works on the other routes (`/agent/list`,
+  `/session`). `clientFor` bakes the Basic header into the `@opencode/client` instance.
+- **Event payloads put everything under `data.*`** (`session.text.delta` → `data.delta`; `session.step.ended` →
+  `data.cost`, `data.tokens`, `data.model`), not under `properties`.
+- **Subscribe before prompting** in the SSE route, and filter events to the turn's `data.sessionID` — otherwise the turn
+  can finish before the stream starts, or another session's events leak in.
+- **The turn's terminator is `session.execution.succeeded` / `session.execution.failed`** (`session.idle` may not fire in
+  serve mode); the route forwards that as `{"type":"done","outcome":...}`.
+- **Model strip feed:** `session.step.ended` carries cost and tokens per step; the page sums it into a spend total (the
+  plugin's `kell_usage` line remains the kell-side copy).
+- **Environment:** the OpenCode desktop app already installed here owns managed-service port 28894, so a second setup
+  needs `opencode service set port <other>` (the profile uses 28941; row in new_user_setup.md). SSE through
+  PowerShell's `Invoke-WebRequest` looks like zero events — test with `curl.exe -N`.
 
 ## Later
 
