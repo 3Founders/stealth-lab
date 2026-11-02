@@ -6,6 +6,7 @@ import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import SearchPalette from "@/components/chat/SearchPalette";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
+import { tempLabel, toTurns } from "@/lib/chat/temporary";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
@@ -145,6 +146,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const tasksRef = useRef(tasksByRoom);
   tasksRef.current = tasksByRoom;
 
+  // Temporary rooms live in memory only: never saved to this device, never synced (lib/chat/temporary.ts).
+  const tempRef = useRef<Set<string>>(new Set());
+
   // sidebar forms
   const [adding, setAdding] = useState(false);
   const [addName, setAddName] = useState("");
@@ -166,7 +170,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (l.kind === "msg" && cur.some((x) => x.kind === "msg" && x.m.id === l.m.id)) return;
     lineStore.current = { ...lineStore.current, [r]: [...cur, l] }; // read straight away by the agents' history, before any re-render
     bump((n) => n + 1);
-    if (l.kind === "msg") {
+    if (l.kind === "msg" && !tempRef.current.has(r)) {
       history.appendMessage(l.m).catch(() => warnHistory());
       if (!remote) void engineRef.current?.enqueue(r, l.m); // typed or produced on this device: it goes to your account
     }
@@ -210,7 +214,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
     askingKell.current.add(key);
     if (who === "@kell") setKellBusy((p) => ({ ...p, [r]: true }));
-    const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    const temp = tempRef.current.has(r);
+    const id = temp ? "temporary" : engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     const done = () => { askingKell.current.delete(key); if (who === "@kell") setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); };
     if (!id) { note("This room is still syncing. Give it a second, then send again.", r); done(); return; }
     const ctl = new AbortController();
@@ -221,12 +226,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const out = await roomsAgent.agentStream(id, text, (delta) => {
         if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: ((p[who]?.text) ?? "") + delta } }));
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
-      }, ctl.signal, who, presetsRef.current[who]);
-      if (out.event?.id) {
+      }, ctl.signal, who, presetsRef.current[who],
+      temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined);
+      if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
         // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
         const m: GroupMessage = {
-          id: out.event.id, roomId: r, sender: assistantIdentityFor(who), recipients: [],
+          id: out.event?.id ?? crypto.randomUUID(), roomId: r, sender: assistantIdentityFor(who), recipients: [],
           payload: toMcpPayload(out.text), timestamp: Date.now(), depthCounter: 0,
         };
         held = true;
@@ -295,7 +301,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // Every room you have exists in the in-tab relay with the in-tab agents as members.
   useEffect(() => {
     for (const r of roomList.rooms) if (!broker.room(r)) broker.addRoom({ id: r, title: r, members: [HUMAN.handle, ...agentsRef.current] });
-    writeRooms(kv, subject, roomList);
+    const keep = roomList.rooms.filter((r) => !tempRef.current.has(r));     // temporary rooms are never written down
+    writeRooms(kv, subject, { rooms: keep.length ? keep : [DEFAULT_ROOM], current: keep.includes(roomList.current) ? roomList.current : (keep[0] ?? DEFAULT_ROOM) });
   }, [broker, kv, subject, roomList]);
 
   // An added agent is another instance of kell: just a name. It answers through the same server agent as @kell.
@@ -344,7 +351,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // Keep your rooms the same on every device: push what was sent here, pull what was sent elsewhere.
   useEffect(() => {
     const engine = new SyncEngine({
-      api: rapi, history, labels: () => roomListRef.current.rooms,
+      api: rapi, history, labels: () => roomListRef.current.rooms.filter((r) => !tempRef.current.has(r)),
       busy: () => Object.keys(streamingRef.current).length > 0 || (tasksRef.current[roomRef.current] ?? []).some((t) => !isFinished(t)),
       hidden: () => document.visibilityState === "hidden",
       hooks: {
@@ -673,6 +680,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       catch (err) { note(err instanceof Error ? err.message : "That didn't work."); return; }
       await engineRef.current?.forget(r);
     }
+    tempRef.current.delete(r);
     void history.clearRoom(r).catch(() => {});
     const { [r]: _l, ...rest } = lineStore.current; // eslint-disable-line @typescript-eslint/no-unused-vars
     lineStore.current = rest;
@@ -745,6 +753,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     } catch (err) { note(err instanceof Error ? err.message : "That didn't work."); }
   };
 
+  /** A room that is not saved or synced: gone when this page closes. */
+  const newTemporary = () => {
+    const label = tempLabel(roomList.rooms);
+    tempRef.current = new Set(tempRef.current).add(label);
+    setRoomList((l) => ({ rooms: [...l.rooms, label], current: label }));
+    setMenuOpen(false);
+  };
+  const shownName = (r: string) => (tempRef.current.has(r) ? "Temporary chat" : roomName(r));
+
   /** Saves this room as a Markdown file: who said what and when. It is made on this device from what is already here. */
   const exportRoom = () => {
     const lines = (lineStore.current[room] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : []));
@@ -760,6 +777,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   const submit = async (line: string, pictures?: ImageAttachment[], docs?: File[]) => {
     // Files go to the server first; the message carries only their names, sizes and ids. If one fails, nothing is sent.
+    if (docs?.length && tempRef.current.has(room)) return note("Files can't be sent in a temporary room.");
     if (docs?.length) {
       const rid = engineRef.current?.roomId(room) ?? infoRef.current[room]?.id;
       if (!rid) return note("This room is still syncing. Give it a second, then send again.");
@@ -786,6 +804,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         return note("/stop: paused. No agent in this tab will be woken until you resume.");
       }
       if (c.cmd === "export") return exportRoom();
+      if (c.cmd === "temporary") return newTemporary();
       const r = newAgentHandle(agents, c.name);
       if ("error" in r) return note(r.error);
       addAgent(r.handle, c.about);
@@ -843,7 +862,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
             <li key={r}>
-              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{cap(r.slice(1))}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
+              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{tempRef.current.has(r) ? "Temporary" : cap(r.slice(1))}{tempRef.current.has(r) && <span className="dg-badge">not saved</span>}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
             </li>
           ))}
         </ul>
@@ -912,14 +931,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu onSearch={() => setSearchOpen(true)} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onSearch={() => setSearchOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
-          <h1>{roomName(room)}</h1>
+          <h1>{shownName(room)}</h1>
         </header>
+        {tempRef.current.has(room) && <div className="dg-temp-note" role="status">Temporary chat: not saved, not synced, and gone when you close this page.</div>}
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
 
         <MessageScroller.Provider autoScroll={false} defaultScrollPosition="end">

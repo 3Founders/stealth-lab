@@ -44,6 +44,20 @@ FindTools = Callable[[str], Awaitable[list[dict[str, Any]]]]
 UseTool = Callable[[str, str, str, dict[str, Any]], Awaitable[Any]]
 
 
+MAX_HISTORY_TURNS = 30
+
+
+def clean_history(raw: Any) -> list[dict[str, Any]]:
+    """The conversation a temporary chat sends, cut to what the agent may be given: user and assistant turns only, text only, the last
+    thirty, each at most one room message long. Anything else (a system turn, a tool turn, a non-string) is dropped, so the page cannot
+    use this to write the agent's instructions."""
+    out: list[dict[str, Any]] = []
+    for t in raw if isinstance(raw, list) else []:
+        if isinstance(t, dict) and t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str) and t["content"].strip():
+            out.append({"role": t["role"], "content": t["content"].strip()[: rm.MAX_BODY]})
+    return out[-MAX_HISTORY_TURNS:]
+
+
 def _sse(obj: Any) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
@@ -156,3 +170,67 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if why is not None:
             return _error(request, why, 400)
         return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted})
+
+    @server.custom_route("/v1/agent/ephemeral", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def ephemeral_agent_route(request: Request) -> Response:
+        """A temporary chat with the agent: the page sends the conversation so far and gets the answer streamed back. Nothing is
+        read from or written to any room, and the conversation is not stored or logged here. Tools, redaction, rate limit and the model
+        endpoint's own caps are the same as for a room."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        if model_stream is None:
+            return _error(request, "temporary chats are not available on this deployment", 503)
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            return _error(request, "the request body must be JSON", 400)
+        if not isinstance(data, dict):
+            return _error(request, "the request body must be a JSON object", 400)
+        if not LIMITER.allow(subject):
+            return _error(request, "too many questions; wait a minute", 429)
+        text = data.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return _error(request, "send the message in `text`", 400)
+        raw_name = str(data.get("agent") or "kell").strip().lstrip("@").lower()
+        if not _INSTANCE_NAME.match(raw_name):
+            return _error(request, "an agent name is 1 to 40 letters, numbers, dots, dashes or underscores", 400)
+        handle = f"@{raw_name}"
+        instructions = data.get("instructions") if isinstance(data.get("instructions"), str) else ""
+        if instructions:
+            instructions = redact_value(instructions.strip()[:1500], [])
+        tz = data.get("tz") if isinstance(data.get("tz"), str) else ""
+        history = clean_history(data.get("history"))
+        bearer = request.headers.get("authorization", "")
+
+        async def frames() -> AsyncIterator[str]:
+            final: agent.AgentOutcome | None = None
+            try:
+                async for kind, value in agent.stream_answer(
+                    text.strip()[: rm.MAX_BODY], history,
+                    model_stream=lambda messages, tools: model_stream(bearer, messages, tools),
+                    find_tools=find_tools,
+                    use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
+                    handle=handle, instructions=instructions, tz=tz,
+                    discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
+                ):
+                    if kind == "delta":
+                        yield _sse({"delta": value})
+                    else:
+                        final = value
+            except RuntimeError as exc:
+                yield _sse({"error": f"{handle} could not answer: {str(exc).strip()[:300]}"})
+                return
+            except Exception:  # noqa: BLE001
+                log.exception("temporary agent: the stream failed")
+                yield _sse({"error": "the agent could not answer just now"})
+                return
+            reply = ((final.text if final else "") or "").strip() or "I do not have an answer for that."
+            for link in dict.fromkeys(final.consent_links if final else []):
+                reply += f"\n\nAllow kell to use that tool here (15 minutes): {link}"
+            yield _sse({"done": True, "text": reply, "event": None, "tools": (final.tools_used if final else [])})
+
+        return StreamingResponse(frames(), media_type="text/event-stream",
+                                 headers={**cors_headers(request), "Cache-Control": "no-store", "X-Accel-Buffering": "no"})

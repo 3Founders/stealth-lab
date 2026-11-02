@@ -81,15 +81,15 @@ export function roomsApi(deps: RoomsDeps) {
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null }>("POST", `/${e(id)}/agent`, { text }),
     /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
-    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string) => {
+    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }) => {
       const token = await deps.token();
       if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
       let res: Response;
       try {
-        res = await doFetch(`${base}/v1/rooms/${e(id)}/agent`, {
+        res = await doFetch(ephemeral ? `${base}/v1/agent/ephemeral` : `${base}/v1/rooms/${e(id)}/agent`, {
           method: "POST", signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
           headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "text/event-stream" },
-          body: JSON.stringify({ text, ...(agentName && agentName !== "@kell" ? { agent: agentName.replace(/^@/, "") } : {}), ...(instructions ? { instructions } : {}), tz: localZone() }),
+          body: JSON.stringify({ text, ...(agentName && agentName !== "@kell" ? { agent: agentName.replace(/^@/, "") } : {}), ...(instructions ? { instructions } : {}), ...(ephemeral ? { history: ephemeral.history } : {}), tz: localZone() }),
         });
       } catch (err) {
         if ((err as { name?: string })?.name === "AbortError") throw err;

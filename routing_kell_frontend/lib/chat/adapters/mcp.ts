@@ -24,6 +24,7 @@ export type Command =
   | { cmd: "stop" }
   | { cmd: "add-agent"; name?: string; about?: string }
   | { cmd: "export" }
+  | { cmd: "temporary" }
   | { cmd: "error"; message: string };
 
 /** Slash commands typed into the room. Anything that is not one returns null and is sent as an ordinary message. */
@@ -33,6 +34,7 @@ export function parseCommand(line: string): Command | null {
   const [word, ...rest] = t.split(/\s+/);
   if (word === "/stop") return { cmd: "stop" };
   if (word === "/export") return { cmd: "export" };
+  if (word === "/temporary") return { cmd: "temporary" };
   if (word === "/invite") return { cmd: "error", message: "Inviting someone else's agent isn't available yet. Use /add-agent to add another assistant." };
   if (word === "/add-agent") {
     const m = /--name=(?:"([^"]*)"|(\S+))/.exec(t);

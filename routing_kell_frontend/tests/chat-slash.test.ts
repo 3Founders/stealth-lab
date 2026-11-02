@@ -9,7 +9,7 @@ describe("slash commands menu", () => {
     expect(slashQuery("/add-agent --name=x", 19)).toBeNull();
   });
   it("lists matching commands, and nothing once one is typed in full so Enter sends it", () => {
-    expect(matchCommands("").map((c) => c.name)).toEqual(["/add-agent", "/stop", "/export"]);
+    expect(matchCommands("").map((c) => c.name)).toEqual(["/add-agent", "/stop", "/export", "/temporary"]);
     expect(matchCommands("ex").map((c) => c.name)).toEqual(["/export"]);
     expect(matchCommands("st").map((c) => c.name)).toEqual(["/stop"]);
     expect(matchCommands("stop")).toEqual([]);

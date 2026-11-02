@@ -30,6 +30,7 @@ export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: "/add-agent", hint: "Add another kell agent to this room (--name=scout --about=\"what it should do\")" },
   { name: "/stop", hint: "Pause every agent until you resume" },
   { name: "/export", hint: "Save this room as a Markdown file" },
+  { name: "/temporary", hint: "Start a room that is not saved or synced" },
 ];
 
 /** The command being typed: the line starts with "/" and the caret is still inside that first word. */

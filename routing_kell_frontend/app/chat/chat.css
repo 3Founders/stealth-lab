@@ -787,3 +787,5 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
   :root:not([data-theme="light"]) .dg-page .dg-onboard { background: #2b2a23; }
 }
+
+.dg-temp-note { margin: 6px 18px 0; padding: 6px 12px; border-radius: 8px; font-size: 13px; color: var(--ink); background: linear-gradient(135deg, rgba(255, 210, 31, .3), rgba(255, 241, 168, .2)); box-shadow: var(--dg-lift, 0 4px 12px rgba(0,0,0,.12)); }
