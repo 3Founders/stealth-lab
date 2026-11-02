@@ -85,6 +85,11 @@ EXPECTED_V1_SURFACE: frozenset[str] = frozenset({
     "report_audit", "report_check_evidence",
     # the Delegator relay's agent side (migration 155): discoverable, scoped knowledge:write
     "delegate_inbox", "delegate_result",
+    # registered before this pin was last written (the drift this test exists to make explicit)
+    "delegate", "report_tools",
+    # rooms (P5, docs/rooms_design.md): a connector reads and posts in the person's rooms - a deliberate surface change,
+    # visible in the progressive core so that "Claude and ChatGPT can join a room" is true without a discovery step
+    "room_list", "room_read", "room_post", "room_members",
 })
 
 # The B32 operations whose only implementation lived on the removed v2 surface.
@@ -113,13 +118,13 @@ def test_b32_operations_on_the_removed_v2_surface_are_deliberately_absent():
     )
 
 
-def test_the_v1_surface_is_exactly_the_intended_nine_tools():
+def test_the_v1_surface_is_exactly_the_pinned_tools():
     """Pins the live surface. `server.list_tools` is progressive and filtered,
     so a client-visible listing cannot be used to assert the registry -- read
     the registry directly."""
     registered = _registered_tools()
     assert registered == EXPECTED_V1_SURFACE, (
-        f"MCP surface drifted from the intended nine: "
+        f"MCP surface drifted from the pinned set: "
         f"unexpected={sorted(registered - EXPECTED_V1_SURFACE)} "
         f"missing={sorted(EXPECTED_V1_SURFACE - registered)}"
     )

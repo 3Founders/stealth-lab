@@ -10,9 +10,10 @@ import "./chat.css";
 
 /**
  * Chat: group chat for people and agents. It is shown only to a signed-in visitor. That is a display gate, like
- * the rest of the site's account pages: the sandbox itself runs entirely in this tab (an in-memory relay with mock
- * agents) and calls no API, so there is no server data for the gate to protect yet. When real agents are connected,
- * the endpoints behind them must verify the token on the server; hiding this page is not what protects them.
+ * the rest of the site's account pages: rooms, relay tasks and connector tool calls verify the session on the
+ * server (room_routes.py, delegate_routes.py, the room tools in mcp_server/server.py); hiding this page is not
+ * what protects them. In-tab assistants call a model with the person's own key (or the opt-in kel pilot) and keep
+ * no server history beyond the room events this page syncs.
  */
 export default function ChatPage() {
   // undefined = still resolving (Supabase's session read is async): never flash the signed-out notice at a signed-in visitor.

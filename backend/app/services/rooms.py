@@ -340,6 +340,31 @@ async def redeem_invite(pool: Any, sub: str, code: str) -> dict[str, Any]:
 
 # ------------------------------------------------------------------ events
 
+def agent_handle(client_id: Optional[str]) -> str:
+    """The @handle an MCP client posts under, from its OAuth client id: "claude-ai" -> "@claude-ai". Anything that does not
+    survive the handle rule (a UUID, a URL, a service: prefix) becomes "@agent": a post must never fail on branding."""
+    raw = (client_id or "").split(":")[-1].strip().lower()
+    cleaned = re.sub(r"[^a-z0-9_.-]", "-", raw).strip(".-_")
+    if not cleaned or re.fullmatch(r"[0-9a-f-]{20,}", cleaned):
+        cleaned = "agent"
+    return ("@" + cleaned)[:39]
+
+
+def agent_event(handle: str, text: str, reply_to: Optional[str] = None) -> dict[str, Any]:
+    """One "msg" event from an MCP connector's agent, shaped for append_events (mentions are parsed there from the body).
+    Depth 0: the connector posts because the person asked it to, so no agent-to-agent hop has happened yet."""
+    body = (text or "").strip()
+    if not body:
+        raise RoomError("the message is empty")
+    if len(body) > MAX_BODY:
+        raise RoomError(f"a room message is at most {MAX_BODY} characters; put the rest behind a link")
+    ev: dict[str, Any] = {"id": uuid7(), "kind": "msg", "body": body, "sender_kind": "agent",
+                          "sender_handle": handle, "depth": 0, "lamport": 0}
+    if reply_to:
+        ev["reply_to"] = reply_to
+    return ev
+
+
 def _event_json(row: Any, names: dict[str, str], me: str) -> dict[str, Any]:
     return {
         "id": str(row["id"]), "room_id": str(row["room_id"]), "seq": row["seq"], "kind": row["kind"],

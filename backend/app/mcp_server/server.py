@@ -624,13 +624,15 @@ _TOOL_SCOPES: dict[str, str] = {
         "use_tool",
         "get_route_decision", "project_knowledge", "inspect_trajectory",
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
-        "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync")},
+        "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync",
+        # rooms are read through the signed-in person's own membership
+        "room_list", "room_read", "room_members")},
     **{n: _WRITE for n in (
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
         "report_discovery", "submit_way", "submit", "report_model_run", "report_result", "report_audit", "report_check_evidence",
-        "report_tools",
+        "report_tools", "room_post",
         "delegate_inbox", "delegate_result")},
     **{n: _acx.INGESTION_SUBMIT for n in ("ingest_trajectory", "run_semantic_extraction", "reextract_trajectory")},
     **{n: _EXEC for n in (
@@ -656,7 +658,7 @@ def _enforce_tool_scope(tool_name: str) -> None:
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "submit", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
-    "delegate_result"})
+    "delegate_result", "room_list", "room_read", "room_post", "room_members"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -692,6 +694,13 @@ _V1_ANNOTATIONS: dict[str, dict] = {
                        "idempotent_hint": False, "open_world_hint": False},
     "delegate_result": {"title": "Post a task result", "read_only_hint": False, "destructive_hint": False,
                         "idempotent_hint": False, "open_world_hint": False},
+    # rooms: the tools that make a connector a real participant in the person's kell rooms (P5, docs/rooms_design.md)
+    "room_list": {"title": "List my kell rooms", "read_only_hint": True, "open_world_hint": False},
+    "room_read": {"title": "Read a kell room", "read_only_hint": True, "open_world_hint": False},
+    # writes a message everyone in the room sees; a person can delete it, and it is never destructive to other data
+    "room_post": {"title": "Post to a kell room", "read_only_hint": False, "destructive_hint": False,
+                  "idempotent_hint": False, "open_world_hint": False},
+    "room_members": {"title": "Who is in a kell room", "read_only_hint": True, "open_world_hint": False},
     # stores a private candidate for the signed-in caller; nothing is published
     "submit": {"title": "Submit a tool, prompt or tip", "read_only_hint": False, "destructive_hint": False,
                "idempotent_hint": False, "open_world_hint": False},
@@ -2796,7 +2805,8 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 # so the hooks, the executor and older clients that call them directly keep working. "all" lists every tool.
 # ---------------------------------------------------------------------------
 
-CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "delegate", "report_tools", "discover_tools", "use_tool"})
+CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "delegate", "report_tools", "discover_tools", "use_tool",
+                                        "room_list", "room_read", "room_post", "room_members"})
 DISCOVERY_TOOLS: frozenset[str] = frozenset({"discover_tools", "use_tool"})
 
 
@@ -3012,9 +3022,9 @@ async def use_tool(ctx: Context, name: str, arguments: dict[str, Any] | None = N
     return text
 
 
-def _delegate_owner() -> str:
-    """Whose delegator inbox this call is for: the signed-in person's Supabase subject (the same one the website's relay
-    routes scope by). The local single-user operator is "local-user"; an anonymous reader has no inbox."""
+def _kell_owner() -> str:
+    """Whose kell data this call is for: the signed-in person's Supabase subject (the same one the website's relay and room
+    routes scope by). The local single-user operator is "local-user"; an anonymous reader has no room or inbox."""
     token = get_access_token()
     if token is not None and token.subject:
         return token.subject
@@ -3023,7 +3033,7 @@ def _delegate_owner() -> str:
         return actor_id
     if token is not None and token.client_id == "stealthlab-local":
         return "local-user"
-    raise PermissionError("forbidden: sign in to kell to use your delegator inbox")
+    raise PermissionError("forbidden: sign in to kell to use your rooms or your delegator inbox")
 
 
 @server.tool()
@@ -3044,7 +3054,7 @@ async def delegate_inbox(ctx: Context, agent: str) -> str:
 
     pool = ctx.request_context.lifespan_context["pool"]
     try:
-        return json.dumps(await _dg.claim_next(pool, _delegate_owner(), agent), default=str)
+        return json.dumps(await _dg.claim_next(pool, _kell_owner(), agent), default=str)
     except _dg.DelegateError as exc:
         return f"REFUSED: {exc}"
 
@@ -3065,8 +3075,86 @@ async def delegate_result(ctx: Context, task_id: str, result: str, ok: bool = Tr
 
     pool = ctx.request_context.lifespan_context["pool"]
     try:
-        return json.dumps(await _dg.submit_result(pool, _delegate_owner(), task_id, result, ok, check), default=str)
+        return json.dumps(await _dg.submit_result(pool, _kell_owner(), task_id, result, ok, check), default=str)
     except _dg.DelegateError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def room_list(ctx: Context) -> str:
+    """
+    List the signed-in person's kell rooms: channels shared with people and agents, each with its latest line and unread
+    count. Start here; the room *ids* it returns are what room_read, room_post and room_members take (titles are not ids).
+
+    Example: room_list() -> {"rooms": [{"id": "...", "title": "#general", "unread": 0, "members": 3}]}
+    """
+    from app.services import rooms as _rooms
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        return json.dumps({"rooms": await _rooms.list_rooms(pool, _kell_owner())}, default=str)
+    except _rooms.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def room_read(ctx: Context, room: str, after: int = 0, limit: int = 100) -> str:
+    """
+    Read a kell room's messages and events after a cursor, oldest first. `after` is the seq you saw last (0 to start);
+    take `next` from the reply and pass it next time so nothing is read twice. You must be a member of the room (its
+    id comes from room_list). Messages sent by agents carry a `depth`; at depth 4 no agent is woken until a person posts.
+
+    Example: room_read(room="<id>", after=0) -> {"events": [...], "next": 412, "more": false}
+    """
+    from app.services import rooms as _rooms
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        return json.dumps(await _rooms.list_events(pool, _kell_owner(), room, after, limit), default=str)
+    except _rooms.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def room_post(ctx: Context, room: str, text: str, reply_to: str | None = None) -> str:
+    """
+    Post a message to everyone in one of the signed-in person's kell rooms, shown as an agent (from this connector).
+    Post only what the person asked you to put in the room. A message may mention @person or @agent handles; a mentioned
+    agent can be woken by it. To show a slide deck or a small web page, include a fenced HTML block (a line of ```html,
+    the complete document, then a line of ```): the room renders it in a sandboxed frame on each person's screen.
+
+    room: the room id from room_list, not its title. text: at most 8,000 characters per message. reply_to: an event id.
+    Example: room_post(room="...", text="Deck attached:\\n```html\\n<!doctype html>...\\n```")
+    """
+    from app.services import rooms as _rooms
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    token = get_access_token()
+    try:
+        event = _rooms.agent_event(_rooms.agent_handle(token.client_id if token else None), text, reply_to)
+        return json.dumps(await _rooms.append_events(pool, _kell_owner(), room, [event]), default=str)
+    except _rooms.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def room_members(ctx: Context, room: str) -> str:
+    """
+    Who is in a kell room: people (with display names) and agents (with @handles), and the person roles. Use it before
+    mentioning someone, so the handle you write is one that is actually in the room.
+
+    Example: room_members(room="...") -> {"members": [{"kind": "person", "name": "Asha", "role": "owner"}, ...]}
+    """
+    from app.services import rooms as _rooms
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        return json.dumps({"members": await _rooms.list_members(pool, _kell_owner(), room)}, default=str)
+    except _rooms.RoomError as exc:
         return f"REFUSED: {exc}"
 
 

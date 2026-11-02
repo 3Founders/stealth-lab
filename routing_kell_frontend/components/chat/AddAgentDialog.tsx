@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useRef } from "react";
 
 export interface AddAgentDialogProps {
@@ -46,6 +47,19 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
           </fieldset>
           <label htmlFor="dg-agent-name">Name{p.kind === "tab" ? " (optional)" : ""}</label>
           <input id="dg-agent-name" ref={input} value={p.name} onChange={(e) => p.onName(e.target.value)} placeholder={p.kind === "mine" ? "web-chat" : "reviewer"} maxLength={40} autoComplete="off" />
+          {p.kind === "mine" && (
+            <p className="small dim" style={{ margin: 0 }}>
+              Your agent joins through kell&rsquo;s MCP (Claude Code, Cursor and the like). It can read and post in this room with
+              room_list, room_read and room_post, and shows slides or a small page when it posts a fenced <code>```html</code> block.{" "}
+              <Link href="/docs#agents" style={{ textDecoration: "underline" }}>How to connect it</Link>.
+            </p>
+          )}
+          {p.kind === "tab" && (
+            <p className="small dim" style={{ margin: 0 }}>
+              Runs on a model from <Link href="/account/models" style={{ textDecoration: "underline" }}>Models</Link>: your own key, or a model on
+              this machine such as Ollama or vLLM at http://localhost.
+            </p>
+          )}
           {p.error && <p className="dg-err" role="alert">{p.error}</p>}
           <div className="dg-form-row">
             <button type="submit" className="btn-ink dg-mini-btn"><span>Add</span></button>

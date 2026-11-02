@@ -176,7 +176,9 @@ export default function ModelsPanel({ client }: { client: HelperClient }) {
             <div className="field">
               <label htmlFor={`${uid}-base`}>{local ? "Local address" : "Provider address"}</label>
               <input id={`${uid}-base`} type="url" value={draft.base} onChange={(e) => set("base", e.target.value)} />
-              {local && <span className="hint">Must be on this machine (127.0.0.1 or localhost).</span>}
+              {local
+                ? <span className="hint">Must be on this machine (127.0.0.1 or localhost).</span>
+                : <span className="hint">https://, or http://localhost for a model running on this machine (Ollama, vLLM).</span>}
             </div>
             {!local && (
               <>
