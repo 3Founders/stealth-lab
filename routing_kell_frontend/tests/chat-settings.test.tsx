@@ -59,7 +59,7 @@ describe("hamburger menu", () => {
     expect(document.body.querySelector('[role="menu"]')).toBeNull();
     await act(async () => { (host!.querySelector(".dg-burger") as HTMLButtonElement).click(); });
     const items = [...document.body.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent);
-    expect(items).toEqual(["Manage rooms", "Close room list", "Preferences", "Notifications", "Your data", "Agents and models", "Keyboard shortcuts", "Pause agents", "Help and docs", "Contact", "About and privacy", "Account", "Sign out"]);
+    expect(items).toEqual(["Manage rooms", "Close room list", "Preferences", "Notifications", "Your data", "Memory and knowledge", "Agents and models", "Keyboard shortcuts", "Pause agents", "Help and docs", "Contact", "About and privacy", "Account", "Sign out"]);
     await act(async () => { ([...document.body.querySelectorAll('[role="menuitem"]')].find((i) => i.textContent === "Your data") as HTMLElement).click(); });
     expect(picked).toEqual(["data"]);
     expect(document.body.querySelector('[role="menu"]')).toBeNull();
@@ -92,7 +92,7 @@ describe("Settings window", () => {
   it("has a section for every menu option, opens on the chosen one, and switches with a click", async () => {
     await mount(<Harness start="data" />);
     expect(host!.querySelector("dialog")!.hasAttribute("open")).toBe(true);
-    expect(SECTIONS.map((s) => s.id)).toEqual(["preferences", "notifications", "data", "agents", "account", "shortcuts", "about"]);
+    expect(SECTIONS.map((s) => s.id)).toEqual(["preferences", "notifications", "data", "memory", "agents", "account", "shortcuts", "about"]);
     expect(host!.querySelector('[role="tabpanel"]')!.textContent).toContain("saved in this browser, encrypted");
     await act(async () => { (host!.querySelector("#dg-tab-shortcuts") as HTMLButtonElement).click(); });
     expect(host!.querySelector('[role="tabpanel"]')!.textContent).toContain("Open the list of people and agents to mention");

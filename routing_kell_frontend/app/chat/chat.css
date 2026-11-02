@@ -969,3 +969,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 :root[data-theme="dark"] .dg-composer .dg-expand:hover:not(:disabled) { background: rgba(255, 255, 255, .92); color: #171717; }
 @media (max-width: 760px) { .dg-composer .dg-expand { right: 80px; } .dg-composer textarea[data-big] { min-height: 32vh; } }
 @media (prefers-reduced-transparency: reduce) { .dg-settings[open]::backdrop, .dg-search-wrap { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(0, 0, 0, .55); } }
+
+/* Memory and knowledge settings, and the notes editor. */
+.dg-linkbtn { font: inherit; padding: 0; border: 0; background: none; color: var(--cobalt); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.dg-memory-edit { display: grid; gap: 8px; margin-top: 12px; }
+.dg-memory-edit textarea, .dg-notes-text { width: 100%; font: inherit; font-size: 14px; line-height: 1.5; padding: 10px 12px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; overflow: auto; overscroll-behavior: contain; }
+.dg-set-body h4, .dg-settings h4 { margin: 14px 0 4px; font-size: 14px; }

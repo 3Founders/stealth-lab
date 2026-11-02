@@ -73,6 +73,7 @@ export default function HamburgerMenu({ paused, onSettings, onPause, onSignOut, 
           <button type="button" role="menuitem" onClick={run(() => onSettings("preferences"))}>Preferences</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("notifications"))}>Notifications</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("data"))}>Your data</button>
+          <button type="button" role="menuitem" onClick={run(() => onSettings("memory"))}>Memory and knowledge</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("agents"))}>Agents and models</button>
           <button type="button" role="menuitem" onClick={run(() => onSettings("shortcuts"))}>Keyboard shortcuts</button>
           <hr />

@@ -114,20 +114,21 @@ export function roomsApi(deps: RoomsDeps) {
         const msg = (json as { error?: unknown } | null)?.error;
         throw new RoomsApiError(typeof msg === "string" && msg ? msg : `The server answered ${res.status}.`, res.status);
       }
-      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[] } | null = null;
+      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[]; memory: { used: string[]; remembered: string[] } } | null = null;
       let failure: RoomsApiError | null = null;
       await readSse(res.body, (event) => {
-        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown; consent?: unknown };
+        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown; consent?: unknown; memory?: unknown };
         if (typeof o.error === "string" && o.error) failure = new RoomsApiError(o.error);
         if (typeof o.delta === "string" && o.delta) onDelta(o.delta);
         if (o.done === true) {
           final = { posted: Boolean(o.event), text: String(o.text ?? ""), tools: Array.isArray(o.tools) ? o.tools.map(String) : [],
                     event: (o.event as { id: string; seq: number } | null) ?? null,
-                    consent: Array.isArray(o.consent) ? o.consent.map(String) : [] };
+                    consent: Array.isArray(o.consent) ? o.consent.map(String) : [],
+                    memory: { used: Array.isArray((o.memory as { used?: unknown } | undefined)?.used) ? ((o.memory as { used: unknown[] }).used).map(String) : [], remembered: Array.isArray((o.memory as { remembered?: unknown } | undefined)?.remembered) ? ((o.memory as { remembered: unknown[] }).remembered).map(String) : [] } };
         }
       });
       if (failure) throw failure;
-      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[] } | null;
+      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[]; memory: { used: string[]; remembered: string[] } } | null;
       if (done === null) throw new RoomsApiError("The answer ended before it was posted.");
       return done;
     },

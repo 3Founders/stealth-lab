@@ -31,6 +31,7 @@ import { DEFAULT_ROOM, newRoomName, readAgents, readPresets, readRooms, withoutR
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
+import { memoryApi } from "@/lib/chat/memory-api";
 import { chooseFolder, folderBackupSupported, folderName, forgetFolder, readBackup, writeBackup } from "@/lib/chat/folder-backup";
 import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from "@/lib/chat/types";
 import { MAX_DEPTH } from "@/lib/chat/types";
@@ -103,6 +104,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const history = useMemo(() => new HistoryStore(idbStore(HISTORY_DB), subject), [subject]);
   const historyWarned = useRef(false);
   const rapi = useMemo(() => roomsApi({ token: getAccessToken }), []);
+  const mapi = useMemo(() => memoryApi({ token: getAccessToken }), []);
   const engineRef = useRef<SyncEngine | null>(null);
   const [sync, setSync] = useState<SyncState>({ status: "idle", pending: 0, lastSyncAt: null, error: null });
   const [info, setInfo] = useState<RoomsChange["info"]>({});
@@ -243,6 +245,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
       }, ctl.signal, who, presetsRef.current[who],
       temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined);
+      if (out.memory.remembered.length) note(`Remembered: ${out.memory.remembered.map((l) => l.replace(/^- /, "").replace(/ \[source:.*$/, "")).join("; ")}. Settings, Memory and knowledge, to edit or undo.`, r);
+      else if (out.memory.used.length) note(`Used your memory: ${out.memory.used.join(", ")}`, r);
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
@@ -425,6 +429,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }).catch(() => {});
     return () => { live = false; };
   }, [history, room, push]);
+
+  // Once, a little after the chat opens: ask for a tidy-up of memory. The server only runs it when memory is on, it is due and something new was said.
+  useEffect(() => {
+    const t = window.setTimeout(() => { void mapi.dream(false).catch(() => {}); }, 20_000);
+    return () => window.clearTimeout(t);
+  }, [mapi]);
 
   // The open room is followed live: the server tells us the moment something is written there.
   useEffect(() => { engineRef.current?.watch(room); }, [room]);
@@ -1089,6 +1099,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         open={settings.open} section={settings.section} room={room}
         onSection={(section) => setSettings((x) => ({ ...x, section }))} onClose={() => setSettings((x) => ({ ...x, open: false }))}
         chatPrefs={chatPrefs} onChatPrefs={setChatPrefs} notifyPrefs={prefs} onNotifyPrefs={setPrefs}
+        memory={{ api: mapi }}
         data={{ onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
           folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
         agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH }}

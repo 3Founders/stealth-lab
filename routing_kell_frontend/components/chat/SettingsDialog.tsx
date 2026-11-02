@@ -1,4 +1,6 @@
 "use client";
+import MemoryPanel from "@/components/chat/MemoryPanel";
+import type { MemoryApi } from "@/lib/chat/memory-api";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "@/components/ThemeToggle";
@@ -33,12 +35,13 @@ function PlanText() {
   return <b>{planText(usePlan())}</b>;
 }
 
-export type SectionId = "preferences" | "notifications" | "data" | "agents" | "account" | "shortcuts" | "about";
+export type SectionId = "preferences" | "notifications" | "data" | "memory" | "agents" | "account" | "shortcuts" | "about";
 
 export const SECTIONS: Array<{ id: SectionId; label: string }> = [
   { id: "preferences", label: "Preferences" },
   { id: "notifications", label: "Notifications" },
   { id: "data", label: "Your data" },
+  { id: "memory", label: "Memory and knowledge" },
   { id: "agents", label: "Agents and models" },
   { id: "account", label: "Account" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
@@ -57,6 +60,8 @@ export interface SettingsProps {
     folder?: { supported: boolean; name: string | null; onChoose: () => void; onRestore: () => void; onStop: () => void } };
   agents: { modelText: string; modelReady: boolean; count: number; paused: boolean; onPause: (p: boolean) => void; maxHops: number };
   account: { name: string; onSignOut: () => void };
+  /** kell's memory (server side). Absent in tests that do not need it. */
+  memory?: { api: MemoryApi };
 }
 
 /**
@@ -155,6 +160,7 @@ export default function SettingsDialog(p: SettingsProps) {
                 </div>
               </section>
             )}
+            {p.section === "memory" && p.memory && <MemoryPanel api={p.memory.api} />}
             {p.section === "agents" && (
               <section>
                 <h3>Agents and models</h3>
