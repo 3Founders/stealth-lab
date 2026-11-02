@@ -1,0 +1,25 @@
+{
+  "name": "kell-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3400",
+    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "start": "next start -p 3400"
+  },
+  "dependencies": {
+    "@fontsource/barlow": "^5.3.0",
+    "@opencode/cli": "2.2.5",
+    "@opencode/client": "2.2.5",
+    "next": "^15.5.25",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.9.3"
+  }
+}
