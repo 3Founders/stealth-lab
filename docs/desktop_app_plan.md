@@ -87,12 +87,21 @@ the `rich-proj` fixture with real turns:
   tokens and cost for the same message; rows pair them by that id. Neither event carries a rung, so the rung is the model
   compared with `config.json`'s `cheap` — shown as cheap/strong, and proven on live turns of both.
 - **Tool cards** (`POST /api/tools`): kell's tool router, the same call the plugin's native layer makes, same config file.
-- **Settings** (`GET /api/settings`): sign-in from the token's presence (never the token), models and mode from
-  `opencode/config.json`, engine found/not found. "Open console" runs `kell console open`. Read-only: no key or flag is
-  written by the app.
+- **Settings** (`GET /api/settings`): sign-in from the token's presence (never the token), the lane (organization gateway,
+  own key, or not set up), models and mode, engine found/not found. "Open console" runs `kell console open`. Read-only: no
+  key or flag is written by the app.
 - **Sign-in** (`POST /api/signin`, step 5): the button runs `kell login` in the app's own profile (the browser OAuth writes
   `~/.stealthlab/config.json`), then the app polls settings until the token appears and says "Signed in."; a second click
   within 10 s does not start a second browser flow. The app still never reads or shows the token.
+- **Pooled keys for coding (2026-11-02).** When the machine ran `kell join`, `~/.stealthlab/exec.json` has profiles with
+  `key_from: "stealthlab"`. `lib/pooled.ts` turns those into an inline OpenCode config (`OPENCODE_CONFIG_CONTENT`): one
+  provider on the organization's gateway, the person's kell sign-in as the bearer (`OPEN_MODEL_API_KEY`), the org header
+  and `x-stealthlab-data-class: USER_PRIVATE`. The company's stored key pays; no provider key is on the machine and the
+  global `opencode.json` is not edited. Without a joined profile the engine keeps the previous behavior (the global
+  config, i.e. the developer-held key lane). `kell setup --client opencode` writes the same gateway provider for the CLI.
+- **Bundled CLI (2026-11-02).** The installer ships `packaging/npm` as `vendor/kell-mcp` (unpacked from the asar), and
+  sign-in/console use it through `lib/cli.ts`; a machine that never installed kell can still sign in. Engine discovery
+  now also finds the `@opencode/cli` binary the app itself bundles (and the platform binary beside the asar).
 
 ## Shell: Electron (owner decision, 2026-11-01)
 Electron: OpenCode's SDK and kell's console helper are Node, so the main process runs them directly. The window loads

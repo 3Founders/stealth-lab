@@ -16,11 +16,16 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configDir } from "./config.mjs";
+import { execConfigPath } from "./exec/store.mjs";
 
 export const OPENCODE_VERSION = "2.2.5";
 export const CHEAP_MODEL = "gc/minimax-m2.7";
 export const STRONG_MODEL = "gc/deepseek-v3.2";
 const PROVIDER = "gc";
+// The organization lane (`kell join`): one kell provider whose base URL is the organization's gateway, authenticated
+// with the person's own kell sign-in. The provider key stays on the server; nothing provider-shaped is on this machine.
+export const KELL_PROVIDER = "kell";
+export const KELL_DATA_CLASS = "USER_PRIVATE";
 const MCP_NAME = "kell";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,14 +47,41 @@ export const DI_BASE_URL = "https://api.deepinfra.com/v1/openai";
 const DI_MODELS = { [DI_MODEL]: { name: "DeepSeek V3.2", cost: { input: 0.26, output: 0.38 } } };
 
 /**
- * The strong model and the provider-failure fallback (the plugin's retry hook reads config.json's fallback): with a second
- * provider's key the strong rung moves there and gc/deepseek-v3.2 becomes its fallback; otherwise today's setup -- the strong
- * model on General Compute, the cheap model as the fallback.
+ * The strong model and the provider-failure fallback (the plugin's retry hook reads config.json's fallback): on the
+ * organization lane (`kell join` wrote exec.json profiles with key_from "stealthlab") both rungs are that gateway's
+ * models; with a second provider's key the strong rung moves there and gc/deepseek-v3.2 becomes its fallback; otherwise
+ * today's setup -- the strong model on General Compute, the cheap model as the fallback.
  */
-export function modelPlan({ strongKeyEnv } = {}) {
+export function modelPlan({ strongKeyEnv, pooled } = {}) {
+  if (pooled) return { strong: `${KELL_PROVIDER}/${pooled.strong}`, fallback: `${KELL_PROVIDER}/${pooled.fallback}` };
   return strongKeyEnv
     ? { strong: `${DI_PROVIDER}/${DI_MODEL}`, fallback: STRONG_MODEL }
     : { strong: STRONG_MODEL, fallback: CHEAP_MODEL };
+}
+
+/**
+ * The organization lane from `kell join`'s exec.json: profiles with key_from "stealthlab" are served by the company's
+ * kell gateway with the person's sign-in as the bearer, and the company's stored key pays (docs/setup.md). -> the
+ * provider description, or null when this machine has no joined profile (then setup keeps the developer-held key lane).
+ *
+ * Cheap is the lowest list price; strong is the highest (the profiles carry the server's prices). The data class stays
+ * USER_PRIVATE, the conservative default; an organization that allows private material accepts it, and the pilot
+ * organization (public material only) refuses it with a message instead of silently widening the policy.
+ */
+export function pooledFromExec(exec, { dataClass = process.env.KELL_OC_DATA_CLASS || KELL_DATA_CLASS } = {}) {
+  const all = Object.values(exec?.profiles || {}).filter((p) => p && p.key_from === "stealthlab" && p.openai_base_url && p.model_id);
+  if (!all.length) return null;
+  const baseUrl = all[0].openai_base_url;
+  const same = all.filter((p) => p.openai_base_url === baseUrl);
+  const price = (p) => (typeof p.input_per_mtok === "number" && typeof p.output_per_mtok === "number" ? p.input_per_mtok + p.output_per_mtok : Infinity);
+  const sorted = [...same].sort((a, b) => price(a) - price(b));
+  const cheap = sorted[0];
+  const strong = [...sorted].reverse().find((p) => Number.isFinite(price(p))) || sorted[sorted.length - 1];
+  const models = {};
+  for (const p of same) {
+    models[p.model_id] = { name: p.model_id, ...(Number.isFinite(price(p)) ? { cost: { input: p.input_per_mtok, output: p.output_per_mtok } } : {}) };
+  }
+  return { baseUrl, models, orgId: exec?.organization_id, dataClass, cheap: cheap.model_id, strong: strong.model_id, fallback: cheap.model_id };
 }
 
 export function opencodeDir(env = process.env) {
@@ -67,12 +99,28 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, "utf8
 const writeJson = (file, obj) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, JSON.stringify(obj, null, 2) + "\n"); };
 
 /** Adds kell's keys to an OpenCode config object (pure; for tests). -> { config, owned } */
-export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE_API_KEY", strongKeyEnv, owned: before = [] }) {
+export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE_API_KEY", strongKeyEnv, owned: before = [], pooled }) {
   const c = { ...(cfg || {}) };
   const owned = new Set(before);
   if (!c.$schema) { c.$schema = "https://opencode.ai/v2/config.json"; owned.add("schema"); }
   c.provider = { ...(c.provider || {}) };
-  if (!c.provider[PROVIDER]) {
+  if (pooled) {
+    // One provider, the organization's gateway: baseURL and models come from exec.json, the bearer is the person's kell
+    // sign-in (the same token the MCP server uses), and no provider key is written here or read from the environment.
+    c.provider[KELL_PROVIDER] = {
+      npm: "@ai-sdk/openai-compatible", name: "kell",
+      options: {
+        baseURL: pooled.baseUrl,
+        apiKey: token || "{env:OPEN_MODEL_API_KEY}",
+        headers: {
+          ...(pooled.orgId ? { "x-stealthlab-org": String(pooled.orgId) } : {}),
+          "x-stealthlab-data-class": pooled.dataClass,
+        },
+      },
+      models: pooled.models,
+    };
+    owned.add(`provider.${KELL_PROVIDER}`);
+  } else if (!c.provider[PROVIDER]) {
     c.provider[PROVIDER] = { npm: "@ai-sdk/openai-compatible", name: "General Compute",
                              options: { baseURL: "https://api.generalcompute.com/v1", apiKey: `{env:${keyEnv}}` }, models: MODELS };
     owned.add("provider.gc");
@@ -96,7 +144,8 @@ export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE
   c.mcp.servers = { ...(c.mcp.servers || {}),
     [MCP_NAME]: { type: "remote", url, codemode: false, ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) } };
   owned.add("mcp.kell");
-  if (!c.model) { c.model = STRONG_MODEL; owned.add("model"); }
+  const defaultModel = pooled ? `${KELL_PROVIDER}/${pooled.strong}` : STRONG_MODEL;
+  if (!c.model) { c.model = defaultModel; owned.add("model"); }
   return { config: c, owned: [...owned] };
 }
 
@@ -114,10 +163,11 @@ export function withoutKell(cfg, { pluginDir, owned: list = [] }) {
   }
   if (owned.has("provider.gc") && c.provider) { const p = { ...c.provider }; delete p[PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
   if (owned.has("provider.di") && c.provider) { const p = { ...c.provider }; delete p[DI_PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
+  if (owned.has("provider.kell") && c.provider) { const p = { ...c.provider }; delete p[KELL_PROVIDER]; c.provider = p; if (!Object.keys(p).length) delete c.provider; }
   if (owned.has("experimental.image_generate") && c.experimental?.image_generate === false) {
     const e = { ...c.experimental }; delete e.image_generate; c.experimental = e; if (!Object.keys(e).length) delete c.experimental;
   }
-  if (owned.has("model") && c.model === STRONG_MODEL) delete c.model;
+  if (owned.has("model") && (c.model === STRONG_MODEL || String(c.model).startsWith(`${KELL_PROVIDER}/`))) delete c.model;
   if (owned.has("schema")) delete c.$schema;
   return c;
 }
@@ -154,12 +204,16 @@ export async function installOpenCode({ url, token, launch, env = process.env, n
   installClaudeDispatch({ settingsFile: hooksFile, launch, env });
   const strongEnv = strongKeyEnv || "DEEPINFRA_KEY";
   const useDi = Boolean(env[strongEnv]);
+  // The organization lane wins when this machine has run `kell join`: the company's gateway holds the key, so no
+  // environment variable is involved at all. The developer-held key lane below is only for machines with no joined profile.
+  const pooled = pooledFromExec(readJson(execConfigPath(env)) || {});
   const file = opencodeConfigFile(env);
   const before = readJson(path.join(dir, "config.json"))?.owned || [];
-  const { config, owned } = withKell(readJson(file), { pluginDir, url, token, strongKeyEnv: useDi ? strongEnv : undefined, owned: before });
+  const { config, owned } = withKell(readJson(file), { pluginDir, url, token, strongKeyEnv: useDi ? strongEnv : undefined, owned: before, pooled });
   writeJson(file, config);
-  const plan = modelPlan({ strongKeyEnv: useDi ? strongEnv : undefined });
-  writeJson(path.join(dir, "config.json"), { mode: "session", cheap: CHEAP_MODEL, strong: plan.strong, fallback: plan.fallback, settings: [hooksFile], owned });
+  const plan = modelPlan({ strongKeyEnv: useDi ? strongEnv : undefined, pooled });
+  writeJson(path.join(dir, "config.json"), { mode: "session", cheap: pooled ? `${KELL_PROVIDER}/${pooled.cheap}` : CHEAP_MODEL, strong: plan.strong, fallback: plan.fallback, settings: [hooksFile], owned });
+  if (pooled) return `plugin + hooks in ${dir}; models through your organization's kell gateway at ${pooled.baseUrl} (no provider key on this machine), plugin and MCP server in ${file}`;
   return `plugin + hooks in ${dir}; provider${useDi ? "s (General Compute + DeepInfra for the strong model)" : ""}, plugin and MCP server in ${file}`;
 }
 

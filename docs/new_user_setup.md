@@ -210,9 +210,11 @@ tools that read public information, never ones that send, post or pay.
 
 kell's own coding agent runs on OpenCode, an open-source coding agent. kell picks the model for each request: a cheap open
 model works first, and a stronger one (deepseek-v3.2) takes over when the project's tests keep failing. You don't need
-Claude Code or a Claude plan for this part, only the model key from step A6.
+Claude Code or a Claude plan for this part. The models run on kell's pooled provider keys when your machine joined an
+organization (`kell join`, step A6's alternative); otherwise they run on the model key you set in step A6.
 
-Do steps A1, A3 (`npm install -g kell-mcp`), A5 (`kell login`) and A6 (the key) first, if you haven't.
+Do steps A1, A3 (`npm install -g kell-mcp`) and A5 (`kell login`) first, if you haven't. Then either run the `kell join`
+command your admin gave you, or do A6 (the key).
 
 ### C1. Install OpenCode
 
@@ -228,9 +230,10 @@ Close the terminal and open a new one. `opencode --version` should print `2.2.5`
 kell setup --client opencode
 ```
 
-It installs kell's plugin (this takes a minute the first time), adds the General Compute models and kell's server to
-OpenCode's settings, and ends with the checklist. Every item should be ok; run the command it prints next to any that
-isn't.
+It installs kell's plugin (this takes a minute the first time), adds kell's server to OpenCode's settings, and ends with
+the checklist. On a machine that ran `kell join`, it points OpenCode at your organization's kell gateway: the company's
+stored key pays, and there is no provider key on your machine. Otherwise it adds the General Compute models and reads
+`GENERAL_COMPUTE_API_KEY`. Every item should be ok; run the command it prints next to any that isn't.
 
 ### C3. Try it
 

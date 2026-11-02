@@ -39,6 +39,15 @@ items here (not in other docs); remove one when it is done, with the commit that
 
 ## Our agent (OpenCode)
 
+- **Pooled keys for coding: the organization lane is wired; the /chat pilot is not reachable from the desktop yet.**
+  `kell join` profiles (`key_from: "stealthlab"` in `~/.stealthlab/exec.json`) now drive both `kell setup --client
+  opencode` and the desktop engine: one provider on the organization's gateway, the person's kell sign-in as the bearer,
+  no provider key on the machine (2026-11-02). What is still open: the /chat pilot's `/v1` on the MCP origin accepts only
+  a website-session token, while `kell login` issues an MCP-flow token, so a signed-in person with no organization cannot
+  use the pilot from the desktop. Options: (a) create/join an organization, which works today; (b) add a website sign-in
+  to the desktop (a redirect/consent change); or (c) let the MCP `/v1` accept MCP-flow tokens (an owner security call).
+  The pilot policy is also `PUBLIC_SOURCE` only, so private code needs an organization policy that allows
+  `USER_PRIVATE`; the desktop sends `USER_PRIVATE` by default and shows the server's refusal rather than widening it.
 - **Models and providers for our agent.** Cheap minimax-m2.7 and strong deepseek-v3.2, both on General Compute (one
   key); a second provider (DeepInfra, `--strong-key-env`, default `DEEPINFRA_KEY`) moves the strong rung to its
   DeepSeek-V3.2 with gc/deepseek-v3.2 as the fallback, and the provider-failure fallback (retry once, then the

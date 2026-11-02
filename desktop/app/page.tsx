@@ -14,6 +14,7 @@ type FileDiff = { file: string; patch: string; additions: number; deletions: num
 type ToolCard = { name: string; source: "installed" | "registry"; url: string | null; needsSignIn: boolean }
 type Settings = {
   signedIn: boolean; account: string | null; server: string | null
+  lane?: "organization" | "own-key" | "none"; gateway?: string | null
   models: { cheap: string | null; strong: string | null; fallback: string | null; mode: string | null }
   engine: { exe: string | null; directory: string | null }
 }
@@ -270,6 +271,11 @@ export default function Home() {
               <dd>{settings.signedIn ? <>signed in <span className="mono">{settings.account || settings.server || ""}</span></> : (
                 <span>not signed in <button type="button" className="copy" onClick={() => void signIn()}>sign in</button></span>
               )}</dd>
+              <dt>models</dt>
+              <dd>{settings.lane === "organization"
+                ? <>through your organization <span className="mono">{settings.gateway || ""}</span> (kell&apos;s keys, nothing to add here)</>
+                : settings.lane === "own-key" ? "your own provider key (from kell setup)"
+                  : "not set up — run `kell join` for your organization's pooled keys"}</dd>
               <dt>cheap</dt><dd className="mono">{settings.models.cheap || "—"}</dd>
               <dt>strong</dt><dd className="mono">{settings.models.strong || "—"}</dd>
               <dt>fallback</dt><dd className="mono">{settings.models.fallback || "—"}</dd>

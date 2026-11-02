@@ -5,7 +5,8 @@
   "main": "electron/dist/main.js",
   "scripts": {
     "dev": "next dev -p 3400",
-    "build": "next build",
+    "bundle:cli": "node scripts/bundle-cli.mjs",
+    "build": "npm run bundle:cli && next build",
     "typecheck": "tsc --noEmit",
     "start": "next start -p 3400",
     "electron:build": "tsc -p electron",
@@ -22,7 +23,11 @@
       "electron/dist/**",
       ".next/**",
       "public/**",
-      "lib/**"
+      "lib/**",
+      "vendor/**"
+    ],
+    "asarUnpack": [
+      "vendor/**"
     ],
     "win": {
       "target": "nsis"

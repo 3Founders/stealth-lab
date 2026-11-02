@@ -10,11 +10,11 @@ import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import { NextResponse } from "next/server"
+import { kellCommand } from "@/lib/cli"
 
 export const dynamic = "force-dynamic"
 
 const kellHome = () => process.env.STEALTHLAB_HOME || path.join(os.homedir(), ".stealthlab")
-const kell = () => process.env.KELL_CLI || "kell"
 
 function signedIn(): boolean {
   try {
@@ -33,9 +33,10 @@ export async function POST() {
   if (Date.now() - lastStart < 10_000) return NextResponse.json({ started: true, note: "already starting" })
   lastStart = Date.now()
   try {
-    const child = spawn(kell(), ["login"], {
-      shell: true, windowsHide: true, detached: true, stdio: "ignore",
-      env: { ...process.env, STEALTHLAB_HOME: kellHome() },
+    const c = kellCommand(["login"])
+    const child = spawn(c.cmd, c.args, {
+      shell: c.shell, windowsHide: true, detached: true, stdio: "ignore",
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", STEALTHLAB_HOME: kellHome() },
     })
     child.unref()
     child.on("error", () => { /* the settings poll reports the outcome */ })

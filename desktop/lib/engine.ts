@@ -7,16 +7,35 @@ import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import type { OC, Client } from "./oc-types"
+import { pooledEngineConfig } from "./pooled"
 
 export type { Client }
 
 export type Engine = { baseUrl: string; password: string; directory: string }
 
+// The platform package inside the app (electron-builder unpacks these binaries beside app.asar) and the binary's name.
+const platformBin = () => (process.platform === "win32" ? "opencode.exe" : "opencode")
+const platformPkg = () =>
+  process.platform === "win32" ? "cli-windows-x64"
+    : process.platform === "darwin" ? (process.arch === "arm64" ? "cli-darwin-arm64" : "cli-darwin-x64")
+      : (process.arch === "arm64" ? "cli-linux-arm64" : "cli-linux-x64")
+// Next runs with cwd = the app root; in the packaged app that is .../resources/app.asar, whose unpacked sibling holds the
+// binaries (a file inside an asar cannot be spawned).
+const unpackedRoot = () => {
+  const cwd = process.cwd()
+  return cwd.endsWith("app.asar") ? `${cwd}.unpacked` : path.join(cwd, "..", "app.asar.unpacked")
+}
+
 const exes = () => [
   process.env.KELL_OC_ENGINE || "",
   // `kell setup --client opencode` (isolated profile) and the global install, both Windows and unix layouts
-  path.join(process.env.KELL_OC_PROFILE || path.join(process.env.HOME || process.env.USERPROFILE || "", ".stealthlab", "opencode"), "cli", "node_modules", "@opencode", "cli", "bin", "opencode.exe"),
-  path.join(process.env.APPDATA || "", "npm", "node_modules", "@opencode", "cli", "bin", "opencode.exe"),
+  path.join(process.env.KELL_OC_PROFILE || path.join(process.env.HOME || process.env.USERPROFILE || "", ".stealthlab", "opencode"), "cli", "node_modules", "@opencode", "cli", "bin", platformBin()),
+  path.join(process.env.APPDATA || "", "npm", "node_modules", "@opencode", "cli", "bin", platformBin()),
+  // the copy this app ships: the launcher package in the dev tree, the platform binary beside the asar when packaged
+  path.join(process.cwd(), "node_modules", "@opencode", "cli", "bin", platformBin()),
+  path.join(process.cwd(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
+  path.join(unpackedRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
+  path.join(unpackedRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
 ].filter(Boolean)
 
 export const findEngineExe = () => exes().find((e) => { try { return fs.statSync(e).isFile() } catch { return false } }) || ""
@@ -50,7 +69,13 @@ export async function engineStart(directory: string): Promise<Engine> {
       }
       if (fail && !engine) no(new Error("engine failed to start"))
     }
-    state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], { cwd: directory, stdio: [null, "pipe", "pipe"] })
+    // The organization lane: when this machine ran `kell join`, the child gets an inline provider on the company's
+    // gateway, authenticated with the person's kell sign-in. Nothing provider-shaped is on the machine.
+    const pooled = pooledEngineConfig()
+    state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
+      cwd: directory, stdio: [null, "pipe", "pipe"],
+      env: { ...process.env, ...(pooled ? { OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key } : {}) },
+    })
     const timer = setTimeout(() => { if (!engine) no(new Error("engine did not report a port in 30 s")) }, 30_000)
     state.child.stdout?.on("data", (c: Buffer) => read(c.toString(), false))
     state.child.stderr?.on("data", (c: Buffer) => read(c.toString(), true))
