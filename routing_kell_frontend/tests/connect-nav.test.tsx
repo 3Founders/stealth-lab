@@ -15,6 +15,8 @@ import { CONNECT_PAGES } from "@/components/connect/pages";
 import Connect from "@/app/connect/page";
 import HelpGuide from "@/app/connect/help/page";
 import ClaudeCodeGuide from "@/app/connect/claude-code/page";
+import ClaudeWebGuide from "@/app/connect/claude/page";
+import ChatGptGuide from "@/app/connect/chatgpt/page";
 
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
@@ -40,10 +42,11 @@ describe("Connect subpages", () => {
     pathname = "/connect";
   });
 
-  it("the overview links to every guide and holds no instructions itself", async () => {
+  it("the overview links to every guide and carries the shared room prompt, not per-tool instructions", async () => {
     await render(<Connect />);
     const hrefs = [...host!.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(hrefs).toEqual(CONNECT_PAGES.filter((p) => p.href !== "/connect").map((p) => p.href));
+    expect(host!.textContent).toContain("Find the room with room_list");   // the room instruction, same text as the guides and docs
     expect(host!.textContent).not.toContain("npm install");
   });
 
@@ -54,5 +57,17 @@ describe("Connect subpages", () => {
     await render(<HelpGuide />);
     expect(host!.textContent).toContain("If something goes wrong");
     expect(host!.textContent).not.toContain("Open a terminal");
+  });
+
+  it("Claude Code, Claude on the web and ChatGPT each carry the Agents in room section and the room instruction", async () => {
+    for (const Guide of [ClaudeCodeGuide, ClaudeWebGuide, ChatGptGuide]) {
+      await render(<Guide />);
+      const text = host!.textContent ?? "";
+      expect(text).toContain("Agents in room");
+      expect(text).toContain("room_post");
+      expect(text).toContain("Find the room with room_list");
+      expect(text).toContain("end-to-end encrypted rooms are in design");
+      act(() => root?.unmount()); host?.remove();
+    }
   });
 });

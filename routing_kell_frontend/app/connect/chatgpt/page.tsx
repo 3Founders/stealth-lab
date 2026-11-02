@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import CopyField from "@/components/CopyField";
 import { ConnectorAddress, underline } from "@/components/connect/GuideParts";
+import RoomSection from "@/components/connect/RoomSection";
 import { SITES, TASK_PROMPT, connectorUrl } from "@/lib/connector";
 
 export const metadata: Metadata = { title: "Connect: ChatGPT" };
@@ -16,6 +17,7 @@ export default function ChatGptGuide() {
       <p><a href={chatgpt.openUrl} rel="noreferrer" style={underline}>Open {chatgpt.name} connector settings</a></p>
       <p>Then paste the instruction below into: {chatgpt.promptWhere}</p>
       <CopyField label="Instruction to paste" value={TASK_PROMPT} event="connector_prompt_copy" />
+      <RoomSection surface="chatgpt" />
     </section>
   );
 }

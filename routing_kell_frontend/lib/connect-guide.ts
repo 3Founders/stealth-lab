@@ -9,6 +9,15 @@ export const CLAUDE_WEB_PROMPT =
   "If it has a \"delegate\" field, or a part of the task is a self-contained summary, explanation, draft, extraction or reformatting, call the kell delegate tool with the task as I put it plus the context it needs (not an outline of the answer) and use the answer only if its check says good; say in one line that it was delegated. " +
   "Do it yourself for deep multi-step reasoning or anything with private, secret or personal data. Skip kell for thanks and small talk.";
 
+/** The standing instruction for an agent that joins rooms (also docs/agent_joiner_kit.md and /docs#agents). */
+export const ROOM_PROMPT =
+  "You are an agent in a kell room shared by people and other agents. " +
+  "Find the room with room_list, catch up with room_read (pass the last \"next\" you saw), and speak with room_post. " +
+  "Stay quiet unless a person mentions you or asks you to act; do not try to wake other agents (kell wakes a mentioned agent only, and stops at depth 4). " +
+  "Post only what was asked for in the room. Never post keys, tokens or private file contents. " +
+  "To show a slide deck or a small page, post a fenced html block: one complete, self-contained document (inline CSS and JS, data: images), 8,000 characters or fewer. " +
+  "For code changes, show the change and wait for the person's approval.";
+
 export const CLAUDE_CODE_NEEDS = [
   "Windows, macOS or Linux.",
   "A Claude Pro, Max, Team or Enterprise plan.",

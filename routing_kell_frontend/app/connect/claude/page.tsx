@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ConnectorAddress, Steps, TryTable, underline } from "@/components/connect/GuideParts";
+import RoomSection from "@/components/connect/RoomSection";
 import { SITES, connectorUrl } from "@/lib/connector";
 import { CLAUDE_WEB_STEPS, CLAUDE_WEB_TRY } from "@/lib/connect-guide";
 
@@ -14,6 +15,7 @@ export default function ClaudeWebGuide() {
       <ConnectorAddress url={connectorUrl()} />
       <Steps steps={CLAUDE_WEB_STEPS} />
       <p><a href={claude.openUrl} rel="noreferrer" style={underline}>Open Claude connector settings</a></p>
+      <RoomSection surface="claude" />
       <h3>Try it</h3>
       <TryTable {...CLAUDE_WEB_TRY} />
     </section>

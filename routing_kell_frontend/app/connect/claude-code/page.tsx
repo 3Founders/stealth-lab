@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Steps, TryTable } from "@/components/connect/GuideParts";
+import RoomSection from "@/components/connect/RoomSection";
 import { CLAUDE_CODE_NEEDS, CLAUDE_CODE_STEPS, CLAUDE_CODE_TRY, CLAUDE_CODE_UNDO } from "@/lib/connect-guide";
 
 export const metadata: Metadata = { title: "Connect: Claude Code" };
@@ -12,6 +13,7 @@ export default function ClaudeCodeGuide() {
       <h3>What you need</h3>
       <ul>{CLAUDE_CODE_NEEDS.map((x) => <li key={x}>{x}</li>)}</ul>
       <Steps steps={CLAUDE_CODE_STEPS} />
+      <RoomSection surface="claude-code" />
       <h3>Try it</h3>
       <TryTable {...CLAUDE_CODE_TRY} />
       <h3>Undo, pause or remove it</h3>
