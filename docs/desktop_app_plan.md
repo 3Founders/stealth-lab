@@ -62,14 +62,10 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
 6. **Settings / Account:** the console's panels (connect, models, activity, keys) rendered inside the app;
    an "Open console" button opens the web console at the helper's tokened address.
 
-## Shell choice (owner decision needed)
+## Shell: Electron (owner decision, 2026-11-01)
 
-- **Tauri (recommended):** small binaries (single-digit MB plus the system webview), Rust side only for the window and
-  process spawning; the Next.js UI and the process management stay ordinary Node work run through the helper or a small
-  sidecar script. Cost: one more toolchain (Rust) at build time.
-- **Electron:** everything is Node; ships a browser; bigger installer. Cost: size and memory.
-- Either way the window loads the same Next.js UI, so the decision can wait until the UI prototype exists — build the UI
-  with `next dev` first, and bolt the shell on after.
+Electron: OpenCode's SDK and kell's console helper are Node, so the main process runs them directly. The window loads
+the prototype's Next.js UI. Still open: Windows first, or Windows and macOS together.
 
 ## Build order
 
