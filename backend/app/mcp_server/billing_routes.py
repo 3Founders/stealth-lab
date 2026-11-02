@@ -2,17 +2,24 @@
 Buying credits, on the hosted MCP service (the site calls these; Razorpay calls the webhook):
 
   GET  /v1/billing/wallet    the person's balance, history and what a rupee buys     (website session)
+  GET  /v1/billing/plans     the plans being sold: numbers from billing_plan_rows, which the admin    (no session)
+                             dashboard edits (db/167); the page falls back to its built-in copy offline
   POST /v1/billing/orders    {"amount_inr": 500} -> a Razorpay order for Checkout    (website session)
                              {"pack": "credits_1000"} -> additional credits, a fixed pack (people with an active plan)
                              {"plan": "pro"} or {"plan": "pilot", "seats": 1..10, "team_name": "..."} -> a plan order
+                             {"plan": "pilot", "seats": 1, "referral_code": ...} -> the individual pilot, sold only with
+                             a referral code the server recognises; the code is recorded on the order (never a price)
   GET  /v1/billing/plan      the buyer's latest plan: plan, seats, team_name, active_until
+  GET  /v1/billing/referral  the buyer's own personal referral code, if any - rewards are NOT built               (session)
+  POST /v1/billing/codes/check  {"code": ...} -> {"valid": true} or a 400 saying why. No session, limited per IP.
   POST /v1/billing/webhook   Razorpay's payment.captured / order.paid                (signature, no session)
 
 The money goes to the person's own wallet account (services/accounts.py: their user id, no hidden organization), whose
 policy requires a positive prepaid balance; a Pilot of two or more seats creates a real team organization instead
-(services/plans.py). Crediting happens only in the webhook, from a payment Razorpay signed and an order WE recorded; the browser
-returning from Checkout credits nothing, so a forged "success" page changes no balance. See services/wallet.py for the
-signature rule, the idempotency key and the pricing rule.
+(services/plans.py). Plan numbers come from billing_plan_rows; the admin dashboard edits them and a change applies to
+new orders only. Crediting happens only in the webhook, from a payment Razorpay signed and an order WE recorded; the
+browser returning from Checkout credits nothing, so a forged "success" page changes no balance. See services/wallet.py
+for the signature rule, the idempotency key and the pricing rule.
 
 Off (503) unless RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and KELL_WALLETS=on are set; the webhook additionally needs
 RAZORPAY_WEBHOOK_SECRET. Test-mode keys work without any other change.
@@ -28,12 +35,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.mcp_server.chat_routes import BY_ADDRESS, Window, client_address, cors_headers as _chat_cors, resolve_identity
-from app.services import accounts, packs, plans, wallet
+from app.services import accounts, packs, plans, referrals, wallet
 
 log = logging.getLogger(__name__)
 RAZORPAY_ORDERS = "https://api.razorpay.com/v1/orders"
 # a person starting orders over and over is a card-testing signature; a real buyer needs a handful an hour
 ORDERS_PER_ACCOUNT = Window(int(os.environ.get("KELL_ORDERS_PER_HOUR", "10")), 3600.0)
+# codes/check has no session: one address may try a few codes a minute and no more, so guessing is slow
+CODE_CHECKS_PER_ADDRESS = Window(int(os.environ.get("KELL_CODE_CHECKS_PER_MIN", "10")), 60.0)
 
 
 def cors_headers(request: Request) -> dict[str, str]:
@@ -167,15 +176,18 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
                                "credit_usd": str(order.usd)}, 201)
 
     async def plan_order(request: Request, who: Any, account: str, data: dict[str, Any]) -> Response:
-        """Pro or Pilot: the amount is worked out here from the plan, never taken from the request."""
+        """A plan of the ladder or the Pilot: the amount is worked out here from the plan's tier row, never taken from the
+        request. The one-seat Pilot (the individual pilot) is sold only with a referral code the server recognises."""
+        pool = pool_getter()
         try:
-            order = plans.parse_plan_order(data)
-            if order.plan == "pilot" and await plans.has_pilot(pool_getter(), account):
+            order = plans.parse_plan_order(data, await plans.active_map(pool), await referrals.active_codes(pool))
+            if order.plan == "pilot" and await plans.has_pilot(pool, account):
                 raise plans.PlanConflict("this account has already had its pilot; contact us to extend it")
             rz = await _create_razorpay_order(order.amount_paise, f"kell-{order.plan}-{account[:8]}")
-            await wallet.record_order(pool_getter(), org_id=account, order_id=str(rz["id"]), amount_paise=order.amount_paise,
+            await wallet.record_order(pool, org_id=account, order_id=str(rz["id"]), amount_paise=order.amount_paise,
                                       created_by=who.actor_id, plan=order.plan, seats=order.seats,
-                                      team_name=order.team_name, buyer_user_id=account, period_days=order.period_days)
+                                      team_name=order.team_name, buyer_user_id=account, period_days=order.period_days,
+                                      referral_code=order.referral_code)
         except plans.PlanError as exc:
             return _err(request, exc.status, str(exc))
         except wallet.WalletError as exc:
@@ -183,6 +195,49 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         return _json(request, {"order_id": rz["id"], "amount_paise": order.amount_paise, "currency": "INR",
                                "key_id": os.environ["RAZORPAY_KEY_ID"], "plan": order.plan, "seats": order.seats,
                                "period_days": order.period_days}, 201)
+
+    @server.custom_route("/v1/billing/plans", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def plans_route(request: Request) -> Response:
+        """The plan numbers as they are being sold now, from billing_plan_rows. No session: the pricing page cannot be
+        behind sign-in, and it falls back to its built-in copy when the billing surface is off."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        if not configured():
+            return _err(request, 503, "buying credits is not switched on yet")
+        rows = await plans.active_map(pool_getter())
+        return _json(request, {"plans": [{"plan": r.plan, "inr": r.price_paise // 100, "days": r.period_days,
+                                          "included_usd": str(r.included_usd)} for r in sorted(rows.values(), key=lambda t: t.plan)]})
+
+    @server.custom_route("/v1/billing/referral", methods=["GET", "OPTIONS"], include_in_schema=False)
+    async def referral_route(request: Request) -> Response:
+        """The signed-in buyer's own personal code. It unlocks the one-person pilot for whoever they give it to; no
+        reward of any kind is built (docs/referral_legality_2026-11.md)."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, account, bad = await person(request)
+        if bad is not None:
+            return bad
+        mine = await referrals.mine(pool_getter(), account)
+        return _json(request, mine or {"code": None, "kind": None})
+
+    @server.custom_route("/v1/billing/codes/check", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def codes_check_route(request: Request) -> Response:
+        """Apply-time validation: is a referral code active? A refused code tells why, so no code is guessed blindly."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        if not configured():
+            return _err(request, 503, "buying credits is not switched on yet")
+        if not CODE_CHECKS_PER_ADDRESS.allow(client_address(request)):
+            return _err(request, 429, "too many checks; wait a minute")
+        try:
+            data = await request.json()
+        except ValueError:
+            return _err(request, 400, "the request body must be JSON")
+        why = referrals.failure_sentence(data.get("code") if isinstance(data, dict) else None,
+                                         await referrals.active_codes(pool_getter()))
+        if why is not None:
+            return _err(request, 400, why)
+        return _json(request, {"valid": True})
 
     @server.custom_route("/v1/billing/plan", methods=["GET", "OPTIONS"], include_in_schema=False)
     async def plan_route(request: Request) -> Response:

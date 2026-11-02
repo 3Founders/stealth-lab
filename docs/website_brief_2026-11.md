@@ -7,26 +7,26 @@ For the website lane (`routing_kell_frontend`). This is the one place that lists
 | Item | State |
 |---|---|
 | Backend: plans (Starter, Pro, Plus, Pilot), add-on credit packs, plan and wallet endpoints, webhook, reconcile job | built, tested, pushed to `main` |
-| Migrations 164 applied on production; **165 (plan tiers) and 166 (credit packs) not yet applied** | pending (the founders run `scripts/migrate.py`) |
+| Migrations 164 applied on production; **165 (plan tiers), 166 (credit packs), 167 (plan rows, referral codes) and 168 (the FIRSTTRIAL launch code) not yet applied** | pending (the founders run `scripts/migrate.py`) |
 | Server code with all of this | **not deployed**, so billing still answers 503 |
 | Razorpay | live keys are on Railway but have never taken a test payment |
 | Refund and cancellation page | placeholder ("not published yet"); needs the founders' text |
-| Referral and promo codes | **not built** (legal briefing: [referral_legality_2026-11.md](referral_legality_2026-11.md)) |
+| Referral codes (2026-11-02) | built: a referee-side access code unlocks the one-person Pilot; hand-issued codes plus personal codes for buying accounts; **no referrer reward** (legal briefing: [referral_legality_2026-11.md](referral_legality_2026-11.md)) |
 
 So: build against the contract below with a fake `fetch`, keep every buy button behind `NEXT_PUBLIC_KELL_BUY_PLANS=on` (off by default), and do not tell anyone the flag can go on. The founders will say when.
 
-## 1. Plans (prices live only in `lib/plans.ts`; the server computes every amount)
+## 1. Plans (numbers live in the server's `billing_plan_rows`, edited in the admin dashboard; `lib/plans.ts` keeps the built-in copy and every sentence; the server computes every amount)
 
 | Plan | Price (before GST) | Period | Usage included | Notes |
 |---|---|---|---|---|
 | Starter | Rs 200 | 30 days | $1 | the low anchor |
 | Pro | Rs 1,200 | 30 days | $6 | the step up |
 | **Plus** | Rs 2,000 | 30 days | $12 (twice Pro) | **recommended** |
-| Pilot | Rs 649 per seat | **30 days** | $4 per seat | one seat = an individual pilot (no team name); 2 to 10 seats = a team workspace with a required team name; one pilot per account (409) |
+| Pilot | Rs 649 per seat | **30 days** | $4 per seat | one seat = an individual pilot (no team name), bought online only with an active referral code; 2 to 10 seats = a team workspace with a required team name, invoiced directly; one pilot per account (409) |
 | Teams, Enterprise | contact us | | | not sold online |
 
 Layout (from `pricing_page.md`): Plus carries a plain "Recommended" label and is first on a phone; each card shows the per-day figure ("about Rs 7 / Rs 40 / Rs 67 a day") and the usage in dollars; one computed sentence "Plus gives twice Pro's usage for Rs 800 more". No countdowns, no "only N left", no crossed-out prices, no pre-selected upsell.
-Keep the Pilot card's visibility in ONE constant: it may become reachable only with a code (pending).
+The code section above the plans is the one path to the one-seat Pilot: applying an active code shows exactly one card, the individual Pilot, and removing the code brings the ladder back (2026-11-02).
 Change existing text: Pilot is "for a month" (not 2 weeks; use `period_days` for the end date); remove "or bring your own key" and "Public or non-sensitive material only" from `lib/plans.ts`.
 You may show what the usage buys as an **estimate**: about 19 delegated tasks per $1, 115 per $6, 230 per $12 (average task about $0.05; ranges widely).
 

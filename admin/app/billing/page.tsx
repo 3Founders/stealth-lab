@@ -3,20 +3,23 @@ import { useCallback, useEffect, useState } from "react";
 import { AdminNotice, Hero, Stat } from "@/components/Admin";
 import { CsvButton } from "@/components/Widgets";
 import {
-  STATES, getInvoices, getOrders, getOverview, getPayments, getReconciliation, getSeller, issueCreditNote, issueInvoice, rupees, saveSeller, stateName,
-  type ApiState, type BillingOverview, type Invoice, type OrderRow, type PaymentRow, type Reconciliation, type SellerState,
+  STATES, createReferralCode, deleteReferralCode, getInvoices, getOrders, getOverview, getPayments, getPlans, getReconciliation,
+  getReferralCodes, getSeller, issueCreditNote, issueInvoice, rupees, savePlan, saveSeller, setReferralCode, stateName,
+  type ApiState, type BillingOverview, type Invoice, type OrderRow, type PaymentRow, type PlanRow, type Reconciliation,
+  type ReferralCodeRow, type SellerState,
 } from "@/lib/billing-api";
 
-const TABS = ["Overview", "Payments", "Orders", "Reconcile", "Invoices", "Seller details"] as const;
+const TABS = ["Overview", "Payments", "Orders", "Reconcile", "Invoices", "Plans", "Referral codes", "Seller details"] as const;
 type Tab = (typeof TABS)[number];
 const when = (iso: string) => new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 
-/** INR billing for the platform: what was ordered and paid, whether each order was credited, GST invoices and credit notes. */
+/** INR billing for the platform: what was ordered and paid, whether each order was credited, GST invoices and credit notes,
+ * and what is sold (the plan numbers and the referral codes, both edited here and audited). */
 export default function Billing() {
   const [tab, setTab] = useState<Tab>("Overview");
   return (
     <>
-      <Hero marker="BILLING" title="Billing" lead="Rupee payments from the gateway, GST tax invoices and credit notes. This page reads money records and issues invoices; it can never add or remove a credit." />
+      <Hero marker="BILLING" title="Billing" lead="Rupee payments from the gateway, GST tax invoices and credit notes, and what is sold: the plan numbers and the referral codes. This page cannot add or remove a credit." />
       <section className="frame grid" style={{ paddingBottom: 120, rowGap: 24 }}>
         <div role="tablist" aria-label="Billing sections" className="cluster" style={{ gridColumn: "1 / -1" }}>
           {TABS.map((t) => (
@@ -29,6 +32,8 @@ export default function Billing() {
           {tab === "Orders" && <OrdersTab />}
           {tab === "Reconcile" && <ReconcileTab />}
           {tab === "Invoices" && <InvoicesTab />}
+          {tab === "Plans" && <PlansTab />}
+          {tab === "Referral codes" && <ReferralCodesTab />}
           {tab === "Seller details" && <SellerTab />}
         </div>
       </section>
@@ -129,9 +134,9 @@ function OrdersTab() {
   if (s.data.orders.length === 0) return <div className="empty"><b>No orders yet.</b></div>;
   return (
     <div className="table-wrap"><table className="table">
-      <thead><tr><th>Started</th><th>Organisation</th><th>Order</th><th>Amount</th><th>Status</th></tr></thead>
+      <thead><tr><th>Started</th><th>Organisation</th><th>Order</th><th>Amount</th><th>Code</th><th>Status</th></tr></thead>
       <tbody>{s.data.orders.map((o) => (
-        <tr key={o.order_id}><td>{when(o.created_at)}</td><td>{o.organization ?? o.organization_id.slice(0, 8)}</td><td><code>{o.order_id}</code></td><td>{rupees(o.amount_paise)}</td><td>{o.credited ? "Paid and credited" : "Not credited"}</td></tr>
+        <tr key={o.order_id}><td>{when(o.created_at)}</td><td>{o.organization ?? o.organization_id.slice(0, 8)}</td><td><code>{o.order_id}</code></td><td>{rupees(o.amount_paise)}</td><td>{o.referral_code ? <code>{o.referral_code}</code> : <span className="dim">-</span>}</td><td>{o.credited ? "Paid and credited" : "Not credited"}</td></tr>
       ))}</tbody>
     </table></div>
   );
@@ -260,5 +265,134 @@ function SellerTab() {
       <div className="cluster"><button className="btn-ink" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button></div>
       {msg && <p className="small" role="status">{msg}</p>}
     </form>
+  );
+}
+
+/** What is sold: the plan numbers the server uses for every order and /pricing shows. A change applies to new orders only. */
+function PlansTab() {
+  const [s, reload] = useLoad<{ plans: PlanRow[] }>(getPlans);
+  const [editing, setEditing] = useState<PlanRow | null>(null);
+  const [msg, setMsg] = useState("");
+  if (s.kind !== "ok") return <AdminNotice state={s} />;
+  return (
+    <>
+      <p className="small dim">
+        These are the numbers the server sells with and /pricing shows. A change applies to orders made after it; an order already started keeps
+        its amount. The card sentences live in the site, so a brand-new plan kind is a code change. The Pilot&apos;s price and usage are per seat.
+      </p>
+      {msg && <p className="notice-ok" role="status">{msg}</p>}
+      <div className="table-wrap"><table className="table">
+        <thead><tr><th>Plan</th><th>Price</th><th>Period</th><th>Usage included</th><th>Status</th><th /></tr></thead>
+        <tbody>{s.data.plans.map((p) => (
+          <tr key={p.plan}>
+            <td><b>{p.plan}</b></td>
+            <td>{rupees(p.price_paise)}{p.plan === "pilot" ? " per seat" : ""}</td>
+            <td>{p.period_days} days</td>
+            <td>${p.included_usd}{p.plan === "pilot" ? " per seat" : ""}</td>
+            <td>{!p.active ? "Not sold" : p.plan === "pilot" ? "On sale - code needed" : "On sale"}</td>
+            <td><button type="button" className="btn-line" onClick={() => setEditing(p)}>Edit</button></td>
+          </tr>
+        ))}</tbody>
+      </table></div>
+      {editing && <PlanEdit row={editing} onClose={() => setEditing(null)} onDone={(m) => { setEditing(null); setMsg(m); reload(); }} />}
+    </>
+  );
+}
+
+function PlanEdit({ row, onClose, onDone }: { row: PlanRow; onClose: () => void; onDone: (message: string) => void }) {
+  const [priceInr, setPriceInr] = useState(String(row.price_paise / 100));
+  const [days, setDays] = useState(String(row.period_days));
+  const [usd, setUsd] = useState(row.included_usd);
+  const [active, setActive] = useState(row.active);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError("");
+    const r = await savePlan(row.plan, {
+      price_paise: Math.round(Number(priceInr) * 100), period_days: Math.round(Number(days)), included_usd: usd.trim(), active,
+    });
+    setBusy(false);
+    if (r.kind === "ok") onDone(r.data.note);
+    else setError(r.kind === "error" ? r.message : `Not saved (${r.kind}).`);
+  }
+  return (
+    <form className="cform profile-card" onSubmit={save} style={{ marginTop: 16, maxWidth: 560 }} aria-label={`Edit the ${row.plan} plan`}>
+      <h2 className="h3">{row.plan}</h2>
+      <p className="small dim">Price is whole rupees before GST. Usage included is in dollars, credited at purchase.</p>
+      <div className="cfield"><label htmlFor="p-price">Price (₹, before GST)</label><input id="p-price" inputMode="decimal" value={priceInr} onChange={(e) => setPriceInr(e.target.value)} required /></div>
+      <div className="cfield"><label htmlFor="p-days">Period (days)</label><input id="p-days" inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} required /></div>
+      <div className="cfield"><label htmlFor="p-usd">Usage included ($)</label><input id="p-usd" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} required /></div>
+      <div className="cfield"><label htmlFor="p-active"><input id="p-active" type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> On sale</label></div>
+      <div className="cluster"><button className="btn-ink" type="submit" disabled={busy}>{busy ? "Saving…" : "Save"}</button><button type="button" className="btn-line" onClick={onClose} disabled={busy}>Cancel</button></div>
+      {error && <p className="small" role="alert">{error}</p>}
+    </form>
+  );
+}
+
+/** The referral codes: issued here, plus the personal ones made for a buying account. No reward is paid for any of them. */
+function ReferralCodesTab() {
+  const [s, reload] = useLoad<{ codes: ReferralCodeRow[] }>(getReferralCodes);
+  const [code, setCode] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy || !code.trim()) return;
+    setBusy(true); setMsg("");
+    const r = await createReferralCode(code, note);
+    setBusy(false);
+    setMsg(r.kind === "ok" ? `Added ${r.data.code}.` : r.kind === "error" ? r.message : `Not added (${r.kind}).`);
+    if (r.kind === "ok") { setCode(""); setNote(""); reload(); }
+  }
+  async function toggle(row: ReferralCodeRow) {
+    const r = await setReferralCode(row.code, { active: !row.active });
+    setMsg(r.kind === "ok" ? `${row.code} is now ${r.data.active ? "on" : "off"}.` : r.kind === "error" ? r.message : `Not saved (${r.kind}).`);
+    if (r.kind === "ok") reload();
+  }
+  async function remove(row: ReferralCodeRow) {
+    if (!window.confirm(`Delete ${row.code}? A code an order was made with cannot be deleted, only turned off.`)) return;
+    const r = await deleteReferralCode(row.code);
+    setMsg(r.kind === "ok" ? `Deleted ${row.code}.` : r.kind === "error" ? r.message : `Not deleted (${r.kind}).`);
+    if (r.kind === "ok") reload();
+  }
+  if (s.kind !== "ok") return <AdminNotice state={s} />;
+  const rows = s.data.codes;
+  return (
+    <>
+      <p className="small dim">
+        Every active code unlocks the one-person Pilot - the Rs 649 plan for 30 days with $4 of usage - on /pricing. &ldquo;Issued&rdquo;
+        codes are made here and handed out (the launch code FIRSTTRIAL is seeded by migration 168; matching ignores case, so
+        &ldquo;Firsttrial&rdquo; as typed works); &ldquo;personal&rdquo; codes are made for a buying account when its plan is activated and
+        unlock the same plan for whoever the buyer shares it with. Orders record the code they were made with. No reward is paid to
+        anyone for a code: the referrer reward is not built.
+      </p>
+      <form className="cform profile-card" onSubmit={add} style={{ marginBottom: 16, maxWidth: 560 }} aria-label="Add a referral code">
+        <h2 className="h3">Add a code</h2>
+        <div className="cfield"><label htmlFor="rc-code">Code</label><input id="rc-code" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={32} placeholder="For example FRIEND7" required /></div>
+        <div className="cfield"><label htmlFor="rc-note">Note <span className="dim">(who it is for; never shown to buyers)</span></label><input id="rc-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} /></div>
+        <div className="cluster"><button className="btn-ink" type="submit" disabled={busy || !code.trim()}>{busy ? "Adding…" : "Add code"}</button></div>
+        {msg && <p className="small" role="status">{msg}</p>}
+      </form>
+      {rows.length === 0 ? <div className="empty"><b>No codes yet.</b></div> : (
+        <div className="table-wrap"><table className="table">
+          <thead><tr><th>Code</th><th>Kind</th><th>Note</th><th>Orders</th><th>Status</th><th /></tr></thead>
+          <tbody>{rows.map((c) => (
+            <tr key={c.code}>
+              <td><code>{c.code}</code></td>
+              <td>{c.kind}{c.kind === "personal" && c.owner_user_id ? <span className="dim"> · {c.owner_user_id.slice(0, 8)}</span> : null}</td>
+              <td>{c.note ?? <span className="dim">-</span>}</td>
+              <td>{c.uses}</td>
+              <td>{c.active ? "Active" : "Off"}</td>
+              <td className="cluster">
+                <button type="button" className="btn-line" onClick={() => void toggle(c)}>{c.active ? "Turn off" : "Turn on"}</button>
+                {c.uses === 0 && <button type="button" className="btn-line" onClick={() => void remove(c)}>Delete</button>}
+              </td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+    </>
   );
 }

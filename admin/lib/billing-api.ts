@@ -2,7 +2,7 @@
  * Typed client for the billing endpoints of the admin dashboard (backend/app/api/admin_billing.py). Amounts are whole paise as
  * the backend stores them; `rupees()` is the only place they become rupees, and it never rounds a paisa away.
  */
-import { apiGet, apiPost, apiPut, type ApiState } from "@/lib/api";
+import { apiDelete, apiGet, apiPost, apiPut, type ApiState } from "@/lib/api";
 
 export type { ApiState };
 
@@ -10,7 +10,7 @@ export interface BillingOverview {
   orders: number; ordered_paise: number; payments: number; paid_paise: number; stale_orders: number; stale_after_minutes: number;
   invoices: number; credit_notes: number; invoiced_paise: number; credit_noted_paise: number; payments_without_invoice: number; mfa_required: boolean;
 }
-export interface OrderRow { order_id: string; organization_id: string; organization: string | null; amount_paise: number; created_by: string; created_at: string; credited: boolean }
+export interface OrderRow { order_id: string; organization_id: string; organization: string | null; amount_paise: number; created_by: string; created_at: string; credited: boolean; referral_code: string | null }
 export interface PaymentRow {
   payment_ref: string; order_id: string | null; source: string; organization_id: string; organization: string | null; amount_paise: number;
   amount_usd: string; created_at: string; invoice_id: string | null; invoice_number: string | null;
@@ -34,6 +34,17 @@ export interface Invoice {
 }
 export interface BuyerInput { name: string; gstin?: string; state_code?: string; address?: string }
 
+/** A plan row the dashboard edits (db/167). The Pilot's price and usage are per seat. */
+export interface PlanRow {
+  plan: string; price_paise: number; period_days: number; included_usd: string; active: boolean;
+  updated_by: string | null; updated_at: string;
+}
+/** A referral code: issued by the founders here, or personal to a buying account. `uses` is how many orders carried it. */
+export interface ReferralCodeRow {
+  code: string; kind: "issued" | "personal"; owner_user_id: string | null; note: string | null; active: boolean;
+  created_by: string | null; created_at: string; uses: number;
+}
+
 const B = "/v1/admin/billing";
 export const getOverview = (s?: AbortSignal) => apiGet<BillingOverview>(`${B}/overview`, s);
 export const getOrders = (s?: AbortSignal) => apiGet<{ orders: OrderRow[] }>(`${B}/orders?limit=200`, s);
@@ -44,6 +55,20 @@ export const saveSeller = (body: Partial<SellerProfile>) => apiPut<SellerState>(
 export const getInvoices = (s?: AbortSignal) => apiGet<{ invoices: Invoice[] }>(`${B}/invoices?limit=200`, s);
 export const issueInvoice = (payment_ref: string, buyer: BuyerInput) => apiPost<Invoice>(`${B}/invoices`, { payment_ref, buyer });
 export const issueCreditNote = (invoiceId: string) => apiPost<Invoice>(`${B}/invoices/${encodeURIComponent(invoiceId)}/credit-note`, {});
+
+/** What is sold: the plan numbers. A change applies to orders made after it, never to an order already started. */
+export const getPlans = (s?: AbortSignal) => apiGet<{ plans: PlanRow[] }>(`${B}/plans`, s);
+export const savePlan = (plan: string, body: { price_paise?: number; period_days?: number; included_usd?: string; active?: boolean }) =>
+  apiPut<{ row: PlanRow; note: string }>(`${B}/plans/${encodeURIComponent(plan)}`, body);
+
+/** Referral codes: issued here, plus the personal ones made for buying accounts. No reward is paid for any of them. */
+export const getReferralCodes = (s?: AbortSignal) => apiGet<{ codes: ReferralCodeRow[] }>(`${B}/referral-codes?limit=500`, s);
+export const createReferralCode = (code: string, note: string) =>
+  apiPost<ReferralCodeRow>(`${B}/referral-codes`, { code, ...(note.trim() ? { note: note.trim() } : {}) });
+export const setReferralCode = (code: string, body: { active?: boolean; note?: string }) =>
+  apiPut<ReferralCodeRow>(`${B}/referral-codes/${encodeURIComponent(code)}`, body);
+export const deleteReferralCode = (code: string) =>
+  apiDelete<{ code: string; deleted: boolean }>(`${B}/referral-codes/${encodeURIComponent(code)}`);
 
 /** Whole paise to a rupee string with two decimals, in Indian digit grouping. Exact: no floating point on the amount. */
 export function rupees(paise: number): string {

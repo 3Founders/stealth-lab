@@ -31,14 +31,14 @@ const btn = (label: string) => [...host!.querySelectorAll("button")].find((b) =>
 const click = async (el: Element | undefined) => { await act(async () => { (el as HTMLElement).click(); }); };
 
 /** The card's controls with a state that can change when reload() is called, as the page does. */
-function Harness({ plan, states, planOrder = vi.fn(async (_req?: object) => orderFor(plan)), session = SESSION, checkout, waitMs = 1000, looks = 5 }: {
+function Harness({ plan, states, planOrder = vi.fn(async (_req?: object) => orderFor(plan)), session = SESSION, checkout, waitMs = 1000, looks = 5, orderCode }: {
   plan: BuyablePlanId; states: Array<Loaded<PlanState> | null>; planOrder?: ReturnType<typeof vi.fn>; session?: Session | null | undefined;
-  checkout?: () => Promise<"paid" | "closed" | "failed">; waitMs?: number; looks?: number;
+  checkout?: () => Promise<"paid" | "closed" | "failed">; waitMs?: number; looks?: number; orderCode?: string;
 }) {
   const [i, setI] = React.useState(0);
   const idx = React.useRef(0);
   const reload = async () => { idx.current = Math.min(idx.current + 1, states.length - 1); setI(idx.current); return states[idx.current] ?? states[0]!; };
-  return <PlanBuy plan={plan} api={{ planOrder: planOrder as never }} session={session} state={states[i]} reload={reload} checkout={checkout} waitMs={waitMs} looks={looks} now={NOW} />;
+  return <PlanBuy plan={plan} api={{ planOrder: planOrder as never }} session={session} state={states[i]} reload={reload} checkout={checkout} waitMs={waitMs} looks={looks} now={NOW} orderCode={orderCode} />;
 }
 const at = (state: Loaded<PlanState> | null, over: Partial<React.ComponentProps<typeof Harness>> = {}) => <Harness plan="plus" states={[state]} {...over} />;
 
@@ -74,12 +74,10 @@ describe("in the plan's own card", () => {
     expect(text()).toContain("The server answered 500.");
   });
 
-  it("no plan yet: the 30-day dates, 'not a subscription', the terms line and a buy button", async () => {
+  it("no plan yet: the terms line and a buy button, with no run-dates block", async () => {
     await mount(at(ok(null)));
-    expect(text()).toContain("1 November 2026");
-    expect(text()).toContain("1 December 2026");                                   // 30 days later, from the plan's period_days
-    expect(text()).toContain("30 days");
-    expect(text()).toContain("not a subscription");
+    expect(text()).not.toContain("Runs from today");
+    expect(text()).not.toContain("not a subscription");
     expect(text()).toContain("By paying you accept the Terms and the Refund policy");
     expect(host!.querySelector('a[href="/docs/legal/terms"]')).not.toBeNull();
     expect(host!.querySelector('a[href="/legal/refunds"]')).not.toBeNull();
@@ -112,6 +110,15 @@ describe("in the plan's own card", () => {
     expect(slot.childElementCount).toBe(0);
     expect(text()).not.toMatch(/have a code|promo|referral|discount/i);
     expect(host!.querySelector("input")).toBeNull();
+  });
+
+  it("the one-person pilot's order carries the applied code and still no amount", async () => {
+    const planOrder = vi.fn(async (_req?: object) => ({ kind: "ok" as const, data: { orderId: "order_9", amountPaise: 64900, keyId: "rzp_test", plan: "pilot", periodDays: 30 } }));
+    await mount(<Harness plan="pilot" states={[ok(null)]} planOrder={planOrder} orderCode="FRIEND" checkout={async () => "closed"} />);
+    await click(btn("Buy Pilot"));
+    expect(planOrder).toHaveBeenCalledWith({ plan: "pilot", referralCode: "FRIEND" });
+    expect(Object.keys(planOrder.mock.calls[0][0] as object)).toEqual(["plan", "referralCode"]);
+    expect(text()).toContain("window was closed");
   });
 
   it("an active plan shows the end date and offers Renew, not Buy", async () => {

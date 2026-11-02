@@ -25,7 +25,7 @@ def test_an_unknown_pack_is_refused(body):
 
 
 def test_every_pack_costs_more_per_credit_dollar_than_the_best_plan_and_a_bigger_pack_never_costs_more_per_dollar():
-    best_plan = min(t["inr"] / float(plans.included_usd(name, 1, {})) for name, t in plans.TIERS.items())
+    best_plan = min(t["inr"] / float(plans.included_usd(name, 1)) for name, t in plans.TIERS.items())
     rates = [inr / float(usd) for inr, usd in packs.PACKS.values()]
     assert all(r > best_plan for r in rates)                 # a plan is always the better way to buy usage
     assert rates == sorted(rates, reverse=True)              # more rupees buy a little more per rupee

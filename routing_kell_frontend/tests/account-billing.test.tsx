@@ -3,7 +3,7 @@
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,13 +14,18 @@ vi.mock("@/lib/session", () => ({ getAccessToken: async () => null, getSession: 
 import AccountBillingPage from "@/app/account/billing/page";
 import PricingPage from "@/app/pricing/page";
 
+/** The billing surface as these tests meet it: off (503), so the built-in plan copy is shown and no network is touched. */
+const stubOff = () => vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch);
+
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLElement | null = null;
 async function render(el: React.ReactElement) {
   host = document.createElement("div"); document.body.appendChild(host);
   await act(async () => { root = createRoot(host!); root.render(el); });
+  await act(async () => {});
 }
-afterEach(() => { act(() => root?.unmount()); host?.remove(); vi.unstubAllEnvs(); });
+beforeEach(() => { localStorage.clear(); stubOff(); });
+afterEach(() => { act(() => root?.unmount()); host?.remove(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); localStorage.clear(); });
 const hrefs = () => [...host!.querySelectorAll("a")].map((a) => a.getAttribute("href"));
 
 describe("/account/billing", () => {
@@ -60,14 +65,15 @@ describe("/pricing", () => {
     }
     const contacts = [...host!.querySelectorAll("article a")].filter((a) => a.getAttribute("href") === "/contact");
     expect(contacts.length).toBe(2);                                                           // Teams and Enterprise
-    expect(t).not.toMatch(/pilot/i);
+    const inCards = [...host!.querySelectorAll("article")].map((a) => a.textContent ?? "").join(" ");
+    expect(inCards).not.toMatch(/pilot/i);                                                     // the code section mentions it; no card does
     expect(t).not.toMatch(/half the price|% (cheaper|less|saving)|Claude|ChatGPT|Codex|zero.egress|zero data retention|SOC 2 (compliant|certified)/i);
   });
 
-  it("the page is the plans, the credit packs and the legal links, with no extra blocks and no data-path block", async () => {
+  it("the page is the code section, the plans, the credit packs and the legal links, with no extra blocks and no data-path block", async () => {
     await render(<PricingPage />);
     const headings = [...host!.querySelectorAll("h2")].map((h) => h.textContent);
-    expect(headings).toEqual(["Plans", "Additional kell credits"]);
+    expect(headings).toEqual(["Have a code?", "Plans", "Additional kell credits"]);
     expect(host!.textContent).not.toMatch(/Where your data goes|What credits are|SOC 2 report/);
   });
 
@@ -90,6 +96,6 @@ describe("/pricing", () => {
   it("by default (purchases off), the cards link to Contact and nothing can be bought", async () => {
     await render(<PricingPage />);
     expect([...host!.querySelectorAll("article.plan-card a")].every((a) => a.getAttribute("href") === "/contact")).toBe(true);
-    expect(host!.querySelector("button")).toBeNull();
+    expect(host!.querySelector("article button")).toBeNull();                                  // the only button is the code's Apply
   });
 });

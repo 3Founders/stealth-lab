@@ -84,15 +84,17 @@ async def balance(pool: Any, org_id: str) -> dict[str, Any]:
 async def record_order(pool: Any, *, org_id: str, order_id: str, amount_paise: int, created_by: str,
                        plan: Optional[str] = None, seats: Optional[int] = None, team_name: Optional[str] = None,
                        buyer_user_id: Optional[str] = None, period_days: Optional[int] = None,
-                       pack: Optional[str] = None, pack_usd: Optional[Decimal] = None) -> None:
-    """Record an order we created. A plan order also records what it is for (plan, seats, team name, buyer, period) and a pack
-    order the pack and its credit dollars, so the webhook activates it from this row and never from a field in the webhook body."""
+                       pack: Optional[str] = None, pack_usd: Optional[Decimal] = None,
+                       referral_code: Optional[str] = None) -> None:
+    """Record an order we created. A plan order also records what it is for (plan, seats, team name, buyer, period), a pack
+    order the pack and its credit dollars, and a pilot order the referral code that unlocked it, so the webhook activates it
+    from this row and never from a field in the webhook body."""
     cols = ["order_id", "organization_id", "amount_paise", "created_by"]
     vals: list[Any] = [order_id, str(org_id), amount_paise, created_by]
     casts = ["", "::uuid", "", ""]
     for name, value, cast in (("plan", plan, ""), ("seats", seats, ""), ("team_name", team_name, ""),
                               ("buyer_user_id", buyer_user_id, "::uuid"), ("period_days", period_days, ""),
-                              ("pack", pack, ""), ("pack_usd", pack_usd, "")):
+                              ("pack", pack, ""), ("pack_usd", pack_usd, ""), ("referral_code", referral_code, "")):
         if value is not None:
             cols.append(name)
             vals.append(value)
@@ -108,7 +110,7 @@ async def find_order(pool: Any, order_id: str) -> Optional[dict[str, Any]]:
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         row = await conn.fetchrow(
             "SELECT order_id, organization_id::text AS organization_id, amount_paise, plan, seats, team_name, "
-            "buyer_user_id::text AS buyer_user_id, period_days, pack, pack_usd FROM billing_orders WHERE order_id = $1", order_id)
+            "buyer_user_id::text AS buyer_user_id, period_days, pack, pack_usd, referral_code FROM billing_orders WHERE order_id = $1", order_id)
     return dict(row) if row else None
 
 

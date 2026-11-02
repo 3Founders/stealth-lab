@@ -1,21 +1,26 @@
 /**
  * The plans the founders chose (kell_decks/4_kell_router_and_coding_agents.html, slides 7-8; docs/billing.md, "Plans";
- * docs/pricing_page.md for the layout rules). This file is the ONLY place a price is written. Prices are in rupees, before GST. The
- * server works out every amount: the page sends a plan name (and, for a pilot, seats and a team name), never a price.
+ * docs/pricing_page.md for the layout rules). Since 2026-11-02 the numbers live in the backend's billing_plan_rows table and are
+ * edited in the admin dashboard's Billing page (db/167); this file is the built-in copy of those numbers - what the page shows
+ * while the server does not answer (billing off) - and the card sentences, so a price is still never typed in a component. When
+ * the server answers GET /v1/billing/plans the page overrides the numbers with it (withRows below). The server works out every
+ * amount: the page sends a plan name (and, for a pilot, seats, a team name and a referral code), never a price.
  *
  * The ladder: three 30-day passes bought once and renewed by hand (not subscriptions), each with an amount of usage included, in dollars,
  * that the server credits at purchase. Plus is the plan the page recommends. The recommendation is a plain label, never a claim about what
  * other buyers do. Everything derived from the numbers below (the per-day figure, "twice Pro's usage for ₹800 more") is
  * computed here, so a change of price changes every sentence with it.
  *
- * There is no separate plan for teams to try it and no pilot: discounts will come from referral codes, not from another plan.
+ * The one-seat (individual) Pilot is NOT on the open ladder: an active referral code unlocks it, and the page then shows exactly
+ * one plan card, this one. Two or more seats is the team pilot, invoiced directly. The code is checked by the server and the
+ * order records it; nothing here can unlock a plan on its own.
  *
  * Kept off on purpose: comparisons with another company's list prices (no measured saving backs them), any savings percentage, and any
  * claim about data handling or security beyond the data-path sentence on the page. There is no bring-your-own-key plan for now.
  */
-export type PlanId = "starter" | "pro" | "plus" | "teams" | "enterprise";
+export type PlanId = "starter" | "pro" | "plus" | "pilot" | "teams" | "enterprise";
 /** The plans that can be bought online (the server's plan names). */
-export type BuyablePlanId = "starter" | "pro" | "plus";
+export type BuyablePlanId = "starter" | "pro" | "plus" | "pilot";
 
 export interface Plan {
   id: PlanId;
@@ -67,6 +72,16 @@ export const PLANS: Plan[] = [
     status: "Not available online yet", cta: "Ask for Plus",
   },
   {
+    id: "pilot", name: "Pilot", price: "₹649", priceInr: 649, per: "for 30 days", periodDays: 30, includedUsd: 4,
+    forWhom: "For one person, unlocked with a referral code.",
+    includes: [
+      "Assistant or coding tool connected to the keळ MCP.",
+      "A recommended plan for each task.",
+      "A kept record of what the assistant did.",
+    ],
+    status: "Unlocked with a referral code", cta: "Ask for Pilot",
+  },
+  {
     id: "teams", name: "Teams", price: "₹1,800", priceInr: 1800, per: "per seat a month", forWhom: "Three or more seats.",
     includes: [
       "Everything in Pro.",
@@ -95,8 +110,27 @@ export const planById = (id: PlanId): Plan => PLANS.find((p) => p.id === id)!;
 /** The three passes, cheapest first. */
 export const LADDER: Plan[] = (["starter", "pro", "plus"] as const).map(planById);
 
-export const BUYABLE: BuyablePlanId[] = ["starter", "pro", "plus"];
+export const BUYABLE: BuyablePlanId[] = ["starter", "pro", "plus", "pilot"];
 export const isBuyable = (id: string): id is BuyablePlanId => (BUYABLE as string[]).includes(id);
+
+/** One plan as the server sells it now (GET /v1/billing/plans, from the dashboard-edited billing_plan_rows). */
+export interface PlanRow { plan: string; inr: number; days: number; includedUsd: number }
+
+/**
+ * The plans with the server's current numbers, or the built-in copy when it does not answer (`rows` null). A buyable plan the
+ * server did not name is not being sold and is dropped; Teams and Enterprise are not server rows (contact us), so they stay.
+ * Only numbers are overridden here: every card sentence is still written in this file.
+ */
+export function withRows(rows: PlanRow[] | null): Plan[] {
+  if (!rows) return PLANS;
+  const by = new Map(rows.map((r) => [r.plan, r]));
+  return PLANS.flatMap((p) => {
+    const row = by.get(p.id);
+    if (!row) return isBuyable(p.id) ? [] : [p];
+    const priceInr = row.inr;
+    return [{ ...p, price: `₹${priceInr.toLocaleString("en-IN")}`, priceInr, periodDays: row.days, includedUsd: row.includedUsd }];
+  });
+}
 
 /** "about ₹67 a day": the price spread over the days it covers. */
 export function perDay(p: Plan): string | null {

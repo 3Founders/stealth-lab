@@ -1,7 +1,8 @@
 """
 The admin dashboard's billing endpoints (``/v1/admin/billing/...``): what was ordered and paid in rupees, whether each order was
-credited, GST tax invoices and credit notes, and the seller details that print on them. Money in is recorded by the payment webhook
-(app/mcp_server/billing_routes.py); this module only reads it and issues invoices, so nothing here can add or remove a credit.
+credited, GST tax invoices and credit notes, and the seller details that print on them - and, since db/167, what is being sold:
+the plan rows (price, period, included usage, active) and the referral codes, editable here and audited on each change. Money
+in is recorded by the payment webhook (app/mcp_server/billing_routes.py); nothing here can add or remove a credit.
 
 Who may call: a signed-in HUMAN who holds the platform ``admin:ops`` scope (the platform_admin grant). Unlike the older /v1/admin
 routes it does NOT accept the shared static admin key, because money records must be attributable to a person. While
@@ -17,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps import get_auth_context
 from app.services import auth_context as _ac
-from app.services import invoicing
+from app.services import invoicing, plans, referrals
 from app.services.access import TenantScope, tenant_transaction
 from app.services.audit import record_security_event
 
@@ -81,7 +82,7 @@ async def overview(ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
 async def orders(limit: int = Query(100, ge=1, le=500), ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
     async with tenant_transaction(pool, TenantScope.unrestricted()) as c:
         rows = await c.fetch(
-            "SELECT o.order_id, o.organization_id::text AS organization_id, g.name AS organization, o.amount_paise, o.created_by, o.created_at, "
+            "SELECT o.order_id, o.organization_id::text AS organization_id, g.name AS organization, o.amount_paise, o.created_by, o.created_at, o.referral_code, "
             "EXISTS (SELECT 1 FROM org_wallet_credits w WHERE w.order_id = o.order_id) AS credited FROM billing_orders o "
             "LEFT JOIN organizations g ON g.id = o.organization_id ORDER BY o.created_at DESC LIMIT $1", limit)
     return {"orders": [{**dict(r), "created_at": r["created_at"].isoformat()} for r in rows]}
@@ -164,3 +165,80 @@ async def credit_note(invoice_id: str, ctx=Depends(billing_admin), pool=Depends(
     if not note.get("already_issued"):
         await _audit(pool, ctx, "billing.credit_note_issued", note["number"], {"invoice": invoice_id, "total_paise": note["total_paise"]})
     return note
+
+
+def _service_problem(exc: Exception) -> HTTPException:
+    """A refusal raised by the services this page edits (a PlanError, a ReferralError), carrying its own HTTP status."""
+    return HTTPException(getattr(exc, "status", 400), str(exc))
+
+
+# ---- what is sold (db/167): the plan numbers and the referral codes, edited here and effective for new orders only
+
+@router.get("/plans")
+async def plans_all(ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    """Every plan row including inactive ones: what the server sells now, and what it stopped selling."""
+    return {"plans": await plans.all_rows(pool)}
+
+
+@router.put("/plans/{plan}")
+async def plan_save(plan: str, body: dict, ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    """Change a plan's price, period, included usage or active flag. The order keeps the amount it was made with, so an
+    edit applies to new orders only; a brand-new plan KIND needs a code change (each card's sentences live in the site)."""
+    try:
+        fields = plans.row_fields(body)
+        row = await plans.save_row(pool, plan, fields, ctx.subject)
+    except plans.PlanError as exc:
+        raise _service_problem(exc) from exc
+    if row is None:
+        raise HTTPException(404, "no such plan; a new plan kind is a code change, not a dashboard edit")
+    audit = {**dict(fields)}
+    if "included_usd" in audit:
+        audit["included_usd"] = str(audit["included_usd"])
+    await _audit(pool, ctx, "billing.plan_updated", plan, audit)
+    return {"row": {**row._asdict(), "included_usd": str(row.included_usd)}, "note": "Applies to orders made after this moment."}
+
+
+@router.get("/referral-codes")
+async def codes_all(limit: int = Query(500, ge=1, le=1000), ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    """Every code with how many orders it has been made with. Referrer rewards are not built; this list is the record."""
+    return {"codes": await referrals.listing(pool, limit)}
+
+
+@router.post("/referral-codes", status_code=201)
+async def codes_create(body: dict, ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    try:
+        out = await referrals.create(pool, body.get("code"), body.get("note"), ctx.subject)
+    except referrals.ReferralError as exc:
+        raise _service_problem(exc) from exc
+    await _audit(pool, ctx, "billing.referral_code_created", out["code"], {"kind": out["kind"]})
+    return out
+
+
+@router.put("/referral-codes/{code}")
+async def codes_edit(code: str, body: dict, ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    try:
+        active = body.get("active")
+        note = body.get("note")
+        if active is not None and not isinstance(active, bool):
+            raise HTTPException(400, "active must be true or false")
+        if note is not None and not isinstance(note, str):
+            raise HTTPException(400, "the note must be text")
+        out = await referrals.set_code(pool, code, active=active, note=note)
+    except referrals.NotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except referrals.ReferralError as exc:
+        raise _service_problem(exc) from exc
+    await _audit(pool, ctx, "billing.referral_code_updated", out["code"], {"active": out["active"], "note": out["note"]})
+    return out
+
+
+@router.delete("/referral-codes/{code}")
+async def codes_delete(code: str, ctx=Depends(billing_admin), pool=Depends(get_pool)) -> dict:
+    try:
+        out = await referrals.remove(pool, code)
+    except referrals.NotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except referrals.ReferralError as exc:
+        raise _service_problem(exc) from exc
+    await _audit(pool, ctx, "billing.referral_code_deleted", out["code"], {})
+    return out

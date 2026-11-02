@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "@/lib/session";
-import { addDays, anyPlanActive, openCheckout, plainDate, planActive, type Loaded, type PlanState, type billingApi } from "@/lib/billing";
+import { anyPlanActive, openCheckout, plainDate, planActive, type Loaded, type PlanState, type billingApi } from "@/lib/billing";
 import { planById, type BuyablePlanId } from "@/lib/plans";
 
 const link = { textDecoration: "underline" } as const;
@@ -23,10 +23,13 @@ export const PLAN_WAIT_MS = 2500;
  *  - the days come from the plan's data (`periodDays`).
  * `state` is the account's plan as the page loaded it (null while loading) and `reload` loads it again and returns it; one request serves
  * every card. `session` is undefined while it is being checked, null when signed out. Shown only when NEXT_PUBLIC_KELL_BUY_PLANS=on.
+ * `orderCode` is the referral code a person applied above the plans; it is sent with a pilot order (the server checks it again) and
+ * never for another plan, whose price the code does not change.
  */
-export default function PlanBuy({ plan, api, session, state, reload, returnTo = "/pricing", checkout = openCheckout, waitMs = PLAN_WAIT_MS, looks = PLAN_WAIT_LOOKS, now }: {
+export default function PlanBuy({ plan, api, session, state, reload, orderCode, returnTo = "/pricing", checkout = openCheckout, waitMs = PLAN_WAIT_MS, looks = PLAN_WAIT_LOOKS, now }: {
   plan: BuyablePlanId; api: Api; session: Session | null | undefined;
   state: Loaded<PlanState> | null; reload: () => Promise<Loaded<PlanState>>;
+  orderCode?: string;
   returnTo?: string; checkout?: typeof openCheckout; waitMs?: number; looks?: number; now?: () => Date;
 }) {
   const p = planById(plan);
@@ -60,7 +63,7 @@ export default function PlanBuy({ plan, api, session, state, reload, returnTo = 
     if (busy) return;
     setBusy(true); setNote(""); setOrderId("");
     const beforeUntil = current?.plan === plan ? current.activeUntil : null;
-    const order = await api.planOrder({ plan });
+    const order = await api.planOrder(orderCode ? { plan, referralCode: orderCode } : { plan });
     if (order.kind === "off") { await reload(); setNote("Buying plans isn’t switched on yet. Nothing was charged."); setBusy(false); return; }
     if (order.kind === "signed-out") { setNote("Your session has ended. Sign in again to buy."); setBusy(false); return; }
     if (order.kind === "error") { setNote(order.message); setBusy(false); return; }
@@ -88,8 +91,7 @@ export default function PlanBuy({ plan, api, session, state, reload, returnTo = 
           {active && current && <p className="small" role="status"><b>{p.name} active until {plainDate(current.activeUntil!)}.</b></p>}
           {otherActive && current?.plan && <p className="small dim" role="status">{planById(current.plan).name} is active until {plainDate(current.activeUntil!)}. If you buy {p.name} too, both run, and the higher plan applies.</p>}
           {ended && current?.activeUntil && <p className="small" role="status">Your {p.name} ended on {plainDate(current.activeUntil)}.</p>}
-          <p className="small dim">Runs from today, {plainDate(clock())}, to {plainDate(addDays(clock(), days))} ({days} days). A {days}-day pass paid once, not a subscription.</p>
-          {/* Reserved for referral codes, which are not built (docs/referral_legality_2026-11.md). Empty and hidden on purpose. */}
+          {/* Reserved: referral codes have their own section above the plans (components/billing/ReferralCode.tsx), so this stays empty and hidden. */}
           <div data-slot="have-a-code" hidden />
           <button className="btn-ink" type="button" disabled={busy} onClick={() => void buy()}>
             <span>{busy ? "Opening payment…" : active ? "Renew" : `Buy ${p.name}`}</span><span className="sq" aria-hidden="true">→</span>

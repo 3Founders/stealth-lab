@@ -7,15 +7,19 @@ import type { Session } from "@/lib/session";
 
 const link = { textDecoration: "underline" } as const;
 
-/** The plan the signed-in account has: which one, until when, and where to buy or renew. Buying happens on /pricing. */
+/** The plan the signed-in account has: which one, until when, and where to buy or renew. Buying happens on /pricing.
+ * A buying account also has a personal referral code (made when its plan was activated): it unlocks the one-person Pilot for
+ * whoever uses it. No reward is paid for sharing it (docs/referral_legality_2026-11.md). */
 export default function PlanSummary({ api, session, returnTo = "/account/billing", now }: {
-  api: Pick<ReturnType<typeof billingApi>, "plan">; session: Session | null | undefined; returnTo?: string; now?: () => Date;
+  api: Pick<ReturnType<typeof billingApi>, "plan" | "myReferral">; session: Session | null | undefined; returnTo?: string; now?: () => Date;
 }) {
   const [state, setState] = useState<Loaded<PlanState> | null>(null);
+  const [referral, setReferral] = useState<string | null>(null);
   useEffect(() => {
     if (!session) return;
     let live = true;
     api.plan().then((s) => { if (live) setState(s); });
+    api.myReferral().then((r) => { if (live && r.kind === "ok") setReferral(r.data.code); });
     return () => { live = false; };
   }, [session, api]);
   const current = state?.kind === "ok" ? state.data : null;
@@ -39,6 +43,12 @@ export default function PlanSummary({ api, session, returnTo = "/account/billing
         <p className="small" role="status">
           {current.plan && current.activeUntil ? <>Your {planById(current.plan).name} ended on {plainDate(current.activeUntil)}. </> : <>You have no plan yet. </>}
           <Link href="/pricing" style={link}>See the plans</Link>.
+        </p>
+      )}
+      {session && referral && (
+        <p className="small" role="status" style={{ marginTop: 10 }}>
+          Your code to share: <code>{referral}</code>. Someone who uses it unlocks the one-person {planById("pilot").name} plan on
+          the pricing page. No reward is paid for sharing it.
         </p>
       )}
     </div>

@@ -9,6 +9,7 @@
  * NEXT_PUBLIC_KELL_GST_MODE and the page says "being confirmed" when absent. Credit packs come from the server's wallet answer.
  */
 import { MCP_ORIGIN } from "@/lib/connector";
+import type { PlanRow } from "@/lib/plans";
 
 export type GstMode = "inclusive" | "extra" | "undecided";
 export function gstMode(raw: string | undefined = process.env.NEXT_PUBLIC_KELL_GST_MODE): GstMode {
@@ -52,8 +53,8 @@ export function buyPlansOn(raw: string | undefined = process.env.NEXT_PUBLIC_KEL
   return (raw ?? "").trim().toLowerCase() === "on";
 }
 
-export type PlanName = "starter" | "pro" | "plus";
-const PLAN_NAMES: PlanName[] = ["starter", "pro", "plus"];
+export type PlanName = "starter" | "pro" | "plus" | "pilot";
+const PLAN_NAMES: PlanName[] = ["starter", "pro", "plus", "pilot"];
 export interface PlanState { plan: PlanName | null; activeUntil: string | null }
 
 export function parsePlan(j: Record<string, unknown>): PlanState {
@@ -74,8 +75,11 @@ export function anyPlanActive(s: PlanState | null | undefined, now = new Date())
   return Boolean(s?.plan) && planActive(s, s!.plan!, now);
 }
 
-/** What a plan order asks for: the plan name. Never an amount. */
-export type PlanOrderRequest = { plan: PlanName };
+/** What a plan order asks for: the plan name, plus the referral code that unlocks the one-person Pilot. Never an amount. */
+export type PlanOrderRequest = { plan: PlanName; referralCode?: string };
+
+/** The answer to a code check: a refusal's sentence comes from the server, the same words the order route would use. */
+export type CodeCheck = { kind: "valid" } | { kind: "off" } | { kind: "error"; message: string };
 
 export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
@@ -104,14 +108,19 @@ export function billingApi(deps: BillingDeps) {
   const base = (deps.origin ?? MCP_ORIGIN).replace(/\/+$/, "");
   const doFetch: typeof fetch = deps.fetchImpl ?? ((...a) => fetch(...a));
 
-  async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<Loaded<Record<string, unknown>>> {
-    const token = await deps.token();
-    if (!token) return { kind: "signed-out" };
+  /**
+   * One request to the billing surface. `auth: false` is for the two routes that need no session (the code check and the plan
+   * numbers): the pricing page works before anyone signs in, and no token is sent when there is none.
+   */
+  async function call(method: "GET" | "POST", path: string, body?: unknown, opts: { auth?: boolean } = {}): Promise<Loaded<Record<string, unknown>>> {
+    const auth = opts.auth !== false;
+    const token = auth ? await deps.token() : null;
+    if (auth && !token) return { kind: "signed-out" };
     let res: Response;
     try {
       res = await doFetch(`${base}/v1/billing${path}`, {
         method, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
-        headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { "content-type": "application/json" } : {}) },
+        headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}) },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
     } catch { return { kind: "error", message: "Couldn't reach the keळ server. Try again in a moment." }; }
@@ -137,8 +146,45 @@ export function billingApi(deps: BillingDeps) {
       if (r.kind === "error" && /answered 404/.test(r.message)) return { kind: "off" };   // a server that has no plan endpoint yet: plans are not switched on
       return r.kind === "ok" ? { kind: "ok", data: parsePlan(r.data) } : r;
     },
+    /**
+     * The plan numbers as the server sells them now (the dashboard's billing_plan_rows). No session needed: the pricing page is
+     * public. While billing is off (503) the page keeps its built-in copy from lib/plans.ts.
+     */
+    async plans(): Promise<Loaded<PlanRow[]>> {
+      const r = await call("GET", "/plans", undefined, { auth: false });
+      if (r.kind !== "ok") return r;
+      const rows = Array.isArray(r.data.plans) ? r.data.plans : [];
+      const out: PlanRow[] = [];
+      for (const x of rows) {
+        const d = x as Record<string, unknown>;
+        const inr = Number(d.inr), days = Number(d.days), usd = Number(d.included_usd);
+        if (typeof d.plan === "string" && Number.isFinite(inr) && inr > 0 && Number.isFinite(days) && days > 0 && Number.isFinite(usd) && usd > 0) {
+          out.push({ plan: d.plan, inr, days, includedUsd: usd });
+        }
+      }
+      return { kind: "ok", data: out };
+    },
+    /**
+     * Is a referral code active? The refusal sentence comes from the server, so the page repeats exactly what the order route
+     * would say. No session: a code is applied before anyone signs in. 503 = billing is off (nothing can be checked yet).
+     */
+    async checkCode(code: string): Promise<CodeCheck> {
+      const r = await call("POST", "/codes/check", { code }, { auth: false });
+      if (r.kind === "ok") return { kind: "valid" };
+      if (r.kind === "off") return { kind: "off" };
+      if (r.kind === "signed-out") return { kind: "error", message: "The code could not be checked." };   // cannot happen: no session is asked for
+      return { kind: "error", message: r.message };
+    },
+    /** The signed-in buyer's own personal referral code, if they have one (made when their first plan is activated). */
+    async myReferral(): Promise<Loaded<{ code: string | null }>> {
+      const r = await call("GET", "/referral");
+      if (r.kind !== "ok") return r;
+      return { kind: "ok", data: { code: typeof r.data.code === "string" && r.data.code ? r.data.code : null } };
+    },
         async planOrder(req: PlanOrderRequest): Promise<Loaded<{ orderId: string; amountPaise: number; keyId: string; plan: string; periodDays: number }>> {
-      const r = await call("POST", "/orders", { plan: req.plan });
+      const body: Record<string, unknown> = { plan: req.plan };
+      if (req.referralCode) body.referral_code = req.referralCode;
+      const r = await call("POST", "/orders", body);
       if (r.kind !== "ok") return r;
       const d = r.data;
       if (typeof d.order_id !== "string" || typeof d.key_id !== "string") return { kind: "error", message: "The payment window could not be prepared." };
