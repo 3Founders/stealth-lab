@@ -100,8 +100,16 @@ export function reviseRequest(c: Canvas, who = "@kell"): string {
   return `${who} Revise the canvas "${c.title}". What to change: \n\n${fence}canvas title="${c.title}" kind=${c.kind}\n${latest(c).text}\n${fence}`;
 }
 
+/** How a canvas is shown. A page (or an svg picture) is drawn, whatever kind the agent named: agents often forget kind=html. */
+export type CanvasView = "page" | "markdown" | "code";
+export function viewOf(kind: CanvasKind, text: string): CanvasView {
+  const t = text.trimStart().slice(0, 600).toLowerCase();
+  if (kind === "html" || t.startsWith("<!doctype html") || t.startsWith("<html") || /^<(svg|body|head|div|main|section|style|script)[\s>]/.test(t)) return "page";
+  return kind === "code" ? "code" : "markdown";
+}
+
 export function fileNameFor(c: Canvas): string {
-  const ext = c.kind === "html" ? "html" : c.kind === "code" ? "txt" : "md";
+  const ext = viewOf(c.kind, latest(c).text) === "page" ? (latest(c).text.trimStart().toLowerCase().startsWith("<svg") ? "svg" : "html") : c.kind === "code" ? "txt" : "md";
   return `${c.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "canvas"}.${ext}`;
 }
 

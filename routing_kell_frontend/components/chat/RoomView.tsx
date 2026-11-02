@@ -364,6 +364,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       api: rapi, history, labels: () => roomListRef.current.rooms.filter((r) => !tempRef.current.has(r)),
       busy: () => Object.keys(streamingRef.current).length > 0 || (tasksRef.current[roomRef.current] ?? []).some((t) => !isFinished(t)),
       hidden: () => document.visibilityState === "hidden",
+      live: (id, after, onSignal, signal, onOpen) => rapi.watch(id, after, onSignal, signal, onOpen),
       hooks: {
         onMessages: (label, ms) => {
           for (const m of ms) {
@@ -399,11 +400,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     });
     engineRef.current = engine;
     engine.start();
+    engine.watch(roomRef.current);
     const wake = () => engine.kick();
     window.addEventListener("online", wake);
     document.addEventListener("visibilitychange", wake);
     return () => { engine.stop(); window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); engineRef.current = null; };
   }, [rapi, history, push, notify]);
+
+  // The open room is followed live: the server tells us the moment something is written there.
+  useEffect(() => { engineRef.current?.watch(room); }, [room]);
 
   // Bring this room's saved history back from this device (what is already on screen wins on a clash).
   const hydrate = useCallback(async (r: string) => {
@@ -956,7 +961,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           name={addName} onName={setAddName} about={addAbout} onAbout={setAddAbout} error={formError} onSubmit={(e) => void submitAgent(e)}
           onOnboard={onboardAgent}
         />
-        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
+        <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : sync.live ? "Live" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
       </aside>
 
       <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} />

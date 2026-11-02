@@ -76,6 +76,19 @@ export function roomsApi(deps: RoomsDeps) {
     join: (code: string) => call<{ room_id: string; title: string; already_member: boolean }>("POST", "/join", { code }),
     events: (id: string, after = 0, limit = 200, signal?: AbortSignal) => call<EventsPage>("GET", `/${e(id)}/events?after=${after}&limit=${limit}`, undefined, signal),
     append: (id: string, events: EventIn[]) => call<AppendResult>("POST", `/${e(id)}/events`, { events }),
+    /** The live stream of one room (Server-Sent Events over fetch): `onEvent` fires for every frame, `onOpen` once connected. Resolves when the
+     *  stream ends (about every 50 s) or is aborted; the caller reconnects with the cursor. */
+    watch: async (id: string, after: number, onEvent: () => void, signal: AbortSignal, onOpen: () => void) => {
+      const token = await deps.token();
+      if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
+      const res = await doFetch(`${base}/v1/rooms/${e(id)}/stream?after=${after}`, {
+        method: "GET", signal, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer",
+        headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" },
+      });
+      if (!res.ok || !res.body) throw new RoomsApiError(`The server answered ${res.status}.`, res.status);
+      onOpen();
+      await readSse(res.body, (ev) => { if ((ev as { error?: unknown } | null)?.error === undefined) onEvent(); });
+    },
     markRead: (id: string, seq: number) => call<{ last_read_seq: number }>("PUT", `/${e(id)}/read`, { seq }),
     /** Ask the built-in room agent (@kell) to answer in this room. The server posts the answer as a room event, so it
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */

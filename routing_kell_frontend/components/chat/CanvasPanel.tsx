@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fileNameFor, type Canvas, type CanvasVersion } from "@/lib/chat/canvas";
+import Markdown from "@/components/chat/Markdown";
+import { fileNameFor, viewOf, type Canvas, type CanvasVersion } from "@/lib/chat/canvas";
 
 /**
  * The canvas: a panel at the right of the chat that shows what an agent wrote (a page, code or a document). Laid out after Open WebUI's
@@ -9,6 +10,8 @@ import { fileNameFor, type Canvas, type CanvasVersion } from "@/lib/chat/canvas"
  * Close on the right, and below it the content edge to edge. Every version in the room is one step, oldest to newest. There is no editor:
  * you ask an agent for the next version. Pages run in a sandbox that cannot reach this site or your account.
  */
+/** A bare fragment (an svg, a div) is wrapped so it has a page to sit in; a whole page is used as it is. */
+const pageDoc = (t: string): string => /<html[\s>]|<!doctype/i.test(t) ? t : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;font-family:system-ui,sans-serif;background:#fff;color:#171717}</style></head><body>${t}</body></html>`;
 const MIN_W = 300, MIN_SIBLING = 360, DEFAULT_W = 420, KEY = "kell:canvas-width";
 
 interface Entry { canvas: Canvas; v: CanvasVersion }
@@ -69,7 +72,8 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId 
   if (!open || count === 0) return null;
   const cur = entries[Math.min(idx, count - 1)];
   const text = cur.v.text;
-  const isPage = cur.canvas.kind === "html";
+  const view = viewOf(cur.canvas.kind, text);
+  const isPage = view === "page";
   const flashCopied = () => { setCopied(true); window.clearTimeout(timer.current); timer.current = window.setTimeout(() => setCopied(false), 2000); };
   const copy = () => { void navigator.clipboard.writeText(text).then(flashCopied, () => {}); };
   const download = () => {
@@ -120,7 +124,9 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId 
         </div>
         <div className="dg-canvas-body">
           {isPage ? (
-            <iframe ref={frame} title="Content" className="dg-canvas-frame" srcDoc={text} sandbox="allow-scripts allow-downloads allow-forms" referrerPolicy="no-referrer" />
+            <iframe ref={frame} key={`${cur.canvas.id}-${cur.v.n}`} title="Content" className="dg-canvas-frame" srcDoc={pageDoc(text)} sandbox="allow-scripts allow-downloads allow-forms" referrerPolicy="no-referrer" />
+          ) : view === "markdown" ? (
+            <div className="dg-canvas-doc" tabIndex={0} aria-label={cur.canvas.title}><Markdown text={text} /></div>
           ) : (
             <pre className="dg-canvas-pre" data-kind={cur.canvas.kind} tabIndex={0} aria-label={cur.canvas.title}>{text}</pre>
           )}

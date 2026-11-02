@@ -944,3 +944,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 :root[data-theme="dark"] .dg-page :is(.btn-line, .dg-add, .dg-mini, .dg-breaker, .dg-stop, .dg-burger, .dg-menu, .dg-rooms-btn, .dg-set-x, .dg-manage-x, .dg-onboard-side, .dg-onboard):hover:not(:disabled) {
   background: rgba(255, 255, 255, .92); color: #171717;
 }
+
+/* The mention and command lists float above the box. The sliding highlight makes lists position: relative, which pulled these two into the
+   composer row and pushed the text bar sideways when @ was pressed. */
+.dg-page .dg-mentions.dg-slide { position: absolute; }
+.dg-canvas-doc { height: 100%; overflow: auto; padding: 12px 20px 24px; font-size: 15px; line-height: 1.6; overscroll-behavior: contain; }
+.dg-canvas-doc .dg-md { gap: 10px; }
+.dg-canvas-doc .dg-md p, .dg-canvas-doc .dg-md li { font-weight: 400; line-height: 1.6; }

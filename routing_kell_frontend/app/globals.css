@@ -916,3 +916,8 @@ main, footer { position: relative; z-index: 1; }
 /* "Talk to a founder" and the other outlined buttons: the yellow hover needs dark text in dark mode, and a theme switch must not animate the glass. */
 .btn-line:hover { color: var(--on-yellow); }
 .btn-line { transition: background-color .25s var(--ease), color .25s var(--ease); }
+
+/* Footer logo in dark mode: the light-letters wordmark straight on the dark footer, no pale box. */
+:root[data-theme="dark"] .footer-logo { background: transparent; padding: 0; }
+:root[data-theme="dark"] .footer-logo .wm-light { display: none !important; }
+:root[data-theme="dark"] .footer-logo .wm-dark { display: inline-block !important; }

@@ -22,7 +22,7 @@ import { RoomsApiError, type RoomsApi, type ServerRoom } from "./rooms-api";
 import type { GroupMessage } from "./types";
 
 export type SyncStatus = "idle" | "syncing" | "offline" | "error";
-export interface SyncState { status: SyncStatus; pending: number; lastSyncAt: number | null; error: string | null }
+export interface SyncState { status: SyncStatus; pending: number; lastSyncAt: number | null; error: string | null; /** A live connection to the open room is up: new messages arrive as they are written. */ live?: boolean }
 
 export interface RoomsChange {
   added: Array<{ label: string; id: string; title: string; role: "owner" | "admin" | "member" }>;
@@ -49,6 +49,8 @@ export interface SyncDeps {
   busy?(): boolean;
   hidden?(): boolean;
   sleep?(ms: number): Promise<void>;
+  /** Holds a live stream for one room open (the server's /stream): calls `onSignal` for each event and resolves when it ends. */
+  live?(roomId: string, after: number, onSignal: () => void, signal: AbortSignal, onOpen: () => void): Promise<void>;
 }
 
 const BATCH = 50;
@@ -111,16 +113,60 @@ export class SyncEngine {
     void this.loop();
   }
 
-  stop(): void { this.stopped = true; this.wake?.(); }
+  stop(): void { this.stopped = true; this.liveAbort?.abort(); this.liveAbort = null; this.wake?.(); }
 
-  /** Sync soon (after a send, on coming back online, on returning to the tab). */
-  kick(): void { this.wake?.(); }
+  /** Sync soon (after a send, on coming back online, on returning to the tab, or when the live stream says something happened). A kick that
+   *  arrives while a pass is running is remembered, so it is never lost. */
+  kick(): void { if (this.wake) this.wake(); else this.kicked = true; }
+
+  // ---- live updates: a stream for the room on screen tells us at once when something was written; polling becomes the slow fallback.
+  private liveAbort: AbortController | null = null;
+  private liveRoom: string | null = null;
+  private kicked = false;
+  private connected = false;
+
+  /** Watch the room on screen (null stops watching). Safe to call again with the same room. */
+  watch(label: string | null): void {
+    if (label === this.liveRoom && this.liveAbort) return;
+    this.liveAbort?.abort();
+    this.liveAbort = null;
+    this.liveRoom = label;
+    this.setLive(false);
+    if (!label || !this.d.live || this.stopped) return;
+    const ac = new AbortController();
+    this.liveAbort = ac;
+    void this.liveLoop(label, ac);
+  }
+
+  private setLive(v: boolean) { if (this.connected !== v) { this.connected = v; this.set({ live: v }); } }
+
+  private async liveLoop(label: string, ac: AbortController): Promise<void> {
+    let fails = 0;
+    while (!ac.signal.aborted && !this.stopped) {
+      await this.load();
+      const id = this.map[label];
+      if (!id || this.d.hidden?.()) { await this.pause(ac, 3000); continue; }
+      let opened = false;
+      try {
+        await this.d.live!(id, this.cursors[id] ?? 0, () => this.kick(), ac.signal, () => { opened = true; fails = 0; this.setLive(true); });
+      } catch { /* dropped or refused: reconnect below */ }
+      this.setLive(false);
+      if (ac.signal.aborted) return;
+      if (!opened) fails += 1;
+      await this.pause(ac, opened ? 500 : Math.min(30_000, 1000 * 2 ** Math.min(fails, 5)));
+    }
+  }
+
+  private pause(ac: AbortController, ms: number): Promise<void> {
+    return new Promise<void>((resolve) => { const t = setTimeout(resolve, ms); ac.signal.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true }); });
+  }
 
   private async loop(): Promise<void> {
     while (!this.stopped) {
       await this.syncNow();
       if (this.stopped) break;
-      const ms = this.failures ? Math.min(60_000, 2000 * 2 ** Math.min(this.failures, 5)) : this.d.hidden?.() ? 30_000 : this.d.busy?.() ? 2500 : 5000;
+      const ms = this.failures ? Math.min(60_000, 2000 * 2 ** Math.min(this.failures, 5)) : this.d.hidden?.() ? 30_000 : this.connected ? 15_000 : this.d.busy?.() ? 2500 : 5000;
+      if (this.kicked) { this.kicked = false; continue; }
       await new Promise<void>((resolve) => {
         const t = setTimeout(resolve, ms);
         this.wake = () => { clearTimeout(t); resolve(); };
@@ -157,15 +203,22 @@ export class SyncEngine {
 
   private async pass(): Promise<void> {
     await this.load();
-    this.set({ status: "syncing", pending: (await this.d.history.outboxIds()).length });
+    const queued = (await this.d.history.outboxIds()).length;
+    // "Syncing" is only said when something is waiting to go out, or a pass is slow. A quiet check every few seconds must not flip the
+    // indicator between Syncing and Synced.
+    let slow: ReturnType<typeof setTimeout> | null = null;
+    if (queued > 0 || this.state.lastSyncAt === null) this.set({ status: "syncing", pending: queued });
+    else slow = setTimeout(() => this.set({ status: "syncing" }), 1200);
     try {
       let rooms = await this.d.api.rooms();
       await this.reconcile(rooms);
       if ((await this.flush()) > 0) rooms = await this.d.api.rooms(); // see our own sends in the room list, so the cursor moves past them now
       await this.pull(rooms);
       this.failures = 0;
+      if (slow) clearTimeout(slow);
       this.set({ status: "idle", pending: (await this.d.history.outboxIds()).length, lastSyncAt: Date.now(), error: null });
     } catch (err) {
+      if (slow) clearTimeout(slow);
       this.failures += 1;
       const e = err as RoomsApiError;
       const offline = e instanceof RoomsApiError && e.offline;
