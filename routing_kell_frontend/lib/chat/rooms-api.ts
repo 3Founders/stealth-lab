@@ -76,6 +76,9 @@ export function roomsApi(deps: RoomsDeps) {
     events: (id: string, after = 0, limit = 200, signal?: AbortSignal) => call<EventsPage>("GET", `/${e(id)}/events?after=${after}&limit=${limit}`, undefined, signal),
     append: (id: string, events: EventIn[]) => call<AppendResult>("POST", `/${e(id)}/events`, { events }),
     markRead: (id: string, seq: number) => call<{ last_read_seq: number }>("PUT", `/${e(id)}/read`, { seq }),
+    /** Ask the built-in room agent (@kell) to answer in this room. The server posts the answer as a room event, so it
+     *  arrives through sync like any other message; nothing is posted when it cannot answer. */
+    agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null }>("POST", `/${e(id)}/agent`, { text }),
   };
 }
 export type RoomsApi = ReturnType<typeof roomsApi>;

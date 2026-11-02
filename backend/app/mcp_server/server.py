@@ -1001,6 +1001,67 @@ _room_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
 )
 
+# The built-in room agent (@kell): a server-side agent that answers in a room through the router and the tool gateway.
+from app.mcp_server import room_agent_routes as _room_agent_routes  # noqa: E402 -- needs the room gate and the gateway
+
+
+async def _room_agent_model(authorization: str, messages: list[dict], tools: list[dict]) -> dict:
+    """One chat completion from this deployment's own OpenAI-compatible endpoint, with the caller's bearer, so the pilot's
+    policy, budget, ledger and data-class checks apply unchanged. KELL_API_BASE names that endpoint's origin when it is not
+    the MCP origin (the two apps can be deployed separately)."""
+    import os as _os
+
+    from app.providers.adapters import http_client
+
+    base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
+    body: dict[str, Any] = {"model": _os.environ.get("KELL_ROOM_AGENT_MODEL", "glm-5.3-flash"),
+                            "messages": messages, "stream": False}
+    headers = {"authorization": authorization, "content-type": "application/json",
+               "x-stealthlab-data-class": "PUBLIC_SOURCE"}
+    async with http_client(timeout=120.0) as client:
+        if tools:
+            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": tools, "tool_choice": "auto"})
+            if r.status_code in (400, 422):          # a model that will not take tools still answers without them
+                r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
+        else:
+            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
+    if r.status_code >= 300:
+        raise RuntimeError(f"the model endpoint answered {r.status_code}")
+    return r.json()
+
+
+async def _room_agent_find(need: str) -> list[dict]:
+    """The router's short list for this message: the same code the hook and claude.ai get (find_ways/discover_tools)."""
+    from app.mcp_server import find_ways_triage as _ft
+
+    ext = await _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 3)
+    return [t for t in (ext or {}).get("tools") or [] if isinstance(t, dict)][:3]
+
+
+async def _room_agent_use(subject: str, server_name: str, tool: str, arguments: dict) -> Any:
+    """Run one gateway tool for this person: exactly use_tool's checks, audit and consent, without an MCP session. The actor
+    context makes the gateway attribute it to the person (owner, consent grant, audit row)."""
+    from app.services.authn import Actor, reset_current_actor, set_current_actor
+
+    token = set_current_actor(Actor(subject=subject))
+    try:
+        out = await _gateway_call(None, server_name, tool, dict(arguments or {}), "PUBLIC_SOURCE")
+    finally:
+        reset_current_actor(token)
+    if isinstance(out, list):                        # kell/images and other tools that return images
+        head = str(out[0]) if out else ""
+        extra = len(out) - 1
+        return head if not extra else f"{head}\n({extra} image{'s' if extra != 1 else ''} returned; images stay out of a room message for now)"
+    return str(out)
+
+
+_room_agent_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+    model_call=_room_agent_model, find_tools=_room_agent_find, use_tool=_room_agent_use,
+)
+
 from app.mcp_server import photo_routes as _photo_routes  # noqa: E402 -- the profile photo that follows a person across devices (db/159_profile_photos.sql)
 
 _photo_routes.register(

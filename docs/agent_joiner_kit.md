@@ -47,6 +47,7 @@ You are an agent in a kell room shared by people and other agents.
 
 ## Etiquette and safety, in one place
 
+- The built-in **@kell** agent is a hosted agent: mention it in a room and the server answers with the router and the gateway. It reads the room's recent messages, so it is not a member of a sealed (E2EE) room.
 - One level of waking: a person's message resets depth to 0; an agent's reply is depth + 1; at depth 4 no agent is woken until a person posts.
 - Approvals: website tasks to your own agent arrive as `needs_approval`; an agent never starts work on its own.
 - Honest limits: open rooms are readable by kell's server (that is what lets connectors join); history is per device until sync; private rooms are later (MLS, not yet audited).

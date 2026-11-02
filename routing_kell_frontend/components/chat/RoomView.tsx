@@ -14,7 +14,7 @@ import { describeBacking, makeResolver, type Backing } from "@/lib/chat/adapters
 import { Broker } from "@/lib/chat/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, validAgentName, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/chat/rooms";
-import { roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
+import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
 import type { AgentActivity, AgentIdentity, GroupMessage, ImageAttachment } from "@/lib/chat/types";
@@ -159,6 +159,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, [history]);
   const firstRooms = useRef(true);
   const note = useCallback((text: string, r: string = roomRef.current) => push(r, { kind: "notice", id: broker.newId(), text, t: Date.now() }), [broker, push]);
+
+  // The built-in room agent (@kell) runs on the server (mcp_server/room_agent_routes.py): a mention asks it, and its
+  // answer is posted into the room as an agent message, so it arrives through sync on every device.
+  const roomsAgent = useMemo(() => roomsApi({ token: getAccessToken }), []);
+  const askingKell = useRef<Set<string>>(new Set());
+  const askKell = useCallback(async (r: string, text: string) => {
+    if (askingKell.current.has(r)) return;
+    askingKell.current.add(r);
+    try {
+      const out = await roomsAgent.agent(r, text);
+      if (!out.posted) note("@kell answered but could not post it in the room.");
+    } catch (err) {
+      if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask @kell.");
+      else note(err instanceof Error ? err.message : "@kell could not answer just now.");
+    } finally { askingKell.current.delete(r); }
+  }, [roomsAgent, note]);
 
   // Notifications (lib/chat/notify.ts): what reaches you, in the bell, the tab title, the app badge, a chime and, in the background, an OS alert.
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
@@ -596,16 +612,17 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const names = new Set(relayAgents.map((a) => a.name));
     const toRelay = mentionedNames(line).filter((n) => names.has(n));
     const localMentions = mentionsIn(line).filter((h) => agents.includes(h));
+    const asksKell = /(^|\s)@kell\b/i.test(line);
     if (toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
       try {
         const r = await api.send(line, room);
         setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], r.tasks) }));
       } catch (err) { note(err instanceof Error ? err.message : "That didn't send."); }
-      if (!localMentions.length) return;
+      if (!localMentions.length && !asksKell) return;
     } else {
       const people = new Set(peopleHandles.map((h) => h.slice(1)));
-      const unknown = mentionedNames(line).filter((n) => !agents.includes(`@${n}`) && !names.has(n) && !people.has(n));
+      const unknown = mentionedNames(line).filter((n) => n !== "kell" && !agents.includes(`@${n}`) && !names.has(n) && !people.has(n));
       if (unknown.length && !localMentions.length) note(`No agent named ${unknown.map((n) => `@${n}`).join(", ")}. Add one with + Add agent.`);
     }
     const m: GroupMessage = {
@@ -613,10 +630,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       payload: { ...toMcpPayload(line), ...(pictures?.length ? { attachments: pictures } : {}) }, timestamp: Date.now(), depthCounter: 0,
     };
     await broker.send(m);
+    if (asksKell) void askKell(room, line);
   };
 
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);
-  const mentionable = [...new Set([...agents, ...relayAgents.map((a) => a.handle), ...peopleHandles])];
+  const mentionable = [...new Set([...agents, "@kell", ...relayAgents.map((a) => a.handle), ...peopleHandles])];
   const full = agents.length >= MAX_AGENTS;
   const count = agents.length + relayAgents.length;
 
@@ -643,6 +661,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           <li>
             <span className="dg-dot" data-a="human" aria-hidden="true" />
             <span className="dg-handle">{HUMAN.handle}</span>
+          </li>
+          <li>
+            <span className="dg-dot" data-a="idle" aria-hidden="true" />
+            <span className="dg-handle">@kell</span> <span className="dim small">built-in</span>
           </li>
           {relayAgents.map((a) => (
             <li key={a.id}>
@@ -724,7 +746,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>
               <MessageScroller.Content ref={contentRef} className="dg-content">
                 {items.length === 0 && streamingHere.length === 0 && (
-                  <p className="dg-empty">No messages in {room} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}Add your own agents with <b>+ Add agent</b>.</p>
+                  <p className="dg-empty">No messages in {room} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}Ask <b>@kell</b>, the built-in agent, by mentioning it; add your own agents with <b>+ Add agent</b>.</p>
                 )}
                 {items.map((i) => i.node)}
                 {streamingHere.map(([h, v]) => (

@@ -80,8 +80,51 @@ Private rooms (a later version) add `mode: "private"`, `user_keys` and per-membe
 | P3 | Open-room API and tables (migration 157, `/v1/rooms`) | built, 13 e2e tests on a real Postgres |
 | P4 | Sync engine (`lib/delegator/sync.ts`): local outbox, poll-based pull, multi-device, invite links, member list, unread counts | built, verified with two browser contexts against a local server. Not built: SSE (it polls every 2.5-5 s), edits/deletes/reactions in the UI, typing and presence, push notifications |
 | P5 | MCP room tools so connectors are real participants; hop rules | built (`room_list`, `room_read`, `room_post`, `room_members` in `server.py`, store in `services/rooms.py`; visible in the progressive core so Claude/ChatGPT can join without a discovery step) |
-| P6 | keळ-hosted agents that call MCP tools (open rooms only; call_model under org policy and budgets; tool calls that need approval reuse `needs_approval`) | backend |
+| P6 | keळ-hosted agents that call MCP tools (open rooms only; call_model under org policy and budgets; tool calls that need approval reuse `needs_approval`) | first slice built: the built-in **@kell** room agent (`POST /v1/rooms/{id}/agent`, `services/room_agent.py`) - server-side, hosted models via the caller's own `/v1/chat/completions`, router-chosen tools through the same gateway/consent/audit as `use_tool`, reply posted into the room as an agent message. `KELL_API_BASE` (when the API app is not the MCP origin) and `KELL_ROOM_AGENT_MODEL` (default `glm-5.3-flash`). Remaining: multiple hosted agents, org budgets, per-agent approval. |
 | P7 | Private rooms on ts-mls, with an independent review before they are called secure | later |
+
+## Next session (scoped 2026-11-02): E2EE rooms, parity addressing, encrypted store-and-forward
+
+Founder direction: rooms end-to-end encrypted by default; **the same addressing model for people and agents** - `@alice` (person),
+`@alice/claude-code` (Alice's agent), `@bob/opencode` (Bob's agent) are equal members of the same room; and a **reliable encrypted
+store-and-forward** so an intermittently connected local agent is never a 504: a message waits in an encrypted inbox and is taken the
+moment the agent wakes. Storage (retention, quota, export, deletion) is part of it. None of this is built yet; the plan below is the
+next session's work.
+
+**Decision to settle first (the hard one).** claude.ai and ChatGPT cannot hold MLS keys; their model is a server-side connector. Two
+honest shapes:
+
+- **A (recommended): E2EE rooms exclude hosted connectors.** Claude Code and other local agents join through a key-holding bridge
+  (`kell` CLI / MCP bridge, keys never leave the machine). Hosted connectors stay in open rooms. The room label states which kind it
+  is, and the current label ("kell can read this room") remains true for open rooms.
+- **B: per-room "connector gateway" member** that decrypts for claude.ai/ChatGPT. Useful, but that room is not end-to-end encrypted
+  in the strict sense and must be labelled exactly so (a gateway is inside the trust boundary). Only if A blocks a real use case.
+
+**Work order (each item lands with its exit test).**
+
+1. **Addressing/identity (migration after 167).** `room_members` gains `address` (`@name` or `@owner/agent`), `kind` (person|agent),
+   `owner_sub`; unique `(room_id, address)`; events carry `sender_address` alongside the existing sender fields; backfill people as
+   `@<their handle>`. Exit: a person and two agents are members of one room with the same row shape and can be addressed and mentioned
+   identically; existing rooms and history still read.
+2. **MLS group layer (ts-mls; not home-grown).** Per-member key packages; join via Welcome; add/remove via Commit; the server stores
+   only opaque blobs (key packages, Welcome, Commit, application data) and never a room key; a removed member cannot read later events.
+   Exit: e2e with 2 people + 2 agents on a real Postgres; removal test; the security-review checklist is written before any "secure"
+   wording ships (ts-mls is not audited - say so).
+3. **Room mode + truthful labels.** New rooms default to E2EE; an explicit open-room option (needed for hosted connectors); the badge,
+   the docs and the API say which one a room is; existing rooms stay open until converted.
+4. **Encrypted store-and-forward.** Per-recipient (per-room, per-member) ciphertext inbox with `seq`, idempotent envelope ids, ack/claim,
+   TTL and quota; sent while the agent is down, taken on its next `room_read`/inbox call (cursor), never dependent on a live socket or a
+   webhook; SSE stays a latency hint only. Exit: send while the laptop is closed; agent wakes after 20+ minutes and receives each message
+   exactly once; no 504 on either side; the server cannot read the payload.
+5. **Storage and retention.** Per-room retention (open and E2EE separately), per-account storage quota, deletion and export on the
+   device and on the server; purge on membership removal; an audit trail of key/membership changes (times, no content).
+6. **Artifacts in E2EE rooms.** The fenced ` ```html ` artifact travels inside ciphertext and renders exactly as today
+   (`lib/chat/artifacts.ts`); no change to `MessageText`.
+7. **Delivery/verification.** Docs (this file, `agent_joiner_kit.md`, `/docs#agents`, `/connect`), the joiner prompt, and a threat-model
+   note; e2e: two browsers + a local agent, offline window, member removal, export/import.
+
+**Out of scope next session:** server-side search of E2EE content, cross-organization connector federation, agents with several owners,
+and any re-encryption guarantee beyond what MLS provides.
 
 ## Honest limits
 

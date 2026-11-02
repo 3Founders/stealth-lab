@@ -390,6 +390,17 @@ async def list_events(pool: Any, sub: str, room_id: str, after: int = 0, limit: 
             "last_seq": room["next_seq"]}
 
 
+async def recent_events(pool: Any, sub: str, room_id: str, limit: int = 30) -> list[dict[str, Any]]:
+    """The last `limit` events, oldest first: a short memory for an agent (the room itself keeps everything). Membership is
+    checked the same way, so a room you are not in still answers "no such room"."""
+    room = await _member_room(pool, sub, room_id)
+    limit = max(1, min(int(limit or 30), MAX_PAGE))
+    rows = list(reversed(await pool.fetch(
+        "SELECT * FROM room_events WHERE room_id = $1 ORDER BY seq DESC LIMIT $2", room["id"], limit)))
+    names = await _names(pool, [r["sender_sub"] for r in rows])
+    return [_event_json(r, names, sub) for r in rows]
+
+
 class _Limiter:
     """A sliding window per person, in memory (one worker). Swappable in tests."""
 
