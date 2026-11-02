@@ -92,7 +92,7 @@ export function roomsApi(deps: RoomsDeps) {
     markRead: (id: string, seq: number) => call<{ last_read_seq: number }>("PUT", `/${e(id)}/read`, { seq }),
     /** Ask the built-in room agent (@kell) to answer in this room. The server posts the answer as a room event, so it
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */
-    agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null }>("POST", `/${e(id)}/agent`, { text }),
+    agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[] }>("POST", `/${e(id)}/agent`, { text }),
     /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
     agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }) => {
       const token = await deps.token();
@@ -114,19 +114,20 @@ export function roomsApi(deps: RoomsDeps) {
         const msg = (json as { error?: unknown } | null)?.error;
         throw new RoomsApiError(typeof msg === "string" && msg ? msg : `The server answered ${res.status}.`, res.status);
       }
-      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null } | null = null;
+      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[] } | null = null;
       let failure: RoomsApiError | null = null;
       await readSse(res.body, (event) => {
-        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown };
+        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown; consent?: unknown };
         if (typeof o.error === "string" && o.error) failure = new RoomsApiError(o.error);
         if (typeof o.delta === "string" && o.delta) onDelta(o.delta);
         if (o.done === true) {
           final = { posted: Boolean(o.event), text: String(o.text ?? ""), tools: Array.isArray(o.tools) ? o.tools.map(String) : [],
-                    event: (o.event as { id: string; seq: number } | null) ?? null };
+                    event: (o.event as { id: string; seq: number } | null) ?? null,
+                    consent: Array.isArray(o.consent) ? o.consent.map(String) : [] };
         }
       });
       if (failure) throw failure;
-      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null } | null;
+      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[] } | null;
       if (done === null) throw new RoomsApiError("The answer ended before it was posted.");
       return done;
     },

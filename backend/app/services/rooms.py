@@ -20,6 +20,7 @@ redacted copy. Per-person rate limiting is in memory (one worker). Nothing here 
 from __future__ import annotations
 
 import hashlib
+import logging
 import hmac
 import re
 import secrets
@@ -30,6 +31,8 @@ from typing import Any, Optional
 from app.services.delegate import mentions as _mentions
 from app.services.trace_redaction import redact_value
 from app.utils.ids import uuid7
+
+log = logging.getLogger(__name__)
 
 MAX_BODY = 8000
 MAX_ROOMS_PER_OWNER = 50
@@ -209,6 +212,10 @@ async def delete_room(pool: Any, sub: str, room_id: str) -> dict[str, Any]:
     await pool.execute("DELETE FROM room_invites WHERE room_id = $1", rid)
     await pool.execute("DELETE FROM room_reads WHERE room_id = $1", rid)
     await pool.execute("DELETE FROM room_members WHERE room_id = $1", rid)
+    try:                                       # uploaded files go with the room (their bytes are not kept for a room that is gone)
+        await pool.execute("DELETE FROM room_files WHERE room_id = $1", rid)
+    except Exception:  # noqa: BLE001 -- the files table may not exist yet on an older database; the room is already deleted
+        log.warning("rooms: could not delete files of room %s", rid, exc_info=True)
     return {"deleted": str(rid), "events_removed": _count(events)}
 
 
@@ -363,6 +370,31 @@ def agent_event(handle: str, text: str, reply_to: Optional[str] = None) -> dict[
     if reply_to:
         ev["reply_to"] = reply_to
     return ev
+
+
+NL = chr(10)
+PARA = NL + NL
+
+
+def split_body(text: str, limit: int = MAX_BODY) -> list[str]:
+    """A long reply as pieces of at most `limit` characters, cut at a blank line, a line end or a space when one is near the cut, so a
+    long answer is posted in full as several messages instead of being refused."""
+    body = (text or "").strip()
+    parts: list[str] = []
+    while len(body) > limit:
+        cut = max(body.rfind(PARA, 0, limit), body.rfind(NL, 0, limit), body.rfind(" ", 0, limit))
+        if cut < limit // 2:
+            cut = limit
+        parts.append(body[:cut].strip())
+        body = body[cut:].strip()
+    if body:
+        parts.append(body)
+    return parts
+
+
+def agent_events(handle: str, text: str) -> list[dict[str, Any]]:
+    """The events for an agent's reply, one per piece when it is longer than a room message may be."""
+    return [agent_event(handle, piece) for piece in split_body(text)]
 
 
 def _event_json(row: Any, names: dict[str, str], me: str) -> dict[str, Any]:

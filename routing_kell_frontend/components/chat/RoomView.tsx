@@ -242,6 +242,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
       }, ctl.signal, who, presetsRef.current[who],
       temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined);
+      for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
         // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
@@ -1016,7 +1017,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                     <Avatar who={assistantIdentityFor(h)} />
                     <div className="dg-col">
                       <div className="dg-meta"><b>{nameOf(h)}</b><span className="dg-badge">agent</span></div>
-                      <div className="dg-body"><p><SmoothText text={hideCanvasWhileStreaming(withoutDataImages(v.text))} onRevealed={v.final ? () => flushFinal(h) : undefined} /></p></div>
+                      <div className="dg-body"><SmoothText markdown text={hideCanvasWhileStreaming(withoutDataImages(v.text))} onRevealed={v.final ? () => flushFinal(h) : undefined} /></div>
                     </div>
                   </MessageScroller.Item>
                 ))}

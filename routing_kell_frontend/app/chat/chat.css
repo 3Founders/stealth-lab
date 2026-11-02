@@ -952,3 +952,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-canvas-doc .dg-md { gap: 10px; }
 .dg-canvas-doc .dg-md p, .dg-canvas-doc .dg-md li { font-weight: 400; line-height: 1.6; }
 .dg-composer .dg-count { position: absolute; right: 96px; bottom: 4px; font-size: 11px; color: var(--grey); pointer-events: none; }
+
+/* Connect agent in dark mode: the dark pill vanished into the dark page. It is a light pill with dark text here, and the three marks keep a visible ring. */
+:root[data-theme="dark"] .dg-page .dg-onboard { background: #f1eee5; color: #171717; box-shadow: 0 1px 0 rgba(255, 255, 255, .4) inset, 0 4px 14px rgba(0, 0, 0, .45); }
+:root[data-theme="dark"] .dg-page .dg-onboard:hover:not(:disabled) { background: #fff; color: #171717; }
+:root[data-theme="dark"] .dg-onboard-marks i { background: #fff; color: #171717; box-shadow: 0 0 0 2px #f1eee5; }
+:root[data-theme="dark"] .dg-page .dg-onboard:hover .dg-onboard-marks i { box-shadow: 0 0 0 2px #fff; }
+:root[data-theme="dark"] .dg-onboard-copy { color: #171717; }

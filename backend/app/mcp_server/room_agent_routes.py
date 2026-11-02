@@ -15,6 +15,7 @@ budget and data-class checks apply unchanged (PUBLIC_SOURCE).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -56,6 +57,9 @@ def clean_history(raw: Any) -> list[dict[str, Any]]:
         if isinstance(t, dict) and t.get("role") in ("user", "assistant") and isinstance(t.get("content"), str) and t["content"].strip():
             out.append({"role": t["role"], "content": t["content"].strip()[: rm.MAX_BODY]})
     return out[-MAX_HISTORY_TURNS:]
+
+
+_RUNNING: set[Any] = set()
 
 
 def _sse(obj: Any) -> str:
@@ -101,19 +105,24 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
 
         bearer = request.headers.get("authorization", "")
 
-        async def finish(outcome: agent.AgentOutcome) -> tuple[str, Any, str | None]:
+        async def finish(outcome: agent.AgentOutcome) -> tuple[str, Any, str | None, list[str]]:
             reply = outcome.text.strip() or "I do not have an answer for that."
-            for link in dict.fromkeys(outcome.consent_links):
-                reply += f"\n\nAllow kell to use that tool here (15 minutes): {link}"
+            # Consent links go back to the person who asked, never into the room, where every member and connector would read them.
+            links = list(dict.fromkeys(outcome.consent_links))
             try:
-                appended = await rm.append_events(pool, subject, room_id,
-                                                  [rm.agent_event(handle, reply)])
+                events = rm.agent_events(handle, reply)
+                appended = await rm.append_events(pool, subject, room_id, events)
             except rm.RoomError as exc:
-                return reply, None, str(exc)
-            return reply, (appended["accepted"][0] if appended["accepted"] else None), None
+                return reply, None, str(exc), links
+            # A reply longer than one message is posted as several; the first is returned here, the rest arrive through sync.
+            return events[0]["body"], (appended["accepted"][0] if appended["accepted"] else None), None, links
 
         if model_stream is not None and "text/event-stream" in (request.headers.get("accept") or ""):
-            async def frames() -> AsyncIterator[str]:
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+            async def work() -> None:
+                """The whole answer runs here, apart from the connection: if the person closes the tab mid-answer the reply is still
+                finished and posted (the model call and any tool it used have already been paid for and done)."""
                 final: agent.AgentOutcome | None = None
                 try:
                     async for kind, value in agent.stream_answer(
@@ -125,26 +134,36 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                     ):
                         if kind == "delta":
-                            yield _sse({"delta": value})
+                            queue.put_nowait(_sse({"delta": value}))
                         else:
                             final = value
+                    reply, accepted, why, links = await finish(final or agent.AgentOutcome(text=""))
+                    if why is not None:
+                        queue.put_nowait(_sse({"error": why}))
+                    else:
+                        queue.put_nowait(_sse({"done": True, "text": reply, "event": accepted, "consent": links,
+                                               "tools": (final.tools_used if final else [])}))
                 except RuntimeError as exc:          # the model endpoint's own refusal
                     log.exception("room agent: the model refused the answer for room %s", room_id)
-                    yield _sse({"error": f"{handle} could not answer: {str(exc).strip()[:300]}"})
-                    return
+                    queue.put_nowait(_sse({"error": f"{handle} could not answer: {str(exc).strip()[:300]}"}))
                 except rm.RoomError as exc:
-                    yield _sse({"error": str(exc)})
-                    return
+                    queue.put_nowait(_sse({"error": str(exc)}))
                 except Exception:  # noqa: BLE001
                     log.exception("room agent: the stream failed for room %s", room_id)
-                    yield _sse({"error": "the room agent could not answer just now; nothing was posted"})
-                    return
-                reply, accepted, why = await finish(final or agent.AgentOutcome(text=""))
-                if why is not None:
-                    yield _sse({"error": why})
-                    return
-                yield _sse({"done": True, "text": reply, "event": accepted,
-                            "tools": (final.tools_used if final else [])})
+                    queue.put_nowait(_sse({"error": "the room agent could not answer just now; nothing was posted"}))
+                finally:
+                    queue.put_nowait(None)
+
+            task = asyncio.ensure_future(work())
+            _RUNNING.add(task)                       # keep a reference so the answer is not collected while nobody is listening
+            task.add_done_callback(_RUNNING.discard)
+
+            async def frames() -> AsyncIterator[str]:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        return
+                    yield item
 
             return StreamingResponse(frames(), media_type="text/event-stream",
                                      headers={**cors_headers(request), "Cache-Control": "no-store",
@@ -166,10 +185,10 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             log.exception("room agent: the answer failed for room %s", room_id)
             return _error(request, "the room agent could not answer just now; nothing was posted", 502)
 
-        reply, accepted, why = await finish(outcome)
+        reply, accepted, why, links = await finish(outcome)
         if why is not None:
             return _error(request, why, 400)
-        return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted})
+        return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted, "consent": links})
 
     @server.custom_route("/v1/agent/ephemeral", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def ephemeral_agent_route(request: Request) -> Response:

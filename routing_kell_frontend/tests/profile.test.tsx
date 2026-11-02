@@ -36,6 +36,7 @@ vi.mock("@/lib/kel-api", () => ({
   getMyProfile: (...a: unknown[]) => api.getMyProfile(...a), updateMyProfile: (...a: unknown[]) => api.updateMyProfile(...a),
   uploadAvatar: (...a: unknown[]) => api.uploadAvatar(...a), removeAvatar: (...a: unknown[]) => api.removeAvatar(...a),
 }));
+vi.mock("@/components/billing/PlanBadge", () => ({ default: () => <span data-testid="plan">Plan</span>, usePlan: () => null }));
 vi.mock("@/components/AnimatedHeading", () => ({ default: ({ children }: { children: React.ReactNode }) => <span>{children}</span> }));
 vi.mock("@/components/Avatar", () => ({ default: ({ username }: { username: string }) => <span data-testid="avatar">{username}</span> }));
 vi.mock("next/link", () => ({ default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a> }));

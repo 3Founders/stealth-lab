@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Markdown from "@/components/chat/Markdown";
 import { KellMark } from "@/components/chat/brand";
 import { revealStep, visiblePrefix } from "@/lib/chat/smooth";
 
@@ -25,7 +26,7 @@ export function Thinking({ label = "Thinking" }: { label?: string }) {
  * what has been received as it is. A text that is not an extension of the last one starts over. Before any text has arrived it
  * shows the thinking indicator.
  */
-export default function SmoothText({ text, onRevealed }: { text: string; onRevealed?: () => void }) {
+export default function SmoothText({ text, onRevealed, markdown = false }: { text: string; onRevealed?: () => void; /** Draw the words already revealed as formatted text (headings, lists, code), so a reply looks the same while it streams as after it is posted. */ markdown?: boolean }) {
   const [shown, setShown] = useState(0);
   const pos = useRef(0);
   const prev = useRef("");
@@ -64,6 +65,7 @@ export default function SmoothText({ text, onRevealed }: { text: string; onRevea
 
   const out = visiblePrefix(text, Math.min(shown, text.length));
   if (!out) return <Thinking />;
+  if (markdown) return <Markdown text={out} />;
   const words = wordsOf(out);
   const base = Math.max(0, words.length - FADE_WINDOW);
   return (
