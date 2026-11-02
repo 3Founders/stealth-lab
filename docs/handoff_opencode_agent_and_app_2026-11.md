@@ -3,7 +3,11 @@
 For a new coding-agent session (OpenCode or any other) with no memory of earlier work. Read this whole page first,
 then `docs/revisit.md`. Work in the `stealth-lab` repo on `main`.
 
-## Resume here (status 2026-11-01, after the previous session ran out of usage)
+## Status 2026-11-02 (supersedes the resume block below)
+
+All of Part 1 and the Part 2 prototype are done and on main (watchdog, acceptance, live escalation, desktop app and installer). Part 3 ran on the OpenCode agent; the Claude Code and claude.ai legs need the owners' own accounts. A system-memory audit followed (see `docs/revisit.md`, "System memory (RAM) audit"). Final check: `cd packaging/npm && npm test` 852 pass, 3 skipped, 0 fail (one test file at a time); `node scripts/check-publish.mjs` ok; desktop `tsc` and `next build` green. What is left needs the owners: publishing, the macOS decision, the Part 3 legs on their accounts.
+
+## Resume here (historical) (status 2026-11-01, after the previous session ran out of usage)
 
 **Done and on main:**
 - Part 1 step 4, per-turn tokens and cost (`8264d1a0`).

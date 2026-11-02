@@ -38,7 +38,7 @@ if (!app.requestSingleInstanceLock()) {
     const port = await freePort()
     if (port === 28894) throw new Error("28894 belongs to the OpenCode desktop app") // unreachable; the rule's guard
     next = spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)],
-                 { cwd: ROOT, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "pipe", "pipe"] })
+                 { cwd: ROOT, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", KELL_PARENT_PID: String(process.pid) }, stdio: ["ignore", "pipe", "pipe"] })
     next.on("exit", (code) => { say(`next exited (${code})`); next = undefined; win?.close() })
     next.stdout?.on("data", (c) => process.stdout.write(c))
     next.stderr?.on("data", (c) => process.stderr.write(c))
@@ -81,4 +81,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", killTree)
   app.on("will-quit", killTree)
   app.on("window-all-closed", () => app.quit())
+  // A crash of this process must not leave the Next server and the engine running (each is hundreds of MB and they pile up
+  // across crashes). The Next child also watches this pid (instrumentation.ts) for the case where we are killed outright.
+  process.on("exit", killTree)
+  process.on("uncaughtException", (e) => { console.error("KELL uncaught", e); killTree(); app.exit(1) })
 }

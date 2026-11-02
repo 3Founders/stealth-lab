@@ -61,9 +61,9 @@ function runCli(args, env, timeoutMs = 90000) {
   return new Promise((resolve) => {
     let text = "";
     const child = spawn(process.execPath, [BIN, ...args], { env, windowsHide: true });
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on("data", (d) => { text += d; });
-    child.stderr.on("data", (d) => { text += d; });
+    const timer = setTimeout(() => { void import("./exec/proc.mjs").then((m) => m.killTree(child.pid)); }, timeoutMs);
+    child.stdout.on("data", (d) => { text = (text + d).slice(-1_000_000); });
+    child.stderr.on("data", (d) => { text = (text + d).slice(-1_000_000); });
     child.on("error", (err) => { text += err.message; });
     child.on("close", (status) => { clearTimeout(timer); resolve({ status, text: text.replace(/\x1b\[[0-9;]*m/g, "") }); });
   });

@@ -3,6 +3,9 @@
 // reviewer (lib/review.mjs). The prompt goes on stdin: it has many lines, and on Windows `claude` is a .cmd shim that
 // would cut an argument at the first newline -- launchOrThrow runs Claude Code's own entry point, never through a shell.
 import { spawn } from "node:child_process";
+import { killTree } from "./exec/proc.mjs";
+// Output of a one-shot is a verdict or a JSON line; the last 4 MB bounds a runaway without touching a real answer.
+const OUT_CAP = 4_000_000;
 import { claudeChildEnv, launchOrThrow } from "./executors/common.mjs";
 
 export function runClaudeAsync(env, args, input, signal, timeoutMs = 180000, cwd = undefined) {
@@ -11,11 +14,11 @@ export function runClaudeAsync(env, args, input, signal, timeoutMs = 180000, cwd
     try { launch = launchOrThrow("claude", { env }); } catch (err) { resolve({ status: null, stdout: "", stderr: err.message }); return; }
     const child = spawn(launch.cmd, [...launch.prefix, ...args], { windowsHide: true, env: claudeChildEnv(env), ...(cwd ? { cwd } : {}) });
     let stdout = "", stderr = "";
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    const abort = () => child.kill();
+    const timer = setTimeout(() => killTree(child.pid), timeoutMs);
+    const abort = () => killTree(child.pid);
     signal?.addEventListener?.("abort", abort);
-    child.stdout.on("data", (d) => { stdout += d; });
-    child.stderr.on("data", (d) => { stderr += d; });
+    child.stdout.on("data", (d) => { stdout = (stdout + d).slice(-OUT_CAP); });
+    child.stderr.on("data", (d) => { stderr = (stderr + d).slice(-OUT_CAP); });
     child.on("error", (err) => { stderr += err.message; });
     child.on("close", (status) => { clearTimeout(timer); signal?.removeEventListener?.("abort", abort); resolve({ status, stdout, stderr }); });
     child.stdin.end(input);

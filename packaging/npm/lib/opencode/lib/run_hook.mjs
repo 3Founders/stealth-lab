@@ -1,14 +1,18 @@
 // Runs one command hook the way Claude Code does: the event as JSON on stdin; stdout, stderr and the exit code read back.
 import { spawn } from "node:child_process"
+import { killTree } from "../../exec/proc.mjs"
+// A hook's output is read for a decision, never kept whole: the last 1 MB is more than any decision needs, and a hook that
+// prints without end must not grow this process (docs/revisit.md, memory audit 2026-11-02).
+const OUT_CAP = 1_000_000
 
 export function runHook({ command, payload, timeoutMs = 60_000, cwd, env = process.env }) {
   return new Promise((resolve) => {
     let stdout = "", stderr = "", done = false, timedOut = false
     const child = spawn(command, { shell: true, cwd, env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] })
     const finish = (code) => { if (!done) { done = true; clearTimeout(timer); resolve({ code, stdout, stderr, timedOut }) } }
-    const timer = setTimeout(() => { timedOut = true; try { child.kill() } catch { /* already gone */ } finish(null) }, timeoutMs)
-    child.stdout.on("data", (d) => { stdout += d })
-    child.stderr.on("data", (d) => { stderr += d })
+    const timer = setTimeout(() => { timedOut = true; try { killTree(child.pid) } catch { /* already gone */ } finish(null) }, timeoutMs)
+    child.stdout.on("data", (d) => { stdout = (stdout + d).slice(-OUT_CAP) })
+    child.stderr.on("data", (d) => { stderr = (stderr + d).slice(-OUT_CAP) })
     child.on("error", () => finish(null))
     child.on("close", (code) => finish(code))
     child.stdin.on("error", () => { /* the hook did not read its input */ })

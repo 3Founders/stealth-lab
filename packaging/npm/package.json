@@ -19,7 +19,7 @@
     "node": ">=18.17"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "prepublishOnly": "node scripts/check-publish.mjs && node --test test/*.test.mjs"
   },
   "stealthlab": {

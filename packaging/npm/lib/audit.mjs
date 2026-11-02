@@ -66,8 +66,8 @@ export async function runAudit(jobFile, { env = process.env, runClaude, report }
     return await new Promise((resolve) => {
       const c = spawn(launch.cmd, [...launch.prefix, ...a], { windowsHide: true, env: claudeChildEnv(env) });
       let stdout = "";
-      const timer = setTimeout(() => c.kill(), 120000);
-      c.stdout.on("data", (d) => { stdout += d; });
+      const timer = setTimeout(() => { void import("./exec/proc.mjs").then((m) => m.killTree(c.pid)); }, 120000);
+      c.stdout.on("data", (d) => { stdout = (stdout + d).slice(-4_000_000); });
       c.on("error", () => {});
       c.on("close", (status) => { clearTimeout(timer); resolve({ status, stdout }); });
       c.stdin.end(input);

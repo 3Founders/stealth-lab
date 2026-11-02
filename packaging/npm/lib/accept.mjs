@@ -157,8 +157,8 @@ function pytestIds(python, cwd, files, env = process.env) {
     const c = spawn(python, ["-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", ...files], { cwd, env: testEnv(cwd, env), windowsHide: true });
     let out = "";
     const t = setTimeout(() => c.kill(), 300000);
-    c.stdout.on("data", (d) => { out += d; });
-    c.stderr.on("data", (d) => { out += d; });
+    c.stdout.on("data", (d) => { out = (out + d).slice(-16_000_000); });
+    c.stderr.on("data", (d) => { out = (out + d).slice(-16_000_000); });
     c.on("error", () => { clearTimeout(t); resolve({}); });
     c.on("close", () => {
       clearTimeout(t);
