@@ -338,17 +338,17 @@ attempted through kell.
 | 2 | explain the regex | minimax | – | 31 s | correct breakdown |
 | 3 | rename `calc_total` | minimax | read, grep | 27 s | right: the function does not exist; no tool suggested |
 | 4 | "thanks, that's all" | minimax | – | 26 s | pleasantry only |
-| 5 | failing test | minimax (one escalated turn → deepseek, killed by GC 403) | read, edit, shell | 84 s (2 att.) | `clamp` `lo`→`hi`, 4/4 pass |
+| 5 | failing test | minimax | read, glob, edit, shell | 135 s | `clamp` `lo`→`hi`, 4/4 pass; the cheap model carried the whole turn, no escalation, no provider failure (re-run 2026-11-02) |
 | 6 | signup validation | minimax | write, shell | 69 s | validators + 9 tests pass |
 | 7 | React 18→19 | minimax | read, glob | 35 s | right refusal: no React in the fixture; the docs tool could not be observed |
 | 8 | left-pad safety | minimax | webfetch | 36 s | correct: deprecated, supply-chain risk, use `padStart` |
 | 9 | 'k' logo | minimax | kell_discover_tools, image | 46 s (2 att.) | image tool named and attempted; OpenRouter account has no credits → no image; SVG offered |
 | 10 | changelog, 10 commits | minimax | shell | 21 s | right: the repo has 1 commit |
-| 11 | API 500 on empty body | minimax → deepseek | read, glob, grep, edit, write, shell | 189 s (2 att.) | **failed**: both attempts died at GC 403; had reproduced 3 test failures, fix never landed |
+| 11 | API 500 on empty body | minimax | read, glob, shell | 63 s | right refusal-by-question (re-run 2026-11-02): the fixture has no API, so it reported the unrelated clamp bug and asked which scenario applies — same "fixture too small" note as 7/10/12/19 |
 | 12 | login page in a browser | minimax | read, glob, grep, shell | 40 s | right: no login page in the fixture; no browser tool installed |
 | 13 | jsonargparse issues | minimax | kell_discover_tools, webfetch | 67 s | found #880 (repo moved to `mauvilsa/`), drafted a fix plan; public API, no sign-in needed |
-| 14 | 4-min suite under 1 min | minimax → deepseek | read, glob, grep, edit, write, shell | 769 s (2 att.) | **failed**: the fixture's PowerShell 5 shell rejects the model's `&&` chains, then the escalated deepseek turn died at GC |
-| 15 | `/health` + mocked DB failure | minimax (one deepseek turn in the killed attempt) | read, glob, edit, write, shell | 262 s (2 att.) | 503-on-db-down, tests pass; final work on the cheap model |
+| 14 | 4-min suite under 1 min | minimax → fallback gc/deepseek-v3.2 | read, glob, shell | 87 s | **failed — provider, not shell** (re-run 2026-11-02, PowerShell-5 note in the prompt): zero `&&` errors this time; minimax died twice in the GC outage window, the fallback switched to gc/deepseek-v3.2, deepseek 403'd too, run ended — one switch, loop guard held |
+| 15 | `/health` + mocked DB failure | minimax → escalated to di/DeepSeek-V3.2 | read, glob, write, edit, shell | 417 s | `db.py` + `app.py`, /health 200/503 on db-down, mocked-failure tests, 7/7 pass (re-run 2026-11-02): two failed test runs escalated to the strong rung — on the new di provider — and it finished there |
 | 16 | hero banner + image | minimax | image | 59 s | three ideas; image blocked (no credits); HTML/SVG alternative offered |
 | 17 | error tracking | minimax | kell_discover_tools, read, glob, edit, shell | 247 s (2 att.) | SDK init wired + setup steps; finishing needs a real Sentry project/DSN (a person) |
 | 18 | `deleted_at` migration | minimax | read, glob, grep, write, shell | 317 s (2 att.) | alembic migration, queries filter deleted rows, 5 tests pass; no escalation needed |
@@ -358,15 +358,27 @@ attempted through kell.
 Scorecard against the handoff's "what good looks like":
 
 - 1–4 and 10 never reach the strong model and cost under a cent each (usage lines ran ~$0.004–0.005): **yes**.
-- 5–6 and 15 finish on the cheap model with tests passing: **yes** (each needed one retry after a GC flake).
+- 5–6 and 15 finish on the cheap model with tests passing: **5 and 6, yes** (5 needed no retry in the 2026-11-02 re-run);
+  15 escalated this time and finished on the strong rung with 7/7 — "usually" holds over the two legs (cheap in the
+  2026-11-01 leg, strong in this one).
 - 7–9, 12–13 and 16–17 name the right tool once at the start: **yes where observable** (8 webfetch, 9 image, 13
   GitHub/webfetch, 17 observability); 7, 12 and 16 could not be observed on this fixture (no React project, no login
   page, no image credits).
-- 11, 14, 18 and 20 may escalate: **14 escalated on cue** (and 5 did too, unprompted); 11 escalated but died at the
-  provider; 18 and 20 never needed it.
+- 11, 14, 18 and 20 may escalate: the 2026-11-02 re-runs have **14 falling back after a provider failure** (the new
+  retry-hook fallback, fired live) and **15 escalating on cue** (two failed test runs → di) and finishing there; 18 and
+  20 never needed it; 11 could not escalate — there is nothing to do in the fixture.
 - Nothing suggested for 3, 4 or 19: **yes**.
 
-The two outright failures (11, 14) are provider/environment, not routing — see revisit.md.
+The one outright failure left (14, in the 2026-11-02 re-runs) is the provider, not routing or the shell — see
+revisit.md; 11 turned out to be the fixture's gap (no API), not a failure.
+
+**Re-runs of 5, 11, 14, 15 (2026-11-02, after steps 1–4: the fallback, the di provider, image off, `kell opencode`).**
+One run each on a fresh fixture under `experiments/opencode_kell/fixtures/p3s3-proj`, rows above updated. Two things the
+re-runs add to the 2026-11-01 leg: (1) prompt 14 was given a note in the prompt that the shell is Windows PowerShell 5
+(chosen over running in Git Bash, since the agent's shell tool inherits the host's), and the `&&` failures are gone —
+its remaining failure is purely the GC outage window; (2) the provider-failure fallback worked live: in 14, minimax
+failed twice, the session switched to gc/deepseek-v3.2, and when deepseek 403'd too the loop guard held and the turn
+ended instead of looping. The fallback softens single-model failure; a GC-wide outage still kills the turn (revisit.md).
 
 **Prompt 9 re-run (2026-11-02, after `experimental.image_generate: false` was added to the config kell writes).** Two
 live runs on a fresh fixture under `experiments/opencode_kell/fixtures/`: the built-in image tool never appears (it is
