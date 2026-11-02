@@ -55,6 +55,23 @@ export function readAgents(kv: KeyValue, subject: string, max = 5): string[] {
   return [...DEFAULT_AGENTS];
 }
 
+const presetsKey = (subject: string) => `kell:agent-presets:${subject}`;
+
+/** What each added agent was asked to do (its instructions), by handle. Kept on this device with the rest of the room settings. */
+export function readPresets(kv: KeyValue, subject: string): Record<string, string> {
+  try {
+    const v = JSON.parse(kv.getItem(presetsKey(subject)) ?? "null") as unknown;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([h, t]) => AGENT.test(h) && typeof t === "string").map(([h, t]) => [h, String(t).slice(0, 1500)]));
+    }
+  } catch { /* fall through */ }
+  return {};
+}
+
+export function writePresets(kv: KeyValue, subject: string, presets: Record<string, string>): void {
+  try { kv.setItem(presetsKey(subject), JSON.stringify(presets)); } catch { /* storage blocked */ }
+}
+
 export function writeAgents(kv: KeyValue, subject: string, agents: string[]): void {
   try { kv.setItem(agentsKey(subject), JSON.stringify(agents)); } catch { /* storage blocked */ }
 }

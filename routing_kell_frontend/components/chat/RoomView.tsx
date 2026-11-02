@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
+import { FilesContext } from "@/components/chat/FileCard";
+import { FileError, filesApi, fileToken } from "@/lib/chat/files";
 import { newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { cap, nameOf, roomName } from "@/components/chat/bare";
 import SmoothText, { Thinking } from "@/components/chat/SmoothText";
@@ -16,7 +18,7 @@ import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/cha
 import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
-import { DEFAULT_ROOM, newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/chat/rooms";
+import { DEFAULT_ROOM, newRoomName, readAgents, readPresets, readRooms, withoutRoom, writeAgents, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
@@ -140,6 +142,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // sidebar forms
   const [adding, setAdding] = useState(false);
   const [addName, setAddName] = useState("");
+  const [addAbout, setAddAbout] = useState("");
+  const [presets, setPresets] = useState<Record<string, string>>({});
+  const presetsRef = useRef(presets);
+  presetsRef.current = presets;
+  useEffect(() => { setPresets(readPresets(kv, subject)); }, [kv, subject]);
   const [formError, setFormError] = useState("");
 
   const warnHistory = () => {
@@ -166,6 +173,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // answer is posted into the room as an agent message, so it arrives through sync on every device. The API needs the
   // SERVER room id (the label here is the title, e.g. #general), which arrives with the first sync.
   const roomsAgent = useMemo(() => roomsApi({ token: getAccessToken }), []);
+  const filesClient = useMemo(() => filesApi({ token: getAccessToken }), []);
+  const [sendingFiles, setSendingFiles] = useState("");
   const askingKell = useRef<Set<string>>(new Set());
   /** Copy a message's text: to the clipboard, with a small notice as feedback. */
   const copyRoomText = useCallback(async (t: string) => {
@@ -199,7 +208,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const out = await roomsAgent.agentStream(id, text, (delta) => {
         if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: ((p[who]?.text) ?? "") + delta } }));
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
-      }, ctl.signal, who);
+      }, ctl.signal, who, presetsRef.current[who]);
       if (out.event?.id) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
         // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
@@ -269,7 +278,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   }, [broker, kv, subject, roomList]);
 
   // An added agent is another instance of kell: just a name. It answers through the same server agent as @kell.
-  const addAgent = (handle: string) => {
+  const addAgent = (handle: string, about?: string) => {
+    if (about?.trim()) { const next = { ...presetsRef.current, [handle]: about.trim().slice(0, 1500) }; presetsRef.current = next; setPresets(next); writePresets(kv, subject, next); }
     if (agentsRef.current.includes(handle)) return;
     agentsRef.current = [...agentsRef.current, handle];
     setAgents(agentsRef.current);
@@ -279,6 +289,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const removeAgent = (handle: string) => {
     controllers.current.get(handle)?.abort();
     agentsRef.current = agentsRef.current.filter((h) => h !== handle);
+    { const { [handle]: _gone, ...rest } = presetsRef.current; presetsRef.current = rest; setPresets(rest); writePresets(kv, subject, rest); }
     setAgents(agentsRef.current);
     writeAgents(kv, subject, agentsRef.current);
     setActivity((p) => { const n = { ...p }; delete n[handle]; return n; });
@@ -660,9 +671,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (full) return setFormError(`A room can have ${MAX_AGENTS} added agents. Remove one first.`);
     const r = newAgentHandle(agents, addName.trim() || undefined);
     if ("error" in r) return setFormError(r.error);
-    addAgent(r.handle);
+    addAgent(r.handle, addAbout);
     note(`${nameOf(r.handle)} joined the room.`);
-    setAdding(false); setAddName("");
+    setAdding(false); setAddName(""); setAddAbout("");
   };
   /** "Onboard Your Agent": registers a fresh agent name on the account and returns the text the person pastes into their agent. */
   const onboardAgent = async (): Promise<string> => {
@@ -686,7 +697,38 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     } catch (err) { note(err instanceof Error ? err.message : "That didn't work."); }
   };
 
-  const submit = async (line: string, pictures?: ImageAttachment[]) => {
+  /** Saves this room as a Markdown file: who said what and when. It is made on this device from what is already here. */
+  const exportRoom = () => {
+    const lines = (lineStore.current[room] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : []));
+    if (!lines.length) return note("There is nothing in this room to export yet.");
+    const md = [`# ${roomName(room)}`, "", ...lines.flatMap((m) => [`**${nameOf(m.sender.handle)}** · ${new Date(m.timestamp).toLocaleString()}`, "", m.payload.text, ""])].join("\n");
+    const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `${roomName(room).toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`;
+    document.body.appendChild(a); a.click(); a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    note("Saved this room as a Markdown file.");
+  };
+
+  const submit = async (line: string, pictures?: ImageAttachment[], docs?: File[]) => {
+    // Files go to the server first; the message carries only their names, sizes and ids. If one fails, nothing is sent.
+    if (docs?.length) {
+      const rid = engineRef.current?.roomId(room) ?? infoRef.current[room]?.id;
+      if (!rid) return note("This room is still syncing. Give it a second, then send again.");
+      const tokens: string[] = [];
+      try {
+        for (const f of docs) {
+          setSendingFiles(`Sending ${f.name}`);
+          const up = await filesClient.upload(rid, f, (p) => setSendingFiles(`Sending ${f.name} ${Math.round(p * 100)}%`));
+          tokens.push(fileToken(up));
+        }
+      } catch (err) {
+        setSendingFiles("");
+        return note(`${err instanceof FileError || err instanceof Error ? err.message : "The file didn't send."} Nothing was sent.`);
+      }
+      setSendingFiles("");
+      line = [line, ...tokens].filter(Boolean).join("\n");
+    }
     const c = parseCommand(line);
     if (c) {
       if (c.cmd === "error") return note(c.message);
@@ -695,9 +737,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         controllers.current.forEach((ctl) => ctl.abort());
         return note("/stop: paused. No agent in this tab will be woken until you resume.");
       }
+      if (c.cmd === "export") return exportRoom();
       const r = newAgentHandle(agents, c.name);
       if ("error" in r) return note(r.error);
-      addAgent(r.handle);
+      addAgent(r.handle, c.about);
       return note(`${nameOf(r.handle)} joined the room.`);
     }
     const route = routeMessage(line, { local: agents, relay: relayAgents.map((a) => a.name), people: peopleHandles });
@@ -729,10 +772,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     .filter((t) => t.status === "queued" || t.status === "claimed")
     .map((t) => relayAgents.find((a) => a.id === t.agent_id)?.handle ?? "@agent");
   const mentionable = [...new Set([...agents, "@kell", ...relayAgents.map((a) => a.handle), ...peopleHandles])];
+  const filesCtx = useMemo(() => ({
+    fetchBlob: async (fileId: string) => {
+      const rid = engineRef.current?.roomId(roomRef.current) ?? infoRef.current[roomRef.current]?.id;
+      if (!rid) throw new FileError("This room is still syncing. Try again in a moment.");
+      return filesClient.download(rid, fileId);
+    },
+  }), [filesClient]);
   const full = agents.length >= MAX_AGENTS;
   const count = 1 + agents.length + relayAgents.length;   // kell itself, its instances, and connected agents: all agents
 
   return (
+    <FilesContext.Provider value={filesCtx}>
     <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
@@ -799,7 +850,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
         <AddAgentDialog
           open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
-          name={addName} onName={setAddName} error={formError} onSubmit={(e) => void submitAgent(e)}
+          name={addName} onName={setAddName} about={addAbout} onAbout={setAddAbout} error={formError} onSubmit={(e) => void submitAgent(e)}
           onOnboard={onboardAgent}
         />
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={count} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
@@ -854,6 +905,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           </MessageScroller.Root>
         </MessageScroller.Provider>
 
+        {sendingFiles && <div className="dg-sending" role="status" aria-live="polite"><span className="dg-pulse" aria-hidden="true" /> {sendingFiles}</div>}
         <div className="dg-typing" role="status" aria-live="polite">
           {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere) && <>
             <span className="dg-pulse" aria-hidden="true" />
@@ -867,7 +919,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
           )}
         </div>
-        <Composer handles={mentionable} onSend={(t, a) => void submit(t, a)} enterToSend={chatPrefs.enterToSend} />
+        <Composer handles={mentionable} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <SettingsDialog
@@ -879,5 +931,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
       />
     </div>
+    </FilesContext.Provider>
   );
 }

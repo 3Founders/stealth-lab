@@ -2,6 +2,8 @@
 import { useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import { splitArtifacts, type Artifact } from "@/lib/chat/artifacts";
+import FileCard from "@/components/chat/FileCard";
+import { splitFiles } from "@/lib/chat/files";
 import { dataUrlOf, hostOf, splitImages } from "@/lib/chat/images";
 import type { ImageAttachment } from "@/lib/chat/types";
 
@@ -62,9 +64,11 @@ export function ArtifactCard({ artifact }: { artifact: Artifact }) {
 }
 
 /** The words of a message, the pictures attached to it, any pictures a model put in its reply, and any HTML artifacts. */
-export default function MessageText({ text, attachments }: { text: string; attachments?: ImageAttachment[] }) {
+export default function MessageText({ text: raw, attachments }: { text: string; attachments?: ImageAttachment[] }) {
+  const { text, files } = splitFiles(raw);
   return (
     <>
+      {files.length > 0 && <div className="dg-files">{files.map((f) => <FileCard key={f.id} file={f} />)}</div>}
       {attachments && attachments.length > 0 && (
         <div className="dg-imgs">{attachments.map((a, i) => <Picture key={i} src={dataUrlOf(a)} alt={a.name} />)}</div>
       )}

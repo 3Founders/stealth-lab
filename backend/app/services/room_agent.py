@@ -42,10 +42,14 @@ TOOLS_ON = (
 TOOLS_OFF = "No tools are available this turn. Answer from what you know, say so briefly if the question needs live data, and do not offer to look anything up."
 
 
-def _system(candidates: list[dict[str, Any]], handle: str = SELF_HANDLE) -> str:
+def _system(candidates: list[dict[str, Any]], handle: str = SELF_HANDLE, instructions: str = "") -> str:
     """The system prompt. Every agent in a room is kell: @kell is the default one, and any other name is another instance of it
     (same model, tools and rules), so the only difference is the name it answers to."""
     base = SYSTEM if handle == SELF_HANDLE else SYSTEM.replace("You are @kell, the built-in agent", f"You are {handle}, an instance of kell,", 1)
+    mine = instructions.strip()[:1500]
+    if mine:
+        base = (f"{base}\n\nThe person who added you asked you to do this (follow it unless it conflicts with the rules above):\n"
+                f"{mine}")
     if not candidates:
         return f"{base}\n\n{TOOLS_OFF}"
     return f"{base}\n\n{TOOLS_ON}\n\nTools the router offers for this message (use one only if it helps):\n{_tool_brief(candidates)}"
@@ -190,14 +194,14 @@ def _consent(result: Any) -> str | None:
 
 
 async def converse(text: str, history: list[dict[str, Any]], *, model_call: ModelCall, find_tools: FindTools,
-                   use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE) -> AgentOutcome:
+                   use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "") -> AgentOutcome:
     """One answer for `text`, with up to `max_rounds` rounds of tools. `history` comes from transcript()."""
     try:
         candidates = await find_tools(text) or []
     except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
         candidates = []
 
-    system = _system(candidates, handle)
+    system = _system(candidates, handle, instructions)
     turns = list(history)
     if turns and turns[-1].get("role") == "user" and str(turns[-1].get("content") or "").endswith(text.strip()):
         turns.pop()                                  # the message is already the last turn (it synced before this call)
@@ -236,7 +240,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
 
 
 async def stream_answer(text: str, history: list[dict[str, Any]], *, model_stream: ModelStream, find_tools: FindTools,
-                        use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE) -> AsyncIterator[tuple[str, Any]]:
+                        use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "") -> AsyncIterator[tuple[str, Any]]:
     """The same answer as converse(), streamed: yields ("delta", piece) as the model produces it, then exactly one
     ("final", AgentOutcome). A tool round is buffered (the model's content before a tool call is normally empty), then the
     next round streams again."""
@@ -245,7 +249,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
         candidates = []
 
-    system = _system(candidates, handle)
+    system = _system(candidates, handle, instructions)
     turns = list(history)
     if turns and turns[-1].get("role") == "user" and str(turns[-1].get("content") or "").endswith(text.strip()):
         turns.pop()

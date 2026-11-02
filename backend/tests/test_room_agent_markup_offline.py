@@ -60,3 +60,10 @@ def test_another_agent_is_an_instance_of_kell() -> None:
     events = [{"kind": "msg", "body": "hi", "sender": {"kind": "agent", "handle": "@scout"}},
               {"kind": "msg", "body": "yo", "sender": {"kind": "agent", "handle": "@kell"}}]
     assert [t["role"] for t in ra.transcript(events, "@scout")] == ["assistant", "user"]
+
+
+def test_the_instructions_a_person_gave_an_agent_reach_its_prompt() -> None:
+    s = ra._system([], "@reviewer", "Review my pull requests. Be blunt.")
+    assert "Review my pull requests. Be blunt." in s and s.startswith("You are @reviewer, an instance of kell,")
+    assert "asked you to do this" not in ra._system([], "@reviewer", "   ")
+    assert len(ra._system([], "@x", "a" * 5000)) < len(ra._system([], "@x")) + 1700

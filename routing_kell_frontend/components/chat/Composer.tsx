@@ -5,12 +5,13 @@ import { applyMention, matchCommands, matchHandles, mentionQuery, slashQuery } f
 import { ACCEPT, dataUrlOf, prepareImage, whyNotImage } from "@/lib/chat/images";
 import type { ImageAttachment } from "@/lib/chat/types";
 import { CrossIcon, ImageIcon } from "@/components/chat/icons";
+import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
 
 /**
  * The message box. Typing "@" opens a list of the room's handles. It follows the W3C combobox pattern: focus stays in
  * the text box, the list is a listbox, and aria-activedescendant names the highlighted option.
  */
-export default function Composer({ handles, onSend, disabled, enterToSend = true }: { handles: string[]; onSend: (text: string, attachments?: ImageAttachment[]) => void; disabled?: boolean; enterToSend?: boolean }) {
+export default function Composer({ handles, onSend, disabled, enterToSend = true }: { handles: string[]; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
@@ -18,6 +19,7 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [pics, setPics] = useState<ImageAttachment[]>([]);
+  const [docs, setDocs] = useState<File[]>([]);
   const [picError, setPicError] = useState("");
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
@@ -50,21 +52,29 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
   const addFiles = async (files: File[]) => {
     setPicError("");
     const next: ImageAttachment[] = [];
+    const nextDocs: File[] = [];
     setBusy(true);
     try {
       for (const f of files) {
-        const why = whyNotImage(f, pics.length + next.length);
-        if (why) { setPicError(why); break; }
-        try { next.push(await prepareImage(f)); } catch (err) { setPicError(err instanceof Error ? err.message : "That picture could not be added."); break; }
+        if (ACCEPT.split(",").includes(f.type)) {            // a picture: scaled down and sent inside the message, as before
+          const why = whyNotImage(f, pics.length + next.length);
+          if (why) { setPicError(why); break; }
+          try { next.push(await prepareImage(f)); } catch (err) { setPicError(err instanceof Error ? err.message : "That picture could not be added."); break; }
+        } else {                                             // anything else: a file, uploaded to the room when you press Send
+          const why = whyNotFile(f, docs.length + nextDocs.length);
+          if (why) { setPicError(why); break; }
+          nextDocs.push(f);
+        }
       }
     } finally { setBusy(false); }
     if (next.length) setPics((p) => [...p, ...next]);
+    if (nextDocs.length) setDocs((d) => [...d, ...nextDocs]);
   };
   const send = () => {
     const t = text.trim();
-    if ((!t && !pics.length) || busy) return;
-    if (pics.length) onSend(t, pics); else onSend(t);
-    setText(""); setCaret(0); setActive(0); setDismissed(false); setPics([]); setPicError("");
+    if ((!t && !pics.length && !docs.length) || busy) return;
+    if (docs.length) onSend(t, pics.length ? pics : undefined, docs); else if (pics.length) onSend(t, pics); else onSend(t);
+    setText(""); setCaret(0); setActive(0); setDismissed(false); setPics([]); setDocs([]); setPicError("");
   };
   /** Files from the picker or a drop: all of them, so one that is not a picture is reported instead of silently ignored. */
   const imageFiles = (files: FileList | null | undefined): File[] => Array.from(files ?? []);
@@ -91,8 +101,15 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
       onDragLeave={() => setOver(false)}
       onDrop={(e) => { setOver(false); const f = imageFiles(e.dataTransfer.files); if (f.length) { e.preventDefault(); void addFiles(f); } }}
     >
-      {(pics.length > 0 || picError) && (
+      {(pics.length > 0 || docs.length > 0 || picError) && (
         <div className="dg-pics">
+          {docs.map((f, i) => (
+            <span key={`d${i}`} className="dg-doc" title={f.name}>
+              <span className="dg-file-kind" aria-hidden="true">{fileKind({ name: f.name, mime: f.type })}</span>
+              <span className="dg-file-meta"><b>{f.name}</b><span className="small dim">{formatSize(f.size)}</span></span>
+              <button type="button" onClick={() => setDocs((x) => x.filter((_, j) => j !== i))} aria-label={`Remove ${f.name}`} title="Remove"><CrossIcon /></button>
+            </span>
+          ))}
           {pics.map((p, i) => (
             <span key={i} className="dg-pic">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -133,9 +150,9 @@ export default function Composer({ handles, onSend, disabled, enterToSend = true
         onPaste={(e) => { const f = pastedImages(e.clipboardData.items); if (f.length) { e.preventDefault(); void addFiles(f); } }}
         onKeyDown={onKeyDown}
       />
-      <input ref={fileRef} type="file" accept={ACCEPT} multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
-      <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy || pics.length >= 4} aria-label="Attach a picture" title="Attach a picture (or paste or drop one)"><ImageIcon /></button>
-      <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length)}>Send</button>
+      <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
+      <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy} aria-label="Attach a file" title="Attach a picture or a file (or paste or drop one)"><ImageIcon /></button>
+      <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>Send</button>
     </form>
   );
 }

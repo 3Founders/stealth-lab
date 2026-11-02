@@ -1001,6 +1001,14 @@ _room_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
 )
 
+from app.mcp_server import room_file_routes as _room_file_routes  # noqa: E402 -- files sent in a room (db/172_room_files.sql)
+
+_room_file_routes.register(
+    server,
+    _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"),
+)
+
 # The built-in room agent (@kell): a server-side agent that answers in a room through the router and the tool gateway.
 from app.mcp_server import room_agent_routes as _room_agent_routes  # noqa: E402 -- needs the room gate and the gateway
 

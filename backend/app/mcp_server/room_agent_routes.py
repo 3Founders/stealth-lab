@@ -66,6 +66,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if not _INSTANCE_NAME.match(raw_name):
             return _error(request, "an agent name is 1 to 40 letters, numbers, dots, dashes or underscores", 400)
         handle = f"@{raw_name}"
+        instructions = data.get("instructions") if isinstance(data.get("instructions"), str) else ""
         try:
             history = agent.transcript(await rm.recent_events(pool, subject, room_id, recent), self_handle=handle)
         except rm.RoomError as exc:
@@ -93,7 +94,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         model_stream=lambda messages, tools: model_stream(bearer, messages, tools),
                         find_tools=find_tools,
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
-                        handle=handle,
+                        handle=handle, instructions=instructions,
                     ):
                         if kind == "delta":
                             yield _sse({"delta": value})
@@ -125,7 +126,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=lambda m, t: model_call(bearer, m, t),
                                            find_tools=find_tools,
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
-                                           handle=handle)
+                                           handle=handle, instructions=instructions)
         except rm.RoomError:
             raise
         except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)

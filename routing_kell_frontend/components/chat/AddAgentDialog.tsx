@@ -7,6 +7,8 @@ export interface AddAgentDialogProps {
   /** The room already has as many added agents as it can have. */
   full: boolean;
   name: string; onName: (n: string) => void;
+  /** What the new agent should do: its own instructions, on top of being kell. */
+  about: string; onAbout: (t: string) => void;
   error: string;
   onSubmit: (e: React.FormEvent) => void;
   /** Registers a new name for an agent that runs on the person's own machine and returns the text to paste into it. */
@@ -43,6 +45,8 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
         <div className="dg-addagent-body">
           <label htmlFor="dg-agent-name">Name (optional)</label>
           <input id="dg-agent-name" ref={input} value={p.name} onChange={(e) => p.onName(e.target.value)} placeholder="reviewer" maxLength={40} autoComplete="off" />
+          <label htmlFor="dg-agent-about">What should it do? (optional)</label>
+          <textarea id="dg-agent-about" value={p.about} onChange={(e) => p.onAbout(e.target.value)} rows={3} maxLength={1500} placeholder="Review my pull requests. Be blunt and short." />
           <p className="small dim" style={{ margin: 0 }}>
             Every agent is kell. A new one is another instance of it: same models and tools, a name of its own. Mention it with <code>@name</code> and it answers in this room.
           </p>
