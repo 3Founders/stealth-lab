@@ -620,3 +620,16 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 @media (prefers-reduced-motion: reduce) {
   .dg-thinking .dg-pulse, .dg-working .dg-pulse, .dg-status { animation: none !important; }
 }
+
+/* No boundary on click or focus for the message box and the sidebar buttons: no outline, no ring, no border. The drop shadow deepens instead. */
+.dg-page .dg-composer textarea,
+.dg-page .dg-composer textarea:focus,
+.dg-page .dg-composer textarea:focus-visible { outline: none; border-color: transparent; }
+.dg-page .dg-composer textarea:focus,
+.dg-page .dg-composer textarea:focus-visible { box-shadow: var(--dg-lift-hover); }
+.dg-page .dg-rooms-btn, .dg-page .dg-burger, .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state) { box-shadow: var(--dg-lift); border-color: transparent; }
+.dg-page .dg-rooms-btn:hover, .dg-page .dg-burger:hover, .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):hover { box-shadow: var(--dg-lift-hover); }
+.dg-page .dg-rooms-btn:focus, .dg-page .dg-rooms-btn:focus-visible,
+.dg-page .dg-burger:focus, .dg-page .dg-burger:focus-visible,
+.dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):focus,
+.dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):focus-visible { outline: none; box-shadow: var(--dg-lift-hover); }

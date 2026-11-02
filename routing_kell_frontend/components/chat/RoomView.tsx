@@ -3,6 +3,7 @@ import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/mes
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
+import { bare } from "@/components/chat/bare";
 import SmoothText from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
 import { recordUse, withinCap, type KeyValue } from "@/lib/byok/spend";
@@ -428,7 +429,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 : <Avatar who={run.sender} />}
               <div className="dg-col">
                 <div className="dg-meta">
-                  <b>{run.sender.handle}</b>
+                  <b>{bare(run.sender.handle)}</b>
                   {run.sender.type !== "human" && <span className="dg-badge">agent</span>}
                   <time>{time(run.messages[0].timestamp)}</time>
                 </div>
@@ -454,7 +455,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         node: (
           <MessageScroller.Item key={`task-${task.id}`} className="dg-task" data-status={task.status}>
             <div className="dg-meta">
-              <b>@you</b><span aria-hidden="true">→</span><b>{handle}</b>
+              <b>you</b><span aria-hidden="true">→</span><b>{bare(handle)}</b>
               <span className="dg-status" data-status={task.status}>{STATUS[task.status]}</span>
               <time>{time(t)}</time>
             </div>
@@ -465,7 +466,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             )}
             {task.result && (
               <div className="dg-result">
-                <div className="dg-meta"><b>{handle}</b><span className="dg-badge">agent</span></div>
+                <div className="dg-meta"><b>{bare(handle)}</b><span className="dg-badge">agent</span></div>
                 <div className="dg-body"><Markdown text={task.result} /></div>
               </div>
             )}
@@ -695,16 +696,16 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-members">
           <li>
             <span className="dg-dot" data-a="human" aria-hidden="true" />
-            <span className="dg-handle">{HUMAN.handle}</span>
+            <span className="dg-handle">{bare(HUMAN.handle)}</span>
           </li>
           <li>
             <span className="dg-dot" data-a="idle" aria-hidden="true" />
-            <span className="dg-handle">@kell</span> <span className="dim small">built-in</span>
+            <span className="dg-handle">kell</span> <span className="dim small">built-in</span>
           </li>
           {relayAgents.map((a) => (
             <li key={a.id}>
               <span className="dg-dot" data-a={a.online ? "human" : "idle"} aria-hidden="true" />
-              <span className="dg-handle">{a.handle}</span>
+              <span className="dg-handle">{bare(a.handle)}</span>
               <span className="dg-badge">agent</span>
               <span className="dg-state" data-a="idle">{a.online ? "online" : "offline"}</span>
               <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${a.handle}`} title={`Remove ${a.handle}`}><RemoveIcon /></button>
@@ -715,7 +716,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             return (
               <li key={h}>
                 <span className="dg-dot" data-a={a} aria-hidden="true" />
-                <span className="dg-handle">{h}</span>
+                <span className="dg-handle">{bare(h)}</span>
                 <span className="dg-badge" data-kind="tab">in this tab</span>
                 {backing && !backing.ready
                   ? <button type="button" className="dg-state dg-addkey" onClick={() => { setAddKind("tab"); setAdding(true); setFormError(""); }}>Add a key</button>
@@ -751,7 +752,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         />
         {justAdded && (
           <p className="dg-note dg-connect" role="status">
-            <b>@{justAdded} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
+            <b>{bare(justAdded)} is added.</b> To connect it, open your agent (Claude Code, Cursor, …), connect the keळ server from <Link href="/connect" style={{ textDecoration: "underline" }}>Connect</Link>, and ask it to check its keळ inbox as <code>{justAdded}</code> (it calls <code>delegate_inbox</code>).
           </p>
         )}
         <ProfileWidget subject={subject} status={sync.status === "syncing" ? "Syncing" : sync.status === "offline" ? "Offline" : sync.status === "error" ? "Not syncing" : "Synced"} agents={agents.length} onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
@@ -789,7 +790,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                   <MessageScroller.Item key={`live-${h}`} className="dg-run" data-agent="true">
                     <Avatar who={assistantIdentityFor(h)} />
                     <div className="dg-col">
-                      <div className="dg-meta"><b>{h}</b><span className="dg-badge">agent</span></div>
+                      <div className="dg-meta"><b>{bare(h)}</b><span className="dg-badge">agent</span></div>
                       <div className="dg-body"><p><SmoothText text={withoutDataImages(v.text)} /></p></div>
                     </div>
                   </MessageScroller.Item>
@@ -798,7 +799,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                   <MessageScroller.Item className="dg-run" data-agent="true">
                     <Avatar who={assistantIdentityFor("@kell")} />
                     <div className="dg-col">
-                      <div className="dg-meta"><b>@kell</b><span className="dg-badge">agent</span></div>
+                      <div className="dg-meta"><b>kell</b><span className="dg-badge">agent</span></div>
                       <div className="dg-body dg-thinking" role="status" aria-label="@kell is working">
                         <span className="dg-pulse" /><span className="dg-pulse" /><span className="dg-pulse" />
                       </div>
@@ -815,9 +816,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere) && <>
             <span className="dg-pulse" aria-hidden="true" />
             {[
-              ...working.map((h) => `${h} is working`),
-              ...relayWorkingHandles.map((h) => `${h} is working`),
-              ...(kellHere ? ["@kell is working"] : []),
+              ...working.map((h) => `${bare(h)} is working`),
+              ...relayWorkingHandles.map((h) => `${bare(h)} is working`),
+              ...(kellHere ? ["kell is working"] : []),
             ].join(" · ")}
           </>}
           {streamingHere.length > 0 && (
