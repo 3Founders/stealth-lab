@@ -181,7 +181,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (l.kind === "msg" && l.m.sender.type !== "human") captureRef.current(l.m);
     if (l.kind === "msg" && !tempRef.current.has(r)) {
       history.appendMessage(l.m).catch(() => warnHistory());
-      if (!remote) void engineRef.current?.enqueue(r, l.m); // typed or produced on this device: it goes to your account
+      if (!remote) { // typed or produced on this device: it goes to your account
+        engineRef.current?.enqueue(r, l.m).catch(() => {
+          push(r, { kind: "notice", id: `queue-${l.m.id}`, text: "That message could not be saved to send to your account, so it is only on this screen. Check that this browser allows site storage, then send it again.", t: Date.now() });
+        });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history]);
@@ -406,6 +410,19 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     document.addEventListener("visibilitychange", wake);
     return () => { engine.stop(); window.removeEventListener("online", wake); document.removeEventListener("visibilitychange", wake); engineRef.current = null; };
   }, [rapi, history, push, notify]);
+
+  // Ask the browser not to evict this site's storage (your history lives in it), and notice if the browser threw away our encryption key.
+  useEffect(() => { try { void navigator.storage?.persist?.(); } catch { /* not supported */ } }, []);
+  useEffect(() => {
+    let live = true;
+    void history.load(room).then(async () => {
+      if (!live || !history.keyReplaced) return;
+      await history.recoverFromKeyLoss();
+      await engineRef.current?.resetLocal();
+      push(room, { kind: "notice", id: "key-lost", text: "This browser cleared the key that protects your saved history, so the copy on this device could not be opened. Your rooms are on your account and are downloading again.", t: Date.now() });
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [history, room, push]);
 
   // The open room is followed live: the server tells us the moment something is written there.
   useEffect(() => { engineRef.current?.watch(room); }, [room]);
@@ -753,6 +770,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const wipe = async () => {
     if (!window.confirm("Clear this device's copy of your rooms? Your rooms stay on your account, so they download again. To remove a room for good, remove the room.")) return;
     await history.clearAll().catch(() => {});
+    await engineRef.current?.resetLocal().catch(() => {}); // forget where sync had read up to, so everything downloads again
     lineStore.current = {};
     setTasksByRoom({});
     savedTasks.current.clear();

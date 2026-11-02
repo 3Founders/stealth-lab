@@ -951,3 +951,4 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-canvas-doc { height: 100%; overflow: auto; padding: 12px 20px 24px; font-size: 15px; line-height: 1.6; overscroll-behavior: contain; }
 .dg-canvas-doc .dg-md { gap: 10px; }
 .dg-canvas-doc .dg-md p, .dg-canvas-doc .dg-md li { font-weight: 400; line-height: 1.6; }
+.dg-composer .dg-count { position: absolute; right: 96px; bottom: 4px; font-size: 11px; color: var(--grey); pointer-events: none; }

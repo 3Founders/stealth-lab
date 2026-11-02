@@ -151,3 +151,37 @@ describe("your own documents (canvas, notes)", () => {
     expect(await h.rooms()).toEqual([]);
   });
 });
+
+describe("history store safety", () => {
+  it("clearing a room also drops the messages still waiting to be sent for it, and only for it", async () => {
+    const h = new HistoryStore(mapStore(), "u1");
+    const ev = (id: string) => ({ id, kind: "msg" as const, body: "x", sender_kind: "person" as const });
+    await h.putOutbox({ id: "a", room: "#one", event: ev("a"), at: 1 });
+    await h.putOutbox({ id: "b", room: "#two", event: ev("b"), at: 2 });
+    await h.clearRoom("#one");
+    expect((await h.outbox()).map((o) => o.id)).toEqual(["b"]);
+  });
+
+  it("the same message stored twice (two tabs) is shown once", async () => {
+    const s = mapStore();
+    const h = new HistoryStore(s, "u1");
+    await h.appendMessage(msg("m1", "#r", 1000, "hello"));
+    const [evKey] = [...s.map.keys()].filter((k) => k.startsWith("ev:"));
+    s.map.set(evKey.replace(":000000000000001000:", ":000000000000002000:"), s.map.get(evKey)); // a second copy under another timestamp
+    expect((await new HistoryStore(s, "u1").load("#r")).messages).toHaveLength(1);
+  });
+
+  it("notices when the device key was thrown away while saved records remain, and recovery clears the unreadable ones", async () => {
+    const s = mapStore();
+    const h = new HistoryStore(s, "u1");
+    await h.appendMessage(msg("m1", "#r", 1000, "kept"));
+    s.map.delete("device-key"); // the browser cleared it
+    const after = new HistoryStore(s, "u1");
+    expect((await after.load("#r")).messages).toHaveLength(0); // sealed under the old key: unreadable
+    expect(after.keyReplaced).toBe(true);
+    await after.recoverFromKeyLoss();
+    await after.appendMessage(msg("m1", "#r", 1000, "kept")); // the same message can be saved again (its old marker is gone)
+    expect((await after.load("#r")).messages.map((m) => m.payload.text)).toEqual(["kept"]);
+    expect(after.keyReplaced).toBe(false);
+  });
+});

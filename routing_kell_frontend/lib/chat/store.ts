@@ -59,6 +59,9 @@ export class HistoryStore {
   private docKey = (kind: DocKind, id: string) => `doc:${this.subject}:${kind}:${id}`;
 
   private keyP: Promise<CryptoKey> | null = null;
+  /** True when this device's key had to be made new although records sealed under an old one are still here (the browser cleared it).
+   *  Those records can never be opened again; `recoverFromKeyLoss` removes them so the account's rooms download again. */
+  keyReplaced = false;
   /** One key per device. Concurrent first uses share one promise: two racing writes must never make two keys, because the later one
    *  would overwrite the first and everything sealed under it could no longer be opened. */
   private deviceKey(): Promise<CryptoKey> {
@@ -67,6 +70,8 @@ export class HistoryStore {
         const existing = await this.store.get(DEVICE_KEY);
         if (existing) return existing as CryptoKey;
         const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+        const mine = (await this.store.keys()).some((k) => k.startsWith(`ev:${this.subject}:`) || k.startsWith(`meta:${this.subject}:`));
+        if (mine) this.keyReplaced = true;
         const raced = await this.store.get(DEVICE_KEY); // another tab may have made one a moment ago: keep theirs
         if (raced) return raced as CryptoKey;
         await this.store.set(DEVICE_KEY, key);
@@ -169,7 +174,9 @@ export class HistoryStore {
         if (v) tasks.push(v);
       }
     }
-    return { messages: messages.sort((a, b) => a.timestamp - b.timestamp), tasks: tasks.sort((a, b) => a.created_at.localeCompare(b.created_at)) };
+    const seen = new Set<string>();
+    const unique = messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true))); // two tabs can store one message twice
+    return { messages: unique.sort((a, b) => a.timestamp - b.timestamp), tasks: tasks.sort((a, b) => a.created_at.localeCompare(b.created_at)) };
   }
 
   /** Rooms that have anything saved. */
@@ -198,7 +205,18 @@ export class HistoryStore {
   async clearRoom(room: string): Promise<void> {
     for (const k of await this.store.keys()) {
       if (k.startsWith(`${this.evPrefix(room)}:`) || k.startsWith(`${this.taskPrefix(room)}:`) || k.startsWith(`idx:${this.subject}:${room}:`)) await this.store.delete(k);
+      else if (k.startsWith(`out:${this.subject}:`)) { // a message still waiting to be sent must not leak into a later room with the same name
+        const s = (await this.store.get(k)) as Sealed | undefined;
+        if (s && s.room === room) await this.store.delete(k);
+      }
     }
+  }
+
+  /** The device key was lost while records sealed under it remain: they can never be read, and they would stop the same messages from being
+   *  saved again (their ids are still marked as seen). Drop them and the cursors so the next sync downloads the rooms again. */
+  async recoverFromKeyLoss(): Promise<void> {
+    await this.clearAll();
+    this.keyReplaced = false;
   }
 
   /** Everything this account has saved on this device. Not the device key. */

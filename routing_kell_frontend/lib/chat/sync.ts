@@ -18,6 +18,7 @@
  */
 import type { HistoryStore, OutboxItem } from "./store";
 import { newEventId, toEvent, toMessage } from "./events";
+import { HUMAN } from "./agents";
 import { RoomsApiError, type RoomsApi, type ServerRoom } from "./rooms-api";
 import type { GroupMessage } from "./types";
 
@@ -94,6 +95,14 @@ export class SyncEngine {
     delete this.map[label];
     if (id) delete this.cursors[id];
     await this.save();
+  }
+
+  /** After "clear this device" (or a lost key): forget the places we had read up to, so everything downloads again. */
+  async resetLocal(): Promise<void> {
+    await this.load();
+    this.cursors = {};
+    await this.save();
+    this.kick();
   }
 
   async markRead(label: string): Promise<void> {
@@ -252,6 +261,7 @@ export class SyncEngine {
       used.add(room.id);
       for (const m of (await this.d.history.load(label)).messages) {
         if (queued.has(m.id)) continue;
+        if (m.sender.type === "human" && m.sender.handle !== HUMAN.handle) continue; // another person's line is never re-sent as yours
         this.lamport += 1;
         await this.d.history.putOutbox({ id: m.id, room: label, event: toEvent(m, await this.d.history.deviceId(), this.lamport), at: m.timestamp });
       }

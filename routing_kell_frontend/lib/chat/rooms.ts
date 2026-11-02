@@ -10,13 +10,15 @@ export const MAX_ROOMS = 12;
 // The storage keys keep their original "delegator" name on purpose: renaming them would hide rooms already saved on a device.
 const key = (subject: string) => `kel.delegator.rooms.${subject}`;
 const ROOM = /^#[a-z0-9][a-z0-9_-]{0,29}$/;
+/** What the server allows for a room name (dots too, up to 79): a saved list must still hold a room someone invited you to. */
+const SAVED_ROOM = /^#[a-z0-9][a-z0-9._-]{0,78}$/;
 
 export interface RoomList { rooms: string[]; current: string }
 
 export function readRooms(kv: KeyValue, subject: string): RoomList {
   try {
     const v = JSON.parse(kv.getItem(key(subject)) ?? "null") as { rooms?: unknown; current?: unknown } | null;
-    const rooms = Array.isArray(v?.rooms) ? v!.rooms.filter((r): r is string => typeof r === "string" && ROOM.test(r)) : [];
+    const rooms = Array.isArray(v?.rooms) ? v!.rooms.filter((r): r is string => typeof r === "string" && SAVED_ROOM.test(r)) : [];
     if (rooms.length) return { rooms, current: typeof v?.current === "string" && rooms.includes(v.current) ? v.current : rooms[0] };
   } catch { /* fall through */ }
   return { rooms: [DEFAULT_ROOM], current: DEFAULT_ROOM };

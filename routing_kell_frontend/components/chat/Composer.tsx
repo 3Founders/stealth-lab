@@ -13,6 +13,9 @@ import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
  * The message box. Typing "@" opens a list of the room's handles. It follows the W3C combobox pattern: focus stays in
  * the text box, the list is a listbox, and aria-activedescendant names the highlighted option.
  */
+/** The server keeps at most this many characters of a message; the box stops here so nothing is cut off silently. */
+const MAX_MESSAGE = 8000;
+
 export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft }: { handles: string[]; agentHandles?: string[];
   /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
   draft?: { text: string; n: number }; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
@@ -152,7 +155,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         </ul>
       )}
       <textarea
-        ref={ref} rows={1} value={text} disabled={disabled}
+        ref={ref} rows={1} value={text} disabled={disabled} maxLength={MAX_MESSAGE}
         role="combobox" aria-label="Message" aria-autocomplete="list" aria-expanded={open}
         aria-controls={open ? listId : undefined} aria-activedescendant={open ? `${listId}-${idx}` : undefined}
         placeholder="Message the room. @ to mention a person or an agent, /add-agent to add one, /stop to pause"
@@ -161,6 +164,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         onPaste={(e) => { const f = pastedImages(e.clipboardData.items); if (f.length) { e.preventDefault(); void addFiles(f); } }}
         onKeyDown={onKeyDown}
       />
+      {text.length >= MAX_MESSAGE - 1000 && <span className="dg-count" role="status" aria-live="polite">{text.length} / {MAX_MESSAGE}</span>}
       <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
       <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy} aria-label="Attach a file" title="Attach a picture or a file (or paste or drop one)"><ImageIcon /></button>
       <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>Send</button>
