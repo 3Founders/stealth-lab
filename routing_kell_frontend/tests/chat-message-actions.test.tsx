@@ -1,0 +1,51 @@
+// @vitest-environment jsdom
+// The copy/retry icon actions on a chat message: copy always offered, retry only when a re-run makes sense, and the
+// icons come from one family (components/chat/icons.tsx, Lucide's copy and rotate-ccw on the house stroke).
+import React, { act } from "react";
+// @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
+import { createRoot } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+import MessageActions from "@/components/chat/MessageActions";
+
+let host: HTMLElement | null = null;
+let root: { render(n: React.ReactNode): void; unmount(): void } | null = null;
+const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+async function mount(node: React.ReactNode) {
+  host = document.createElement("div"); document.body.append(host);
+  root = createRoot(host);
+  await act(async () => { root!.render(node); });
+  await flush();
+}
+const click = async (el: Element) => { await act(async () => { (el as HTMLElement).click(); }); await flush(); };
+const byLabel = (t: string) => host!.querySelector(`button[aria-label="${t}"]`);
+
+afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; });
+
+describe("message actions (copy / retry)", () => {
+  it("copies the message text, and offers retry only when a re-run makes sense", async () => {
+    const onCopy = vi.fn();
+    const onRetry = vi.fn();
+    await mount(<MessageActions copyText="hello there" onCopy={onCopy} />);
+    expect(byLabel("Copy message")).not.toBeNull();
+    expect(host!.querySelector(".dg-act svg")).not.toBeNull();       // an icon, not text
+    await click(byLabel("Copy message")!);
+    expect(onCopy).toHaveBeenCalledWith("hello there");
+    expect(byLabel("Ask again")).toBeNull();                          // no retry without a re-run
+
+    await mount(<MessageActions copyText="answer" retryText="the prompt" onCopy={onCopy} onRetry={onRetry} retryLabel="Ask @kell again" />);
+    expect(byLabel("Ask @kell again")).not.toBeNull();
+    await click(byLabel("Ask @kell again")!);
+    expect(onRetry).toHaveBeenCalledWith("the prompt");               // retry re-runs the prompt, not the answer
+  });
+
+  it("draws no retry button for an empty re-run text", async () => {
+    const onRetry = vi.fn();
+    await mount(<MessageActions copyText="x" retryText="" onCopy={vi.fn()} onRetry={onRetry} />);
+    expect(byLabel("Ask again")).toBeNull();
+    await click(byLabel("Copy message")!);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+});

@@ -3,6 +3,8 @@ import { MessageScroller, useMessageScrollerScrollable } from "@shadcn/react/mes
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
+import OnboardButton from "@/components/chat/OnboardButton";
+import { newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { bare } from "@/components/chat/bare";
 import SmoothText from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
@@ -13,7 +15,7 @@ import { assistantIdentityFor, attachAssistant, type AssistantDeps } from "@/lib
 import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
 import { describeBacking, makeResolver, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
-import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, validAgentName, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
+import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, validAgentName, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, newRoomName, readAgents, readRooms, withoutRoom, writeAgents, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
@@ -32,6 +34,7 @@ import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
 import MessageText from "@/components/chat/MessageText";
+import MessageActions from "@/components/chat/MessageActions";
 import Markdown from "@/components/chat/Markdown";
 import AddAgentDialog from "@/components/chat/AddAgentDialog";
 import { withoutDataImages } from "@/lib/chat/images";
@@ -138,7 +141,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // sidebar forms
   const [adding, setAdding] = useState(false);
-  const [addKind, setAddKind] = useState<"mine" | "tab">("mine");
+  const [addKind, setAddKind] = useState<"mine" | "tab">("tab");
   const [addName, setAddName] = useState("");
   const [formError, setFormError] = useState("");
   const [justAdded, setJustAdded] = useState("");
@@ -168,6 +171,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   // SERVER room id (the label here is the title, e.g. #general), which arrives with the first sync.
   const roomsAgent = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const askingKell = useRef<Set<string>>(new Set());
+  /** Copy a message's text: to the clipboard, with a small notice as feedback. */
+  const copyRoomText = useCallback(async (t: string) => {
+    if (!t) return;
+    try { await navigator.clipboard.writeText(t); note("Copied."); }
+    catch { note("Copying was blocked by the browser."); }
+  }, [note]);
+  /** Ask a relay agent the same task again: a new task, the old one stays as it ended. */
+  const resendTask = useCallback(async (t: RelayTask) => {
+    const r = roomRef.current;
+    try {
+      const out = await api.send(t.text, r);
+      setTasksByRoom((p) => ({ ...p, [r]: mergeTasks(p[r] ?? [], out.tasks) }));
+      note("Asked the agent again.", r);
+    } catch (err) { note(err instanceof Error ? err.message : "That didn't send.", r); }
+  }, [api, note]);
   const askKell = useCallback(async (r: string, text: string) => {
     if (askingKell.current.has(r)) return;
     askingKell.current.add(r);
@@ -417,35 +435,63 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   const items: Item[] = (() => {
     const out: Item[] = [];
+    type Run = ReturnType<typeof groupMessages>[number];
+    const seq: Array<{ kind: "run"; run: Run } | { kind: "notice"; l: Extract<Line, { kind: "notice" }> }> = [];
     let buf: GroupMessage[] = [];
     const flush = () => {
-      for (const run of groupMessages(buf)) {
-        out.push({
-          t: run.messages[0].timestamp, key: run.key,
-          node: (
-            <MessageScroller.Item key={run.key} messageId={run.key} className="dg-run" data-agent={run.sender.type !== "human"}>
-              {run.sender.type === "human"
-                ? <PersonAvatar sub={run.sender.sub} mine={run.sender.handle === HUMAN.handle} selfSub={subject} initials={initials(run.sender.handle)} />
-                : <Avatar who={run.sender} />}
-              <div className="dg-col">
-                <div className="dg-meta">
-                  <b>{bare(run.sender.handle)}</b>
-                  {run.sender.type !== "human" && <span className="dg-badge">agent</span>}
-                  <time>{time(run.messages[0].timestamp)}</time>
-                </div>
-                {run.messages.map((m) => <Body key={m.id} m={m} />)}
-              </div>
-            </MessageScroller.Item>
-          ),
-        });
-      }
+      for (const run of groupMessages(buf)) seq.push({ kind: "run", run });
       buf = [];
     };
     for (const l of lines) {
       if (l.kind === "msg") buf.push(l.m);
-      else { flush(); out.push({ t: l.t, key: l.id, node: <MessageScroller.Item key={l.id} className="dg-notice" role="status">{l.text}</MessageScroller.Item> }); }
+      else { flush(); seq.push({ kind: "notice", l }); }
     }
     flush();
+    // What Retry re-runs, per run: one of your own messages re-sends it; an agent's answer re-runs the latest human
+    // message before it (the mention that woke it), and @kell answers again without re-posting that message.
+    let lastHuman = "";
+    for (const s of seq) {
+      if (s.kind !== "run") {
+        const l = s.l;
+        out.push({ t: l.t, key: l.id, node: <MessageScroller.Item key={l.id} className="dg-notice" role="status">{l.text}</MessageScroller.Item> });
+        continue;
+      }
+      const run = s.run;
+      const texts = run.messages.map((m) => m.payload.text).filter((t): t is string => Boolean(t));
+      const mine = run.sender.type === "human" && run.sender.handle === HUMAN.handle;
+      if (run.sender.type === "human") {
+        const t = texts[texts.length - 1];
+        if (t) lastHuman = t;
+      }
+      const agentRun = run.sender.type !== "human";
+      const isKell = agentRun && bare(run.sender.handle) === "kell";
+      const prompt = mine ? texts[texts.length - 1] ?? "" : agentRun ? lastHuman : "";
+      out.push({
+        t: run.messages[0].timestamp, key: run.key,
+        node: (
+          <MessageScroller.Item key={run.key} messageId={run.key} className="dg-run" data-agent={agentRun}>
+            {run.sender.type === "human"
+              ? <PersonAvatar sub={run.sender.sub} mine={run.sender.handle === HUMAN.handle} selfSub={subject} initials={initials(run.sender.handle)} />
+              : <Avatar who={run.sender} />}
+            <div className="dg-col">
+              <div className="dg-meta">
+                <b>{bare(run.sender.handle)}</b>
+                {agentRun && <span className="dg-badge">agent</span>}
+                <time>{time(run.messages[0].timestamp)}</time>
+                <MessageActions
+                  copyText={texts.join("\n\n")}
+                  retryText={prompt || undefined}
+                  onCopy={(t) => void copyRoomText(t)}
+                  onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
+                  retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
+                />
+              </div>
+              {run.messages.map((m) => <Body key={m.id} m={m} />)}
+            </div>
+          </MessageScroller.Item>
+        ),
+      });
+    }
     for (const task of tasks) {
       const ag = relayAgents.find((a) => a.id === task.agent_id);
       const handle = ag?.handle ?? "@agent";
@@ -466,7 +512,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             )}
             {task.result && (
               <div className="dg-result">
-                <div className="dg-meta"><b>{bare(handle)}</b><span className="dg-badge">agent</span></div>
+                <div className="dg-meta">
+                  <b>{bare(handle)}</b><span className="dg-badge">agent</span>
+                  <MessageActions copyText={task.result} onCopy={(t) => void copyRoomText(t)} />
+                </div>
                 <div className="dg-body"><Markdown text={task.result} /></div>
               </div>
             )}
@@ -474,6 +523,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               <div className="dg-task-actions">
                 {task.status === "needs_approval" && <button type="button" className="dg-mini" onClick={() => void act(task.id, "approve")}>Approve</button>}
                 <button type="button" className="dg-mini" onClick={() => void act(task.id, "cancel")}>Cancel</button>
+              </div>
+            )}
+            {isFinished(task) && (
+              <div className="dg-task-actions">
+                <button type="button" className="dg-mini" onClick={() => void resendTask(task)}>Ask again</button>
               </div>
             )}
           </MessageScroller.Item>
@@ -620,6 +674,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       setAdding(false); setAddName("");
     } catch (err) { setFormError(err instanceof Error ? err.message : "That didn't work."); }
   };
+  /** "Onboard Your Agent": registers a fresh agent name on the account and returns the text the person pastes into their agent. */
+  const onboardAgent = async (): Promise<string> => {
+    for (let tries = 0; tries < 3; tries++) {
+      const name = newOnboardName();
+      try {
+        const a = await api.addAgent(name);
+        setRelayAgents((p) => [...p.filter((x) => x.id !== a.id), a]);
+        return onboardPrompt({ name: a.name, room });
+      } catch (err) {
+        if (tries === 2 || (err instanceof RelayError && err.status !== 409)) { setFormError(""); note(err instanceof Error ? err.message : "That didn't work."); throw err; }
+      }
+    }
+    throw new Error("unreachable");
+  };
   const removeRelayAgent = async (a: RelayAgent) => {
     try {
       const r = await api.removeAgent(a.id);
@@ -693,6 +761,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage rooms</button>
 
         <h2>Agents</h2>
+        <OnboardButton onOnboard={onboardAgent} className="dg-onboard-side" />
         <ul className="dg-members">
           <li>
             <span className="dg-dot" data-a="human" aria-hidden="true" />
@@ -748,6 +817,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <AddAgentDialog
           open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full} subject={subject}
           kind={addKind} onKind={setAddKind} name={addName} onName={setAddName} error={formError} onSubmit={(e) => void submitAgent(e)}
+          onOnboard={onboardAgent}
           onModelChanged={() => { describeBacking({ vault, kv, subject }).then(setBacking).catch(() => {}); }}
         />
         {justAdded && (

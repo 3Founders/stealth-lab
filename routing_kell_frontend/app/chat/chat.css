@@ -54,6 +54,13 @@
 .dg-meta { display: flex; align-items: baseline; gap: 8px; }
 .dg-meta b { font-weight: 400; }
 .dg-meta time { font-size: 12px; color: var(--grey); }
+/* Copy and Retry on a message (components/chat/MessageActions.tsx): icon buttons at the end of the meta row, shown
+   while you point at the message or reach them with the keyboard; always visible where hover does not exist. */
+.dg-acts { margin-left: auto; display: inline-flex; gap: 2px; opacity: 0; transition: opacity .15s ease; align-self: center; }
+.dg-run:hover .dg-acts, .dg-result:hover .dg-acts, .dg-acts:focus-within { opacity: 1; }
+@media (hover: none) { .dg-acts { opacity: 1; } }
+.dg-act { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--grey); cursor: pointer; }
+.dg-act:hover { color: var(--ink); background: rgba(0, 0, 0, .06); }
 .dg-body p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-weight: 300; }
 .dg-payload { transition: background-color var(--dg-micro-d) var(--dg-micro), border-color var(--dg-micro-d) var(--dg-micro); margin-top: 4px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); font-size: 13px; max-width: 560px; }
 .dg-payload summary { cursor: pointer; padding: 5px 10px; display: flex; gap: 10px; align-items: center; list-style: none; }
@@ -572,7 +579,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-settings.dg-addagent { width: min(760px, 96vw); height: auto; max-height: 92dvh; }
 /* The model-key panel can outgrow the max-height, and the base .dg-settings sets overflow: visible, which left the
    overflow unreachable (no scroll). The dialog itself scrolls; scrolling is kept inside it. */
-.dg-settings.dg-addagent { overflow: auto; overscroll-behavior: contain; }
+.dg-settings.dg-addagent { overflow: auto; overscroll-behavior: contain; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
 .dg-addagent .dg-set-frame { height: auto; display: block; }
 .dg-addagent .dg-set-head { padding: 14px 18px; }
 .dg-addagent .dg-set-head h2 { font-size: 19px; }
@@ -633,3 +640,24 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-page .dg-burger:focus, .dg-page .dg-burger:focus-visible,
 .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):focus,
 .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):focus-visible { outline: none; box-shadow: var(--dg-lift-hover); }
+
+/* "Onboard Your Agent": a dark pill with three round marks, the words, and a copy icon. */
+.dg-onboard-wrap { display: grid; gap: 8px; }
+.dg-onboard-side { padding: 0 6px 10px; }
+.dg-page .dg-onboard {
+  display: inline-flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 6px 14px 6px 8px; border: 0; border-radius: 999px;
+  background: #171717; color: #fff; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; text-align: left;
+  box-shadow: var(--dg-lift); transition: transform var(--dg-micro-d) var(--dg-micro), box-shadow var(--dg-micro-d) var(--dg-micro);
+}
+.dg-page .dg-onboard:hover { box-shadow: var(--dg-lift-hover); transform: translateY(-1px); }
+.dg-page .dg-onboard:active { transform: none; }
+.dg-page .dg-onboard:focus-visible { outline: none; box-shadow: var(--dg-lift-hover); }
+.dg-onboard-marks { display: inline-flex; flex: none; }
+.dg-onboard-marks i { width: 26px; height: 26px; border-radius: 50%; background: #2a2a2a; color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 2px #171717; }
+.dg-onboard-marks i + i { margin-left: -7px; }
+.dg-onboard-marks svg { width: 15px; height: 15px; }
+.dg-onboard-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-onboard-copy { flex: none; width: 16px; height: 16px; opacity: .85; }
+.dg-onboard[data-state="busy"] { opacity: .7; cursor: progress; }
+.dg-onboard-manual { display: grid; gap: 6px; }
+.dg-onboard-manual textarea { font: inherit; font-size: 12.5px; width: 100%; border-radius: 6px; padding: 8px; resize: vertical; }

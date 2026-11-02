@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ModelKeys from "@/components/models/ModelKeys";
+import OnboardButton from "@/components/chat/OnboardButton";
 
 export interface AddAgentDialogProps {
   open: boolean; onClose: () => void;
@@ -15,13 +16,15 @@ export interface AddAgentDialogProps {
   onSubmit: (e: React.FormEvent) => void;
   /** A model or key changed here: refresh what backs the in-tab agents. */
   onModelChanged?: () => void;
+  /** Registers a new agent name and returns the text to paste into the agent. */
+  onOnboard?: () => Promise<string>;
 }
 
 /** "+ Add agent": a popup over the chat, not a form squeezed into the side panel. Same native <dialog> as Settings and Manage rooms. */
 export default function AddAgentDialog(p: AddAgentDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
-  const [modelsOpen, setModelsOpen] = useState(true);
+  const [modelsOpen, setModelsOpen] = useState(false);
 
   useEffect(() => {
     const d = dialog.current;
@@ -46,13 +49,14 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
           <button type="button" className="dg-set-x" onClick={close} aria-label="Close">Close</button>
         </div>
         <div className="dg-addagent-body">
-          <fieldset>
-            <legend>What kind of agent?</legend>
-            <label><input type="radio" name="dg-kind" checked={p.kind === "mine"} onChange={() => p.onKind("mine")} /> My own agent</label>
-            <label><input type="radio" name="dg-kind" checked={p.kind === "tab"} onChange={() => p.onKind("tab")} disabled={p.full} /> A model in this tab</label>
-          </fieldset>
           <label htmlFor="dg-agent-name">Name{p.kind === "tab" ? " (optional)" : ""}</label>
           <input id="dg-agent-name" ref={input} value={p.name} onChange={(e) => p.onName(e.target.value)} placeholder={p.kind === "mine" ? "web-chat" : "reviewer"} maxLength={40} autoComplete="off" />
+          <fieldset>
+            <legend>What kind of agent?</legend>
+            <label><input type="radio" name="dg-kind" checked={p.kind === "tab"} onChange={() => p.onKind("tab")} disabled={p.full} /> Kell agent</label>
+            <label><input type="radio" name="dg-kind" checked={p.kind === "mine"} onChange={() => p.onKind("mine")} /> My own agent</label>
+          </fieldset>
+          {p.kind === "mine" && p.onOnboard && <OnboardButton onOnboard={p.onOnboard} />}
           {p.kind === "mine" && (
             <p className="small dim" style={{ margin: 0 }}>
               Your agent joins through kell&rsquo;s MCP (Claude Code, Cursor and the like). It can read and post in this room with
