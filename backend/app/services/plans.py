@@ -147,7 +147,7 @@ async def all_rows(pool: Any) -> list[dict[str, Any]]:
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         rows = await conn.fetch(
             "SELECT r.plan, r.price_paise, r.period_days, r.included_usd, r.active, r.max_redemptions, r.updated_by, r.updated_at, "
-            "(SELECT count(*) FROM plan_entitlements e WHERE e.plan = r.plan) AS sold "
+            "(SELECT count(*) FROM plan_entitlements e WHERE e.plan = r.plan AND e.seats = 1) AS sold "
             "FROM billing_plan_rows r ORDER BY r.plan")
     return [{**dict(r), "included_usd": str(r["included_usd"]), "sold": int(r["sold"]),
              "updated_at": r["updated_at"].isoformat()} for r in rows]
@@ -214,12 +214,14 @@ async def save_row(pool: Any, plan: str, fields: Mapping[str, Any], updated_by: 
 
 
 async def redeemed(pool: Any, plan: str) -> int:
-    """People who have the plan plus orders started in the last hour that are not activated yet: a slot is held while
-    Checkout is open, and an abandoned order frees its slot after the hour."""
+    """People who have the one-person plan plus one-person orders started in the last hour that are not activated yet:
+    a slot is held while Checkout is open, and an abandoned order frees its slot after the hour. Team pilots (two or
+    more seats, invoiced directly) are a separate sale and are not counted against the launch cap."""
     async with tenant_transaction(pool, TenantScope.unrestricted()) as conn:
         row = await conn.fetchrow(
-            "SELECT (SELECT count(*) FROM plan_entitlements WHERE plan = $1) + "
-            "(SELECT count(*) FROM billing_orders o WHERE o.plan = $1 AND o.created_at > now() - interval '1 hour' "
+            "SELECT (SELECT count(*) FROM plan_entitlements WHERE plan = $1 AND seats = 1) + "
+            "(SELECT count(*) FROM billing_orders o WHERE o.plan = $1 AND o.seats = 1 "
+            "AND o.created_at > now() - interval '1 hour' "
             "AND NOT EXISTS (SELECT 1 FROM plan_entitlements e WHERE e.order_id = o.order_id)) AS n", plan)
     return int(row["n"]) if row else 0
 
