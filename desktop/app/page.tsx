@@ -50,6 +50,7 @@ export default function Home() {
   const [cardsNote, setCardsNote] = useState("")
   const [settings, setSettings] = useState<Settings | null>(null)
   const [consoleNote, setConsoleNote] = useState("")
+  const [signinNote, setSigninNote] = useState("")
   const logRef = useRef<HTMLDivElement>(null)
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
 
@@ -174,6 +175,23 @@ export default function Home() {
     setConsoleNote(j.output || j.error || "no answer")
   }
 
+  // kell login writes ~/.stealthlab/config.json; the app only polls settings until the token is there.
+  const signIn = async () => {
+    setSigninNote("A browser window will open. Approve there, then come back here.")
+    const started = await fetch("/api/signin", { method: "POST" }).then((r) => r.json()).catch(() => ({ error: "could not start kell login" }))
+    if (started?.error) { setSigninNote(String(started.error)); return }
+    if (started?.already) { setSigninNote("Already signed in."); return }
+    const until = Date.now() + 120_000
+    const tick = async () => {
+      const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
+      if (s) setSettings(s)
+      if (s?.signedIn) { setSigninNote("Signed in."); return }
+      if (Date.now() > until) { setSigninNote("Still not signed in. Try again, or run `kell login` in a terminal."); return }
+      setTimeout(tick, 2000)
+    }
+    setTimeout(tick, 2000)
+  }
+
   const isCheap = (r: LedgerRow) => !!settings?.models.cheap && `${r.providerID}/${r.model}` === settings.models.cheap
   const readEngine = engine?.up && !!directory
 
@@ -249,7 +267,9 @@ export default function Home() {
           {!settings ? <p style={{ fontSize: 13, color: "var(--grey)" }}>reading…</p> : (
             <dl className="kv">
               <dt>account</dt>
-              <dd>{settings.signedIn ? <>signed in <span className="mono">{settings.account || settings.server || ""}</span></> : "not signed in — run `kell login`"}</dd>
+              <dd>{settings.signedIn ? <>signed in <span className="mono">{settings.account || settings.server || ""}</span></> : (
+                <span>not signed in <button type="button" className="copy" onClick={() => void signIn()}>sign in</button></span>
+              )}</dd>
               <dt>cheap</dt><dd className="mono">{settings.models.cheap || "—"}</dd>
               <dt>strong</dt><dd className="mono">{settings.models.strong || "—"}</dd>
               <dt>fallback</dt><dd className="mono">{settings.models.fallback || "—"}</dd>
@@ -259,6 +279,7 @@ export default function Home() {
           )}
           <p style={{ marginTop: 10 }}><button className="copy" onClick={openConsole}>open console</button></p>
           {consoleNote && <p style={{ fontSize: 12, color: "var(--grey)", marginTop: 4 }}>{consoleNote}</p>}
+          {signinNote && <p style={{ fontSize: 12, color: "var(--grey)", marginTop: 4 }} role="status">{signinNote}</p>}
         </aside>
         <section className="main" style={{ padding: "0 0 0 var(--gap)" }}>
           <h2>Chat</h2>

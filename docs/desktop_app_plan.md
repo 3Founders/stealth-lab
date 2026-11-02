@@ -90,6 +90,9 @@ the `rich-proj` fixture with real turns:
 - **Settings** (`GET /api/settings`): sign-in from the token's presence (never the token), models and mode from
   `opencode/config.json`, engine found/not found. "Open console" runs `kell console open`. Read-only: no key or flag is
   written by the app.
+- **Sign-in** (`POST /api/signin`, step 5): the button runs `kell login` in the app's own profile (the browser OAuth writes
+  `~/.stealthlab/config.json`), then the app polls settings until the token appears and says "Signed in."; a second click
+  within 10 s does not start a second browser flow. The app still never reads or shows the token.
 
 ## Shell: Electron (owner decision, 2026-11-01)
 Electron: OpenCode's SDK and kell's console helper are Node, so the main process runs them directly. The window loads
@@ -105,7 +108,9 @@ the prototype's Next.js UI. Still open: Windows first, or Windows and macOS toge
 4. **Model strip and tool cards:**(simplicity) model + cost per step from `kell_usage` events; kell's tool suggestions
    from the plugin's existing note path.
 5. **Sign-in:** the app shows "Signed in as ..." from the helper; a "Sign in" button runs `kell login` (browser OAuth).
-6. **Packaging:** installers for Windows and macOS. **Not published without the owners.**
+   **Built** (2026-11-02): `POST /api/signin` + the settings button and poll; typecheck and `next build` green.
+6. **Packaging:** installers for Windows and macOS. **Not published without the owners.** `npm run dist` builds the Windows
+   NSIS installer (electron-builder, config in `desktop/package.json`); macOS packaging and signing are the open owner item.
 
 ## Prototype built (2026-11-02, `desktop/`)
 
