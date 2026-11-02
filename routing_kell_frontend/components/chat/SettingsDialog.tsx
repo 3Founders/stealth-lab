@@ -1,12 +1,32 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { applyTheme, readTheme, saveTheme, type Theme } from "@/lib/theme";
 import NotificationSettings from "@/components/chat/NotificationSettings";
 import { DEFAULT_CHAT_PREFS, type ChatPrefs, type TextSize } from "@/lib/chat/prefs";
 import type { Prefs } from "@/lib/chat/notify";
 
 import { usePlan } from "@/components/billing/PlanBadge";
 import { planText } from "@/lib/chat/plan";
+
+const THEMES: Array<[Theme, string]> = [["system", "Same as device"], ["light", "Light"], ["dark", "Dark"]];
+
+/** Light, dark, or the device's own setting. Applies at once and is remembered on this device. */
+function ThemeChoice() {
+  const [theme, setTheme] = useState<Theme>("system");
+  useEffect(() => { setTheme(readTheme()); }, []);
+  const choose = (t: Theme) => { setTheme(t); applyTheme(t); saveTheme(t); };
+  return (
+    <fieldset className="dg-set-group">
+      <legend>Appearance</legend>
+      <div className="dg-seg" role="radiogroup" aria-label="Appearance">
+        {THEMES.map(([v, l]) => (
+          <label key={v} data-on={theme === v}><input type="radio" name="dg-theme" checked={theme === v} onChange={() => choose(v)} />{l}</label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
 
 function PlanText() {
   return <b>{planText(usePlan())}</b>;
@@ -90,6 +110,7 @@ export default function SettingsDialog(p: SettingsProps) {
             {p.section === "preferences" && (
               <section>
                 <h3>Preferences</h3>
+                <ThemeChoice />
                 <fieldset className="dg-set-group">
                   <legend>Text size</legend>
                   <div className="dg-seg" role="radiogroup" aria-label="Text size">

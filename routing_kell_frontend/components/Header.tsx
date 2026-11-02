@@ -1,6 +1,6 @@
 "use client";
+import Wordmark from "@/components/Wordmark";
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
@@ -137,7 +137,7 @@ export default function Header() {
       <div className="frame">
         <header className="nav">
           <Link href="/" className="logo" aria-label="keळ, home" onClick={() => setOpen(false)}>
-            <Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} priority style={{ height: 54, width: "auto" }} />
+            <Wordmark priority style={{ height: 54, width: "auto" }} />
           </Link>
           <nav aria-label="Primary" className="nav-links">{navLinks.map(item)}</nav>
           {signedIn === undefined || (signedIn && username === undefined) ? (

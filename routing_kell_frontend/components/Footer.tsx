@@ -1,5 +1,5 @@
+import Wordmark from "@/components/Wordmark";
 import Link from "next/link";
-import Image from "next/image";
 import { adminSignInUrl } from "@/lib/admin-link";
 import { companyLinks } from "@/lib/social-links";
 
@@ -29,7 +29,7 @@ export default function Footer() {
     <footer className="footer">
       <div className="frame grid">
         <div className="footer-mark">
-          <span className="footer-logo"><Image src="/kel-wordmark.png" alt="keळ" width={800} height={440} /></span>
+          <span className="footer-logo"><Wordmark /></span>
           <p>Recall, reuse, route, reduce.</p>
         </div>
         {columns.map((c) => (

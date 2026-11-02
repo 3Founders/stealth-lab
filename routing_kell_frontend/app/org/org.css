@@ -8,10 +8,10 @@
 .org-nav a { padding: 10px 14px; text-decoration: none; color: var(--grey); border-bottom: 2px solid transparent; white-space: nowrap; min-height: 44px; display: inline-flex; align-items: center; }
 .org-nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
 .org-picker { display: grid; gap: 4px; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--grey); }
-.org-picker select, .org-picker input { font: inherit; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--ink); padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: #fff; min-height: 40px; }
+.org-picker select, .org-picker input { font: inherit; font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--ink); padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--surface); min-height: 40px; }
 .org-filters { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
 .org-tabs { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 8px; overflow: hidden; }
-.org-tabs button { font: inherit; padding: 8px 16px; min-height: 40px; background: #fff; border: 0; cursor: pointer; color: var(--ink); }
+.org-tabs button { font: inherit; padding: 8px 16px; min-height: 40px; background: var(--surface); border: 0; cursor: pointer; color: var(--ink); }
 .org-tabs button[aria-selected="true"] { background: var(--ink); color: var(--paper); }
 .org-big { font-size: 34px; letter-spacing: -.02em; margin: 4px 0; }
 .org-bar-track { height: 10px; border-radius: 999px; background: rgba(23,23,23,.1); overflow: hidden; }
@@ -31,7 +31,7 @@
 .org-dl dd { margin: 0; overflow-wrap: anywhere; }
 .org-chip { display: inline-block; margin: 0 6px 4px 0; padding: 1px 8px; border-radius: 999px; background: var(--soft); }
 .org-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.org-chipbtn { font: inherit; font-size: 13.5px; min-height: 36px; padding: 0 12px; border: 1px solid var(--rule-strong); border-radius: 999px; background: #fff; cursor: pointer; color: var(--ink); }
+.org-chipbtn { font: inherit; font-size: 13.5px; min-height: 36px; padding: 0 12px; border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--surface); cursor: pointer; color: var(--ink); }
 .org-chipbtn[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .org-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
 .org-classes { display: grid; gap: 8px; }
