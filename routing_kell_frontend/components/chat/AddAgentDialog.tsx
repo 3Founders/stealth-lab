@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import ModelKeys from "@/components/models/ModelKeys";
 
 export interface AddAgentDialogProps {
@@ -21,6 +21,7 @@ export interface AddAgentDialogProps {
 export default function AddAgentDialog(p: AddAgentDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const [modelsOpen, setModelsOpen] = useState(true);
 
   useEffect(() => {
     const d = dialog.current;
@@ -60,7 +61,7 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
             </p>
           )}
           {p.kind === "tab" && (
-            <details className="dg-agent-models" open={false}>
+            <details className="dg-agent-models" open={modelsOpen} onToggle={(e) => setModelsOpen((e.currentTarget as HTMLDetailsElement).open)}>
               <summary><b>Model key and model</b> <span className="dim small">- your key, or kell&rsquo;s hosted models</span></summary>
               <ModelKeys subject={p.subject} onDone={p.onModelChanged} />
             </details>

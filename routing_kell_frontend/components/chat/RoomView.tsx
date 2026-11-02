@@ -696,7 +696,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <span className="dg-handle">{h}</span>
                 <span className="dg-badge" data-kind="tab">in this tab</span>
                 {backing && !backing.ready
-                  ? <button type="button" className="dg-state dg-addkey" onClick={() => { setAdding(true); setFormError(""); }}>Add a key</button>
+                  ? <button type="button" className="dg-state dg-addkey" onClick={() => { setAddKind("tab"); setAdding(true); setFormError(""); }}>Add a key</button>
                   : <span className="dg-state" data-a={a}>{a === "idle" ? "" : LABEL[a]}</span>}
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${h} from the room`} title={`Remove ${h}`}><RemoveIcon /></button>
               </li>

@@ -62,6 +62,12 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=call_model,
                                            find_tools=find_tools,
                                            use_tool=lambda server, tool, args: use_tool(subject, server, tool, args))
+        except rm.RoomError:
+            raise
+        except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)
+            log.exception("room agent: the model refused the answer for room %s", room_id)
+            why = str(exc).strip()[:300] or "the model did not answer"
+            return _error(request, f"@kell could not answer: {why}", 502)
         except Exception:  # noqa: BLE001 -- a failed answer posts nothing, rather than half a reply
             log.exception("room agent: the answer failed for room %s", room_id)
             return _error(request, "the room agent could not answer just now; nothing was posted", 502)
