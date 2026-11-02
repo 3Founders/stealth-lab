@@ -119,7 +119,7 @@ export default function SettingsDialog(p: SettingsProps) {
               <section>
                 <h3>Agents and models</h3>
                 <p className="dg-set-lead">{p.agents.count} agent{p.agents.count === 1 ? "" : "s"} in your rooms.</p>
-                <p className="small"><b>Model for agents in this tab:</b> {p.agents.modelReady ? p.agents.modelText : "none set up yet"}. <Link href="/account/models" style={{ textDecoration: "underline" }}>Change under Models</Link>.</p>
+                <p className="small"><b>Model for agents in this tab:</b> {p.agents.modelReady ? p.agents.modelText : "none set up yet"}. Change it in Chat with <b>+ Add agent</b>.</p>
                 <label className="dg-set-row"><input type="checkbox" checked={p.agents.paused} onChange={(e) => p.agents.onPause(e.target.checked)} /><span><b>Pause agents in this tab</b><small>They will not be woken until you resume.</small></span></label>
                 <p className="small dim">Agents in this tab hand off to each other at most {p.agents.maxHops} times before a person must step in. Agents on the relay stay on your account and keep working with this page closed.</p>
               </section>
@@ -130,7 +130,6 @@ export default function SettingsDialog(p: SettingsProps) {
                 <p className="dg-set-lead">Signed in as <b>{p.account.name || "you"}</b>.</p>
                 <ul className="dg-set-links">
                   <li><Link href="/account/profile">Profile and photo</Link></li>
-                  <li><Link href="/account/models">Models and keys</Link></li>
                   <li><Link href="/account/connections">Connected apps</Link></li>
                 </ul>
                 <button type="button" className="btn-line dg-mini-btn" onClick={p.account.onSignOut}>Sign out</button>

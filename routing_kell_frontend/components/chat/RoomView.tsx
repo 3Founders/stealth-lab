@@ -161,18 +161,31 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const note = useCallback((text: string, r: string = roomRef.current) => push(r, { kind: "notice", id: broker.newId(), text, t: Date.now() }), [broker, push]);
 
   // The built-in room agent (@kell) runs on the server (mcp_server/room_agent_routes.py): a mention asks it, and its
-  // answer is posted into the room as an agent message, so it arrives through sync on every device.
+  // answer is posted into the room as an agent message, so it arrives through sync on every device. The API needs the
+  // SERVER room id (the label here is the title, e.g. #general), which arrives with the first sync.
   const roomsAgent = useMemo(() => roomsApi({ token: getAccessToken }), []);
   const askingKell = useRef<Set<string>>(new Set());
   const askKell = useCallback(async (r: string, text: string) => {
     if (askingKell.current.has(r)) return;
     askingKell.current.add(r);
     try {
-      const out = await roomsAgent.agent(r, text);
-      if (!out.posted) note("@kell answered but could not post it in the room.");
+      const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+      if (!id) { note("This room is still syncing. Give it a second, then mention @kell again.", r); return; }
+      try {
+        const out = await roomsAgent.agent(id, text);
+        if (!out.posted) note("@kell answered but could not post it in the room.", r);
+      } catch (err) {
+        if (err instanceof RoomsApiError && err.status === 404) {      // the room may have just been created by sync
+          await new Promise((res) => setTimeout(res, 1500));
+          const out = await roomsAgent.agent(id, text);
+          if (!out.posted) note("@kell answered but could not post it in the room.", r);
+          return;
+        }
+        throw err;
+      }
     } catch (err) {
-      if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask @kell.");
-      else note(err instanceof Error ? err.message : "@kell could not answer just now.");
+      if (err instanceof RoomsApiError && err.status === 401) note("Sign in to ask @kell.", r);
+      else note(err instanceof Error ? err.message : "@kell could not answer just now.", r);
     } finally { askingKell.current.delete(r); }
   }, [roomsAgent, note]);
 
@@ -683,7 +696,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <span className="dg-handle">{h}</span>
                 <span className="dg-badge" data-kind="tab">in this tab</span>
                 {backing && !backing.ready
-                  ? <Link className="dg-state dg-addkey" href="/account/models">Add a key</Link>
+                  ? <button type="button" className="dg-state dg-addkey" onClick={() => { setAdding(true); setFormError(""); }}>Add a key</button>
                   : <span className="dg-state" data-a={a}>{a === "idle" ? "" : LABEL[a]}</span>}
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${h} from the room`} title={`Remove ${h}`}><RemoveIcon /></button>
               </li>
@@ -710,8 +723,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
         <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
         <AddAgentDialog
-          open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
+          open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full} subject={subject}
           kind={addKind} onKind={setAddKind} name={addName} onName={setAddName} error={formError} onSubmit={(e) => void submitAgent(e)}
+          onModelChanged={() => { describeBacking({ vault, kv, subject }).then(setBacking).catch(() => {}); }}
         />
         {justAdded && (
           <p className="dg-note dg-connect" role="status">

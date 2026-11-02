@@ -1026,7 +1026,12 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
         else:
             r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
     if r.status_code >= 300:
-        raise RuntimeError(f"the model endpoint answered {r.status_code}")
+        why = ""
+        try:
+            why = str(((r.json() or {}).get("error") or {}).get("message") or "")[:200]
+        except Exception:  # noqa: BLE001 -- a non-JSON error body
+            why = ""
+        raise RuntimeError(why or f"the model endpoint answered {r.status_code}")
     return r.json()
 
 

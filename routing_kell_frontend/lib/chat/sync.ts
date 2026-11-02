@@ -28,7 +28,7 @@ export interface RoomsChange {
   added: Array<{ label: string; id: string; title: string; role: "owner" | "admin" | "member" }>;
   removed: string[];
   /** Per room label: what the list says about it right now. */
-  info: Record<string, { unread: number; members: number; last: ServerRoom["last"] | null; role: "owner" | "admin" | "member" }>;
+  info: Record<string, { id: string; unread: number; members: number; last: ServerRoom["last"] | null; role: "owner" | "admin" | "member" }>;
 }
 
 export interface SyncHooks {
@@ -219,7 +219,7 @@ export class SyncEngine {
     const labelOf = new Map(Object.entries(this.map).map(([l, id]) => [id, l]));
     for (const r of rooms) {
       const label = labelOf.get(r.id);
-      if (label) change.info[label] = { unread: r.unread ?? 0, members: r.members ?? 1, last: r.last ?? null, role: r.role };
+      if (label) change.info[label] = { id: r.id, unread: r.unread ?? 0, members: r.members ?? 1, last: r.last ?? null, role: r.role };
     }
     await this.save();
     if (change.added.length || change.removed.length || Object.keys(change.info).length) this.d.hooks.onRooms(change);

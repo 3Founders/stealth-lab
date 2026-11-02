@@ -1,15 +1,12 @@
 "use client";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import AnimatedHeading from "@/components/AnimatedHeading";
 import { listModels, scrub } from "@/lib/byok/chat";
 import { parseEnvBlock, type FoundKey } from "@/lib/byok/envimport";
 import { PROVIDERS, cleanBaseUrl, providerById } from "@/lib/byok/providers";
 import { DEFAULT_DAILY_CAP, readCap, usedToday, writeCap, type KeyValue } from "@/lib/byok/spend";
 import { Vault, idbStore, type KeyMeta } from "@/lib/byok/vault";
 import { KELL_MODEL_IDS, kellModelsAvailable, kellTarget, onlyKellModels, readChoice, writeChoice, type AssistantChoice } from "@/lib/kell-models";
-import { getAccessToken, getSession, onSessionChange, type Session } from "@/lib/session";
+import { getAccessToken } from "@/lib/session";
 
 const kv = (): KeyValue => {
   try { if (window.localStorage) return window.localStorage; } catch { /* blocked */ }
@@ -20,42 +17,11 @@ const kv = (): KeyValue => {
 type Probe = { state: "idle" } | { state: "testing" } | { state: "ok"; models: string[] } | { state: "failed"; message: string };
 
 /**
- * Your own model keys. A key is encrypted in THIS browser and sent only to the provider you choose; kell never sees it,
- * never pays for your usage and never falls back to a key of its own. Shown to signed-in visitors only.
+ * Your own model keys, and the choice between them and kell's hosted models. This is the whole Models page, now inside the
+ * "+ Add agent" popup: a key is encrypted in THIS browser and sent only to the provider you choose; kell never sees it and
+ * never pays for your usage. Nothing here is stored on a server.
  */
-export default function ModelsPage() {
-  const [session, setSession] = useState<Session | null | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    getSession().then((s) => { if (live) setSession(s); });
-    const off = onSessionChange((s) => { if (live) setSession(s); });
-    return () => { live = false; off(); };
-  }, []);
-
-  return (
-    <>
-      <section className="page-hero frame grid">
-        <div className="marker caption" style={{ gridColumn: "1 / -1" }}><b>MODELS</b></div>
-        <h1 className="display"><AnimatedHeading>Your model keys</AnimatedHeading></h1>
-      </section>
-      <section className="frame grid" style={{ paddingBottom: 120 }}>
-        <div className="models-wrap">
-          {session === undefined && <p className="small dim" role="status">Checking your session…</p>}
-          {session === null && (
-            <div className="empty" role="status">
-              <b>Sign in to add a key.</b>
-              <p>Keys belong to your account. <Link href="/sign-in?redirect=/account/models" style={{ textDecoration: "underline" }}>Sign in</Link>.</p>
-            </div>
-          )}
-          {session && <Panel subject={session.subject} />}
-        </div>
-      </section>
-    </>
-  );
-}
-
-function Panel({ subject }: { subject: string }) {
-  const router = useRouter();
+export default function ModelKeys({ subject, onDone }: { subject: string; onDone?: () => void }) {
   const vault = useMemo(() => new Vault(idbStore(), subject), [subject]);
   const [keys, setKeys] = useState<KeyMeta[] | undefined>(undefined);
   const [probe, setProbe] = useState<Record<string, Probe>>({});
@@ -66,7 +32,6 @@ function Panel({ subject }: { subject: string }) {
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [cap, setCap] = useState(DEFAULT_DAILY_CAP);
   const [used, setUsed] = useState(0);
   const [note, setNote] = useState("");
   const [envText, setEnvText] = useState("");
@@ -82,7 +47,6 @@ function Panel({ subject }: { subject: string }) {
   const reload = useCallback(() => {
     vault.list().then(setKeys).catch(() => { setKeys([]); setError("This browser would not let us read stored keys."); });
     const store = kv();
-    setCap(readCap(store, subject));
     setUsed(usedToday(store, subject));
     const c = readChoice(store, subject);
     setChoice(c);
@@ -141,7 +105,7 @@ function Panel({ subject }: { subject: string }) {
     if (!target || !token) { setKellProbe({ state: "failed", message: "Sign in again, then try the test." }); return; }
     try {
       const models = onlyKellModels(await listModels(target));
-      setKellProbe(models.length ? { state: "ok", models } : { state: "failed", message: "The server answered, but listed none of the keळ models for your account." });
+      setKellProbe(models.length ? { state: "ok", models } : { state: "failed", message: "The server answered, but listed none of the kell models for your account." });
     } catch (err) {
       setKellProbe({ state: "failed", message: scrub(err instanceof Error ? err.message : "The test failed.", token) });
     }
@@ -150,7 +114,7 @@ function Panel({ subject }: { subject: string }) {
   function chooseKell() {
     if (!kellAck) return;
     writeChoice(kv(), subject, { source: "kell", model: kellModel });
-    router.push("/chat"); // the choice is for the Chat's agents: go back and use it
+    onDone?.();
   }
 
   function chooseOwnKey() {
@@ -178,17 +142,44 @@ function Panel({ subject }: { subject: string }) {
       setNote(n ? `Saved ${n} key${n === 1 ? "" : "s"}. Press Test on each to choose a model.` : "Nothing was selected.");
       reload();
     } catch { setError("We could not store those keys in this browser."); }
-    setEnvText(""); setEnvFound(null); // the pasted text is dropped as soon as it has been used
+    setEnvText(""); setEnvFound(null);
   }
 
   return (
     <>
       <div className="models-note">
-        <p><b>Where your key goes.</b> It is encrypted in this browser and sent only to the provider you choose below. keळ never sees it, never pays for your usage and never uses a key of its own. Your provider bills you.</p>
+        <p><b>Where your key goes.</b> It is encrypted in this browser and sent only to the provider you choose below. kell never sees it, never pays for your usage and never uses a key of its own. Your provider bills you.</p>
         <p className="small dim">Keys are kept per browser. Clearing this site&rsquo;s data, or using another browser, removes them; add the key again there. A script running on this site could in principle use your stored key, so use keys with a spending limit set at the provider.</p>
       </div>
 
       {note && <p className="small" role="status">{note}</p>}
+
+      {kellOn && (
+        <div className="models-note" style={{ marginTop: 14 }}>
+          <p><b>Or use kell&rsquo;s hosted models.</b> No key needed; kell pays, under its cap, for public material only.</p>
+          <div className="cluster" style={{ marginTop: 8 }}>
+            <button type="button" className="btn-line" onClick={() => void testKell()} disabled={kellProbe.state === "testing"}>{kellProbe.state === "testing" ? "Testing…" : "Test kell models"}</button>
+            {choice.source === "kell" && <span className="small" role="status">In use: <code>{choice.model}</code></span>}
+          </div>
+          {kellProbe.state === "failed" && <p className="small" role="alert">{kellProbe.message}</p>}
+          {kellProbe.state === "ok" && (
+            <div className="cluster" style={{ marginTop: 8 }}>
+              <div className="models-select">
+                <label className="small" htmlFor="m-kell-model">Model</label>
+                <select id="m-kell-model" value={kellModel} onChange={(e) => setKellModel(e.target.value)}>
+                  {kellProbe.models.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <label className="small" style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="checkbox" checked={kellAck} onChange={(e) => setKellAck(e.target.checked)} />
+                Public material only
+              </label>
+              <button type="button" className="btn-ink" onClick={chooseKell} disabled={!kellAck}><span>Use kell models</span></button>
+            </div>
+          )}
+          {choice.source === "key" && <p className="small dim" style={{ marginTop: 6 }}>Your own key is used until you switch.</p>}
+        </div>
+      )}
 
       <section className="models-ways" aria-labelledby="other-ways">
         <h2 className="h3" id="other-ways">Add several keys at once</h2>
@@ -222,7 +213,7 @@ function Panel({ subject }: { subject: string }) {
         {!def.baseUrl && (
           <div className="cfield"><label htmlFor="m-base">Provider address</label>
             <input id="m-base" type="text" inputMode="url" autoComplete="off" placeholder="https://api.example.com/v1" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-            <span className="hint">Any OpenAI-compatible host. It must allow requests from a web page.</span></div>
+            <span className="hint">Any OpenAI-compatible host, including http://localhost for a model on this machine.</span></div>
         )}
         <div className="cfield"><label htmlFor="m-key">API key</label>
           <input id="m-key" type="password" autoComplete="off" spellCheck={false} required value={apiKey} onChange={(e) => setApiKey(e.target.value)} />

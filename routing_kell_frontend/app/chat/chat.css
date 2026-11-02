@@ -553,6 +553,11 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 @media (prefers-reduced-motion: reduce) { .dg-pic, .dg-img img { animation: none; transition: none; } }
 
 /* An HTML artifact (a slide deck, a small site) posted as a fenced ```html block: a card; Render opens a sandboxed frame. */
+.dg-settings.dg-addagent { width: min(760px, 96vw); }
+.dg-agent-models { border-top: 1px solid var(--rule, #e5e5e5); padding-top: 10px; margin-top: 4px; }
+.dg-agent-models summary { cursor: pointer; }
+.dg-agent-models .models-note { margin-top: 10px; }
+.dg-agent-models .cform { max-width: none; }
 .dg-artifact { margin: 6px 0; border: 1px solid var(--rule-strong, #ddd); border-radius: 10px; overflow: hidden; background: var(--dg-glass-strong, #fff); box-shadow: var(--dg-lift, 0 4px 12px rgba(0, 0, 0, .14)); }
 .dg-artifact-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--rule, #e5e5e5); }
 .dg-artifact-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

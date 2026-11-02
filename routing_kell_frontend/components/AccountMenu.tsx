@@ -81,7 +81,6 @@ export default function AccountMenu({ username }: { username: string }) {
           <Link href="/account/connections" role="menuitem" onClick={() => setOpen(false)}>Connected apps</Link>
           <Link href="/chat" role="menuitem" onClick={() => setOpen(false)}>Chat</Link>
           {orgAdminEnabled() && <Link href="/org" role="menuitem" onClick={() => setOpen(false)}>Organization</Link>}
-          <Link href="/account/models" role="menuitem" onClick={() => setOpen(false)}>Models</Link>
           <hr />
           <button type="button" role="menuitem" onClick={handleSignOut}>Sign out</button>
         </div>

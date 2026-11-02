@@ -1,15 +1,20 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useRef } from "react";
+import ModelKeys from "@/components/models/ModelKeys";
 
 export interface AddAgentDialogProps {
   open: boolean; onClose: () => void;
   /** The room already has as many in-tab agents as it can run. */
   full: boolean;
+  /** The signed-in account: its model keys live in this browser, per account. */
+  subject: string;
   kind: "mine" | "tab"; onKind: (k: "mine" | "tab") => void;
   name: string; onName: (n: string) => void;
   error: string;
   onSubmit: (e: React.FormEvent) => void;
+  /** A model or key changed here: refresh what backs the in-tab agents. */
+  onModelChanged?: () => void;
 }
 
 /** "+ Add agent": a popup over the chat, not a form squeezed into the side panel. Same native <dialog> as Settings and Manage rooms. */
@@ -55,10 +60,10 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
             </p>
           )}
           {p.kind === "tab" && (
-            <p className="small dim" style={{ margin: 0 }}>
-              Runs on a model from <Link href="/account/models" style={{ textDecoration: "underline" }}>Models</Link>: your own key, or a model on
-              this machine such as Ollama or vLLM at http://localhost.
-            </p>
+            <details className="dg-agent-models" open={false}>
+              <summary><b>Model key and model</b> <span className="dim small">- your key, or kell&rsquo;s hosted models</span></summary>
+              <ModelKeys subject={p.subject} onDone={p.onModelChanged} />
+            </details>
           )}
           {p.error && <p className="dg-err" role="alert">{p.error}</p>}
           <div className="dg-form-row">

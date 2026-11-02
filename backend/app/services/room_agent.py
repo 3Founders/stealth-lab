@@ -131,7 +131,10 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
     system = SYSTEM
     if candidates:
         system = f"{SYSTEM}\n\nTools the router offers for this message (use one only if it helps):\n{_tool_brief(candidates)}"
-    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *history, {"role": "user", "content": text}]
+    turns = list(history)
+    if turns and turns[-1].get("role") == "user" and str(turns[-1].get("content") or "").endswith(text.strip()):
+        turns.pop()                                  # the message is already the last turn (it synced before this call)
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *turns, {"role": "user", "content": text}]
     tools = tool_specs(candidates)
     used: list[str] = []
     links: list[str] = []

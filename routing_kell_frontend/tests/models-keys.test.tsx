@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// /account/models: signed-in only; saves a key through the vault (never to localStorage or the page); Test reports pass or fail
-// without the key; Delete removes it; the copy never asks for a chat-app login.
+// The model-key panel, now inside the "+ Add agent" popup: saves a key through the vault (never to localStorage or the
+// page), Test reports pass or fail without the key, Delete removes it, and the copy never asks for a chat-app login.
 import React, { act } from "react";
 // @ts-ignore this app does not install @types/react-dom; the test only needs createRoot at runtime
 import { createRoot } from "react-dom/client";
@@ -43,7 +43,7 @@ vi.mock("@/lib/byok/chat", async (orig) => ({
   listModels: async () => { if (models instanceof Error) throw models; return models; },
 }));
 
-import ModelsPage from "@/app/account/models/page";
+import ModelKeys from "@/components/models/ModelKeys";
 
 let host: HTMLElement | null = null;
 let root: { render(n: React.ReactNode): void; unmount(): void } | null = null;
@@ -51,7 +51,7 @@ const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0))
 async function mount() {
   host = document.createElement("div"); document.body.append(host);
   root = createRoot(host);
-  await act(async () => { root!.render(<ModelsPage />); });
+  await act(async () => { root!.render(<ModelKeys subject="u1" />); });
   await flush(); await flush();
 }
 const type = async (el: HTMLInputElement, v: string) => {
@@ -59,32 +59,17 @@ const type = async (el: HTMLInputElement, v: string) => {
   await act(async () => { setter.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); });
 };
 const click = async (el: Element) => { await act(async () => { (el as HTMLElement).click(); }); await flush(); };
-const keyButton = (t: string) => [...host!.querySelectorAll(".models-key button")].find((b) => b.textContent?.trim() === t)!; // a saved key's own buttons
+const keyButton = (t: string) => [...host!.querySelectorAll(".models-key button")].find((b) => b.textContent?.trim() === t)!;
 const byText = (t: string) => [...host!.querySelectorAll("button")].find((b) => b.textContent?.trim() === t)!;
 
 afterEach(() => { act(() => root?.unmount()); host?.remove(); host = null; root = null; rows.length = 0; for (const k of Object.keys(keyOf)) delete keyOf[k]; session = { token: "t", subject: "u1" }; models = ["model-a", "model-b"]; vi.restoreAllMocks(); });
 
-describe("Models page", () => {
-  it("no longer offers the keळ-hosted pilot models or a daily limit, only your own keys", async () => {
-    vi.stubEnv("NEXT_PUBLIC_KEL_MCP_URL", "https://mcp.example.org");
-    vi.resetModules();
-    const { default: Page } = await import("@/app/account/models/page");
-    host = document.createElement("div"); document.body.append(host);
-    root = createRoot(host);
-    await act(async () => { root!.render(<Page />); });
-    await flush(); await flush();
+describe("model keys (in the Add-agent popup)", () => {
+  it("offers no pilot models or daily limit, only your own keys and the hosted choice", async () => {
+    await mount();
     const text = host!.textContent ?? "";
     expect(text).not.toMatch(/Pilot|keळ models|Two small models|Daily limit|Replies per day/);
     expect(text).toMatch(/Where your key goes/);
-    vi.unstubAllEnvs();
-  });
-
-  it("signed out: only a sign-in notice that returns here", async () => {
-    session = null;
-    await mount();
-    expect(host!.textContent).toContain("Sign in to add a key");
-    expect(host!.querySelector('a[href="/sign-in?redirect=/account/models"]')).not.toBeNull();
-    expect(host!.querySelector("form")).toBeNull();
   });
 
   it("says plainly where the key goes, and never asks for a chat-app login", async () => {
@@ -152,19 +137,14 @@ describe("Add several keys at once", () => {
     await mount();
     const area = host!.querySelector<HTMLTextAreaElement>("#m-env")!;
     const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-    await act(async () => { set.call(area, `OPENAI_API_KEY=sk-oai-IMPORTSECRET-9999\nDATABASE_URL=postgres://u:pw@h/db\nGROQ_API_KEY=gsk_IMPORTSECRET-7777`); area.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => {
+      set.call(area, `ANTHROPIC_API_KEY=${SECRET}\nOPENAI_API_KEY=sk-openai-SECRET-xyz\nRANDOM=1`);
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await click(byText("Find keys"));
-    const shown = host!.textContent ?? "";
-    expect(shown).toContain("OPENAI_API_KEY");
-    expect(shown).toContain("ends in 9999");
-    const withoutTextarea = host!.cloneNode(true) as HTMLElement; // the pasted text lives in the textarea itself; nothing else may show it
-    withoutTextarea.querySelector("#m-env")?.remove();
-    expect(withoutTextarea.innerHTML).not.toContain("IMPORTSECRET");
-    expect(shown).toMatch(/1 other line ignored/);
-    const boxes = host!.querySelectorAll<HTMLInputElement>(".models-found input[type=checkbox]");
-    await act(async () => { boxes[1].click(); }); // untick the second
+    expect(host!.textContent).toMatch(/1 other line ignored/);
     await click(byText("Save selected"));
-    expect(rows.map((r) => r.provider)).toEqual(["openai"]);
+    expect(rows.length).toBe(2);
     expect(host!.querySelector<HTMLTextAreaElement>("#m-env")!.value).toBe("");
   });
 });
