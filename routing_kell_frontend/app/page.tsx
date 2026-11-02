@@ -48,11 +48,10 @@ export default function Home() {
       <section id="top" className="hero frame grid" aria-labelledby="h-hero">
         <h1 id="h-hero" className="display">
           <span className="ln" style={{ "--d": "0ms" } as React.CSSProperties}><span>Cut LLM API bills by <span className="hl">50%</span></span></span>
-          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>without losing</span></span>
-          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>prompt cache retention.</span></span>
+          <span className="ln l2" style={{ "--d": "90ms" } as React.CSSProperties}><span>with cache</span></span>
+          <span className="ln l2" style={{ "--d": "180ms" } as React.CSSProperties}><span>retention.</span></span>
         </h1>
         <Reveal className="hero-sub stack" delay={250}>
-          <p className="lead hero-q">Recall, reuse, route, reduce.</p>
           <HeroActions />
         </Reveal>
         <InteractiveLogo />
