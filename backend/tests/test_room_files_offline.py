@@ -102,3 +102,17 @@ def test_only_media_and_pdf_are_inline_and_everything_is_nosniff() -> None:
     assert h["X-Content-Type-Options"] == "nosniff" and "sandbox" in h["Content-Security-Policy"]
     assert rf.download_headers({"name": "p.png", "mime": "image/png", "inline": True})["Content-Disposition"].startswith("inline")
     assert "svg" not in "".join(rf.INLINE) and "html" not in "".join(rf.INLINE)
+
+
+def test_a_flood_of_uploads_is_refused_with_429() -> None:
+    pool = Pool()
+    old = rf.LIMITER
+    rf.LIMITER = rf._Limiter(3, 60.0) if hasattr(rf, "_Limiter") else old
+    try:
+        for i in range(3):
+            run(rf.upload(pool, "alice", str(ROOM), f"f{i}.txt", f"hello {i}".encode()))
+        with pytest.raises(RoomError) as e:
+            run(rf.upload(pool, "alice", str(ROOM), "f9.txt", b"one too many"))
+        assert e.value.status == 429
+    finally:
+        rf.LIMITER = old

@@ -25,9 +25,16 @@ from starlette.responses import Response, StreamingResponse
 
 from app.mcp_server.room_routes import _error, _json, cors_headers
 from app.services import room_agent as agent
+from app.services.rooms import _Limiter
+from app.services.trace_redaction import redact_value
 from app.services import rooms as rm
 
 log = logging.getLogger(__name__)
+
+# Asks of the room agent per person per minute, in memory (one worker). The model endpoint and the tool gateway have their own caps;
+# this stops one page from queuing a pile of long answers behind them.
+ASKS_PER_MINUTE = int(__import__("os").environ.get("KELL_ROOM_AGENT_PER_MIN", "30"))
+LIMITER = _Limiter(ASKS_PER_MINUTE, 60.0)
 
 _INSTANCE_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,39}$")
 
@@ -58,6 +65,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             data = await request.json()
         except Exception:  # noqa: BLE001
             return _error(request, "the request body must be JSON", 400)
+        if not LIMITER.allow(subject):
+            return _error(request, "too many questions; wait a minute", 429)
         text = data.get("text") if isinstance(data, dict) else None
         if not isinstance(text, str) or not text.strip():
             return _error(request, "send the message in `text`", 400)
@@ -68,6 +77,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _error(request, "an agent name is 1 to 40 letters, numbers, dots, dashes or underscores", 400)
         handle = f"@{raw_name}"
         instructions = data.get("instructions") if isinstance(data.get("instructions"), str) else ""
+        if instructions:                                  # a key pasted into "what should it do?" must not reach the model
+            instructions = redact_value(instructions.strip()[:1500], [])
         tz = data.get("tz") if isinstance(data.get("tz"), str) else ""
         try:
             history = agent.transcript(await rm.recent_events(pool, subject, room_id, recent), self_handle=handle)

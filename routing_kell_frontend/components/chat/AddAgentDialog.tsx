@@ -47,6 +47,7 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
           <input id="dg-agent-name" ref={input} value={p.name} onChange={(e) => p.onName(e.target.value)} placeholder="reviewer" maxLength={40} autoComplete="off" />
           <label htmlFor="dg-agent-about">What should it do? (optional)</label>
           <textarea id="dg-agent-about" value={p.about} onChange={(e) => p.onAbout(e.target.value)} rows={3} maxLength={1500} placeholder="Review my pull requests. Be blunt and short." />
+          <p className="small dim" style={{ margin: 0 }}>Don't put keys, tokens or passwords here: this text is sent to the model with every question.</p>
           <p className="small dim" style={{ margin: 0 }}>
             Every agent is kell. A new one is another instance of it: same models and tools, a name of its own. Mention it with <code>@name</code> and it answers in this room.
           </p>

@@ -755,3 +755,4 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-queued-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dg-queued button { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink); font-size: 16px; line-height: 1; cursor: pointer; opacity: .6; }
 .dg-queued button:hover { opacity: 1; background: rgba(127, 127, 127, .18); }
+.dg-doc-note { flex-basis: 100%; }

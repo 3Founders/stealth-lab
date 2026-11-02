@@ -116,3 +116,10 @@ def test_the_agent_is_told_todays_date_in_the_persons_time_zone() -> None:
     assert ra.now_line("Asia/Kolkata", moment) == "Today is Tuesday, 03 November 2026; the time is 05:00 (Asia/Kolkata)."
     assert "(UTC)" in ra.now_line("Not/AZone", moment) and "(UTC)" in ra.now_line("x" * 80, moment)
     assert "Today is" in ra._system([], "@kell", "", "Asia/Kolkata")
+
+
+def test_a_key_pasted_into_instructions_is_redacted_before_it_reaches_the_prompt() -> None:
+    from app.services.trace_redaction import redact_value
+
+    clean = redact_value("Use this key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA when reviewing", [])
+    assert "sk-ant-api03-AAAA" not in clean

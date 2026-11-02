@@ -18,12 +18,15 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.services.rooms import RoomError, _iso, _member_room, _uuid
+from app.services.rooms import RoomError, _Limiter, _iso, _member_room, _uuid
 from app.utils.ids import uuid7
 
 MAX_BYTES = int(os.environ.get("KELL_FILE_MAX_MB", "25")) * 1024 * 1024
 RETENTION_DAYS = int(os.environ.get("KELL_FILE_RETENTION_DAYS", "30"))
 MAX_FILES_PER_ROOM = 2000
+# Uploads per person per minute, in memory (one worker, like the rooms limiter): a loop of uploads must not fill the table.
+UPLOADS_PER_MINUTE = int(os.environ.get("KELL_UPLOADS_PER_MIN", "20"))
+LIMITER = _Limiter(UPLOADS_PER_MINUTE, 60.0)
 
 BLOCKED_EXT = {"exe", "dll", "msi", "scr", "com", "bat", "cmd", "vbs", "ps1", "jar", "apk", "app", "dmg", "pif", "cpl", "lnk", "reg"}
 # Served inline (the browser draws them). Everything else is a download. SVG and HTML are never inline: they can run script.
@@ -110,6 +113,8 @@ def _json(row: Any) -> dict[str, Any]:
 
 async def upload(pool: Any, sub: str, room_id: str, name: str, data: bytes) -> dict[str, Any]:
     room = await _member_room(pool, sub, room_id)
+    if not LIMITER.allow(sub):
+        raise RoomError("too many files at once; wait a minute", 429)
     clean, mime = check(name, data)
     digest = hashlib.sha256(data).hexdigest()
     existing = await pool.fetchrow("SELECT * FROM room_files WHERE room_id = $1 AND sha256 = $2", room["id"], digest)
