@@ -10,7 +10,7 @@
   --pad: clamp(16px, 4vw, 48px);
   --max: 1320px;
   --gap: clamp(12px, 1.8vw, 24px);
-  --font: "Bahnschrift", "Barlow", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
+  --font: "Bahnschrift", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Roboto, sans-serif;   /* no "DIN Alternate": on a Mac it exists only in bold, so every weight below rendered bold */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --surface: #ffffff;
   --text-2: #55554f;

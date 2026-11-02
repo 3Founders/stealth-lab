@@ -1234,3 +1234,9 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-canvas-doc .dg-md pre.dg-md-pre { font-size: 13px; line-height: 1.55; padding: 12px 14px; }
 .dg-canvas-doc .dg-md ul, .dg-canvas-doc .dg-md ol { padding-left: 24px; }
 .dg-canvas-doc .dg-md .dg-md-table th { font-weight: 650; background: color-mix(in srgb, currentColor 7%, transparent); }
+
+/* Documents and chat text use the system's own sans, which has every weight (regular, medium, bold, italic), so headings, bold, italic and body text differ. */
+.dg-canvas-doc, .dg-canvas-doc .dg-md, .dg-md { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Roboto, sans-serif; }
+.dg-canvas-doc .dg-md p, .dg-canvas-doc .dg-md li { font-weight: 400; }
+.dg-canvas-doc .dg-md strong, .dg-canvas-doc .dg-md b { font-weight: 700; }
+.dg-canvas-doc .dg-md .dg-md-h { font-weight: 600; }
