@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import { newOnboardName, onboardPrompt } from "@/lib/chat/onboard";
-import { bare } from "@/components/chat/bare";
+import { cap, nameOf, roomName } from "@/components/chat/bare";
 import SmoothText, { Thinking } from "@/components/chat/SmoothText";
 import { useSpringScroll } from "@/components/chat/useSpringScroll";
 import type { KeyValue } from "@/lib/byok/spend";
@@ -114,7 +114,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [, bump] = useState(0);
   const lineStore = useRef<Record<string, Line[]>>({});
   const [activity, setActivity] = useState<Record<string, AgentActivity>>({});
-  const [streaming, setStreaming] = useState<Record<string, { room: string; text: string }>>({});
+  const [streaming, setStreaming] = useState<Record<string, { room: string; text: string; final?: GroupMessage }>>({});
   const [kellBusy, setKellBusy] = useState<Record<string, boolean>>({});
   const streamingRef = useRef(streaming);
   streamingRef.current = streaming;
@@ -192,6 +192,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const done = () => { askingKell.current.delete(key); if (who === "@kell") setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); };
     if (!id) { note("This room is still syncing. Give it a second, then send again.", r); done(); return; }
     const ctl = new AbortController();
+    let held = false;
     controllers.current.set(who, ctl);
     if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: "" } }));
     try {
@@ -200,24 +201,42 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
       }, ctl.signal, who);
       if (out.event?.id) {
-        // Already on the server: show it now, and the sync pull will find the same id and not add it twice.
+        // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
+        // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
         const m: GroupMessage = {
           id: out.event.id, roomId: r, sender: assistantIdentityFor(who), recipients: [],
           payload: toMcpPayload(out.text), timestamp: Date.now(), depthCounter: 0,
         };
-        push(r, { kind: "msg", m }, true);
-      } else if (!out.posted) note(`${bare(who)} answered but could not post it in the room.`, r);
+        held = true;
+        setStreaming((p) => ({ ...p, [who]: { room: r, text: out.text, final: m } }));
+      } else if (!out.posted) note(`${nameOf(who)} answered but could not post it in the room.`, r);
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") note("Stopped.", r);
-      else if (err instanceof RoomsApiError && err.status === 401) note(`Sign in to ask ${bare(who)}.`, r);
+      else if (err instanceof RoomsApiError && err.status === 401) note(`Sign in to ask ${nameOf(who)}.`, r);
       else if (err instanceof RoomsApiError && err.status === 404) note("This room is still syncing. Try again in a moment.", r);
-      else note(err instanceof Error ? err.message : `${bare(who)} could not answer just now.`, r);
+      else note(err instanceof Error ? err.message : `${nameOf(who)} could not answer just now.`, r);
     } finally {
       controllers.current.delete(who);
-      setStreaming((p) => { const n = { ...p }; delete n[who]; return n; });
+      if (!held) setStreaming((p) => { const n = { ...p }; delete n[who]; return n; });
       done();
     }
   }, [roomsAgent, note, push]);
+  /** The streamed bubble has been fully revealed: the posted message takes its place. Safe to call twice. */
+  const flushFinal = useCallback((who: string) => {
+    const e = streamingRef.current[who];
+    if (!e?.final) return;
+    const m = e.final;
+    streamingRef.current = (() => { const n = { ...streamingRef.current }; delete n[who]; return n; })();
+    setStreaming((p) => { const n = { ...p }; delete n[who]; return n; });
+    push(e.room, { kind: "msg", m }, true);
+  }, [push]);
+  // A hidden tab pauses the reveal; never keep a posted reply waiting longer than its text could take to read.
+  useEffect(() => {
+    const timers = Object.entries(streaming).filter(([, v]) => v.final).map(([who, v]) =>
+      window.setTimeout(() => flushFinal(who), Math.min(9000, 1200 + v.text.length * 28)));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [streaming, flushFinal]);
+
 
   // Notifications (lib/chat/notify.ts): what reaches you, in the bell, the tab title, the app badge, a chime and, in the background, an OS alert.
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
@@ -263,7 +282,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     setAgents(agentsRef.current);
     writeAgents(kv, subject, agentsRef.current);
     setActivity((p) => { const n = { ...p }; delete n[handle]; return n; });
-    note(`${bare(handle)} left the room.`);
+    note(`${nameOf(handle)} left the room.`);
   };
 
   useEffect(() => {
@@ -383,7 +402,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             for (const x of t) {
               const was = before.get(x.id);
               if (was === x.status) continue;
-              const who = bare(relayAgentsRef.current.find((a) => a.id === x.agent_id)?.handle ?? "An agent");
+              const who = nameOf(relayAgentsRef.current.find((a) => a.id === x.agent_id)?.handle ?? "An agent");
               if (x.status === "needs_approval") notify("approval", room, `${who} needs your approval`, x.text);
               else if (x.status === "done") notify("task", room, `${who} finished a task`, x.result ?? x.text);
               else if (x.status === "failed") notify("task", room, `${who} could not finish a task`, x.result ?? x.text);
@@ -444,7 +463,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         if (t) lastHuman = t;
       }
       const agentRun = run.sender.type !== "human";
-      const isKell = agentRun && bare(run.sender.handle) === "kell";
+      const isKell = agentRun && nameOf(run.sender.handle) === "kell";
       const prompt = mine ? texts[texts.length - 1] ?? "" : agentRun ? lastHuman : "";
       out.push({
         t: run.messages[0].timestamp, key: run.key,
@@ -455,7 +474,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               : <Avatar who={run.sender} />}
             <div className="dg-col">
               <div className="dg-meta">
-                <b>{bare(run.sender.handle)}</b>
+                <b>{nameOf(run.sender.handle)}</b>
                 {agentRun && <span className="dg-badge">agent</span>}
                 <time>{time(run.messages[0].timestamp)}</time>
                 <MessageActions
@@ -481,19 +500,19 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         node: (
           <MessageScroller.Item key={`task-${task.id}`} className="dg-task" data-status={task.status}>
             <div className="dg-meta">
-              <b>you</b><span aria-hidden="true">→</span><b>{bare(handle)}</b>
+              <b>You</b><span aria-hidden="true">→</span><b>{nameOf(handle)}</b>
               <span className="dg-status" data-status={task.status}>{STATUS[task.status]}</span>
               <time>{time(t)}</time>
             </div>
             <div className="dg-body"><p>{task.text}</p></div>
-            {task.status === "queued" && ag && !ag.online && <p className="dg-hint">{bare(handle)} is offline. It will pick this up the next time it checks its inbox.</p>}
+            {task.status === "queued" && ag && !ag.online && <p className="dg-hint">{nameOf(handle)} is offline. It will pick this up the next time it checks its inbox.</p>}
             {(task.status === "queued" || task.status === "claimed") && (
-              <p className="dg-working"><span className="dg-pulse" aria-hidden="true" /> {bare(handle)} is working…</p>
+              <p className="dg-working"><span className="dg-pulse" aria-hidden="true" /> {nameOf(handle)} is working…</p>
             )}
             {task.result && (
               <div className="dg-result">
                 <div className="dg-meta">
-                  <b>{bare(handle)}</b><span className="dg-badge">agent</span>
+                  <b>{nameOf(handle)}</b><span className="dg-badge">agent</span>
                   <MessageActions copyText={task.result} onCopy={(t) => void copyRoomText(t)} />
                 </div>
                 <div className="dg-body"><Markdown text={task.result} /></div>
@@ -518,7 +537,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   })();
 
   const streamingHere = Object.entries(streaming).filter(([, v]) => v.room === room);
-  const kellHere = kellBusy[room] === true;
+  const kellHere = kellBusy[room] === true && streaming["@kell"] === undefined;
   const liveText = JSON.stringify(streaming);
   useEffect(() => { scrollToEnd({ instant: true }); }, [scrollToEnd, room]);
   const itemKeys = items.map((i) => i.key).join("|");
@@ -642,7 +661,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const r = newAgentHandle(agents, addName.trim() || undefined);
     if ("error" in r) return setFormError(r.error);
     addAgent(r.handle);
-    note(`${bare(r.handle)} joined the room.`);
+    note(`${nameOf(r.handle)} joined the room.`);
     setAdding(false); setAddName("");
   };
   /** "Onboard Your Agent": registers a fresh agent name on the account and returns the text the person pastes into their agent. */
@@ -663,7 +682,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     try {
       const r = await api.removeAgent(a.id);
       setRelayAgents((p) => p.filter((x) => x.id !== a.id));
-      note(`${bare(a.handle)} was removed${r.cancelled ? ` and ${r.cancelled} unfinished task${r.cancelled === 1 ? "" : "s"} cancelled` : ""}.`);
+      note(`${nameOf(a.handle)} was removed${r.cancelled ? ` and ${r.cancelled} unfinished task${r.cancelled === 1 ? "" : "s"} cancelled` : ""}.`);
     } catch (err) { note(err instanceof Error ? err.message : "That didn't work."); }
   };
 
@@ -679,7 +698,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const r = newAgentHandle(agents, c.name);
       if ("error" in r) return note(r.error);
       addAgent(r.handle);
-      return note(`${bare(r.handle)} joined the room.`);
+      return note(`${nameOf(r.handle)} joined the room.`);
     }
     const route = routeMessage(line, { local: agents, relay: relayAgents.map((a) => a.name), people: peopleHandles });
     if (route.toRelay.length) {
@@ -725,7 +744,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
             <li key={r}>
-              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{r.slice(1)}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
+              <button type="button" className="dg-room" aria-current={r === room ? "page" : undefined} onClick={() => chooseRoom(r)}><span aria-hidden="true">#</span>{cap(r.slice(1))}{r !== room && (info[r]?.unread ?? 0) > 0 && <span className="dg-unread" aria-label={`${info[r]!.unread} unread`}>{info[r]!.unread > 99 ? "99+" : info[r]!.unread}</span>}</button>
             </li>
           ))}
         </ul>
@@ -735,12 +754,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <OnboardButton onOnboard={onboardAgent} className="dg-onboard-side" />
         <ul className="dg-members">
           <li>
-            <span className="dg-dot" data-a="human" aria-hidden="true" />
-            <span className="dg-handle">{bare(HUMAN.handle)}</span>
-          </li>
-          <li>
             <span className="dg-dot" data-a={kellBusy[room] ? "processing" : "online"} aria-hidden="true" />
-            <span className="dg-handle">kell</span><span className="dg-badge">default</span>
+            <span className="dg-handle">Kell</span><span className="dg-badge">default</span>
             {kellBusy[room] && <span className="dg-state" data-a="processing">working</span>}
           </li>
           {agents.map((h) => {
@@ -748,18 +763,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             return (
               <li key={h}>
                 <span className="dg-dot" data-a={a} aria-hidden="true" />
-                <span className="dg-handle">{bare(h)}</span><span className="dg-badge">kell</span>
+                <span className="dg-handle">{nameOf(h)}</span><span className="dg-badge">kell</span>
                 {a === "processing" && <span className="dg-state" data-a={a}>working</span>}
-                <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${bare(h)} from the room`} title={`Remove ${bare(h)}`}><RemoveIcon /></button>
+                <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${nameOf(h)} from the room`} title={`Remove ${nameOf(h)}`}><RemoveIcon /></button>
               </li>
             );
           })}
           {relayAgents.map((a) => (
             <li key={a.id}>
               <span className="dg-dot" data-a={a.online ? "online" : "idle"} aria-hidden="true" />
-              <span className="dg-handle">{bare(a.handle)}</span><span className="dg-badge">connected</span>
+              <span className="dg-handle">{nameOf(a.handle)}</span><span className="dg-badge">connected</span>
               {!a.online && <span className="dg-state" data-a="idle">offline</span>}
-              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${bare(a.handle)}`} title={`Remove ${bare(a.handle)}`}><RemoveIcon /></button>
+              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${nameOf(a.handle)}`} title={`Remove ${nameOf(a.handle)}`}><RemoveIcon /></button>
             </li>
           ))}
         </ul>
@@ -767,12 +782,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
         {synced && (
           <>
-            <h2>People in {room}</h2>
+            <h2>People in {roomName(room)}</h2>
             <ul className="dg-members">
               {members.filter((m) => m.kind === "person").map((m) => (
                 <li key={m.sub ?? m.agent_id}>
                   <PersonAvatar sub={m.sub ?? undefined} mine={m.me} selfSub={subject} initials={initials(`@${m.name ?? "member"}`)} className="dg-avatar dg-avatar-sm" />
-                  <span className="dg-handle">{m.me ? "You" : m.name ?? fallbackName(m.sub)}</span>
+                  <span className="dg-handle">{m.me ? "You" : cap(m.name ?? fallbackName(m.sub))}</span>
                   <span className="dg-badge" data-kind="tab">{m.role}</span>
                 </li>
               ))}
@@ -795,7 +810,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         roles={Object.fromEntries(Object.entries(info).map(([k, v]) => [k, v.role]))} rapi={rapi}
         roomId={(label) => engineRef.current?.roomId(label)} onDissolve={async (label) => { await deleteRoom(label); }} onCreate={createRoomNamed}
       />
-      <section className="dg-main" aria-label={`Room ${room}`}>
+      <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
           <HamburgerMenu panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
@@ -803,7 +818,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
           </button>
-          <h1>{room}</h1>
+          <h1>{roomName(room)}</h1>
         </header>
         {paused && <div className="dg-banner" role="status">Paused. Agents in this tab will not be woken until you resume.</div>}
 
@@ -812,15 +827,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>
               <MessageScroller.Content ref={contentRef} className="dg-content">
                 {items.length === 0 && streamingHere.length === 0 && !kellHere && (
-                  <p className="dg-empty">No messages in {room} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
+                  <p className="dg-empty">No messages in {roomName(room)} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
                 )}
                 {items.map((i) => i.node)}
                 {streamingHere.map(([h, v]) => (
                   <MessageScroller.Item key={`live-${h}`} className="dg-run" data-agent="true">
                     <Avatar who={assistantIdentityFor(h)} />
                     <div className="dg-col">
-                      <div className="dg-meta"><b>{bare(h)}</b><span className="dg-badge">agent</span></div>
-                      <div className="dg-body"><p><SmoothText text={withoutDataImages(v.text)} /></p></div>
+                      <div className="dg-meta"><b>{nameOf(h)}</b><span className="dg-badge">agent</span></div>
+                      <div className="dg-body"><p><SmoothText text={withoutDataImages(v.text)} onRevealed={v.final ? () => flushFinal(h) : undefined} /></p></div>
                     </div>
                   </MessageScroller.Item>
                 ))}
@@ -828,7 +843,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                   <MessageScroller.Item className="dg-run" data-agent="true">
                     <Avatar who={assistantIdentityFor("@kell")} />
                     <div className="dg-col">
-                      <div className="dg-meta"><b>kell</b><span className="dg-badge">agent</span></div>
+                      <div className="dg-meta"><b>Kell</b><span className="dg-badge">agent</span></div>
                       <div className="dg-body" role="status" aria-label="kell is working"><Thinking /></div>
                     </div>
                   </MessageScroller.Item>
@@ -843,9 +858,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere) && <>
             <span className="dg-pulse" aria-hidden="true" />
             {[
-              ...working.map((h) => `${bare(h)} is working`),
-              ...relayWorkingHandles.map((h) => `${bare(h)} is working`),
-              ...(kellHere ? ["kell is working"] : []),
+              ...working.map((h) => `${nameOf(h)} is working`),
+              ...relayWorkingHandles.map((h) => `${nameOf(h)} is working`),
+              ...(kellHere ? ["Kell is working"] : []),
             ].join(" · ")}
           </>}
           {streamingHere.length > 0 && (

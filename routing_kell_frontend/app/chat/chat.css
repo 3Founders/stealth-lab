@@ -647,12 +647,12 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-page .dg-composer textarea:focus-visible { outline: none; border-color: transparent; }
 .dg-page .dg-composer textarea:focus,
 .dg-page .dg-composer textarea:focus-visible { box-shadow: var(--dg-lift-hover); }
-.dg-page .dg-rooms-btn, .dg-page .dg-burger, .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state) { box-shadow: var(--dg-lift); border-color: transparent; }
-.dg-page .dg-rooms-btn:hover, .dg-page .dg-burger:hover, .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):hover { box-shadow: var(--dg-lift-hover); }
+.dg-page .dg-rooms-btn, .dg-page .dg-burger, .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):not(.dg-room) { box-shadow: var(--dg-lift); border-color: transparent; }
+.dg-page .dg-rooms-btn:hover, .dg-page .dg-burger:hover, .dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):not(.dg-room):hover { box-shadow: var(--dg-lift-hover); }
 .dg-page .dg-rooms-btn:focus, .dg-page .dg-rooms-btn:focus-visible,
 .dg-page .dg-burger:focus, .dg-page .dg-burger:focus-visible,
-.dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):focus,
-.dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):focus-visible { outline: none; box-shadow: var(--dg-lift-hover); }
+.dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):not(.dg-room):focus,
+.dg-page .dg-side button:not(.dg-remove):not(.dg-close):not(.dg-state):not(.dg-room):focus-visible { outline: none; box-shadow: var(--dg-lift-hover); }
 
 /* "Onboard Your Agent": a dark pill with three round marks, the words, and a copy icon. */
 .dg-onboard-wrap { display: grid; gap: 8px; }
@@ -690,3 +690,6 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-onboard-marks i + i { margin-left: -6px; }
 .dg-onboard-marks svg { width: 13px; height: 13px; }
 .dg-page .dg-onboard { gap: 8px; padding: 6px 12px 6px 8px; font-size: 13.5px; }
+
+/* Only the selected room carries the yellow glass and its shadow. A focused or clicked room that is not selected shows nothing extra. */
+.dg-page .dg-room:not([aria-current="page"]):focus, .dg-page .dg-room:not([aria-current="page"]):focus-visible { outline: none; box-shadow: none; }

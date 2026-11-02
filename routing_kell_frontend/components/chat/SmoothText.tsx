@@ -24,7 +24,7 @@ export function Thinking({ label = "Thinking" }: { label?: string }) {
  * what has been received as it is. A text that is not an extension of the last one starts over. Before any text has arrived it
  * shows the thinking indicator.
  */
-export default function SmoothText({ text }: { text: string }) {
+export default function SmoothText({ text, onRevealed }: { text: string; onRevealed?: () => void }) {
   const [shown, setShown] = useState(0);
   const pos = useRef(0);
   const prev = useRef("");
@@ -53,6 +53,13 @@ export default function SmoothText({ text }: { text: string }) {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  // Everything received is on screen: tell the owner once (it can then swap this bubble for the finished message).
+  const told = useRef(false);
+  useEffect(() => {
+    if (!onRevealed) { told.current = false; return; }
+    if (shown >= text.length && text.length > 0 && !told.current) { told.current = true; onRevealed(); }
+  }, [shown, text, onRevealed]);
 
   const out = visiblePrefix(text, Math.min(shown, text.length));
   if (!out) return <Thinking />;
