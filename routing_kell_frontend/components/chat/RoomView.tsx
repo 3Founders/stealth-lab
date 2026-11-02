@@ -378,19 +378,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         onRooms: (c) => {
           if (firstRooms.current) firstRooms.current = false;
           else for (const a of c.added) notify("room", a.label, `Added to ${a.title || a.label}`, "A room was added to your account.");
-          if (c.added.length || c.removed.length) {
+          if (c.added.length) {
             setRoomList((l) => {
-              let rooms = l.rooms.filter((r) => !c.removed.includes(r));
+              let rooms = l.rooms;
               for (const a of c.added) if (!rooms.includes(a.label)) rooms = [...rooms, a.label];
-              if (!rooms.length) rooms = [DEFAULT_ROOM];
               return { rooms, current: rooms.includes(l.current) ? l.current : rooms[0] };
             });
-            for (const r of c.removed) {
-              const { [r]: _gone, ...rest } = lineStore.current; // eslint-disable-line @typescript-eslint/no-unused-vars
-              lineStore.current = rest;
-              void history.clearRoom(r).catch(() => {});
-              push(roomRef.current, { kind: "notice", id: crypto.randomUUID(), text: `${r} is no longer on your account (it was deleted, or you left it), so it was removed here.`, t: Date.now() });
-            }
+          }
+          // A room the server no longer lists is NEVER deleted here: an empty or partial answer (a redeploy, a reset, a hiccup) must not
+          // erase what is on this device. The room and its history stay, and sync re-links it and uploads it again. Removing a room is
+          // only ever something you do yourself (the Remove button).
+          for (const r of c.removed) {
+            push(roomRef.current, { kind: "notice", id: crypto.randomUUID(), text: `${r} was not found on your account. Your copy here is kept and will sync again.`, t: Date.now() });
           }
           setInfo((p) => ({ ...p, ...c.info }));
         },

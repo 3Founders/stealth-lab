@@ -58,12 +58,22 @@ export class HistoryStore {
   private taskPrefix = (room?: string) => `task:${this.subject}:${room ?? ""}`;
   private docKey = (kind: DocKind, id: string) => `doc:${this.subject}:${kind}:${id}`;
 
-  private async deviceKey(): Promise<CryptoKey> {
-    const existing = await this.store.get(DEVICE_KEY);
-    if (existing) return existing as CryptoKey;
-    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-    await this.store.set(DEVICE_KEY, key);
-    return key;
+  private keyP: Promise<CryptoKey> | null = null;
+  /** One key per device. Concurrent first uses share one promise: two racing writes must never make two keys, because the later one
+   *  would overwrite the first and everything sealed under it could no longer be opened. */
+  private deviceKey(): Promise<CryptoKey> {
+    if (!this.keyP) {
+      this.keyP = (async () => {
+        const existing = await this.store.get(DEVICE_KEY);
+        if (existing) return existing as CryptoKey;
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+        const raced = await this.store.get(DEVICE_KEY); // another tab may have made one a moment ago: keep theirs
+        if (raced) return raced as CryptoKey;
+        await this.store.set(DEVICE_KEY, key);
+        return key;
+      })().catch((e) => { this.keyP = null; throw e; });
+    }
+    return this.keyP;
   }
 
   private aad = (kind: string, room: string, id: string) => te.encode(`${this.subject}|${kind}|${room}|${id}`);
