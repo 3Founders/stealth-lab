@@ -115,6 +115,8 @@ Usage:
                                              .kell/run.md node and library.md entry, from recorded check runs
                                              (.kell/evidence.md); --run runs the checks and appends the evidence
   kell [serve] [--url <url>]                 run the stdio relay (what Claude Desktop launches)
+  kell opencode [args...]                    run OpenCode's CLI with kell's sign-in token refreshed first
+                                             (new_user_setup.md Part C); the arguments pass through
   kell help | --help | --version
 
 Setup options (setup also takes the install options below):
@@ -510,6 +512,13 @@ async function main() {
     } catch (err) {
       die(err.message, 1);
     }
+  }
+  if (cmd === "opencode") {
+    // `kell opencode [args...]`: kell's token refreshed first, then OpenCode's CLI with the same arguments
+    // (new_user_setup.md Part C). Before parseArgs: OpenCode's own flags must pass through untouched.
+    const { runOpenCodeCli } = await import("../lib/opencode_cli.mjs");
+    process.exitCode = await runOpenCodeCli(argv);
+    return;
   }
   // `hook <event>` and `survey [path]` take one positional; everything else is flags only.
   const sub = (cmd === "hook" || cmd === "survey" || cmd === "join" || cmd === "console") && argv[0] && !argv[0].startsWith("-") ? argv.shift() : undefined;

@@ -236,11 +236,16 @@ isn't.
 
 ```
 cd <your project folder>
-opencode
+kell opencode
 ```
 
+`kell opencode` refreshes kell's sign-in token first, then starts OpenCode with the arguments you gave it — start OpenCode
+this way and its first turn will not fail at an expired token (see the troubleshooting row below). The plain `opencode`
+command works too; its first turn after about an hour from the sign-in may need one rerun.
+
 Send the same prompts as in A8. Under each reply, OpenCode shows which model wrote it: `minimax-m2.7` is the cheap one,
-`deepseek-v3.2` the stronger one. A request kell can't classify starts on deepseek-v3.2.
+`deepseek-v3.2` the stronger one. A request kell can't classify starts on deepseek-v3.2. From a terminal, a one-off run is
+`kell opencode run --standalone "<prompt>"`.
 
 ### C4. Remove it
 
@@ -269,7 +274,7 @@ It removes only what kell added to OpenCode's settings; your own settings stay.
 | OpenCode shows nothing for a minute or more on the first run | Wait or run it again. If it repeats, send the kell team the last lines of OpenCode's log (type `kell setup --client opencode` once more first). |
 | OpenCode says "Streaming request failed" | Run `kell setup --client opencode` again (it sets the output limit General Compute needs), then restart OpenCode. |
 | OpenCode shows kell's server as needing a login | Run `kell login`, then `kell setup --client opencode` again. |
-| The first OpenCode run after about an hour from the sign-in shows kell's server rejecting the token, and the turn fails | The saved sign-in token lasts about an hour. The plugin refreshes it on its own and fixes the file to hand for the next connect, so run the prompt again; if it still refuses, run `kell login` and `kell setup --client opencode` again. |
+| The first OpenCode run after about an hour from the sign-in shows kell's server rejecting the token, and the turn fails | Start OpenCode with `kell opencode` (C3): it refreshes the token before OpenCode boots. The plugin also refreshes it on its own and fixes the file for the next connect, so running the prompt again works either way; if it still refuses, run `kell login` and `kell setup --client opencode` again. |
 | OpenCode says "Managed service port 28894 ... already in use" | Another OpenCode app on this machine (for example the OpenCode desktop app) already runs the shared service. Give your setup its own port: `opencode service set port 28941` (any free port), then start again. |
 
 For anything else, send the kell team what you typed, what you saw, and (for Claude Code) the last lines of
