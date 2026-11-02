@@ -9,7 +9,7 @@ import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue"
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
 import CanvasPanel from "@/components/chat/CanvasPanel";
 import DocPanel from "@/components/chat/DocPanel";
-import { docsApi } from "@/lib/chat/docs-api";
+import { docsApi, type DocInfo } from "@/lib/chat/docs-api";
 import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
 import { captureFrom, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
@@ -52,7 +52,7 @@ import MessageActions from "@/components/chat/MessageActions";
 import Markdown from "@/components/chat/Markdown";
 import AddAgentDialog from "@/components/chat/AddAgentDialog";
 import { withoutDataImages } from "@/lib/chat/images";
-import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs } from "@/lib/chat/notify";
+import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs, unlockAudio } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
 const STATUS: Record<RelayTask["status"], string> = {
@@ -60,6 +60,9 @@ const STATUS: Record<RelayTask["status"], string> = {
 };
 
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number };
+
+/** A message older than this when it arrives is history, not news: it raises no alert, bell entry or sound. */
+const NEW_MESSAGE_MS = 3 * 60 * 1000;
 
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -311,6 +314,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const openRoomRef = useRef<(r: string | null) => void>(() => {});
   useEffect(() => { const p = loadPrefs(subject); prefsRef.current = p; setPrefsState(p); }, [subject]);
   const setPrefs = useCallback((p: Prefs) => { prefsRef.current = p; setPrefsState(p); savePrefs(subject, p); }, [subject]);
+  useEffect(() => { unlockAudio(); }, []);
   const notify = useCallback((kind: NoteKind, r: string | null, title: string, body: string) => {
     const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
     const d = decide({ kind, room: r, onScreen: r !== null && r === roomRef.current, hidden }, prefsRef.current);
@@ -383,6 +387,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           for (const m of ms) {
             push(label, { kind: "msg", m }, true);
             if (m.sender.handle === HUMAN.handle) continue;
+            if (Date.now() - m.timestamp > NEW_MESSAGE_MS) continue;     // history coming down (a new device, a restore) is not news
             const mine = myHandleRef.current;
             const mention = m.recipients.includes(HUMAN.handle) || (mine !== null && m.recipients.includes(mine));
             const kind: NoteKind = mention ? "mention" : m.sender.type === "human" ? "message" : "agent";
@@ -682,7 +687,19 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const [docTitle, setDocTitle] = useState<string | null>(null);   // the document to show first in the shared docs panel
-  const [docsCount, setDocsCount] = useState(0);
+  const [docList, setDocList] = useState<DocInfo[]>([]);
+  // What you have already looked at, so the count beside "Docs" is only what is new to you. Kept on this device, per account.
+  const seenKey = `kell:docs-seen:${subject}`;
+  const [seen, setSeen] = useState<Record<string, number>>({});
+  useEffect(() => { try { setSeen(JSON.parse(window.localStorage.getItem(seenKey) ?? "{}") as Record<string, number>); } catch { setSeen({}); } }, [seenKey]);
+  const markSeen = useCallback((id: string, version: number) => {
+    setSeen((p) => {
+      if ((p[id] ?? 0) >= version) return p;
+      const n = { ...p, [id]: version };
+      try { window.localStorage.setItem(seenKey, JSON.stringify(n)); } catch { /* storage blocked: the count comes back after a reload */ }
+      return n;
+    });
+  }, [seenKey]);
   const [draft, setDraft] = useState<{ text: string; n: number }>({ text: "", n: 0 });
   useEffect(() => { void history.listDocs<Canvas>("canvas").then((l) => setCanvases(l.map((d) => d.value))).catch(() => {}); }, [history]);
   const storeCanvas = (c: Canvas) => {
@@ -695,6 +712,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const c of changed) storeCanvas(c);
     if (changed.length) { setCanvasId(changed[0].id); setDocTitle(changed[0].title); if (live && m.roomId === roomRef.current) setCanvasOpen(true); } // a canvas an agent just wrote opens beside the chat
   };
+  const syncedRoomRef = useRef<string | undefined>(undefined);
+  syncedRoomRef.current = info[room]?.id;
   const canvasCtx = useMemo(() => ({
     open: (title: string) => {
       const c = canvasesRef.current.find((x) => x.room === roomRef.current && x.title.toLowerCase() === title.toLowerCase());
@@ -702,7 +721,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       setDocTitle(title);
       setCanvasOpen(true);
     },
-  }), []);
+    /** A page an agent wrote in a message: opens it in the canvas (made a document of the room, or kept on this device in a temporary room). */
+    openPage: async (title: string, html: string) => {
+      const room = roomRef.current;
+      const sid = syncedRoomRef.current;
+      if (sid && !tempRef.current.has(room)) {
+        try { await dapi.create(sid, title, "html", html); } catch { /* a document with this title is already there: it is opened as it is */ }
+        setDocTitle(title); setCanvasOpen(true);
+        return;
+      }
+      const have = canvasesRef.current.find((x) => x.room === room && x.title.toLowerCase() === title.toLowerCase());
+      const c = have ?? newCanvas(crypto.randomUUID(), room, title, "html", html, "you");
+      if (!have) storeCanvas(c);
+      setCanvasId(c.id); setCanvasOpen(true);
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [dapi]);
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setSearchOpen((o) => !o); } };
     window.addEventListener("keydown", k);
@@ -954,7 +988,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   return (
     <FilesContext.Provider value={filesCtx}>
     <CanvasContext.Provider value={canvasCtx}>
-    <div className="dg-shell" data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
+    <div className="dg-shell" data-lenis-prevent data-paused={paused} data-panel={panelHidden ? "closed" : "open"} data-menu={menuOpen ? "open" : "closed"} data-compact={chatPrefs.compact} data-times={chatPrefs.showTimes} style={{ fontSize: TEXT_PX[chatPrefs.textSize] }}>
       <div className="dg-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />
       <aside id="dg-side" className="dg-side" data-lenis-prevent aria-label="Your rooms and agents">
         <button type="button" className="dg-close" onClick={closeSidebar} aria-label="Close the room list" title="Close the room list"><PanelCloseIcon /></button>
@@ -1027,8 +1061,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       </aside>
 
       {info[room]?.id && !tempRef.current.has(room)
-        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} wantedTitle={docTitle} onCount={setDocsCount} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
-        : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} />}
+        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} wantedTitle={docTitle} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
+        : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms
         open={manageOpen} onClose={() => setManageOpen(false)} rooms={roomList.rooms} initial={room}
@@ -1037,7 +1071,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       />
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
-          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docsCount : canvases.filter((c) => c.room === room).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
+          <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">

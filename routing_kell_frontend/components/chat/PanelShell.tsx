@@ -56,7 +56,7 @@ export default function PanelShell({ open, label, children, wide = false }: { op
           const w = clampWidth(width + (e.key === "ArrowLeft" ? 10 : -10)); setWidth(w); save(w);
         }}
       ><span /></div>
-      <aside className="dg-canvas" aria-label={label}>
+      <aside className="dg-canvas" aria-label={label} data-lenis-prevent>
         {children}
         {dragging && <div className="dg-canvas-shield" />}
       </aside>

@@ -113,12 +113,28 @@ export async function askPermission(): Promise<Permission> {
 }
 
 let audio: AudioContext | null = null;
+/** Browsers keep an AudioContext silent until the person has touched the page: make it on the first touch, so the chime can play later. */
+export function unlockAudio(): void {
+  if (typeof window === "undefined") return;
+  const make = () => {
+    try {
+      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      audio = audio ?? new Ctx();
+      if (audio.state === "suspended") void audio.resume();
+    } catch { /* sound is a nicety */ }
+  };
+  const once = () => { make(); window.removeEventListener("pointerdown", once); window.removeEventListener("keydown", once); };
+  window.addEventListener("pointerdown", once, { once: false });
+  window.addEventListener("keydown", once, { once: false });
+}
 /** A short two-note chime made in the browser (no sound file). Silent if the browser has not allowed audio yet. */
 export function chime(): void {
   try {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
     audio = audio ?? new Ctx();
+    if (audio.state === "suspended") void audio.resume();
     const t0 = audio.currentTime;
     [[660, 0], [880, 0.11]].forEach(([hz, dt]) => {
       const o = audio!.createOscillator(), g = audio!.createGain();

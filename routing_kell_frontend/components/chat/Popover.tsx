@@ -48,7 +48,7 @@ export default function Popover({ anchor, open, align = "left", matchWidth = fal
 
   if (!open || typeof document === "undefined") return null;
   return createPortal(
-    <div className="dg-page dg-portal">
+    <div className="dg-page dg-portal" data-lenis-prevent>
       <div
         className="dg-pop" data-up={pos?.up || undefined}
         ref={(el) => { (inner as React.MutableRefObject<HTMLDivElement | null>).current = el; if (popRef) (popRef as React.MutableRefObject<HTMLDivElement | null>).current = el; }}

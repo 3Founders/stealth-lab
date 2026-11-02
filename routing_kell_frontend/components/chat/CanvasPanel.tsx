@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import PanelShell from "@/components/chat/PanelShell";
-import { fileNameFor, viewOf, type Canvas, type CanvasVersion } from "@/lib/chat/canvas";
+import HtmlViewer, { type ViewerMode } from "@/components/chat/HtmlViewer";
+import { addVersion, fileNameFor, viewOf, type Canvas, type CanvasVersion } from "@/lib/chat/canvas";
 
 /**
  * The canvas kept on this device (temporary rooms, and rooms that are not on your account yet): what an agent wrote, a page, code or a
@@ -12,16 +13,19 @@ import { fileNameFor, viewOf, type Canvas, type CanvasVersion } from "@/lib/chat
  */
 interface Entry { canvas: Canvas; v: CanvasVersion }
 
-/** A bare fragment (an svg, a div) is wrapped so it has a page to sit in; a whole page is used as it is. */
-export const pageDoc = (t: string): string => /<html[\s>]|<!doctype/i.test(t) ? t : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;font-family:system-ui,sans-serif;background:#fff;color:#171717}</style></head><body>${t}</body></html>`;
-
-export default function CanvasPanel({ open, onClose, canvases, room, selectedId }: {
+export default function CanvasPanel({ open, onClose, canvases, room, selectedId, onChange, onSeen }: {
   open: boolean; onClose: () => void; canvases: Canvas[]; room: string; selectedId: string | null;
+  /** A canvas with a new version (you edited it here): the owner saves it. */
+  onChange?: (c: Canvas) => void;
+  /** This version of this canvas is on screen: it no longer counts as new. */
+  onSeen?: (canvasId: string, n: number) => void;
 }) {
   const entries = useMemo<Entry[]>(() => canvases.filter((c) => c.room === room).flatMap((c) => c.versions.map((v) => ({ canvas: c, v }))).sort((a, b) => a.v.at - b.v.at), [canvases, room]);
   const [idx, setIdx] = useState(0);
   const [copied, setCopied] = useState(false);
-  const frame = useRef<HTMLIFrameElement>(null);
+  const [viewer, setViewer] = useState<ViewerMode>("browser");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
   const timer = useRef<number | undefined>(undefined);
 
   // The newest step is shown when one is added; asking for a canvas by title shows its newest version.
@@ -33,9 +37,13 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId 
     for (let i = entries.length - 1; i >= 0; i--) if (entries[i].canvas.id === selectedId) { setIdx(i); break; }
   }, [selectedId, entries]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
+  const shown = count > 0 ? entries[Math.min(idx, count - 1)] : null;
+  useEffect(() => { if (open && shown) onSeen?.(shown.canvas.id, shown.v.n); }, [open, shown, onSeen]);
+  useEffect(() => { setEditing(false); }, [shown?.canvas.id, shown?.v.n]);
 
   if (!open || count === 0) return null;
   const cur = entries[Math.min(idx, count - 1)];
+  const newest = cur.v.n === cur.canvas.versions[cur.canvas.versions.length - 1].n;
   const text = cur.v.text;
   const view = viewOf(cur.canvas.kind, text);
   const isPage = view === "page";
@@ -46,7 +54,6 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId 
     const a = document.createElement("a"); a.href = url; a.download = fileNameFor(cur.canvas); document.body.appendChild(a); a.click(); a.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
-  const full = () => { const f = frame.current as (HTMLIFrameElement & { webkitRequestFullscreen?: () => void }) | null; if (f?.requestFullscreen) void f.requestFullscreen(); else f?.webkitRequestFullscreen?.(); };
 
   return (
     <PanelShell open label="Canvas">
@@ -67,10 +74,12 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId 
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5" width="14" height="14" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
             </button>
             {isPage && (
-              <button type="button" className="dg-cv-chip dg-cv-sq" aria-label="Open in full screen" title="Open in full screen" onClick={full}>
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5" width="14" height="14" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
-              </button>
+              <span className="dg-doc-seg" role="tablist" aria-label="Viewer">
+                <button type="button" role="tab" aria-selected={viewer === "browser"} onClick={() => setViewer("browser")}>Browser</button>
+                <button type="button" role="tab" aria-selected={viewer === "page"} onClick={() => setViewer("page")}>Page</button>
+              </span>
             )}
+            {onChange && newest && !editing && <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => { setDraft(text); setEditing(true); }}>Edit</button>}
           </div>
         </div>
         <button type="button" className="dg-cv-close" aria-label="Close" onClick={onClose}>
@@ -78,8 +87,17 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId 
         </button>
       </div>
       <div className="dg-canvas-body">
-        {isPage ? (
-          <iframe ref={frame} key={`${cur.canvas.id}-${cur.v.n}`} title="Content" className="dg-canvas-frame" srcDoc={pageDoc(text)} sandbox="allow-scripts allow-downloads allow-forms" referrerPolicy="no-referrer" />
+        {editing ? (
+          <div className="dg-canvas-edit">
+            <textarea className="dg-doc-text" data-kind={cur.canvas.kind} value={draft} onChange={(e) => setDraft(e.target.value)} aria-label={`Edit ${cur.canvas.title}`} spellCheck={false} />
+            <div className="dg-canvas-editbar">
+              <span className="small dim">Saved as a new version, on this device.</span>
+              <button type="button" className="btn-line dg-mini-btn" onClick={() => setEditing(false)}>Cancel</button>
+              <button type="button" className="btn-ink dg-mini-btn" disabled={draft === text} onClick={() => { onChange?.(addVersion(cur.canvas, draft, "you")); setEditing(false); }}><span>Save version</span></button>
+            </div>
+          </div>
+        ) : isPage ? (
+          <HtmlViewer html={text} title={cur.canvas.title} mode={viewer} />
         ) : view === "markdown" ? (
           <div className="dg-canvas-doc" tabIndex={0} aria-label={cur.canvas.title}><Markdown text={text} /></div>
         ) : (

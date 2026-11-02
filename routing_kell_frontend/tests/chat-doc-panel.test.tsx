@@ -46,12 +46,12 @@ const type = async (v: string) => {
 describe("docs panel", () => {
   it("opens the room's document, shows who is here, and saves what you type after a pause", async () => {
     const { api } = fakeApi();
-    await mount(api);
+    await mount(api, { timing: { poll: 4000, save: 200 } });
     expect(editor().value).toContain("Step one.");
     expect(host!.querySelector(".dg-doc-here")?.textContent).toBe("Asha is here");
     await type(editor().value + "\nStep two.\n");
     expect(host!.querySelector(".dg-doc-status")?.textContent).toBe("Editing…");
-    await wait(80);
+    await wait(320);
     expect((api.save as ReturnType<typeof vi.fn>).mock.calls[0].slice(1, 4)).toEqual(["d1", "# Plan\n\nIntro.\n\nStep one.\n\nStep two.\n", 1]);
     expect(host!.querySelector(".dg-doc-status")?.textContent).toBe("Saved");
   });

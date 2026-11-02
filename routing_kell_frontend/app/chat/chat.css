@@ -835,36 +835,29 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* The canvas panel, after Open WebUI's artifacts panel: white (dark: #262626) full-height column, hairline divider you drag, 10px header. */
 .dg-shell { margin-right: var(--dg-canvas-w, 0px); }
-.dg-canvas-wrap { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; display: flex; max-width: 100vw; background: #fff; color: #171717; }
-.dg-canvas-resizer { position: relative; display: flex; align-items: center; justify-content: center; border-left: 1px solid #f9f9f9; transition: border-color .15s; z-index: 20; cursor: col-resize; }
-.dg-canvas-resizer:hover, .dg-canvas-resizer:focus-visible, .dg-canvas-wrap[data-dragging] .dg-canvas-resizer { border-left-color: #e3e3e3; outline: none; }
+.dg-canvas-wrap { position: fixed; top: 0; right: 0; bottom: 0; z-index: 50; display: flex; max-width: 100vw; background: var(--surface); color: var(--ink); animation: dg-canvas-in .32s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-canvas-resizer { position: relative; display: flex; align-items: center; justify-content: center; border-left: 1px solid var(--rule); transition: border-color .15s; z-index: 20; cursor: col-resize; }
+.dg-canvas-resizer:hover, .dg-canvas-resizer:focus-visible, .dg-canvas-wrap[data-dragging] .dg-canvas-resizer { border-left-color: var(--rule-strong); outline: none; }
 .dg-canvas-resizer span { position: absolute; left: -6px; right: -6px; top: 0; bottom: 0; touch-action: none; }
-.dg-canvas { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: #fff; color: #171717; position: relative; }
+.dg-canvas { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: var(--surface); color: var(--ink); position: relative; }
 .dg-canvas-head { display: flex; justify-content: space-between; align-items: center; padding: 10px; z-index: 20; }
 .dg-canvas-headrow { flex: 1; display: flex; align-items: center; justify-content: space-between; padding-right: 4px; min-width: 0; gap: 8px; }
 .dg-canvas-ver { display: flex; align-items: center; gap: 2px; min-width: fit-content; }
 .dg-cv-icon { display: inline-flex; padding: 4px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; transition: background-color .15s; }
-.dg-cv-icon:hover:not(:disabled) { background: rgba(0, 0, 0, .05); }
+.dg-cv-icon:hover:not(:disabled) { background: color-mix(in srgb, currentColor 9%, transparent); }
 .dg-cv-icon:disabled { cursor: not-allowed; opacity: .5; }
 .dg-cv-label { font-size: 12px; min-width: fit-content; }
 .dg-canvas-tools { display: flex; align-items: center; gap: 6px; }
-.dg-cv-chip { display: inline-flex; align-items: center; border: 0; border-radius: 6px; background: #f9f9f9; color: inherit; font: inherit; font-size: 12px; cursor: pointer; transition: background-color .15s; }
-.dg-cv-chip:hover { background: #f3f3f3; }
+.dg-cv-chip { display: inline-flex; align-items: center; border: 0; border-radius: 6px; background: color-mix(in srgb, currentColor 7%, transparent); color: inherit; font: inherit; font-size: 12px; cursor: pointer; transition: background-color .15s; }
+.dg-cv-chip:hover { background: color-mix(in srgb, currentColor 14%, transparent); color: inherit; }
 .dg-cv-copy { padding: 2px 6px; }
 .dg-cv-sq { padding: 2px; }
-.dg-cv-close { display: inline-flex; padding: 4px; border: 0; border-radius: 999px; background: #fff; color: #171717; cursor: pointer; }
+.dg-cv-close { display: inline-flex; padding: 4px; border: 0; border-radius: 999px; background: var(--surface); color: var(--ink); cursor: pointer; }
 .dg-canvas-body { flex: 1; min-height: 0; position: relative; }
 .dg-canvas-frame { display: block; width: 100%; height: 100%; border: 0; border-radius: 0; background: #fff; }
 .dg-canvas-pre { margin: 0; height: 100%; overflow: auto; padding: 12px 16px; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 14px; line-height: 1.6; overscroll-behavior: contain; }
 .dg-canvas-pre[data-kind="code"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; white-space: pre; word-break: normal; }
 .dg-canvas-shield { position: absolute; inset: 0; z-index: 10; }
-:root[data-theme="dark"] .dg-canvas-wrap, :root[data-theme="dark"] .dg-canvas { background: #262626; color: #fff; }
-:root[data-theme="dark"] .dg-canvas-resizer { border-left-color: rgba(38, 38, 38, .3); }
-:root[data-theme="dark"] .dg-canvas-resizer:hover, :root[data-theme="dark"] .dg-canvas-resizer:focus-visible, :root[data-theme="dark"] .dg-canvas-wrap[data-dragging] .dg-canvas-resizer { border-left-color: #333; }
-:root[data-theme="dark"] .dg-cv-icon:hover:not(:disabled) { background: rgba(255, 255, 255, .05); }
-:root[data-theme="dark"] .dg-cv-chip { background: #262626; }
-:root[data-theme="dark"] .dg-cv-chip:hover { background: #333; }
-:root[data-theme="dark"] .dg-cv-close { background: #262626; color: #fff; }
 @media (max-width: 767px) { .dg-shell { margin-right: 0; } .dg-canvas-wrap { width: 100vw !important; } .dg-canvas-resizer { display: none; } }
 .dg-canvas-card .dg-file-kind { background: #b97700; }
 @media (prefers-reduced-motion: reduce) { .dg-canvas { animation: none; } }
@@ -941,10 +934,6 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 :root[data-theme="dark"] .dg-badge { color: #171717; }
 :root[data-theme="dark"] .dg-badge[data-kind="tab"] { color: #171717; }
 
-/* Dark mode: the chat's buttons (Manage rooms, Connect agent, Add agent, mini buttons) light up white on hover, with dark text, instead of going black. */
-:root[data-theme="dark"] .dg-page :is(.btn-line, .dg-add, .dg-mini, .dg-breaker, .dg-stop, .dg-burger, .dg-menu, .dg-rooms-btn, .dg-set-x, .dg-manage-x, .dg-onboard-side, .dg-onboard):hover:not(:disabled) {
-  background: rgba(255, 255, 255, .92); color: #171717;
-}
 
 /* The mention and command lists float above the box. The sliding highlight makes lists position: relative, which pulled these two into the
    composer row and pushed the text bar sideways when @ was pressed. */
@@ -984,11 +973,12 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 /* ---- Docs: the shared, editable canvas of a room ---- */
 .dg-doc-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 10px 12px 6px; }
 .dg-doc-pick { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.dg-doc-pick select { font: inherit; font-size: 14px; font-weight: 500; max-width: 100%; min-width: 0; padding: 5px 26px 5px 10px; border: 0; border-radius: 8px; background: rgba(0, 0, 0, .04); color: inherit; cursor: pointer; text-overflow: ellipsis; transition: background-color .15s; }
-.dg-doc-pick select:hover { background: rgba(0, 0, 0, .07); }
+.dg-doc-pick select { font: inherit; font-size: 14px; font-weight: 500; max-width: 100%; min-width: 0; padding: 5px 26px 5px 10px; border: 0; border-radius: 8px; background: color-mix(in srgb, currentColor 7%, transparent); color: inherit; cursor: pointer; text-overflow: ellipsis; transition: background-color .15s; }
+.dg-doc-pick select:hover { background: color-mix(in srgb, currentColor 13%, transparent); }
+.dg-doc-pick select option { background: var(--surface); color: var(--ink); }
 .dg-doc-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; }
 .dg-doc-people { display: inline-flex; align-items: center; }
-.dg-doc-people i { width: 22px; height: 22px; margin-left: -6px; border-radius: 50%; display: inline-grid; place-items: center; font: 600 11px/1 inherit; font-style: normal; background: var(--yellow); color: #171717; box-shadow: 0 0 0 2px #fff; animation: dg-doc-pop .3s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-doc-people i { width: 22px; height: 22px; margin-left: -6px; border-radius: 50%; display: inline-grid; place-items: center; font: 600 11px/1 inherit; font-style: normal; background: var(--yellow); color: #171717; box-shadow: 0 0 0 2px var(--surface); animation: dg-doc-pop .3s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
 .dg-doc-people i:first-child { margin-left: 0; }
 .dg-doc-here { margin-left: 8px; color: var(--grey); }
 .dg-doc-status { display: inline-flex; align-items: center; gap: 6px; color: var(--grey); transition: color .2s; }
@@ -1004,32 +994,96 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-doc-empty { display: grid; gap: 8px; justify-items: start; padding: 24px 20px; }
 .dg-doc-empty p { margin: 0; }
 .dg-doc-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 12px 8px; flex-wrap: wrap; }
-.dg-doc-seg { display: inline-flex; padding: 2px; border-radius: 9px; background: rgba(0, 0, 0, .05); }
+.dg-doc-seg { display: inline-flex; padding: 2px; border-radius: 9px; background: color-mix(in srgb, currentColor 8%, transparent); }
 .dg-doc-seg button { font: inherit; font-size: 12.5px; padding: 4px 12px; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; transition: background-color .2s, box-shadow .2s; }
-.dg-doc-seg button[aria-selected="true"] { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .14); }
+.dg-doc-seg button[aria-selected="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
 .dg-doc-fmt { display: inline-flex; gap: 2px; }
 .dg-doc-fmt button { min-width: 28px; height: 28px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; transition: background-color .15s, transform .15s; }
-.dg-doc-fmt button:hover { background: rgba(0, 0, 0, .06); transform: translateY(-1px); }
+.dg-doc-fmt button:hover { background: color-mix(in srgb, currentColor 10%, transparent); transform: translateY(-1px); }
 .dg-doc-body { position: relative; flex: 1; min-height: 0; display: flex; }
 .dg-doc-text { flex: 1; width: 100%; height: 100%; resize: none; border: 0; outline: none; padding: 14px 22px 28px; font: inherit; font-size: 15.5px; line-height: 1.7; background: transparent; color: inherit; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; caret-color: var(--yellow); }
 .dg-doc-text[data-kind="code"], .dg-doc-text[data-kind="html"] { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.55; white-space: pre; tab-size: 2; }
-.dg-doc-history { position: absolute; inset: 0 0 0 auto; width: min(320px, 92%); z-index: 5; display: flex; flex-direction: column; background: rgba(255, 255, 255, .86); -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3); box-shadow: -12px 0 32px rgba(0, 0, 0, .14); animation: dg-doc-slide .28s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
+.dg-doc-history { position: absolute; inset: 0 0 0 auto; width: min(320px, 92%); z-index: 5; display: flex; flex-direction: column; background: color-mix(in srgb, var(--surface) 86%, transparent); -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3); box-shadow: -12px 0 32px rgba(0, 0, 0, .14); animation: dg-doc-slide .28s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)) both; }
 .dg-doc-history-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 6px; }
 .dg-doc-history ul { list-style: none; margin: 0; padding: 4px 8px 12px; overflow: auto; overscroll-behavior: contain; }
 .dg-doc-history li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 6px; border-radius: 8px; font-size: 13px; transition: background-color .15s; }
-.dg-doc-history li:hover { background: rgba(0, 0, 0, .05); }
+.dg-doc-history li:hover { background: color-mix(in srgb, currentColor 8%, transparent); }
 .dg-doc-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px 12px 10px; border-top: 1px solid var(--rule); }
 .dg-doc-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 @keyframes dg-doc-rise { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes dg-doc-slide { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
 @keyframes dg-doc-pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
-:root[data-theme="dark"] .dg-doc-pick select { background: rgba(255, 255, 255, .07); }
-:root[data-theme="dark"] .dg-doc-pick select:hover { background: rgba(255, 255, 255, .12); }
-:root[data-theme="dark"] .dg-doc-people i { box-shadow: 0 0 0 2px #262626; }
-:root[data-theme="dark"] .dg-doc-seg { background: rgba(255, 255, 255, .07); }
-:root[data-theme="dark"] .dg-doc-seg button[aria-selected="true"] { background: rgba(255, 255, 255, .16); box-shadow: none; }
-:root[data-theme="dark"] .dg-doc-fmt button:hover { background: rgba(255, 255, 255, .1); }
-:root[data-theme="dark"] .dg-doc-history { background: rgba(38, 38, 38, .86); }
-:root[data-theme="dark"] .dg-doc-history li:hover { background: rgba(255, 255, 255, .07); }
 @media (prefers-reduced-motion: reduce) { .dg-doc-new, .dg-doc-err, .dg-doc-note, .dg-doc-history, .dg-doc-people i { animation: none; } }
 @media (prefers-reduced-transparency: reduce) { .dg-doc-history { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface); } }
+
+@keyframes dg-canvas-in { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dg-canvas-wrap { animation: none; } }
+
+/* ---- Page viewers: a small browser, and the page edge to edge ---- */
+.dg-viewer { height: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 12px 12px; overflow: auto; overscroll-behavior: contain; background: color-mix(in srgb, currentColor 4%, transparent); }
+.dg-viewer-page { height: 100%; }
+.dg-browser { width: 100%; flex: 1; min-height: 240px; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: 0 12px 34px rgba(0, 0, 0, .22), 0 2px 6px rgba(0, 0, 0, .12), 0 0 0 1px var(--rule); transition: width .35s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
+.dg-browser-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px; background: color-mix(in srgb, currentColor 6%, var(--surface)); border-bottom: 1px solid var(--rule); }
+.dg-browser-dots { display: inline-flex; gap: 5px; margin-right: 4px; }
+.dg-browser-dots i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+.dg-browser-dots i:nth-child(2) { background: #febc2e; }
+.dg-browser-dots i:nth-child(3) { background: #28c840; }
+.dg-browser-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; transition: background-color .15s, transform .15s; }
+.dg-browser-btn:hover:not(:disabled) { background: color-mix(in srgb, currentColor 12%, transparent); }
+.dg-browser-btn:active:not(:disabled) { transform: scale(.92); }
+.dg-browser-btn:disabled { opacity: .35; cursor: default; }
+.dg-browser-url { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: var(--grey); background: color-mix(in srgb, currentColor 7%, transparent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-browser-body { flex: 1; min-height: 0; background: #fff; }
+.dg-browser-body .dg-canvas-frame { height: 100%; }
+.dg-viewer-devices { display: inline-flex; padding: 2px; border-radius: 9px; background: color-mix(in srgb, currentColor 8%, transparent); flex: none; }
+.dg-viewer-devices button { font: inherit; font-size: 12px; padding: 4px 12px; border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; transition: background-color .2s, box-shadow .2s; }
+.dg-viewer-devices button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, .18); }
+.dg-canvas-edit { height: 100%; display: flex; flex-direction: column; }
+.dg-canvas-edit .dg-doc-text { flex: 1; min-height: 0; }
+.dg-canvas-editbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--rule); }
+.dg-canvas-editbar .small { margin-right: auto; }
+
+/* Cards in the chat that open the canvas: the whole box is the button. */
+.dg-canvas-card[data-clickable], .dg-artifact[data-clickable] .dg-artifact-head { cursor: pointer; }
+.dg-canvas-card[data-clickable] { transition: transform .18s var(--dg-apple, ease), box-shadow .18s var(--dg-apple, ease); }
+.dg-canvas-card[data-clickable]:hover { transform: translateY(-1px); box-shadow: var(--dg-lift-hover, 0 8px 22px rgba(0, 0, 0, .18)); }
+.dg-canvas-card[data-clickable]:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.dg-card-open { margin-left: auto; }
+
+/* ---- one pass of fixes ---- */
+/* Kell's mark in the chat has no coloured tile behind it. */
+.dg-page .dg-avatar.dg-avatar-kell, .dg-page .dg-avatar[data-kind="agent"] { background: transparent; box-shadow: none; color: inherit; }
+
+/* The word count and the bigger/smaller button sit together above the right-hand buttons. */
+.dg-composer .dg-composer-meta { position: absolute; right: 18px; top: 2px; transform: translateY(-100%); display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.dg-composer .dg-composer-meta > * { pointer-events: auto; }
+.dg-composer .dg-count { position: static; right: auto; bottom: auto; pointer-events: none; font-size: 11.5px; color: var(--grey); }
+.dg-composer .dg-expand { position: static; transform: none; }
+@media (max-width: 760px) { .dg-composer .dg-composer-meta { right: 12px; } }
+
+/* "Only this room" in the search bar: a small switch. */
+.dg-search-here { display: inline-flex; align-items: center; gap: 8px; justify-self: start; padding: 4px 10px 4px 6px; border: 0; border-radius: 999px; background: color-mix(in srgb, currentColor 6%, transparent); color: inherit; font: inherit; font-size: 12.5px; cursor: pointer; transition: background-color .2s; }
+.dg-search-here:hover { background: color-mix(in srgb, currentColor 11%, transparent); }
+.dg-search-here:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+.dg-switch { position: relative; width: 28px; height: 16px; border-radius: 999px; background: color-mix(in srgb, currentColor 22%, transparent); transition: background-color .25s var(--dg-apple, ease); }
+.dg-switch i { position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: transform .25s var(--dg-apple, cubic-bezier(.32, .72, 0, 1)); }
+.dg-search-here[aria-checked="true"] .dg-switch { background: var(--yellow); }
+.dg-search-here[aria-checked="true"] .dg-switch i { transform: translateX(12px); }
+@media (prefers-reduced-motion: reduce) { .dg-switch, .dg-switch i { transition: none; } }
+
+/* Connect agent: one pill, two colours that swap with the theme (ink on paper), so it is never white one time and black the next. The marks sit on white
+   discs so every logo reads in both themes. */
+.dg-page .dg-onboard, :root .dg-page .dg-onboard { background: var(--ink); color: var(--paper); }
+.dg-page .dg-onboard:hover:not(:disabled) { background: var(--ink); color: var(--paper); filter: brightness(1.06); }
+.dg-onboard-marks i { background: #fff; color: #171717; box-shadow: 0 0 0 2px var(--ink); }
+.dg-onboard-copy { color: var(--paper); }
+:root[data-theme="dark"] .dg-page .dg-onboard, :root[data-theme="dark"] .dg-page .dg-onboard:hover:not(:disabled) { background: var(--ink); color: var(--paper); box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
+:root[data-theme="dark"] .dg-onboard-marks i, :root[data-theme="dark"] .dg-page .dg-onboard:hover .dg-onboard-marks i { background: #fff; color: #171717; box-shadow: 0 0 0 2px var(--ink); }
+:root[data-theme="dark"] .dg-onboard-copy { color: var(--paper); }
+
+/* Dark mode: a button that is hovered lights up (a light veil) and its words stay light. Yellow selections keep dark words on yellow. */
+:root[data-theme="dark"] .dg-page :is(.btn-line, .dg-add, .dg-mini, .dg-breaker, .dg-stop, .dg-burger, .dg-menu, .dg-rooms-btn, .dg-set-x, .dg-manage-x, .dg-cv-chip):hover:not(:disabled),
+:root[data-theme="dark"] :is(.btn-line, .copy, .oauth-btn, .back-btn):hover:not(:disabled) {
+  background: rgba(255, 255, 255, .17); color: var(--ink);
+}
+:root[data-theme="dark"] .dg-page .dg-composer button:not(:disabled):hover { background: var(--yellow); color: #171717; }

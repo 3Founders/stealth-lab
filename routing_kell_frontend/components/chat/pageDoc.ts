@@ -1,0 +1,2 @@
+/** A bare fragment (an svg, a div) is wrapped so it has a page to sit in; a whole page is used as it is. */
+export const pageDoc = (t: string): string => /<html[\s>]|<!doctype/i.test(t) ? t : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;font-family:system-ui,sans-serif;background:#fff;color:#171717}</style></head><body>${t}</body></html>`;

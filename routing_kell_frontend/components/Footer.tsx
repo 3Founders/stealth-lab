@@ -1,4 +1,7 @@
+"use client";
 import Wordmark from "@/components/Wordmark";
+import { useEffect, useState } from "react";
+import { getSession, onSessionChange } from "@/lib/session";
 import Link from "next/link";
 import { adminSignInUrl } from "@/lib/admin-link";
 import { companyLinks } from "@/lib/social-links";
@@ -12,7 +15,6 @@ const cols: Array<{ h: string; items: string[][] }> = [
       ["For teams", "/docs#teams"],
     ],
   },
-  { h: "Account", items: [["Sign in", "/sign-in"], ["Connected apps", "/account/connections"]] },
   { h: "About", items: [["About keळ", "/#about"]] },
 ];
 
@@ -21,8 +23,21 @@ const isOutside = (href: string) => href.startsWith("http");
 
 export default function Footer() {
   const admin = adminSignInUrl();
+  // The Account column offers what fits: someone signed in sees their profile, not "Sign in".
+  const [signedIn, setSignedIn] = useState<boolean | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    void getSession().then((x) => { if (live) setSignedIn(Boolean(x)); });
+    const off = onSessionChange((x) => { if (live) setSignedIn(Boolean(x)); });
+    return () => { live = false; off(); };
+  }, []);
+  const account: string[][] = signedIn
+    ? [["Profile", "/account/profile"], ["Plan and billing", "/account/billing"], ["Connected apps", "/account/connections"]]
+    : signedIn === false ? [["Sign in", "/sign-in"], ["Connected apps", "/account/connections"]] : [["Connected apps", "/account/connections"]];
   const columns = [
-    ...cols.map((c) => (c.h === "Account" && admin ? { ...c, items: [...c.items, ["Administrator sign in", admin]] } : c)),
+    ...cols.slice(0, 2),
+    { h: "Account", items: admin && signedIn === false ? [...account, ["Administrator sign in", admin]] : account },
+    ...cols.slice(2),
     { h: "Company", items: companyLinks().map((l) => [l.label, l.href]) },
   ];
   return (
@@ -53,7 +68,6 @@ export default function Footer() {
         </nav>
         <div className="footer-base">
           <span>© {new Date().getFullYear()} keळ</span>
-          <span>Pre-release · v0.1</span>
         </div>
       </div>
     </footer>

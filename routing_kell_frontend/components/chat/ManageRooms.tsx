@@ -105,7 +105,7 @@ export default function ManageRooms(p: ManageRoomsProps) {
   const canRemove = (m: RoomMember) => !m.me && m.role !== "owner" && (isOwner || (role === "admin" && m.role === "member"));
 
   return (
-    <dialog ref={dialog} className="dg-settings dg-manage" aria-labelledby="dg-manage-title" onCancel={(e) => { e.preventDefault(); close(); }} onClick={(e) => { if (e.target === dialog.current) close(); }}>
+    <dialog data-lenis-prevent ref={dialog} className="dg-settings dg-manage" aria-labelledby="dg-manage-title" onCancel={(e) => { e.preventDefault(); close(); }} onClick={(e) => { if (e.target === dialog.current) close(); }}>
       <div className="dg-set-frame">
         <div className="dg-set-head">
           <h2 id="dg-manage-title">Manage rooms</h2>

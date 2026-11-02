@@ -166,10 +166,12 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
         onPaste={(e) => { const f = pastedImages(e.clipboardData.items); if (f.length) { e.preventDefault(); void addFiles(f); } }}
         onKeyDown={onKeyDown}
       />
+      <div className="dg-composer-meta">
       {text.trim() && <span className="dg-count" aria-live="off">{wordCount(text)} {wordCount(text) === 1 ? "word" : "words"}{text.length >= MAX_MESSAGE - 1000 ? ` · ${text.length} / ${MAX_MESSAGE}` : ""}</span>}
-      <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
+        <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); ref.current?.focus(); }} aria-pressed={big} aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
       </button>
+      </div>
       <input ref={fileRef} type="file" multiple hidden onChange={(e) => { const f = imageFiles(e.target.files); e.target.value = ""; if (f.length) void addFiles(f); }} />
       <button type="button" className="dg-attach" onClick={() => fileRef.current?.click()} disabled={disabled || busy} aria-label="Attach a file" title="Attach a picture or a file (or paste or drop one)"><ImageIcon /></button>
       <button type="submit" disabled={disabled || busy || (!text.trim() && !pics.length && !docs.length)}>Send</button>

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import PanelShell from "@/components/chat/PanelShell";
-import { pageDoc } from "@/components/chat/CanvasPanel";
+import HtmlViewer from "@/components/chat/HtmlViewer";
 import { DocsApiError, type DocInfo, type DocKind, type DocVersion, type DocsApi } from "@/lib/chat/docs-api";
 import { mapCaret, merge3 } from "@/lib/chat/merge3";
 
@@ -44,13 +44,16 @@ function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onCount, timing }: {
+export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, timing }: {
   open: boolean; onClose: () => void; api: DocsApi; roomId: string;
   /** A document to show first (the title on the card the person pressed). */
   wantedTitle: string | null;
   /** Puts text in the message box ("Ask kell to edit this"). */
   onAsk: (text: string) => void;
-  onCount?: (n: number) => void;
+  /** The documents of the room, whenever the list is read. */
+  onDocs?: (docs: DocInfo[]) => void;
+  /** This version of this document is on screen: it no longer counts as new. */
+  onSeen?: (id: string, version: number) => void;
   /** Shorter waits for tests. */
   timing?: { poll: number; save: number };
 }) {
@@ -63,7 +66,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const [status, setStatus] = useState<Status>("saved");
   const [note, setNote] = useState("");
   const [present, setPresent] = useState<string[]>([]);
-  const [mode, setMode] = useState<"write" | "preview">("write");
+  const [mode, setMode] = useState<"write" | "browser" | "page">("write");
   const [history, setHistory] = useState<DocVersion[] | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -96,11 +99,11 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     try {
       const l = await api.list(roomId);
       setDocs(l);
-      onCount?.(l.length);
+      onDocs?.(l);
       setError("");
       return l;
     } catch (e) { setError(e instanceof Error ? e.message : "Couldn't load the documents."); return null; }
-  }, [api, roomId, onCount]);
+  }, [api, roomId, onDocs]);
 
   useEffect(() => {
     if (!open) return;
@@ -127,7 +130,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       base.current = { body: d.body, version: d.version };
       textRef.current = d.body;
       setText(d.body); setKind(d.kind); setTitle(d.title); setPresent(d.present);
-      setMode(d.kind === "document" ? "write" : "write");
+      setMode(d.kind === "html" ? "browser" : "write");
     }).catch((e) => { if (live) setError(e instanceof Error ? e.message : "Couldn't open that document."); });
     return () => { live = false; };
   }, [open, activeId, api, roomId]);
@@ -196,6 +199,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   }, [open, activeId, api, roomId, adopt, flash, pollMs]);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
+  useEffect(() => { if (open && activeId) onSeen?.(activeId, base.current.version); }, [open, activeId, text, onSeen]);   // what is on screen is no longer new
 
   // a last save when the panel closes or the page is left
   useEffect(() => {
@@ -288,7 +292,9 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
           <div className="dg-doc-bar">
             <div className="dg-doc-seg" role="tablist" aria-label="View">
               <button type="button" role="tab" aria-selected={mode === "write"} onClick={() => setMode("write")}>{kind === "html" ? "Code" : "Write"}</button>
-              {kind !== "code" && <button type="button" role="tab" aria-selected={mode === "preview"} onClick={() => setMode("preview")}>{kind === "html" ? "Page" : "Read"}</button>}
+              {kind === "html" && <button type="button" role="tab" aria-selected={mode === "browser"} onClick={() => setMode("browser")}>Browser</button>}
+              {kind === "html" && <button type="button" role="tab" aria-selected={mode === "page"} onClick={() => setMode("page")}>Page</button>}
+              {kind === "document" && <button type="button" role="tab" aria-selected={mode === "browser"} onClick={() => setMode("browser")}>Read</button>}
             </div>
             {mode === "write" && kind === "document" && (
               <div className="dg-doc-fmt" role="toolbar" aria-label="Formatting">
@@ -309,7 +315,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
                 spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
               />
             ) : kind === "html" ? (
-              <iframe title={title} className="dg-canvas-frame" srcDoc={pageDoc(text)} sandbox="allow-scripts allow-downloads allow-forms" referrerPolicy="no-referrer" />
+              <HtmlViewer html={text} title={title} mode={mode === "page" ? "page" : "browser"} />
             ) : (
               <div className="dg-canvas-doc" tabIndex={0}><Markdown text={text} /></div>
             )}

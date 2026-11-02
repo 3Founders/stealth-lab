@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { CanvasContext } from "@/components/chat/CanvasCard";
+import { useState, useContext } from "react";
 import Markdown from "@/components/chat/Markdown";
 import { splitArtifacts, type Artifact } from "@/lib/chat/artifacts";
 import CanvasCard from "@/components/chat/CanvasCard";
@@ -38,11 +39,14 @@ function RemotePicture({ url, alt }: { url: string; alt: string }) {
  */
 export function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const [view, setView] = useState<"closed" | "rendered" | "source">("closed");
+  const ctx = useContext(CanvasContext);
+  const toCanvas = () => { void ctx?.openPage?.(artifact.title, artifact.html); };
   return (
-    <div className="dg-artifact" data-view={view}>
-      <div className="dg-artifact-head">
+    <div className="dg-artifact" data-view={view} data-clickable={ctx?.openPage ? "true" : undefined}>
+      <div className="dg-artifact-head" onClick={(e) => { if (!(e.target as HTMLElement).closest("button")) toCanvas(); }} title={ctx?.openPage ? "Open in the canvas" : undefined}>
         <span className="dg-artifact-title">{artifact.title}</span>
         <span className="dg-artifact-size">{Math.max(1, Math.ceil(artifact.html.length / 1024))} KB</span>
+        {ctx?.openPage && <button type="button" className="dg-artifact-btn" onClick={toCanvas}>Open</button>}
         <button type="button" className="dg-artifact-btn" aria-pressed={view === "rendered"} onClick={() => setView(view === "rendered" ? "closed" : "rendered")}>
           {view === "rendered" ? "Hide" : "Render"}
         </button>

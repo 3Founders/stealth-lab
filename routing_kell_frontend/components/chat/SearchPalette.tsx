@@ -49,13 +49,15 @@ export default function SearchPalette({ open, onClose, rooms, currentRoom, load,
   };
 
   return (
-    <div className="dg-search-wrap" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="dg-search-wrap" data-lenis-prevent onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="dg-search" role="dialog" aria-modal="true" aria-label="Search" onKeyDown={key}>
         <input
           ref={input} value={q} onChange={(e) => { setQ(e.target.value); setActive(0); }} placeholder="Search your rooms and messages"
           role="combobox" aria-expanded aria-controls={listId} aria-activedescendant={count ? `${listId}-${idx}` : undefined} aria-autocomplete="list" autoComplete="off"
         />
-        <label className="dg-search-here small"><input type="checkbox" checked={here} onChange={(e) => { setHere(e.target.checked); setActive(0); }} /> Only {roomName(currentRoom)}</label>
+        <button type="button" role="switch" aria-checked={here} className="dg-search-here" onClick={() => { setHere(!here); setActive(0); }}>
+          <span className="dg-switch" aria-hidden="true"><i /></span>Only {roomName(currentRoom)}
+        </button>
         <ul id={listId} role="listbox" className="dg-search-list" ref={slide('li[role="option"]')}>
           {q.trim() === "" && roomRows.map((r, i) => (
             <li key={r} id={`${listId}-${i}`} role="option" aria-selected={i === idx} data-active={i === idx} onMouseDown={(e) => { e.preventDefault(); pick(i); }}>

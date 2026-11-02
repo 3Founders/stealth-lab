@@ -101,7 +101,7 @@ export default function SettingsDialog(p: SettingsProps) {
   const set = (patch: Partial<ChatPrefs>) => p.onChatPrefs({ ...p.chatPrefs, ...patch });
 
   return (
-    <dialog ref={dialog} className="dg-settings" aria-labelledby="dg-settings-title" onCancel={(e) => { e.preventDefault(); close(); }} onClose={p.onClose}
+    <dialog data-lenis-prevent ref={dialog} className="dg-settings" aria-labelledby="dg-settings-title" onCancel={(e) => { e.preventDefault(); close(); }} onClose={p.onClose}
       onClick={(e) => { if (e.target === dialog.current) close(); }}>
       <div className="dg-set-frame">
         <header className="dg-set-head">

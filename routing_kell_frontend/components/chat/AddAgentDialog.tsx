@@ -36,7 +36,7 @@ export default function AddAgentDialog(p: AddAgentDialogProps) {
   }
 
   return (
-    <dialog ref={dialog} className="dg-settings dg-addagent" aria-labelledby="dg-addagent-title" onCancel={(e) => { e.preventDefault(); close(); }} onClick={(e) => { if (e.target === dialog.current) close(); }}>
+    <dialog data-lenis-prevent ref={dialog} className="dg-settings dg-addagent" aria-labelledby="dg-addagent-title" onCancel={(e) => { e.preventDefault(); close(); }} onClick={(e) => { if (e.target === dialog.current) close(); }}>
       <form className="dg-set-frame" onSubmit={p.onSubmit}>
         <div className="dg-set-head">
           <h2 id="dg-addagent-title">Add an agent</h2>
