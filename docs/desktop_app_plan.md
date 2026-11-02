@@ -120,6 +120,8 @@ the prototype's Next.js UI. Still open: Windows first, or Windows and macOS toge
    **Built** (2026-11-02): `POST /api/signin` + the settings button and poll; typecheck and `next build` green.
 6. **Packaging:** installers for Windows and macOS. **Not published without the owners.** `npm run dist` builds the Windows
    NSIS installer (electron-builder, config in `desktop/package.json`); macOS packaging and signing are the open owner item.
+   On a network that blocks electron-builder's Electron download (`write EPROTO`), pass the cached zip instead:
+   `npx electron-builder --win nsis --config.electronDist=%LOCALAPPDATA%\electron\Cache\<hash>\electron-v45.2.1-win32-x64.zip`.
 
 ## Prototype built (2026-11-02, `desktop/`)
 
