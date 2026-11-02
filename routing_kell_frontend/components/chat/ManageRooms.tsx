@@ -97,6 +97,7 @@ export default function ManageRooms(p: ManageRoomsProps) {
     const r = p.onCreate(newName);
     if ("error" in r) { setNewError(r.error); return; }
     setNewName(""); setNewError(""); setRoom(r.id);
+    close(); // you land in the new room, not behind a dialog that looks as if nothing happened
   }
   async function dissolve() { setBusy("room"); try { await p.onDissolve(room); } finally { setBusy(""); } }
 

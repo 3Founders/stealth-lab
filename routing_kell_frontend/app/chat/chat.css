@@ -975,3 +975,8 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-memory-edit { display: grid; gap: 8px; margin-top: 12px; }
 .dg-memory-edit textarea, .dg-notes-text { width: 100%; font: inherit; font-size: 14px; line-height: 1.5; padding: 10px 12px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); resize: vertical; overflow: auto; overscroll-behavior: contain; }
 .dg-set-body h4, .dg-settings h4 { margin: 14px 0 4px; font-size: 14px; }
+
+/* The @ list and the slash-command list float over the chat. However any other rule positions lists, they never join the composer row (that
+   squeezed the text box wider or narrower when a list opened). The text box keeps its own size. */
+.dg-page .dg-composer > .dg-mentions, .dg-page .dg-composer > .dg-commands { position: absolute !important; }
+.dg-composer textarea { flex: 1 1 0; min-width: 0; }
