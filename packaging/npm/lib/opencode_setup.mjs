@@ -115,6 +115,10 @@ export function withKell(cfg, { pluginDir, url, token, keyEnv = "GENERAL_COMPUTE
         headers: {
           ...(pooled.orgId ? { "x-stealthlab-org": String(pooled.orgId) } : {}),
           "x-stealthlab-data-class": pooled.dataClass,
+          // If the chosen model's provider is down or out of credit, the gateway tries the others in this list (it
+          // dedupes the requested model). Production on 2026-11-03: gemma-4-31b-it answered 402 (empty balance), so a
+          // cheap rung alone can fail a turn; the strong rung is the first fallback.
+          "x-stealthlab-fallback-models": [...new Set([pooled.strong, pooled.cheap])].join(","),
         },
       },
       models: pooled.models,

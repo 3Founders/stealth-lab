@@ -68,6 +68,8 @@ export function pooledEngineConfig(env: NodeJS.ProcessEnv = process.env): Pooled
             // The conservative class: an organization that allows private material accepts it; the public-only pilot
             // refuses it with a message instead of silently widening the policy.
             "x-stealthlab-data-class": env.KELL_OC_DATA_CLASS || "USER_PRIVATE",
+            // A dead or out-of-credit provider on the chosen model does not fail the turn: the gateway tries the others.
+            "x-stealthlab-fallback-models": [...new Set([strong.model_id!, cheap.model_id!])].join(","),
           },
         },
         models,

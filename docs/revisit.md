@@ -48,6 +48,9 @@ items here (not in other docs); remove one when it is done, with the commit that
   to the desktop (a redirect/consent change); or (c) let the MCP `/v1` accept MCP-flow tokens (an owner security call).
   The pilot policy is also `PUBLIC_SOURCE` only, so private code needs an organization policy that allows
   `USER_PRIVATE`; the desktop sends `USER_PRIVATE` by default and shows the server's refusal rather than widening it.
+  The pooled provider also sends `x-stealthlab-fallback-models` (strong, cheap): on 2026-11-03 production's
+  gemma-4-31b-it answered 402 (General Compute balance empty), and the gateway now moves a failed cheap rung to the
+  strong one instead of failing the turn.
 - **Models and providers for our agent.** Cheap minimax-m2.7 and strong deepseek-v3.2, both on General Compute (one
   key); a second provider (DeepInfra, `--strong-key-env`, default `DEEPINFRA_KEY`) moves the strong rung to its
   DeepSeek-V3.2 with gc/deepseek-v3.2 as the fallback, and the provider-failure fallback (retry once, then the

@@ -75,6 +75,8 @@ test("organization lane: join profiles point the provider at the gateway, with t
   assert.equal(config.provider.kell.options.apiKey, "tok", "the person's kell sign-in is the bearer");
   assert.equal(config.provider.kell.options.headers["x-stealthlab-org"], "org-1");
   assert.equal(config.provider.kell.options.headers["x-stealthlab-data-class"], "USER_PRIVATE", "the conservative default");
+  assert.equal(config.provider.kell.options.headers["x-stealthlab-fallback-models"], "glm-5.3,glm-5.3-flash",
+               "a dead cheap provider falls back to the strong model, and the reverse");
   assert.deepEqual(config.provider.kell.models["glm-5.3"].cost, { input: 0.6, output: 2.2 });
   assert.equal(config.model, "kell/glm-5.3", "the priciest joined model is the strong rung");
   assert.deepEqual(modelPlan({ pooled }), { strong: "kell/glm-5.3", fallback: "kell/glm-5.3-flash" });
