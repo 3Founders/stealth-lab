@@ -34,6 +34,20 @@ def test_only_live_remote_verified_used_servers_qualify(monkeypatch):
     assert not gw.gateway_allowed(card())
 
 
+def test_a_server_that_failed_is_left_out_for_a_while_then_comes_back():
+    gw.FAILING.clear()
+    assert not gw.failing("app.glif/glif")
+    gw.note_failure("app.glif/glif")
+    assert gw.failing("app.glif/glif")
+    gw.note_ok("app.glif/glif")                     # a later success clears it at once
+    assert not gw.failing("app.glif/glif")
+    gw.note_failure("app.glif/glif")
+    assert gw.failing("app.glif/glif")
+    gw.FAILING["app.glif/glif"] = 0.0               # the cooldown has passed
+    assert not gw.failing("app.glif/glif")
+    assert "app.glif/glif" not in gw.FAILING
+
+
 def test_tools_that_act_for_the_user_are_refused():
     assert gw.tool_allowed({"name": "generate_image"})[0]
     assert gw.tool_allowed({"name": "search_docs"})[0]

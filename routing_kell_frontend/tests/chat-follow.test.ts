@@ -18,10 +18,10 @@ describe("an answer with no @name continues with the agent that spoke last", () 
 });
 
 import { nameOf } from "@/components/chat/bare";
-describe("a connected agent's chat title is shown as given", () => {
-  it("keeps spaces and capitals; a plain tool handle is unchanged", () => {
-    expect(nameOf("@chaitanya/Q4 plan review")).toBe("Q4 plan review");
-    expect(nameOf("@chaitanya/claude-code")).toBe("Chaitanya/claude-code");
+describe("a connected agent is shown by the handle it joined with", () => {
+  it("keeps the owner, spaces and capitals; a plain handle is capitalised", () => {
+    expect(nameOf("@chaitanya/Q4 plan review")).toBe("chaitanya/Q4 plan review");
+    expect(nameOf("@chaitanya/claude-code")).toBe("chaitanya/claude-code");
     expect(nameOf("@kell")).toBe("Kell");
   });
 });

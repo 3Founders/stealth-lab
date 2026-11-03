@@ -62,6 +62,33 @@ _LEARNED_AT = 0.0
 LEARN_EVERY_S = 600.0
 
 
+# A server that failed a real call (not a sign-in, which has its own memory above) is left out of search for a while, so the
+# agent does not keep offering the same dead end in every turn. It is time-based and clears itself; a successful call clears
+# it sooner.
+FAILING: dict[str, float] = {}
+FAILURE_TTL_S = float(os.environ.get("TOOL_GATEWAY_FAILURE_TTL", "900"))
+
+
+def note_failure(server: str) -> None:
+    if server:
+        FAILING[server] = time.monotonic() + FAILURE_TTL_S
+
+
+def note_ok(server: str) -> None:
+    FAILING.pop(server, None)
+
+
+def failing(server: str) -> bool:
+    """True while a server that failed recently is in its cooldown; False once the cooldown has passed."""
+    until = FAILING.get(server)
+    if until is None:
+        return False
+    if until <= time.monotonic():
+        FAILING.pop(server, None)
+        return False
+    return True
+
+
 async def learn_signins(pool: Any, now: Optional[float] = None) -> None:
     """Reads the audit log: a server whose newest outcome is a sign-in refusal is marked, so it is never offered as runnable and never tried
     first. A later successful call (the server changed) clears it."""

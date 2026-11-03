@@ -61,7 +61,7 @@
 @media (hover: none) { .dg-acts { opacity: 1; } }
 .dg-act { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--grey); cursor: pointer; }
 .dg-act:hover { color: var(--ink); background: rgba(0, 0, 0, .06); }
-.dg-body p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-weight: 300; }
+.dg-body p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-weight: 400; }
 .dg-payload { transition: background-color var(--dg-micro-d) var(--dg-micro), border-color var(--dg-micro-d) var(--dg-micro); margin-top: 4px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); font-size: 13px; max-width: 560px; }
 .dg-payload summary { cursor: pointer; padding: 5px 10px; display: flex; gap: 10px; align-items: center; list-style: none; }
 .dg-payload summary::-webkit-details-marker { display: none; }
@@ -196,7 +196,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   .dg-mini-btn { min-height: 44px; }
 }
 .dg-data { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 6px; }
-.dg-unread { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--cobalt); color: #fff; font-size: 11.5px; line-height: 20px; text-align: center; }
+.dg-unread { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--yellow); color: #171717; font-size: 11.5px; line-height: 20px; text-align: center; }
 .dg-room { align-items: center; }
 .dg-sync { font-size: 12px; padding: 2px 10px; border-radius: 999px; background: #e3f4e9; color: #1b5e3a; white-space: nowrap; }
 .dg-sync[data-status="syncing"] { background: #e6edf8; color: var(--cobalt); }
@@ -253,7 +253,7 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-burger:active { transform: scale(.96); }
 .dg-burger[aria-expanded="true"] { background: var(--soft); }
 .dg-burger { position: relative; color: var(--ink); }
-.dg-burger-dot { position: absolute; top: -5px; right: -5px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--cobalt); color: #fff; font-size: 10.5px; line-height: 18px; text-align: center; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
+.dg-burger-dot { position: absolute; top: -5px; right: -5px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--yellow); color: #171717; font-size: 10.5px; line-height: 18px; text-align: center; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
 .dg-menu-pop > button:has(.dg-unread) { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dg-bell-pop--menu { left: 0; right: auto; }
 .dg-menu-pop { position: absolute; left: 0; top: calc(100% + 8px); z-index: 35; min-width: 232px; padding: 6px; background: var(--surface); border: 1px solid var(--rule-strong); border-radius: 12px; box-shadow: 0 18px 44px rgba(0, 0, 0, .2), 0 2px 8px rgba(0, 0, 0, .1); display: grid; gap: 1px; animation: dg-pop .28s cubic-bezier(.32, .72, 0, 1) both; transform-origin: top left; }
@@ -519,16 +519,16 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 }
 .dg-page .dg-bell-list button:hover { background: rgba(255, 255, 255, .85); box-shadow: var(--dg-lift-hover); transform: translateY(-1px); }
 .dg-page .dg-bell-list li[data-read="false"] button { background: linear-gradient(135deg, rgba(255, 210, 31, .26), rgba(255, 241, 168, .42)), var(--dg-glass-strong); }
-.dg-page .dg-bell-list li[data-read="false"]::before { content: ""; position: absolute; left: 5px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--cobalt); z-index: 1; pointer-events: none; }
+.dg-page .dg-bell-list li[data-read="false"]::before { content: ""; position: absolute; left: 5px; top: 14px; width: 6px; height: 6px; border-radius: 50%; background: var(--yellow); box-shadow: 0 0 0 1.5px rgba(23, 23, 23, .35); z-index: 1; pointer-events: none; }
 .dg-page .dg-bell-list li[data-read="true"] b { font-weight: 400; color: var(--text-2); }
-.dg-page .dg-bell-kind { justify-self: start; padding: 1px 8px; border-radius: 999px; background: rgba(25, 58, 112, .1); color: var(--cobalt); font-size: 10.5px; }
+.dg-page .dg-bell-kind { justify-self: start; padding: 1px 8px; border-radius: 999px; background: rgba(255, 210, 31, .38); color: var(--ink); font-size: 10.5px; }
 .dg-page .dg-bell-pop .dg-hint { margin: 0; padding: 12px 14px; border-radius: var(--dg-r-btn); background: rgba(255, 255, 255, .5); box-shadow: var(--dg-dent); line-height: 1.45; }
 .dg-page .dg-bell-set { border: 0; padding: 12px 14px; margin: 0; border-radius: var(--dg-r-btn); background: rgba(255, 255, 255, .45); box-shadow: var(--dg-dent); }
 .dg-page .dg-bell-set legend { float: left; width: 100%; padding: 0 0 8px; margin: 0; }
 .dg-page .dg-bell-set legend + * { clear: both; }
 .dg-page .dg-bell-set-body { gap: 10px; }
 .dg-page .dg-bell-set-body label { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; line-height: 1.35; }
-.dg-page .dg-bell-set-body input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--cobalt); box-shadow: none; }
+.dg-page .dg-bell-set-body input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--yellow); box-shadow: none; }
 .dg-page .dg-bell-set-body input[type="time"], .dg-page .dg-bell-set-body select { font-size: 13px; padding: 4px 8px; border-radius: var(--dg-r-btn); min-height: 30px; max-width: 100%; }
 .dg-page .dg-bell-set-body .dg-hint { padding: 0; background: none; box-shadow: none; font-size: 12.5px; }
 @media (prefers-reduced-motion: reduce) { .dg-page .dg-bell-list button { transition: none; transform: none !important; } }
@@ -604,10 +604,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* Markdown in a message (components/chat/Markdown.tsx): rendered as elements, never raw HTML. */
 .dg-md { display: grid; gap: 6px; }
-.dg-md p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-weight: 300; }
+.dg-md p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; font-weight: 400; }
 .dg-md .dg-md-h { font-size: 1.05em; line-height: 1.3; margin: 2px 0 0; }
 .dg-md ul, .dg-md ol { margin: 0; padding-left: 20px; display: grid; gap: 3px; }
-.dg-md li { line-height: 1.42; font-weight: 300; }
+.dg-md li { line-height: 1.42; font-weight: 400; }
 .dg-md code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: rgba(0,0,0,.06); border-radius: 4px; padding: 0 4px; }
 .dg-md pre.dg-md-pre { margin: 0; padding: 10px 12px; background: #f4f5f7; border: 1px solid var(--rule); border-radius: 8px; overflow-x: auto; }
 .dg-md pre.dg-md-pre code { background: none; padding: 0; font-size: .9em; }
@@ -1305,8 +1305,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-tex-table td[data-l] { --tl: inset 1.5px 0 0 var(--ink); } .dg-tex-table td[data-r] { --tr: inset -1.5px 0 0 var(--ink); }
 .dg-tex-display { scrollbar-width: none; } .dg-tex-display::-webkit-scrollbar { display: none; }
 
+.dg-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
 /* Chat text a size up (it was 15px), and the Copy / Ask again buttons smaller. */
-.dg-body, .dg-md { font-size: 17px; }
+.dg-body, .dg-md { font-size: 18px; }
 .dg-body p, .dg-md p, .dg-md li { font-size: inherit; line-height: 1.55; }
 .dg-md code { font-size: .9em; }
 .dg-md pre.dg-md-pre { font-size: 15px; }

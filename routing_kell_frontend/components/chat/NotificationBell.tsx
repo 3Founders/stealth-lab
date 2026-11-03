@@ -8,12 +8,13 @@ const LABEL: Record<Note["kind"], string> = {
 
 export interface AlertsProps {
   notes: Note[]; prefs: Prefs; room: string;
-  onPrefs: (p: Prefs) => void; onOpen: (room: string | null) => void; onReadAll: () => void; onClear: () => void;
+  onPrefs: (p: Prefs) => void; onOpen: (room: string | null) => void; onRead: (id: string) => void;
+  onReadAll: () => void; onClear: () => void;
 }
 
 /** The alerts panel: recent notifications, and the settings that decide which ones reach you and how. It has no button of its own; the
  * chat menu opens it (components/chat/HamburgerMenu.tsx). */
-export default function NotificationPanel({ notes, prefs, room, onPrefs, onOpen, onReadAll, onClear, onClose, onBack }: AlertsProps & { onClose: () => void; onBack: () => void }) {
+export default function NotificationPanel({ notes, prefs, room, onPrefs, onOpen, onRead, onReadAll, onClear, onClose, onBack }: AlertsProps & { onClose: () => void; onBack: () => void }) {
   const unread = notes.filter((n) => !n.read).length;
   return (
     <div className="dg-bell-pop dg-bell-pop--menu" role="dialog" aria-label="Notifications">
@@ -29,7 +30,7 @@ export default function NotificationPanel({ notes, prefs, room, onPrefs, onOpen,
         ? <p className="dg-hint">Nothing yet. Mentions, agent results, approvals and new messages in rooms you are not looking at show up here.</p>
         : <ul className="dg-bell-list">{notes.map((n) => (
             <li key={n.id} data-read={n.read}>
-              <button type="button" onClick={() => { onOpen(n.room); onClose(); }}>
+              <button type="button" onClick={() => { onRead(n.id); onOpen(n.room); onClose(); }}>
                 <span className="dg-bell-kind">{LABEL[n.kind]}{n.room ? ` · ${n.room}` : ""}</span>
                 <b>{n.title}</b>
                 <span>{n.body}</span>

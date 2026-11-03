@@ -137,7 +137,7 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
     @handler
     async def agents(request: Request, pool: Any, subject: str) -> Response:
         if request.method == "GET":
-            return _json(request, {"agents": await dg.list_agents(pool, subject)})
+            return _json(request, {"agents": await dg.list_agents(pool, subject, request.query_params.get("room_id"))})
         data = await body_of(request)
         return _json(request, await dg.create_agent(pool, subject, str(data.get("name", "")), str(data.get("kind", "agent"))), 201)
 
@@ -151,7 +151,8 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
     async def messages(request: Request, pool: Any, subject: str) -> Response:
         data = await body_of(request)
         out = await dg.post_message(pool, subject, str(data.get("text", "")), data.get("room"),
-                                    needs_approval=bool(data.get("needs_approval", False)))
+                                    needs_approval=bool(data.get("needs_approval", False)),
+                                    room_id=str(data["room_id"]) if data.get("room_id") else None)
         return _json(request, out, 201 if out["tasks"] else 200)
 
     @server.custom_route("/v1/delegate/tasks", methods=["GET", "OPTIONS"], include_in_schema=False)

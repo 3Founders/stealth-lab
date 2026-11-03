@@ -16,7 +16,7 @@ def _entry(name, via=True):
 def test_a_server_that_asks_for_a_sign_in_is_demoted_and_moved_behind_the_ones_that_run(monkeypatch):
     urls = {"a/needs-login": "https://a.example/mcp", "b/open": "https://b.example/mcp"}
 
-    async def card(server):
+    async def card(server, **_):
         return ToolCard(id="r:" + server, source="registry", name=server, title="", description="", server=server,
                         extra={"connector_url": urls[server]})
 
@@ -36,7 +36,7 @@ def test_a_server_that_asks_for_a_sign_in_is_demoted_and_moved_behind_the_ones_t
 
 
 def test_a_slow_or_failing_server_is_left_as_it_was(monkeypatch):
-    async def card(server):
+    async def card(server, **_):
         return ToolCard(id="r:" + server, source="registry", name=server, title="", description="", server=server,
                         extra={"connector_url": "https://slow.example/mcp"})
 
@@ -54,7 +54,7 @@ def test_a_slow_or_failing_server_is_left_as_it_was(monkeypatch):
 def test_an_answer_is_remembered(monkeypatch):
     calls = []
 
-    async def card(server):
+    async def card(server, **_):
         return ToolCard(id="r:" + server, source="registry", name=server, title="", description="", server=server,
                         extra={"connector_url": "https://ok.example/mcp"})
 

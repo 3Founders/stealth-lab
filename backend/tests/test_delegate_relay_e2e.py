@@ -57,6 +57,7 @@ def pool():
         await admin.close()
         p = await asyncpg.create_pool(_swap_db(ADMIN_DSN, name), min_size=1, max_size=4)
         await p.execute((ROOT / "db" / "155_delegate_relay.sql").read_text(encoding="utf-8"))
+        await p.execute((ROOT / "db" / "176_delegate_cross_owner.sql").read_text(encoding="utf-8"))      # who asked, and in which room
         return p
 
     async def down(p):
@@ -121,11 +122,7 @@ def test_agent_pulls_in_order_posts_one_result_and_is_seen_online(pool):
 def test_nobody_can_touch_someone_elses_agents_or_tasks(pool):
     a = run(pool, dg.create_agent(pool, ALICE, "web-chat"))
     task = run(pool, dg.post_message(pool, ALICE, "@web-chat secret plan"))["tasks"][0]
-    with pytest.raises(dg.DelegateError) as e1:
-        run(pool, dg.claim_next(pool, BOB, "web-chat"))                          # Bob has no such agent
-    assert e1.value.status == 404
-    run(pool, dg.create_agent(pool, BOB, "web-chat"))
-    assert run(pool, dg.claim_next(pool, BOB, "web-chat"))["task"] is None        # his own empty queue
+    assert run(pool, dg.claim_next(pool, BOB, "web-chat"))["task"] is None        # Bob's first call registers HIS web-chat: an empty queue, never Alice's task
     with pytest.raises(dg.DelegateError):
         run(pool, dg.submit_result(pool, BOB, task["id"], "x"))
     with pytest.raises(dg.DelegateError):

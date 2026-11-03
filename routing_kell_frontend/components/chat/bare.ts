@@ -12,10 +12,9 @@ export function cap(s: string): string {
 /** How a person or agent is shown: no "@", first letter in capitals ("@scout" -> "Scout"). */
 export function nameOf(handle: string): string {
   const h = bare(handle);
-  const i = h.indexOf("/");
-  // "@asha/Q4 plan review": a connected agent that gave its chat's own title is shown by exactly that title, spaces and capitals kept.
-  // "@asha/claude" (no title given) stays "Asha/claude".
-  if (i > 0 && !/^[a-z0-9_.-]+$/.test(h.slice(i + 1))) return h.slice(i + 1);
+  // A connected agent is shown exactly as it joined, "asha/claude-code" or "asha/claude-code/Q4 plan review" (its chat's own title, spaces and
+  // capitals kept): that is also how another person calls it (@asha/claude).
+  if (h.includes("/")) return h;
   return cap(h);
 }
 

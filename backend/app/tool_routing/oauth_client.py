@@ -161,8 +161,22 @@ async def discover(resource_url: str, challenge: Optional[dict[str, str]] = None
         if not servers:
             raise OAuthRefused("this server does not publish a sign-in service kell can use") from last
         issuer = servers[0].rstrip("/")
+        u = urlsplit(issuer)
+        origin = f"{u.scheme}://{u.netloc}"
+        path = u.path.rstrip("/")
+        candidates = [
+            f"{issuer}/.well-known/oauth-authorization-server",
+            f"{issuer}/.well-known/openid-configuration",
+            # RFC 8414 puts the well-known segment before the issuer's path; servers in the wild also publish it at the
+            # origin (Presentations.AI's issuer is /oauth but its metadata is at the host root), so try both shapes.
+            f"{origin}/.well-known/oauth-authorization-server",
+            f"{origin}/.well-known/openid-configuration",
+        ]
+        if path:
+            candidates += [f"{origin}/.well-known/oauth-authorization-server{path}",
+                           f"{origin}/.well-known/openid-configuration{path}"]
         asm: dict = {}
-        for url in (f"{issuer}/.well-known/oauth-authorization-server", f"{issuer}/.well-known/openid-configuration"):
+        for url in dict.fromkeys(candidates):
             try:
                 asm = await _json(c, "GET", url)
                 if asm.get("authorization_endpoint") and asm.get("token_endpoint"):

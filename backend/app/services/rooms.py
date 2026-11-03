@@ -44,7 +44,7 @@ INVITE_MAX_DAYS = 30
 INVITE_MAX_USES = 100
 EVENTS_PER_MINUTE = 120
 TITLE_RE = re.compile(r"^#[a-z0-9][a-z0-9_.-]{0,78}$")
-HANDLE_RE = re.compile(r"^@[a-z0-9][a-z0-9_.-]{0,38}(?:/[^\s@/<>][^@/<>\r\n]{0,58})?$", re.I)   # @name, or @person/tool for a connector; after the slash a chat's own name, spaces and all
+HANDLE_RE = re.compile(r"^@[a-z0-9][a-z0-9_.-]{0,38}(?:/[a-z0-9][a-z0-9_.-]{0,38}(?:/[^\s@/<>][^@/<>\r\n]{0,58})?)?$", re.I)   # @name, @person/tool for a connector, @person/tool/chat title (the chat's own name, spaces and all)
 KINDS = ("msg", "edit", "delete", "react", "system", "task", "task_update", "note")
 NEEDS_TEXT = ("msg", "edit", "system")
 NEEDS_TARGET = ("edit", "delete", "react")
@@ -388,11 +388,8 @@ def connector_tool_name(tool: str) -> str:
     return _TOOL_NAMES.get(tool, tool)
 
 
-async def connector_handle(pool: Any, sub: str, *hints: Optional[str], chat: str = "") -> str:
-    """How a person's connected agent is named in a room: ``@username/claude``, ``@username/chatgpt``, ``@username/claude-code``, so everyone
-    can tell whose agent it is and which tool it is. Without a username on the account it is ``@name/tool`` from the display name, else
-    ``@agent/tool``."""
-    tool = connector_tool(*hints)
+async def owner_label(pool: Any, sub: str) -> str:
+    """The name a person's agents carry in a room: their username, else their display name, else "agent" (lowercase, handle-safe)."""
     owner = ""
     try:
         row = await pool.fetchrow(
@@ -402,9 +399,36 @@ async def connector_handle(pool: Any, sub: str, *hints: Optional[str], chat: str
         owner = ""
     if not owner:
         owner = (await _names(pool, [sub])).get(sub, "")
-    owner = re.sub(r"[^a-z0-9_.-]", "-", owner.lower()).strip(".-_")[:30] or "agent"
+    return re.sub(r"[^a-z0-9_.-]", "-", owner.lower()).strip(".-_")[:30] or "agent"
+
+
+async def sub_of_username(pool: Any, username: str) -> Optional[str]:
+    """The account behind a username, or None. (A handle names a person by username.)"""
+    name = re.sub(r"[^a-z0-9_.-]", "", (username or "").lower())
+    if not name:
+        return None
+    try:
+        row = await pool.fetchrow(
+            "SELECT u.external_subject FROM contributor_profiles cp JOIN users u ON u.id = cp.user_id WHERE lower(cp.username) = $1", name)
+        if row:
+            return str(row["external_subject"])
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        row = await pool.fetchrow("SELECT external_subject FROM users WHERE lower(display_name) = $1", name)
+        return str(row["external_subject"]) if row else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def connector_handle(pool: Any, sub: str, *hints: Optional[str], chat: str = "") -> str:
+    """How a person's connected agent is named in a room: exactly the agent that joined. ``@username/claude-code`` for Claude Code,
+    ``@username/claude`` for Claude on the web, ``@username/chatgpt``..., and when the agent says which chat it is in,
+    ``@username/claude-code/Q4 plan review``. The first two parts are also what people type to call it (``@username/claude``)."""
+    tool = connector_tool(*hints)
+    owner = await owner_label(pool, sub)
     name = chat_label(chat)
-    return f"@{owner}/{name or tool}"
+    return f"@{owner}/{tool}" + (f"/{name}" if name else "")
 
 
 def agent_event(handle: str, text: str, reply_to: Optional[str] = None) -> dict[str, Any]:

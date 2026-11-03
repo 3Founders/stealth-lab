@@ -46,6 +46,7 @@ import ManageRooms from "@/components/chat/ManageRooms";
 import { PanelCloseIcon, RemoveIcon, CanvasIcon } from "@/components/chat/icons";
 import HamburgerMenu from "@/components/chat/HamburgerMenu";
 import SettingsDialog, { type SectionId } from "@/components/chat/SettingsDialog";
+import { getToolPrefs, setToolPrefs } from "@/lib/chat/tool-prefs";
 import { DEFAULT_CHAT_PREFS, TEXT_PX, loadChatPrefs, saveChatPrefs, type ChatPrefs } from "@/lib/chat/prefs";
 import { fallbackName, personHandle } from "@/lib/chat/events";
 import MessageText from "@/components/chat/MessageText";
@@ -53,7 +54,7 @@ import MessageActions from "@/components/chat/MessageActions";
 import Markdown from "@/components/chat/Markdown";
 import AddAgentDialog from "@/components/chat/AddAgentDialog";
 import { withoutDataImages } from "@/lib/chat/images";
-import { DEFAULT_PREFS, chime, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs, unlockAudio } from "@/lib/chat/notify";
+import { DEFAULT_PREFS, chime, closeAllOs, closeOs, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs, unlockAudio } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
 const STATUS: Record<RelayTask["status"], string> = {
@@ -61,6 +62,14 @@ const STATUS: Record<RelayTask["status"], string> = {
 };
 
 type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number };
+
+/** A notice's text with any http(s) link made clickable: the sign-in and consent links are meant to be opened. */
+function withLinks(text: string) {
+  return text.split(/(https?:\/\/[^\s]+)/g).map((part, i) =>
+    /^https?:\/\//.test(part)
+      ? <a key={i} href={part} target="_blank" rel="noreferrer noopener" className="dg-link">{part}</a>
+      : part);
+}
 
 /** A message older than this when it arrives is history, not news: it raises no alert, bell entry or sound. */
 const NEW_MESSAGE_MS = 3 * 60 * 1000;
@@ -212,6 +221,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const queues = useRef<Queues>({});
   const [queueView, setQueueView] = useState<Queues>({});
   const askKellRef = useRef<((r: string, text: string, who?: string) => Promise<void>) | null>(null);
+  /** The request that hit a sign-in wall: run it again by itself when the person comes back from signing in. */
+  const signInRetry = useRef<{ room: string; text: string; who: string } | null>(null);
   /** Copy a message's text: to the clipboard, with a small notice as feedback. */
   const copyRoomText = useCallback(async (t: string): Promise<boolean> => {
     if (!t) return true;
@@ -257,7 +268,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (out.memory.remembered.length) note(`Remembered: ${out.memory.remembered.map((l) => l.replace(/^- /, "").replace(/ \[source:.*$/, "")).join("; ")}. Settings, Memory and knowledge, to edit or undo.`, r);
       else if (out.memory.used.length) note(`Used your memory: ${out.memory.used.join(", ")}`, r);
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
-      for (const link of out.sign_in ?? []) note(`Sign in to that tool here (10 minutes), then ask again: ${link}`, r);
+      if (out.sign_in?.length) {
+        signInRetry.current = { room: r, text, who };   // return from the sign-in and the same request runs again
+        for (const link of out.sign_in) note(`Sign in to that tool here (10 minutes): ${link}`, r);
+      }
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
         // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
@@ -287,6 +301,22 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     }
   }, [roomsAgent, note, push]);
   askKellRef.current = askKell;
+  // "Use it just after kell says": the sign-in link opens in another tab; when the person comes back to this one, run the
+  // request that hit the sign-in wall again, once. A short wait lets the callback finish sealing the token first.
+  useEffect(() => {
+    const retry = () => {
+      if (document.visibilityState === "hidden") return;
+      const p = signInRetry.current;
+      if (!p) return;
+      signInRetry.current = null;
+      window.setTimeout(() => {
+        if (roomRef.current === p.room) void askKellRef.current?.(p.room, p.text, p.who);
+      }, 900);
+    };
+    document.addEventListener("visibilitychange", retry);
+    window.addEventListener("focus", retry);
+    return () => { document.removeEventListener("visibilitychange", retry); window.removeEventListener("focus", retry); };
+  }, []);
   /** The streamed bubble has been fully revealed: the posted message takes its place. Safe to call twice. */
   const flushFinal = useCallback((who: string) => {
     const e = streamingRef.current[who];
@@ -308,10 +338,26 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [prefs, setPrefsState] = useState<Prefs>(DEFAULT_PREFS);
   const prefsRef = useRef(prefs);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [tabVisible, setTabVisible] = useState(true);
+  useEffect(() => {
+    const sync = () => setTabVisible(document.visibilityState !== "hidden");
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
   // Settings window (opened from the menu) and the look-and-feel preferences it holds (lib/chat/prefs.ts).
   const [settings, setSettings] = useState<{ open: boolean; section: SectionId }>({ open: false, section: "preferences" });
   const [chatPrefs, setChatPrefsState] = useState<ChatPrefs>(DEFAULT_CHAT_PREFS);
   useEffect(() => { setChatPrefsState(loadChatPrefs(subject)); }, [subject]);
+  // Tools that need a sign-in: on unless the person turned them off; the server stores it per account, so the room agent agrees.
+  const [allowSignInTools, setAllowSignInTools] = useState(true);
+  useEffect(() => {
+    void getAccessToken().then((t) => (t ? getToolPrefs(t).then(setAllowSignInTools).catch(() => undefined) : undefined));
+  }, [subject]);
+  const setAllowSignInToolsSaved = (v: boolean) => {
+    setAllowSignInTools(v);
+    void getAccessToken().then((t) => (t ? setToolPrefs(t, v).catch(() => setAllowSignInTools(!v)) : undefined));
+  };
   const setChatPrefs = useCallback((p: ChatPrefs) => { setChatPrefsState(p); saveChatPrefs(subject, p); }, [subject]);
   const [accountName, setAccountName] = useState("");
   useEffect(() => { void import("@/lib/device-profile").then((m) => m.loadDeviceProfile()).then((p) => { if (p) setAccountName(p.name || (p.email ?? "")); }); }, [subject]);
@@ -547,7 +593,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const s of seq) {
       if (s.kind !== "run") {
         const l = s.l;
-        out.push({ t: l.t, key: l.id, node: <MessageScroller.Item key={l.id} className="dg-notice" role="status">{l.text}</MessageScroller.Item> });
+        out.push({ t: l.t, key: l.id, node: <MessageScroller.Item key={l.id} className="dg-notice" role="status">{withLinks(l.text)}</MessageScroller.Item> });
         continue;
       }
       const run = s.run;
@@ -805,7 +851,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     };
     window.setTimeout(() => find(10), 120);
   };
-  useEffect(() => { setNotes((p) => (p.some((n) => !n.read && n.room === room) ? p.map((n) => (n.room === room ? { ...n, read: true } : n)) : p)); }, [room]);
+  // Seeing the room is seeing its alerts: once the tab is visible and the room is open, its notifications are read and the
+  // system alert for it is taken back. A note for another room stays until that room is opened or its entry is clicked.
+  useEffect(() => {
+    if (!tabVisible || !notes.some((n) => !n.read && n.room === room)) return;
+    closeOs(room);
+    setNotes((p) => p.map((n) => (n.room === room && !n.read ? { ...n, read: true } : n)));
+  }, [room, tabVisible, notes]);
   const unreadTotal = Object.entries(info).reduce((a, [r, v]) => a + (r === room ? 0 : v.unread), 0);
   useEffect(() => {
     const base = document.title.replace(/^\(\d+\+?\) /, "");
@@ -1156,7 +1208,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       <section className="dg-main" aria-label={`Room ${roomName(room)}`}>
         <header className="dg-head">
           <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
-            alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r), onReadAll: () => setNotes((p) => p.map((n) => ({ ...n, read: true }))), onClear: () => setNotes([]) }}
+            alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r),
+              onRead: (id) => setNotes((p) => p.map((n) => (n.id === id ? { ...n, read: true } : n))),
+              onReadAll: () => { closeAllOs(); setNotes((p) => p.map((n) => ({ ...n, read: true }))); },
+              onClear: () => { closeAllOs(); setNotes([]); } }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
             <span aria-hidden="true">▤</span> <span>Open sidebar</span>
@@ -1233,7 +1288,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         memory={{ api: mapi }}
         data={{ encrypted: { onDownload: () => void downloadEncrypted(), onImport: () => encFile.current?.click() }, onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
           folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
-        agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH }}
+        agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, allowSignInTools, onAllowSignInTools: setAllowSignInToolsSaved }}
         account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
       />
     </div>

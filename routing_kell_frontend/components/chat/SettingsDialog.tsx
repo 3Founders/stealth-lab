@@ -61,7 +61,8 @@ export interface SettingsProps {
     encrypted?: { onDownload: () => void; onImport: () => void };
     /** A folder on this computer that keeps a copy (only where the browser allows it). */
     folder?: { supported: boolean; name: string | null; onChoose: () => void; onRestore: () => void; onStop: () => void } };
-  agents: { modelText: string; modelReady: boolean; count: number; paused: boolean; onPause: (p: boolean) => void; maxHops: number };
+  agents: { modelText: string; modelReady: boolean; count: number; paused: boolean; onPause: (p: boolean) => void; maxHops: number;
+    allowSignInTools: boolean; onAllowSignInTools: (v: boolean) => void };
   account: { name: string; onSignOut: () => void };
   /** kell's memory (server side). Absent in tests that do not need it. */
   memory?: { api: MemoryApi };
@@ -177,6 +178,7 @@ export default function SettingsDialog(p: SettingsProps) {
                 <p className="small"><b>Kell</b> is the default agent. An agent you add is another instance of Kell: the same models and tools, with its own name and, if you gave it any, its own instructions. They answer through keळ's server when you ask them.</p>
                 <p className="small"><b>Agents you connect</b> (Claude Code, Cursor, Claude on the web, ChatGPT) run on your side. They show as online for a minute after each time they check their keळ inbox, and as not connected until they do.</p>
                 <label className="dg-set-row"><input type="checkbox" checked={p.agents.paused} onChange={(e) => p.agents.onPause(e.target.checked)} /><span><b>Pause agents</b><small>Kell and its instances will not answer until you resume. Messages you send are still saved.</small></span></label>
+                <label className="dg-set-row"><input type="checkbox" checked={p.agents.allowSignInTools} onChange={(e) => p.agents.onAllowSignInTools(e.target.checked)} /><span><b>Tools that need a sign-in</b><small>When off, kell will not offer a tool that asks you to sign in to another service. Tools that need no sign-in still work. You can also just say &quot;don&apos;t use tools that need a sign-in&quot;.</small></span></label>
                 <p className="small dim">Agents hand off to each other at most {p.agents.maxHops} times before a person must step in.</p>
               </section>
             )}

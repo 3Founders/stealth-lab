@@ -151,10 +151,29 @@ export function setBadge(unread: number): void {
 }
 
 /** Shows an operating-system alert. One per room: a newer one replaces the older instead of stacking. */
+const osAlerts = new Map<string, Notification>();
+
 export function showOs(note: Note, onOpen: (room: string | null) => void): void {
   if (permission() !== "granted") return;
+  const key = note.room ?? "kel-chat";
   try {
-    const n = new Notification(note.title, { body: note.body, tag: note.room ?? "kel-chat", icon: "/kel-mark.png", silent: true });
+    osAlerts.get(key)?.close();
+    const n = new Notification(note.title, { body: note.body, tag: key, icon: "/kel-mark.png", silent: true });
+    osAlerts.set(key, n);
+    n.onclose = () => { if (osAlerts.get(key) === n) osAlerts.delete(key); };
     n.onclick = () => { try { window.focus(); } catch { /* none */ } onOpen(note.room); n.close(); };
   } catch { /* some browsers only allow alerts from a service worker */ }
+}
+
+/** Takes back the system alert for a room once the person has seen the message it was about. */
+export function closeOs(room: string | null): void {
+  const key = room ?? "kel-chat";
+  try { osAlerts.get(key)?.close(); } catch { /* already gone */ }
+  osAlerts.delete(key);
+}
+
+/** Takes back every system alert (when the person marks everything read). */
+export function closeAllOs(): void {
+  for (const n of osAlerts.values()) { try { n.close(); } catch { /* already gone */ } }
+  osAlerts.clear();
 }

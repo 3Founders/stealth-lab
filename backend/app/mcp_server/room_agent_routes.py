@@ -107,6 +107,23 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         text = data.get("text") if isinstance(data, dict) else None
         if not isinstance(text, str) or not text.strip():
             return _error(request, "send the message in `text`", 400)
+        # "Just say it": a short message that clearly asks to stop or allow tools that need a sign-in is a setting, not a
+        # model turn. It is saved for the account and answered privately (never posted into the room).
+        from app.tool_routing import prefs as _tool_prefs
+        want = _tool_prefs.preference_from_text(text)
+        if want is not None:
+            await _tool_prefs.set_allow_signin(pool, subject, want)
+            note = ("Okay: tools that need a sign-in are off. I will not offer them; turn them back on in Settings > Agents "
+                    "and models, or say \"allow tools that need a sign-in\"." if not want else
+                    "Okay: tools that need a sign-in are allowed again.")
+            payload = {"posted": False, "text": note, "tools": [], "event": None, "consent": [], "sign_in": [],
+                       "memory": {"used": [], "remembered": []}}
+            if "text/event-stream" in (request.headers.get("accept") or ""):
+                async def pref_frames():
+                    yield _sse({"done": True, **payload})
+                return StreamingResponse(pref_frames(), media_type="text/event-stream",
+                                         headers={**cors_headers(request), "Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+            return _json(request, payload)
         room_id = request.path_params["room_id"]
         # Every agent is kell: the default one is @kell, any other name is another instance of it.
         raw_name = str(data.get("agent") or "kell").strip().lstrip("@").lower()

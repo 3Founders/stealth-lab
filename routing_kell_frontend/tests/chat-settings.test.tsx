@@ -84,7 +84,7 @@ function Harness({ start = "preferences" as SectionId, onData = () => {} }: { st
   return (
     <SettingsDialog open section={section} room="#team" onSection={setSection} onClose={() => {}} chatPrefs={chat} onChatPrefs={setChat}
       notifyPrefs={DEFAULT_PREFS} onNotifyPrefs={() => {}} data={{ onDownload: onData, onImport: () => {}, onDelete: () => {} }}
-      agents={{ modelText: "OpenAI · gpt", modelReady: true, count: 2, paused: false, onPause: () => {}, maxHops: 4 }} account={{ name: "Ada", onSignOut: () => {} }} />
+      agents={{ modelText: "OpenAI · gpt", modelReady: true, count: 2, paused: false, onPause: () => {}, maxHops: 4, allowSignInTools: true, onAllowSignInTools: () => {} }} account={{ name: "Ada", onSignOut: () => {} }} />
   );
 }
 

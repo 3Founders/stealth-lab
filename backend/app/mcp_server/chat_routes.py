@@ -83,7 +83,7 @@ def cors_headers(request: Request) -> dict[str, str]:
     origin = request.headers.get("origin", "")
     if origin and origin in allowed_origins():
         return {"Access-Control-Allow-Origin": origin, "Vary": "Origin", "Access-Control-Allow-Headers": ALLOWED_HEADERS,
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Expose-Headers": EXPOSED_HEADERS,
+                "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS", "Access-Control-Expose-Headers": EXPOSED_HEADERS,
                 "Access-Control-Max-Age": "600"}
     return {"Vary": "Origin"}
 
@@ -215,6 +215,28 @@ def register(server: Any, verifier: Any, pool_getter: Callable[[], Any], is_loca
         from app.providers import chat as _chat
         return JSONResponse({"object": "list", "data": await _chat.list_models(who.scope)},
                             headers={**cors_headers(request), "Cache-Control": "no-store"})
+
+    @server.custom_route("/v1/tools/prefs", methods=["GET", "PUT", "OPTIONS"], include_in_schema=False)
+    async def tool_prefs(request: Request) -> Response:
+        """The person's tool preference: may kell use tools that need a sign-in? (app/tool_routing/prefs.py)"""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        who, refusal = await authed(request)
+        if refusal is not None:
+            return _error(request, refusal[1], refusal[0], _kind(refusal[1]))
+        from app.tool_routing import prefs as _prefs
+        pool = pool_getter()
+        headers = {**cors_headers(request), "Cache-Control": "no-store"}
+        if request.method == "GET":
+            return JSONResponse({"allow_signin_tools": await _prefs.allow_signin(pool, who.actor_id)}, headers=headers)
+        try:
+            body = await request.json()
+        except ValueError:
+            return _error(request, 400, "the body must be JSON", "invalid_request_error")
+        if not isinstance(body, dict) or not isinstance(body.get("allow_signin_tools"), bool):
+            return _error(request, 400, "give allow_signin_tools as true or false", "invalid_request_error")
+        value = await _prefs.set_allow_signin(pool, who.actor_id, body["allow_signin_tools"])
+        return JSONResponse({"allow_signin_tools": value}, headers=headers)
 
     @server.custom_route("/v1/chat/completions", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def completions(request: Request) -> Response:

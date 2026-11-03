@@ -6,11 +6,19 @@
  */
 import { MCP_ORIGIN } from "@/lib/connector";
 
-export interface RelayAgent { id: string; name: string; kind: string; handle: string; created_at: string; last_seen: string | null; online: boolean; revoked: boolean }
+export interface RelayAgent {
+  id: string; name: string; kind: string; handle: string; created_at: string; last_seen: string | null; online: boolean; revoked: boolean;
+  /** The person it belongs to (their username), whether it is yours, what to type for someone else's (@owner/name), and whether it polled in the last minute. */
+  owner?: string; mine?: boolean; full_handle?: string; connected?: boolean;
+}
+/** What you type to call an agent: your own is @name, another person's is @owner/name. */
+export const relayKey = (a: Pick<RelayAgent, "name" | "owner" | "mine">): string => (a.mine === false && a.owner ? `${a.owner}/${a.name}` : a.name).toLowerCase();
 export type TaskStatus = "needs_approval" | "queued" | "claimed" | "done" | "failed" | "cancelled";
 export interface RelayTask {
   id: string; agent_id: string; room: string; from: string; text: string; locators: unknown[]; depth: number; status: TaskStatus;
   created_at: string; claimed_at: string | null; finished_at: string | null; result: string | null; check: string | null;
+  /** Whether its answer was posted into the room (then the room's message is the answer, not this card). */
+  posted?: boolean;
 }
 
 export class RelayError extends Error {
@@ -61,11 +69,11 @@ export function relay(deps: RelayDeps) {
   };
 
   return {
-    agents: async () => (await call<{ agents: RelayAgent[] }>("GET", "/agents")).agents,
+    agents: async (roomId?: string) => (await call<{ agents: RelayAgent[] }>("GET", `/agents${q({ room_id: roomId })}`)).agents,
     addAgent: (name: string) => call<RelayAgent>("POST", "/agents", { name }),
     removeAgent: (id: string) => call<{ revoked: boolean; cancelled: number }>("DELETE", `/agents/${encodeURIComponent(id)}`),
-    send: (text: string, room: string, needsApproval = false) =>
-      call<{ room: string; tasks: RelayTask[]; unknown: string[] }>("POST", "/messages", { text, room, ...(needsApproval ? { needs_approval: true } : {}) }),
+    send: (text: string, room: string, needsApproval = false, roomId?: string) =>
+      call<{ room: string; tasks: RelayTask[]; unknown: string[] }>("POST", "/messages", { text, room, ...(roomId ? { room_id: roomId } : {}), ...(needsApproval ? { needs_approval: true } : {}) }),
     tasks: async (room: string, after?: string) => (await call<{ tasks: RelayTask[] }>("GET", `/tasks${q({ room, after })}`)).tasks,
     approve: (id: string) => call<RelayTask>("POST", `/tasks/${encodeURIComponent(id)}/approve`),
     cancel: (id: string) => call<RelayTask>("POST", `/tasks/${encodeURIComponent(id)}/cancel`),
