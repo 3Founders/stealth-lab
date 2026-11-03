@@ -1687,7 +1687,7 @@ async def _gateway_call(ctx: Context, server_name: str, tool: str, arguments: di
             return await done("refused:tool", f"REFUSED: {tool} cannot be run through kell: {why}")
         result, sent, received = await _gateway.call_tool(url, tool, arguments)
     except _gateway.GatewayRefused as exc:
-        return await done("failed:refused", f"FAILED: {server_name}: {exc}")
+        return await done("failed:signin" if "sign-in" in str(exc) else "failed:refused", f"FAILED: {server_name}: {exc}")
     except Exception as exc:  # noqa: BLE001
         return await done(f"failed:{type(exc).__name__}", f"FAILED: {server_name}: {type(exc).__name__}")
     text, images = _gateway.content_parts(result)
@@ -3298,9 +3298,18 @@ async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     import asyncio as _asyncio
     import time as _time
 
+    pool = _LIFESPAN_STATE.get("pool")
+    if pool is not None:
+        await _gateway.learn_signins(pool)
+        for t in tools:
+            if isinstance(t, dict) and t.get("via_kell") and str(t.get("server") or t.get("name")) in _gateway.SIGNIN_SERVERS:
+                t["via_kell"] = False
+                t.pop("call", None)
+                t["available"] = "cannot run through kell: it asks for a sign-in kell cannot give; do not try it"
     live = [t for t in tools if isinstance(t, dict) and t.get("via_kell") and t.get("source") == "registry"][:6]
     if not live:
-        return tools
+        return [t for t in tools if not str(t.get("available", "")).startswith("cannot run through kell: it asks")] + \
+               [t for t in tools if str(t.get("available", "")).startswith("cannot run through kell: it asks")]
 
     async def check(t: dict[str, Any]) -> None:
         server = str(t.get("server") or t.get("name") or "")

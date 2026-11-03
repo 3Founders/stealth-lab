@@ -54,6 +54,32 @@ WRITE_TOOL = re.compile(
 NEEDS_SIGNIN: set[str] = set()
 
 
+# The same fact learned from use and kept in the audit log, so it survives a restart and covers every person: servers whose calls were refused
+# for a sign-in in the last thirty days and that have not worked since (refreshed at most every ten minutes by learn_signins).
+SIGNIN_SERVERS: set[str] = set()
+_LEARNED_AT = 0.0
+LEARN_EVERY_S = 600.0
+
+
+async def learn_signins(pool: Any, now: Optional[float] = None) -> None:
+    """Reads the audit log: a server whose newest outcome is a sign-in refusal is marked, so it is never offered as runnable and never tried
+    first. A later successful call (the server changed) clears it."""
+    global _LEARNED_AT, SIGNIN_SERVERS
+    t = time.monotonic() if now is None else now
+    if t - _LEARNED_AT < LEARN_EVERY_S:
+        return
+    _LEARNED_AT = t
+    try:
+        rows = await pool.fetch("""SELECT server FROM (
+                                     SELECT DISTINCT ON (server) server, status FROM tool_gateway_calls
+                                     WHERE at > now() - interval '30 days' AND (status = 'failed:signin' OR status = 'ok' OR status LIKE 'ok:%')
+                                     ORDER BY server, at DESC) latest
+                                   WHERE status = 'failed:signin'""")
+        SIGNIN_SERVERS = {str(r["server"]) for r in rows}
+    except Exception:  # noqa: BLE001 -- no audit table or no database: the in-memory list still works
+        pass
+
+
 class GatewayRefused(Exception):
     """A call the gateway will not make; the message says why, in words the agent can pass on."""
 
@@ -85,7 +111,7 @@ def gateway_allowed(card: ToolCard) -> bool:
     return (card.source == "registry" and bool(ex.get("connector_url")) and ex.get("probe") == "live"
             and bool(ex.get("verified")) and int(ex.get("owner_count") or 1) <= BULK_PUBLISHER
             and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card)) and not ex.get("archived")
-            and str(ex.get("connector_url")) not in NEEDS_SIGNIN
+            and str(ex.get("connector_url")) not in NEEDS_SIGNIN and card.name not in SIGNIN_SERVERS
             and card.name not in denylist() and os.environ.get("TOOL_GATEWAY", "on").lower() != "off")
 
 

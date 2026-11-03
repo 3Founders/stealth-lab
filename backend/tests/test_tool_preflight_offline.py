@@ -69,3 +69,19 @@ def test_an_answer_is_remembered(monkeypatch):
     asyncio.run(sv._preflight_tools([_entry("o/ok")]))
     asyncio.run(sv._preflight_tools([_entry("o/ok")]))
     assert len(calls) == 1
+
+
+def test_servers_whose_newest_outcome_was_a_sign_in_refusal_are_learned_from_the_audit_log_and_demoted(monkeypatch):
+    class Pool:
+        async def fetch(self, sql, *a):
+            assert "failed:signin" in sql
+            return [{"server": "ai.pitchboost/pitchboost"}]
+
+    g.SIGNIN_SERVERS.clear()
+    g._LEARNED_AT = 0.0
+    monkeypatch.setitem(sv._LIFESPAN_STATE, "pool", Pool())
+    out = asyncio.run(sv._preflight_tools([_entry("ai.pitchboost/pitchboost"), _entry("co.good/server")]))
+    # pitchboost is demoted before anything is called; the other one is checked live (nothing reachable here, so no verdict) and left as it was
+    assert out[-1]["name"] == "ai.pitchboost/pitchboost" and out[-1]["via_kell"] is False
+    g.SIGNIN_SERVERS.clear()
+    g._LEARNED_AT = 0.0
