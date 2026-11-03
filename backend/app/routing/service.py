@@ -6,7 +6,7 @@ import math
 import re
 import uuid
 from datetime import datetime
-from functools import lru_cache
+from collections import OrderedDict
 from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
@@ -20,26 +20,37 @@ class RoutingError(ValueError):
     pass
 
 
-@lru_cache(maxsize=4)
-def _globals_cached(version: int, blob: bytes, meta_json: str) -> predict.Globals:
-    import json
-
-    return predict.load_globals(version, blob, json.loads(meta_json))
+# Fitted globals by params version, newest used last. A version's draws never change once saved (a refit saves a new
+# version), so the version is the whole key. Keying on the blob itself (as this did) made every request download the
+# ~10 MB blob from Postgres, hash it, and keep up to four of them alive as dictionary keys beside the decoded arrays.
+_GLOBALS_BY_VERSION: "OrderedDict[int, predict.Globals]" = OrderedDict()
+_GLOBALS_KEEP = 4
 
 
 async def _globals(pool: Any, version: Optional[int] = None) -> Optional[predict.Globals]:
     """The fitted global draws: the database's (a given version, or the active one), else the bundled public
     prior (app/routing/prior_bundle.py) -- so routing works before any production fit has run."""
-    import json
-
     from app.routing import prior_bundle
 
     if version == prior_bundle.BUNDLE_VERSION:
         return prior_bundle.load_globals()
-    row = await (store.params_version(pool, version) if version is not None else store.active_params(pool))
+    if version is None:
+        active = await store.active_params(pool, with_draws=False)      # the version only: no blob over the wire
+        if active is None:
+            return prior_bundle.load_globals()
+        version = active["version"]
+    g = _GLOBALS_BY_VERSION.get(version)
+    if g is not None:
+        _GLOBALS_BY_VERSION.move_to_end(version)
+        return g
+    row = await store.params_version(pool, version)                     # the blob, once per version
     if row is None:
-        return prior_bundle.load_globals() if version is None else None
-    return _globals_cached(row["version"], row["draws"], json.dumps(row["meta"], sort_keys=True))
+        return None
+    g = predict.load_globals(row["version"], row["draws"], row["meta"])
+    _GLOBALS_BY_VERSION[version] = g
+    while len(_GLOBALS_BY_VERSION) > _GLOBALS_KEEP:
+        _GLOBALS_BY_VERSION.popitem(last=False)
+    return g
 
 
 async def _card_rows(pool: Any) -> list[dict]:

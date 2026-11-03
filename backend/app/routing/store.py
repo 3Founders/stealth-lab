@@ -327,9 +327,13 @@ async def record_decision(pool: Any, row: Mapping[str, Any]) -> None:
 
 # ------------------------------------------------------------------ control DB
 
-async def active_params(pool: Any) -> Optional[dict]:
+async def active_params(pool: Any, *, with_draws: bool = True) -> Optional[dict]:
+    """The active fit. `with_draws=False` leaves the draws blob (about 10 MB compressed) in the database and returns
+    `draws=None`: a decision only needs the version to look its already-loaded globals up, so it does not pull the
+    blob across the wire on every request (service._globals fetches it once per version, on a cache miss)."""
+    cols = "version, draws, meta, method" if with_draws else "version, NULL::bytea AS draws, meta, method"
     row = await pool.fetchrow(
-        "SELECT version, draws, meta, method FROM routing_params WHERE status = 'active' ORDER BY version DESC LIMIT 1")
+        f"SELECT {cols} FROM routing_params WHERE status = 'active' ORDER BY version DESC LIMIT 1")
     return _params_row(row)
 
 
@@ -342,7 +346,7 @@ def _params_row(row: Any) -> Optional[dict]:
     if row is None:
         return None
     meta = row["meta"]
-    return {"version": int(row["version"]), "draws": bytes(row["draws"]),
+    return {"version": int(row["version"]), "draws": None if row["draws"] is None else bytes(row["draws"]),
             "meta": json.loads(meta) if isinstance(meta, str) else dict(meta), "method": row["method"]}
 
 
