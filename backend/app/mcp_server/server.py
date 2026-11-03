@@ -1056,6 +1056,56 @@ def _room_agent_max_tokens() -> int:
         return 4096
 
 
+def _self_base() -> str:
+    """Where the room agent asks for a completion: this process's own /v1/chat/completions on the loopback address (KELL_API_BASE overrides it
+    when the model endpoint is a separate deployment). It used to go out through the public address, so every agent turn crossed the hosting
+    edge twice, and an edge 502 (a deploy swapping instances, an idle stream cut) read as "the model endpoint answered 502"."""
+    import os as _os
+
+    return (_os.environ.get("KELL_API_BASE") or f"http://127.0.0.1:{_os.environ.get('PORT') or _MCP_PORT}").rstrip("/")
+
+
+_MODEL_DOWN: dict[str, float] = {}          # model -> until when (monotonic) it is skipped: its provider has no credit left
+TRANSIENT = (502, 503, 504)
+
+
+def _out_of_credit(message: str) -> bool:
+    m = (message or "").lower()
+    return any(k in m for k in ("credit balance", "insufficient", "payment required", "http 402", "quota", "billing"))
+
+
+def _friendly_status(status: int, why: str) -> str:
+    """The sentence a person sees when the model service fails. A gateway status with no message of its own (a hosting edge, not kell's
+    endpoint) is a brief outage, and is said to be one."""
+    if why:
+        return why
+    if status in TRANSIENT:
+        return f"the model service was briefly unavailable ({status}); ask again in a moment"
+    return f"the model service answered {status}"
+
+
+async def _post_retry(client: Any, url: str, headers: dict, payload: dict) -> Any:
+    """POST that tries again (twice, after one and two seconds) on a dropped connection or a gateway 502/503/504 that carries no error of
+    kell's own. A real refusal (a 4xx, or kell's own JSON error such as an empty provider balance) is returned at once."""
+    import asyncio as _asyncio
+
+    import httpx
+
+    for attempt in range(3):
+        try:
+            r = await client.post(url, headers=headers, json=payload)
+        except httpx.TransportError as exc:
+            if attempt == 2:
+                raise RuntimeError(f"the model service could not be reached ({type(exc).__name__}); ask again in a moment") from exc
+            await _asyncio.sleep(1.0 + attempt)
+            continue
+        if r.status_code in TRANSIENT and attempt < 2 and '"error"' not in r.text[:400]:
+            await _asyncio.sleep(1.0 + attempt)
+            continue
+        return r
+    raise RuntimeError("the model service did not answer")
+
+
 def _room_agent_model_chain() -> list[str]:
     """The model the agent uses, then the ones it falls back to when the first cannot answer (an empty provider balance, an outage, a refusal):
     KELL_ROOM_AGENT_FALLBACKS (comma separated), else the deployment's default model."""
@@ -1063,7 +1113,12 @@ def _room_agent_model_chain() -> list[str]:
 
     first = _room_agent_model_name()
     extra = [m.strip() for m in (_os.environ.get("KELL_ROOM_AGENT_FALLBACKS") or "").split(",") if m.strip()] or [_default_call_model()]
-    return list(dict.fromkeys([first, *extra]))
+    chain = list(dict.fromkeys([first, *extra]))
+    import time as _time
+
+    now = _time.monotonic()
+    live = [m for m in chain if _MODEL_DOWN.get(m, 0.0) <= now]
+    return live or chain                       # a model whose provider has no credit is skipped for ten minutes, unless none else is left
 
 
 async def _room_agent_model(authorization: str, messages: list[dict], tools: list[dict]) -> dict:
@@ -1075,6 +1130,10 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
             return await _room_agent_model_one(authorization, messages, tools, model)
         except RuntimeError as exc:
             last = exc
+            if _out_of_credit(str(exc)):
+                import time as _time
+
+                _MODEL_DOWN[model] = _time.monotonic() + 600.0
             logging.getLogger(__name__).warning("room agent: %s could not answer (%s); trying the next model", model, str(exc)[:120])
     raise last or RuntimeError("no model answered")
 
@@ -1087,27 +1146,27 @@ async def _room_agent_model_one(authorization: str, messages: list[dict], tools:
 
     from app.providers.adapters import http_client
 
-    base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
+    base = _self_base()
     body: dict[str, Any] = {"model": model, "max_tokens": _room_agent_max_tokens(),
                             "messages": messages, "stream": False}
     headers = {"authorization": authorization, "content-type": "application/json",
                "x-stealthlab-data-class": "PUBLIC_SOURCE"}
     async with http_client(timeout=120.0) as client:
         if tools:
-            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": _wire_tools(tools), "tool_choice": _tool_choice(tools)})
+            r = await _post_retry(client, f"{base}/v1/chat/completions", headers, {**body, "tools": _wire_tools(tools), "tool_choice": _tool_choice(tools)})
             if r.status_code in (400, 422) and _tool_choice(tools) != "auto":   # a model that refuses a forced call is asked again with the choice left to it
-                r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": _wire_tools(tools), "tool_choice": "auto"})
+                r = await _post_retry(client, f"{base}/v1/chat/completions", headers, {**body, "tools": _wire_tools(tools), "tool_choice": "auto"})
             if r.status_code in (400, 422):          # a model that will not take tools still answers without them
-                r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
+                r = await _post_retry(client, f"{base}/v1/chat/completions", headers, body)
         else:
-            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
+            r = await _post_retry(client, f"{base}/v1/chat/completions", headers, body)
     if r.status_code >= 300:
         why = ""
         try:
             why = str(((r.json() or {}).get("error") or {}).get("message") or "")[:200]
         except Exception:  # noqa: BLE001 -- a non-JSON error body
             why = ""
-        raise RuntimeError(why or f"the model endpoint answered {r.status_code}")
+        raise RuntimeError(_friendly_status(r.status_code, why))
     return r.json()
 
 
@@ -1168,7 +1227,7 @@ async def _room_agent_call_model_one(authorization: str, model: str, prompt: str
 
     from app.providers.adapters import http_client
 
-    base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
+    base = _self_base()
     headers = {"authorization": authorization, "content-type": "application/json", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
     body = {"model": model, "stream": False, "max_tokens": int(_os.environ.get("KELL_CHEAP_MAX_TOKENS", "7000")),
             "messages": [{"role": "system", "content": "You write the finished thing that is asked for, complete and ready to use, with no preface and no closing remarks."},
@@ -1216,53 +1275,76 @@ async def _room_agent_model_stream(authorization: str, messages: list[dict], too
             if started:
                 raise                                   # part of an answer is out: it cannot be swapped for another model's
             last = exc
+            if _out_of_credit(str(exc)):
+                import time as _time
+
+                _MODEL_DOWN[model] = _time.monotonic() + 600.0
             logging.getLogger(__name__).warning("room agent: %s could not answer (%s); trying the next model", model, str(exc)[:120])
     raise last or RuntimeError("no model answered")
 
 
 async def _room_agent_model_stream_one(authorization: str, messages: list[dict], tools: list[dict], model: str):
     """The same completion, streamed: yields the OpenAI SSE chunks as they arrive. A model that refuses tools (400/422) is
-    retried once without them; any other refusal raises RuntimeError carrying the endpoint's own sentence."""
-    import os as _os
+    retried once without them; a gateway 502/503/504 or a dropped connection before the first chunk is tried again (twice); any other refusal
+    raises RuntimeError carrying the endpoint's own sentence, and a connection that drops mid-answer raises one that says so."""
+    import asyncio as _asyncio
 
+    import httpx
     from app.providers.adapters import http_client
 
-    base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
+    base = _self_base()
     body: dict[str, Any] = {"model": model, "max_tokens": _room_agent_max_tokens(),
                             "messages": messages, "stream": True}
     headers = {"authorization": authorization, "content-type": "application/json",
                "accept": "text/event-stream", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
+    sent = {"any": False}
 
-    async def frames(with_tools: bool, forced: bool = True):
+    async def frames(with_tools: bool, forced: bool = True, attempt: int = 0):
         payload = {**body, **({"tools": _wire_tools(tools), "tool_choice": _tool_choice(tools) if forced else "auto"} if with_tools else {})}
-        async with http_client(timeout=180.0) as client:
-            async with client.stream("POST", f"{base}/v1/chat/completions", headers=headers, json=payload) as r:
-                if r.status_code >= 300:
-                    raw = await r.aread()
-                    why = ""
-                    try:
-                        why = str(((json.loads(raw) or {}).get("error") or {}).get("message") or "")[:200]
-                    except Exception:  # noqa: BLE001
+        try:
+            async with http_client(timeout=httpx.Timeout(180.0, connect=10.0)) as client:
+                async with client.stream("POST", f"{base}/v1/chat/completions", headers=headers, json=payload) as r:
+                    if r.status_code >= 300:
+                        raw = await r.aread()
                         why = ""
-                    if with_tools and forced and _tool_choice(tools) != "auto" and r.status_code in (400, 422):
-                        async for chunk in frames(True, False):        # a model that refuses a forced call: the choice is left to it
-                            yield chunk
-                        return
-                    if with_tools and r.status_code in (400, 422):
-                        async for chunk in frames(False):
-                            yield chunk
-                        return
-                    raise RuntimeError(why or f"the model endpoint answered {r.status_code}")
-                async for line in r.aiter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        return
-                    try:
-                        yield json.loads(data)
-                    except ValueError:
-                        continue
+                        try:
+                            why = str(((json.loads(raw) or {}).get("error") or {}).get("message") or "")[:200]
+                        except Exception:  # noqa: BLE001
+                            why = ""
+                        if with_tools and forced and _tool_choice(tools) != "auto" and r.status_code in (400, 422):
+                            async for chunk in frames(True, False):        # a model that refuses a forced call: the choice is left to it
+                                yield chunk
+                            return
+                        if with_tools and r.status_code in (400, 422):
+                            async for chunk in frames(False):
+                                yield chunk
+                            return
+                        if r.status_code in TRANSIENT and not why and attempt < 2:
+                            await _asyncio.sleep(1.0 + attempt)            # a gateway hiccup with no message of kell's own: again
+                            async for chunk in frames(with_tools, forced, attempt + 1):
+                                yield chunk
+                            return
+                        raise RuntimeError(_friendly_status(r.status_code, why))
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            return
+                        try:
+                            chunk = json.loads(data)
+                        except ValueError:
+                            continue
+                        sent["any"] = True
+                        yield chunk
+        except httpx.TransportError as exc:
+            if not sent["any"] and attempt < 2:
+                await _asyncio.sleep(1.0 + attempt)
+                async for chunk in frames(with_tools, forced, attempt + 1):
+                    yield chunk
+                return
+            raise RuntimeError("the connection to the model service dropped while it was answering; ask again") if sent["any"] else RuntimeError(
+                f"the model service could not be reached ({type(exc).__name__}); ask again in a moment") from exc
 
     async for chunk in frames(bool(tools)):
         yield chunk

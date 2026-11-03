@@ -457,33 +457,46 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     search_first = wants_work(text)
     creates = makes_something(text)
     worked = False
+    said: list[str] = []                              # everything shown so far, over all rounds
 
     for round_no in range(max_rounds + 1):
         parts: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
         markup = MarkupFilter()
-        async for chunk in model_stream(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else (must_work_tools() if (creates and not worked) else tools)):
-            choice = (chunk.get("choices") or [{}])[0] or {}
-            delta = choice.get("delta") or {}
-            piece = delta.get("content")
-            if isinstance(piece, str) and piece:
-                shown = markup.feed(piece)
-                if shown:
-                    parts.append(shown)
-                    yield ("delta", shown)
-            for tc in delta.get("tool_calls") or []:
-                idx = int(tc.get("index") or 0)
-                slot = calls.setdefault(idx, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
-                if tc.get("id"):
-                    slot["id"] = str(tc["id"])
-                fn = tc.get("function") or {}
-                if fn.get("name"):
-                    slot["function"]["name"] += str(fn["name"])
-                if fn.get("arguments"):
-                    slot["function"]["arguments"] += str(fn["arguments"])
+        try:
+            async for chunk in model_stream(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else (must_work_tools() if (creates and not worked) else tools)):
+                choice = (chunk.get("choices") or [{}])[0] or {}
+                delta = choice.get("delta") or {}
+                piece = delta.get("content")
+                if isinstance(piece, str) and piece:
+                    shown = markup.feed(piece)
+                    if shown:
+                        parts.append(shown)
+                        said.append(shown)
+                        yield ("delta", shown)
+                for tc in delta.get("tool_calls") or []:
+                    idx = int(tc.get("index") or 0)
+                    slot = calls.setdefault(idx, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                    if tc.get("id"):
+                        slot["id"] = str(tc["id"])
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] += str(fn["name"])
+                    if fn.get("arguments"):
+                        slot["function"]["arguments"] += str(fn["arguments"])
+        except RuntimeError as exc:
+            # The model service failed part-way. If an answer was already being shown (or a tool already made something), the person keeps it:
+            # what was shown, then a plain note, instead of an error that throws the partial answer away.
+            if not said and not made and not used:
+                raise
+            note = f"(I was cut off before I could finish: {str(exc).strip()[:160] or 'the model service had a problem'}. Ask me again and I will pick it up.)"
+            partial = "".join(said).strip()
+            yield ("final", AgentOutcome(text=_with_made((partial + "\n\n" if partial else "") + note, made), tools_used=used, consent_links=links))
+            return
         tail = markup.flush()
         if tail:
             parts.append(tail)
+            said.append(tail)
             yield ("delta", tail)
         content = "".join(parts).strip()
         tool_calls = [calls[i] for i in sorted(calls)]

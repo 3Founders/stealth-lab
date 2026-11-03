@@ -61,6 +61,7 @@ def clean_history(raw: Any) -> list[dict[str, Any]]:
 
 
 _RUNNING: set[Any] = set()
+HEARTBEAT_S = 8.0
 
 # Added to the memory block: how kell may save something worth keeping. The person sees what was saved and can undo it.
 MEMORY_HINT = ("\nIf the person tells you something durable about themselves (a preference, a person, a project, a decision) that is not already above, "
@@ -198,7 +199,13 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
 
             async def frames() -> AsyncIterator[str]:
                 while True:
-                    item = await queue.get()
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_S)
+                    except asyncio.TimeoutError:
+                        # A model that thinks for a long while sends nothing; a comment line every few seconds keeps the connection from being
+                        # cut as idle by the hosting edge or a proxy (the browser ignores it).
+                        yield ": keep-alive\n\n"
+                        continue
                     if item is None:
                         return
                     yield item
