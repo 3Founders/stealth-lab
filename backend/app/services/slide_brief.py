@@ -66,7 +66,7 @@ BRIEF = (
     "exactly; replace the sample slides with 8 to 10 slides of real, specific content about the topic (title; a claim per slide, not a label; at most "
     "four short points; a diagram, a big number, a comparison, a quote, a closing takeaway). Vary the layouts (bullets, two columns, three cards, big "
     "number, quote, SVG diagram). Replace TOPIC and SECTION with real words. Draw any picture as inline SVG (always with a viewBox, inside a .cols or a .card, never as a direct child of .slide and never larger than the text beside it) that illustrates the idea (shapes, arrows, simple icons in the palette) - never a grey "
-    "placeholder box and never an external image. Keep the dark palette with its one yellow accent. No external fonts, scripts or files. Output only the "
+    "placeholder box and never an external image. Do not change any value in :root: keep the dark palette and its one yellow accent (#f5c542) everywhere, including inside SVG. In an SVG, centre every label on its shape with text-anchor=middle and dominant-baseline=middle at the shape's centre (x + width/2, y + height/2), with fill #f4f1ea and font-size 14 to 18. Keep a diagram simple: at most four labelled shapes in a clear row or column, each shape at least 120 wide in a viewBox of 400 by 240, labels under 16 characters, nothing outside the viewBox. No external fonts, scripts or files. Output only the "
     "HTML document, starting with <!doctype html>, nothing before or after it.\n\nSKELETON:\n"
 )
 
