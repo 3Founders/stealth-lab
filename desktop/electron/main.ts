@@ -5,7 +5,8 @@
 // The child gets ELECTRON_RUN_AS_NODE=1 so it runs as plain node, listens on an OS-picked port (port 0 probed, never a
 // fixed one — the OpenCode desktop app owns 28894 and is never touched), and its whole tree — including the opencode
 // engine it starts through lib/engine.ts's /api routes — dies with the app.
-import { app, BrowserWindow } from "electron"
+import { app, BrowserWindow, ipcMain, shell } from "electron"
+import { isSignInLink, openSignIn } from "./signin"
 import net from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
 import path from "node:path"
@@ -51,7 +52,23 @@ if (!app.requestSingleInstanceLock()) {
     if (!up) throw new Error("the Next server never answered")
     say(`next up on ${base}`)
 
-    win = new BrowserWindow({ width: 1240, height: 880, title: "kell", backgroundColor: "#F8F6EF", show: false })
+    win = new BrowserWindow({ width: 1240, height: 880, title: "kell", backgroundColor: "#F8F6EF", show: false,
+                              webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false } })
+    // Links: a tool's sign-in opens in the app's own sign-in window (electron/signin.ts); any other link goes to the
+    // system browser. The app window itself never navigates away from the UI.
+    const signInDone = (r: { url: string; ok: boolean }) => win?.webContents.send("kell:signin-done", r)
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      if (isSignInLink(url)) openSignIn(win, url, signInDone)
+      else if (/^https?:/.test(url)) void shell.openExternal(url)
+      return { action: "deny" }
+    })
+    win.webContents.on("will-navigate", (e, url) => {
+      if (url.startsWith(base)) return
+      e.preventDefault()
+      if (isSignInLink(url)) openSignIn(win, url, signInDone)
+      else if (/^https?:/.test(url)) void shell.openExternal(url)
+    })
+    ipcMain.on("kell:open-signin", (_e, url: string) => openSignIn(win, String(url), signInDone))
     // Register the show handler BEFORE the load: "ready-to-show" can fire while loadURL is still resolving, and a handler
     // added after the await then never runs, leaving the window hidden forever (the installed app looked like it did
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.

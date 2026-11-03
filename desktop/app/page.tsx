@@ -9,8 +9,25 @@ import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import MessageActions from "@/components/chat/MessageActions"
 import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
+import { KellMark } from "@/components/chat/brand"
+import { springVars } from "@/lib/chat/spring"
 
-type Line = { who: "user" | "assistant"; text: string; at?: number }
+// The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab.
+type KellDesktop = { openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void }
+const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
+
+// A tool that needs a sign-in comes back from kell's gateway as JSON inside the tool's result:
+// {"sign_in_required": true, "server": ..., "link": ...} or {"consent_required": true, ...}. The event carries it as text,
+// sometimes escaped once more, so this reads it from the raw event rather than a parsed field.
+const signInFrom = (raw: string): { server: string; link: string } | null => {
+  if (!/(sign_in_required|consent_required)\\*"\s*:\s*true/.test(raw)) return null
+  const link = raw.match(/link\\*"\s*:\s*\\*"(https:[^"\\\s]+)/)?.[1]
+  if (!link) return null
+  const server = raw.match(/server\\*"\s*:\s*\\*"([^"\\]+)/)?.[1] || "this tool"
+  return { server, link }
+}
+
+type Line = { who: "user" | "assistant" | "signin"; text: string; at?: number; server?: string; state?: "ready" | "open" | "done" | "failed" }
 type Step = { kind: "tool" | "model"; label: string; note?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
@@ -149,8 +166,12 @@ export default function Home() {
         const d = ev.data || {}
         if (t === "session") { sid = ev.sessionID; setSessionID(ev.sessionID) }
         else if (t === "session.text.delta") appendAssistant(d.delta ?? d.text ?? "")
-        else if (t === "session.tool.called" || t === "session.tool.success" || t === "session.tool.failed")
+        else if (t === "session.tool.called" || t === "session.tool.success" || t === "session.tool.failed") {
           setSteps((s) => [...s, { kind: "tool", label: d.tool || d.name || "tool", note: t.endsWith("failed") ? "failed" : undefined }])
+          const need = t === "session.tool.called" ? null : signInFrom(JSON.stringify(d))
+          if (need) setLines((l) => l.some((x) => x.who === "signin" && x.text === need.link) ? l
+            : [...l, { who: "signin", text: need.link, server: need.server, state: "ready", at: Date.now() }])
+        }
         else if (t === "session.step.started") {
           const id = String(d.assistantMessageID || "")
           if (id && d.model?.id) setLedger((rows) => [...rows.filter((r) => r.id !== id), { id, model: d.model.id, providerID: d.model.providerID }])
@@ -210,173 +231,249 @@ export default function Home() {
     setTimeout(tick, 2000)
   }
 
+  // One click: the sign-in opens in the app's own window (electron/signin.ts) and closes itself when the tool provider
+  // sends the person back to kell; then the request that needed the tool runs again by itself.
+  const openToolSignIn = (link: string) => {
+    setLines((l) => l.map((x) => (x.who === "signin" && x.text === link ? { ...x, state: "open" } : x)))
+    const d = desktop()
+    if (d) d.openSignIn(link)
+    else window.open(link, "_blank", "noopener")
+  }
+  const [resume, setResume] = useState<string | null>(null)
+  useEffect(() => {
+    const d = desktop()
+    if (!d) return
+    return d.onSignInDone(({ ok }) => {
+      let server = ""
+      setLines((l) => l.map((x) => {
+        if (x.who !== "signin" || x.state !== "open") return x
+        server = x.server || ""
+        return { ...x, state: ok ? "done" : "failed" }
+      }))
+      if (ok) setResume(`I signed in to ${server || "the tool"}. Carry on with what I asked.`)
+    })
+  }, [])
+  useEffect(() => {
+    if (resume && !busy) { const t = resume; setResume(null); void send(t) }
+    // send is recreated each render; the resume only needs to fire once the turn has ended
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resume, busy])
+
   const isCheap = (r: LedgerRow) => !!settings?.models.cheap && `${r.providerID}/${r.model}` === settings.models.cheap
   const readEngine = engine?.up && !!directory
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
 
-  return (
-    <main className="frame">
-      <ThemeWatcher />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ padding: "18px 0 2px" }}>kell</h1>
-        <ThemeToggle />
-      </div>
-      <div className="modelstrip">
-        <span title={sessionID || undefined}>{sessionID ? `session ${sessionID.slice(0, 12)}…` : "no session"}</span>
-        <span>{readEngine ? "engine up" : "engine down"}</span>
-        <span className="spend">{spend > 0 ? `spent $${spend.toFixed(4)}` : "no spend yet"}</span>
-      </div>
-      <div className="shell">
-        <aside className="side">
-          <h2>Project</h2>
-          <p style={{ margin: "10px 0 4px" }}>
-            <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
-              placeholder="a folder path to work in" className="mono" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid var(--rule-strong)", background: "var(--surface)" }} />
-          </p>
-          <button className="btn-ink" onClick={openProject} disabled={!!sessionID || !directory || busy}>open project</button>
-          {sessionID && <p style={{ fontSize: 13, marginTop: 8 }}><button className="copy" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>reset session</button></p>}
-          {engine && !engine.up && (engine.error || sessionID) && <p className="banner" style={{ marginTop: 14 }}>Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
+  const project = directory ? directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || directory : "No project"
+  const time = (at?: number) => (at ? new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null)
 
-          <h2 style={{ marginTop: 22 }}>Changes</h2>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <button className="copy" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>refresh</button>
-            <button className="copy" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>undo</button>
+  return (
+    <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
+      <ThemeWatcher />
+      <div className="dg-shell">
+        <aside className="dg-side" aria-label="Project, models and account">
+          <div className="dg-brand">
+            <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
+            <img className="wm-dark" src="/kel-wordmark-dark.png" alt="" aria-hidden="true" style={{ height: 38, width: "auto" }} />
           </div>
-          {confirm ? (
-            <div className="banner" style={{ marginTop: 8 }}>
-              <p style={{ margin: "0 0 6px" }}>{confirm}. Undo would drop that.</p>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className="btn-ink" onClick={() => undo(true)}>undo anyway</button>
-                <button className="copy" onClick={() => setConfirm("")}>keep it</button>
-              </div>
-            </div>
-          ) : (
-            <p style={{ fontSize: 12, color: "var(--grey)", margin: "6px 0 0" }}>
-              undo puts back the files the session&apos;s last turn changed (from OpenCode&apos;s snapshot of that turn); with no
-              session, it runs `kell undo` for a dispatched answer.
+
+          <h2>Project</h2>
+          <div style={{ margin: "0 6px" }}>
+            <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
+              placeholder="a folder path to work in" className="dk-field mono" aria-label="Project folder" />
+          </div>
+          <div className="dk-row">
+            <button type="button" className="btn-ink" onClick={openProject} disabled={!!sessionID || !directory || busy}>Open project</button>
+            {sessionID && (
+              <button type="button" className="btn-line" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>New session</button>
+            )}
+          </div>
+          {engine && !engine.up && (engine.error || sessionID) && <p className="dk-err" role="status">Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
+
+          <h2>Models</h2>
+          {!settings ? <p className="dk-note">reading…</p> : (
+            <ul className="dg-members">
+              {([["cheap", settings.models.cheap], ["strong", settings.models.strong], ["fallback", settings.models.fallback]] as const).map(([k, v]) => (
+                <li key={k}>
+                  <span className="dg-dot" data-a={v ? "online" : "idle"} aria-hidden="true" />
+                  <span className="dg-handle mono" title={v || ""}>{v ? v.split("/").pop() : "not set"}</span>
+                  <span className="dg-badge" data-kind="tab">{k}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {settings && (
+            <p className="dk-note">
+              {settings.lane === "organization" ? <>Paid through your organization ({settings.gateway || "kell"}).</>
+                : settings.lane === "own-key" ? "Your own provider key." : "Not set up: run `kell join` for your organization's keys."}
+              {settings.models.mode ? <> Mode: {settings.models.mode}.</> : null}
             </p>
           )}
-          <div className="changes">
-            {filesNote && !files.length && <p style={{ fontSize: 13, color: "var(--grey)" }}>{filesNote}</p>}
-            {files.map((f) => (
-              <details className="filecard" key={f.file} open={files.length === 1}>
-                <summary>
-                  <span className="path">{f.file}</span>
-                  <span className="stat"><span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span></span>
-                </summary>
-                <div className="diff">{patchLines(f.patch).map((l, i) => <div className={l.cls} key={i}>{l.text || " "}</div>)}</div>
-              </details>
-            ))}
-          </div>
 
-          <h2 style={{ marginTop: 22 }}>Tools</h2>
-          {cardsNote && <p style={{ fontSize: 13, color: "var(--grey)", margin: "8px 0 0" }}>{cardsNote}</p>}
-          <div className="cards">
-            {cards.map((c) => (
-              <div className="toolcard" key={c.name}>
-                <div className="body">
-                  <div className="name" title={`${c.name}${c.url ? ` — ${c.url}` : ""}`}>{c.name}</div>
-                  <div className="meta">{c.source === "installed" ? "installed here" : "from the registry"}{c.needsSignIn ? " · needs a sign-in" : ""}</div>
-                </div>
-                <div className="pillrow">
-                  <span className={`pill ${c.source === "installed" ? "installed" : "outline"}`}>{c.source === "installed" ? "installed" : "available"}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          {cards.length > 0 && <p style={{ fontSize: 12, color: "var(--grey)", marginTop: 6 }}>through kell: the session's plugin adds the fitting ones itself (KELL_OC_ADD_REMOTE=on).</p>}
-
-          <h2 style={{ marginTop: 22 }}>Settings</h2>
-          {!settings ? <p style={{ fontSize: 13, color: "var(--grey)" }}>reading…</p> : (
-            <dl className="kv">
-              <dt>account</dt>
-              <dd>{settings.signedIn ? <>signed in <span className="mono">{settings.account || settings.server || ""}</span></> : (
-                <span>not signed in <button type="button" className="copy" onClick={() => void signIn()}>sign in</button></span>
-              )}</dd>
-              <dt>models</dt>
-              <dd>{settings.lane === "organization"
-                ? <>through your organization <span className="mono">{settings.gateway || ""}</span> (kell&apos;s keys, nothing to add here)</>
-                : settings.lane === "own-key" ? "your own provider key (from kell setup)"
-                  : "not set up — run `kell join` for your organization's pooled keys"}</dd>
-              <dt>cheap</dt><dd className="mono">{settings.models.cheap || "—"}</dd>
-              <dt>strong</dt><dd className="mono">{settings.models.strong || "—"}</dd>
-              <dt>fallback</dt><dd className="mono">{settings.models.fallback || "—"}</dd>
-              <dt>mode</dt><dd>{settings.models.mode || "—"}</dd>
-              <dt>engine</dt><dd className="mono">{settings.engine.exe ? "found" : "not found — run `kell setup --client opencode`"}</dd>
+          <h2>Account</h2>
+          {settings && (
+            <dl className="dk-kv">
+              <dt>kell</dt>
+              <dd>{settings.signedIn ? <>signed in <span className="mono">{settings.account || ""}</span></> : "not signed in"}</dd>
+              <dt>engine</dt>
+              <dd>{settings.engine.exe ? "ready" : "not found: run `kell setup --client opencode`"}</dd>
             </dl>
           )}
-          <p style={{ marginTop: 10 }}><button className="copy" onClick={openConsole}>open console</button></p>
-          {consoleNote && <p style={{ fontSize: 12, color: "var(--grey)", marginTop: 4 }}>{consoleNote}</p>}
-          {signinNote && <p style={{ fontSize: 12, color: "var(--grey)", marginTop: 4 }} role="status">{signinNote}</p>}
+          <div className="dk-row">
+            {settings && !settings.signedIn && <button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button>}
+            <button type="button" className="btn-line" onClick={openConsole}>Open console</button>
+          </div>
+          {signinNote && <p className="dk-note" role="status">{signinNote}</p>}
+          {consoleNote && <p className="dk-note">{consoleNote}</p>}
         </aside>
-        <section className="main" style={{ padding: "0 0 0 var(--gap)" }}>
-          <h2>Chat</h2>
-          <div className="chat">
-            <div className="log" ref={logRef}>
-              {lines.length === 0 && (
-                <p className="banner">Open a project, then say what to do. The cheap model runs the turn and switches to the strong model when the tests say so; tool calls show as chips below.</p>
-              )}
-              <div className="logc" ref={logContentRef}>
+
+        <section className="dg-main" aria-label={`Chat in ${project}`}>
+          <header className="dg-head">
+            <h1>{project}</h1>
+            <div className="dk-chips">
+              <span className="dk-chip" data-on={readEngine || undefined}>{readEngine ? "engine up" : "engine down"}</span>
+              <span className="dk-spend">{spend > 0 ? `$${spend.toFixed(4)} this session` : "no spend yet"}</span>
+            </div>
+            <ThemeToggle className="dg-theme" />
+          </header>
+
+          <div className="dg-scroll">
+            <div className="dg-viewport" ref={logRef} aria-label="Messages">
+              <div className="dg-content" ref={logContentRef}>
+                {lines.length === 0 && (
+                  <p className="dg-empty">Open a project, then say what to do. A low-cost model starts each task and the stronger one takes over when the tests say so. Tools that need a sign-in open in a small window here.</p>
+                )}
                 {lines.map((l, i) => {
-                  const live = busy && l.who === "assistant" && i === lines.length - 1   // the reply still arriving
-                  return (
-                    <div className={`line ${l.who}`} key={i}>
-                      <div className="who dg-meta"><b>{l.who === "user" ? "you" : "kell"}</b>{l.who === "assistant" && <span className="dg-badge">agent</span>}{l.at ? <time>{new Date(l.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time> : null}</div>
-                      <div className="dg-msg">
-                        <div className="bubble">
-                          {l.who === "user" ? l.text : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}
+                  if (l.who === "signin") {
+                    return (
+                      <div className="dg-run" data-agent="true" key={i}>
+                        <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                        <div className="dg-col">
+                          <div className="dg-meta"><b>Kell</b><span className="dg-badge">sign-in</span><time>{time(l.at)}</time></div>
+                          <div className="dk-signin" data-state={l.state}>
+                            <p>{l.state === "done" ? <>Signed in to <b>{l.server}</b>. Carrying on.</>
+                              : l.state === "failed" ? <>The sign-in to <b>{l.server}</b> was closed before it finished.</>
+                                : l.state === "open" ? <>Finish signing in to <b>{l.server}</b> in the window that opened.</>
+                                  : <><b>{l.server}</b> needs you to sign in once. Choose your account in the window that opens; kell keeps the sign-in for next time.</>}</p>
+                            {l.state !== "done" && (
+                              <div className="dk-row">
+                                <button type="button" className="btn-ink" onClick={() => openToolSignIn(l.text)}>{l.state === "failed" ? "Try again" : `Sign in to ${l.server}`}</button>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        {l.text && !live ? (
-                          <MessageActions copyText={l.text} retryText={l.who === "user" ? l.text : lastUserBefore(i)}
-                            onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={l.who === "user" ? "Send this again" : "Ask again"} />
-                        ) : null}
+                      </div>
+                    )
+                  }
+                  const live = busy && l.who === "assistant" && i === lines.length - 1   // the reply still arriving
+                  const mine = l.who === "user"
+                  return (
+                    <div className={`dg-run${mine ? " dk-you" : ""}`} data-agent={!mine} key={i}>
+                      {mine
+                        ? <span className="dg-avatar" data-kind="human" aria-hidden="true">You</span>
+                        : <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>}
+                      <div className="dg-col">
+                        <div className="dg-meta"><b>{mine ? "You" : "Kell"}</b>{!mine && <span className="dg-badge">agent</span>}<time>{time(l.at)}</time></div>
+                        <div className="dg-msg">
+                          <div className="dg-body">{mine ? <p>{l.text}</p> : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}</div>
+                          {l.text && !live ? (
+                            <MessageActions copyText={l.text} retryText={mine ? l.text : lastUserBefore(i)}
+                              onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={mine ? "Send this again" : "Ask again"} />
+                          ) : null}
+                        </div>
                       </div>
                     </div>
                   )
                 })}
                 {busy && lines.at(-1)?.who !== "assistant" && (
-                  <div className="line assistant"><div className="who">kell</div><div className="bubble"><Thinking /></div></div>
+                  <div className="dg-run" data-agent="true">
+                    <span className="dg-avatar dg-avatar-kell" data-kind="agent" aria-hidden="true"><KellMark size={26} /></span>
+                    <div className="dg-col">
+                      <div className="dg-meta"><b>Kell</b><span className="dg-badge">agent</span></div>
+                      <div className="dg-body" role="status" aria-label="kell is working"><Thinking /></div>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
-            {steps.length > 0 && (
-              <div className="steps">
-                {steps.slice(-14).map((s, i) => <span className="step" key={i}><b>{s.kind === "tool" ? "tool" : "model"}</b> {s.label}{s.note ? ` — ${s.note}` : ""}</span>)}
-              </div>
-            )}
-            {ledger.length > 0 && (
-              <div className="ledger">
-                <div className="row" style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                  <span>step</span><span>tokens</span><span style={{ textAlign: "right" }}>cost</span>
-                </div>
-                {ledger.map((r) => (
-                  <div className="row" key={r.id}>
-                    <span><span className={`rung ${isCheap(r) ? "cheap" : "strong"}`}>{isCheap(r) ? "cheap" : "strong"}</span> <b>{r.model || (r.id ? "picking model…" : "")}</b></span>
-                    <span>{r.tokens || "—"}</span>
-                    <span style={{ textAlign: "right" }}>{r.cost != null ? `$${r.cost.toFixed(5)}` : "—"}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="composer">
-              <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
-                <textarea ref={textRef} rows={1} data-big={big || undefined} value={text} onChange={(e) => setText(e.target.value)}
-                  placeholder={directory ? "tell kell what to do…" : "open a project first"}
-                  disabled={!!engine && !engine.up}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} />
-                <div className="dg-composer-meta">
-                  {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
-                  <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); textRef.current?.focus() }} aria-pressed={big}
-                    aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
-                  </button>
-                </div>
-                <button type="submit" disabled={busy || !text.trim() || !directory || (engine != null && !engine.up)}>{busy ? "Working…" : "Send"}</button>
-              </form>
-            </div>
           </div>
+
+          {steps.length > 0 && (
+            <div className="dk-steps" aria-label="Tool calls">
+              {steps.slice(-10).map((s, i) => <span className="dk-step" data-failed={!!s.note || undefined} key={i}><b>{s.label}</b>{s.note ? ` · ${s.note}` : ""}</span>)}
+            </div>
+          )}
+          <div className="dg-typing" role="status" aria-live="polite">
+            {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
+          </div>
+          <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
+            <textarea ref={textRef} rows={1} data-big={big || undefined} value={text} onChange={(e) => setText(e.target.value)}
+              placeholder={directory ? "Tell kell what to do…" : "Open a project first"}
+              disabled={!!engine && !engine.up}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} />
+            <div className="dg-composer-meta">
+              {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
+              <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); textRef.current?.focus() }} aria-pressed={big}
+                aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
+              </button>
+            </div>
+            <button type="submit" disabled={busy || !text.trim() || !directory || (engine != null && !engine.up)}>{busy ? "Working…" : "Send"}</button>
+          </form>
         </section>
+
+        <aside className="dk-panel" aria-label="Changes, steps and tools">
+          <h2>Changes</h2>
+          <div className="dk-row">
+            <button type="button" className="btn-line" onClick={() => loadChanges(sessionID)} disabled={!readEngine}>Refresh</button>
+            <button type="button" className="btn-line" onClick={() => undo()} disabled={!directory || busy || (!!sessionID && pending === 0)}>Undo</button>
+          </div>
+          {confirm && (
+            <div className="dk-err">
+              <p style={{ margin: "0 0 6px" }}>{confirm}. Undo would drop that.</p>
+              <div className="dk-row" style={{ margin: 0 }}>
+                <button type="button" className="btn-ink" onClick={() => undo(true)}>Undo anyway</button>
+                <button type="button" className="btn-line" onClick={() => setConfirm("")}>Keep it</button>
+              </div>
+            </div>
+          )}
+          {filesNote && !files.length && <p className="dk-note">{filesNote}</p>}
+          <div className="dk-files">
+            {files.map((f) => (
+              <details className="dk-file" key={f.file} open={files.length === 1}>
+                <summary>
+                  <span className="path">{f.file}</span>
+                  <span className="stat"><span className="add">+{f.additions}</span> <span className="del">−{f.deletions}</span></span>
+                </summary>
+                <div className="dk-diff">{patchLines(f.patch).map((p, i) => <div className={p.cls} key={i}>{p.text || " "}</div>)}</div>
+              </details>
+            ))}
+          </div>
+
+          <h2>Model steps</h2>
+          {ledger.length === 0 ? <p className="dk-note">Each model step shows here with its tokens and cost.</p> : (
+            <div className="dk-ledger">
+              {ledger.map((r) => (
+                <div className="row" key={r.id}>
+                  <span title={r.tokens || ""}><span className="dk-rung" data-r={isCheap(r) ? "cheap" : "strong"}>{isCheap(r) ? "cheap" : "strong"}</span><b>{r.model || "picking model…"}</b></span>
+                  <span>{r.cost != null ? `$${r.cost.toFixed(5)}` : "—"}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <h2>Tools for this request</h2>
+          {cardsNote && <p className="dk-note">{cardsNote}</p>}
+          <div className="dk-cards">
+            {cards.map((c) => (
+              <div className="dk-card" key={c.name}>
+                <span className="name" title={`${c.name}${c.url ? ` — ${c.url}` : ""}`}>{c.name}</span>
+                <span className="dg-badge" data-kind="tab">{c.source === "installed" ? "installed" : "available"}</span>
+                <span className="meta">{c.source === "installed" ? "installed here" : "kell can run it for you"}{c.needsSignIn ? " · asks you to sign in once" : ""}</span>
+              </div>
+            ))}
+          </div>
+        </aside>
       </div>
-    </main>
+    </section>
   )
 }

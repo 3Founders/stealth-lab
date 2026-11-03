@@ -1,0 +1,80 @@
+/* What the desktop app has that the website chat does not: the changes panel, the model steps, tool cards, the tool
+   sign-in card and the settings rows. Same tokens and the same patterns as routing_kell_frontend/app/chat/chat.css
+   (copied here as chat.css) -- no new palette. */
+
+.dk-page { padding: 0; }
+.dk-page .dg-shell { grid-template-columns: 260px minmax(0, 1fr) 340px; height: 100dvh; }
+@media (max-width: 1100px) { .dk-page .dg-shell { grid-template-columns: 240px minmax(0, 1fr); } .dk-panel { display: none; } }
+
+/* sidebar fields */
+.dk-field { width: 100%; font: inherit; font-size: 13px; padding: 9px 11px; border: 1px solid var(--rule-strong); border-radius: 10px;
+  background: var(--surface); color: var(--ink); }
+.dk-field:disabled { opacity: .6; }
+.dk-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 6px 0; }
+.dk-note { font-size: 12px; color: var(--grey); margin: 6px 6px 0; line-height: 1.4; }
+.dk-err { font-size: 12.5px; margin: 8px 6px 0; padding: 8px 10px; border-radius: 8px; background: var(--soft); border: 1px solid var(--rule-strong); }
+
+/* settings rows */
+.dk-kv { display: grid; grid-template-columns: 70px 1fr; gap: 4px 8px; font-size: 12.5px; margin: 4px 6px 0; }
+.dk-kv dt { color: var(--grey); }
+.dk-kv dd { margin: 0; overflow-wrap: anywhere; }
+.dk-kv .mono { font-size: 11.5px; }
+
+/* header chips: engine, spend */
+.dk-chips { display: flex; gap: 8px; align-items: center; margin-left: auto; font-size: 12px; color: var(--grey); }
+.dk-chip { border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; white-space: nowrap; }
+.dk-chip[data-on="true"] { border-color: var(--ink); color: var(--ink); }
+.dk-spend { color: var(--ink); border-bottom: 2px solid var(--yellow); }
+
+/* the user's own message, as the website's agent runs but in yellow */
+.dk-you .dg-avatar { background: var(--yellow); color: var(--on-yellow, #171717); }
+
+/* tool calls and model steps under the conversation */
+.dk-steps { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 18px 0; }
+.dk-step { border: 1px solid var(--rule); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--grey);
+  animation: dg-rise var(--dg-smooth-d, 300ms) var(--dg-smooth, ease) both; }
+.dk-step b { color: var(--ink); font-weight: 400; }
+.dk-step[data-failed="true"] { border-color: #b3261e; }
+
+/* the tool sign-in card, in the conversation */
+.dk-signin { border: 1px solid var(--rule-strong); border-radius: 12px; background: var(--surface); padding: 12px 14px; display: grid;
+  gap: 8px; max-width: 520px; box-shadow: var(--dg-lift, 0 6px 18px rgba(23,23,23,.08)); }
+.dk-signin p { margin: 0; font-size: 14px; }
+.dk-signin .dk-row { margin: 0; }
+.dk-signin[data-state="done"] { border-color: var(--yellow); }
+
+/* right panel: changes, steps, tools */
+.dk-panel { border-left: 1px solid var(--rule); background: var(--paper); overflow-y: auto; padding: 14px 12px; display: flex;
+  flex-direction: column; gap: 6px; min-height: 0; }
+.dk-panel h2 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); font-weight: 400; margin: 10px 6px 4px; }
+.dk-panel h2:first-child { margin-top: 0; }
+
+.dk-ledger { display: grid; gap: 2px; font-size: 12px; margin: 0 6px; }
+.dk-ledger .row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; color: var(--grey); }
+.dk-ledger .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-ledger b { color: var(--ink); font-weight: 400; }
+.dk-rung { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; border-radius: 3px; padding: 1px 5px 0; margin-right: 6px; }
+.dk-rung[data-r="cheap"] { background: var(--cobalt); color: #fff; }
+.dk-rung[data-r="strong"] { background: var(--ink); color: var(--paper); }
+
+.dk-files { display: flex; flex-direction: column; gap: 8px; margin: 4px 6px 0; }
+.dk-file { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.dk-file summary { cursor: pointer; padding: 8px 10px; font-size: 12.5px; display: flex; gap: 8px; align-items: baseline; }
+.dk-file .path { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; overflow-wrap: anywhere; }
+.dk-file .stat { margin-left: auto; font-size: 11.5px; white-space: nowrap; }
+.dk-file .stat .add { color: #1F6B3A; } .dk-file .stat .del { color: #9B2C2C; }
+.dk-diff { border-top: 1px solid var(--rule); font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 11.5px; line-height: 1.45; overflow-x: auto; }
+.dk-diff div { white-space: pre; padding: 0 10px; }
+.dk-diff .add { background: rgba(31, 107, 58, 0.08); color: #1F4F30; }
+.dk-diff .del { background: rgba(155, 44, 44, 0.07); color: #6E2323; }
+.dk-diff .hunk { color: var(--grey); background: rgba(23, 23, 23, 0.03); }
+
+.dk-cards { display: flex; flex-direction: column; gap: 6px; margin: 4px 6px 0; }
+.dk-card { border: 1px solid var(--rule); border-radius: 10px; padding: 8px 10px; background: var(--surface); display: grid;
+  grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; }
+.dk-card .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.dk-card .meta { font-size: 11.5px; color: var(--grey); grid-column: 1; }
+
+:root[data-theme="dark"] .dk-diff .add { color: #8fd3a8; } :root[data-theme="dark"] .dk-diff .del { color: #e6a0a0; }
+:root[data-theme="dark"] .dk-file .stat .add { color: #6ee7a0; } :root[data-theme="dark"] .dk-file .stat .del { color: #ff8a80; }
+:root[data-theme="dark"] .dk-diff .hunk { background: rgba(255, 255, 255, .04); }
