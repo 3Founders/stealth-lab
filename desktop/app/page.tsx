@@ -351,12 +351,12 @@ export default function Home() {
               </div>
             )}
             <div className="composer">
-              <form onSubmit={(e) => { e.preventDefault(); send() }}>
+              <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
                 <textarea value={text} onChange={(e) => setText(e.target.value)}
                   placeholder={directory ? "tell kell what to do…" : "open a project first"}
                   disabled={!!engine && !engine.up}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} />
-                <button className="btn-ink" disabled={busy || !directory || (engine != null && !engine.up)}>{busy ? "working…" : "send"}</button>
+                <button type="submit" disabled={busy || !text.trim() || !directory || (engine != null && !engine.up)}>{busy ? "Working…" : "Send"}</button>
               </form>
             </div>
           </div>

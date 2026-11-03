@@ -123,3 +123,31 @@
 .dg-msg > .dg-acts .dg-act { width: 28px; height: 28px; border-radius: 8px; }
 .dg-msg > .dg-acts .dg-act svg { width: 15px; height: 15px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* The composer, resolved from routing_kell_frontend/app/chat/chat.css: the base .dg-composer rules with the .dg-page glass
+   layer folded in (the desktop has no .dg-page wrapper). Same tokens, same values. */
+:root {
+  --dg-glass-strong: rgba(248, 246, 239, .86); --dg-edge: rgba(255, 255, 255, .6); --dg-r-btn: 6px;
+  --dg-lift: 0 8px 22px rgba(0, 0, 0, .13), 0 1px 3px rgba(0, 0, 0, .09);
+  --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .18), 0 2px 5px rgba(0, 0, 0, .1);
+  --dg-smooth: cubic-bezier(.22, 1, .36, 1); --dg-smooth-d: 300ms; --dg-micro: cubic-bezier(.22, 1, .36, 1); --dg-micro-d: 160ms;
+}
+.composer { border-top: 0; }
+.dg-composer { position: relative; display: flex; gap: 8px; padding: 0; align-items: flex-end; animation: dg-glass-in var(--dg-smooth-d) var(--dg-smooth) both; }
+.dg-composer textarea {
+  flex: 1; font: inherit; font-size: 15px; resize: none; min-height: 44px; max-height: 160px; padding: 11px 14px;
+  border: 1px solid transparent; border-radius: var(--dg-r-btn); background: var(--dg-glass-strong); color: var(--ink);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2); backdrop-filter: blur(14px) saturate(1.2); box-shadow: var(--dg-lift); outline: none;
+  transition: box-shadow var(--dg-smooth-d) var(--dg-smooth), background-color var(--dg-smooth-d) var(--dg-smooth), transform var(--dg-micro-d) var(--dg-micro);
+}
+.dg-composer textarea:focus, .dg-composer textarea:focus-visible { box-shadow: var(--dg-lift-hover); transform: translateY(-1px); outline: none; }
+.dg-composer button {
+  font: inherit; height: 44px; padding: 0 18px; border: 0; border-radius: var(--dg-r-btn); background: var(--ink); color: var(--paper);
+  cursor: pointer; box-shadow: var(--dg-lift);
+  transition: opacity var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro), background-color var(--dg-micro-d) var(--dg-micro), box-shadow var(--dg-smooth-d) var(--dg-smooth);
+}
+.dg-composer button:not(:disabled):hover { background: var(--cobalt); box-shadow: var(--dg-lift-hover); }
+.dg-composer button:not(:disabled):active { transform: scale(.96); }
+.dg-composer button:disabled { opacity: .35; cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) { .dg-composer { animation: none; } .dg-composer textarea:focus-visible { transition: none; transform: none; } }
+@media (prefers-reduced-transparency: reduce) { .dg-composer textarea { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--paper); } }

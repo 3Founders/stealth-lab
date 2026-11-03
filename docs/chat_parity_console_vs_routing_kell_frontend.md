@@ -71,8 +71,13 @@ Second slice (same day): message headers (name, agent badge, time) and the hover
 tick feedback, "Ask again" / "Send this again"), copied byte-identical with `icons.tsx`; their rules appended to
 `chat-core.css`. Checked by screenshot of the same markup with the hover row forced visible (headless cannot hover).
 
-Still to port for "exactly the same" in the desktop chat: the glass composer (`Composer.tsx`, `.dg-composer`) and its send button
-motion; popovers and panels (`Popover`, `PanelShell`); dark mode (the desktop has no dark tokens yet); the
+Third slice (same day): the glass composer - the base `.dg-composer` rules with the `.dg-page` glass layer folded in
+(blurred recessed field, lift shadow, focus lift, press-scale send button, entrance animation, reduced-motion and
+reduced-transparency fallbacks), same tokens and values. `tsc --noEmit` passes; NOT looked at on screen (the installer
+rebuild that was to show it was stopped by the harness for low memory), and the desktop composer has no attach/mention/expand
+parts.
+
+Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); dark mode (the desktop has no dark tokens yet); the
 canvas sheet (`CanvasPanel`) once the desktop has something to put in it. `console/` is unchanged.
 
 ## Backend memory review, completed scan (same day)
