@@ -1029,12 +1029,20 @@ def _room_agent_model_name() -> str:
 
 
 def _tool_choice(tools: list[dict]) -> Any:
-    """One offered tool means the agent must call it (the first search of a task); several mean the model chooses."""
+    """One offered tool means the agent must call it (the first search of a task); a list marked `_required` means it must call one of them
+    (a request to make something has to run a tool); otherwise the model chooses."""
+    if any(isinstance(t, dict) and t.get("_required") for t in tools):
+        return "required"
     if len(tools) == 1:
         name = ((tools[0] or {}).get("function") or {}).get("name")
         if name:
             return {"type": "function", "function": {"name": name}}
     return "auto"
+
+
+def _wire_tools(tools: list[dict]) -> list[dict]:
+    """The tools as the model endpoint should see them: without kell's own markers."""
+    return [{k: v for k, v in t.items() if not str(k).startswith("_")} for t in tools]
 
 
 def _room_agent_max_tokens() -> int:
@@ -1086,9 +1094,9 @@ async def _room_agent_model_one(authorization: str, messages: list[dict], tools:
                "x-stealthlab-data-class": "PUBLIC_SOURCE"}
     async with http_client(timeout=120.0) as client:
         if tools:
-            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": tools, "tool_choice": _tool_choice(tools)})
-            if r.status_code in (400, 422) and len(tools) == 1:   # a model that refuses a forced call is asked again with the choice left to it
-                r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": tools, "tool_choice": "auto"})
+            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": _wire_tools(tools), "tool_choice": _tool_choice(tools)})
+            if r.status_code in (400, 422) and _tool_choice(tools) != "auto":   # a model that refuses a forced call is asked again with the choice left to it
+                r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": _wire_tools(tools), "tool_choice": "auto"})
             if r.status_code in (400, 422):          # a model that will not take tools still answers without them
                 r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
         else:
@@ -1226,7 +1234,7 @@ async def _room_agent_model_stream_one(authorization: str, messages: list[dict],
                "accept": "text/event-stream", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
 
     async def frames(with_tools: bool, forced: bool = True):
-        payload = {**body, **({"tools": tools, "tool_choice": _tool_choice(tools) if forced else "auto"} if with_tools else {})}
+        payload = {**body, **({"tools": _wire_tools(tools), "tool_choice": _tool_choice(tools) if forced else "auto"} if with_tools else {})}
         async with http_client(timeout=180.0) as client:
             async with client.stream("POST", f"{base}/v1/chat/completions", headers=headers, json=payload) as r:
                 if r.status_code >= 300:
@@ -1236,7 +1244,7 @@ async def _room_agent_model_stream_one(authorization: str, messages: list[dict],
                         why = str(((json.loads(raw) or {}).get("error") or {}).get("message") or "")[:200]
                     except Exception:  # noqa: BLE001
                         why = ""
-                    if with_tools and forced and len(tools) == 1 and r.status_code in (400, 422):
+                    if with_tools and forced and _tool_choice(tools) != "auto" and r.status_code in (400, 422):
                         async for chunk in frames(True, False):        # a model that refuses a forced call: the choice is left to it
                             yield chunk
                         return
@@ -3278,7 +3286,66 @@ def _installed_list(installed: list[Any] | None) -> list[dict[str, Any]]:
 from app.tool_routing import gateway as _gateway  # noqa: E402
 
 
+_PREFLIGHT: dict[str, tuple[float, bool]] = {}          # connector url -> (when checked, answers without a sign-in)
+PREFLIGHT_TTL_S = 900.0
+
+
+async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The registry's probe is a snapshot; a server marked live can have started asking for a sign-in since (or only asks when a tool is called).
+    The runnable-looking candidates at the top of a search are asked now, all at once with a short wait: one that answers 401 or 403 is no longer
+    marked via_kell, says why, and moves behind the ones that really run, so the agent does not try a dead end first. A server that is merely slow is
+    left as it was. Results are remembered for fifteen minutes."""
+    import asyncio as _asyncio
+    import time as _time
+
+    live = [t for t in tools if isinstance(t, dict) and t.get("via_kell") and t.get("source") == "registry"][:6]
+    if not live:
+        return tools
+
+    async def check(t: dict[str, Any]) -> None:
+        server = str(t.get("server") or t.get("name") or "")
+        try:
+            card = await _gateway_card(server)
+            url = str(card.extra["connector_url"])
+        except Exception:  # noqa: BLE001 -- not a gateway server: leave the entry as it is
+            return
+        hit = _PREFLIGHT.get(url)
+        if hit and _time.monotonic() - hit[0] < PREFLIGHT_TTL_S:
+            ok = hit[1]
+        elif url in _gateway.NEEDS_SIGNIN:
+            ok = False
+        else:
+            try:
+                await _asyncio.wait_for(_gateway.list_tools(url), timeout=float(os.environ.get("KELL_PREFLIGHT_WAIT", "4.0")))
+                ok = True
+            except _gateway.GatewayRefused as exc:
+                ok = "sign-in" not in str(exc)
+            except Exception:  # noqa: BLE001 -- slow or down: no verdict
+                return
+            _PREFLIGHT[url] = (_time.monotonic(), ok)
+        if not ok:
+            t["via_kell"] = False
+            t.pop("call", None)
+            t["available"] = "cannot run through kell: it asks for a sign-in kell cannot give; do not try it"
+
+    await _asyncio.gather(*(check(t) for t in live))
+    dead = [t for t in tools if isinstance(t, dict) and t.get("source") == "registry" and not t.get("via_kell")
+            and str(t.get("available", "")).startswith("cannot run through kell: it asks")]
+    return [t for t in tools if t not in dead] + dead
+
+
 async def _external_tools(need: str, goal: str, installed: list[Any] | None, k: int) -> dict[str, Any] | None:
+    """The router's answer for `need` with its runnable-looking servers checked live (see _preflight_tools)."""
+    out = await _external_tools_ranked(need, goal, installed, k)
+    if out and isinstance(out.get("tools"), list):
+        try:
+            out["tools"] = await _preflight_tools(out["tools"])
+        except Exception:  # noqa: BLE001 -- the check never breaks a search
+            logging.getLogger(__name__).warning("tool preflight failed", exc_info=True)
+    return out
+
+
+async def _external_tools_ranked(need: str, goal: str, installed: list[Any] | None, k: int) -> dict[str, Any] | None:
     """The tool router (app/tool_routing, docs/tool_routing_plan.md): MCP tools and servers ranked for `need` -- the
     caller's installed ones and the MCP Registry snapshot. None when it is off (TOOL_ROUTING=off) or finds nothing."""
     if os.environ.get("TOOL_ROUTING", "on").lower() == "off":

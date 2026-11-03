@@ -55,7 +55,7 @@ WORK_RULES = (
     "knows what can run. Then, in this order: (1) a tool it marks via_kell that does the job: call use_tool with it. (2) Otherwise, if the job "
     "is writing or making something (slides, a page, a document, code, a draft, a summary), do not write it yourself: call call_model, which "
     "runs the cheapest capable model kell has connected, with a complete prompt for the finished thing; give canvas_title and kind and kell "
-    "puts the result in a canvas for everyone in the room. After the tool results come back, answer in one or two sentences about what was made "
+    "puts the result in a canvas for everyone in the room. Never stop at describing a tool or at what could be done, and never write the finished thing yourself: when asked to make something, a tool or call_model must run. After the tool results come back, answer in one or two sentences about what was made "
     "or found. Do not ask the person for details you can decide yourself: if the topic or style is missing, use the conversation so far or choose a "
     "sensible one, say in a few words what you chose, and do the work now. For a paper, notes with equations or anything typeset, use kind=latex and ask for one complete LaTeX article. For slides: ask call_model for ONE complete self-contained HTML deck (one full-screen section per slide, scroll-snap, a restrained "
     "palette with one accent colour, large type, generous space, no external files) with kind=html."
@@ -91,6 +91,29 @@ def wants_work(text: str) -> bool:
     "make me slides" goes through discover_tools nearly every time instead of whenever the model feels like it."""
     t = (text or "").strip()
     return len(t.split()) >= 3 and not _CHAT_ONLY.match(t)
+
+
+_MAKE = re.compile(r"\b(make|create|build|write|generate|design|draft|produce|prepare|compose|put together|turn .* into)\b", re.I)
+_ASKS_FOR_TOOL = re.compile(r"\b(find|which|what|recommend|suggest|search|look for)\b.*\btools?\b|\bis there a tool\b", re.I)
+
+
+def makes_something(text: str) -> bool:
+    """A request to make something (slides, a page, a memo, code), as opposed to a question or a request for a tool recommendation. For these the
+    agent must run a tool or call_model after its search; it may not just describe what could be done, or write a long piece itself."""
+    t = (text or "").strip()
+    return wants_work(t) and bool(_MAKE.search(t)) and not _ASKS_FOR_TOOL.search(t)
+
+
+def must_work_tools() -> list[dict[str, Any]]:
+    """All three tools, with discover_tools marked so the model endpoint sends tool_choice "required": some tool has to be called (the marker is
+    removed before the request leaves; see mcp_server/server.py _wire_tools)."""
+    return [{**DISCOVER_TOOLS, "_required": True}, USE_TOOL, CALL_MODEL]
+
+
+def _ok(result: Any) -> bool:
+    """A tool result that is a real outcome: not a failure, a refusal or a consent link."""
+    r = str(result)
+    return not (r.startswith("FAILED") or r.startswith("REFUSED") or '"consent_required"' in r[:200])
 
 
 def now_line(tz: str = "", now: Any = None) -> str:
@@ -386,10 +409,12 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
     links: list[str] = []
     made: list[str] = []
     search_first = wants_work(text)
+    creates = makes_something(text)
+    worked = False
 
     for round_no in range(max_rounds + 1):
         # The first round of a task offers only discover_tools, which the model endpoint turns into a forced call: the search always happens.
-        reply = await model_call(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else tools)
+        reply = await model_call(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else (must_work_tools() if (creates and not worked) else tools))
         message = ((reply.get("choices") or [{}])[0] or {}).get("message") or {}
         calls = message.get("tool_calls") or []
         content = strip_tool_markup(str(message.get("content") or ""))
@@ -398,6 +423,8 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
             result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made)
+            if str(((call or {}).get("function") or {}).get("name") or "") in ("use_tool", "call_model") and _ok(result):
+                worked = True
             link = _consent(result)
             if link:
                 links.append(link)
@@ -428,12 +455,14 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     links: list[str] = []
     made: list[str] = []
     search_first = wants_work(text)
+    creates = makes_something(text)
+    worked = False
 
     for round_no in range(max_rounds + 1):
         parts: list[str] = []
         calls: dict[int, dict[str, Any]] = {}
         markup = MarkupFilter()
-        async for chunk in model_stream(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else tools):
+        async for chunk in model_stream(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else (must_work_tools() if (creates and not worked) else tools)):
             choice = (chunk.get("choices") or [{}])[0] or {}
             delta = choice.get("delta") or {}
             piece = delta.get("content")
@@ -464,6 +493,8 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
         messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
         for call in tool_calls:
             result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made)
+            if str(((call or {}).get("function") or {}).get("name") or "") in ("use_tool", "call_model") and _ok(result):
+                worked = True
             link = _consent(result)
             if link:
                 links.append(link)

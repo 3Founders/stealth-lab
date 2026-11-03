@@ -53,3 +53,31 @@ async def test_a_failed_cheap_model_is_text_the_agent_can_act_on():
 def test_small_talk_does_not_force_a_search():
     assert room_agent.wants_work("make aesthetic slides for me")
     assert not room_agent.wants_work("thanks!") and not room_agent.wants_work("hi") and not room_agent.wants_work("ok")
+
+
+@pytest.mark.asyncio
+async def test_a_request_to_make_something_must_run_a_tool_after_the_search_until_one_has_worked():
+    model = Model(_reply(tool_calls=[_tc("discover_tools", need="slides")]),
+                  _reply(tool_calls=[_tc("call_model", prompt="deck", canvas_title="D", kind="html")]),
+                  _reply("Made it."))
+
+    async def discover(need):
+        return json.dumps({"tools": []})
+
+    async def cheap(prompt):
+        return "<!doctype html><section>x</section>"
+
+    out = await room_agent.converse("make aesthetic slides for me", [], model_call=model, find_tools=_some_tools, use_tool=_never,
+                                    discover=discover, call_cheap=cheap)
+    first, second, third = (t for _m, t in model.seen[:3])
+    assert [x["function"]["name"] for x in first] == ["discover_tools"] and not any(x.get("_required") for x in first)
+    assert any(x.get("_required") for x in second)                      # after the search, some tool has to be called
+    assert not any(x.get("_required") for x in third)                   # once call_model worked, the model may just answer
+    assert out.text.startswith("Made it.")
+
+
+@pytest.mark.asyncio
+async def test_questions_and_tool_requests_are_not_forced_to_make_anything():
+    assert not room_agent.makes_something("find a tool that converts a pdf to text")
+    assert not room_agent.makes_something("summarise the main causes of the french revolution")
+    assert room_agent.makes_something("write a python script that renames files by date")
