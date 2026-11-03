@@ -182,3 +182,40 @@ def test_a_temporary_chat_history_is_cleaned_to_user_and_assistant_text() -> Non
     assert clean_history(None) == [] and clean_history("x") == []
     many = [{"role": "user", "content": str(i)} for i in range(100)]
     assert [t["content"] for t in clean_history(many)] == [str(i) for i in range(100 - MAX_HISTORY_TURNS, 100)]
+
+
+@pytest.mark.asyncio
+async def test_a_finished_turn_leaves_one_trace_line_with_the_tools_in_order_and_no_text(caplog):
+    import logging
+
+    from app.services import room_agent as ra
+
+    async def model_stream(authorization, messages, tools):
+        if len(model_stream.calls) == 0:
+            model_stream.calls.append(1)
+            yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "1", "function": {"name": "discover_tools", "arguments": json.dumps({"need": "slides"})}}]}}]}
+        elif len(model_stream.calls) == 1:
+            model_stream.calls.append(2)
+            yield {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "2", "function": {"name": "call_model", "arguments": json.dumps({"prompt": "deck", "canvas_title": "Deck", "kind": "html"})}}]}}]}
+        else:
+            yield {"choices": [{"delta": {"content": "Here is your deck."}}]}
+
+    model_stream.calls = []
+
+    async def discover(need):
+        return json.dumps({"tools": []})
+
+    async def cheap(bearer, subject, prompt):
+        return "<!doctype html><section>x</section>"
+
+    server = FakeServer()
+    room_agent_routes.register(server, Gate(), lambda: _pool(), model_call=lambda a, m, t: _none(), find_tools=lambda need: _none(),
+                               use_tool=lambda s, sv, t, a: _none(), model_stream=model_stream, discover=discover, call_cheap=cheap)
+    route = server.routes["/v1/rooms/{room_id}/agent"]
+    with caplog.at_level(logging.INFO, logger="app.mcp_server.room_agent_routes"):
+        r = await route(_request({"text": "make aesthetic slides for me"}, accept="text/event-stream"))
+        async for _ in r.body_iterator:
+            pass
+    lines = [rec.getMessage() for rec in caplog.records if "room agent turn:" in rec.getMessage()]
+    assert len(lines) == 1 and "tools=discover_tools,call_model" in lines[0] and "canvas=True" in lines[0]
+    assert "slides" not in lines[0] and "deck" not in lines[0].lower()                     # no message text, no answer text

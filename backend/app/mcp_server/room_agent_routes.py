@@ -69,6 +69,17 @@ MEMORY_HINT = ("\nIf the person tells you something durable about themselves (a 
                "Never save secrets, keys or small talk.")
 
 
+def trace_turn(room_id: Any, handle: str, outcome: "agent.AgentOutcome | None", started: float, path: str) -> None:
+    """One log line per finished agent turn: which tools ran, in order, whether a canvas was made, how long it took. Never the message or the
+    answer. It is how a turn in production can be followed (is the search first? did call_model run?) without reading anyone's chat."""
+    import time as _time
+
+    tools = list(outcome.tools_used) if outcome else []
+    made = bool(outcome and "canvas title=" in (outcome.text or ""))
+    log.info("room agent turn: room=%s agent=%s path=%s tools=%s canvas=%s answered=%s secs=%.1f", str(room_id)[:8], handle, path,
+             ",".join(tools) or "-", made, bool(outcome and outcome.text.strip()), _time.monotonic() - started)
+
+
 def _sse(obj: Any) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
@@ -132,6 +143,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _error(request, str(exc), exc.status)
 
         bearer = request.headers.get("authorization", "")
+        started = __import__("time").monotonic()
 
         async def finish(outcome: agent.AgentOutcome) -> tuple[str, Any, str | None, list[str], list[str]]:
             reply = outcome.text.strip() or "I do not have an answer for that."
@@ -176,6 +188,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         else:
                             final = value
                     reply, accepted, why, links, remembered = await finish(final or agent.AgentOutcome(text=""))
+                    trace_turn(room_id, handle, final, started, "stream")
                     if why is not None:
                         queue.put_nowait(_sse({"error": why}))
                     else:
@@ -219,7 +232,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                                            find_tools=find_tools,
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                                            handle=handle, instructions=instructions, tz=tz, discover=discover,
-                                           tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None)
+                                           tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
+                                           call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None)
         except rm.RoomError:
             raise
         except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)
@@ -231,6 +245,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return _error(request, "the room agent could not answer just now; nothing was posted", 502)
 
         reply, accepted, why, links, remembered = await finish(outcome)
+        trace_turn(room_id, handle, outcome, started, "plain")
         if why is not None:
             return _error(request, why, 400)
         return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted, "consent": links,
