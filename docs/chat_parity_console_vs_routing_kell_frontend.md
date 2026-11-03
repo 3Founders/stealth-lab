@@ -67,7 +67,19 @@ Verified: `tsc --noEmit` and `next build` pass; a temporary page rendering the r
 Edge, showed the mark, animated dots and rendered markdown. NOT verified: the mid-stream word fade on screen (virtual time
 does not advance the stream timer) and a live engine turn.
 
-Still to port for "exactly the same" in the desktop chat: message group headers (name, agent badge, time) and per-message
-actions (`MessageActions`: copy / ask again); the glass composer (`Composer.tsx`, `.dg-composer`) and its send button
+Second slice (same day): message headers (name, agent badge, time) and the hover actions row (`MessageActions`: copy with the
+tick feedback, "Ask again" / "Send this again"), copied byte-identical with `icons.tsx`; their rules appended to
+`chat-core.css`. Checked by screenshot of the same markup with the hover row forced visible (headless cannot hover).
+
+Still to port for "exactly the same" in the desktop chat: the glass composer (`Composer.tsx`, `.dg-composer`) and its send button
 motion; popovers and panels (`Popover`, `PanelShell`); dark mode (the desktop has no dark tokens yet); the
 canvas sheet (`CanvasPanel`) once the desktop has something to put in it. `console/` is unchanged.
+
+## Backend memory review, completed scan (same day)
+
+AST scan of every `.fetch(` / `.fetchall(` in `backend/app`: 299 SELECTs analysed, 57 built dynamically (not analysed).
+Only 12 have no WHERE, no LIMIT and no aggregate; nearly all are small registry tables (shards, plans, schema_migrations,
+alert state). The two that grow with data, `routing_evidence_items` and `routing_aggregate_results`, are read only by
+the offline fit (`routing/fit.py`), which needs the whole table. Per-request routing queries are all id-scoped. Fixed
+earlier: the per-request draws-blob download (`f896f89e`) and the embedding cache's real size (`313ac96a`). Not covered:
+the 57 dynamic queries and any list that grows in Python after the fetch.

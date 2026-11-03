@@ -107,3 +107,19 @@
 @keyframes dg-tok-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 @keyframes dg-glow { 0%, 100% { opacity: .75; transform: rotate(-4deg); } 50% { opacity: 1; transform: rotate(4deg); } }
 @keyframes dg-breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+/* Message headers, the hover actions row (extracted the same way from routing_kell_frontend/app/chat/chat.css). */
+.dg-badge { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; background: var(--cobalt); color: #fff; border-radius: 3px; padding: 1px 5px 0; line-height: 1.5; }
+.dg-meta { display: flex; align-items: baseline; gap: 8px; }
+.dg-meta b { font-weight: 400; }
+.dg-meta time { font-size: 12px; color: var(--grey); }
+.dg-badge[data-kind="tab"] { background: var(--grey); }
+.dg-msg { display: grid; gap: 0; }
+.dg-msg > .dg-acts { margin: 2px 0 0 -4px; align-self: start; opacity: 0; transition: opacity .16s ease; }
+.dg-msg:hover > .dg-acts, .dg-msg > .dg-acts:focus-within { opacity: 1; }
+@media (hover: none) {
+  .dg-msg > .dg-acts { opacity: 1; }
+}
+.dg-msg > .dg-acts .dg-act { width: 28px; height: 28px; border-radius: 8px; }
+.dg-msg > .dg-acts .dg-act svg { width: 15px; height: 15px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

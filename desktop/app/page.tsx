@@ -6,9 +6,10 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
+import MessageActions from "@/components/chat/MessageActions"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
 
-type Line = { who: "user" | "assistant"; text: string }
+type Line = { who: "user" | "assistant"; text: string; at?: number }
 type Step = { kind: "tool" | "model"; label: string; note?: string }
 // One row per step (one model round trip). The engine splits it across events: session.step.started names the model (keyed
 // by assistantMessageID), session.step.ended carries tokens and cost for the same message. Neither event carries a rung.
@@ -104,21 +105,27 @@ export default function Home() {
 
   const appendAssistant = (delta: string) => setLines((l) => {
     const last = l.at(-1)
-    if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta }); return c }
-    return [...l, { who: "assistant", text: delta }]
+    if (last?.who === "assistant") { const c = l.slice(0, -1); c.push({ who: "assistant", text: last.text + delta, at: last.at }); return c }
+    return [...l, { who: "assistant", text: delta, at: Date.now() }]
   })
 
-  const send = async () => {
-    if (!text.trim() || busy || !directory) return
-    const sent = text
-    setLines((l) => [...l, { who: "user", text: sent }])
-    setText(""); setBusy(true); busyRef.current = true
+  // The prompt an answer came from, for "Ask again".
+  const lastUserBefore = (i: number) => { for (let k = i - 1; k >= 0; k--) if (lines[k].who === "user") return lines[k].text; return undefined }
+  const copyText = async (t: string) => { try { await navigator.clipboard.writeText(t); return true } catch { return false } }
+
+  const send = async (again?: string) => {
+    const body = again ?? text
+    if (!body.trim() || busy || !directory) return
+    const sent = body
+    setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
+    if (again === undefined) setText("")                     // sending it again keeps what you were typing
+    setBusy(true); busyRef.current = true
     // The cards are for this request: ask while the turn runs (the tool router is fast; the model is not).
     setCards([]); setCardsNote(""); loadTools(sent)
     const r = await fetch("/api/prompt", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionID, directory, text: sent }) })
     if (!r.ok || !r.body) {
       const err = await r.text()
-      setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}` }])
+      setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
       setBusy(false); return
     }
     let sid = sessionID
@@ -162,7 +169,7 @@ export default function Home() {
     for (const ms of [600, 1200, 2500, 5000]) setTimeout(() => { if (!busyRef.current) loadChanges(sid) }, ms)
   }
 
-  const appendNote = (text: string) => setLines((l) => [...l, { who: "assistant", text }])
+  const appendNote = (text: string) => setLines((l) => [...l, { who: "assistant", text, at: Date.now() }])
 
   // Undo: put the session's changed files back as they were before its last turn (OpenCode's snapshot of that turn), or
   // `kell undo` for a dispatched answer. A second click only when a file was edited since -- that edit would be dropped.
@@ -306,9 +313,15 @@ export default function Home() {
                   const live = busy && l.who === "assistant" && i === lines.length - 1   // the reply still arriving
                   return (
                     <div className={`line ${l.who}`} key={i}>
-                      <div className="who">{l.who === "user" ? "you" : "kell"}</div>
-                      <div className="bubble">
-                        {l.who === "user" ? l.text : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}
+                      <div className="who dg-meta"><b>{l.who === "user" ? "you" : "kell"}</b>{l.who === "assistant" && <span className="dg-badge">agent</span>}{l.at ? <time>{new Date(l.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</time> : null}</div>
+                      <div className="dg-msg">
+                        <div className="bubble">
+                          {l.who === "user" ? l.text : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}
+                        </div>
+                        {l.text && !live ? (
+                          <MessageActions copyText={l.text} retryText={l.who === "user" ? l.text : lastUserBefore(i)}
+                            onCopy={copyText} onRetry={(t) => void send(t)} retryLabel={l.who === "user" ? "Send this again" : "Ask again"} />
+                        ) : null}
                       </div>
                     </div>
                   )
