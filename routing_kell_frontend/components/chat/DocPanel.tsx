@@ -40,7 +40,7 @@ const personColor = (name: string): string => {
  * artifact toolbar in vercel/chatbot sends only "Please add final polish..." and the model gets the document by reference. Pasting the whole
  * document into the box made it show as raw text, a fence and all.
  */
-export const editRequest = (label: string): string => `@kell Edit "${label}": `;
+export const editRequest = (label: string, selected = false): string => (selected ? `@kell Edit the selected part of "${label}": ` : `@kell Edit "${label}": `);
 
 /** One-click edits, each a short sentence sent as it is (like the toolbar actions of vercel/chatbot's artifacts). */
 export const QUICK_EDITS: Record<DocKind, Array<{ label: string; ask: string }>> = {
@@ -81,7 +81,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   /** A document to show first (the title on the card the person pressed). */
   wantedTitle: string | null;
   /** Puts text in the message box ("Ask kell to edit this"). */
-  onAsk: (text: string) => void;
+  onAsk: (text: string, selection?: string) => void;
   /** Sends a short request at once (a quick edit). The open canvas goes with it. */
   onQuick?: (text: string) => void;
   /** The documents of the room, whenever the list is read. */
@@ -173,7 +173,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     const pick = async () => {
       const l = await refreshList();
       if (!live || !l) return;
-      const wanted = wantedTitle ? l.find((d) => d.title.toLowerCase() === wantedTitle.toLowerCase()) : null;
+      const wanted = wantedTitle ? l.find((d) => d.title.toLowerCase() === wantedTitle.toLowerCase()) ?? l.find((d) => (d.label ?? "").toLowerCase() === wantedTitle.toLowerCase()) : null;
       setActiveId((cur) => wanted?.id ?? (cur && l.some((d) => d.id === cur) ? cur : l[0]?.id ?? null));
     };
     void pick();
@@ -537,7 +537,11 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={download}>Download</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => void openHistory()} aria-expanded={!!history}>History</button>
-              <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => onAsk(editRequest(shown(docs.find((d) => d.id === activeId) ?? { title, kind, id: activeId ?? "" }, docs)))}>Ask kell to edit</button>
+              <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => {
+                const el = area.current;
+                const picked = el && el.selectionStart !== el.selectionEnd ? textRef.current.slice(el.selectionStart, el.selectionEnd).slice(0, 3000) : "";
+                onAsk(editRequest(shownName, !!picked), picked || undefined);       // the highlighted part goes as context beside the short line, not inside it
+              }}>Ask kell to edit</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => void remove()}>Delete</button>
             </span>
           </div>

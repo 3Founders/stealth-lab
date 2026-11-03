@@ -46,6 +46,8 @@ class Pool:
     async def fetch(self, sql, *a):
         if "FROM users" in sql:
             return []
+        if sql.startswith("SELECT * FROM room_docs WHERE room_id = $1 AND deleted_at IS NULL"):
+            return [d for d in self.docs.values() if d["room_id"] == a[0] and not d.get("deleted_at")]
         if sql.startswith("SELECT version, by_handle"):
             return [{"version": v["version"], "by_handle": v["by_handle"], "note": v["note"], "at": None, "size": len(v["body"])} for v in sorted(self.versions, key=lambda v: -v["version"]) if v["doc_id"] == a[0]]
         return []
@@ -153,3 +155,30 @@ def test_who_is_editing_is_shown_to_others_briefly_and_never_stored_in_the_docum
     seen = run(rd.get_doc(p, "alice", str(ROOM), doc["id"]))
     assert seen["present"] == ["Someone"] and seen["editing"] == ["Someone"]
     assert "editing" not in p.docs[uuid.UUID(doc["id"])]                              # presence is not part of the document
+
+
+def test_an_edit_that_names_a_canvas_by_its_stored_id_title_is_a_new_version_not_a_new_document():
+    """A canvas made before titles were checked is stored under an id. The agent is given that title and writes it back; the server must match it
+    to the canvas it came from, not rename it and start another document."""
+    p = Pool()
+    uid_title = "3f9c1b22-8d54-4c1a-9be7-5a1d2c3e4f50"
+    made = run(rd.create_doc(p, "alice", str(ROOM), "Memo", "document", "# Four Day Week Memo\n\nOld text.\n"))
+    p.docs[uuid.UUID(made["id"])]["title"] = uid_title                 # as stored before the rule: the title is an id
+    text = f'Done.\n\n```canvas title="{uid_title}" kind=document\n# Four Day Week Memo\n\nNew text, more confident.\n```\n'
+    assert run(rd.capture(p, ROOM, "alice", "@kell", "msg-9", text)) == 1
+    assert len(p.docs) == 1                                             # still one document
+    d = next(iter(p.docs.values()))
+    assert d["version"] == 2 and "more confident" in d["body"] and d["title"] == uid_title
+    brand_new = '```canvas title="3f9c1b22-0000-4c1a-9be7-5a1d2c3e4f99" kind=document\n# A Fresh Memo\n\ntext\n```'
+    assert run(rd.capture(p, ROOM, "alice", "@kell", "msg-10", brand_new)) == 1
+    assert sorted(x["title"] for x in p.docs.values() if x["title"] != uid_title) == ["A Fresh Memo"]     # a new canvas is never saved under an id
+
+
+def test_a_block_named_by_the_readable_label_finds_the_canvas_stored_under_an_id():
+    p = Pool()
+    uid_title = "3f9c1b22-8d54-4c1a-9be7-5a1d2c3e4f50"
+    made = run(rd.create_doc(p, "alice", str(ROOM), "Memo", "document", "# Four Day Week Memo\n\nOld text.\n"))
+    p.docs[uuid.UUID(made["id"])]["title"] = uid_title
+    text = '```canvas title="Four Day Week Memo" kind=document\n# Four Day Week Memo\n\nNew text.\n```'      # the name the agent was given
+    assert run(rd.capture(p, ROOM, "alice", "@kell", "msg-11", text)) == 1
+    assert len(p.docs) == 1 and next(iter(p.docs.values()))["version"] == 2

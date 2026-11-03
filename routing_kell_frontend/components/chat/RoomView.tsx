@@ -252,7 +252,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
       }, ctl.signal, who, presetsRef.current[who],
       temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined,
-      canvasOpenRef.current && r === roomRef.current ? canvasContextRef.current : null);   // the canvas you have open, so "make it shorter" edits it
+      canvasOpenRef.current && r === roomRef.current && canvasContextRef.current ? { ...canvasContextRef.current, ...(selectionRef.current ? { selection: selectionRef.current } : {}) } : null);   // the canvas you have open (and the part you highlighted), so "make it shorter" edits it
+      selectionRef.current = "";
       if (out.memory.remembered.length) note(`Remembered: ${out.memory.remembered.map((l) => l.replace(/^- /, "").replace(/ \[source:.*$/, "")).join("; ")}. Settings, Memory and knowledge, to edit or undo.`, r);
       else if (out.memory.used.length) note(`Used your memory: ${out.memory.used.join(", ")}`, r);
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
@@ -695,6 +696,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const canvasContextRef = useRef<{ title: string; kind: string; text: string } | null>(null);
+  const selectionRef = useRef("");                      // the part of the canvas highlighted when "Ask kell to edit" was pressed, for the next ask only
   const canvasOpenRef = useRef(false);
   canvasOpenRef.current = canvasOpen;
   const [docTitle, setDocTitle] = useState<string | null>(null);   // the document to show first in the shared docs panel
@@ -740,8 +742,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     if (!todo.length) return;
     let live = true;
     void (async () => {
+      // what the room already has, by stored title or by the name shown for it: a canvas stored under an id is the same canvas as the one named by its text
+      let have = new Set<string>();
+      try { have = new Set((await dapi.list(sid)).flatMap((d) => [d.title, d.label ?? ""]).map((t) => t.toLowerCase()).filter(Boolean)); } catch { /* offline: create() below answers 409 for a title that exists */ }
       for (const c of todo) {
         const last = c.versions[c.versions.length - 1];
+        if (have.has(c.title.toLowerCase())) { done = [...done, c.id]; if (live) try { window.localStorage.setItem(key, JSON.stringify(done)); } catch { /* storage blocked */ } continue; }
         try { await dapi.create(sid, c.title, c.kind, last.text); } catch (e) { if (!(e as { status?: number }).status || (e as { status?: number }).status !== 409) continue; }
         done = [...done, c.id];
         if (live) try { window.localStorage.setItem(key, JSON.stringify(done)); } catch { /* storage blocked */ }
@@ -1138,7 +1144,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       </aside>
 
       {info[room]?.id && !tempRef.current.has(room)
-        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} onQuick={(t) => void submit(t)} />
+        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t, sel) => { selectionRef.current = sel ?? ""; setDraft((d) => ({ text: t, n: d.n + 1 })); }} onQuick={(t) => void submit(t)} />
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms

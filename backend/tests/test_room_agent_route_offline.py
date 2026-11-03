@@ -219,3 +219,19 @@ async def test_a_finished_turn_leaves_one_trace_line_with_the_tools_in_order_and
     lines = [rec.getMessage() for rec in caplog.records if "room agent turn:" in rec.getMessage()]
     assert len(lines) == 1 and "tools=discover_tools,call_model" in lines[0] and "canvas=True" in lines[0]
     assert "slides" not in lines[0] and "deck" not in lines[0].lower()                     # no message text, no answer text
+
+
+@pytest.mark.asyncio
+async def test_the_highlighted_part_of_an_open_canvas_reaches_the_model_beside_the_short_message_not_inside_it():
+    seen = {}
+
+    async def model(authorization, messages, tools):
+        seen["system"] = messages[0]["content"]
+        seen["user"] = messages[-1]["content"]
+        return {"choices": [{"message": {"content": "Done."}}]}
+
+    canvas = {"title": "Plan", "kind": "document", "text": "# Plan\n\nIntro.\n\nStep one.\n", "selection": "Step one."}
+    r = await _route(model)(_request({"text": '@kell Edit the selected part of "Plan": make it clearer', "canvas": canvas}))
+    assert r.status_code == 200
+    assert seen["user"].endswith('make it clearer') and "Step one." not in seen["user"] and "<canvas>" not in seen["user"]   # the message is the short line
+    assert "<canvas>\n# Plan" in seen["system"] and "<selection>\nStep one.\n</selection>" in seen["system"]

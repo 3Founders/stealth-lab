@@ -94,7 +94,7 @@ export function roomsApi(deps: RoomsDeps) {
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[] }>("POST", `/${e(id)}/agent`, { text }),
     /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
-    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }, canvas?: { title: string; kind: string; text: string } | null) => {
+    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }, canvas?: { title: string; kind: string; text: string; selection?: string } | null) => {
       const token = await deps.token();
       if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
       let res: Response;

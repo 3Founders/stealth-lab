@@ -315,9 +315,18 @@ async def capture(pool: Any, room_id: Any, sub: str, handle: str, message_id: st
         for title, kind, body in canvas_blocks(text)[:5]:
             if not (body or "").strip():
                 continue                                          # the pointer a big canvas leaves in its message: the canvas already has the text
-            t = title_of(title, kind, body)
+            written = title_of(title)                                 # the title as the agent wrote it: an edit names the canvas it was given, by its stored title
+            t = title_of(title, kind, body)                           # the title a NEW canvas is saved under (never an id)
             src = f"{message_id}"[:64]
-            doc = await pool.fetchrow("SELECT * FROM room_docs WHERE room_id = $1 AND lower(title) = lower($2) AND deleted_at IS NULL", room_id, t)
+            doc = await pool.fetchrow("SELECT * FROM room_docs WHERE room_id = $1 AND lower(title) = lower($2) AND deleted_at IS NULL", room_id, written)
+            if doc is None and t != written:
+                doc = await pool.fetchrow("SELECT * FROM room_docs WHERE room_id = $1 AND lower(title) = lower($2) AND deleted_at IS NULL", room_id, t)
+            if doc is None:
+                # the agent calls a canvas by the readable name it was shown; a canvas stored under an id is found by that name
+                for cand in await pool.fetch("SELECT * FROM room_docs WHERE room_id = $1 AND deleted_at IS NULL", room_id):
+                    if is_ugly(cand["title"]) and label_for(cand["title"], cand["kind"], cand["body"]).lower() == written.lower():
+                        doc = cand
+                        break
             if doc is None:
                 if int(await pool.fetchval("SELECT count(*) FROM room_docs WHERE room_id = $1 AND deleted_at IS NULL", room_id) or 0) >= MAX_DOCS_PER_ROOM:
                     continue
