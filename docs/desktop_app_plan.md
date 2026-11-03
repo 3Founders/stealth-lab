@@ -175,3 +175,6 @@ drops the second and third copies of the OpenCode binary (`@opencode/cli`, `-bas
 (installer 500 MB to 273 MB; only `@opencode/cli-windows-x64` is used). Smoke on the built app: window loads, engine 200
 up, no leftover processes. If a build fails with `EBUSY` on `release\win-unpacked`, a shell has its working directory
 there: build with `--config.directories.output=release-build`. The installer needs about 2.5 GB of free disk to build.
+
+**Window never shown (2026-11-03, second installer bug).** After the ENOENT fix the app launched but showed no window: `main.ts` registered `win.once("ready-to-show")` after `await win.loadURL`, and the event can fire during the load, so the handler never ran. Fixed by registering it before the load and calling `show()` after it. Verified on a real install (silent NSIS install, then a screenshot of the window: UI renders, title "kell"). The first launch right after an install can take longer than 20 s (cold start plus antivirus scan); a second launch showed the window within 5 s. The "Engine problem" banner now appears only when there is an error or an open session, not on a fresh start.
+

@@ -213,7 +213,7 @@ export default function Home() {
           </p>
           <button className="btn-ink" onClick={openProject} disabled={!!sessionID || !directory || busy}>open project</button>
           {sessionID && <p style={{ fontSize: 13, marginTop: 8 }}><button className="copy" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>reset session</button></p>}
-          {engine && !engine.up && <p className="banner" style={{ marginTop: 14 }}>Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
+          {engine && !engine.up && (engine.error || sessionID) && <p className="banner" style={{ marginTop: 14 }}>Engine problem{engine.error ? `: ${engine.error}` : ""}</p>}
 
           <h2 style={{ marginTop: 22 }}>Changes</h2>
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>

@@ -52,10 +52,14 @@ if (!app.requestSingleInstanceLock()) {
     say(`next up on ${base}`)
 
     win = new BrowserWindow({ width: 1240, height: 880, title: "kell", backgroundColor: "#F8F6EF", show: false })
-    await win.loadURL(base)
-    say("window loaded")
+    // Register the show handler BEFORE the load: "ready-to-show" can fire while loadURL is still resolving, and a handler
+    // added after the await then never runs, leaving the window hidden forever (the installed app looked like it did
+    // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.
     win.once("ready-to-show", () => win?.show())
     win.on("closed", () => { win = undefined })
+    await win.loadURL(base)
+    say("window loaded")
+    win.show()
 
     // Smoke (KELL_SMOKE=1): with the window up, start the engine through the UI's own route, report, quit.
     // KELL_SMOKE_DIR is the project directory to boot the engine on.
