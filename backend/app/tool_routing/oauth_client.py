@@ -251,26 +251,24 @@ async def complete(pool: Any, state: str, code: str, *, client: Optional[httpx.A
     if not state or not code:
         raise OAuthRefused("the sign-in answer is missing its state or code")
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            row = await conn.fetchrow("""UPDATE tool_oauth_pending SET used_at = now()
-                                         WHERE state_hash = $1 AND used_at IS NULL AND expires_at > now()
-                                         RETURNING owner_id, server, client_id, verifier, redirect_uri, token_endpoint, resource""",
-                                      _hash(state))
-            if not row:
-                raise OAuthRefused("this sign-in link is no longer valid; ask kell for a new one")
-            form = {
-                "grant_type": "authorization_code", "code": code, "redirect_uri": str(row["redirect_uri"]),
-                "client_id": str(row["client_id"]), "code_verifier": str(row["verifier"]),
-                **({"resource": str(row["resource"])} if row["resource"] else {}),
-            }
-            async with _Client(client) as c:
-                answer = await _json(c, "POST", str(row["token_endpoint"]), data=form,
-                                     headers={"accept": "application/json", "content-type": "application/x-www-form-urlencoded"})
-            access = str(answer.get("access_token") or "")
-            if not access:
-                raise OAuthRefused("the sign-in service did not return an access token")
-            await _store(pool, str(row["owner_id"]), str(row["server"]), answer, token_endpoint=str(row["token_endpoint"]),
-                         client_id=str(row["client_id"]))
+        row = await conn.fetchrow("""UPDATE tool_oauth_pending SET used_at = now()
+                                     WHERE state_hash = $1 AND used_at IS NULL AND expires_at > now()
+                                     RETURNING owner_id, server, client_id, verifier, redirect_uri, token_endpoint, resource""",
+                                  _hash(state))
+    if not row:
+        raise OAuthRefused("this sign-in link is no longer valid; ask kell for a new one")
+    form = {
+        "grant_type": "authorization_code", "code": code, "redirect_uri": str(row["redirect_uri"]),
+        "client_id": str(row["client_id"]), "code_verifier": str(row["verifier"]),
+        **({"resource": str(row["resource"])} if row["resource"] else {}),
+    }
+    async with _Client(client) as c:
+        answer = await _json(c, "POST", str(row["token_endpoint"]), data=form,
+                             headers={"accept": "application/json", "content-type": "application/x-www-form-urlencoded"})
+    if not str(answer.get("access_token") or ""):
+        raise OAuthRefused("the sign-in service did not return an access token")
+    await _store(pool, str(row["owner_id"]), str(row["server"]), answer, token_endpoint=str(row["token_endpoint"]),
+                 client_id=str(row["client_id"]))
     return str(row["owner_id"]), str(row["server"])
 
 
