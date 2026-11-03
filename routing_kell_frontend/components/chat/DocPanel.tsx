@@ -1,5 +1,6 @@
 "use client";
 import { isRealName } from "@/lib/chat/artifacts";
+import { isUglyTitle, labelFor } from "@/lib/chat/canvas-names";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import Latex from "@/components/chat/Latex";
@@ -96,6 +97,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
 }) {
   const pollMs = timing?.poll ?? POLL_MS, saveMs = timing?.save ?? SAVE_AFTER_MS;
   const [docs, setDocs] = useState<DocInfo[]>([]);
+  const named = useRef<Set<string>>(new Set());               // documents whose name was already looked up
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [kind, setKind] = useState<DocKind>("document");
@@ -151,6 +153,16 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       setDocs(l);
       onDocs?.(l);
       setError("");
+      // A document stored under an id (made before names were checked) is listed by a name read from its text. The server sends `label`;
+      // from one that does not, the text is read here, once per document.
+      for (const d of l.filter((x) => !x.label && isUglyTitle(x.title) && !named.current.has(x.id)).slice(0, 12)) {
+        named.current.add(d.id);
+        void api.get(roomId, d.id).then((full) => {
+          if (!("body" in full)) return;
+          const label = labelFor(d.title, d.kind, full.body);
+          setDocs((cur) => cur.map((c) => (c.id === d.id ? { ...c, label } : c)));
+        }).catch(() => { named.current.delete(d.id); });
+      }
       return l;
     } catch (e) { setError(e instanceof Error ? e.message : "Couldn't load the documents."); return null; }
   }, [api, roomId, onDocs]);
@@ -343,6 +355,9 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     return () => { window.removeEventListener("pagehide", bye); bye(); };
   }, [open, save]);
 
+  /** The open document's name as people read it (never an id): the address bar, labels and the delete question all use it. */
+  const shownName = shown(docs.find((d) => d.id === activeId) ?? { title, kind, id: activeId ?? "" }, docs);
+
   const create = async () => {
     const t = newTitle.trim();
     if (!t) return;
@@ -368,7 +383,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     } catch (e) { setError(e instanceof Error ? e.message : "Couldn't restore that version."); }
   };
   const remove = async () => {
-    if (!activeId || !window.confirm(`Delete "${title}" for everyone in this room? Its history goes with it.`)) return;
+    if (!activeId || !window.confirm(`Delete "${shownName}" for everyone in this room? Its history goes with it.`)) return;
     try { await api.remove(roomId, activeId); setActiveId(null); const l = await refreshList(); setActiveId(l?.[0]?.id ?? null); } catch (e) { setError(e instanceof Error ? e.message : "Couldn't delete it."); }
   };
   const copy = () => { void navigator.clipboard.writeText(textRef.current).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 2000); }, () => {}); };
@@ -484,15 +499,15 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
               <div className="dg-doc-pane" data-split={mode === "split" && kind !== "code" || undefined}>
                 <textarea
                   ref={area} className="dg-doc-text" data-kind={kind} value={text} onChange={(e) => onType(e.target.value)} onScroll={() => tie(area.current, readPane.current)} onSelect={shareCursor} onFocus={shareCursor}
-                  spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
+                  spellCheck={kind === "document"} aria-label={`Edit ${shownName}`} placeholder="Start writing…"
                 />
                 <CursorLayer area={area} text={text} cursors={remote} color={personColor} />
                 {mode === "split" && rich && <div ref={readPane} className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview" onScroll={() => tie(readPane.current, area.current)}>{kind === "latex" ? <Latex text={text} /> : <Markdown text={text} />}</div>}
-                {mode === "split" && kind === "html" && <HtmlViewer html={text} title={title} mode="browser" />}
+                {mode === "split" && kind === "html" && <HtmlViewer html={text} title={shownName} mode="browser" />}
               </div>
             )}
             {mode === "read" && rich && <div className="dg-canvas-doc" tabIndex={0}>{kind === "latex" ? <Latex text={text} /> : <Markdown text={text} />}</div>}
-            {(mode === "browser" || mode === "page") && kind === "html" && <HtmlViewer html={text} title={title} mode={mode === "page" ? "page" : "browser"} />}
+            {(mode === "browser" || mode === "page") && kind === "html" && <HtmlViewer html={text} title={shownName} mode={mode === "page" ? "page" : "browser"} />}
             {history && (
               <div className="dg-doc-history" role="dialog" aria-label="History">
                 <div className="dg-doc-history-head"><b>History</b><button type="button" className="dg-cv-icon" aria-label="Close history" onClick={() => setHistory(null)}>×</button></div>

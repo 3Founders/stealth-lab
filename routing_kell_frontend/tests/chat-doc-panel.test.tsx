@@ -162,3 +162,33 @@ describe("docs panel over a live socket", () => {
     expect(host!.querySelector(".dg-doc-status")?.textContent).toBe("Saved");
   });
 });
+
+describe("a document stored under an id", () => {
+  it("is listed by a name read from its text, not by the id", async () => {
+    const uuid = "0e2a3067-4ddd-4fef-831b-0bdb68343104";
+    const page = "<!doctype html><html><head><title>Crumb Bakery</title></head><body><p>hi</p></body></html>";
+    const api = {
+      list: vi.fn(async () => [{ id: "p1", title: uuid, kind: "html" as const, version: 1, updated_by: "kell", updated_at: null, size: page.length }]),
+      get: vi.fn(async () => ({ id: "p1", version: 1, present: [], editing: [], title: uuid, kind: "html" as const, body: page, updated_by: "kell", updated_at: null })),
+      save: vi.fn(), create: vi.fn(), remove: vi.fn(), history: vi.fn(async () => []), restore: vi.fn(),
+    } as unknown as DocsApi;
+    await mount(api);
+    await wait(60);
+    const shown = host!.textContent ?? "";
+    expect(shown).toContain("Crumb Bakery");
+    expect(shown).not.toContain(uuid);
+  });
+
+  it("is listed by the server's label when it sends one, without reading the text", async () => {
+    const uuid = "0e2a3067-4ddd-4fef-831b-0bdb68343104";
+    const api = {
+      list: vi.fn(async () => [{ id: "p1", title: uuid, label: "Rocket slides", kind: "html" as const, version: 1, updated_by: "kell", updated_at: null, size: 10 }]),
+      get: vi.fn(async () => ({ id: "p1", version: 1, present: [], editing: [], title: uuid, label: "Rocket slides", kind: "html" as const, body: "<p>x</p>", updated_by: "kell", updated_at: null })),
+      save: vi.fn(), create: vi.fn(), remove: vi.fn(), history: vi.fn(async () => []), restore: vi.fn(),
+    } as unknown as DocsApi;
+    await mount(api);
+    await wait(60);
+    expect(host!.textContent).toContain("Rocket slides");
+    expect(host!.textContent).not.toContain(uuid);
+  });
+});
