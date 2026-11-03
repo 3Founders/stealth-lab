@@ -1106,19 +1106,32 @@ async def _post_retry(client: Any, url: str, headers: dict, payload: dict) -> An
     raise RuntimeError("the model service did not answer")
 
 
+_DEAD_MODELS: dict[str, float] = {}      # model -> until when it is skipped (it failed for lack of credit or a billing refusal)
+DEAD_MODEL_S = 600.0
+
+
+def _mark_dead(model: str, exc: Exception) -> None:
+    """A model whose provider said the account has no credit is not tried again for ten minutes: every turn would otherwise pay a failed call first."""
+    import time as _time
+
+    text = str(exc).lower()
+    if "402" in text or "credit" in text or "billing" in text or "insufficient" in text:
+        _DEAD_MODELS[model] = _time.monotonic() + DEAD_MODEL_S
+
+
 def _room_agent_model_chain() -> list[str]:
     """The model the agent uses, then the ones it falls back to when the first cannot answer (an empty provider balance, an outage, a refusal):
-    KELL_ROOM_AGENT_FALLBACKS (comma separated), else the deployment's default model."""
+    KELL_ROOM_AGENT_FALLBACKS (comma separated), else the deployment's default model. A model that just failed for lack of credit is left out
+    until its ten minutes are up (unless every model is in that state)."""
     import os as _os
+    import time as _time
 
     first = _room_agent_model_name()
     extra = [m.strip() for m in (_os.environ.get("KELL_ROOM_AGENT_FALLBACKS") or "").split(",") if m.strip()] or [_default_call_model()]
     chain = list(dict.fromkeys([first, *extra]))
-    import time as _time
-
     now = _time.monotonic()
-    live = [m for m in chain if _MODEL_DOWN.get(m, 0.0) <= now]
-    return live or chain                       # a model whose provider has no credit is skipped for ten minutes, unless none else is left
+    alive = [m for m in chain if _DEAD_MODELS.get(m, 0.0) <= now]
+    return alive or chain
 
 
 async def _room_agent_model(authorization: str, messages: list[dict], tools: list[dict]) -> dict:
@@ -1219,6 +1232,7 @@ async def _room_agent_call_cheap(authorization: str, subject: str, prompt: str) 
             return await _room_agent_call_model_one(authorization, model, prompt)
         except RuntimeError as exc:
             last = exc
+            _mark_dead(model, exc)
     raise last or RuntimeError("no model answered")
 
 

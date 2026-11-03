@@ -95,3 +95,27 @@ def test_a_server_that_answers_401_is_not_offered_as_runnable_again():
         assert not g.gateway_allowed(c)
     finally:
         g.NEEDS_SIGNIN.discard("https://pdfoven.com/mcp")
+
+
+def test_a_model_that_failed_for_lack_of_credit_is_skipped_for_a_while(monkeypatch):
+    monkeypatch.setenv("KELL_ROOM_AGENT_MODEL", "gemma-4-31b-it")
+    monkeypatch.setenv("KELL_DEFAULT_MODEL", "glm-5.3-flash")
+    monkeypatch.delenv("KELL_ROOM_AGENT_FALLBACKS", raising=False)
+    sv._DEAD_MODELS.clear()
+    assert sv._room_agent_model_chain() == ["gemma-4-31b-it", "glm-5.3-flash"]
+    sv._mark_dead("gemma-4-31b-it", RuntimeError("general-compute: HTTP 402: Credit balance is empty"))
+    assert sv._room_agent_model_chain() == ["glm-5.3-flash"]
+    sv._mark_dead("glm-5.3-flash", RuntimeError("insufficient credits"))
+    assert sv._room_agent_model_chain() == ["gemma-4-31b-it", "glm-5.3-flash"]          # every model dead: all are tried again
+    sv._DEAD_MODELS.clear()
+    sv._mark_dead("gemma-4-31b-it", RuntimeError("the model returned a 500"))             # an ordinary failure does not blacklist it
+    assert "gemma-4-31b-it" in sv._room_agent_model_chain()
+
+
+def test_the_production_glm_connection_leaves_room_for_the_answer():
+    import json
+    import pathlib
+
+    cfg = json.loads((pathlib.Path(__file__).resolve().parent.parent / "deploy" / "provider_connections.json").read_text(encoding="utf-8"))
+    glm = next(c for c in cfg["connections"] if c["connection_id"] == "zai-glm")
+    assert glm["request_extras"] == {"reasoning_effort": "low"}       # glm-5.3-flash always thinks; at the default effort it used 6,000 tokens before answering
