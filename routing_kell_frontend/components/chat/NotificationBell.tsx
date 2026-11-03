@@ -9,21 +9,19 @@ const LABEL: Record<Note["kind"], string> = {
 export interface AlertsProps {
   notes: Note[]; prefs: Prefs; room: string;
   onPrefs: (p: Prefs) => void; onOpen: (room: string | null) => void; onRead: (id: string) => void;
-  onReadAll: () => void; onClear: () => void;
+  onClear: () => void;
 }
 
 /** The alerts panel: recent notifications, and the settings that decide which ones reach you and how. It has no button of its own; the
- * chat menu opens it (components/chat/HamburgerMenu.tsx). */
-export default function NotificationPanel({ notes, prefs, room, onPrefs, onOpen, onRead, onReadAll, onClear, onClose, onBack }: AlertsProps & { onClose: () => void; onBack: () => void }) {
-  const unread = notes.filter((n) => !n.read).length;
+ * chat menu opens it (components/chat/HamburgerMenu.tsx). An alert is removed as soon as the person sees its room or clicks it. */
+export default function NotificationPanel({ notes, prefs, room, onPrefs, onOpen, onRead, onClear, onClose, onBack }: AlertsProps & { onClose: () => void; onBack: () => void }) {
   return (
     <div className="dg-bell-pop dg-bell-pop--menu" role="dialog" aria-label="Notifications">
       <div className="dg-bell-head">
         <b>Notifications</b>
         <span>
           <button type="button" className="dg-mini" onClick={onBack}>Back</button>{" "}
-          <button type="button" className="dg-mini" onClick={onReadAll} disabled={!unread}>Mark all read</button>{" "}
-          <button type="button" className="dg-mini" onClick={onClear} disabled={!notes.length}>Clear</button>
+          <button type="button" className="dg-mini" onClick={onClear} disabled={!notes.length}>Clear all</button>
         </span>
       </div>
       {notes.length === 0

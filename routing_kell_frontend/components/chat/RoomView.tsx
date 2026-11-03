@@ -851,12 +851,13 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     };
     window.setTimeout(() => find(10), 120);
   };
-  // Seeing the room is seeing its alerts: once the tab is visible and the room is open, its notifications are read and the
-  // system alert for it is taken back. A note for another room stays until that room is opened or its entry is clicked.
+  // Seeing the room is seeing its alerts: once the tab is visible and the room is open, its notifications are removed
+  // (and the system alert for it is taken back). A note for another room stays until that room is opened or its entry
+  // is clicked.
   useEffect(() => {
-    if (!tabVisible || !notes.some((n) => !n.read && n.room === room)) return;
+    if (!tabVisible || !notes.some((n) => n.room === room)) return;
     closeOs(room);
-    setNotes((p) => p.map((n) => (n.room === room && !n.read ? { ...n, read: true } : n)));
+    setNotes((p) => p.filter((n) => n.room !== room));
   }, [room, tabVisible, notes]);
   const unreadTotal = Object.entries(info).reduce((a, [r, v]) => a + (r === room ? 0 : v.unread), 0);
   useEffect(() => {
@@ -1209,8 +1210,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <header className="dg-head">
           <HamburgerMenu onSearch={() => setSearchOpen(true)} canvasCount={info[room]?.id && !tempRef.current.has(room) ? docList.filter((d) => (seen[d.id] ?? 0) < d.version).length : canvases.filter((c) => c.room === room && (seen[c.id] ?? 0) < c.versions[c.versions.length - 1].n).length} onCanvas={() => setCanvasOpen(true)} onTemporary={newTemporary} panelOpen={isWide() ? !panelHidden : menuOpen} onTogglePanel={toggleSidebar} onManageRooms={() => setManageOpen(true)} paused={paused} onSettings={(section) => setSettings({ open: true, section })} onPause={() => broker.setPaused(!paused)}
             alerts={{ notes, prefs, room, onPrefs: setPrefs, onOpen: (r) => openRoomRef.current(r),
-              onRead: (id) => setNotes((p) => p.map((n) => (n.id === id ? { ...n, read: true } : n))),
-              onReadAll: () => { closeAllOs(); setNotes((p) => p.map((n) => ({ ...n, read: true }))); },
+              onRead: (id) => setNotes((p) => p.filter((n) => n.id !== id)),
               onClear: () => { closeAllOs(); setNotes([]); } }}
             onSignOut={() => void signOut().then(() => { window.location.assign("/"); })} />
           <button type="button" className="dg-menu" onClick={openSidebar} aria-expanded={menuOpen} aria-controls="dg-side" aria-label="Open sidebar">
