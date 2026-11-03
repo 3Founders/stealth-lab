@@ -79,8 +79,9 @@ parts.
 
 Fourth slice (same day): dark mode - the same dark tokens as `routing_kell_frontend/app/globals.css`, chosen by the device
 (`prefers-color-scheme`) or by `data-theme`; the desktop's hard-coded white panels now use `--surface`; the user bubble uses
-`--on-yellow`; diff and copy-tick colours have dark twins. `tsc --noEmit` passes; NOT seen on screen (RAM was 0.7 GB free,
-too low to run a dev server and screenshot safely). The desktop has no theme toggle (the website's is in Settings).
+`--on-yellow`; diff and copy-tick colours have dark twins. `tsc --noEmit` passes, and the real desktop page under `next dev` was screenshot in dark
+(headless Edge with `--force-dark-mode`; `--blink-settings=preferredColorScheme=1` did NOT switch it): dark paper, light text,
+dark surfaces, dark soft banner, dark glass composer. Light-vs-dark side by side on an installed build is still unchecked. The desktop has no theme toggle (the website's is in Settings).
 
 Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); a theme toggle; the
 canvas sheet (`CanvasPanel`) once the desktop has something to put in it. `console/` is unchanged.
