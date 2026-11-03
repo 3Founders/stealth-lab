@@ -33,7 +33,7 @@ SYSTEM = (
     "Never write tool-call markup (such as <invoke> or <function_calls>) in your answer and never say you will try a tool: "
     "a tool runs only through the tool-calling interface, and only when one is offered below. Never post anything you were not asked to post. "
     "For a longer document, a piece of code or a web page that the person will want to keep and edit, put it in a canvas: a fenced block that "
-    "starts with ```canvas title=\"Short title\" kind=document (or kind=code, or kind=html for one complete self-contained page) and holds the "
+    "starts with ```canvas title=\"Short title\" kind=document (or kind=code, kind=latex for a paper or anything with maths, or kind=html for one complete self-contained page) and holds the "
     "whole text, and say in a sentence or two what you made. Writing a block with the same title again replaces that canvas with a new version for everyone in the room, "
     "so send the whole text each time. Use ~~~ instead of ``` as the fence when the text itself contains ``` fences. Short answers stay in chat."
 )
@@ -57,7 +57,7 @@ WORK_RULES = (
     "runs the cheapest capable model kell has connected, with a complete prompt for the finished thing; give canvas_title and kind and kell "
     "puts the result in a canvas for everyone in the room. After the tool results come back, answer in one or two sentences about what was made "
     "or found. Do not ask the person for details you can decide yourself: if the topic or style is missing, use the conversation so far or choose a "
-    "sensible one, say in a few words what you chose, and do the work now. For slides: ask call_model for ONE complete self-contained HTML deck (one full-screen section per slide, scroll-snap, a restrained "
+    "sensible one, say in a few words what you chose, and do the work now. For a paper, notes with equations or anything typeset, use kind=latex and ask for one complete LaTeX article. For slides: ask call_model for ONE complete self-contained HTML deck (one full-screen section per slide, scroll-snap, a restrained "
     "palette with one accent colour, large type, generous space, no external files) with kind=html."
 )
 
@@ -76,7 +76,7 @@ CALL_MODEL = {
             "properties": {
                 "prompt": {"type": "string", "description": "everything the model needs to produce the finished thing"},
                 "canvas_title": {"type": "string", "description": "a short title: the result becomes a canvas with this name"},
-                "kind": {"type": "string", "enum": ["document", "code", "html"], "description": "html for slides or a web page"},
+                "kind": {"type": "string", "enum": ["document", "code", "html", "latex"], "description": "html for slides or a web page; latex for a paper, maths or anything typeset"},
             },
             "required": ["prompt"],
         },
@@ -259,7 +259,7 @@ def fence_canvas(title: str, kind: str, body: str) -> str:
     """The canvas block a room turns into a shared document. ~~~ is the fence when the body itself contains ``` ."""
     fence = "~~~" if "```" in body else "```"
     clean = " ".join(str(title or "Result").replace('"', "'").split())[:80] or "Result"
-    return f'{fence}canvas title="{clean}" kind={kind if kind in ("document", "code", "html") else "document"}\n{body.strip()}\n{fence}'
+    return f'{fence}canvas title="{clean}" kind={kind if kind in ("document", "code", "html", "latex") else "document"}\n{body.strip()}\n{fence}'
 
 
 def _tool_brief(candidates: list[dict[str, Any]]) -> str:
@@ -333,6 +333,8 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
 
         if str(args.get("kind") or "") == "html" and slide_brief.wants_slides(prompt, str(args.get("canvas_title") or "")):
             prompt = slide_brief.slide_prompt(prompt)         # a small model fills in a finished, good-looking deck instead of inventing one
+        if str(args.get("kind") or "") == "latex":
+            prompt = slide_brief.latex_prompt(prompt)         # only the parts the canvas can typeset, so what is written shows properly
         try:
             out = str(await call_cheap(prompt)).strip()
         except Exception as exc:  # noqa: BLE001

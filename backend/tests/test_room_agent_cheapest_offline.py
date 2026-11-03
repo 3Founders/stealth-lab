@@ -46,3 +46,52 @@ def test_with_no_prices_the_default_runs_and_an_override_wins(monkeypatch):
     assert asyncio.run(sv._cheapest_model("u1")) == "glm-5.3-flash"
     monkeypatch.setenv("KELL_CHEAP_MODEL", "my-cheap")
     assert asyncio.run(sv._cheapest_model("u1")) == "my-cheap"
+
+
+def test_a_model_that_cannot_answer_falls_back_to_the_next_one(monkeypatch):
+    monkeypatch.setenv("KELL_ROOM_AGENT_MODEL", "main")
+    monkeypatch.setenv("KELL_ROOM_AGENT_FALLBACKS", "second,third")
+    assert sv._room_agent_model_chain() == ["main", "second", "third"]
+    tried = []
+
+    async def one(authorization, messages, tools, model):
+        tried.append(model)
+        if model != "second":
+            raise RuntimeError("Credit balance is empty")
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    monkeypatch.setattr(sv, "_room_agent_model_one", one)
+    out = asyncio.run(sv._room_agent_model("Bearer t", [], []))
+    assert out["choices"][0]["message"]["content"] == "ok" and tried == ["main", "second"]
+
+
+def test_the_stream_falls_back_only_before_anything_was_sent(monkeypatch):
+    monkeypatch.setenv("KELL_ROOM_AGENT_MODEL", "main")
+    monkeypatch.setenv("KELL_ROOM_AGENT_FALLBACKS", "second")
+
+    async def one(authorization, messages, tools, model):
+        if model == "main":
+            raise RuntimeError("402")
+        yield {"choices": [{"delta": {"content": "hi"}}]}
+
+    monkeypatch.setattr(sv, "_room_agent_model_stream_one", one)
+
+    async def run():
+        return [c async for c in sv._room_agent_model_stream("Bearer t", [], [])]
+
+    assert asyncio.run(run())[0]["choices"][0]["delta"]["content"] == "hi"
+
+
+def test_a_server_that_answers_401_is_not_offered_as_runnable_again():
+    from app.tool_routing import gateway as g
+    from app.tool_routing.catalog import ToolCard
+
+    c = ToolCard(id="registry:com.pdfoven/p", source="registry", name="com.pdfoven/p", title="", description="", server="com.pdfoven/p",
+                 extra={"connector_url": "https://pdfoven.com/mcp", "probe": "live", "verified": True, "owner_count": 1, "stars": 0})
+    g.NEEDS_SIGNIN.discard("https://pdfoven.com/mcp")
+    assert g.gateway_allowed(c)
+    g.NEEDS_SIGNIN.add("https://pdfoven.com/mcp")
+    try:
+        assert not g.gateway_allowed(c)
+    finally:
+        g.NEEDS_SIGNIN.discard("https://pdfoven.com/mcp")

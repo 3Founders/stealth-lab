@@ -1037,7 +1037,41 @@ def _tool_choice(tools: list[dict]) -> Any:
     return "auto"
 
 
+def _room_agent_max_tokens() -> int:
+    """A cap on the agent's own turns (KELL_ROOM_AGENT_MAX_TOKENS, default 4096): its answers are short, and anything long is made by call_model.
+    Without one a provider reserves its largest allowance for every turn, which an account with a small balance cannot cover."""
+    import os as _os
+
+    try:
+        return max(256, int(_os.environ.get("KELL_ROOM_AGENT_MAX_TOKENS", "4096")))
+    except ValueError:
+        return 4096
+
+
+def _room_agent_model_chain() -> list[str]:
+    """The model the agent uses, then the ones it falls back to when the first cannot answer (an empty provider balance, an outage, a refusal):
+    KELL_ROOM_AGENT_FALLBACKS (comma separated), else the deployment's default model."""
+    import os as _os
+
+    first = _room_agent_model_name()
+    extra = [m.strip() for m in (_os.environ.get("KELL_ROOM_AGENT_FALLBACKS") or "").split(",") if m.strip()] or [_default_call_model()]
+    return list(dict.fromkeys([first, *extra]))
+
+
 async def _room_agent_model(authorization: str, messages: list[dict], tools: list[dict]) -> dict:
+    """One completion for the agent: the chosen model, and if it cannot answer the next model of the chain (so one provider running out of
+    credit does not silence the agent)."""
+    last: Exception | None = None
+    for model in _room_agent_model_chain():
+        try:
+            return await _room_agent_model_one(authorization, messages, tools, model)
+        except RuntimeError as exc:
+            last = exc
+            logging.getLogger(__name__).warning("room agent: %s could not answer (%s); trying the next model", model, str(exc)[:120])
+    raise last or RuntimeError("no model answered")
+
+
+async def _room_agent_model_one(authorization: str, messages: list[dict], tools: list[dict], model: str) -> dict:
     """One chat completion from this deployment's own OpenAI-compatible endpoint, with the caller's bearer, so the pilot's
     policy, budget, ledger and data-class checks apply unchanged. KELL_API_BASE names that endpoint's origin when it is not
     the MCP origin (the two apps can be deployed separately)."""
@@ -1046,7 +1080,7 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
     from app.providers.adapters import http_client
 
     base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
-    body: dict[str, Any] = {"model": _room_agent_model_name(),
+    body: dict[str, Any] = {"model": model, "max_tokens": _room_agent_max_tokens(),
                             "messages": messages, "stream": False}
     headers = {"authorization": authorization, "content-type": "application/json",
                "x-stealthlab-data-class": "PUBLIC_SOURCE"}
@@ -1111,8 +1145,22 @@ async def _room_agent_call_cheap(authorization: str, subject: str, prompt: str) 
 
     from app.providers.adapters import http_client
 
+    cheapest = await _cheapest_model(subject)
+    last: Exception | None = None
+    for model in dict.fromkeys([cheapest, _default_call_model()]):
+        try:
+            return await _room_agent_call_model_one(authorization, model, prompt)
+        except RuntimeError as exc:
+            last = exc
+    raise last or RuntimeError("no model answered")
+
+
+async def _room_agent_call_model_one(authorization: str, model: str, prompt: str) -> str:
+    import os as _os
+
+    from app.providers.adapters import http_client
+
     base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
-    model = await _cheapest_model(subject)
     headers = {"authorization": authorization, "content-type": "application/json", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
     body = {"model": model, "stream": False, "max_tokens": int(_os.environ.get("KELL_CHEAP_MAX_TOKENS", "7000")),
             "messages": [{"role": "system", "content": "You write the finished thing that is asked for, complete and ready to use, with no preface and no closing remarks."},
@@ -1147,6 +1195,24 @@ async def _room_agent_find(need: str) -> list[dict]:
 
 
 async def _room_agent_model_stream(authorization: str, messages: list[dict], tools: list[dict]):
+    """The streamed completion, with the same fallback chain: a model that refuses before it sends anything is replaced by the next one."""
+    last: Exception | None = None
+    for model in _room_agent_model_chain():
+        started = False
+        try:
+            async for chunk in _room_agent_model_stream_one(authorization, messages, tools, model):
+                started = True
+                yield chunk
+            return
+        except RuntimeError as exc:
+            if started:
+                raise                                   # part of an answer is out: it cannot be swapped for another model's
+            last = exc
+            logging.getLogger(__name__).warning("room agent: %s could not answer (%s); trying the next model", model, str(exc)[:120])
+    raise last or RuntimeError("no model answered")
+
+
+async def _room_agent_model_stream_one(authorization: str, messages: list[dict], tools: list[dict], model: str):
     """The same completion, streamed: yields the OpenAI SSE chunks as they arrive. A model that refuses tools (400/422) is
     retried once without them; any other refusal raises RuntimeError carrying the endpoint's own sentence."""
     import os as _os
@@ -1154,7 +1220,7 @@ async def _room_agent_model_stream(authorization: str, messages: list[dict], too
     from app.providers.adapters import http_client
 
     base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
-    body: dict[str, Any] = {"model": _room_agent_model_name(),
+    body: dict[str, Any] = {"model": model, "max_tokens": _room_agent_max_tokens(),
                             "messages": messages, "stream": True}
     headers = {"authorization": authorization, "content-type": "application/json",
                "accept": "text/event-stream", "x-stealthlab-data-class": "PUBLIC_SOURCE"}

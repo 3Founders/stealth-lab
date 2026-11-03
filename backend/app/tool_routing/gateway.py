@@ -49,6 +49,11 @@ WRITE_TOOL = re.compile(
     r"($|[_\-.]|s$|ed$)", re.I)
 
 
+# Servers the probe called "live" that then answered 401/403 to a real call: they need a sign-in kell cannot give. Remembered for this process so the
+# next search stops offering them as runnable (and ranks them last) instead of the agent trying the same dead end each time.
+NEEDS_SIGNIN: set[str] = set()
+
+
 class GatewayRefused(Exception):
     """A call the gateway will not make; the message says why, in words the agent can pass on."""
 
@@ -80,6 +85,7 @@ def gateway_allowed(card: ToolCard) -> bool:
     return (card.source == "registry" and bool(ex.get("connector_url")) and ex.get("probe") == "live"
             and bool(ex.get("verified")) and int(ex.get("owner_count") or 1) <= BULK_PUBLISHER
             and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card)) and not ex.get("archived")
+            and str(ex.get("connector_url")) not in NEEDS_SIGNIN
             and card.name not in denylist() and os.environ.get("TOOL_GATEWAY", "on").lower() != "off")
 
 
@@ -164,6 +170,7 @@ async def _session(url: str, method: str, params: dict) -> tuple[dict, int, int]
         r, raw = await _post(client, url, init, HEADERS)
         sent, received = sent + len(json.dumps(init)), received + len(raw)
         if r.status_code in (401, 403):
+            NEEDS_SIGNIN.add(url)
             raise GatewayRefused("the server needs a sign-in, which the gateway does not do yet")
         if r.status_code >= 300 or "result" not in _parse(r, raw):
             raise GatewayRefused(f"the server did not start an MCP session (HTTP {r.status_code})")
@@ -174,6 +181,7 @@ async def _session(url: str, method: str, params: dict) -> tuple[dict, int, int]
         r, raw = await _post(client, url, req, h)
         sent, received = sent + len(json.dumps(req)), received + len(raw)
         if r.status_code in (401, 403):
+            NEEDS_SIGNIN.add(url)
             raise GatewayRefused("the server needs a sign-in, which the gateway does not do yet")
         body = _parse(r, raw)
         if sid:

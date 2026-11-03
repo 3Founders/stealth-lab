@@ -80,3 +80,18 @@ def wants_slides(prompt: str, title: str = "") -> bool:
 def slide_prompt(prompt: str) -> str:
     """The brief, the skeleton and then the person's request."""
     return f"{BRIEF}{_SKELETON}\n\nTHE REQUEST:\n{prompt.strip()}"
+
+
+LATEX_BRIEF = (
+    r"You are writing ONE complete LaTeX document (article class). Output only the LaTeX source, starting with \documentclass, nothing before or after. "
+    r"It is shown by a viewer that typesets: \title, \author, \date, \maketitle, abstract, \section, \subsection, \subsubsection, "
+    r"paragraphs, itemize, enumerate, description, \textbf, \emph, \textit, \texttt, \underline, \href, tabular with \hline, "
+    r"table and figure floats with \caption, theorem, lemma, definition, proof, remark and example environments, verbatim, quote, "
+    r"equation, align, gather, $...$ and \[...\] maths (amsmath and amssymb symbols), \label with \ref and \eqref, and a thebibliography "
+    r"with \bibitem and \cite. Use \newtheorem for the theorem-like environments. Do not use TikZ, includegraphics, custom packages or "
+    r"macros that need a package beyond amsmath, amssymb and amsthm. Write real content: precise statements, worked steps, no placeholders."
+)
+
+
+def latex_prompt(prompt: str) -> str:
+    return f"{LATEX_BRIEF}\n\nTHE REQUEST:\n{prompt.strip()}"

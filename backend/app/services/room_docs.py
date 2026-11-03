@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 MAX_DOC_CHARS = 200_000
 MAX_DOCS_PER_ROOM = 50
-KINDS = ("document", "code", "html")
+KINDS = ("document", "code", "html", "latex")
 PRESENCE_SECONDS = 12.0
 NL = chr(10)
 # Called after every new version (doc id, version, body, who made it, their display name): the live socket hub fans it out to everyone with the document open.
@@ -288,7 +288,7 @@ _FENCE = re.compile(r"(^|\n)(```|~~~)canvas([^\n]*)\n(.*?)\n\2[ \t]*(?=\n|$)", r
 
 
 def canvas_blocks(text: str) -> list[tuple[str, str, str]]:
-    """(title, kind, body) for each ```canvas title="..." kind=document|code|html block in a message."""
+    """(title, kind, body) for each ```canvas title="..." kind=document|code|html|latex block in a message."""
     out = []
     for m in _FENCE.finditer(text or ""):
         attrs = m.group(3) or ""
