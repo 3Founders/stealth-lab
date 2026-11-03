@@ -74,7 +74,7 @@ def _sse(obj: Any) -> str:
 
 def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_call: ModelCall,
              find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12,
-             discover: Any = None, tools_of: Any = None) -> None:
+             discover: Any = None, tools_of: Any = None, call_cheap: Any = None) -> None:
     @server.custom_route("/v1/rooms/{room_id}/agent", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_route(request: Request) -> Response:
         if request.method == "OPTIONS":
@@ -168,6 +168,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                         handle=handle, instructions=instructions, tz=tz,
                         discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
+                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None,
                     ):
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
@@ -272,6 +273,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                     handle=handle, instructions=instructions, tz=tz,
                     discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
+                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None,
                 ):
                     if kind == "delta":
                         yield _sse({"delta": value})

@@ -1028,6 +1028,15 @@ def _room_agent_model_name() -> str:
     return _os.environ.get("KELL_ROOM_AGENT_MODEL") or "gemma-4-31b-it"
 
 
+def _tool_choice(tools: list[dict]) -> Any:
+    """One offered tool means the agent must call it (the first search of a task); several mean the model chooses."""
+    if len(tools) == 1:
+        name = ((tools[0] or {}).get("function") or {}).get("name")
+        if name:
+            return {"type": "function", "function": {"name": name}}
+    return "auto"
+
+
 async def _room_agent_model(authorization: str, messages: list[dict], tools: list[dict]) -> dict:
     """One chat completion from this deployment's own OpenAI-compatible endpoint, with the caller's bearer, so the pilot's
     policy, budget, ledger and data-class checks apply unchanged. KELL_API_BASE names that endpoint's origin when it is not
@@ -1043,7 +1052,9 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
                "x-stealthlab-data-class": "PUBLIC_SOURCE"}
     async with http_client(timeout=120.0) as client:
         if tools:
-            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": tools, "tool_choice": "auto"})
+            r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": tools, "tool_choice": _tool_choice(tools)})
+            if r.status_code in (400, 422) and len(tools) == 1:   # a model that refuses a forced call is asked again with the choice left to it
+                r = await client.post(f"{base}/v1/chat/completions", headers=headers, json={**body, "tools": tools, "tool_choice": "auto"})
             if r.status_code in (400, 422):          # a model that will not take tools still answers without them
                 r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
         else:
@@ -1056,6 +1067,66 @@ async def _room_agent_model(authorization: str, messages: list[dict], tools: lis
             why = ""
         raise RuntimeError(why or f"the model endpoint answered {r.status_code}")
     return r.json()
+
+
+_CHEAP: dict[str, Any] = {"at": 0.0, "model": ""}
+
+
+async def _cheapest_model(subject: str) -> str:
+    """The cheapest model this person can use: the lowest listed input+output price per million tokens among the models kell has connected
+    for them (KELL_CHEAP_MODEL overrides; with no prices listed, the deployment default). Remembered for ten minutes."""
+    import os as _os
+    import time as _time
+
+    from app.providers.chat import list_models as _list_models
+    from app.services.authn import Actor, reset_current_actor, set_current_actor
+
+    forced = (_os.environ.get("KELL_CHEAP_MODEL") or "").strip()
+    if forced:
+        return forced
+    if _CHEAP["model"] and _time.monotonic() - float(_CHEAP["at"]) < 600:
+        return str(_CHEAP["model"])
+    token = set_current_actor(Actor(subject=subject))
+    try:
+        models = await _list_models(_caller_access_scope())
+    except Exception:  # noqa: BLE001 -- no list: the default runs
+        models = []
+    finally:
+        reset_current_actor(token)
+    priced = []
+    for m in models:
+        info = m.get("stealthlab") or {}
+        a, b = info.get("input_per_mtok"), info.get("output_per_mtok")
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            priced.append((float(a) + float(b), str(m.get("id"))))
+    pick = min(priced)[1] if priced else _default_call_model()
+    _CHEAP.update(at=_time.monotonic(), model=pick)
+    return pick
+
+
+async def _room_agent_call_cheap(authorization: str, subject: str, prompt: str) -> str:
+    """call_model for the room agent: one completion from the cheapest model the person can use, through the same endpoint, bearer, policy,
+    budget and ledger as the agent's own turns. Public data only (the agent is told never to send private material)."""
+    import os as _os
+
+    from app.providers.adapters import http_client
+
+    base = (_os.environ.get("KELL_API_BASE") or _ISSUER_URL).rstrip("/")
+    model = await _cheapest_model(subject)
+    headers = {"authorization": authorization, "content-type": "application/json", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
+    body = {"model": model, "stream": False, "max_tokens": int(_os.environ.get("KELL_CHEAP_MAX_TOKENS", "7000")),
+            "messages": [{"role": "system", "content": "You write the finished thing that is asked for, complete and ready to use, with no preface and no closing remarks."},
+                         {"role": "user", "content": prompt[:12000]}]}
+    async with http_client(timeout=240.0) as client:
+        r = await client.post(f"{base}/v1/chat/completions", headers=headers, json=body)
+    if r.status_code >= 300:
+        try:
+            why = str(((r.json() or {}).get("error") or {}).get("message") or "")[:200]
+        except Exception:  # noqa: BLE001
+            why = ""
+        raise RuntimeError(f"{model}: {why or r.status_code}")
+    msg = ((r.json().get("choices") or [{}])[0] or {}).get("message") or {}
+    return str(msg.get("content") or "")
 
 
 async def _room_agent_find(need: str) -> list[dict]:
@@ -1088,8 +1159,8 @@ async def _room_agent_model_stream(authorization: str, messages: list[dict], too
     headers = {"authorization": authorization, "content-type": "application/json",
                "accept": "text/event-stream", "x-stealthlab-data-class": "PUBLIC_SOURCE"}
 
-    async def frames(with_tools: bool):
-        payload = {**body, **({"tools": tools, "tool_choice": "auto"} if with_tools else {})}
+    async def frames(with_tools: bool, forced: bool = True):
+        payload = {**body, **({"tools": tools, "tool_choice": _tool_choice(tools) if forced else "auto"} if with_tools else {})}
         async with http_client(timeout=180.0) as client:
             async with client.stream("POST", f"{base}/v1/chat/completions", headers=headers, json=payload) as r:
                 if r.status_code >= 300:
@@ -1099,6 +1170,10 @@ async def _room_agent_model_stream(authorization: str, messages: list[dict], too
                         why = str(((json.loads(raw) or {}).get("error") or {}).get("message") or "")[:200]
                     except Exception:  # noqa: BLE001
                         why = ""
+                    if with_tools and forced and len(tools) == 1 and r.status_code in (400, 422):
+                        async for chunk in frames(True, False):        # a model that refuses a forced call: the choice is left to it
+                            yield chunk
+                        return
                     if with_tools and r.status_code in (400, 422):
                         async for chunk in frames(False):
                             yield chunk
@@ -1130,7 +1205,7 @@ async def _room_agent_discover(need: str) -> str:
     try:
         ext = await _asyncio.wait_for(
             _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 6),
-            timeout=float(_os.environ.get("KELL_ROOM_AGENT_DISCOVER_WAIT", "8.0")))
+            timeout=float(_os.environ.get("KELL_ROOM_AGENT_DISCOVER_WAIT", "20.0")))
     except Exception:  # noqa: BLE001 -- the model is told, and answers without a tool
         return json.dumps({"tools": [], "note": "tool search did not answer in time; answer without it and say so"})
     if not ext:
@@ -1196,7 +1271,7 @@ _room_agent_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
     model_call=_room_agent_model, model_stream=_room_agent_model_stream,
     find_tools=_room_agent_find, use_tool=_room_agent_use,
-    discover=_room_agent_discover, tools_of=_room_agent_tools_of,
+    discover=_room_agent_discover, tools_of=_room_agent_tools_of, call_cheap=_room_agent_call_cheap,
 )
 
 from app.mcp_server import room_doc_routes as _room_doc_routes  # noqa: E402 -- shared documents in a room (db/174_room_docs.sql)

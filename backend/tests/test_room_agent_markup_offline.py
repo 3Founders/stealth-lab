@@ -22,7 +22,7 @@ def test_filter_holds_back_a_half_tag_across_chunks() -> None:
 
 
 def test_the_tools_are_offered_on_every_turn_and_the_prompt_says_how_to_use_them() -> None:
-    assert [t["function"]["name"] for t in ra.tool_specs([])] == ["discover_tools", "use_tool"]
+    assert [t["function"]["name"] for t in ra.tool_specs([])] == ["discover_tools", "use_tool", "call_model"]
     for cands in ([], [{"server": "web", "about": "search"}]):
         s = ra._system(cands)
         assert ra.TOOLS_ON in s and "discover_tools" in s
