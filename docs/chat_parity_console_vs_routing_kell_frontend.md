@@ -77,7 +77,12 @@ reduced-transparency fallbacks), same tokens and values. `tsc --noEmit` passes; 
 rebuild that was to show it installed was stopped by the harness for low memory), and the desktop composer has no attach/mention/expand
 parts.
 
-Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); dark mode (the desktop has no dark tokens yet); the
+Fourth slice (same day): dark mode - the same dark tokens as `routing_kell_frontend/app/globals.css`, chosen by the device
+(`prefers-color-scheme`) or by `data-theme`; the desktop's hard-coded white panels now use `--surface`; the user bubble uses
+`--on-yellow`; diff and copy-tick colours have dark twins. `tsc --noEmit` passes; NOT seen on screen (RAM was 0.7 GB free,
+too low to run a dev server and screenshot safely). The desktop has no theme toggle (the website's is in Settings).
+
+Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); a theme toggle; the
 canvas sheet (`CanvasPanel`) once the desktop has something to put in it. `console/` is unchanged.
 
 ## Backend memory review, completed scan (same day)

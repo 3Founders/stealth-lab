@@ -223,7 +223,7 @@ export default function Home() {
           <h2>Project</h2>
           <p style={{ margin: "10px 0 4px" }}>
             <input value={directory} onChange={(e) => setDirectory(e.target.value)} disabled={!!sessionID}
-              placeholder="a folder path to work in" className="mono" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid var(--rule-strong)", background: "#fff" }} />
+              placeholder="a folder path to work in" className="mono" style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid var(--rule-strong)", background: "var(--surface)" }} />
           </p>
           <button className="btn-ink" onClick={openProject} disabled={!!sessionID || !directory || busy}>open project</button>
           {sessionID && <p style={{ fontSize: 13, marginTop: 8 }}><button className="copy" onClick={() => { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }}>reset session</button></p>}

@@ -12,6 +12,8 @@
   --gap: clamp(12px, 1.4vw, 20px);
   --font: "Bahnschrift", "Barlow", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --surface: #ffffff; --on-yellow: #171717;
+  color-scheme: light;
 }
 *, *::before, *::after { box-sizing: border-box; }
 body {
@@ -49,9 +51,9 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 .logc { display: flex; flex-direction: column; gap: 14px; will-change: transform; }
 .line { max-width: 68ch; }
 .line .who { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--grey); margin-bottom: 4px; }
-.line.user .bubble { background: var(--yellow); border-radius: 14px 14px 2px 14px; padding: 10px 14px; max-width: fit-content; }
+.line.user .bubble { background: var(--yellow); color: var(--on-yellow); border-radius: 14px 14px 2px 14px; padding: 10px 14px; max-width: fit-content; }
 .line.assistant .bubble { padding: 2px 0; }
-.toolnote { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: #fff; margin-top: 8px; font-size: 14px; }
+.toolnote { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: var(--surface); margin-top: 8px; font-size: 14px; }
 .steps { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 .step { border: 1px solid var(--rule); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--grey); }
 .step b { color: var(--ink); font-weight: 400; }
@@ -60,7 +62,7 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 .composer form { display: flex; gap: 10px; }
 .composer textarea {
   flex: 1; font: inherit; font-size: 15px; padding: 12px 14px; border: 1px solid var(--rule-strong);
-  border-radius: 12px; background: #fff; color: var(--ink); resize: none; min-height: 44px;
+  border-radius: 12px; background: var(--surface); color: var(--ink); resize: none; min-height: 44px;
 }
 .banner { border: 1px solid var(--rule-strong); background: var(--soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .modelstrip { color: var(--grey); font-size: 12px; display: flex; gap: 14px; align-items: baseline; margin-top: 6px; }
@@ -78,7 +80,7 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 
 /* The changes panel: file headers and the diffs, muted green/red on the paper. */
 .changes { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-.filecard { border: 1px solid var(--rule); border-radius: 10px; background: #fff; overflow: hidden; }
+.filecard { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); overflow: hidden; }
 .filecard summary { cursor: pointer; padding: 8px 10px; font-size: 13px; display: flex; gap: 8px; align-items: baseline; }
 .filecard .path { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .filecard .stat { margin-left: auto; font-size: 12px; white-space: nowrap; }
@@ -93,7 +95,7 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 /* Tool suggestion cards: the note the session gets, as cards. Registry ids are long, so the name truncates (full id on
    hover) and the pill keeps its own column instead of being pushed out of the card. */
 .cards { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-.toolcard { border: 1px solid var(--rule-strong); border-radius: 10px; padding: 10px 12px; background: #fff; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
+.toolcard { border: 1px solid var(--rule-strong); border-radius: 10px; padding: 10px 12px; background: var(--surface); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; }
 .toolcard .body { min-width: 0; }
 .toolcard .name { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolcard .meta { font-size: 12px; color: var(--grey); }
@@ -107,3 +109,21 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 .kv dt { color: var(--grey); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .kv dd .mono { font-size: 12px; }
+
+/* Dark: the same tokens routing_kell_frontend redefines (app/globals.css), chosen by the device, or by data-theme when set. */
+:root[data-theme="dark"] { --paper: #15140f; --ink: #f1eee5; --yellow: #ffd21f; --cobalt: #9dbef5; --soft: #3a3512; --grey: #a9a69d;
+  --rule: rgba(241, 238, 229, 0.14); --rule-strong: rgba(241, 238, 229, 0.75); --surface: #1e1d17; --text-2: #cfcbc0;
+  --dg-glass-strong: rgba(34, 33, 27, .86); --dg-edge: transparent;
+  --dg-lift: 0 8px 22px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .6), 0 2px 5px rgba(0, 0, 0, .45);
+  color-scheme: dark; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --paper: #15140f; --ink: #f1eee5; --yellow: #ffd21f; --cobalt: #9dbef5; --soft: #3a3512; --grey: #a9a69d;
+  --rule: rgba(241, 238, 229, 0.14); --rule-strong: rgba(241, 238, 229, 0.75); --surface: #1e1d17; --text-2: #cfcbc0;
+  --dg-glass-strong: rgba(34, 33, 27, .86); --dg-edge: transparent;
+  --dg-lift: 0 8px 22px rgba(0, 0, 0, .5), 0 1px 3px rgba(0, 0, 0, .4); --dg-lift-hover: 0 12px 28px rgba(0, 0, 0, .6), 0 2px 5px rgba(0, 0, 0, .45);
+  color-scheme: dark; }
+  :root:not([data-theme="light"]) .diff .add { color: #8fd3a8; } :root:not([data-theme="light"]) .diff .del { color: #e6a0a0; }
+  :root:not([data-theme="light"]) .filecard .stat .add { color: #6ee7a0; } :root:not([data-theme="light"]) .filecard .stat .del { color: #ff8a80; }
+  :root:not([data-theme="light"]) .dg-act-copy[data-state="copied"] { color: #6ee7a0; } :root:not([data-theme="light"]) .dg-act-copy[data-state="failed"] { color: #ff8a80; }
+  :root:not([data-theme="light"]) .dg-act:hover { background: rgba(255, 255, 255, .08); }
+}
