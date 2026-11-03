@@ -19,6 +19,7 @@ import time
 from typing import Any, Optional
 
 from app.services.memory import _EXTRA_SECRET
+from app.services.canvas_names import guess_title, is_ugly, label_for
 from app.services.rooms import MANAGERS, RoomError, _member_room, _names, _uuid
 from app.services.trace_redaction import redact_value
 from app.utils.ids import uuid7
@@ -47,10 +48,13 @@ def _text(body: str) -> str:
     return _EXTRA_SECRET.sub("[redacted]", redact_value(t, []))
 
 
-def title_of(raw: str) -> str:
+def title_of(raw: str, kind: str = "document", body: str = "") -> str:
+    """The title a document is saved under. One that is only an id (a UUID, a hash, a number) is replaced by a name read from the text."""
     t = re.sub(r"\s+", " ", (raw or "").strip())[:120].strip()
     if not t:
         raise RoomError("a document needs a title")
+    if is_ugly(t) and (body or "").strip():
+        t = guess_title(body, kind)[:120]
     return t
 
 
@@ -136,8 +140,11 @@ def merge3(base: str, mine: str, theirs: str) -> tuple[str, bool]:
 
 
 def _row(r: Any) -> dict[str, Any]:
+    body = r["body"] if "body" in r.keys() else None
     return {"id": str(r["id"]), "title": r["title"], "kind": r["kind"], "version": r["version"], "updated_by": r["updated_by"],
-            "updated_at": _iso(r["updated_at"]), "size": len(r["body"]) if "body" in r.keys() else None}
+            "updated_at": _iso(r["updated_at"]), "size": len(body) if body is not None else None,
+            # the name to show: the stored title when it is a name, else one read from the text (documents made before titles were checked)
+            "label": label_for(r["title"], r["kind"], body or "")}
 
 
 async def list_docs(pool: Any, sub: str, room_id: str) -> list[dict[str, Any]]:
@@ -190,7 +197,8 @@ async def get_doc(pool: Any, sub: str, room_id: str, doc_id: str, since: Optiona
     base = {"id": did, "version": d["version"], "present": _peers(did, sub), "editing": _editing(did, sub)}
     if since is not None and since == d["version"]:
         return {**base, "unchanged": True}
-    return {**base, "title": d["title"], "kind": d["kind"], "body": d["body"], "updated_by": d["updated_by"], "updated_at": _iso(d["updated_at"])}
+    return {**base, "title": d["title"], "label": label_for(d["title"], d["kind"], d["body"]), "kind": d["kind"], "body": d["body"],
+            "updated_by": d["updated_by"], "updated_at": _iso(d["updated_at"])}
 
 
 async def _write_version(pool: Any, doc: Any, body: str, by: str, note: str = "", src: Optional[str] = None) -> int:
@@ -213,8 +221,8 @@ async def _write_version(pool: Any, doc: Any, body: str, by: str, note: str = ""
 async def create_doc(pool: Any, sub: str, room_id: str, title: str, kind: str = "document", body: str = "", by: Optional[str] = None,
                      src: Optional[str] = None) -> dict[str, Any]:
     room = await _member_room(pool, sub, room_id)
-    t = title_of(title)
     k = kind if kind in KINDS else "document"
+    t = title_of(title, k, body)
     if int(await pool.fetchval("SELECT count(*) FROM room_docs WHERE room_id = $1 AND deleted_at IS NULL", room["id"]) or 0) >= MAX_DOCS_PER_ROOM:
         raise RoomError(f"a room keeps at most {MAX_DOCS_PER_ROOM} documents", 409)
     text = _text(body)
@@ -305,7 +313,9 @@ async def capture(pool: Any, room_id: Any, sub: str, handle: str, message_id: st
     n = 0
     try:
         for title, kind, body in canvas_blocks(text)[:5]:
-            t = title_of(title)
+            if not (body or "").strip():
+                continue                                          # the pointer a big canvas leaves in its message: the canvas already has the text
+            t = title_of(title, kind, body)
             src = f"{message_id}"[:64]
             doc = await pool.fetchrow("SELECT * FROM room_docs WHERE room_id = $1 AND lower(title) = lower($2) AND deleted_at IS NULL", room_id, t)
             if doc is None:

@@ -101,13 +101,13 @@ def test_a_model_that_failed_for_lack_of_credit_is_skipped_for_a_while(monkeypat
     monkeypatch.setenv("KELL_ROOM_AGENT_MODEL", "gemma-4-31b-it")
     monkeypatch.setenv("KELL_DEFAULT_MODEL", "glm-5.3-flash")
     monkeypatch.delenv("KELL_ROOM_AGENT_FALLBACKS", raising=False)
-    sv._DEAD_MODELS.clear()
+    sv._MODEL_DOWN.clear()
     assert sv._room_agent_model_chain() == ["gemma-4-31b-it", "glm-5.3-flash"]
     sv._mark_dead("gemma-4-31b-it", RuntimeError("general-compute: HTTP 402: Credit balance is empty"))
     assert sv._room_agent_model_chain() == ["glm-5.3-flash"]
     sv._mark_dead("glm-5.3-flash", RuntimeError("insufficient credits"))
     assert sv._room_agent_model_chain() == ["gemma-4-31b-it", "glm-5.3-flash"]          # every model dead: all are tried again
-    sv._DEAD_MODELS.clear()
+    sv._MODEL_DOWN.clear()
     sv._mark_dead("gemma-4-31b-it", RuntimeError("the model returned a 500"))             # an ordinary failure does not blacklist it
     assert "gemma-4-31b-it" in sv._room_agent_model_chain()
 

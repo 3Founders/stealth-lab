@@ -12,7 +12,7 @@ import DocPanel from "@/components/chat/DocPanel";
 import { docsApi, type DocInfo } from "@/lib/chat/docs-api";
 import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
-import { captureFrom, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
+import { captureFrom, extractCanvasBlocks, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
 import { FilesContext } from "@/components/chat/FileCard";
 import { FileError, filesApi, fileToken } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, onboardName, onboardPrompt } from "@/lib/chat/onboard";
@@ -722,6 +722,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const changed = captureFrom(canvasesRef.current, { id: m.id, room: m.roomId, by: m.sender.handle, text: m.payload.text, at: m.timestamp }, () => crypto.randomUUID());
     for (const c of changed) storeCanvas(c);
     if (changed.length) { setCanvasId(changed[0].id); setDocTitle(changed[0].title); if (live && m.roomId === roomRef.current) setCanvasOpen(true); } // a canvas an agent just wrote opens beside the chat
+    else if (live && m.roomId === roomRef.current && m.sender.type !== "human") {
+      // an empty block is a card for a canvas the server already holds (it was too big for one message): open the panel at its title
+      const held = extractCanvasBlocks(m.payload.text).find((b) => !b.text.trim());
+      if (held) { setDocTitle(held.title); setCanvasOpen(true); }
+    }
   };
   // Canvases kept only on this device (made before shared canvas existed) are copied to the room on your account once, so clearing this
   // browser never loses them. A title the room already has is left alone.
@@ -1133,7 +1138,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       </aside>
 
       {info[room]?.id && !tempRef.current.has(room)
-        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} />
+        ? <DocPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} api={dapi} roomId={info[room]!.id} socket={{ token: getAccessToken }} wantedTitle={docTitle} onContext={(c) => { canvasContextRef.current = c; }} onDocs={setDocList} onSeen={markSeen} onAsk={(t) => setDraft((d) => ({ text: t, n: d.n + 1 }))} onQuick={(t) => void submit(t)} />
         : <CanvasPanel open={canvasOpen} onClose={() => setCanvasOpen(false)} canvases={canvases} room={room} selectedId={canvasId} onChange={storeCanvas} onSeen={(id, n) => markSeen(id, n)} />}
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} rooms={roomList.rooms} currentRoom={room} load={loadForSearch} onPick={pickSearch} />
       <ManageRooms

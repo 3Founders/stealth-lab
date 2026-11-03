@@ -33,30 +33,38 @@ const personColor = (name: string): string => {
   return `hsl(${h} 70% 62%)`;
 };
 
-export const editRequest = (title: string, kind: DocKind, text: string): string => {
-  const fence = text.includes("```") ? "~~~" : "```";
-  return `@kell Edit the document "${title}". What to change: \n\n${fence}canvas title="${title}" kind=${kind}\n${text}\n${fence}`;
+/**
+ * What "Ask kell to edit" puts in the message box: one short line that names the canvas, ready for you to finish ("... make it shorter"). The
+ * canvas itself is not in the message: while it is open its text travels with your request (RoomView sends it as `canvas`), the way an
+ * artifact toolbar in vercel/chatbot sends only "Please add final polish..." and the model gets the document by reference. Pasting the whole
+ * document into the box made it show as raw text, a fence and all.
+ */
+export const editRequest = (label: string): string => `@kell Edit "${label}": `;
+
+/** One-click edits, each a short sentence sent as it is (like the toolbar actions of vercel/chatbot's artifacts). */
+export const QUICK_EDITS: Record<DocKind, Array<{ label: string; ask: string }>> = {
+  document: [
+    { label: "Polish", ask: "fix grammar, tighten the wording and keep my meaning." },
+    { label: "Shorter", ask: "make it about half as long and keep the key points." },
+    { label: "Add headings", ask: "add section headings and a short summary at the top." },
+  ],
+  html: [
+    { label: "Improve design", ask: "make the design cleaner and more polished: spacing, type and colour." },
+    { label: "Make responsive", ask: "make it work well on a phone." },
+  ],
+  code: [
+    { label: "Add comments", ask: "add short, useful comments and keep the behaviour the same." },
+    { label: "Find bugs", ask: "find bugs or edge cases and fix them." },
+  ],
+  latex: [
+    { label: "Polish", ask: "fix grammar and tighten the wording; keep the LaTeX valid." },
+    { label: "Add abstract", ask: "add an abstract and section headings." },
+  ],
 };
 
-function wrapSelection(el: HTMLTextAreaElement, before: string, after = before, placeholder = "text"): void {
-  const { selectionStart: s, selectionEnd: e, value } = el;
-  const chosen = value.slice(s, e) || placeholder;
-  el.focus();
-  el.setRangeText(before + chosen + after, s, e, "end");
-  el.setSelectionRange(s + before.length, s + before.length + chosen.length);
-  el.dispatchEvent(new Event("input", { bubbles: true }));
-}
-function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
-  const { selectionStart: s, selectionEnd: e, value } = el;
-  const start = value.lastIndexOf("\n", s - 1) + 1;
-  const block = value.slice(start, e).split("\n").map((l) => prefix + l).join("\n");
-  el.focus();
-  el.setRangeText(block, start, e, "end");
-  el.dispatchEvent(new Event("input", { bubbles: true }));
-}
-
 /** What a canvas is called in the picker: its title, or - when the title is only a number or a key - "Page 2" / "Document 1" by its place in the list. */
-function shown(d: { title: string; kind: string; id: string }, all: { id: string; kind: string }[]): string {
+function shown(d: { title: string; label?: string; kind: string; id: string }, all: { id: string; kind: string }[]): string {
+  if (d.label && isRealName(d.label)) return d.label;                 // the server read a name from the text when the stored title was only an id
   if (isRealName(d.title)) return d.title;
   const same = all.filter((x) => x.kind === d.kind);
   const n = Math.max(1, same.findIndex((x) => x.id === d.id) + 1);
@@ -67,12 +75,14 @@ function shown(d: { title: string; kind: string; id: string }, all: { id: string
 const latexStarter = (title: string): string =>
   `\\documentclass{article}\n\\usepackage{amsmath}\n\\title{${title.replace(/[\\{}$&#_%^~]/g, " ")}}\n\\author{}\n\\date{\\today}\n\\begin{document}\n\\maketitle\n\n\\section{Introduction}\nWrite here. Maths goes between dollar signs, like $e^{i\\pi} + 1 = 0$, or on its own line:\n\\begin{equation}\n  \\int_0^1 x^2\\,dx = \\frac{1}{3}\n\\end{equation}\n\n\\end{document}\n`;
 
-export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, onContext, timing, socket }: {
+export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onQuick, onDocs, onSeen, onContext, timing, socket }: {
   open: boolean; onClose: () => void; api: DocsApi; roomId: string;
   /** A document to show first (the title on the card the person pressed). */
   wantedTitle: string | null;
   /** Puts text in the message box ("Ask kell to edit this"). */
   onAsk: (text: string) => void;
+  /** Sends a short request at once (a quick edit). The open canvas goes with it. */
+  onQuick?: (text: string) => void;
   /** The documents of the room, whenever the list is read. */
   onDocs?: (docs: DocInfo[]) => void;
   /** This version of this document is on screen: it no longer counts as new. */
@@ -498,13 +508,21 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
             )}
           </div>
 
+          {onQuick && (
+            <div className="dg-doc-quick" role="group" aria-label="Quick edits by kell">
+              <span className="small dim">Ask kell</span>
+              {(QUICK_EDITS[kind] ?? QUICK_EDITS.document).map((q) => (
+                <button key={q.label} type="button" className="dg-cv-chip" onClick={() => onQuick(`@kell ${q.label} "${shown(docs.find((d) => d.id === activeId) ?? { title, kind, id: activeId ?? "" }, docs)}": ${q.ask}`)}>{q.label}</button>
+              ))}
+            </div>
+          )}
           <div className="dg-doc-foot">
             <span className="small dim">{words} {words === 1 ? "word" : "words"} · version {base.current.version}</span>
             <span className="dg-doc-actions">
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={download}>Download</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => void openHistory()} aria-expanded={!!history}>History</button>
-              <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => onAsk(editRequest(title, kind, textRef.current))}>Ask kell to edit</button>
+              <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => onAsk(editRequest(shown(docs.find((d) => d.id === activeId) ?? { title, kind, id: activeId ?? "" }, docs)))}>Ask kell to edit</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={() => void remove()}>Delete</button>
             </span>
           </div>

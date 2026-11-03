@@ -16,7 +16,7 @@ export default function CanvasCard({ block }: { block: CanvasBlock }) {
       onClick={open} onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); open(); } }}
     >
       <span className="dg-file-kind" aria-hidden="true">{block.kind === "html" ? "PAGE" : block.kind === "code" ? "CODE" : block.kind === "latex" ? "TEX" : "DOC"}</span>
-      <span className="dg-file-meta"><b title={block.title}>{block.title}</b><span className="small dim">Canvas · {lines} line{lines === 1 ? "" : "s"}</span></span>
+      <span className="dg-file-meta"><b title={block.title}>{block.title}</b><span className="small dim">{block.text.trim() ? `Canvas · ${lines} line${lines === 1 ? "" : "s"}` : "Canvas · open to read and edit"}</span></span>
       <span className="dg-artifact-btn dg-card-open" aria-hidden="true">Open</span>
     </div>
   );

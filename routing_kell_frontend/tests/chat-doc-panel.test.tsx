@@ -97,8 +97,21 @@ describe("docs panel", () => {
     expect((api.restore as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
 
     await act(async () => { btn("Ask kell to edit").click(); });
-    expect(onAsk.mock.calls[0][0]).toContain('@kell Edit the document');
-    expect(onAsk.mock.calls[0][0]).toContain("```canvas title=");
+    // a short line that names the canvas: the document and its fence are not pasted into the message box (the open canvas travels with the request)
+    expect(onAsk.mock.calls[0][0]).toBe('@kell Edit "Plan": ');
+    expect(onAsk.mock.calls[0][0]).not.toContain("canvas title=");
+  });
+
+  it("offers one-click quick edits that send a short request at once", async () => {
+    const onQuick = vi.fn();
+    const { api } = fakeApi();
+    await mount(api, { onQuick } as never);
+    await wait(10);
+    const quick = [...host!.querySelectorAll(".dg-doc-quick button")].find((b) => b.textContent === "Polish") as HTMLElement;
+    await act(async () => { quick.click(); });
+    expect(onQuick).toHaveBeenCalledTimes(1);
+    expect(onQuick.mock.calls[0][0]).toMatch(/^@kell Polish "Plan": fix grammar/);
+    expect(onQuick.mock.calls[0][0].length).toBeLessThan(160);
   });
 
   it("says it is offline and keeps the text when a save cannot reach the server", async () => {

@@ -1336,3 +1336,14 @@ body:has(.dg-shell) { overscroll-behavior: none; }
   :root:not([data-theme="light"]) .dg-page .dg-onboard:hover:not(:disabled) { background: #ffffff !important; }
   :root:not([data-theme="light"]) .dg-page .dg-onboard:hover:not(:disabled) { background: #111111 !important; box-shadow: 0 8px 24px rgba(255, 255, 255, .2), 0 0 0 1px rgba(255, 255, 255, .32) !important; }
 }
+
+/* Quick edits under the document: short asks to kell, one click each. */
+.dg-doc-quick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px 0; }
+.dg-doc-quick .dg-cv-chip { padding: 6px 12px; }
+
+/* HTML viewer: one scrollbar. The page scrolls inside its own frame; the viewer around it (browser window, screen-size switch) is sized to the
+   panel and never scrolls itself, so there is no second bar beside the page's own. */
+.dg-viewer, .dg-doc-pane[data-split] > .dg-viewer { overflow: hidden; }
+.dg-browser { min-height: 0; }
+.dg-browser-body { min-height: 0; overflow: hidden; }
+.dg-viewer-page { overflow: hidden; }

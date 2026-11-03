@@ -81,3 +81,33 @@ async def test_questions_and_tool_requests_are_not_forced_to_make_anything():
     assert not room_agent.makes_something("find a tool that converts a pdf to text")
     assert not room_agent.makes_something("summarise the main causes of the french revolution")
     assert room_agent.makes_something("write a python script that renames files by date")
+
+
+@pytest.mark.asyncio
+async def test_what_the_cheap_model_makes_goes_to_a_canvas_even_when_the_agent_gave_no_title():
+    model = Model(_reply(tool_calls=[_tc("discover_tools", need="memo")]),
+                  _reply(tool_calls=[_tc("call_model", prompt="write the memo")]),                  # no canvas_title, no kind
+                  _reply("Here is the memo."))
+
+    async def discover(need):
+        return json.dumps({"tools": []})
+
+    memo = "# Four Day Week Memo\n\n" + "A paragraph of the memo. " * 60
+
+    async def cheap(prompt):
+        return memo
+
+    out = await room_agent.converse("write a short memo about a four day week", [], model_call=model, find_tools=_some_tools, use_tool=_never,
+                                    discover=discover, call_cheap=cheap)
+    assert '```canvas title="Four Day Week Memo" kind=document' in out.text and "A paragraph of the memo." in out.text
+
+
+def test_html_or_a_long_piece_the_agent_wrote_itself_is_moved_into_a_canvas():
+    page = "```html\n<!doctype html><html><head><title>Crumb</title></head><body>" + "<p>bread</p>" * 40 + "</body></html>\n```"
+    out = room_agent.canvasify("Here is your page.\n\n" + page, False)
+    assert 'canvas title="Crumb" kind=html' in out and "```html" not in out and out.startswith("Here is your page.")
+    long_memo = "# Plan\n\n" + "Words about the plan. " * 80
+    assert 'canvas title="Plan" kind=document' in room_agent.canvasify(long_memo, True)
+    assert room_agent.canvasify(long_memo, False) == long_memo                         # an ordinary long answer to a question stays in the chat
+    already = '```canvas title="X" kind=html\n<p>x</p>\n```'
+    assert room_agent.canvasify(already, True) == already

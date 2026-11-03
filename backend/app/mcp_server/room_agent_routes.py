@@ -159,6 +159,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             # Consent links go back to the person who asked, never into the room, where every member and connector would read them.
             links = list(dict.fromkeys(outcome.consent_links))
             try:
+                # A canvas too big for one message goes straight into the room's canvases; the message keeps a card for it.
+                reply = await rm.externalize_canvases(pool, subject, room_id, handle, reply)
                 events = rm.agent_events(handle, reply)
                 appended = await rm.append_events(pool, subject, room_id, events)
             except rm.RoomError as exc:

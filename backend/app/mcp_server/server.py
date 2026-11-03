@@ -1106,17 +1106,13 @@ async def _post_retry(client: Any, url: str, headers: dict, payload: dict) -> An
     raise RuntimeError("the model service did not answer")
 
 
-_DEAD_MODELS: dict[str, float] = {}      # model -> until when it is skipped (it failed for lack of credit or a billing refusal)
-DEAD_MODEL_S = 600.0
-
-
 def _mark_dead(model: str, exc: Exception) -> None:
-    """A model whose provider said the account has no credit is not tried again for ten minutes: every turn would otherwise pay a failed call first."""
+    """A model whose provider said the account has no credit is not tried again for ten minutes (_MODEL_DOWN): every turn would otherwise pay a
+    failed call first."""
     import time as _time
 
-    text = str(exc).lower()
-    if "402" in text or "credit" in text or "billing" in text or "insufficient" in text:
-        _DEAD_MODELS[model] = _time.monotonic() + DEAD_MODEL_S
+    if _out_of_credit(str(exc)):
+        _MODEL_DOWN[model] = _time.monotonic() + 600.0
 
 
 def _room_agent_model_chain() -> list[str]:
@@ -1130,7 +1126,7 @@ def _room_agent_model_chain() -> list[str]:
     extra = [m.strip() for m in (_os.environ.get("KELL_ROOM_AGENT_FALLBACKS") or "").split(",") if m.strip()] or [_default_call_model()]
     chain = list(dict.fromkeys([first, *extra]))
     now = _time.monotonic()
-    alive = [m for m in chain if _DEAD_MODELS.get(m, 0.0) <= now]
+    alive = [m for m in chain if _MODEL_DOWN.get(m, 0.0) <= now]
     return alive or chain
 
 
@@ -1374,12 +1370,14 @@ async def _room_agent_discover(need: str) -> str:
 
     try:
         ext = await _asyncio.wait_for(
-            _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 6),
+            _external_tools(condense(need.strip(), _ft.QUERY_MAX), "", None, 14),
             timeout=float(_os.environ.get("KELL_ROOM_AGENT_DISCOVER_WAIT", "20.0")))
     except Exception:  # noqa: BLE001 -- the model is told, and answers without a tool
         return json.dumps({"tools": [], "note": "tool search did not answer in time; answer without it and say so"})
     if not ext:
         return json.dumps({"tools": [], "note": "no tool found for that"})
+    if isinstance(ext.get("tools"), list):
+        ext["tools"] = ext["tools"][:8]          # the search is wide (14), the preflight moves servers that need a sign-in behind the runnable ones, the best eight are shown
     return json.dumps({"external": ext, "next": "use_tool(server=<name>, name=<tool>, arguments=...) for tools marked via_kell; "
                                                 "discover_tools(server=<name>) lists a server's tools"}, default=str)
 

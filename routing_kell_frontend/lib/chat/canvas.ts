@@ -81,6 +81,7 @@ export function captureFrom(canvases: Canvas[], m: { id: string; room: string; b
   const changed: Canvas[] = [];
   const current = [...canvases];
   for (const b of extractCanvasBlocks(m.text)) {
+    if (!b.text.trim()) continue;                      // a card for a canvas the server already holds (too big for a message): nothing to copy
     const i = current.findIndex((c) => c.room === m.room && c.title.toLowerCase() === b.title.toLowerCase());
     if (i >= 0) {
       const next = addVersion(current[i], b.text, m.by, m.at, m.id);

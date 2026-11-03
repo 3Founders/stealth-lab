@@ -426,9 +426,10 @@ NL = chr(10)
 PARA = NL + NL
 
 
-def split_body(text: str, limit: int = MAX_BODY) -> list[str]:
-    """A long reply as pieces of at most `limit` characters, cut at a blank line, a line end or a space when one is near the cut, so a
-    long answer is posted in full as several messages instead of being refused."""
+CANVAS_FENCE = re.compile(r"(^|\n)(```|~~~)canvas([^\n]*)\n(.*?)\n\2[ \t]*(?=\n|$)", re.S)
+
+
+def _split_plain(text: str, limit: int) -> list[str]:
     body = (text or "").strip()
     parts: list[str] = []
     while len(body) > limit:
@@ -440,6 +441,76 @@ def split_body(text: str, limit: int = MAX_BODY) -> list[str]:
     if body:
         parts.append(body)
     return parts
+
+
+def split_body(text: str, limit: int = MAX_BODY) -> list[str]:
+    """A long reply as pieces of at most `limit` characters, cut at a blank line, a line end or a space when one is near the cut, so a long
+    answer is posted in full as several messages instead of being refused. A canvas block (a fence with the word canvas) is never cut: a block
+    cut in two is neither half a canvas, and its text would land in the chat as plain words. Blocks are packed whole; one that cannot fit a
+    message on its own is the caller's to move out first (externalize_canvases)."""
+    body = (text or "").strip()
+    if len(body) <= limit:
+        return [body] if body else []
+    segments: list[tuple[bool, str]] = []
+    last = 0
+    for m in CANVAS_FENCE.finditer(body):
+        start = m.start() + (1 if m.group(1) else 0)
+        if start > last:
+            segments.append((False, body[last:start]))
+        segments.append((True, body[start:m.end()]))
+        last = m.end()
+    if last < len(body):
+        segments.append((False, body[last:]))
+    pieces: list[str] = []
+    cur = ""
+    for is_block, seg in segments:
+        seg = seg.strip(NL)
+        if not seg.strip():
+            continue
+        if is_block:
+            if cur:
+                pieces.append(cur.strip())
+                cur = ""
+            pieces.append(seg)                                    # a block is a piece of its own, whole
+            continue
+        for part in _split_plain(seg, limit):
+            if cur and len(cur) + 2 + len(part) <= limit:
+                cur = cur + PARA + part
+            else:
+                if cur:
+                    pieces.append(cur.strip())
+                cur = part
+    if cur:
+        pieces.append(cur.strip())
+    return [p for p in pieces if p]
+
+
+async def externalize_canvases(pool: Any, sub: str, room_id: Any, handle: str, text: str, limit: int = MAX_BODY - 100) -> str:
+    """A canvas block too big for one room message (a message body is at most MAX_BODY characters) is saved as the room's canvas directly, and
+    the message keeps an empty block of the same title: the card is still there and opens the canvas, which holds the whole text. Smaller blocks
+    stay in the message as they are."""
+    from app.services import room_docs
+
+    def pointer(m: "re.Match[str]") -> str:
+        block = m.group(0)
+        if len(block) <= limit:
+            return block
+        lead = m.group(1) or ""
+        fence = m.group(2)
+        return f"{lead}{fence}canvas{m.group(3)}\n\n{fence}"
+
+    out: list[str] = []
+    last = 0
+    for m in CANVAS_FENCE.finditer(text or ""):
+        if len(m.group(0)) > limit:
+            import uuid as _uuid
+
+            await room_docs.capture(pool, room_id, sub, handle, f"big-{_uuid.uuid4().hex[:12]}", m.group(0).lstrip(NL))
+        out.append(text[last:m.start()])
+        out.append(pointer(m))
+        last = m.end()
+    out.append(text[last:])
+    return "".join(out)
 
 
 def agent_events(handle: str, text: str) -> list[dict[str, Any]]:

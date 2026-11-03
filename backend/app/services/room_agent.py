@@ -15,6 +15,7 @@ room text it reads is visible to kell (open rooms). It is not added to sealed (E
 from __future__ import annotations
 
 import json
+from app.services.canvas_names import guess_kind, guess_title, looks_like_html  # noqa: F401 -- the naming rules live in canvas_names
 import re
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -295,6 +296,25 @@ def _tool_brief(candidates: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def canvasify(text: str, creates: bool) -> str:
+    """The agent's final words, with anything it wrote itself that belongs in a canvas moved there: a fenced html block of any size, and, for
+    a request to make something, a long piece of writing. Text that already holds a canvas block is left alone."""
+    body = text or ""
+    if "canvas title=" in body or "canvas kind=" in body or re.search(r"(```|~~~)canvas", body):
+        return body
+    m = re.search(r"(^|\n)(```|~~~)html[ \t]*\n(.*?)\n\2[ \t]*(?=\n|$)", body, re.S)
+    if m and len(m.group(3)) > 300:
+        inner = m.group(3)
+        title = guess_title(inner, "html")
+        note = (body[:m.start()] + body[m.end():]).strip() or f"Made {title!r} in the canvas."
+        return f"{note}\n\n{fence_canvas(title, 'html', inner)}"
+    if creates and len(body.strip()) > 900:
+        kind = guess_kind(body)
+        title = guess_title(body, kind)
+        return f"Made {title!r} in the canvas.\n\n{fence_canvas(title, kind, body)}"
+    return body
+
+
 def _unfence(text: str) -> str:
     """A model asked for a page often wraps it in ```html ... ```: the canvas wants the page itself."""
     m = re.match(r"^\s*(```|~~~)[a-zA-Z0-9_-]*\s*\n(.*)\n\1\s*$", text, re.S)
@@ -364,11 +384,16 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
             return f"FAILED: call_model: {str(exc).strip()[:200] or type(exc).__name__}"
         if not out:
             return "FAILED: call_model: the model returned nothing; try again or write it yourself"
+        body = _unfence(out)
         title = str(args.get("canvas_title") or "").strip()
-        if title and made is not None:
-            kind = str(args.get("kind") or "document")
-            made.append(fence_canvas(title, kind, _unfence(out)))
-            return f"Done: the model wrote {len(out)} characters and kell is putting them in a canvas named {title!r} for the room. Reply in one or two sentences about what you made; do not repeat it."
+        kind = str(args.get("kind") or "").strip()
+        # What a model makes goes in the canvas whether or not the agent said so: a long answer, a page or a piece of code is a thing to keep and
+        # edit, not something to read in the chat. The title and kind come from the text itself when the agent gave none.
+        if made is not None and (title or len(body) > 700 or looks_like_html(body)):
+            kind = kind if kind in ("document", "code", "html") else guess_kind(body)
+            title = title or guess_title(body, kind)
+            made.append(fence_canvas(title, kind, body))
+            return f"Done: the model wrote {len(body)} characters and kell is putting them in a canvas named {title!r} for the room. Reply in one or two sentences about what you made; do not repeat it."
         return out
     server, tool = str(args.get("server") or "").strip(), str(args.get("name") or "").strip()
     if not server and "/" in tool:                      # a model that sends name="server/tool" (as claude.ai sometimes does)
@@ -419,7 +444,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
         calls = message.get("tool_calls") or []
         content = strip_tool_markup(str(message.get("content") or ""))
         if not calls or round_no >= max_rounds:
-            return AgentOutcome(text=_with_made(content, made), tools_used=used, consent_links=links)
+            return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links)
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
             result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made)
@@ -501,7 +526,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
         content = "".join(parts).strip()
         tool_calls = [calls[i] for i in sorted(calls)]
         if not tool_calls or round_no >= max_rounds:
-            yield ("final", AgentOutcome(text=_with_made(content, made), tools_used=used, consent_links=links))
+            yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links))
             return
         messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
         for call in tool_calls:
