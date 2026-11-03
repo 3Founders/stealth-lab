@@ -60,12 +60,11 @@ device photos), so it cannot be dropped into `console/`; the chat a user of the 
 `lib/chat/spring.ts`, `lib/chat/smooth.ts`, `components/chat/{useSpringScroll.ts, Markdown.tsx, SmoothText.tsx, brand.tsx}`,
 and the chat's motion/markdown/mark rules extracted into `desktop/app/chat-core.css` (the file says to re-extract, not
 hand-edit). In the desktop chat that gives: spring scroll that follows new text only while you are at the bottom and
-rubber-bands at the edges; the reply streams at a steady pace with each new word fading in; markdown (code, lists, bold);
+rubber-bands at the edges; the reply streams at a steady pace (see the correction below: no per-word fade); markdown (code, lists, bold);
 and the same thinking indicator (kell mark, wave dots, breathing label) before the first words.
 
 Verified: `tsc --noEmit` and `next build` pass; a temporary page rendering the real components, captured with headless
-Edge, showed the mark, animated dots and rendered markdown. NOT verified: the mid-stream word fade on screen (virtual time
-does not advance the stream timer) and a live engine turn.
+Edge, showed the mark, animated dots and rendered markdown. NOT verified at that point: the stream in real time and a live engine turn (both addressed below).
 
 Second slice (same day): message headers (name, agent badge, time) and the hover actions row (`MessageActions`: copy with the
 tick feedback, "Ask again" / "Send this again"), copied byte-identical with `icons.tsx`; their rules appended to
@@ -102,4 +101,8 @@ earlier: the per-request draws-blob download (`f896f89e`) and the embedding cach
 the 57 dynamic queries and any list that grows in Python after the fetch.
 
 **Dynamic queries, finished (same day).** The 57 queries built at runtime (147 call sites with a non-literal first argument, resolved through their enclosing function and module constants): 61 have a `LIMIT` in the function, 87 are scoped by `WHERE`/`ANY` without one, 1 is a wrapper (`publication_deps._safe_fetch`, text comes from callers). The two that read embedding columns without a `LIMIT` and looked heavy (`tool_routing/store._embed_missing`, `dedup.find_duplicate_clusters`) are batched or do the similarity in SQL. No memory-unsafe pattern found; the remaining risk is a `WHERE`-scoped list that is large for one tenant, which a scan cannot size.
+
+## Correction: streaming has no per-word fade, on the website either (same day)
+
+Earlier notes and the commit message of the first desktop slice (`56efca16`) said each new word fades in. That is wrong. `SmoothText` only draws the fading `dg-tok` word spans in its plain-text mode; the website calls it with `markdown`, which renders the revealed prefix as markdown with no spans, and the desktop uses the same call, so the two behave the same. Measured in real time over DevTools on the real component (a 237-character reply fed at about 14 characters per 120 ms): thinking indicator for about 1 s, then 4, 35, 69, 107, 141, 180, 227, 237 characters at roughly 0.3 s steps, settled at 3.6 s, zero `dg-tok` elements. So the "mid-stream word fade" item is closed as: matches the website; there is no fade to port. Still unchecked: a live engine turn.
 
