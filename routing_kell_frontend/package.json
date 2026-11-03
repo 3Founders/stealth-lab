@@ -25,6 +25,7 @@
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.7",
     "@types/node": "^26.6.2",
     "@types/react": "^19.3.0",
     "jsdom": "^25.0.1",
