@@ -192,3 +192,20 @@ describe("a document stored under an id", () => {
     expect(host!.textContent).not.toContain(uuid);
   });
 });
+
+describe("the markdown toolbar", () => {
+  it("wraps the selection in bold, adds a heading and a bullet (the buttons work, not just render)", async () => {
+    const { api } = fakeApi();
+    await mount(api);
+    await wait(10);
+    const area = editor();
+    await type("hello world");
+    const tool = (label: string) => host!.querySelector(`button[aria-label="${label}"]`) as HTMLElement;
+    await act(async () => { area.focus(); area.setSelectionRange(0, 5); tool("Bold").click(); });
+    expect(area.value).toBe("**hello** world");
+    await act(async () => { area.setSelectionRange(0, 0); tool("Heading").click(); });
+    expect(area.value.startsWith("## ")).toBe(true);
+    await act(async () => { area.setSelectionRange(0, 0); tool("Bullet list").click(); });
+    expect(area.value.startsWith("- ")).toBe(true);
+  });
+});

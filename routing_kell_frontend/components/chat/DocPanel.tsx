@@ -63,6 +63,23 @@ export const QUICK_EDITS: Record<DocKind, Array<{ label: string; ask: string }>>
   ],
 };
 
+function wrapSelection(el: HTMLTextAreaElement, before: string, after = before, placeholder = "text"): void {
+  const { selectionStart: s, selectionEnd: e, value } = el;
+  const chosen = value.slice(s, e) || placeholder;
+  el.focus();
+  el.setRangeText(before + chosen + after, s, e, "end");
+  el.setSelectionRange(s + before.length, s + before.length + chosen.length);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
+  const { selectionStart: s, selectionEnd: e, value } = el;
+  const start = value.lastIndexOf("\n", s - 1) + 1;
+  const block = value.slice(start, e).split("\n").map((l) => prefix + l).join("\n");
+  el.focus();
+  el.setRangeText(block, start, e, "end");
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 /** What a canvas is called in the picker: its title, or - when the title is only a number or a key - "Page 2" / "Document 1" by its place in the list. */
 function shown(d: { title: string; label?: string; kind: string; id: string }, all: { id: string; kind: string }[]): string {
   if (d.label && isRealName(d.label)) return d.label;                 // the server read a name from the text when the stored title was only an id
