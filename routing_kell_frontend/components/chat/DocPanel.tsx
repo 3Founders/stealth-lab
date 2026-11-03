@@ -2,6 +2,7 @@
 import { isRealName } from "@/lib/chat/artifacts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
+import Latex from "@/components/chat/Latex";
 import PanelShell from "@/components/chat/PanelShell";
 import HtmlViewer from "@/components/chat/HtmlViewer";
 import CursorLayer, { type RemoteCursor } from "@/components/chat/CursorLayer";
@@ -59,8 +60,12 @@ function shown(d: { title: string; kind: string; id: string }, all: { id: string
   if (isRealName(d.title)) return d.title;
   const same = all.filter((x) => x.kind === d.kind);
   const n = Math.max(1, same.findIndex((x) => x.id === d.id) + 1);
-  return `${d.kind === "html" ? "Page" : d.kind === "code" ? "Code" : "Document"} ${n}`;
+  return `${d.kind === "html" ? "Page" : d.kind === "code" ? "Code" : d.kind === "latex" ? "LaTeX" : "Document"} ${n}`;
 }
+
+/** What a new LaTeX canvas starts with: a short article with a section and an equation, so there is something to see at once. */
+const latexStarter = (title: string): string =>
+  `\\documentclass{article}\n\\usepackage{amsmath}\n\\title{${title.replace(/[\\{}$&#_%^~]/g, " ")}}\n\\author{}\n\\date{\\today}\n\\begin{document}\n\\maketitle\n\n\\section{Introduction}\nWrite here. Maths goes between dollar signs, like $e^{i\\pi} + 1 = 0$, or on its own line:\n\\begin{equation}\n  \\int_0^1 x^2\\,dx = \\frac{1}{3}\n\\end{equation}\n\n\\end{document}\n`;
 
 export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAsk, onDocs, onSeen, onContext, timing, socket }: {
   open: boolean; onClose: () => void; api: DocsApi; roomId: string;
@@ -84,6 +89,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [kind, setKind] = useState<DocKind>("document");
+  const [newKind, setNewKind] = useState<DocKind>("document");
+  const rich = kind === "document" || kind === "latex";            // a text you write and read rendered: markdown or LaTeX
   const [title, setTitle] = useState("");
   const [status, setStatus] = useState<Status>("saved");
   const [note, setNote] = useState("");
@@ -163,7 +170,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       base.current = { body: d.body, version: d.version };
       textRef.current = d.body;
       setText(d.body); setKind(d.kind); setTitle(d.title); setPresent(d.present); setEditing(d.editing ?? []);
-      setMode(d.kind === "html" ? "browser" : d.kind === "document" ? "split" : "write");
+      setMode(d.kind === "html" ? "browser" : d.kind === "document" || d.kind === "latex" ? "split" : "write");
     }).catch((e) => { if (live) setError(e instanceof Error ? e.message : "Couldn't open that document."); });
     return () => { live = false; };
   }, [open, activeId, api, roomId]);
@@ -330,8 +337,8 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     const t = newTitle.trim();
     if (!t) return;
     try {
-      const d = await api.create(roomId, t, "document", `# ${t}\n\n`);
-      setCreating(false); setNewTitle("");
+      const d = await api.create(roomId, t, newKind, newKind === "latex" ? latexStarter(t) : `# ${t}\n\n`);
+      setCreating(false); setNewTitle(""); setNewKind("document");
       await refreshList();
       setActiveId(d.id);
     } catch (e) { setError(e instanceof Error ? e.message : "Couldn't make that document."); }
@@ -357,7 +364,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const copy = () => { void navigator.clipboard.writeText(textRef.current).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 2000); }, () => {}); };
   const download = () => {
     const url = URL.createObjectURL(new Blob([textRef.current], { type: kind === "html" ? "text/html" : "text/plain" }));
-    const a = document.createElement("a"); a.href = url; a.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "document"}.${kind === "html" ? "html" : kind === "code" ? "txt" : "md"}`;
+    const a = document.createElement("a"); a.href = url; a.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "document"}.${kind === "html" ? "html" : kind === "code" ? "txt" : kind === "latex" ? "tex" : "md"}`;
     document.body.appendChild(a); a.click(); a.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   };
 
@@ -378,7 +385,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
                 {docs.map((d) => (
                   <li key={d.id} role="option" aria-selected={d.id === activeId}>
                     <button type="button" onClick={() => { setActiveId(d.id); setPickerOpen(false); }}>
-                      <span className="dg-picker-kind" aria-hidden="true">{d.kind === "html" ? "PAGE" : d.kind === "code" ? "CODE" : "DOC"}</span>
+                      <span className="dg-picker-kind" aria-hidden="true">{d.kind === "html" ? "PAGE" : d.kind === "code" ? "CODE" : d.kind === "latex" ? "TEX" : "DOC"}</span>
                       <span className="dg-picker-name">{shown(d, docs)}</span>
                       <span className="dg-picker-by small dim">{d.updated_by}</span>
                     </button>
@@ -406,6 +413,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       {creating && (
         <form className="dg-doc-new" onSubmit={(e) => { e.preventDefault(); void create(); }}>
           <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Canvas title" maxLength={120} autoFocus aria-label="Canvas title" />
+          <select value={newKind} onChange={(e) => setNewKind(e.target.value as DocKind)} aria-label="Type"><option value="document">Markdown</option><option value="latex">LaTeX</option></select>
           <button type="submit" className="btn-ink dg-mini-btn" disabled={!newTitle.trim()}><span>Create</span></button>
         </form>
       )}
@@ -421,7 +429,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
         <>
           <div className="dg-doc-bar">
             <div className="dg-doc-seg dg-doc-seg--big" role="tablist" aria-label="View">
-              {kind === "document" ? (
+              {rich ? (
                 <>
                   <button type="button" role="tab" aria-selected={mode === "write"} onClick={() => setMode("write")}>Write</button>
                   <button type="button" role="tab" aria-selected={mode === "split"} onClick={() => setMode("split")}>Side by side</button>
@@ -436,8 +444,18 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
                 </>
               ) : <button type="button" role="tab" aria-selected="true">Code</button>}
             </div>
-            {mode === "split" && kind === "document" && (
+            {mode === "split" && rich && (
               <button type="button" className="dg-cv-chip dg-cv-big" aria-pressed={linked} onClick={() => setLinked((l) => !l)} title="Scroll both halves together">{linked ? "Scrolling linked" : "Scrolling free"}</button>
+            )}
+            {(mode === "write" || mode === "split") && kind === "latex" && (
+              <div className="dg-doc-fmt" role="toolbar" aria-label="LaTeX">
+                <button type="button" title="Bold" aria-label="Bold" onClick={() => area.current && wrapSelection(area.current, "\\textbf{", "}", "bold")}><b>B</b></button>
+                <button type="button" title="Italic" aria-label="Italic" onClick={() => area.current && wrapSelection(area.current, "\\emph{", "}", "italic")}><i>I</i></button>
+                <button type="button" title="Inline maths" aria-label="Inline maths" onClick={() => area.current && wrapSelection(area.current, "$", "$", "x^2")}>$x$</button>
+                <button type="button" title="Equation" aria-label="Equation" onClick={() => area.current && wrapSelection(area.current, "\\begin{equation}\n", "\n\\end{equation}", "E = mc^2")}>∑</button>
+                <button type="button" title="Section" aria-label="Section" onClick={() => area.current && wrapSelection(area.current, "\\section{", "}", "Title")}>§</button>
+                <button type="button" title="List" aria-label="List" onClick={() => area.current && wrapSelection(area.current, "\\begin{itemize}\n  \\item ", "\n\\end{itemize}", "item")}>•</button>
+              </div>
             )}
             {(mode === "write" || mode === "split") && kind === "document" && (
               <div className="dg-doc-fmt" role="toolbar" aria-label="Formatting">
@@ -459,11 +477,11 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
                   spellCheck={kind === "document"} aria-label={`Edit ${title}`} placeholder="Start writing…"
                 />
                 <CursorLayer area={area} text={text} cursors={remote} color={personColor} />
-                {mode === "split" && kind === "document" && <div ref={readPane} className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview" onScroll={() => tie(readPane.current, area.current)}><Markdown text={text} /></div>}
+                {mode === "split" && rich && <div ref={readPane} className="dg-canvas-doc dg-doc-read" tabIndex={0} aria-label="Preview" onScroll={() => tie(readPane.current, area.current)}>{kind === "latex" ? <Latex text={text} /> : <Markdown text={text} />}</div>}
                 {mode === "split" && kind === "html" && <HtmlViewer html={text} title={title} mode="browser" />}
               </div>
             )}
-            {mode === "read" && kind === "document" && <div className="dg-canvas-doc" tabIndex={0}><Markdown text={text} /></div>}
+            {mode === "read" && rich && <div className="dg-canvas-doc" tabIndex={0}>{kind === "latex" ? <Latex text={text} /> : <Markdown text={text} />}</div>}
             {(mode === "browser" || mode === "page") && kind === "html" && <HtmlViewer html={text} title={title} mode={mode === "page" ? "page" : "browser"} />}
             {history && (
               <div className="dg-doc-history" role="dialog" aria-label="History">

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
+import Latex from "@/components/chat/Latex";
 import PanelShell from "@/components/chat/PanelShell";
 import HtmlViewer, { type ViewerMode } from "@/components/chat/HtmlViewer";
 import { addVersion, fileNameFor, viewOf, type Canvas, type CanvasVersion } from "@/lib/chat/canvas";
@@ -100,6 +101,8 @@ export default function CanvasPanel({ open, onClose, canvases, room, selectedId,
           <HtmlViewer html={text} title={cur.canvas.title} mode={viewer} />
         ) : view === "markdown" ? (
           <div className="dg-canvas-doc" tabIndex={0} aria-label={cur.canvas.title}><Markdown text={text} /></div>
+        ) : view === "latex" ? (
+          <div className="dg-canvas-doc" tabIndex={0} aria-label={cur.canvas.title}><Latex text={text} /></div>
         ) : (
           <pre className="dg-canvas-pre" data-kind={cur.canvas.kind} tabIndex={0} aria-label={cur.canvas.title}>{text}</pre>
         )}

@@ -1250,3 +1250,57 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-rc { position: relative; display: inline-block; width: 0; height: 1em; vertical-align: text-bottom; }
 .dg-rc::before { content: ""; position: absolute; left: -1px; top: -.1em; width: 2px; height: 1.25em; background: var(--c); border-radius: 1px; }
 .dg-rc-name { position: absolute; left: -1px; bottom: 1.1em; transform: translateY(-1px); background: var(--c); color: #fff; font: 600 10px/1.5 ui-sans-serif, system-ui, sans-serif; padding: 0 5px; border-radius: 4px 4px 4px 0; white-space: nowrap; opacity: .95; letter-spacing: 0; }
+
+/* ===== LaTeX in the canvas (components/chat/Latex.tsx): a typeset page, serif, centred title, numbered sections, theorems, tables ===== */
+.dg-doc-text[data-kind="latex"] { font-family: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; line-height: 1.7; font-weight: 400; letter-spacing: 0; white-space: pre-wrap; }
+.dg-doc-new select { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.dg-tex { --tex-serif: "Latin Modern Roman", "CMU Serif", "Computer Modern", "STIX Two Text", Georgia, "Times New Roman", serif; font-family: var(--tex-serif); font-size: 17px; line-height: 1.62; max-width: 44em; margin: 0 auto; padding-bottom: 32px; hyphens: auto; color: inherit; }
+.dg-tex p { margin: 0 0 .9em; font-weight: 400; text-align: justify; font-size: inherit; line-height: inherit; max-width: none; color: inherit; white-space: normal; }
+.dg-tex .katex { font-size: 1.06em; }
+.dg-tex-title { text-align: center; margin: 6px 0 26px; }
+.dg-tex-title h1 { font-family: var(--tex-serif); font-weight: 600; font-size: 1.9em; line-height: 1.2; letter-spacing: 0; margin: 0 0 .5em; }
+.dg-tex-author, .dg-tex-date { text-align: center !important; margin: 0 0 .3em !important; font-size: 1.1em !important; }
+.dg-tex-date { color: var(--text-2); }
+.dg-tex-h { font-family: var(--tex-serif); font-weight: 700; letter-spacing: 0; line-height: 1.25; margin: 1.5em 0 .6em; }
+.dg-tex-h1 { font-size: 1.45em; } .dg-tex-h2 { font-size: 1.2em; } .dg-tex-h3, .dg-tex-h4 { font-size: 1.05em; }
+.dg-tex-h4 { font-style: italic; }
+.dg-tex-num { display: inline-block; min-width: 1.9em; margin-right: .3em; }
+.dg-tex-abstract { margin: 0 2.2em 1.4em; font-size: .94em; }
+.dg-tex-abstract > b { display: block; text-align: center; margin-bottom: .4em; }
+.dg-tex ul, .dg-tex ol { margin: 0 0 .9em; padding-left: 1.6em; display: block; }
+.dg-tex li { margin: .2em 0; font-weight: 400; line-height: inherit; font-size: inherit; max-width: none; color: inherit; }
+.dg-tex li > p { margin: 0 0 .3em; }
+.dg-tex ul.dg-tex-dl { list-style: none; padding-left: 0; }
+.dg-tex-display { overflow-x: auto; overflow-y: hidden; margin: .5em 0 1em; }
+.dg-tex-display .katex-display { margin: .3em 0; }
+.dg-tex-thm { margin: 1em 0; padding: .1em 0; font-style: italic; text-align: justify; }
+.dg-tex-thm .dg-tex-thm-head { font-style: normal; font-weight: 700; }
+.dg-tex-thm.is-proof { font-style: normal; }
+.dg-tex-thm.is-proof .dg-tex-thm-head { font-style: italic; font-weight: 400; }
+.dg-tex-qed { float: right; font-style: normal; }
+.dg-tex-table-wrap { overflow-x: auto; margin: .4em 0 .6em; text-align: center; }
+.dg-tex-table { border-collapse: collapse; margin: 0 auto; font-size: .96em; }
+.dg-tex-table td { padding: .22em .8em; font-weight: 400; }
+.dg-tex-float { margin: 1.1em 0; text-align: center; }
+.dg-tex-float figcaption { font-size: .92em; margin-top: .4em; }
+.dg-tex-image { display: grid; place-items: center; min-height: 120px; margin: .6em auto; border: 1px dashed var(--rule-strong); border-radius: 8px; color: var(--text-2); font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+.dg-tex blockquote { margin: 0 0 .9em 2em; padding: 0; border: 0; font-style: normal; color: inherit; }
+.dg-tex-center { text-align: center; } .dg-tex-center p { text-align: center; }
+.dg-tex-toc { margin: 0 0 1.4em; } .dg-tex-toc ul { list-style: none; padding-left: 0; } .dg-tex-toc li { margin: .1em 0; }
+.dg-tex-bib ol { padding-left: 2.2em; } .dg-tex-bib li { font-size: .96em; }
+.dg-tex-ref { color: var(--cobalt); } .dg-tex-ref[data-missing] { color: #c0392b; }
+.dg-tex-fn { font-size: .75em; vertical-align: super; color: var(--text-2); } .dg-tex-fn-text { display: none; }
+.dg-tex-sc { font-variant: small-caps; } .dg-tex-sf { font-family: ui-sans-serif, system-ui, sans-serif; }
+.dg-tex code { font-family: "Cascadia Mono", ui-monospace, Consolas, monospace; font-size: .9em; background: color-mix(in srgb, currentColor 7%, transparent); border-radius: 4px; padding: 0 4px; }
+.dg-tex a { color: var(--cobalt); }
+.dg-tex .dg-md-pre { font-size: 13px; text-align: left; }
+.dg-tex-warn { text-align: center; }
+.dg-tex { counter-reset: katexEqnNo mmlEqnNo; }
+.dg-tex .dg-tex-display .katex-display > .katex { text-align: center; }
+
+.dg-tex-table td[data-a="c"] { text-align: center; } .dg-tex-table td[data-a="r"] { text-align: right; } .dg-tex-table td[data-a="l"] { text-align: left; }
+/* Rules are drawn as inset shadows: the chat page forces every border colour transparent, so a real border would never show. */
+.dg-tex-table td { box-shadow: var(--tt, inset 0 0 #0000), var(--tb, inset 0 0 #0000), var(--tl, inset 0 0 #0000), var(--tr, inset 0 0 #0000); }
+.dg-tex-table td[data-t] { --tt: inset 0 1.5px 0 var(--ink); } .dg-tex-table td[data-b] { --tb: inset 0 -1.5px 0 var(--ink); }
+.dg-tex-table td[data-l] { --tl: inset 1.5px 0 0 var(--ink); } .dg-tex-table td[data-r] { --tr: inset -1.5px 0 0 var(--ink); }
+.dg-tex-display { scrollbar-width: none; } .dg-tex-display::-webkit-scrollbar { display: none; }

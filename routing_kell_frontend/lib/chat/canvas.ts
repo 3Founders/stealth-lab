@@ -10,7 +10,7 @@
 //
 // A block with the same title in the same room is a new version of that canvas, not a new canvas. A fence of ~~~ works too, for text that
 // itself contains ``` fences.
-export type CanvasKind = "document" | "code" | "html";
+export type CanvasKind = "document" | "code" | "html" | "latex";
 
 export interface CanvasVersion { n: number; text: string; at: number; by: string; src?: string }
 export interface Canvas { id: string; room: string; title: string; kind: CanvasKind; versions: CanvasVersion[]; createdAt: number }
@@ -20,7 +20,7 @@ export const MAX_CANVAS_CHARS = 200_000;
 
 export interface CanvasBlock { title: string; kind: CanvasKind; text: string; start: number; end: number }
 
-const KINDS: CanvasKind[] = ["document", "code", "html"];
+const KINDS: CanvasKind[] = ["document", "code", "html", "latex"];
 const FENCE = /(^|\n)(```|~~~)canvas([^\n]*)\n([\s\S]*?)\n\2[ \t]*(?=\n|$)/g;
 
 /** Every canvas block in a message, with where it starts and ends, so the rest of the text can be shown around it. */
@@ -101,15 +101,15 @@ export function reviseRequest(c: Canvas, who = "@kell"): string {
 }
 
 /** How a canvas is shown. A page (or an svg picture) is drawn, whatever kind the agent named: agents often forget kind=html. */
-export type CanvasView = "page" | "markdown" | "code";
+export type CanvasView = "page" | "markdown" | "code" | "latex";
 export function viewOf(kind: CanvasKind, text: string): CanvasView {
   const t = text.trimStart().slice(0, 600).toLowerCase();
   if (kind === "html" || t.startsWith("<!doctype html") || /^<([a-z][a-z0-9-]*)[\s>/]/.test(t)) return "page"; // starts with an HTML tag: it is a page or a fragment of one
-  return kind === "code" ? "code" : "markdown";
+  return kind === "code" ? "code" : kind === "latex" ? "latex" : "markdown";
 }
 
 export function fileNameFor(c: Canvas): string {
-  const ext = viewOf(c.kind, latest(c).text) === "page" ? (latest(c).text.trimStart().toLowerCase().startsWith("<svg") ? "svg" : "html") : c.kind === "code" ? "txt" : "md";
+  const ext = viewOf(c.kind, latest(c).text) === "page" ? (latest(c).text.trimStart().toLowerCase().startsWith("<svg") ? "svg" : "html") : c.kind === "code" ? "txt" : c.kind === "latex" ? "tex" : "md";
   return `${c.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "canvas"}.${ext}`;
 }
 
