@@ -1,12 +1,12 @@
-# The desktop app: kell's own coding app (plan for approval, 2026-11-01)
+﻿# The desktop app: kell's own coding app (plan for approval, 2026-11-01)
 
-Status: plan, with steps 1–2 built as a prototype (`desktop/`, commit `4504eeb3`, verified end to end 2026-11-02). The
-shell is Electron (owner decision); steps 3–6 can go ahead. Verified facts: "Prototype built" below.
+Status: plan, with steps 1â€“2 built as a prototype (`desktop/`, commit `4504eeb3`, verified end to end 2026-11-02). The
+shell is Electron (owner decision); steps 3â€“6 can go ahead. Verified facts: "Prototype built" below.
 
 **Shell built (2026-11-02, step 7).** `desktop/electron/main.ts`: single instance; the Next UI runs as a child
 (`next start` on the production build, `ELECTRON_RUN_AS_NODE=1` so the child is plain node) because next's programmatic
 `prepare()` hangs inside the Electron main (its render-server fork resolves to electron.exe); the port is OS-picked
-(port 0 probed, the 28894 guard kept); the window loads it; on quit the child's whole tree dies (taskkill /T) — the
+(port 0 probed, the 28894 guard kept); the window loads it; on quit the child's whole tree dies (taskkill /T) â€” the
 opencode engine it started through lib/engine.ts goes with it. Smoke (KELL_SMOKE=1): window up, engine 200 up:true on
 its own OS-picked port, tree killed, no orphans. macOS not added: dmg + signing is extra work (owner item).
 
@@ -26,7 +26,7 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
     `--grey #777773`, `--rule rgba(23,23,23,.13)`, `--rule-strong rgba(23,23,23,.85)`;
   - font: `"Bahnschrift", "Barlow", "DIN Alternate", "Segoe UI", system-ui` (body weight 300);
   - code: `"Cascadia Mono", ui-monospace, ...`; buttons: `.btn-ink`, `.copy`.
-- **The connection**: `packaging/npm/lib/console.mjs` (`kell console`) — a loopback HTTP server with a token in its
+- **The connection**: `packaging/npm/lib/console.mjs` (`kell console`) â€” a loopback HTTP server with a token in its
   address, routes `GET /health`, `GET /clients`, `POST /install`, `POST /uninstall`, plus keys, local models, streamed
   replies and an activity feed from the hosted server's `/activity`. Started the way `console_launch.mjs` does.
 
@@ -46,7 +46,7 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
 +-------------------+      +----------------------+
         |                            |
         v                            v
-   min ≤ strong models        https://mcp.kell.org.in (same reporting)
+   min â‰¤ strong models        https://mcp.kell.org.in (same reporting)
 ```
 
 - The app starts (or finds) `opencode serve` as a child process, pinned to 2.2.5, with the plugin installed by
@@ -63,7 +63,7 @@ kell's own coding app, like Claude Code's desktop app, in the look of the websit
 1. **Project picker:** open a folder; engine boots inside it.
 2. **Chat:** prompts and streamed answers; tool calls rendered inline (the console's `chat/` components re-used).
 3. **Changes panel:** a diff of what the cheap model changed, with Apply / Undo (`kell undo`).
-4. **Model strip:** which model did each step and its cost — fed by the plugin's `kell_usage` (part 1 step 4, already
+4. **Model strip:** which model did each step and its cost â€” fed by the plugin's `kell_usage` (part 1 step 4, already
    in the plugin).
 5. **Tool suggestions:** kell's tool note as cards, one click to add, or "use through kell" (the gateway).
 6. **Settings / Account:** the console's panels (connect, models, activity, keys) rendered inside the app;
@@ -77,15 +77,15 @@ the `rich-proj` fixture with real turns:
   turn ends (polls after the stream closes; the snapshot record is written a moment later).
 - **Undo** (`POST /api/undo`): OpenCode snapshots the tree around each turn into a shadow git
   (`data/opencode/snapshot/<project>/<repo>`) as TREE objects, and every assistant message in `opencode.db` records
-  `snapshot: { start, end, files }` — one turn is "everything after the last user message", first step's start tree to last
-  step's end tree. Undo writes each changed file's before-blob back (byte-exact). Verified round trip: edit → undo → the
-  file is identical to before → the panel reports nothing left to undo. A file edited since the turn asks first.
+  `snapshot: { start, end, files }` â€” one turn is "everything after the last user message", first step's start tree to last
+  step's end tree. Undo writes each changed file's before-blob back (byte-exact). Verified round trip: edit â†’ undo â†’ the
+  file is identical to before â†’ the panel reports nothing left to undo. A file edited since the turn asks first.
   - **The engine's own revert does not work here**: `session.revert.stage` reports `files: []` and changes nothing (the
     shadow repo has no commits or refs to walk). kell's app reads the trees itself instead. Recorded in revisit.md.
-  - `kell undo` is kept for its own case — a dispatched cheap model's applied answer — and runs when there is no session.
+  - `kell undo` is kept for its own case â€” a dispatched cheap model's applied answer â€” and runs when there is no session.
 - **Model strip**: `session.step.started` names the model (keyed by `assistantMessageID`), `session.step.ended` carries
   tokens and cost for the same message; rows pair them by that id. Neither event carries a rung, so the rung is the model
-  compared with `config.json`'s `cheap` — shown as cheap/strong, and proven on live turns of both.
+  compared with `config.json`'s `cheap` â€” shown as cheap/strong, and proven on live turns of both.
 - **Tool cards** (`POST /api/tools`): kell's tool router, the same call the plugin's native layer makes, same config file.
 - **Settings** (`GET /api/settings`): sign-in from the token's presence (never the token), the lane (organization gateway,
   own key, or not set up), models and mode, engine found/not found. "Open console" runs `kell console open`. Read-only: no
@@ -125,9 +125,9 @@ the prototype's Next.js UI. Still open: Windows first, or Windows and macOS toge
 
 ## Prototype built (2026-11-02, `desktop/`)
 
-Steps 1–2 of the build order exist as a Next.js 15 app (`desktop/`): `POST /api/engine` boots the engine, the page is the
-chat with streamed events, `POST /api/undo` runs `kell undo`. `npm run build` is green; the flow boot → prompt → undo ran
-live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts, for whoever builds steps 3–6:
+Steps 1â€“2 of the build order exist as a Next.js 15 app (`desktop/`): `POST /api/engine` boots the engine, the page is the
+chat with streamed events, `POST /api/undo` runs `kell undo`. `npm run build` is green; the flow boot â†’ prompt â†’ undo ran
+live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts, for whoever builds steps 3â€“6:
 
 - **Engine process:** one `opencode serve --hostname 127.0.0.1 --port 0` child per Next server, spawned by
   `lib/engine.ts` with the isolated profile's env; the singleton lives on `globalThis.__kellEngineState` because Next
@@ -135,9 +135,9 @@ live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts
 - **Auth is Basic on `/api/*`:** the engine answers `WWW-Authenticate: Basic realm="Secure Area"` there and wants
   `base64("opencode:<password>")`; the printed password as a bearer token works on the other routes (`/agent/list`,
   `/session`). `clientFor` bakes the Basic header into the `@opencode/client` instance.
-- **Event payloads put everything under `data.*`** (`session.text.delta` → `data.delta`; `session.step.ended` →
+- **Event payloads put everything under `data.*`** (`session.text.delta` â†’ `data.delta`; `session.step.ended` â†’
   `data.cost`, `data.tokens`, `data.model`), not under `properties`.
-- **Subscribe before prompting** in the SSE route, and filter events to the turn's `data.sessionID` — otherwise the turn
+- **Subscribe before prompting** in the SSE route, and filter events to the turn's `data.sessionID` â€” otherwise the turn
   can finish before the stream starts, or another session's events leak in.
 - **The turn's terminator is `session.execution.succeeded` / `session.execution.failed`** (`session.idle` may not fire in
   serve mode); the route forwards that as `{"type":"done","outcome":...}`.
@@ -145,7 +145,7 @@ live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts
   plugin's `kell_usage` line remains the kell-side copy).
 - **Environment:** the OpenCode desktop app already installed here owns managed-service port 28894, so a second setup
   needs `opencode service set port <other>` (the profile uses 28941; row in new_user_setup.md). SSE through
-  PowerShell's `Invoke-WebRequest` looks like zero events — test with `curl.exe -N`.
+  PowerShell's `Invoke-WebRequest` looks like zero events â€” test with `curl.exe -N`.
 
 ## Later
 
@@ -164,3 +164,14 @@ live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts
 - No keys in the UI, the logs or the installer: the engine runs on the user's own saved key from
   `~/.stealthlab/config.json`, read by the helper; the app only shows "Signed in as ...".
 - The app never edits `prod_frontend/` and never publishes anything by itself.
+
+**Installer startup failures fixed (2026-11-03).** The installed app showed "Uncaught Exception: spawn ...\kell.exe ENOENT" and
+never opened. Cause: the shell started the Next server with its working directory inside `app.asar` (a single file, not a
+folder), which Windows cannot use as a directory; `ENOENT` names the exe but it is the cwd that is missing. OpenCode's files
+were not involved. Fixes: ship the app unpacked (`"asar": false` in `desktop/package.json`; `engine.ts` and `cli.ts`
+already fall back to `cwd/node_modules` and `cwd/vendor`); `next.config.ts` became `next.config.mjs` (a `.ts` config
+makes `next start` try to install typescript at launch, and the installed app has no devDependencies); the package list
+drops the second and third copies of the OpenCode binary (`@opencode/cli`, `-baseline`), Next's compiler and typescript
+(installer 500 MB to 273 MB; only `@opencode/cli-windows-x64` is used). Smoke on the built app: window loads, engine 200
+up, no leftover processes. If a build fails with `EBUSY` on `release\win-unpacked`, a shell has its working directory
+there: build with `--config.directories.output=release-build`. The installer needs about 2.5 GB of free disk to build.

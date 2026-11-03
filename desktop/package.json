@@ -16,6 +16,7 @@
     "appId": "org.kell.desktop",
     "productName": "kell",
     "icon": "build/icon.png",
+    "asar": false,
     "directories": {
       "output": "release"
     },
@@ -24,7 +25,12 @@
       ".next/**",
       "public/**",
       "lib/**",
-      "vendor/**"
+      "vendor/**",
+      "next.config.mjs",
+      "!node_modules/@opencode/cli/**",
+      "!node_modules/@opencode/cli-windows-x64-baseline/**",
+      "!node_modules/@next/swc-*/**",
+      "!node_modules/typescript/**"
     ],
     "asarUnpack": [
       "vendor/**"
