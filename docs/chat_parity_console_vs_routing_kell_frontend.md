@@ -51,3 +51,23 @@ scroll feel already matches; what differs is everything built on top of it.
 `console`: `npm run typecheck`, `npm test`, `npm run build`; then a side-by-side screenshot of the same room in both apps
 at 1240x880 (light and dark) and the same interaction recorded in both: send a message, open the canvas sheet, open
 search. Honest limit: nothing here has been run on the console side yet.
+
+## Update (same day): the desktop app's chat, first slice ported
+
+Reading the closure changed the target. `routing_kell_frontend`'s `RoomView` imports 88 files (Supabase, billing, BYOK,
+device photos), so it cannot be dropped into `console/`; the chat a user of the Windows installer sees is
+`desktop/app/page.tsx`, which was plain. Ported from `routing_kell_frontend`, byte-identical copies:
+`lib/chat/spring.ts`, `lib/chat/smooth.ts`, `components/chat/{useSpringScroll.ts, Markdown.tsx, SmoothText.tsx, brand.tsx}`,
+and the chat's motion/markdown/mark rules extracted into `desktop/app/chat-core.css` (the file says to re-extract, not
+hand-edit). In the desktop chat that gives: spring scroll that follows new text only while you are at the bottom and
+rubber-bands at the edges; the reply streams at a steady pace with each new word fading in; markdown (code, lists, bold);
+and the same thinking indicator (kell mark, wave dots, breathing label) before the first words.
+
+Verified: `tsc --noEmit` and `next build` pass; a temporary page rendering the real components, captured with headless
+Edge, showed the mark, animated dots and rendered markdown. NOT verified: the mid-stream word fade on screen (virtual time
+does not advance the stream timer) and a live engine turn.
+
+Still to port for "exactly the same" in the desktop chat: message group headers (name, agent badge, time) and per-message
+actions (`MessageActions`: copy / ask again); the glass composer (`Composer.tsx`, `.dg-composer`) and its send button
+motion; popovers and panels (`Popover`, `PanelShell`); dark mode (the desktop has no dark tokens yet); the
+canvas sheet (`CanvasPanel`) once the desktop has something to put in it. `console/` is unchanged.

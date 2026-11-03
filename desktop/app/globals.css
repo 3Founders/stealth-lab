@@ -45,11 +45,12 @@ code, kbd, pre, .mono { font-family: "Cascadia Mono", ui-monospace, "SFMono-Regu
 .side h2, .main h2 { font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--grey); font-weight: 400; }
 
 .chat { display: flex; flex-direction: column; min-height: 70vh; }
-.log { flex: 1; overflow-y: auto; padding: var(--pad) 0; display: flex; flex-direction: column; gap: 14px; }
+.log { flex: 1; overflow-y: auto; padding: var(--pad) 0; }
+.logc { display: flex; flex-direction: column; gap: 14px; will-change: transform; }
 .line { max-width: 68ch; }
 .line .who { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--grey); margin-bottom: 4px; }
 .line.user .bubble { background: var(--yellow); border-radius: 14px 14px 2px 14px; padding: 10px 14px; max-width: fit-content; }
-.line.assistant .bubble { padding: 2px 0; white-space: pre-wrap; }
+.line.assistant .bubble { padding: 2px 0; }
 .toolnote { border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; background: #fff; margin-top: 8px; font-size: 14px; }
 .steps { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 .step { border: 1px solid var(--rule); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--grey); }

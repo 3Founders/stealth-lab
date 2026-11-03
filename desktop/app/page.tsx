@@ -4,6 +4,9 @@
 // tokens and cost, and whether that model is the configured cheap one); tool suggestion cards (kell's tool router, the same
 // call the session's plugin makes); and settings (sign-in, models, engine, "Open console").
 import { useCallback, useEffect, useRef, useState } from "react"
+import Markdown from "@/components/chat/Markdown"
+import SmoothText, { Thinking } from "@/components/chat/SmoothText"
+import { useSpringScroll } from "@/components/chat/useSpringScroll"
 
 type Line = { who: "user" | "assistant"; text: string }
 type Step = { kind: "tool" | "model"; label: string; note?: string }
@@ -53,6 +56,9 @@ export default function Home() {
   const [consoleNote, setConsoleNote] = useState("")
   const [signinNote, setSigninNote] = useState("")
   const logRef = useRef<HTMLDivElement>(null)
+  const logContentRef = useRef<HTMLDivElement>(null)
+  // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
+  const { follow, scrollToEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
 
   useEffect(() => {
@@ -60,7 +66,8 @@ export default function Home() {
     fetch("/api/engine").then((r) => r.json()).then((j) => setEngine({ up: !!j.up }))
     fetch("/api/settings").then((r) => r.json()).then(setSettings).catch(() => undefined)
   }, [])
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [lines, steps])
+  useEffect(() => { scrollToEnd({ instant: true }) }, [scrollToEnd, sessionID])
+  useEffect(() => { follow() }, [lines, steps, busy, follow])
 
   const loadChanges = useCallback(async (sid: string | null) => {
     // With a session: its turn's snapshot pair (OpenCode's shadow git) gives both the diff and the undo target, so the panel
@@ -294,12 +301,22 @@ export default function Home() {
               {lines.length === 0 && (
                 <p className="banner">Open a project, then say what to do. The cheap model runs the turn and switches to the strong model when the tests say so; tool calls show as chips below.</p>
               )}
-              {lines.map((l, i) => (
-                <div className={`line ${l.who}`} key={i}>
-                  <div className="who">{l.who === "user" ? "you" : "kell"}</div>
-                  <div className="bubble">{l.text}</div>
-                </div>
-              ))}
+              <div className="logc" ref={logContentRef}>
+                {lines.map((l, i) => {
+                  const live = busy && l.who === "assistant" && i === lines.length - 1   // the reply still arriving
+                  return (
+                    <div className={`line ${l.who}`} key={i}>
+                      <div className="who">{l.who === "user" ? "you" : "kell"}</div>
+                      <div className="bubble">
+                        {l.who === "user" ? l.text : live ? <SmoothText text={l.text} markdown /> : <Markdown text={l.text} />}
+                      </div>
+                    </div>
+                  )
+                })}
+                {busy && lines.at(-1)?.who !== "assistant" && (
+                  <div className="line assistant"><div className="who">kell</div><div className="bubble"><Thinking /></div></div>
+                )}
+              </div>
             </div>
             {steps.length > 0 && (
               <div className="steps">

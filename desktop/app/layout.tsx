@@ -1,4 +1,5 @@
 import "./globals.css"
+import "./chat-core.css"
 export const metadata = {
   title: "kell",
   description: "kell's own coding app — the cheapest model that can do it, the right outside tool when one helps.",
