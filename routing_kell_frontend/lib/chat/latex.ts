@@ -281,11 +281,11 @@ function parseTable(body: string, spec: string, ctx: Ctx): Block {
   }
   bars.push(bar);
   const rows: Cell[][] = [];
-  let top = false;
+  let top: boolean = false;
   const text = body.replace(/\\(hline|toprule|midrule|bottomrule)\b/g, "\u0001").replace(/\\cline\{[^}]*\}/g, "");
   for (const rawRow of text.split(/\\\\(?:\[[^\]]*\])?/)) {
     let row = rawRow;
-    let hasTop = top; top = false;
+    let hasTop: boolean = top; top = false;
     while (row.trimStart().startsWith("\u0001")) { hasTop = true; row = row.trimStart().slice(1); }
     const trailing = row.includes("\u0001");
     row = row.replace(/\u0001/g, "");

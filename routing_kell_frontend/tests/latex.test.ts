@@ -90,7 +90,8 @@ describe("LaTeX reader", () => {
     expect(m.s).toBe(String.raw`x \in \R`);
     expect(text(p.c)).toContain("50% done – see Section");
     const eq = doc.blocks[7] as Extract<Block, { t: "math" }>;
-    expect(eq.html).toContain("katex") && expect(eq.html).not.toContain("label");
+    expect(eq.html).toContain("katex");
+    expect(eq.html).not.toContain("label");
   });
 
   it("lists nest and tables keep their rules, spans and alignment", () => {
