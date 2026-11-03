@@ -947,3 +947,11 @@ main section > .install + p { margin-top: 14px; }
 .install-body { line-height: 1.7; }
 /* the active docs link: the highlight sits behind the whole row, not as a loose band under the text */
 .docs-nav a[aria-current="page"], .docs-nav a:hover { background: linear-gradient(var(--soft), var(--soft)) 0 0 / 100% 100% no-repeat; padding-inline: 8px; margin-inline: -8px; border-radius: 6px; }
+
+/* ===== system-dark twins of the dark hover rules (generated) ===== */
+/* Generated from the :root[data-theme="dark"] hover/focus rules above, for the case where no data-theme is set (a device in dark mode,
+   the theme script blocked): without these, a dark page showed light-mode hover colours, e.g. black text on a dark button. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn-line:hover { color: var(--ink); background-color: rgba(255, 255, 255, .17); }
+  :root:not([data-theme="light"]) .btn-line:hover { box-shadow: var(--sh-lift-hover); }
+}

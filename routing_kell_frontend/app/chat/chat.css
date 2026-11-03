@@ -1304,3 +1304,35 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-tex-table td[data-t] { --tt: inset 0 1.5px 0 var(--ink); } .dg-tex-table td[data-b] { --tb: inset 0 -1.5px 0 var(--ink); }
 .dg-tex-table td[data-l] { --tl: inset 1.5px 0 0 var(--ink); } .dg-tex-table td[data-r] { --tr: inset -1.5px 0 0 var(--ink); }
 .dg-tex-display { scrollbar-width: none; } .dg-tex-display::-webkit-scrollbar { display: none; }
+
+/* Chat text a size up (it was 15px), and the Copy / Ask again buttons smaller. */
+.dg-body, .dg-md { font-size: 17px; }
+.dg-body p, .dg-md p, .dg-md li { font-size: inherit; line-height: 1.55; }
+.dg-md code { font-size: .9em; }
+.dg-md pre.dg-md-pre { font-size: 15px; }
+.dg-page .dg-act { width: 20px; height: 20px; border-radius: 4px; }
+.dg-page .dg-act svg { width: 12px; height: 12px; }
+.dg-page .dg-acts { gap: 1px; }
+.dg-canvas-doc .dg-md, .dg-canvas-doc .dg-body { font-size: 15px; }   /* the canvas keeps its own size */
+
+/* ===== system-dark twins of the dark hover rules (generated) ===== */
+/* Generated from the :root[data-theme="dark"] hover/focus rules above, for the case where no data-theme is set (a device in dark mode,
+   the theme script blocked): without these, a dark page showed light-mode hover colours, e.g. black text on a dark button. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dg-page .dg-room:hover:not([aria-current="page"]),
+    :root:not([data-theme="light"]) .dg-page .dg-search-list li[data-active="true"] { background: rgba(255, 255, 255, .08); }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard:hover:not(:disabled) { background: #fff; color: #171717; }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard:hover .dg-onboard-marks i { box-shadow: 0 0 0 2px #fff; }
+  :root:not([data-theme="light"]) .dg-composer .dg-expand:hover:not(:disabled) { background: rgba(255, 255, 255, .92); color: #171717; }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard,
+    :root:not([data-theme="light"]) .dg-page .dg-onboard:hover:not(:disabled) { background: var(--ink); color: var(--paper); box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
+  :root:not([data-theme="light"]) .dg-onboard-marks i,
+    :root:not([data-theme="light"]) .dg-page .dg-onboard:hover .dg-onboard-marks i { background: #fff; color: #171717; box-shadow: 0 0 0 2px var(--ink); }
+  :root:not([data-theme="light"]) .dg-page :is(.btn-line, .dg-add, .dg-mini, .dg-breaker, .dg-stop, .dg-burger, .dg-menu, .dg-rooms-btn, .dg-set-x, .dg-manage-x, .dg-cv-chip):hover:not(:disabled),
+    :root:not([data-theme="light"]) :is(.btn-line, .copy, .oauth-btn, .back-btn):hover:not(:disabled) {
+    background: rgba(255, 255, 255, .17); color: var(--ink);
+  }
+  :root:not([data-theme="light"]) .dg-page .dg-composer button:not(:disabled):hover { background: var(--yellow); color: #171717; }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard:hover:not(:disabled) { background: #ffffff !important; }
+  :root:not([data-theme="light"]) .dg-page .dg-onboard:hover:not(:disabled) { background: #111111 !important; box-shadow: 0 8px 24px rgba(255, 255, 255, .2), 0 0 0 1px rgba(255, 255, 255, .32) !important; }
+}

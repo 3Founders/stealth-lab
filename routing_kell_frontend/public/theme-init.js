@@ -1,0 +1,1 @@
+try{var q=new URLSearchParams(location.search).get('theme'),t=localStorage.getItem('kell:theme'),h=new Date().getHours();var e=(q==='light'||q==='dark')?q:(t==='light'||t==='dark')?t:(h>=19||h<7)?'dark':'light';document.documentElement.setAttribute('data-theme',e)}catch(e){}

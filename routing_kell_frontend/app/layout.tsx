@@ -10,7 +10,6 @@ import PhotoPrompt from "@/components/PhotoPrompt";
 import Footer from "@/components/Footer";
 import SmoothScroll from "@/components/SmoothScroll";
 import Telemetry from "@/components/Telemetry";
-import { THEME_INIT } from "@/lib/theme";
 import { ThemeWatcher } from "@/components/ThemeToggle";
 
 export const metadata: Metadata = {
@@ -31,7 +30,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: motionGate }} />
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+        {/* a file, not inline text: the inline copy was once cut short in the production build, so no theme was ever set */}
+        <script src="/theme-init.js" />
       </head>
       <body>
         <a className="skip" href="#main">Skip to content</a>
