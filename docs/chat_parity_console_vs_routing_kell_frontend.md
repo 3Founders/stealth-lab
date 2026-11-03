@@ -1,4 +1,4 @@
-# Chat tab parity: `console/` vs `routing_kell_frontend/` (inventory, 2026-11-03)
+﻿# Chat tab parity: `console/` vs `routing_kell_frontend/` (inventory, 2026-11-03)
 
 Goal as given: the chat tab should be "exactly the same, with animations and all". The only second chat tab in the repo is
 `console/app/chat` (titled "Chat (dev sandbox)", last changed 2026-10-31); `prod_frontend/` and `admin/` have none. This
@@ -73,8 +73,8 @@ tick feedback, "Ask again" / "Send this again"), copied byte-identical with `ico
 
 Third slice (same day): the glass composer - the base `.dg-composer` rules with the `.dg-page` glass layer folded in
 (blurred recessed field, lift shadow, focus lift, press-scale send button, entrance animation, reduced-motion and
-reduced-transparency fallbacks), same tokens and values. `tsc --noEmit` passes; NOT looked at on screen (the installer
-rebuild that was to show it was stopped by the harness for low memory), and the desktop composer has no attach/mention/expand
+reduced-transparency fallbacks), same tokens and values. `tsc --noEmit` passes; Looked at on screen: the real desktop page under `next dev` in headless Edge shows the recessed glass field, lift shadow and a disabled Send (the installer
+rebuild that was to show it installed was stopped by the harness for low memory), and the desktop composer has no attach/mention/expand
 parts.
 
 Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); dark mode (the desktop has no dark tokens yet); the
@@ -88,3 +88,6 @@ alert state). The two that grow with data, `routing_evidence_items` and `routing
 the offline fit (`routing/fit.py`), which needs the whole table. Per-request routing queries are all id-scoped. Fixed
 earlier: the per-request draws-blob download (`f896f89e`) and the embedding cache's real size (`313ac96a`). Not covered:
 the 57 dynamic queries and any list that grows in Python after the fetch.
+
+**Dynamic queries, finished (same day).** The 57 queries built at runtime (147 call sites with a non-literal first argument, resolved through their enclosing function and module constants): 61 have a `LIMIT` in the function, 87 are scoped by `WHERE`/`ANY` without one, 1 is a wrapper (`publication_deps._safe_fetch`, text comes from callers). The two that read embedding columns without a `LIMIT` and looked heavy (`tool_routing/store._embed_missing`, `dedup.find_duplicate_clusters`) are batched or do the similarity in SQL. No memory-unsafe pattern found; the remaining risk is a `WHERE`-scoped list that is large for one tenant, which a scan cannot size.
+
