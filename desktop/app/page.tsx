@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import Markdown from "@/components/chat/Markdown"
 import SmoothText, { Thinking } from "@/components/chat/SmoothText"
 import MessageActions from "@/components/chat/MessageActions"
+import ThemeToggle, { ThemeWatcher } from "@/components/ThemeToggle"
 import { useSpringScroll } from "@/components/chat/useSpringScroll"
 
 type Line = { who: "user" | "assistant"; text: string; at?: number }
@@ -212,7 +213,11 @@ export default function Home() {
 
   return (
     <main className="frame">
-      <h1 style={{ padding: "18px 0 2px" }}>kell</h1>
+      <ThemeWatcher />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h1 style={{ padding: "18px 0 2px" }}>kell</h1>
+        <ThemeToggle />
+      </div>
       <div className="modelstrip">
         <span title={sessionID || undefined}>{sessionID ? `session ${sessionID.slice(0, 12)}…` : "no session"}</span>
         <span>{readEngine ? "engine up" : "engine down"}</span>

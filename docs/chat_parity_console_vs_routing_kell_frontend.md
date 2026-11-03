@@ -83,7 +83,13 @@ Fourth slice (same day): dark mode - the same dark tokens as `routing_kell_front
 (headless Edge with `--force-dark-mode`; `--blink-settings=preferredColorScheme=1` did NOT switch it): dark paper, light text,
 dark surfaces, dark soft banner, dark glass composer. Light-vs-dark side by side on an installed build is still unchecked. The desktop has no theme toggle (the website's is in Settings).
 
-Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); a theme toggle; the
+Fifth slice (same day): the website's theme mechanism, byte-identical: `lib/theme.ts`, `components/ThemeToggle.tsx` (toggle + clock
+watcher), `public/theme-init.js` in `<head>`, `suppressHydrationWarning` on `<html>`. Correction to the dark-mode slice: the
+website's theme is NOT the OS setting; it is automatic by the device clock (dark 19:00-07:00) with a saved override, and the
+page always carries `data-theme`; the desktop now does the same, and the toggle sits top right (moon in light, sun in
+dark). Seen on screen with the website's own `?theme=light` / `?theme=dark` query on the real desktop page.
+
+Still to port for "exactly the same" in the desktop chat: popovers and panels (`Popover`, `PanelShell`); the
 canvas sheet (`CanvasPanel`) once the desktop has something to put in it. `console/` is unchanged.
 
 ## Backend memory review, completed scan (same day)

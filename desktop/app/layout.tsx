@@ -8,7 +8,11 @@ export const viewport = { width: "device-width", initialScale: 1 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* a file, not inline text (the website learned that the hard way): sets data-theme before the page paints */}
+        <script src="/theme-init.js" />
+      </head>
       <body>{children}</body>
     </html>
   )
