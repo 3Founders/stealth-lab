@@ -185,3 +185,18 @@ is skipped in the current work and recorded here.
 - **macOS build of the desktop app** — only if it needs no extra work beyond the Windows build; else it waits.
 - **Asking General Compute about deepseek** — the random 403/400 blocks, the "Streaming request failed" 400s, and the
   8k+ output-token refusal (kell caps it at 4k today).
+
+## 2026-11-03, tool sign-in and chat alerts
+
+- **kell-mcp is still deployed on phase 1.** The OAuth flow, the per-account sign-in-tools switch and the failure
+  cooldown are built and pushed, but `TOOL_GATEWAY_OAUTH` and `ORG_KEY_ENCRYPTION_KEY` are absent on the Railway
+  service. Setting the encryption key is a secret write: needs Anuj or Chaitanya. After that, deploy `kell-mcp` and
+  run the four-server check again (Kinsy, MagicSlides, Plus AI, Presentations.AI all issued DCR clients on
+  2026-11-03).
+- **Security review before default-on.** `docs/tool_gateway_design.md` phase 2 lists the open questions (terms,
+  disclosure, token scope). The flag stays off until that review.
+- **Untracked worktrees were not force-removed.** Five clean ones were deleted; the rest contain modified or
+  untracked files, or are locked by another job. Force-removing them would discard other sessions' work, so they
+  wait for a person to confirm.
+- **Untracked files in the main tree were not committed**: `.scratch/`, `.stealth/`, research notes, PDFs and the
+  `prod_frontend/` additions. They are not part of this change; `.scratch/_walletdsn.txt` must never be committed.
