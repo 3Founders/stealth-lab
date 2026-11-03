@@ -21,6 +21,7 @@ Two deliberate choices:
 """
 from __future__ import annotations
 
+import array
 import asyncio
 import hashlib
 import json
@@ -29,6 +30,7 @@ import os
 import threading
 import time
 import weakref
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -174,9 +176,14 @@ async def _bucket_acquire(est_tokens: int) -> None:
 # threads -- every access goes through the lock. Concurrent agents search
 # overlapping topics; without the cache each identical query re-spends
 # quota from a single 30K-TPM free-tier key. Bounded FIFO eviction keeps
-# memory at ~80MB worst case.
-_EMBED_CACHE: dict[str, list[float]] = {}
-_EMBED_CACHE_ORDER: list[str] = []
+# memory at ~80MB worst case: vectors are held PACKED as float32
+# (array('f'), 4 KB at 1024 dimensions). The same vector as a list of Python
+# floats is ~33 KB (8 B pointer + 24 B float object per component), which made
+# this cap ~650 MB at 20000 entries while the comment claimed 80. A hit is
+# unpacked to a fresh list, so callers can no longer mutate a shared entry;
+# values come back at float32 precision, which is what the providers return.
+_EMBED_CACHE: "dict[str, array.array]" = {}
+_EMBED_CACHE_ORDER: "deque[str]" = deque()
 _EMBED_CACHE_LOCK = threading.Lock()
 _EMBED_CACHE_MAX = 20000
 
@@ -189,12 +196,19 @@ def _cache_key(model: str, dim: int, task_type: str, text: str) -> str:
 
 
 def _cache_put(key: str, vector: list[float]) -> None:
+    packed = array.array("f", vector)
     with _EMBED_CACHE_LOCK:
         if key not in _EMBED_CACHE:
             _EMBED_CACHE_ORDER.append(key)
             while len(_EMBED_CACHE_ORDER) > _EMBED_CACHE_MAX:
-                _EMBED_CACHE.pop(_EMBED_CACHE_ORDER.pop(0), None)
-        _EMBED_CACHE[key] = vector
+                _EMBED_CACHE.pop(_EMBED_CACHE_ORDER.popleft(), None)
+        _EMBED_CACHE[key] = packed
+
+
+def _cache_get(key: str) -> Optional[list[float]]:
+    with _EMBED_CACHE_LOCK:
+        packed = _EMBED_CACHE.get(key)
+    return None if packed is None else packed.tolist()
 
 
 class EmbeddingError(Exception):
@@ -518,8 +532,7 @@ class Embedder:
         seen: set[str] = set()
         for i, text in enumerate(texts):
             key = _cache_key(model_id, self.dimension, task_type, text)
-            with _EMBED_CACHE_LOCK:
-                cached = _EMBED_CACHE.get(key)
+            cached = _cache_get(key)
             if cached is not None:
                 results[i] = cached
             elif text in seen:
