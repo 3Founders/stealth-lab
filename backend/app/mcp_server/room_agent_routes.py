@@ -191,7 +191,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                         handle=handle, instructions=instructions, tz=tz,
                         discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
-                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None,
+                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv),
                     ):
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
@@ -243,7 +243,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                                            handle=handle, instructions=instructions, tz=tz, discover=discover,
                                            tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
-                                           call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None)
+                                           call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv))
         except rm.RoomError:
             raise
         except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)
@@ -305,7 +305,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                     handle=handle, instructions=instructions, tz=tz,
                     discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
-                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None,
+                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=False,
                 ):
                     if kind == "delta":
                         yield _sse({"delta": value})

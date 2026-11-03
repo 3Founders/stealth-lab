@@ -417,7 +417,7 @@ def _with_made(content: str, made: list[str]) -> str:
 async def converse(text: str, history: list[dict[str, Any]], *, model_call: ModelCall, find_tools: FindTools,
                    use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "", tz: str = "",
                    discover: "DiscoverTools | None" = None, tools_of: "ToolsOf | None" = None,
-                   call_cheap: "CallCheap | None" = None) -> AgentOutcome:
+                   call_cheap: "CallCheap | None" = None, skip_search: bool = False) -> AgentOutcome:
     """One answer for `text`, with up to `max_rounds` rounds of tools. `history` comes from transcript()."""
     try:
         candidates = await find_tools(text) or []
@@ -433,8 +433,10 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
     used: list[str] = []
     links: list[str] = []
     made: list[str] = []
-    search_first = wants_work(text)
-    creates = makes_something(text)
+    # With a canvas open, the message is a change to it ("make it shorter"): the agent answers with the changed canvas, so no tool search is forced
+    # first and no tool has to run (skip_search).
+    search_first = wants_work(text) and not skip_search
+    creates = makes_something(text) and not skip_search
     worked = False
 
     for round_no in range(max_rounds + 1):
@@ -461,7 +463,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
 async def stream_answer(text: str, history: list[dict[str, Any]], *, model_stream: ModelStream, find_tools: FindTools,
                         use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "", tz: str = "",
                    discover: "DiscoverTools | None" = None, tools_of: "ToolsOf | None" = None,
-                   call_cheap: "CallCheap | None" = None) -> AsyncIterator[tuple[str, Any]]:
+                   call_cheap: "CallCheap | None" = None, skip_search: bool = False) -> AsyncIterator[tuple[str, Any]]:
     """The same answer as converse(), streamed: yields ("delta", piece) as the model produces it, then exactly one
     ("final", AgentOutcome). A tool round is buffered (the model's content before a tool call is normally empty), then the
     next round streams again."""
@@ -479,8 +481,10 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     used: list[str] = []
     links: list[str] = []
     made: list[str] = []
-    search_first = wants_work(text)
-    creates = makes_something(text)
+    # With a canvas open, the message is a change to it ("make it shorter"): the agent answers with the changed canvas, so no tool search is forced
+    # first and no tool has to run (skip_search).
+    search_first = wants_work(text) and not skip_search
+    creates = makes_something(text) and not skip_search
     worked = False
     said: list[str] = []                              # everything shown so far, over all rounds
 

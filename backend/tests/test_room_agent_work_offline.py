@@ -111,3 +111,12 @@ def test_html_or_a_long_piece_the_agent_wrote_itself_is_moved_into_a_canvas():
     assert room_agent.canvasify(long_memo, False) == long_memo                         # an ordinary long answer to a question stays in the chat
     already = '```canvas title="X" kind=html\n<p>x</p>\n```'
     assert room_agent.canvasify(already, True) == already
+
+
+@pytest.mark.asyncio
+async def test_with_a_canvas_open_a_change_is_answered_directly_with_no_forced_search_or_tool():
+    model = Model(_reply('Shortened.\n\n```canvas title="Plan" kind=document\n# Plan\nShort.\n```'))
+    out = await room_agent.converse('@kell Edit "Plan": make it shorter', [], model_call=model, find_tools=_some_tools, use_tool=_never, skip_search=True)
+    names = [t["function"]["name"] for t in model.seen[0][1]]
+    assert names == ["discover_tools", "use_tool", "call_model"] and not any(t.get("_required") for t in model.seen[0][1])
+    assert out.tools_used == [] and 'canvas title="Plan"' in out.text
