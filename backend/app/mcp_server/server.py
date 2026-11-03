@@ -830,6 +830,28 @@ async def activity_feed(request: Request) -> Response:
                              headers={"cache-control": "no-store", "x-accel-buffering": "no"})
 
 
+@server.custom_route("/tools/connect/callback", methods=["GET"], include_in_schema=False)
+async def tool_connect_callback(request: Request) -> Response:
+    """The OAuth redirect for a third-party tool server: exchange the code, seal the tokens, tell the person to go back.
+
+    The state is the only thing that identifies the flow (it was stored when the link was made, with the PKCE verifier), so a
+    caller cannot use this route to attach a token to someone else. The page carries no token and no code back to the browser.
+    """
+    from app.tool_routing import oauth_client as _oauth
+
+    error = request.query_params.get("error")
+    if error:
+        return HTMLResponse("<h2>Sign-in was cancelled</h2><p>Return to the chat and try again.</p>", status_code=400)
+    pool = _LIFESPAN_STATE.get("pool")
+    if pool is None or not _oauth.enabled():
+        return HTMLResponse("<h2>Sign-in is not available here</h2>", status_code=503)
+    try:
+        _owner, server = await _oauth.complete(pool, request.query_params.get("state") or "", request.query_params.get("code") or "")
+    except Exception as exc:  # noqa: BLE001 -- the person sees why, never a token
+        return HTMLResponse(f"<h2>Could not finish the sign-in</h2><p>{str(exc)[:300]}</p>", status_code=400)
+    return HTMLResponse(f"<h2>Connected to {server}</h2><p>Return to the chat; ask again and the tool will run.</p>")
+
+
 @server.custom_route("/claim-graph", methods=["GET"], include_in_schema=False)
 async def claim_graph_page(request: Request) -> HTMLResponse:  # noqa: ARG001
     return HTMLResponse(CLAIM_GRAPH_HTML)
@@ -1683,11 +1705,53 @@ async def _gateway_card(server_name: str):
     card = await _store.card_by_name(_LIFESPAN_STATE.get("pool"), server_name)
     if card is None:
         raise _gateway.GatewayRefused(f"no server named {server_name!r} in kell's catalog")
-    if not _gateway.gateway_allowed(card):
+    if not _gateway.gateway_usable(card):
         raise _gateway.GatewayRefused(
             f"{server_name} cannot be used through kell (only live remote servers from verified publishers that need no "
             "sign-in, for now); offer the user its connector_url or install command instead")
     return card
+
+
+async def _gateway_token(owner: str | None, server_name: str) -> str | None:
+    """The person's own access token for a server that asked for a sign-in, refreshed when needed."""
+    from app.tool_routing import oauth_client as _oauth
+
+    pool = _LIFESPAN_STATE.get("pool")
+    if pool is None or owner is None or not _oauth.enabled():
+        return None
+    try:
+        return await _oauth.token(pool, owner, server_name)
+    except Exception:  # noqa: BLE001 -- a token problem becomes "sign in again", not a failed tool call
+        return None
+
+
+async def _gateway_forget_token(owner: str | None, server_name: str) -> None:
+    from app.tool_routing import oauth_client as _oauth
+
+    pool = _LIFESPAN_STATE.get("pool")
+    if pool is not None and owner is not None:
+        try:
+            await _oauth.forget(pool, owner, server_name)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _gateway_sign_in(owner: str | None, server_name: str, url: str, challenge: dict) -> str:
+    """Start the server's own OAuth flow -> the JSON the agent shows the person (a link, never a token)."""
+    from app.tool_routing import oauth_client as _oauth
+
+    pool = _LIFESPAN_STATE.get("pool")
+    if owner is None:
+        return "REFUSED: sign in to kell to use outside tools through it"
+    if pool is None:
+        return "FAILED: the gateway needs the database"
+    try:
+        link = await _oauth.begin(pool, owner, server_name, url, _PUBLIC_ORIGIN or _ISSUER_URL, challenge)
+    except _oauth.OAuthRefused as exc:
+        return f"REFUSED: {server_name} needs a sign-in kell could not start: {exc}"
+    return json.dumps({"sign_in_required": True, "server": server_name, "link": link,
+                       "next": "Show the person this link (valid 10 minutes): it signs them in to the server itself. "
+                               "After they say they signed in, call use_tool again with the same arguments."})
 
 
 async def _gateway_tools(server_name: str) -> str:
@@ -1701,7 +1765,10 @@ async def _gateway_tools(server_name: str) -> str:
                            "how": f'use_tool(server="{server_name}", name=<tool>, arguments={{...}}) -- public data only'})
     try:
         card = await _gateway_card(server_name)
-        tools = await _gateway.list_tools(card.extra["connector_url"])
+        token = await _gateway_token(_gateway_owner(), server_name)
+        tools = await _gateway.list_tools(card.extra["connector_url"], token=token, server=server_name)
+    except _gateway.GatewaySignIn as exc:
+        return await _gateway_sign_in(_gateway_owner(), server_name, exc.url, exc.challenge)
     except _gateway.GatewayRefused as exc:
         return f"REFUSED: {exc}"
     except Exception as exc:  # noqa: BLE001
@@ -1771,15 +1838,20 @@ async def _gateway_call(ctx: Context, server_name: str, tool: str, arguments: di
     if not _gateway.allow_rate(f"server:{server_name}", _gateway.SERVER_PER_MIN, 60):
         return await done("refused:rate_server", f"REFUSED: {server_name} is busy through kell; try again in a minute")
     url = card.extra["connector_url"]
+    token = await _gateway_token(owner, server_name)
     try:
-        tools = {t["name"]: t for t in await _gateway.list_tools(url)}
+        tools = {t["name"]: t for t in await _gateway.list_tools(url, token=token, server=server_name)}
         if tool not in tools:
             return await done("refused:no_tool", f"REFUSED: {server_name} has no tool {tool!r}; "
                                                  f"discover_tools(server=\"{server_name}\") lists them")
         ok, why = _gateway.tool_allowed(tools[tool])
         if not ok:
             return await done("refused:tool", f"REFUSED: {tool} cannot be run through kell: {why}")
-        result, sent, received = await _gateway.call_tool(url, tool, arguments)
+        result, sent, received = await _gateway.call_tool(url, tool, arguments, token=token, server=server_name)
+    except _gateway.GatewaySignIn as exc:
+        if token:
+            await _gateway_forget_token(owner, server_name)   # the saved token was refused: ask for a fresh sign-in
+        return await done("refused:signin", await _gateway_sign_in(owner, server_name, exc.url, exc.challenge))
     except _gateway.GatewayRefused as exc:
         return await done("failed:signin" if "sign-in" in str(exc) else "failed:refused", f"FAILED: {server_name}: {exc}")
     except Exception as exc:  # noqa: BLE001
@@ -3380,7 +3452,7 @@ def _installed_list(installed: list[Any] | None) -> list[dict[str, Any]]:
 from app.tool_routing import gateway as _gateway  # noqa: E402
 
 
-_PREFLIGHT: dict[str, tuple[float, bool]] = {}          # connector url -> (when checked, answers without a sign-in)
+_PREFLIGHT: dict[str, tuple[float, Any]] = {}          # connector url -> (when checked, True / False / "signin")
 PREFLIGHT_TTL_S = 900.0
 
 
@@ -3392,14 +3464,20 @@ async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     import asyncio as _asyncio
     import time as _time
 
+    from app.tool_routing import oauth_client as _oauth
+
+    oauth_on = _oauth.enabled()
     pool = _LIFESPAN_STATE.get("pool")
     if pool is not None:
         await _gateway.learn_signins(pool)
         for t in tools:
             if isinstance(t, dict) and t.get("via_kell") and str(t.get("server") or t.get("name")) in _gateway.SIGNIN_SERVERS:
-                t["via_kell"] = False
-                t.pop("call", None)
-                t["available"] = "cannot run through kell: it asks for a sign-in kell cannot give; do not try it"
+                if oauth_on:
+                    t["available"] = "needs a sign-in first: use_tool returns a link the person opens once"
+                else:
+                    t["via_kell"] = False
+                    t.pop("call", None)
+                    t["available"] = "cannot run through kell: it asks for a sign-in kell cannot give; do not try it"
     live = [t for t in tools if isinstance(t, dict) and t.get("via_kell") and t.get("source") == "registry"][:6]
     if not live:
         return [t for t in tools if not str(t.get("available", "")).startswith("cannot run through kell: it asks")] + \
@@ -3415,21 +3493,25 @@ async def _preflight_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         hit = _PREFLIGHT.get(url)
         if hit and _time.monotonic() - hit[0] < PREFLIGHT_TTL_S:
             ok = hit[1]
-        elif url in _gateway.NEEDS_SIGNIN:
+        elif url in _gateway.NEEDS_SIGNIN and not oauth_on:
             ok = False
         else:
             try:
                 await _asyncio.wait_for(_gateway.list_tools(url), timeout=float(os.environ.get("KELL_PREFLIGHT_WAIT", "4.0")))
                 ok = True
+            except _gateway.GatewaySignIn:
+                ok = "signin" if oauth_on else False
             except _gateway.GatewayRefused as exc:
-                ok = "sign-in" not in str(exc)
+                ok = "signin" if (oauth_on and "sign-in" in str(exc)) else ("sign-in" not in str(exc))
             except Exception:  # noqa: BLE001 -- slow or down: no verdict
                 return
             _PREFLIGHT[url] = (_time.monotonic(), ok)
-        if not ok:
+        if ok is False:
             t["via_kell"] = False
             t.pop("call", None)
             t["available"] = "cannot run through kell: it asks for a sign-in kell cannot give; do not try it"
+        elif ok == "signin":
+            t["available"] = "needs a sign-in first: use_tool returns a link the person opens once"
 
     await _asyncio.gather(*(check(t) for t in live))
     dead = [t for t in tools if isinstance(t, dict) and t.get("source") == "registry" and not t.get("via_kell")

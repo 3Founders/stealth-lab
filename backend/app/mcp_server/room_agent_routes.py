@@ -164,17 +164,18 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     except Exception:  # noqa: BLE001 -- memory trouble must not lose the answer
                         log.exception("memory: could not save facts for %s", subject)
                 reply = reply.strip() or ("Noted." if remembered else "I do not have an answer for that.")
-            # Consent links go back to the person who asked, never into the room, where every member and connector would read them.
+            # Consent and sign-in links go back to the person who asked, never into the room, where every member and connector would read them.
             links = list(dict.fromkeys(outcome.consent_links))
+            sign_ins = list(dict.fromkeys(outcome.sign_in_links))
             try:
                 # A canvas too big for one message goes straight into the room's canvases; the message keeps a card for it.
                 reply = await rm.externalize_canvases(pool, subject, room_id, handle, reply)
                 events = rm.agent_events(handle, reply)
                 appended = await rm.append_events(pool, subject, room_id, events)
             except rm.RoomError as exc:
-                return reply, None, str(exc), links, remembered
+                return reply, None, str(exc), links, sign_ins, remembered
             # A reply longer than one message is posted as several; the first is returned here, the rest arrive through sync.
-            return events[0]["body"], (appended["accepted"][0] if appended["accepted"] else None), None, links, remembered
+            return events[0]["body"], (appended["accepted"][0] if appended["accepted"] else None), None, links, sign_ins, remembered
 
         if model_stream is not None and "text/event-stream" in (request.headers.get("accept") or ""):
             queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -197,12 +198,12 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                             queue.put_nowait(_sse({"delta": value}))
                         else:
                             final = value
-                    reply, accepted, why, links, remembered = await finish(final or agent.AgentOutcome(text=""))
+                    reply, accepted, why, links, sign_ins, remembered = await finish(final or agent.AgentOutcome(text=""))
                     trace_turn(room_id, handle, final, started, "stream")
                     if why is not None:
                         queue.put_nowait(_sse({"error": why}))
                     else:
-                        queue.put_nowait(_sse({"done": True, "text": reply, "event": accepted, "consent": links,
+                        queue.put_nowait(_sse({"done": True, "text": reply, "event": accepted, "consent": links, "sign_in": sign_ins,
                                                "memory": {"used": mem_used, "remembered": remembered},
                                                "tools": (final.tools_used if final else [])}))
                 except RuntimeError as exc:          # the model endpoint's own refusal
@@ -254,11 +255,12 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             log.exception("room agent: the answer failed for room %s", room_id)
             return _error(request, "the room agent could not answer just now; nothing was posted", 502)
 
-        reply, accepted, why, links, remembered = await finish(outcome)
+        reply, accepted, why, links, sign_ins, remembered = await finish(outcome)
         trace_turn(room_id, handle, outcome, started, "plain")
         if why is not None:
             return _error(request, why, 400)
-        return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted, "consent": links,
+        return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted,
+                               "consent": links, "sign_in": sign_ins,
                                "memory": {"used": mem_used, "remembered": remembered}})
 
     @server.custom_route("/v1/agent/ephemeral", methods=["POST", "OPTIONS"], include_in_schema=False)
@@ -321,6 +323,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             reply = ((final.text if final else "") or "").strip() or "I do not have an answer for that."
             for link in dict.fromkeys(final.consent_links if final else []):
                 reply += f"\n\nAllow kell to use that tool here (15 minutes): {link}"
+            for link in dict.fromkeys(final.sign_in_links if final else []):
+                reply += f"\n\nSign in to that tool here (10 minutes), then ask again: {link}"
             yield _sse({"done": True, "text": reply, "event": None, "tools": (final.tools_used if final else [])})
 
         return StreamingResponse(frames(), media_type="text/event-stream",

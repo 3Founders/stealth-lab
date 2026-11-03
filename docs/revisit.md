@@ -129,8 +129,11 @@ Phase 1 is built (remote servers that need no sign-in, consent link, read-only t
 generation). Waiting:
 
 - **Phase 2: servers that need a sign-in.** kell signs in to the third-party server for the user once (OAuth, dynamic
-  client registration where offered) and keeps the token, encrypted and revocable. Most image, voice and SaaS tools need
-  it. Needs a security review first. Detail: [tool_gateway_design.md](tool_gateway_design.md), "Later phases".
+  client registration where offered) and keeps the token, encrypted and revocable. **Built 2026-11-03, off by default**
+  (`TOOL_GATEWAY_OAUTH=on`): a 401 now returns a sign-in link, the callback seals the tokens under (owner, server), and
+  later calls refresh them; `use_tool` shows the link privately to the person, never in the room. Migration 177. Still
+  needs the security review before it is switched on for everyone (the flag is the gate). Most image, voice and SaaS tools
+  need it. Detail: [tool_gateway_design.md](tool_gateway_design.md), "Later phases".
 - **Phase 3: Claude Code auto-install.** For allowlisted servers, with a one-time opt-in, kell runs `claude mcp add ...`
   itself. Package servers run third-party code on the user's machine, so they stay opt-in per server; Claude Code usually
   sees a new server in the next session.

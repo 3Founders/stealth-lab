@@ -29,6 +29,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from app.tool_routing import oauth_client as oauth
 from app.tool_routing.catalog import BULK_PUBLISHER, ToolCard
 
 MIN_STARS = int(os.environ.get("TOOL_GATEWAY_MIN_STARS", "20"))
@@ -84,6 +85,14 @@ class GatewayRefused(Exception):
     """A call the gateway will not make; the message says why, in words the agent can pass on."""
 
 
+class GatewaySignIn(GatewayRefused):
+    """The server answered 401/403: the person must sign in to it first. `challenge` is the parsed WWW-Authenticate."""
+
+    def __init__(self, server: str, url: str, challenge: Optional[str] = None):
+        super().__init__("the server needs a sign-in")
+        self.server, self.url, self.challenge = server, url, oauth.parse_challenge(challenge)
+
+
 def denylist() -> set[str]:
     return {x.strip() for x in os.environ.get("TOOL_GATEWAY_DENY", "").split(",") if x.strip()}
 
@@ -104,15 +113,32 @@ def own_domain(card: ToolCard) -> bool:
     return bool(host) and (host == domain or host.endswith("." + domain))
 
 
+def _base_allowed(card: ToolCard) -> bool:
+    """Everything about the server itself: remote, verified publisher, not bulk, not archived, not denied, useful enough."""
+    ex = card.extra or {}
+    return (card.source == "registry" and bool(ex.get("connector_url"))
+            and bool(ex.get("verified")) and int(ex.get("owner_count") or 1) <= BULK_PUBLISHER
+            and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card)) and not ex.get("archived")
+            and card.name not in denylist() and os.environ.get("TOOL_GATEWAY", "on").lower() != "off")
+
+
 def gateway_allowed(card: ToolCard) -> bool:
     """A remote server, live without a sign-in, verified publisher, not bulk, not archived, not denied, and either used (stars) or served
     from its publisher's own verified domain."""
     ex = card.extra or {}
-    return (card.source == "registry" and bool(ex.get("connector_url")) and ex.get("probe") == "live"
-            and bool(ex.get("verified")) and int(ex.get("owner_count") or 1) <= BULK_PUBLISHER
-            and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card)) and not ex.get("archived")
-            and str(ex.get("connector_url")) not in NEEDS_SIGNIN and card.name not in SIGNIN_SERVERS
-            and card.name not in denylist() and os.environ.get("TOOL_GATEWAY", "on").lower() != "off")
+    return (_base_allowed(card) and ex.get("probe") == "live"
+            and str(ex.get("connector_url")) not in NEEDS_SIGNIN and card.name not in SIGNIN_SERVERS)
+
+
+def signin_allowed(card: ToolCard) -> bool:
+    """Phase 2 (TOOL_GATEWAY_OAUTH=on): the same server, but it may ask for a sign-in, which kell can now do itself. A server
+    the registry could not reach at all (probe "down") is still left out; the sign-in flow reports a dead server clearly."""
+    ex = card.extra or {}
+    return oauth.enabled() and _base_allowed(card) and ex.get("probe") != "down"
+
+
+def gateway_usable(card: ToolCard) -> bool:
+    return gateway_allowed(card) or signin_allowed(card)
 
 
 def tool_allowed(tool: dict[str, Any]) -> tuple[bool, str]:
@@ -185,29 +211,35 @@ def _parse(r: httpx.Response, raw: bytes) -> dict:
     return obj if isinstance(obj, dict) else {}
 
 
-async def _session(url: str, method: str, params: dict) -> tuple[dict, int, int]:
+async def _session(url: str, method: str, params: dict, *, token: Optional[str] = None,
+                   server: Optional[str] = None) -> tuple[dict, int, int]:
     """initialize, initialized, then one request -> (its JSON-RPC body, bytes sent, bytes received)."""
     await guard_url(url)
     sent = received = 0
+    headers = {**HEADERS, **({"authorization": f"Bearer {token}"} if token else {})}
     async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False) as client:
         init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                            "clientInfo": {"name": "kell-tool-gateway", "version": "0.1"}}}
-        r, raw = await _post(client, url, init, HEADERS)
+        r, raw = await _post(client, url, init, headers)
         sent, received = sent + len(json.dumps(init)), received + len(raw)
         if r.status_code in (401, 403):
             NEEDS_SIGNIN.add(url)
+            if oauth.enabled():
+                raise GatewaySignIn(server or url, url, r.headers.get("www-authenticate"))
             raise GatewayRefused("the server needs a sign-in, which the gateway does not do yet")
         if r.status_code >= 300 or "result" not in _parse(r, raw):
             raise GatewayRefused(f"the server did not start an MCP session (HTTP {r.status_code})")
         sid = r.headers.get("mcp-session-id")
-        h = {**HEADERS, **({"mcp-session-id": sid} if sid else {})}
+        h = {**headers, **({"mcp-session-id": sid} if sid else {})}
         await client.post(url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=h)
         req = {"jsonrpc": "2.0", "id": 2, "method": method, "params": params}
         r, raw = await _post(client, url, req, h)
         sent, received = sent + len(json.dumps(req)), received + len(raw)
         if r.status_code in (401, 403):
             NEEDS_SIGNIN.add(url)
+            if oauth.enabled():
+                raise GatewaySignIn(server or url, url, r.headers.get("www-authenticate"))
             raise GatewayRefused("the server needs a sign-in, which the gateway does not do yet")
         body = _parse(r, raw)
         if sid:
@@ -221,18 +253,19 @@ async def _session(url: str, method: str, params: dict) -> tuple[dict, int, int]
 _tools_cache: dict[str, tuple[float, list[dict]]] = {}
 
 
-async def list_tools(url: str) -> list[dict]:
+async def list_tools(url: str, *, token: Optional[str] = None, server: Optional[str] = None) -> list[dict]:
     hit = _tools_cache.get(url)
     if hit and time.monotonic() - hit[0] < TOOLS_TTL_S:
         return hit[1]
-    body, _s, _r = await _session(url, "tools/list", {})
+    body, _s, _r = await _session(url, "tools/list", {}, token=token, server=server)
     tools = [t for t in ((body.get("result") or {}).get("tools") or []) if isinstance(t, dict) and t.get("name")]
     _tools_cache[url] = (time.monotonic(), tools[:100])
     return tools[:100]
 
 
-async def call_tool(url: str, name: str, arguments: dict) -> tuple[dict, int, int]:
-    body, sent, received = await _session(url, "tools/call", {"name": name, "arguments": arguments})
+async def call_tool(url: str, name: str, arguments: dict, *, token: Optional[str] = None,
+                    server: Optional[str] = None) -> tuple[dict, int, int]:
+    body, sent, received = await _session(url, "tools/call", {"name": name, "arguments": arguments}, token=token, server=server)
     if "error" in body:
         raise GatewayRefused(f"the server refused the call: {str((body.get('error') or {}).get('message') or '')[:300]}")
     return (body.get("result") or {}), sent, received

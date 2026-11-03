@@ -68,9 +68,12 @@ Claude Code and any MCP client. It is what Monid does for its catalog.
 
 ## Later phases
 
-- **Phase 2, servers that need a sign-in**: kell becomes an OAuth client of the third-party server (dynamic client
-  registration where offered). The user signs in once through kell; tokens are encrypted at rest and revocable. Needs a
-  security review before it ships.
+- **Phase 2, servers that need a sign-in (built 2026-11-03, off by default)**: kell becomes an OAuth 2.1 client of the
+  third-party server (protected-resource metadata, authorization-server metadata, dynamic client registration where
+  offered, PKCE S256, the RFC 8707 resource parameter). The user signs in once through kell; tokens are sealed with
+  `secret_box` under (owner, server), refreshed when they expire, and deleted by `use_tool(server, "revoke")`. A 401
+  returns a private sign-in link to the person who asked; after the callback the next `use_tool` runs. Migration 177;
+  `TOOL_GATEWAY_OAUTH=on` enables it. Needs a security review before it is switched on by default.
 - **Phase 3, Claude Code auto-install** (option A): for allowlisted servers, with a one-time opt-in, kell runs
   `claude mcp add ...` itself. Package servers (npm, PyPI) run third-party code on the user's machine, so they stay
   opt-in per server; a newly added server is usually seen in the next Claude Code session.

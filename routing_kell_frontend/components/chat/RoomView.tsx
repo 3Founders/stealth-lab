@@ -257,6 +257,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (out.memory.remembered.length) note(`Remembered: ${out.memory.remembered.map((l) => l.replace(/^- /, "").replace(/ \[source:.*$/, "")).join("; ")}. Settings, Memory and knowledge, to edit or undo.`, r);
       else if (out.memory.used.length) note(`Used your memory: ${out.memory.used.join(", ")}`, r);
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
+      for (const link of out.sign_in ?? []) note(`Sign in to that tool here (10 minutes), then ask again: ${link}`, r);
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
         // has been revealed (so a reply that arrives all at once still animates), then this message takes its place.
