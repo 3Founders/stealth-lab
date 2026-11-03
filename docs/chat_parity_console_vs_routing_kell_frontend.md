@@ -106,3 +106,10 @@ the 57 dynamic queries and any list that grows in Python after the fetch.
 
 Earlier notes and the commit message of the first desktop slice (`56efca16`) said each new word fades in. That is wrong. `SmoothText` only draws the fading `dg-tok` word spans in its plain-text mode; the website calls it with `markdown`, which renders the revealed prefix as markdown with no spans, and the desktop uses the same call, so the two behave the same. Measured in real time over DevTools on the real component (a 237-character reply fed at about 14 characters per 120 ms): thinking indicator for about 1 s, then 4, 35, 69, 107, 141, 180, 227, 237 characters at roughly 0.3 s steps, settled at 3.6 s, zero `dg-tok` elements. So the "mid-stream word fade" item is closed as: matches the website; there is no fade to port. Still unchecked: a live engine turn.
 
+## Sixth slice (same day): the composer's bigger/smaller button and word count
+
+The website composer's `.dg-composer-meta` row: a bigger/smaller toggle (the message box grows to 38-68 vh) and a live word
+count, same markup, same icons, rules resolved from `routing_kell_frontend/app/chat/chat.css` (right: 0 here because the desktop
+composer has no side padding). `tsc --noEmit` passes; the toggle is seen on the real page (above the composer's right edge,
+light theme). NOT seen: the grown box and the word count (the box is disabled until a project is open). Attach, mention and
+the `/` commands stay out: they need the hosted rooms and agents.

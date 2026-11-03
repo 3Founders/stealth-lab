@@ -159,3 +159,12 @@
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle { transition: none; }
 }
+
+/* The composer's word count and bigger/smaller button (the website's .dg-composer-meta row; right: 0 here because the desktop
+   composer has no side padding). Resolved from routing_kell_frontend/app/chat/chat.css. */
+.dg-composer textarea[data-big] { min-height: 38vh; max-height: 68vh; }
+.dg-composer .dg-composer-meta { position: absolute; right: 0; top: -4px; transform: translateY(-100%); display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.dg-composer .dg-composer-meta > * { pointer-events: auto; }
+.dg-composer .dg-count { font-size: 11.5px; color: var(--grey); pointer-events: none; }
+.dg-composer .dg-expand { position: static; height: 26px; width: 26px; min-width: 0; padding: 0; border-radius: 6px; display: inline-grid; place-items: center; background: var(--dg-glass-strong); color: var(--ink); box-shadow: var(--dg-lift); }
+.dg-composer .dg-expand:hover:not(:disabled) { background: var(--yellow); color: var(--on-yellow); }

@@ -48,6 +48,8 @@ export default function Home() {
   const [spend, setSpend] = useState(0)
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
+  const [big, setBig] = useState(false)                  // the message box: bigger / smaller, like the website chat
+  const textRef = useRef<HTMLTextAreaElement>(null)
   const [files, setFiles] = useState<FileDiff[]>([])
   const [filesNote, setFilesNote] = useState("")
   const [confirm, setConfirm] = useState("")
@@ -210,6 +212,7 @@ export default function Home() {
 
   const isCheap = (r: LedgerRow) => !!settings?.models.cheap && `${r.providerID}/${r.model}` === settings.models.cheap
   const readEngine = engine?.up && !!directory
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0
 
   return (
     <main className="frame">
@@ -357,10 +360,17 @@ export default function Home() {
             )}
             <div className="composer">
               <form className="dg-composer" onSubmit={(e) => { e.preventDefault(); send() }}>
-                <textarea value={text} onChange={(e) => setText(e.target.value)}
+                <textarea ref={textRef} rows={1} data-big={big || undefined} value={text} onChange={(e) => setText(e.target.value)}
                   placeholder={directory ? "tell kell what to do…" : "open a project first"}
                   disabled={!!engine && !engine.up}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() } }} />
+                <div className="dg-composer-meta">
+                  {text.trim() && <span className="dg-count" aria-live="off">{words} {words === 1 ? "word" : "words"}</span>}
+                  <button type="button" className="dg-expand" onClick={() => { setBig((b) => !b); textRef.current?.focus() }} aria-pressed={big}
+                    aria-label={big ? "Make the message box smaller" : "Make the message box bigger"} title={big ? "Smaller" : "Bigger"}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
+                  </button>
+                </div>
                 <button type="submit" disabled={busy || !text.trim() || !directory || (engine != null && !engine.up)}>{busy ? "Working…" : "Send"}</button>
               </form>
             </div>
