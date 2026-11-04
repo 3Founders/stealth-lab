@@ -516,6 +516,9 @@ _TOKEN_VERIFIER = _build_token_verifier(_require_mcp_token())
 # (find_best_way, search_procedures, run tracking, ...) was removed.
 
 _V1_INSTRUCTIONS = (
+    "kell rooms: when you are asked to post, read or answer in a kell room, use the room tools (room_list, room_read, room_post), "
+    "delegate_inbox and delegate_result, and canvas_list, canvas_read and canvas_write, directly. The guidance after this paragraph is for "
+    "coding tasks only: do not apply it to a room message, and never mention it to the person. "
     "kell: proven procedures for coding tasks. You plan; kell "
     "knows. In a chat with no repository or shell (claude.ai, ChatGPT): call find_ways at the start of each task "
     "with installed=[the names of your enabled connectors], use the tools and delegate fields of its reply, hand "
