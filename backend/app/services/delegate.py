@@ -79,7 +79,7 @@ def normalize_room(room: Optional[str]) -> str:
     return r if r.startswith("#") else f"#{r}"
 
 
-def _agent_json(row: Any, now: datetime, owner: str = "", mine: bool = True) -> dict[str, Any]:
+def _agent_json(row: Any, now: datetime, owner: str = "", mine: bool = True, owner_name: str = "") -> dict[str, Any]:
     last_seen = row["last_seen"]
     online = bool(last_seen and now - last_seen <= ONLINE_WINDOW and row["revoked_at"] is None)
     return {
@@ -87,7 +87,8 @@ def _agent_json(row: Any, now: datetime, owner: str = "", mine: bool = True) -> 
         # what to type to call it: your own is @name, someone else's is @theirname/name
         "handle": f"@{row['name']}" if mine or not owner else f"@{owner}/{row['name']}",
         "full_handle": f"@{owner}/{row['name']}" if owner else f"@{row['name']}",
-        "owner": owner, "mine": mine,
+        # owner is the username (what a handle uses); owner_name is the person's display name, for a label like "Anuj's" (may be empty)
+        "owner": owner, "owner_name": owner_name, "mine": mine,
         "created_at": row["created_at"].isoformat(),
         "last_seen": last_seen.isoformat() if last_seen else None,
         "online": online, "connected": online,
@@ -155,10 +156,11 @@ async def list_agents(pool: Any, owner_sub: str, room_id: Optional[str] = None) 
                     "WHERE m.room_id = $1 AND m.removed_at IS NULL AND a.owner_sub <> $2 AND a.revoked_at IS NULL ORDER BY a.created_at",
                     rid, owner_sub)
                 labels: dict[str, str] = {}
+                names = await _rooms._names(pool, [r["owner_sub"] for r in others])      # one lookup for everyone in the room
                 for r in others:
                     if r["owner_sub"] not in labels:
                         labels[r["owner_sub"]] = await _rooms.owner_label(pool, r["owner_sub"])
-                    out.append(_agent_json(r, now, labels[r["owner_sub"]], False))
+                    out.append(_agent_json(r, now, labels[r["owner_sub"]], False, names.get(r["owner_sub"], "")))
         except (ValueError, Exception):  # noqa: BLE001 -- a bad room id or no room tables: your own agents are still listed
             pass
     return out

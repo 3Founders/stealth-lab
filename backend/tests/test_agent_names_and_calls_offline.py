@@ -58,3 +58,16 @@ def test_an_agent_listing_says_what_to_type_and_whether_it_is_connected():
     assert theirs["handle"] == "@alice/claude" and theirs["full_handle"] == "@alice/claude" and theirs["mine"] is False
     stale = dg._agent_json({**row, "last_seen": now - timedelta(minutes=5)}, now, "alice", False)
     assert stale["connected"] is False
+
+
+def test_someone_elses_agent_carries_its_owners_display_name_for_a_label():
+    """The panel's badge says "Anuj's" rather than "theirs": the listing carries the owner's display name beside the username
+    the handle uses. It may be empty (no display name on the account), and your own agents may leave it empty."""
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    row = {"id": "a1", "name": "claude", "kind": "agent", "last_seen": now, "revoked_at": None, "created_at": now}
+    theirs = dg._agent_json(row, now, "slatesummit", False, "Anuj Bhatt")
+    assert theirs["owner"] == "slatesummit" and theirs["owner_name"] == "Anuj Bhatt"
+    assert theirs["handle"] == "@slatesummit/claude"                      # the handle still uses the username
+    assert dg._agent_json(row, now, "slatesummit", False)["owner_name"] == ""   # older callers: empty, not an error

@@ -9,6 +9,16 @@
 /* The sidebar itself never scrolls: its header (close, logo, Back to home) and the profile at the bottom stay put. Rooms, agents and people scroll in between. */
 .dg-side > .dg-side-scroll { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; margin: 0 -12px; padding: 0 12px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scroll-behavior: smooth; scrollbar-width: thin; scrollbar-gutter: stable; -webkit-overflow-scrolling: touch; }
 .dg-side-scroll > * { flex-shrink: 0; }
+/* A soft shadow under the fixed top ("Back to home") once the list has scrolled, and over the fixed profile while more is below
+   (RoomView's sideScrollRef sets data-top / data-bottom). Both bands are painted in the sidebar colour and run edge to edge. */
+.dg-side > .dg-backrow, .dg-side > .dg-me-wrap { position: relative; z-index: 2; background: var(--paper); margin-left: -12px; margin-right: -12px; transition: box-shadow var(--dg-smooth-d, 300ms) var(--dg-smooth, ease); }
+.dg-side > .dg-backrow { padding-left: 18px; padding-right: 18px; }
+.dg-side > .dg-me-wrap { padding: 8px 12px 0; margin-top: 0; }
+.dg-side[data-top="true"] > .dg-backrow { box-shadow: 0 9px 10px -9px rgba(0, 0, 0, .3); }
+.dg-side[data-bottom="true"] > .dg-me-wrap { box-shadow: 0 -9px 10px -9px rgba(0, 0, 0, .3); }
+:root[data-theme="dark"] .dg-side[data-top="true"] > .dg-backrow { box-shadow: 0 9px 10px -9px rgba(0, 0, 0, .75); }
+:root[data-theme="dark"] .dg-side[data-bottom="true"] > .dg-me-wrap { box-shadow: 0 -9px 10px -9px rgba(0, 0, 0, .75); }
+@media (prefers-reduced-motion: reduce) { .dg-side > .dg-backrow, .dg-side > .dg-me-wrap { transition: none; } }
 .dg-side > * { flex-shrink: 0; }
 .dg-side h2 { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--grey); font-weight: 400; margin: 10px 6px 4px; line-height: 1.2; }
 .dg-room { transition: background-color var(--dg-micro-d) var(--dg-micro), color var(--dg-micro-d) var(--dg-micro), transform var(--dg-micro-d) var(--dg-micro); font: inherit; width: 100%; text-align: left; background: transparent; border: 0; border-radius: 6px; padding: 7px 10px; cursor: pointer; color: var(--ink); display: flex; gap: 6px; }

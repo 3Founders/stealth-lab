@@ -28,7 +28,7 @@ import { assistantIdentityFor } from "@/lib/chat/adapters/assistant";
 import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
 import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
-import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey } from "@/lib/chat/relay-client";
+import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey, ownerBadge } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, newRoomName, readAgents, readPresets, readRooms, withoutRoom, writeAgents, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
@@ -163,6 +163,24 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const { scrollToEnd, follow } = useSpringScroll(viewportRef, contentRef, room);
+  // The sidebar's list scrolls between the fixed "Back to home" and the fixed profile. Each of those gets a soft shadow while the list
+  // has content hidden behind it: data-top once it has scrolled away from the start, data-bottom while more is below. Written straight
+  // to the element (not state), so scrolling never re-renders this component.
+  const edgeCleanup = useRef<(() => void) | null>(null);
+  const sideScrollRef = useCallback((el: HTMLDivElement | null) => {
+    edgeCleanup.current?.(); edgeCleanup.current = null;
+    const side = el?.closest<HTMLElement>(".dg-side");
+    if (!el || !side) return;
+    const calc = () => {
+      side.dataset.top = String(el.scrollTop > 1);
+      side.dataset.bottom = String(el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    };
+    calc();
+    el.addEventListener("scroll", calc, { passive: true });
+    const ro = new ResizeObserver(calc); ro.observe(el);
+    const mo = new MutationObserver(calc); mo.observe(el, { childList: true, subtree: true });
+    edgeCleanup.current = () => { el.removeEventListener("scroll", calc); ro.disconnect(); mo.disconnect(); };
+  }, []);
 
   // relay state
   const [relayAgents, setRelayAgents] = useState<RelayAgent[]>([]);
@@ -1186,7 +1204,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         {back && <div className="dg-backrow">{back}</div>}
 
         {/* Only this part scrolls: the logo and "Back to home" above it, and your profile below it, stay where they are. */}
-        <div className="dg-side-scroll">
+        <div className="dg-side-scroll" ref={sideScrollRef}>
         <h2>Rooms</h2>
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
@@ -1225,7 +1243,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                 <span className="dg-dot" data-a={on ? "online" : "idle"} aria-hidden="true" />
                 <span className="dg-handle" title={`Call it with @${a.mine === false ? full : a.name}`}>{full}</span>
                 {a.mine !== false && <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${full}`} title={`Remove ${full}`}><RemoveIcon /></button>}
-                <span className="dg-badge" data-kind={a.mine === false ? "tab" : undefined}>{a.mine === false ? "theirs" : "yours"}</span>
+                <span className="dg-badge" data-kind={a.mine === false ? "tab" : undefined} title={a.mine === false ? `${full} belongs to ${a.owner_name || a.owner || "someone else"}` : undefined}>{a.mine === false ? ownerBadge(a) : "yours"}</span>
                 <span className="dg-state" data-a={on ? "online" : "idle"} title={on ? "It checked in during the last minute." : "Not connected. Ask it to check its kell inbox (delegate_inbox) and keep checking."}>{on ? "connected" : "not connected"}</span>
               </li>
             );
