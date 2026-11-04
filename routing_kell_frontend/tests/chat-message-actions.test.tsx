@@ -43,6 +43,15 @@ describe("message actions (copy / retry)", () => {
     expect(onRetry).toHaveBeenCalledWith("the prompt");               // retry re-runs the prompt, not the answer
   });
 
+  it("offers Reply only when the room takes replies, and calls it", async () => {
+    const onReply = vi.fn();
+    await mount(<MessageActions copyText="hi" onCopy={() => true} onReply={onReply} />);
+    (byLabel("Reply") as HTMLButtonElement).click();
+    expect(onReply).toHaveBeenCalledTimes(1);
+    await act(async () => { root!.render(<MessageActions copyText="hi" onCopy={() => true} />); });
+    expect(byLabel("Reply")).toBeNull();
+  });
+
   it("draws no retry button for an empty re-run text", async () => {
     const onRetry = vi.fn();
     await mount(<MessageActions copyText="x" retryText="" onCopy={vi.fn()} onRetry={onRetry} />);

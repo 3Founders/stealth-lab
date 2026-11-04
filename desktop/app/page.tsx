@@ -92,6 +92,8 @@ export default function Home() {
   // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
   const { follow, scrollToEnd } = useSpringScroll(logRef, logContentRef, sessionID ?? "")
   const busyRef = useRef(false)                       // a late poll must not overwrite a turn that started after it
+  // Messages sent while kell is working wait here and go out one at a time, in order, as each turn ends (× drops one).
+  const [queued, setQueued] = useState<string[]>([])
 
   useEffect(() => {
     setDirectory(window.localStorage.getItem("kell.directory") || "")
@@ -131,7 +133,7 @@ export default function Home() {
     const r = await fetch("/api/engine", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ directory }) })
     const j = await r.json()
     setEngine(j.up ? { up: true } : { up: false, error: j.error })
-    if (j.up) { setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null) }
+    if (j.up) { setQueued([]); setLines([]); setSteps([]); setLedger([]); setSessionID(null); setCards([]); setCardsNote(""); setSpend(0); loadChanges(null) }
   }
 
   const appendAssistant = (delta: string) => setLines((l) => {
@@ -146,7 +148,12 @@ export default function Home() {
 
   const send = async (again?: string) => {
     const body = again ?? text
-    if (!body.trim() || busy || !directory) return
+    if (!body.trim() || !directory) return
+    if (busy) {                                              // still working: keep it for when this turn ends
+      setQueued((q) => [...q, body])
+      if (again === undefined) setText("")
+      return
+    }
     const sent = body
     setLines((l) => [...l, { who: "user", text: sent, at: Date.now() }])
     if (again === undefined) setText("")                     // sending it again keeps what you were typing
@@ -157,7 +164,7 @@ export default function Home() {
     if (!r.ok || !r.body) {
       const err = await r.text()
       setLines((l) => [...l, { who: "assistant", text: `kell could not reach the engine: ${err.slice(0, 200)}`, at: Date.now() }])
-      setBusy(false); return
+      setBusy(false); busyRef.current = false; return
     }
     let sid = sessionID
     let buffer = ""
@@ -291,6 +298,14 @@ export default function Home() {
     // send is recreated each render; the resume only needs to fire once the turn has ended
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resume, busy])
+  // The next waiting message goes out once the turn has ended (a sign-in resume goes first: it finishes what was asked).
+  useEffect(() => {
+    if (busy || resume || !queued.length) return
+    const [next, ...rest] = queued
+    setQueued(rest)
+    void send(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queued, busy, resume])
 
   // The rooms view follows the placeholder's rectangle while the Rooms pane shows, and hides on the coding pane.
   const roomsOn = pane === "rooms" && !!settings?.signedIn
@@ -501,6 +516,11 @@ export default function Home() {
               {steps.slice(-10).map((s, i) => <span className="dk-step" data-failed={!!s.note || undefined} key={i}><b>{s.label}</b>{s.note ? ` · ${s.note}` : ""}</span>)}
             </div>
           )}
+          {queued.map((q, i) => (
+            <div key={i} className="dg-queued small" role="status">
+              <span className="dim">Waiting for kell:</span> <span className="dg-queued-text">{q}</span>
+              <button type="button" aria-label="Don't send this one" title="Don't send this one" onClick={() => setQueued((x) => x.filter((_, k) => k !== i))}>×</button>
+            </div>))}
           <div className="dg-typing" role="status" aria-live="polite">
             {busy && <><span className="dg-pulse" aria-hidden="true" /> Kell is working</>}
           </div>
@@ -516,7 +536,7 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
               </button>
             </div>
-            <button type="submit" disabled={busy || !text.trim() || !directory || (engine != null && !engine.up)}>{busy ? "Working…" : "Send"}</button>
+            <button type="submit" disabled={!text.trim() || !directory || (engine != null && !engine.up)} title={busy ? "kell is working: this waits and goes out when it finishes" : undefined}>{busy ? "Queue" : "Send"}</button>
           </form>
         </section>
 

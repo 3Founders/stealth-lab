@@ -17,7 +17,9 @@ import { fileKind, formatSize, whyNotFile } from "@/lib/chat/files";
 const MAX_MESSAGE = 8000;
 const wordCount = (t: string): number => (t.trim() ? t.trim().split(/\s+/).length : 0);
 
-export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft }: { handles: string[]; agentHandles?: string[];
+export default function Composer({ handles, agentHandles = [], onSend, disabled, enterToSend = true, draft, onEscape }: { handles: string[]; agentHandles?: string[];
+  /** Escape in the box when no suggestion list is open (cancels a reply). */
+  onEscape?: () => void;
   /** Puts text in the box (a new `n` replaces what is there): "Ask Kell to revise", a suggestion. */
   draft?: { text: string; n: number }; onSend: (text: string, attachments?: ImageAttachment[], files?: File[]) => void; disabled?: boolean; enterToSend?: boolean }) {
   const [text, setText] = useState("");
@@ -106,6 +108,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
       if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); if (slashOpen) pickCommand(cmds[idx].name); else pick(options[idx]); return; }
       if (e.key === "Escape") { e.preventDefault(); setDismissed(true); return; }
     }
+    if (e.key === "Escape" && onEscape) { e.preventDefault(); onEscape(); return; }
     if (sends({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, composing: e.nativeEvent.isComposing }, enterToSend)) { e.preventDefault(); send(); }
   };
 

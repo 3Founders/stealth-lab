@@ -6,6 +6,7 @@ import Composer from "@/components/chat/Composer";
 import OnboardButton from "@/components/chat/OnboardButton";
 import SearchPalette from "@/components/chat/SearchPalette";
 import { drain, enqueue, inRoom, removeAt, type Queues } from "@/lib/chat/queue";
+import { quoteText, withReplyContext } from "@/lib/chat/reply";
 import { tempLabel, toTurns } from "@/lib/chat/temporary";
 import CanvasPanel from "@/components/chat/CanvasPanel";
 import DocPanel from "@/components/chat/DocPanel";
@@ -240,6 +241,21 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const askingKell = useRef<Set<string>>(new Set());
   const queues = useRef<Queues>({});
   const [queueView, setQueueView] = useState<Queues>({});
+  /** The message you are replying to (Reply on a message): shown above the box, sent as the reply's reply_to. */
+  const [replyingTo, setReplyingTo] = useState<GroupMessage | null>(null);
+  useEffect(() => { setReplyingTo(null); }, [room]);
+  const startReply = useCallback((m: GroupMessage) => {
+    setReplyingTo(m);
+    window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".dg-composer textarea")?.focus(), 0);
+  }, []);
+  /** Scrolls to the quoted message and flashes it; says so when it is too far back to be on this device. */
+  const jumpTo = useCallback((id: string) => {
+    const el = document.querySelector<HTMLElement>(`.dg-msg [data-mid="${CSS.escape(id)}"]`)?.closest<HTMLElement>(".dg-msg");
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.remove("dg-flash"); void el.offsetWidth; el.classList.add("dg-flash");
+    window.setTimeout(() => el.classList.remove("dg-flash"), 1600);
+  }, []);
   const askKellRef = useRef<((r: string, text: string, who?: string) => Promise<void>) | null>(null);
   /** The request that hit a sign-in wall: run it again by itself when the person comes back from signing in. */
   const signInRetry = useRef<{ room: string; text: string; who: string } | null>(null);
@@ -642,6 +658,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     // What Retry re-runs, per run: one of your own messages re-sends it; an agent's answer re-runs the latest human
     // message before it (the mention that woke it), and @kell answers again without re-posting that message.
     let lastHuman = "";
+    const byId = new Map(lines.flatMap((l) => (l.kind === "msg" ? [[l.m.id, l.m] as const] : [])));
     for (const s of seq) {
       if (s.kind !== "run") {
         const l = s.l;
@@ -680,6 +697,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               </div>
               {run.messages.map((m) => (
                 <div key={m.id} className="dg-msg">
+                  {m.replyTo && (() => {
+                    const q = byId.get(m.replyTo);
+                    return q
+                      ? <button type="button" className="dg-replyq small" onClick={() => jumpTo(q.id)} title="Show the message this replies to">
+                          <b>{q.sender.handle === HUMAN.handle ? "You" : nameOf(q.sender.handle)}</b> <span>{quoteText(q.payload.text)}</span>
+                        </button>
+                      : <span className="dg-replyq small dim">Reply to an earlier message</span>;
+                  })()}
                   <Body m={m} />
                   {m.payload.text ? (
                     <MessageActions
@@ -687,6 +712,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                       retryText={(mine ? m.payload.text : agentRun ? lastHuman : "") || undefined}
                       onCopy={(t) => copyRoomText(t)}
                       onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
+                      onReply={tempRef.current.has(room) ? undefined : () => startReply(m)}
                       retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
                     />
                   ) : null}
@@ -1136,6 +1162,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       addAgent(r.handle, c.about);
       return note(`${nameOf(r.handle)} joined the room.`);
     }
+    // A reply: the message carries reply_to, and the agents asked get the quoted message with it.
+    const reply = replyingTo && lines.some((l) => l.kind === "msg" && l.m.id === replyingTo.id) ? replyingTo : null;
+    setReplyingTo(null);
+    const ask = reply ? withReplyContext(line, reply.sender.handle === HUMAN.handle ? null : nameOf(reply.sender.handle), reply.payload.text) : line;
     // The agent that spoke last, if the last message in the room was an agent's: an answer with no @name continues with it.
     const lastLine = [...lines].reverse().find((l) => l.kind === "msg");
     const lastFrom = lastLine && lastLine.kind === "msg" && lastLine.m.sender.type !== "human" ? lastLine.m.sender.handle : "";
@@ -1150,7 +1180,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     // what can be called: your own agents by name (@claude), everyone's by owner/name (@alice/claude)
     const relayNames = relayAgents.flatMap((a) => (a.owner ? [relayKey(a), `${a.owner}/${a.name}`.toLowerCase()] : [relayKey(a)]));
     const route = routeMessage(line, { local: agents, relay: relayNames, people: peopleHandles, follow });
-    const toAgent = route.toRelay.length && !/@[a-z0-9]/i.test(line) ? `@${route.toRelay[0]} ${line}` : line;
+    const toAgent = route.toRelay.length && !/@[a-z0-9]/i.test(line) ? `@${route.toRelay[0]} ${ask}` : ask;
     // A connected agent (Claude on the web, Claude Code) gets the question as a task. One that is not connected right now does not hold it up:
     // kell answers at once instead, so nobody needs Claude to be running to get a reply.
     let standIn = false;
@@ -1176,10 +1206,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       id: broker.newId(), roomId: room, sender: HUMAN,
       recipients: standIn ? ["@kell"] : route.toRelay.length ? route.localMentions : route.defaultToKell ? ["@kell"] : recipientsFor(line),
       payload: { ...toMcpPayload(line), ...(pictures?.length ? { attachments: pictures } : {}) }, timestamp: Date.now(), depthCounter: 0,
+      ...(reply ? { replyTo: reply.id } : {}),
     };
     await broker.send(m);
-    if (route.asksKell || standIn) void askKell(room, line);
-    for (const h of route.localMentions) if (h !== "@kell") void askKell(room, line, h);
+    if (route.asksKell || standIn) void askKell(room, ask);
+    for (const h of route.localMentions) if (h !== "@kell") void askKell(room, ask, h);
   };
 
   /** Stops everything running in this room: kell's and the added agents' answers, and any connected agent's task still waiting or being worked. */
@@ -1368,7 +1399,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             ].join(" · ")}
           </>}
         </div>
-        <Composer draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
+        {replyingTo && (
+          <div className="dg-queued dg-replying small" role="status">
+            <span className="dim">Replying to {replyingTo.sender.handle === HUMAN.handle ? "yourself" : nameOf(replyingTo.sender.handle)}:</span> <span className="dg-queued-text">{quoteText(replyingTo.payload.text)}</span>
+            <button type="button" aria-label="Cancel the reply" title="Cancel the reply" onClick={() => setReplyingTo(null)}>×</button>
+          </div>)}
+        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <input ref={encFile} type="file" accept=".kellbackup,application/json" hidden onChange={(e) => void restoreEncrypted(e)} />

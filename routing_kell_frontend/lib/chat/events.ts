@@ -15,7 +15,7 @@ export function toEvent(m: GroupMessage, deviceId: string, lamport: number): Eve
   return {
     id: m.id, kind: "msg", body: textForSync(m.payload.text, m.payload.attachments), sender_kind: agent ? "agent" : "person",
     ...(agent ? { sender_handle: m.sender.handle, depth: Math.max(0, Math.min(4, m.depthCounter)) } : {}),
-    lamport, device_id: deviceId,
+    lamport, device_id: deviceId, ...(m.replyTo ? { reply_to: m.replyTo } : {}),
   };
 }
 
@@ -39,7 +39,7 @@ export function toMessage(e: ServerEvent, roomLabel: string): GroupMessage | nul
     id: e.id, roomId: roomLabel, sender,
     recipients: e.mentions.length ? e.mentions.map((n) => `@${n}`) : ["@all"],
     payload: toMcpPayload(e.body, e.kind === "system" ? "system" : "message"),
-    timestamp: Date.parse(e.created_at) || Date.now(), depthCounter: e.depth,
+    timestamp: Date.parse(e.created_at) || Date.now(), depthCounter: e.depth, ...(e.reply_to ? { replyTo: e.reply_to } : {}),
   };
 }
 

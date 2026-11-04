@@ -39,6 +39,7 @@ export interface GroupMessage {
   payload: DualPayload;
   timestamp: number;
   depthCounter: number; // agent-to-agent hops so far; dispatch to agents stops at MAX_DEPTH
+  replyTo?: string; // the id of the message this one answers (Reply on a message); the room shows it quoted above
 }
 
 export interface Room {

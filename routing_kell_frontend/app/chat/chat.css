@@ -769,6 +769,15 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 .dg-queued button { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink); font-size: 16px; line-height: 1; cursor: pointer; opacity: .6; }
 .dg-queued button:hover { opacity: 1; background: rgba(127, 127, 127, .18); }
 .dg-doc-note { flex-basis: 100%; }
+/* Reply: the strip above the box while you write one, and the quote above a reply (click it to see the message it answers). */
+.dg-replying { border-left: 3px solid var(--accent, currentColor); }
+.dg-replyq { display: flex; gap: 6px; align-items: baseline; max-width: 100%; margin: 0 0 3px; padding: 2px 8px; border: 0; border-left: 2px solid rgba(127, 127, 127, .45); background: none; color: inherit; font: inherit; text-align: left; opacity: .75; cursor: pointer; min-width: 0; }
+.dg-replyq span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+button.dg-replyq:hover { opacity: 1; background: rgba(127, 127, 127, .1); }
+span.dg-replyq { cursor: default; }
+.dg-msg.dg-flash { animation: dg-flash 1.5s ease-out; border-radius: 8px; }
+@keyframes dg-flash { from { background: rgba(255, 196, 0, .28); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .dg-msg.dg-flash { animation: none; outline: 2px solid rgba(255, 196, 0, .6); } }
 
 /* Dark mode for the chat: the glass becomes dark glass, shadows deepen, pale overlays become faint light ones, the logo is lightened. */
 :root[data-theme="dark"] .dg-page {

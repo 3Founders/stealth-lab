@@ -96,6 +96,16 @@ export function AlertIcon({ size = 14 }: { size?: number }) {
 }
 
 /** Retry a message: an anticlockwise arrow re-entering the circle. */
+/** Reply to a message: an arrow turning back (Lucide's "reply", ISC). */
+export function ReplyIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...base}>
+      <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+      <path d="m9 17-5-5 5-5" />
+    </svg>
+  );
+}
+
 export function RetryIcon({ size = 14 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...base}>
