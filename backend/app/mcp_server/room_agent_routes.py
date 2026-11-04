@@ -163,9 +163,16 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         except Exception:  # noqa: BLE001
             mem_used = []
         try:
-            history = agent.transcript(await rm.recent_events(pool, subject, room_id, recent), self_handle=handle)
+            recent_rows = await rm.recent_events(pool, subject, room_id, recent)
+            history = agent.transcript(recent_rows, self_handle=handle)
+            oldest_seen = int(recent_rows[0]["seq"]) if recent_rows else 1
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
+
+
+        async def read_earlier(query: str, before: int | None, limit: int) -> list[dict[str, Any]]:
+            """What the agent asks for when the recent messages are not enough: older messages of this room only, never another room's."""
+            return await rm.earlier_events(pool, subject, room_id, before or oldest_seen, limit, query)
 
         bearer = request.headers.get("authorization", "")
         started = __import__("time").monotonic()
@@ -211,7 +218,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                         handle=handle, instructions=instructions, tz=tz,
                         discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
-                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv),
+                        call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv), read_earlier=read_earlier,
                     ):
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
@@ -263,7 +270,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                                            handle=handle, instructions=instructions, tz=tz, discover=discover,
                                            tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
-                                           call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv))
+                                           call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv), read_earlier=read_earlier)
         except rm.RoomError:
             raise
         except RuntimeError as exc:              # the model endpoint's own refusal (cap, policy, sign-in, upstream)

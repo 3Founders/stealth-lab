@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tools and models</title>
+<style>
+  :root { --bg:#fafaf7; --card:#fff; --ink:#1b1b18; --mute:#6b6a63; --line:#e3e1d8; --acc:#1b1b18; --chip:#f0eee6; --bad:#b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151513; --card:#1e1e1b; --ink:#f1efe6; --mute:#9d9b90; --line:#34332e; --acc:#f1efe6; --chip:#2a2924; --bad:#f97066; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:980px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:20px; margin:0 0 4px; font-weight:650; }
+  .sub { color:var(--mute); margin:0 0 16px; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .tabs { display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; }
+  .tabs button { border:0; background:transparent; color:var(--ink); padding:7px 16px; font:inherit; cursor:pointer; }
+  .tabs button[aria-selected="true"] { background:var(--acc); color:var(--bg); }
+  input[type=search], select { font:inherit; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; }
+  input[type=search] { flex:1; min-width:200px; }
+  .count { color:var(--mute); font-size:12.5px; margin:0 0 10px; min-height:18px; }
+  .list { display:grid; gap:8px; }
+  .item { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .item h3 { margin:0; font-size:14.5px; font-weight:600; word-break:break-word; }
+  .item p { margin:4px 0 8px; color:var(--mute); display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { background:var(--chip); border-radius:999px; padding:2px 9px; font-size:12px; }
+  .chip.ok { outline:1px solid var(--line); }
+  a { color:inherit; text-underline-offset:2px; }
+  .more { margin:14px 0 0; padding:8px 16px; font:inherit; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+  .err { color:var(--bad); }
+  code { font:12px ui-monospace, Consolas, monospace; background:var(--chip); padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Tools and models</h1>
+  <p class="sub">Search the public MCP registry for tools, and OpenRouter's catalogue for models. Read straight from their public APIs; nothing is sent to kell.</p>
+
+  <div class="bar">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="t-tools" aria-selected="true">Tools</button>
+      <button role="tab" id="t-models" aria-selected="false">Models</button>
+    </div>
+    <input id="q" type="search" placeholder="Search tools (name or what it does)" aria-label="Search" autocomplete="off">
+    <select id="sort" aria-label="Sort" hidden>
+      <option value="rel">Best match</option>
+      <option value="price">Cheapest first</option>
+      <option value="ctx">Longest context</option>
+      <option value="name">Name</option>
+    </select>
+    <label id="freeBox" hidden><input type="checkbox" id="free"> free only</label>
+  </div>
+  <p class="count" id="count" aria-live="polite"></p>
+  <div class="list" id="list"></div>
+  <button class="more" id="more" hidden>Load more</button>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const q = $("q"), list = $("list"), count = $("count"), more = $("more"), sort = $("sort"), free = $("free"), freeBox = $("freeBox");
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const safeUrl = u => /^https?:\/\//i.test(u || "") ? u : "";
+  let mode = "tools", models = null, cursor = null, shown = 0, run = 0, timer = null;
+
+  function setMode(m) {
+    mode = m;
+    $("t-tools").setAttribute("aria-selected", m === "tools");
+    $("t-models").setAttribute("aria-selected", m === "models");
+    q.placeholder = m === "tools" ? "Search tools (name or what it does)" : "Search models (name, id or what it does)";
+    sort.hidden = freeBox.hidden = m !== "models";
+    go();
+  }
+
+  // ---- tools: the official MCP registry
+  function toolHTML(s) {
+    const v = s.server || {}, remote = (v.remotes || [])[0], pkg = (v.packages || [])[0];
+    const site = safeUrl(v.websiteUrl) || safeUrl(v.repository && v.repository.url);
+    const chips = [];
+    if (remote) chips.push(`<span class="chip ok">remote · ${esc(remote.type)}</span>`);
+    if (pkg) chips.push(`<span class="chip">${esc(pkg.registryType || "package")} · ${esc(pkg.identifier || "")}</span>`);
+    if (v.version) chips.push(`<span class="chip">v${esc(v.version)}</span>`);
+    return `<div class="item"><h3>${site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">${esc(v.name)}</a>` : esc(v.name)}</h3>
+      <p>${esc(v.description || "")}</p><div class="chips">${chips.join("")}</div>
+      ${remote && safeUrl(remote.url) ? `<div style="margin-top:6px"><code>${esc(remote.url)}</code></div>` : ""}</div>`;
+  }
+  async function loadTools(append) {
+    const my = ++run;
+    if (!append) { list.innerHTML = ""; shown = 0; cursor = null; count.textContent = "Searching…"; }
+    const p = new URLSearchParams({ limit: "30", version: "latest" });
+    if (q.value.trim()) p.set("search", q.value.trim());
+    if (append && cursor) p.set("cursor", cursor);
+    try {
+      const r = await fetch("https://registry.modelcontextprotocol.io/v0/servers?" + p);
+      if (!r.ok) throw new Error("registry answered " + r.status);
+      const d = await r.json();
+      if (my !== run) return;
+      const rows = d.servers || [];
+      list.insertAdjacentHTML("beforeend", rows.map(toolHTML).join(""));
+      shown += rows.length;
+      cursor = d.metadata && d.metadata.nextCursor || null;
+      count.textContent = shown ? `${shown} tool${shown === 1 ? "" : "s"} shown${cursor ? " (more available)" : ""}` : "No tools match.";
+      more.hidden = !cursor;
+    } catch (e) {
+      if (my === run) { count.innerHTML = `<span class="err">Could not load tools: ${esc(e.message)}</span>`; more.hidden = true; }
+    }
+  }
+
+  // ---- models: OpenRouter's public catalogue
+  const perM = x => { const n = parseFloat(x); return isFinite(n) && n >= 0 ? n * 1e6 : null; };
+  const money = n => n === null ? "n/a" : n === 0 ? "free" : "$" + (n < 1 ? n.toFixed(3) : n.toFixed(2)).replace(/\.?0+$/, "");
+  function modelHTML(m) {
+    const pin = perM(m.pricing && m.pricing.prompt), pout = perM(m.pricing && m.pricing.completion);
+    const mods = ((m.architecture && m.architecture.input_modalities) || []).join(", ");
+    return `<div class="item"><h3><a href="https://openrouter.ai/${esc(m.id)}" target="_blank" rel="noopener noreferrer">${esc(m.name || m.id)}</a></h3>
+      <p>${esc((m.description || "").replace(/\s+/g, " "))}</p>
+      <div class="chips"><span class="chip">${esc(m.id)}</span>
+      <span class="chip ok">in ${money(pin)} / out ${money(pout)} per M tokens</span>
+      <span class="chip">${m.context_length ? Math.round(m.context_length / 1000) + "k context" : "context n/a"}</span>
+      ${mods ? `<span class="chip">${esc(mods)}</span>` : ""}</div></div>`;
+  }
+  async function loadModels() {
+    const my = ++run;
+    count.textContent = "Loading models…"; list.innerHTML = ""; more.hidden = true;
+    try {
+      if (!models) {
+        const r = await fetch("https://openrouter.ai/api/v1/models");
+        if (!r.ok) throw new Error("OpenRouter answered " + r.status);
+        models = (await r.json()).data || [];
+      }
+      if (my !== run) return;
+      const terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+      let rows = models.filter(m => {
+        const hay = (m.id + " " + (m.name || "") + " " + (m.description || "")).toLowerCase();
+        return terms.every(t => hay.includes(t));
+      });
+      if (free.checked) rows = rows.filter(m => perM(m.pricing && m.pricing.prompt) === 0 && perM(m.pricing && m.pricing.completion) === 0);
+      const cost = m => { const a = perM(m.pricing && m.pricing.prompt), b = perM(m.pricing && m.pricing.completion); return a === null || b === null ? Infinity : a + b; };
+      if (sort.value === "price") rows.sort((a, b) => cost(a) - cost(b));
+      else if (sort.value === "ctx") rows.sort((a, b) => (b.context_length || 0) - (a.context_length || 0));
+      else if (sort.value === "name") rows.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+      else if (terms.length) rows.sort((a, b) => ((b.id + b.name).toLowerCase().includes(terms[0])) - ((a.id + a.name).toLowerCase().includes(terms[0])));
+      list.innerHTML = rows.slice(0, 80).map(modelHTML).join("");
+      count.textContent = rows.length ? `${rows.length} model${rows.length === 1 ? "" : "s"} match${rows.length > 80 ? " (first 80 shown; narrow the search)" : ""}` : "No models match.";
+    } catch (e) {
+      if (my === run) count.innerHTML = `<span class="err">Could not load models: ${esc(e.message)}</span>`;
+    }
+  }
+
+  function go() { clearTimeout(timer); mode === "tools" ? loadTools(false) : loadModels(); }
+  q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(go, 350); });
+  sort.addEventListener("change", go); free.addEventListener("change", go);
+  more.addEventListener("click", () => loadTools(true));
+  $("t-tools").addEventListener("click", () => setMode("tools"));
+  $("t-models").addEventListener("click", () => setMode("models"));
+  go();
+})();
+</script>
+</body>
+</html>
