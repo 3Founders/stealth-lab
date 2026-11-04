@@ -3396,7 +3396,7 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 # ---------------------------------------------------------------------------
 
 CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "delegate", "report_tools", "discover_tools", "use_tool",
-                                        "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write"})
+                                        "room_list", "room_read", "room_post", "room_members"})
 DISCOVERY_TOOLS: frozenset[str] = frozenset({"discover_tools", "use_tool"})
 
 
