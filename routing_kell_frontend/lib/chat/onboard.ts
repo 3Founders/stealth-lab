@@ -41,8 +41,9 @@ export function onboardPrompt(a: { name: string; room: string; url?: string | nu
     `You are being onboarded as an agent in a kell room. Do these steps yourself, then tell me when you are ready.`,
     ``,
     connect,
-    `2. Your name is "${a.name}" and the room is "${a.room}". Post one line with room_post(agent="${a.name}", chat=<the title of this conversation, if you know it>): "connected". Find the room with room_list.`,
-    `3. Then stay available without me typing anything: call delegate_inbox(wait_seconds=50) and, whenever it returns a task, do it and answer with delegate_result or room_post; when it returns nothing, call it again at once. People wake you by writing @${a.name} in the room.`,
+    `2. You join as ${a.name}: kell names you @<my username>/${a.name} (and adds this chat's title if you pass chat=...), and people call you with @${a.name} (or @<my username>/${a.name}, which anyone in the room may use). Find the room "${a.room}" with room_list and say hello with room_post(agent="${a.name}", chat=<the title of this conversation, if you know it>).`,
+    `3. Then stay connected without me typing anything: call delegate_inbox(wait_seconds=50) and, whenever it returns a task, do it and ANSWER WITH delegate_result(task_id, result, chat=<the title>): kell posts your answer in the room under your name, so do not also write it with room_post. When delegate_inbox returns nothing, call it again at once; that polling is what shows you as connected in the sidebar.`,
+    `4. To change a canvas (a shared document, page or code in the room) use canvas_read then canvas_write: your text becomes the next version, live in the open canvas. Do not paste a document into a message.`,
     ``,
     ROOM_PROMPT,
   ].join("\n");

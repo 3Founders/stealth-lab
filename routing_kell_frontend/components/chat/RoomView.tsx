@@ -28,7 +28,7 @@ import { assistantIdentityFor } from "@/lib/chat/adapters/assistant";
 import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/chat/adapters/mcp";
 import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
-import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask } from "@/lib/chat/relay-client";
+import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey } from "@/lib/chat/relay-client";
 import { DEFAULT_ROOM, newRoomName, readAgents, readPresets, readRooms, withoutRoom, writeAgents, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, type RoomMember } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
@@ -57,6 +57,7 @@ import { withoutDataImages } from "@/lib/chat/images";
 import { DEFAULT_PREFS, chime, closeAllOs, closeOs, decide, loadPrefs, previewText, savePrefs, setBadge, showOs, titleWithCount, type Note, type NoteKind, type Prefs, unlockAudio } from "@/lib/chat/notify";
 
 const LABEL: Record<AgentActivity, string> = { idle: "Idle", processing: "Working", delivering: "Sending" };
+const handleOf = (a: { name: string; owner?: string; handle: string }): string => (a.owner ? `@${a.owner}/${a.name}` : a.handle);
 const STATUS: Record<RelayTask["status"], string> = {
   needs_approval: "Waiting for your approval", queued: "Waiting for the agent", claimed: "Working", done: "Done", failed: "Failed", cancelled: "Cancelled",
 };
@@ -535,7 +536,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (typeof document === "undefined" || document.visibilityState !== "hidden") {
         try {
           const have = tasksRef.current[room] ?? [];
-          const [a, t] = await Promise.all([api.agents(), api.tasks(room, cursorOf(have))]);
+          const [a, t] = await Promise.all([api.agents(infoRef.current[room]?.id), api.tasks(room, cursorOf(have))]);
           if (!live) return;
           setRelayAgents(a);
           if (t.length) {
@@ -647,16 +648,18 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         node: (
           <MessageScroller.Item key={`task-${task.id}`} className="dg-task" data-status={task.status}>
             <div className="dg-meta">
-              <b>You</b><span aria-hidden="true">→</span><b>{nameOf(handle)}</b>
-              <span className="dg-status" data-status={task.status}>{STATUS[task.status]}</span>
+              <b>You</b><span aria-hidden="true">→</span><b>{nameOf(ag ? (ag.mine === false && ag.owner ? `@${ag.owner}/${ag.name}` : handleOf(ag)) : handle)}</b>
+              <span className="dg-status" data-status={task.status}>{task.status === "needs_approval" && ag?.mine === false && ag.owner ? `Waiting for ${ag.owner} to approve` : STATUS[task.status]}</span>
               <time>{time(t)}</time>
             </div>
             <div className="dg-body"><p>{task.text}</p></div>
+            {task.status === "needs_approval" && ag?.mine === false && <p className="dg-hint">{ag.owner} has to approve this before {nameOf(handle)} picks it up: it runs in their agent.</p>}
             {task.status === "queued" && ag && !ag.online && <p className="dg-hint">{nameOf(handle)} is offline. It will pick this up the next time it checks its inbox.</p>}
             {(task.status === "queued" || task.status === "claimed") && (
               <p className="dg-working"><span className="dg-pulse" aria-hidden="true" /> {nameOf(handle)} is working…</p>
             )}
-            {task.result && (
+            {task.result && task.posted && <p className="dg-hint">{nameOf(handle)} answered in the room.</p>}
+            {task.result && !task.posted && (
               <div className="dg-result">
                 <div className="dg-meta">
                   <b>{nameOf(handle)}</b><span className="dg-badge">agent</span>
@@ -667,7 +670,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             )}
             {!isFinished(task) && (
               <div className="dg-task-actions">
-                {task.status === "needs_approval" && <button type="button" className="dg-mini" onClick={() => void act(task.id, "approve")}>Approve</button>}
+                {task.status === "needs_approval" && ag?.mine !== false && <button type="button" className="dg-mini" onClick={() => void act(task.id, "approve")}>Approve</button>}
                 <button type="button" className="dg-mini" onClick={() => void act(task.id, "cancel")}>Cancel</button>
               </div>
             )}
@@ -1076,21 +1079,25 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     // The agent that spoke last, if the last message in the room was an agent's: an answer with no @name continues with it.
     const lastLine = [...lines].reverse().find((l) => l.kind === "msg");
     const lastFrom = lastLine && lastLine.kind === "msg" && lastLine.m.sender.type !== "human" ? lastLine.m.sender.handle : "";
-    const lastSeg = lastFrom.split("/").pop() ?? "";
+    const [fromOwner, fromTool] = lastFrom.replace(/^@/, "").split("/");           // "@alice/claude/Q4 plan" -> alice, claude
     const follow = !lastFrom ? null
       : lastFrom === "@kell" ? "kell"
       : agents.includes(lastFrom) ? lastFrom
-      : relayAgents.find((a) => a.name.toLowerCase() === lastSeg.toLowerCase())?.name
-        ?? (lastFrom.includes("/") ? relayAgents.find((a) => a.online)?.name ?? null : null);   // a connector whose messages carry the chat's own name
-    const route = routeMessage(line, { local: agents, relay: relayAgents.map((a) => a.name), people: peopleHandles, follow });
+      : (() => {
+          const a = relayAgents.find((x) => x.name.toLowerCase() === (fromTool ?? fromOwner ?? "").toLowerCase() && (!fromTool || x.mine !== false || (x.owner ?? "").toLowerCase() === fromOwner.toLowerCase()));
+          return a ? relayKey(a) : null;
+        })();
+    // what can be called: your own agents by name (@claude), everyone's by owner/name (@alice/claude)
+    const relayNames = relayAgents.flatMap((a) => (a.owner ? [relayKey(a), `${a.owner}/${a.name}`.toLowerCase()] : [relayKey(a)]));
+    const route = routeMessage(line, { local: agents, relay: relayNames, people: peopleHandles, follow });
     const toAgent = route.toRelay.length && !/@[a-z0-9]/i.test(line) ? `@${route.toRelay[0]} ${line}` : line;
     if (route.toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
       try {
-        const r = await api.send(toAgent, room);
+        const r = await api.send(toAgent, room, false, infoRef.current[room]?.id);
         setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], r.tasks) }));
       } catch (err) { note(err instanceof Error ? err.message : "That didn't send."); }
-      const offline = route.toRelay.filter((n) => !relayAgents.find((a) => a.name.toLowerCase() === n)?.online);
+      const offline = route.toRelay.filter((n) => !relayAgents.find((a) => relayKey(a) === n || `${a.owner}/${a.name}`.toLowerCase() === n)?.online);
       if (offline.length) note(`${offline.join(", ")} ${offline.length === 1 ? "is" : "are"} offline; the message waits in the inbox for when it starts.`);
       if (!route.localMentions.length && !route.asksKell) return;
     } else if (route.unknown.length && !route.localMentions.length) {
@@ -1107,6 +1114,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const h of route.localMentions) if (h !== "@kell") void askKell(room, line, h);
   };
 
+  /** Stops everything running in this room: kell's and the added agents' answers, and any connected agent's task still waiting or being worked. */
+  const stopAll = () => {
+    controllers.current.forEach((c) => c.abort());
+    for (const t of tasksRef.current[roomRef.current] ?? []) if (!isFinished(t)) void act(t.id, "cancel");
+  };
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);
   const relayWorkingHandles = tasks
     .filter((t) => t.status === "queued" || t.status === "claimed")
@@ -1145,7 +1157,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         <h2>Agents</h2>
         <OnboardButton onOnboard={onboardAgent} className="dg-onboard-side" />
         <ul className="dg-members">
-          <li>
+          <li className="dg-agentrow">
             <span className="dg-dot" data-a={kellBusy[room] ? "processing" : "online"} aria-hidden="true" />
             <KellMark size={16} /><span className="dg-handle">Kell</span><span className="dg-badge">default</span>
             {kellBusy[room] && <span className="dg-state" data-a="processing">working</span>}
@@ -1153,22 +1165,28 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           {agents.map((h) => {
             const a = streaming[h] !== undefined ? "processing" : "online";
             return (
-              <li key={h}>
+              <li key={h} className="dg-agentrow">
                 <span className="dg-dot" data-a={a} aria-hidden="true" />
-                <KellMark size={16} /><span className="dg-handle">{nameOf(h)}</span><span className="dg-badge">kell</span>
-                {a === "processing" && <span className="dg-state" data-a={a}>working</span>}
+                <KellMark size={16} /><span className="dg-handle">{nameOf(h)}</span>
                 <button type="button" className="dg-remove" onClick={() => removeAgent(h)} aria-label={`Remove ${nameOf(h)} from the room`} title={`Remove ${nameOf(h)}`}><RemoveIcon /></button>
+                <span className="dg-badge">kell</span>
+                {a === "processing" && <span className="dg-state" data-a={a}>working</span>}
               </li>
             );
           })}
-          {relayAgents.map((a) => (
-            <li key={a.id}>
-              <span className="dg-dot" data-a={a.online ? "online" : "idle"} aria-hidden="true" />
-              <span className="dg-handle">{nameOf(a.handle)}</span><span className="dg-badge">your agent</span>
-              <span className="dg-state" data-a={a.online ? "online" : "idle"} title={a.online ? "It checked its inbox in the last minute." : "Not connected yet. Paste the message into your agent, or ask it to check its kell inbox."}>{a.online ? "online" : "not connected"}</span>
-              <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${nameOf(a.handle)}`} title={`Remove ${nameOf(a.handle)}`}><RemoveIcon /></button>
-            </li>
-          ))}
+          {relayAgents.map((a) => {
+            const on = a.connected ?? a.online;
+            const full = a.owner ? `${a.owner}/${a.name}` : a.name;
+            return (
+              <li key={a.id} className="dg-agentrow" data-a={on ? "online" : "idle"}>
+                <span className="dg-dot" data-a={on ? "online" : "idle"} aria-hidden="true" />
+                <span className="dg-handle" title={`Call it with @${a.mine === false ? full : a.name}`}>{full}</span>
+                {a.mine !== false && <button type="button" className="dg-remove" onClick={() => void removeRelayAgent(a)} aria-label={`Remove ${full}`} title={`Remove ${full}`}><RemoveIcon /></button>}
+                <span className="dg-badge" data-kind={a.mine === false ? "tab" : undefined}>{a.mine === false ? "theirs" : "yours"}</span>
+                <span className="dg-state" data-a={on ? "online" : "idle"} title={on ? "It checked in during the last minute." : "Not connected. Ask it to check its kell inbox (delegate_inbox) and keep checking."}>{on ? "connected" : "not connected"}</span>
+              </li>
+            );
+          })}
         </ul>
         {relayError && <p className="dg-err" role="status">{relayError}</p>}
 
@@ -1265,6 +1283,11 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             <button type="button" aria-label="Don't ask for this one" title="Don't ask for this one" onClick={() => { queues.current = removeAt(queues.current, q.key, q.index); setQueueView(queues.current); }}>×</button>
           </div>))}
         <div className="dg-typing" role="status" aria-live="polite">
+          {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere || streamingHere.length > 0) && (
+            <button type="button" className="dg-stop" onClick={() => stopAll()} title="Stop what the agents are doing">
+              <span className="dg-stop-sq" aria-hidden="true" />Stop
+            </button>
+          )}
           {(working.length > 0 || relayWorkingHandles.length > 0 || kellHere) && <>
             <span className="dg-pulse" aria-hidden="true" />
             {[
@@ -1273,9 +1296,6 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
               ...(kellHere ? ["Kell is working"] : []),
             ].join(" · ")}
           </>}
-          {streamingHere.length > 0 && (
-            <button type="button" className="dg-stop" onClick={() => controllers.current.forEach((c) => c.abort())}>Stop</button>
-          )}
         </div>
         <Composer draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>

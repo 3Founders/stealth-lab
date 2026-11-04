@@ -269,3 +269,14 @@ def test_event_stream_sends_the_room_then_ends_and_resumes_from_a_cursor(pool, m
         body2 = "".join(again.iter_text())
     assert "event: task" not in body2                                             # nothing changed: no replay, no duplicate
     assert c.get("/v1/delegate/events?room=bad%20room", headers=alice).status_code == 400
+
+
+def test_the_person_who_asked_can_cancel_but_only_the_owner_can_approve(pool):
+    dg_requester = BOB
+    run(pool, dg.create_agent(pool, ALICE, "web-chat"))
+    task = run(pool, pool.fetchrow("INSERT INTO delegate_tasks (id, owner_sub, agent_id, room, from_handle, body, status, requester_sub) "
+                                   "SELECT gen_random_uuid(), $1, a.id, '#general', '@bob', 'please', 'needs_approval', $2 FROM delegate_agents a "
+                                   "WHERE a.owner_sub = $1 AND a.name = 'web-chat' RETURNING id", ALICE, dg_requester))
+    with pytest.raises(dg.DelegateError):
+        run(pool, dg.decide_task(pool, dg_requester, str(task["id"]), True))          # Bob cannot approve a task for Alice's agent
+    assert run(pool, dg.decide_task(pool, dg_requester, str(task["id"]), False))["status"] == "cancelled"   # but he can withdraw his own request

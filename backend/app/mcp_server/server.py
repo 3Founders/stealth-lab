@@ -626,8 +626,9 @@ _TOOL_SCOPES: dict[str, str] = {
         "list_trajectory_events", "inspect_extraction", "list_extraction_objects",
         "inspect_trajectory_provenance",         "inspect_run", "list_stealth_edits", "generate_review_packet", "preview_local_sync",
         # rooms are read through the signed-in person's own membership
-        "room_list", "room_read", "room_members", "memory_read", "memory_search")},
+        "room_list", "room_read", "room_members", "canvas_list", "canvas_read", "memory_read", "memory_search")},
     **{n: _WRITE for n in (
+        "canvas_write",
         "submit_procedure", "create_goal", "report_execution", "record_run_update", "record_stealth_edit",
         "declare_file_intent", "report_node_progress", "commit_local_sync", "init_workspace",
         "open_exploration", "close_exploration", "verify_completion", "unsync_local_project",
@@ -658,7 +659,8 @@ def _enforce_tool_scope(tool_name: str) -> None:
 V1_TOOLS: frozenset[str] = frozenset({
     "find_ways", "report_discovery", "submit_way", "submit", "recommend_models", "report_model_run", "report_result",
     "report_check_evidence", "call_model", "delegate", "report_tools", "discover_tools", "use_tool", "delegate_inbox",
-    "delegate_result", "room_list", "room_read", "room_post", "room_members", "memory_read", "memory_search", "memory_write"})
+    "delegate_result", "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write",
+    "memory_read", "memory_search", "memory_write"})
 
 
 # Tool annotations for the v1 surface. Clients use them to decide what needs the
@@ -701,6 +703,11 @@ _V1_ANNOTATIONS: dict[str, dict] = {
     "room_post": {"title": "Post to a kell room", "read_only_hint": False, "destructive_hint": False,
                   "idempotent_hint": False, "open_world_hint": False},
     "room_members": {"title": "Who is in a kell room", "read_only_hint": True, "open_world_hint": False},
+    # canvases (shared documents) of a room: an agent reads them and edits one in place; each write is a version the room can restore
+    "canvas_list": {"title": "List a room's canvases", "read_only_hint": True, "open_world_hint": False},
+    "canvas_read": {"title": "Read a room's canvas", "read_only_hint": True, "open_world_hint": False},
+    "canvas_write": {"title": "Edit a room's canvas in place", "read_only_hint": False, "destructive_hint": False,
+                     "idempotent_hint": False, "open_world_hint": False},
     # the person's memory (db/173_memory.sql): only when they turned memory on and let their connected agents use it
     "memory_read": {"title": "Read my kell memory", "read_only_hint": True, "open_world_hint": False},
     "memory_search": {"title": "Search my kell memory", "read_only_hint": True, "open_world_hint": False},
@@ -3389,7 +3396,7 @@ async def _attach_model_plan(reply: str, ctx: Context, *, candidates: list[Any] 
 # ---------------------------------------------------------------------------
 
 CORE_TOOLS: frozenset[str] = frozenset({"find_ways", "delegate", "report_tools", "discover_tools", "use_tool",
-                                        "room_list", "room_read", "room_post", "room_members"})
+                                        "room_list", "room_read", "room_post", "room_members", "canvas_list", "canvas_read", "canvas_write"})
 DISCOVERY_TOOLS: frozenset[str] = frozenset({"discover_tools", "use_tool"})
 
 
@@ -3954,6 +3961,82 @@ def _rooms_handle(client_id: str | None) -> str:
     from app.services import rooms as _rooms
 
     return _rooms.agent_handle(client_id)
+
+
+@server.tool()
+@_activity.traced
+async def canvas_list(ctx: Context, room: str) -> str:
+    """
+    List the canvases (shared documents, pages and code) of a kell room: each with its title, readable name, kind, version and size. Use it to see
+    what there is before reading or changing one. room: the room id from room_list.
+
+    Example: canvas_list(room="...") -> {"canvases": [{"title": "Plan", "kind": "document", "version": 3, "size": 812}]}
+    """
+    from app.services import room_docs as _rd
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        await _seen_agent(ctx)
+        docs = await _rd.list_docs(pool, _kell_owner(), room)
+        return json.dumps({"canvases": [{"title": d["title"], "name": d.get("label") or d["title"], "kind": d["kind"], "version": d["version"],
+                                         "size": d["size"], "updated_by": d["updated_by"]} for d in docs]}, default=str)
+    except _rd.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def canvas_read(ctx: Context, room: str, title: str) -> str:
+    """
+    Read one canvas of a kell room: its whole text and its version. Read it before you change it, and pass the version back to canvas_write.
+    title: its title or name from canvas_list.
+
+    Example: canvas_read(room="...", title="Plan") -> {"title": "Plan", "kind": "document", "version": 3, "text": "# Plan ..."}
+    """
+    from app.services import room_docs as _rd
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        await _seen_agent(ctx)
+        owner = _kell_owner()
+        found = await _rd.find_doc(pool, owner, room, title)
+        if found is None:
+            return f"REFUSED: no canvas called {title!r} in that room; canvas_list shows what there is"
+        full = await _rd.get_doc(pool, owner, room, found["id"])
+        return json.dumps({"title": full["title"], "kind": full["kind"], "version": full["version"], "text": full["body"]}, default=str)
+    except _rd.RoomError as exc:
+        return f"REFUSED: {exc}"
+
+
+@server.tool()
+@_activity.traced
+async def canvas_write(ctx: Context, room: str, title: str, text: str, kind: str = "document", expected_version: int | None = None,
+                       agent: str = "", chat: str = "") -> str:
+    """
+    Change a canvas of a kell room in place, or make a new one: `text` is the WHOLE new text, saved as the next version, and everyone with the
+    canvas open sees it change at once (this is how you edit a shared document; do not paste it in a message). kind: document (markdown), html
+    (a page or slide deck), code or latex; used only when the canvas is new. expected_version: the version you read; if someone changed it since,
+    their change is merged with yours and the reply says so. Never write keys, tokens or passwords. agent and chat: as for room_post.
+
+    Example: canvas_write(room="...", title="Plan", text="# Plan\n...", expected_version=3)
+    """
+    from app.services import room_docs as _rd
+    from app.services import rooms as _rooms
+
+    pool = ctx.request_context.lifespan_context["pool"]
+    try:
+        await _seen_agent(ctx, agent)
+        owner = _kell_owner()
+        handle = await _rooms.connector_handle(pool, owner, *_client_hints(ctx, agent), chat=chat)
+        found = await _rd.find_doc(pool, owner, room, title)
+        if found is None:
+            made = await _rd.create_doc(pool, owner, room, title, kind, text, by=handle)
+            return json.dumps({"created": True, "title": made["title"], "version": made["version"]}, default=str)
+        base = int(expected_version) if expected_version is not None else found["version"]
+        saved = await _rd.save_doc(pool, owner, room, found["id"], text, base, by=handle)
+        return json.dumps({"created": False, "title": found["title"], **saved}, default=str)
+    except _rd.RoomError as exc:
+        return f"REFUSED: {exc}"
 
 
 @server.tool()

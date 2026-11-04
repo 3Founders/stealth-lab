@@ -297,9 +297,10 @@ async def decide_task(pool: Any, owner_sub: str, task_id: str, approve: bool) ->
             "UPDATE delegate_tasks SET status = 'queued' WHERE id = $1 AND owner_sub = $2 AND status = 'needs_approval' "
             "RETURNING *", tid, owner_sub)
     else:
+        # the agent's owner or the person who asked can cancel an unfinished task; only the owner can approve one
         row = await pool.fetchrow(
             "UPDATE delegate_tasks SET status = 'cancelled', finished_at = now() "
-            "WHERE id = $1 AND owner_sub = $2 AND status = ANY($3::text[]) RETURNING *", tid, owner_sub, list(OPEN_STATES))
+            "WHERE id = $1 AND (owner_sub = $2 OR requester_sub = $2) AND status = ANY($3::text[]) RETURNING *", tid, owner_sub, list(OPEN_STATES))
     if row is None:
         raise DelegateError("no such task, or it is not in a state that allows this", 404)
     return _task_json(row)

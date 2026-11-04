@@ -16,3 +16,11 @@ describe("canvas names (the same rules as the server)", () => {
     expect(guessTitle("", "html")).toBe("Web page");
   });
 });
+
+import { needsName } from "@/lib/chat/canvas-names";
+describe("which titles need a better name in the list", () => {
+  it("ids and placeholder words do, real names do not", () => {
+    for (const t of ["0e2a3067-4ddd-4fef-831b-0bdb68343104", "Untitled", "HTML artifact", "Web page", "3"]) expect(needsName(t), t).toBe(true);
+    for (const t of ["Crumb Bakery", "Q4 plan review", "Rocket-engine"]) expect(needsName(t), t).toBe(false);
+  });
+});

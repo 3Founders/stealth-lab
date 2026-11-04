@@ -262,6 +262,17 @@ async def save_doc(pool: Any, sub: str, room_id: str, doc_id: str, body: str, ba
     return {"version": v, "body": merged, "merged": True, "clash": clash}
 
 
+async def find_doc(pool: Any, sub: str, room_id: str, name: str) -> Optional[dict[str, Any]]:
+    """The room's canvas called `name`: by its stored title, else by the readable name shown for it. None when there is none."""
+    want = (name or "").strip().lower()
+    if not want:
+        return None
+    for d in await list_docs(pool, sub, room_id):
+        if d["title"].lower() == want or (d.get("label") or "").lower() == want or d["id"] == name.strip():
+            return d
+    return None
+
+
 async def delete_doc(pool: Any, sub: str, room_id: str, doc_id: str) -> bool:
     room = await _member_room(pool, sub, room_id)
     d = await _doc(pool, room, doc_id)

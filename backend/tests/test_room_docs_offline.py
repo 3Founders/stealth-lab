@@ -46,6 +46,8 @@ class Pool:
     async def fetch(self, sql, *a):
         if "FROM users" in sql:
             return []
+        if sql.startswith("SELECT id, title, kind, version, updated_by, updated_at, body FROM room_docs"):
+            return [d for d in self.docs.values() if d["room_id"] == a[0] and not d.get("deleted_at")]
         if sql.startswith("SELECT * FROM room_docs WHERE room_id = $1 AND deleted_at IS NULL"):
             return [d for d in self.docs.values() if d["room_id"] == a[0] and not d.get("deleted_at")]
         if sql.startswith("SELECT version, by_handle"):
@@ -182,3 +184,13 @@ def test_a_block_named_by_the_readable_label_finds_the_canvas_stored_under_an_id
     text = '```canvas title="Four Day Week Memo" kind=document\n# Four Day Week Memo\n\nNew text.\n```'      # the name the agent was given
     assert run(rd.capture(p, ROOM, "alice", "@kell", "msg-11", text)) == 1
     assert len(p.docs) == 1 and next(iter(p.docs.values()))["version"] == 2
+
+
+def test_a_canvas_is_found_by_its_title_its_readable_name_or_its_id():
+    p = Pool()
+    made = run(rd.create_doc(p, "alice", str(ROOM), "Memo", "document", "# Four Day Week Memo" + chr(10) * 2 + "Text."))
+    p.docs[uuid.UUID(made["id"])]["title"] = "3f9c1b22-8d54-4c1a-9be7-5a1d2c3e4f50"       # stored under an id, before titles were checked
+    for name in ("3f9c1b22-8d54-4c1a-9be7-5a1d2c3e4f50", "Four Day Week Memo", "four day week memo", made["id"]):
+        found = run(rd.find_doc(p, "alice", str(ROOM), name))
+        assert found is not None and found["id"] == made["id"], name
+    assert run(rd.find_doc(p, "alice", str(ROOM), "No such canvas")) is None

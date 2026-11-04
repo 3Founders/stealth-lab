@@ -16,6 +16,9 @@ export function isUglyTitle(title: string): boolean {
   return false;
 }
 
+/** A title that needs a better name: an id, or only a placeholder word ("Untitled", "HTML artifact"). */
+export const needsName = (title: string): boolean => isUglyTitle(title) || UNTITLED.has((title ?? "").trim().toLowerCase());
+
 const plainWord = (kind: string) => (kind === "html" ? "Web page" : kind === "code" ? "Code" : kind === "latex" ? "LaTeX document" : "Document");
 
 export function guessTitle(text: string, kind = "document"): string {

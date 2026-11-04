@@ -1,6 +1,5 @@
 "use client";
-import { isRealName } from "@/lib/chat/artifacts";
-import { isUglyTitle, labelFor } from "@/lib/chat/canvas-names";
+import { labelFor, needsName } from "@/lib/chat/canvas-names";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "@/components/chat/Markdown";
 import Latex from "@/components/chat/Latex";
@@ -82,8 +81,8 @@ function prefixLines(el: HTMLTextAreaElement, prefix: string): void {
 
 /** What a canvas is called in the picker: its title, or - when the title is only a number or a key - "Page 2" / "Document 1" by its place in the list. */
 function shown(d: { title: string; label?: string; kind: string; id: string }, all: { id: string; kind: string }[]): string {
-  if (d.label && isRealName(d.label)) return d.label;                 // the server read a name from the text when the stored title was only an id
-  if (isRealName(d.title)) return d.title;
+  if (d.label && !needsName(d.label)) return d.label;                 // the server (or the lookup below) read a name from the text when the stored title was only an id
+  if (!needsName(d.title)) return d.title;
   const same = all.filter((x) => x.kind === d.kind);
   const n = Math.max(1, same.findIndex((x) => x.id === d.id) + 1);
   return `${d.kind === "html" ? "Page" : d.kind === "code" ? "Code" : d.kind === "latex" ? "LaTeX" : "Document"} ${n}`;
@@ -127,6 +126,16 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
   const [mode, setMode] = useState<"write" | "split" | "read" | "browser" | "page">("split");
   const [editing, setEditing] = useState<string[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerBox = useRef<HTMLDivElement>(null);
+  // The picker closes when you press outside it or hit Escape, as a menu should.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const away = (e: PointerEvent) => { if (pickerBox.current && !pickerBox.current.contains(e.target as Node)) setPickerOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setPickerOpen(false); };
+    document.addEventListener("pointerdown", away, true);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", esc); };
+  }, [pickerOpen]);
   const [linked, setLinked] = useState(true);                 // the two halves of Side by side scroll together
   const sock = useRef<DocSocket | null>(null);
   const readPane = useRef<HTMLDivElement>(null);
@@ -172,7 +181,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
       setError("");
       // A document stored under an id (made before names were checked) is listed by a name read from its text. The server sends `label`;
       // from one that does not, the text is read here, once per document.
-      for (const d of l.filter((x) => !x.label && isUglyTitle(x.title) && !named.current.has(x.id)).slice(0, 12)) {
+      for (const d of l.filter((x) => (!x.label || needsName(x.label)) && needsName(x.title) && !named.current.has(x.id)).slice(0, 40)) {
         named.current.add(d.id);
         void api.get(roomId, d.id).then((full) => {
           if (!("body" in full)) return;
@@ -417,7 +426,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
     <PanelShell open={open} label="Canvas">
       <div className="dg-doc-head">
         <div className="dg-doc-pick">
-          <div className="dg-picker">
+          <div className="dg-picker" ref={pickerBox}>
             <button type="button" className="dg-picker-btn" aria-haspopup="listbox" aria-expanded={pickerOpen} onClick={() => setPickerOpen((o) => !o)} disabled={docs.length === 0}>
               <span className="dg-picker-title">{docs.length > 0 ? shown(docs.find((d) => d.id === activeId) ?? { title, kind, id: activeId ?? "" }, docs) : "Canvas"}</span>
               {docs.length > 1 && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>}
