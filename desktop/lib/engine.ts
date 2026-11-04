@@ -75,6 +75,7 @@ export async function engineStart(directory: string): Promise<Engine> {
     const pooled = pooledEngineConfig()
     state.child = spawn(exe, ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: directory, stdio: [null, "pipe", "pipe"],
+      windowsHide: true,        // a console program started from a GUI app opens a visible black window on Windows without this
       env: { ...process.env, ...(pooled ? { OPENCODE_CONFIG_CONTENT: pooled.content, OPEN_MODEL_API_KEY: pooled.key } : {}) },
     })
     const timer = setTimeout(() => { if (!engine) no(new Error("engine did not report a port in 30 s")) }, 30_000)
