@@ -67,10 +67,13 @@ def card_from_row(r: Any) -> ToolCard:
     extra = r["extra"]
     if isinstance(extra, str):
         extra = json.loads(extra)
-    return ToolCard(id=r["id"], source=r["source"], name=r["name"], title=r["title"], description=r["description"],
-                    server=r["server"], goals=tuple(r["goals"] or ()), how=r["how"], url=r["url"],
-                    expansion=r["expansion"], tools=tuple(r["tools"] or ()), tools_text=r["tools_text"],
-                    extra=dict(extra or {}))
+    from app.tool_routing import liveness
+
+    # the newest daily check overrides the snapshot's probe (app/tool_routing/liveness.py)
+    return liveness.apply(ToolCard(id=r["id"], source=r["source"], name=r["name"], title=r["title"], description=r["description"],
+                                   server=r["server"], goals=tuple(r["goals"] or ()), how=r["how"], url=r["url"],
+                                   expansion=r["expansion"], tools=tuple(r["tools"] or ()), tools_text=r["tools_text"],
+                                   extra=dict(extra or {})))
 
 
 async def ready(pool: Any) -> bool:

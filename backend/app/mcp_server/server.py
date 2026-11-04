@@ -206,6 +206,9 @@ async def _warm_tool_catalog() -> None:
                 from app.tool_routing.store import sync_catalog
 
                 await sync_catalog(pool, say=log.info)
+                from app.tool_routing import liveness as _liveness
+
+                _liveness.start(pool, say=log.info)          # re-checks the servers kell can run, once a day
                 return
         await asyncio.to_thread(_warm_tool_router)
         from app.tool_routing.vectors import build_if_missing
@@ -3657,6 +3660,10 @@ async def _external_tools_ranked(need: str, goal: str, installed: list[Any] | No
         query = condense(need.strip(), 2000)
         pool = _LIFESPAN_STATE.get("pool")
         known = qvec = outcomes = None
+        if pool is not None:
+            from app.tool_routing import liveness as _liveness
+
+            await _liveness.refresh(pool)                     # the daily check's outcomes and the servers real calls show are down
         if pool is not None and await _store.ready(pool):
             # the catalog in the database (db/160_tool_cards.sql): its full-text and nearest-neighbour candidates
             qvec = await _query_vector(need_text(query, goal or None), embedder) if embedder else None

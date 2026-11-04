@@ -76,10 +76,17 @@ def note_failure(server: str) -> None:
 
 def note_ok(server: str) -> None:
     FAILING.pop(server, None)
+    from app.tool_routing import liveness
+
+    liveness.DOWN.discard(server)
 
 
 def failing(server: str) -> bool:
-    """True while a server that failed recently is in its cooldown; False once the cooldown has passed."""
+    """True while a server that failed recently is in its cooldown, or whose last real calls all failed (liveness.DOWN)."""
+    from app.tool_routing import liveness
+
+    if server in liveness.DOWN:
+        return True
     until = FAILING.get(server)
     if until is None:
         return False
@@ -161,7 +168,7 @@ def signin_allowed(card: ToolCard) -> bool:
     """Phase 2 (TOOL_GATEWAY_OAUTH=on): the same server, but it may ask for a sign-in, which kell can now do itself. A server
     the registry could not reach at all (probe "down") is still left out; the sign-in flow reports a dead server clearly."""
     ex = card.extra or {}
-    return oauth.enabled() and _base_allowed(card) and ex.get("probe") != "down"
+    return oauth.enabled() and _base_allowed(card) and ex.get("probe") not in ("dead", "down")   # the probe writes "dead"
 
 
 def gateway_usable(card: ToolCard) -> bool:

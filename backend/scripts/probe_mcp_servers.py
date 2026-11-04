@@ -29,55 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 DATA = Path(__file__).resolve().parents[1] / "app" / "tool_routing" / "data"
 SNAPSHOT = DATA / "mcp_registry.json"
 OUT = DATA / "registry_probe.json"
-UA = "kell-tool-router/0.1 (liveness probe; https://www.kell.org.in)"
-HEADERS = {"content-type": "application/json", "accept": "application/json, text/event-stream", "user-agent": UA}
-TOOLS_MAX = 60
-
-
-def parse(r: httpx.Response) -> dict:
-    text = r.text
-    if "text/event-stream" in r.headers.get("content-type", ""):
-        for line in text.splitlines():
-            if line.startswith("data:"):
-                try:
-                    return json.loads(line[5:].strip())
-                except ValueError:
-                    continue
-        return {}
-    try:
-        return r.json()
-    except ValueError:
-        return {}
-
-
-async def probe(client: httpx.AsyncClient, url: str, timeout: float) -> dict:
-    t0 = time.monotonic()
-    if "{" in url:  # a template ("https://host:{PORT}/mcp"): it needs the user's own settings before it is a URL
-        return {"status": "unprobed", "ms": 0, "why": "templated url"}
-    try:
-        init ={"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "kell-probe", "version": "0.1"}}}
-        r = await client.post(url, json=init, headers=HEADERS, timeout=timeout)
-        ms = int((time.monotonic() - t0) * 1000)
-        if r.status_code in (401, 403):
-            return {"status": "auth", "ms": ms, "http": r.status_code}
-        j = parse(r)
-        if r.status_code >= 400 or "result" not in j:
-            return {"status": "dead", "ms": ms, "http": r.status_code, "why": "no MCP initialize result"}
-        info = (j["result"] or {}).get("serverInfo") or {}
-        sid = r.headers.get("mcp-session-id")
-        h = {**HEADERS, **({"mcp-session-id": sid} if sid else {})}
-        await client.post(url, json={"jsonrpc": "2.0", "method": "notifications/initialized"}, headers=h, timeout=timeout)
-        r2 = await client.post(url, json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, headers=h, timeout=timeout)
-        if r2.status_code in (401, 403):
-            return {"status": "auth", "ms": ms, "http": r2.status_code, "server": str(info.get("name", ""))[:80]}
-        tools = (parse(r2).get("result") or {}).get("tools") or []
-        return {"status": "live", "ms": ms, "server": str(info.get("name", ""))[:80],
-                "tools": [{"name": str(t.get("name", ""))[:80], "description": " ".join(str(t.get("description") or "").split())[:300]}
-                          for t in tools[:TOOLS_MAX] if isinstance(t, dict) and t.get("name")],
-                "tool_count": len(tools)}
-    except Exception as exc:  # noqa: BLE001 -- one odd server (httpx.InvalidURL is not an HTTPError) must not end the run
-        return {"status": "dead", "ms": int((time.monotonic() - t0) * 1000), "why": type(exc).__name__}
+from app.tool_routing.liveness import probe  # noqa: E402 -- the same handshake the server's daily check uses
 
 
 async def main(a) -> int:
