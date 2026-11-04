@@ -1,24 +1,30 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-// The homepage demo: a replay of what the developer sees in their terminal for four example tasks, with what each
-// costs beside it and what the developer gets out of it. It shows outcomes only (who did the
-// task, whether it passed the project's checks, what it cost), never how keळ decides. Everything here is made up.
+// The homepage demo: a replay of what the developer sees in their terminal (or their keळ room) for a few example
+// tasks: model routing, a tool found for the request, a pal's agent called into the room. Beside it, what each costs
+// (model tasks) and what the developer gets out of it. Outcomes only, never how keळ decides. Everything here is made up.
 
 type Kind = "prompt" | "kel" | "diff-del" | "diff-add" | "file" | "run" | "ok" | "fail" | "model" | "done";
-// The headline's words plus the check: the strip above the terminal lights each one as the replay reaches it.
-type Word = "recall" | "reuse" | "route" | "tests";
-type Line = { at: number; kind: Kind; text: string; r?: Word[] };
+// The strip above the terminal lights each word as the replay reaches a line tagged with it.
+type Word = string;
+// `who` replaces the "your model:" prefix on a "model" line (a pal's agent, or you in the room).
+type Line = { at: number; kind: Kind; text: string; r?: Word[]; who?: string };
 type Scenario = {
   label: string;
   agent: string;
+  // Where it runs, after the agent in the title bar; default "your-repo".
+  place?: string;
   lines: Line[];
-  // keळ's cost as a share of "your model alone", as [time in ms, percent] points; linear in between.
-  cost: [number, number][];
-  outcome: string;
-  // What the developer gets out of the task, shown beside the cost once it ends.
-  doneBy: string;
-  next: string;
+  // keळ's cost as a share of "your model alone", as [time in ms, percent] points; linear in between. Model tasks only.
+  cost?: [number, number][];
+  outcome?: string;
+  // The strip's words for this task; default the model-routing ones.
+  words?: [Word, string][];
+  // What the developer gets out of the task, shown once it ends. Model tasks use the fixed rows below.
+  doneBy?: string;
+  next?: string;
+  side?: [string, string][];
 };
 
 const PROMPT_MS = 1600; // the prompt types out over this long; every other line appears at its `at`
@@ -126,16 +132,60 @@ const scenarios: Scenario[] = [
     cost: [[0, 0], [2700, 1], [7900, 101]],
     outcome: "Sent straight to your model: no failed attempt to pay for.",
   },
+  {
+    label: "A deck, no setup",
+    agent: "Claude Code",
+    words: [["search", "Search"], ["rank", "Rank"], ["signin", "Sign in once"], ["run", "Run it for you"]],
+    lines: [
+      { at: 0, kind: "prompt", text: "Make a 6-slide investor deck from docs/metrics.md." },
+      { at: 2000, kind: "kel", text: "no slide tool installed · keळ searches its tool servers for this request", r: ["search"] },
+      { at: 3100, kind: "kel", text: "best fit: a slides server from a verified publisher, ranked by what has worked before", r: ["rank"] },
+      { at: 4200, kind: "kel", text: "it needs an account → Sign in with Google, one click", r: ["signin"] },
+      { at: 5600, kind: "ok", text: "signed in · the request carries on by itself" },
+      { at: 6400, kind: "run", text: "keळ runs the tool for you: nothing installed, nothing configured", r: ["run"] },
+      { at: 7900, kind: "ok", text: "6 slides made from docs/metrics.md" },
+      { at: 8600, kind: "done", text: "✓ the deck opens in the canvas · every version kept" },
+    ],
+    side: [
+      ["Found by", "keळ, from thousands of tool servers"],
+      ["Installed", "nothing"],
+      ["Setup", "one sign-in, the first time only"],
+      ["Next time", "the tool that worked ranks higher"],
+    ],
+  },
+  {
+    label: "Ask a pal's agent",
+    agent: "keळ room",
+    place: "#launch",
+    words: [["call", "Call an agent"], ["approve", "Owner approves"], ["answer", "Answer in the room"], ["canvas", "One canvas"]],
+    lines: [
+      { at: 0, kind: "prompt", text: "@pal/claude-code can you load-test the new rate limiter?" },
+      { at: 2000, kind: "kel", text: "→ asking pal's agent · waiting for pal to approve", r: ["call"] },
+      { at: 3400, kind: "ok", text: "pal approved", r: ["approve"] },
+      { at: 4200, kind: "run", text: "pal's agent is running a load test on staging" },
+      { at: 5800, kind: "model", who: "pal's agent:", text: "100 requests a minute held, with 8 workers at once.", r: ["answer"] },
+      { at: 6800, kind: "kel", text: "the answer is in the room · everyone sees it" },
+      { at: 7700, kind: "model", who: "you:", text: "(slide 3 highlighted) turn this into a chart of the load test" },
+      { at: 8800, kind: "kel", text: "keळ updates slide 3 in the canvas", r: ["canvas"] },
+      { at: 9600, kind: "done", text: "✓ slide 3 updated · the earlier version kept" },
+    ],
+    side: [
+      ["Who helped", "pal's agent, with pal's approval"],
+      ["Where", "in the room, for the whole team"],
+      ["Copy-paste", "none"],
+      ["Your chats", "encrypted on your devices"],
+    ],
+  },
 ];
 
-const WORDS: [Word | "reduce", string][] = [["recall", "Recall"], ["reuse", "Reuse"], ["route", "Route"], ["reduce", "Reduce"], ["tests", "Tests decide"]];
+const WORDS: [Word, string][] = [["recall", "Recall"], ["reuse", "Reuse"], ["route", "Route"], ["reduce", "Reduce"], ["tests", "Tests decide"]];
 
 
 const endOf = (s: Scenario) => s.lines[s.lines.length - 1].at + DONE_PAD;
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function costAt(s: Scenario, t: number): number {
-  const pts = s.cost;
+  const pts = s.cost ?? [[0, 0]];
   if (t <= pts[0][0]) return pts[0][1];
   for (let k = 1; k < pts.length; k++) {
     const [t1, c1] = pts[k];
@@ -207,7 +257,7 @@ export default function ActionWalkthrough() {
       </div>
 
       <div className="rstrip" aria-label="What this task used">
-        {WORDS.map(([w, label]) => {
+        {(sc.words ?? WORDS).map(([w, label]) => {
           const on = w === "reduce" ? finished && withKel < 100 : lit.has(w);
           return <span key={w} data-on={on} data-word={w}>{w === "tests" ? "✓ " : ""}{label}</span>;
         })}
@@ -217,14 +267,14 @@ export default function ActionWalkthrough() {
         <div className="term" aria-label={`${sc.agent} terminal, replay`}>
           <div className="term-bar">
             <i /><i /><i />
-            <span>{sc.agent} · your-repo</span>
+            <span>{sc.agent} · {sc.place ?? "your-repo"}</span>
           </div>
           <div className="term-screen" aria-live="polite">
             <div className="term-line" data-kind="prompt"><span className="term-p">&gt;</span> {finished ? prompt : typed}{t < PROMPT_MS && <span className="term-caret" />}</div>
             {shown.slice(1).map((l) => (
               <div key={l.at} className="term-line" data-kind={l.kind}>
                 {(l.kind === "kel" || l.kind === "run") && <span className="term-p">·</span>}
-                {l.kind === "model" && <span className="term-p">your model:</span>}
+                {l.kind === "model" && <span className="term-p">{l.who ?? "your model:"}</span>}
                 {l.text}
               </div>
             ))}
@@ -241,16 +291,18 @@ export default function ActionWalkthrough() {
         </div>
 
         <div className="demo-side">
-          <div className="demo-cost" aria-label="What this task costs">
+          {sc.cost && <div className="demo-cost" aria-label="What this task costs">
             <small className="caption dim">What this task costs</small>
             <div><span>Your model alone</span><i style={{ width: `${alone / 1.1}%` }} /><b>{Math.round(alone)}%</b></div>
             <div data-k><span>With keळ</span><i style={{ width: `${withKel / 1.1}%` }} /><b>{Math.round(withKel)}%</b></div>
             <p className="small" style={{ minHeight: "1.5em" }}>{finished ? sc.outcome : " "}</p>
-          </div>
+          </div>}
 
           <div className="stealth-peek" aria-label="What this task came to">
             <small className="caption dim">For you</small>
-            {[
+            {sc.side ? sc.side.map(([k, v]) => (
+              <div key={k} className="stealth-file"><b>{k}</b><span className={finished ? "" : "dim"}>{finished ? v : "…"}</span></div>
+            )) : [
               ["Done by", sc.doneBy],
               ["Your tests", finished ? "passed before anything was applied" : "running…"],
               ["Your prompt cache", "untouched"],

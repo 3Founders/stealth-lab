@@ -12,6 +12,8 @@ const rail = [
   { id: "top", label: "Introduction" },
   { id: "about", label: "What you get" },
   { id: "cache", label: "Your cache" },
+  { id: "tools", label: "The best tool" },
+  { id: "room", label: "One room" },
   { id: "action", label: "See it work" },
   { id: "use", label: "Use it" },
 ];
@@ -32,11 +34,39 @@ const gets = [
   ["You stay in control", "Skip keळ for any prompt, undo any change, turn it off any time. Chats stay encrypted on your devices."],
 ];
 
+// Each section's comparison: the usual way, then keळ. Every bar is [label, width %, what it means].
+type Row = { who: string; kel: boolean; bars: [string, number, string][] };
+
 // What happens to the prompt cache, and to the bill, with a router that switches models and with keळ.
-const cacheRows: { who: string; kel: boolean; cache: [number, string]; bill: [number, string] }[] = [
-  { who: "A router that switches models mid-session", kel: false, cache: [4, "lost: everything reread at full price"], bill: [100, "savings eaten by the rereads"] },
-  { who: "keळ", kel: true, cache: [100, "kept"], bill: [50, "about half, over time"] },
+const cacheRows: Row[] = [
+  { who: "A router that switches models mid-session", kel: false, bars: [["prompt cache", 4, "lost: everything reread at full price"], ["your bill", 100, "savings eaten by the rereads"]] },
+  { who: "keळ", kel: true, bars: [["prompt cache", 100, "kept"], ["your bill", 50, "about half, over time"]] },
 ];
+
+// Which tools an agent can reach, and what it takes to set them up.
+const toolRows: Row[] = [
+  { who: "An agent with the tools you installed", kel: false, bars: [["tools", 5, "only the few you set up, fit or not"], ["setup", 100, "by hand, for each tool"]] },
+  { who: "keळ", kel: true, bars: [["tools", 100, "thousands, searched for every request"], ["setup", 3, "none; sign in once if a tool needs it"]] },
+];
+
+// Who can work on a request, and how many places the work is spread over.
+const roomRows: Row[] = [
+  { who: "An agent in its own window", kel: false, bars: [["agents", 10, "only your own"], ["places", 100, "chat, agent, doc: paste between them"]] },
+  { who: "A keळ room", kel: true, bars: [["agents", 100, "yours and your pal's, with approval"], ["places", 8, "one room and one canvas"]] },
+];
+
+const Compare = ({ rows }: { rows: Row[] }) => (
+  <Reveal className="cache-bars" delay={120}>
+    {rows.map((row) => (
+      <div key={row.who} className="cache-row" data-kel={row.kel}>
+        <small className="caption">{row.who}</small>
+        {row.bars.map(([label, w, text]) => (
+          <div key={label} className="cache-bar"><span>{label}</span><i><b style={{ width: `${w}%` }} /></i><em>{text}</em></div>
+        ))}
+      </div>
+    ))}
+  </Reveal>
+);
 
 export default function Home() {
   return (
@@ -88,22 +118,42 @@ export default function Home() {
           <p className="lead">Most routers switch your agent&rsquo;s model mid-session, and every switch throws away the prompt cache you&rsquo;ve already paid for.</p>
           <p>keळ never switches your agent&rsquo;s model. Your cache keeps working, and the bill still comes down.</p>
         </Reveal>
-        <Reveal className="cache-bars" delay={120}>
-          {cacheRows.map((row) => (
-            <div key={row.who} className="cache-row" data-kel={row.kel}>
-              <small className="caption">{row.who}</small>
-              <div className="cache-bar"><span>prompt cache</span><i><b style={{ width: `${row.cache[0]}%` }} /></i><em>{row.cache[1]}</em></div>
-              <div className="cache-bar"><span>your bill</span><i><b style={{ width: `${row.bill[0]}%` }} /></i><em>{row.bill[1]}</em></div>
-            </div>
-          ))}
-        </Reveal>
+        <Compare rows={cacheRows} />
       </section>
 
-      {/* 03 SEE IT WORK */}
-      <section id="action" className="section frame grid" aria-labelledby="h-action">
-        <Marker n="03" label="SEE IT WORK" />
+      {/* 03 THE BEST TOOL */}
+      <section id="tools" className="section frame grid" aria-labelledby="h-tools">
+        <Marker n="03" label="NOT A TOOL STORE" />
         <Reveal className="statement">
-          <h2 id="h-action" className="h1">Recall, reuse, route, reduce. <span className="dim">Watch it happen.</span></h2>
+          <h2 id="h-tools" className="h1">Your agent only has the tools you installed. <span className="dim">keळ finds the best one for each request.</span></h2>
+        </Reveal>
+        <Reveal className="cache-copy stack">
+          <p className="lead">Most agents can only use the tool servers you found, installed and configured yourself, and they pick from those whether they fit or not.</p>
+          <p>keळ searches thousands of tool servers for the one that fits this request, ranked by fit and by what has worked before, from verified publishers. It runs the tool for you; if the tool needs an account, you sign in once, in one click.</p>
+          <p>In our tests, the right tool was in the top five 98% of the time.</p>
+        </Reveal>
+        <Compare rows={toolRows} />
+      </section>
+
+      {/* 04 ONE ROOM */}
+      <section id="room" className="section frame grid" aria-labelledby="h-room">
+        <Marker n="04" label="NOT ANOTHER CHAT APP" />
+        <Reveal className="statement">
+          <h2 id="h-room" className="h1">Ten tabs and copy-paste. <span className="dim">Or one room for your team and its agents.</span></h2>
+        </Reveal>
+        <Reveal className="cache-copy stack">
+          <p className="lead">The agent works in one window, the team talks in another, the doc lives in a third, and everything gets pasted between them.</p>
+          <p>In a keळ room, people, the agent of your choice and your pal&rsquo;s agents work in one chat. Call any agent with its owner&rsquo;s approval, and its answer lands where everyone sees it. The work lands in one canvas everyone edits at once, with every version kept.</p>
+          <p>keळ remembers how your team works, and chats stay encrypted on your devices.</p>
+        </Reveal>
+        <Compare rows={roomRows} />
+      </section>
+
+      {/* 05 SEE IT WORK */}
+      <section id="action" className="section frame grid" aria-labelledby="h-action">
+        <Marker n="05" label="SEE IT WORK" />
+        <Reveal className="statement">
+          <h2 id="h-action" className="h1">Models, tools and agents at work. <span className="dim">Watch it happen.</span></h2>
         </Reveal>
         <ActionWalkthrough />
         <MonthInRepo />
@@ -123,9 +173,9 @@ export default function Home() {
         </div>
       </section>
 
-      {/* 04 USE IT */}
+      {/* 06 USE IT */}
       <section id="use" className="section close frame grid" aria-labelledby="h-use">
-        <Marker n="04" label="USE IT" />
+        <Marker n="06" label="USE IT" />
         <Reveal className="statement">
           <h2 id="h-use" className="h1">Set it up once. <span className="dim">Then just work.</span></h2>
         </Reveal>
