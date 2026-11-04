@@ -27,6 +27,7 @@
       "lib/**",
       "vendor/**",
       "next.config.mjs",
+      "!.next/cache/**",
       "!node_modules/@opencode/cli/**",
       "!node_modules/@opencode/cli-windows-x64-baseline/**",
       "!node_modules/@next/swc-*/**",
