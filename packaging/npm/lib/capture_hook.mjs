@@ -495,6 +495,17 @@ export async function runCaptureWorker(file, { env = process.env, report } = {})
       logHook(env, "capture-stop", `tools not recorded (${err.message})`);
     }
   }
+  // Anything queued earlier (a turn whose report could not reach the server) goes out now, before this turn's own work.
+  // The exec server flushes at startup, but a capture worker is the one thing that runs at the end of every turn, in
+  // Claude Code and in the desktop app alike -- without this, a queued record on a long-running session waits for the
+  // next process start. Failure here is not this turn's problem: it is logged and the entries stay queued.
+  try {
+    const { flushOutbox } = await import("./exec/evidence.mjs");
+    const f = await Promise.race([flushOutbox({ env }), timer()]);
+    if (f?.sent) logHook(env, "capture-stop", `outbox drained sent=${f.sent} remaining=${f.remaining ?? 0}`);
+  } catch (err) {
+    logHook(env, "capture-stop", `outbox not drained (${err.message})`);
+  }
   if (job.describe) {
     // first the general Goal and Way, so the semantic codes below are made for the Way that stays
     try {
