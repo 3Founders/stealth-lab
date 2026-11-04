@@ -1011,6 +1011,10 @@ _delegate_routes.register(
     lambda: _LIFESPAN_STATE.get("pool"),
 )
 
+from app.mcp_server import contact_routes as _contact_routes  # noqa: E402 -- the website's Contact form (POST /v1/contact), anonymous by design
+
+_contact_routes.register(server, lambda: _LIFESPAN_STATE.get("pool"))
+
 from app.mcp_server import contribution_routes as _contribution_routes  # noqa: E402 -- a person adding a tool/script/prompt/tip (POST /v1/contributions)
 
 _contribution_routes.register(
