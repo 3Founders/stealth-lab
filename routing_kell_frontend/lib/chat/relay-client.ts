@@ -10,9 +10,17 @@ export interface RelayAgent {
   id: string; name: string; kind: string; handle: string; created_at: string; last_seen: string | null; online: boolean; revoked: boolean;
   /** The person it belongs to (their username), whether it is yours, what to type for someone else's (@owner/name), and whether it polled in the last minute. */
   owner?: string; mine?: boolean; full_handle?: string; connected?: boolean;
+  /** The owner's display name (for "Anuj's"); older servers do not send it. */
+  owner_name?: string;
 }
 /** What you type to call an agent: your own is @name, another person's is @owner/name. */
 export const relayKey = (a: Pick<RelayAgent, "name" | "owner" | "mine">): string => (a.mine === false && a.owner ? `${a.owner}/${a.name}` : a.name).toLowerCase();
+/** The badge on someone else's agent: whose it is ("Anuj's"), by the first word of their display name, else their username, else "theirs". */
+export const ownerBadge = (a: { owner?: string; owner_name?: string }): string => {
+  const first = (a.owner_name ?? "").trim().split(/\s+/)[0];
+  const who = first ? first.charAt(0).toUpperCase() + first.slice(1) : (a.owner ?? "");
+  return who ? `${who}'s` : "theirs";
+};
 export type TaskStatus = "needs_approval" | "queued" | "claimed" | "done" | "failed" | "cancelled";
 export interface RelayTask {
   id: string; agent_id: string; room: string; from: string; text: string; locators: unknown[]; depth: number; status: TaskStatus;
