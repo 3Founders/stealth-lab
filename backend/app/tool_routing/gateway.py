@@ -34,6 +34,9 @@ from app.tool_routing.catalog import BULK_PUBLISHER, ToolCard
 
 MIN_STARS = int(os.environ.get("TOOL_GATEWAY_MIN_STARS", "20"))
 TIMEOUT_S = 20.0
+# Running a tool may take much longer than starting a session: deep research, crawls and scrapes answered after 20 s were cut off as
+# failures (2026-11-04). Only the tools/call request waits this long; connecting and listing keep TIMEOUT_S.
+CALL_TIMEOUT_S = float(os.environ.get("TOOL_GATEWAY_CALL_TIMEOUT", "180"))
 MAX_BYTES = 1_000_000
 LINK_TTL_S = 15 * 60
 TOOLS_TTL_S = 3600.0
@@ -246,12 +249,12 @@ def _parse(r: httpx.Response, raw: bytes) -> dict:
 
 
 async def _session(url: str, method: str, params: dict, *, token: Optional[str] = None,
-                   server: Optional[str] = None) -> tuple[dict, int, int]:
+                   server: Optional[str] = None, timeout: Any = TIMEOUT_S) -> tuple[dict, int, int]:
     """initialize, initialized, then one request -> (its JSON-RPC body, bytes sent, bytes received)."""
     await guard_url(url)
     sent = received = 0
     headers = {**HEADERS, **({"authorization": f"Bearer {token}"} if token else {})}
-    async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                            "clientInfo": {"name": "kell-tool-gateway", "version": "0.1"}}}
@@ -299,7 +302,8 @@ async def list_tools(url: str, *, token: Optional[str] = None, server: Optional[
 
 async def call_tool(url: str, name: str, arguments: dict, *, token: Optional[str] = None,
                     server: Optional[str] = None) -> tuple[dict, int, int]:
-    body, sent, received = await _session(url, "tools/call", {"name": name, "arguments": arguments}, token=token, server=server)
+    body, sent, received = await _session(url, "tools/call", {"name": name, "arguments": arguments}, token=token, server=server,
+                                          timeout=httpx.Timeout(TIMEOUT_S, read=CALL_TIMEOUT_S))
     if "error" in body:
         raise GatewayRefused(f"the server refused the call: {str((body.get('error') or {}).get('message') or '')[:300]}")
     return (body.get("result") or {}), sent, received

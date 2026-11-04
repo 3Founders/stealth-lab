@@ -9,7 +9,7 @@ snapshot. Two things keep it current instead (docs: the 2026-11-04 tool reliabil
     writes the outcome to tool_liveness (db/180_tool_liveness.sql). A server that does not answer is asked once more at the end
     of the run before it counts as dead. Cards read from the database carry the newest outcome (`apply`);
   * a server whose last three real calls through the gateway in the past day all failed on the server's side (not a refusal by
-    kell's rules, not a sign-in, not a tool error the arguments may have caused) is left out as failing until a call succeeds
+    kell's rules, not a sign-in, not a tool error the arguments may have caused, not a slow answer) is left out as failing until a call succeeds
     or the failures age out (`DOWN`).
 """
 from __future__ import annotations
@@ -100,7 +100,7 @@ SELECT server FROM (
     SELECT server, status, row_number() OVER (PARTITION BY server ORDER BY at DESC) AS n
     FROM tool_gateway_calls
     WHERE at > now() - interval '24 hours' AND status NOT LIKE 'refused:%'
-      AND status NOT IN ('failed:signin', 'failed:tool_error')
+      AND status NOT IN ('failed:signin', 'failed:tool_error', 'failed:timeout')
 ) recent WHERE n <= 3
 GROUP BY server HAVING count(*) = 3 AND bool_and(status LIKE 'failed:%')
 """

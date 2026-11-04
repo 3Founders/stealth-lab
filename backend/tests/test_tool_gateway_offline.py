@@ -216,3 +216,48 @@ def test_use_tool_accepts_the_name_forms_a_client_with_an_old_tool_list_sends(mo
     assert seen == [("kell/images", "generate_image", {"prompt": "a lake"}), ("kell/images", "generate_image", {"prompt": "a lake"}),
                     ("io.github.upstash/context7", "resolve-library-id", {"libraryName": "react"}),
                     ("kell/images", "generate_image", {"prompt": "a lake"})]
+
+
+def test_a_slow_tool_or_a_tool_error_does_not_hide_the_server_but_a_broken_one_does(monkeypatch):
+    """A deep-research run cut off after 20 s counted as a failure and hid the server (2026-11-04): now a tool call may take
+    CALL_TIMEOUT_S, a timeout says so without hiding the server, and so does a tool error (often the agent's own arguments)."""
+    import httpx
+
+    from app.mcp_server import server as srv
+    from app.tool_routing import store as _store
+
+    assert gw.CALL_TIMEOUT_S >= 120
+    pool = FakePool()
+    monkeypatch.setitem(srv._LIFESPAN_STATE, "pool", pool)
+    monkeypatch.setattr(srv, "_gateway_owner", lambda: "user-3")
+    pool.grants.add(("user-3", "app.glif/glif"))
+    the_card = card()
+
+    async def by_name(p, name):
+        return the_card if name == "app.glif/glif" else None
+    monkeypatch.setattr(_store, "card_by_name", by_name)
+    monkeypatch.setattr(_store, "record_outcome", lambda *a, **k: asyncio.sleep(0, 0))
+
+    async def tools(url, **kw):
+        return [{"name": "run_glif", "inputSchema": {}}]
+    monkeypatch.setattr(gw, "list_tools", tools)
+    gw.FAILING.clear()
+    outcome = {"kind": "slow"}
+
+    async def call(url, name, args, **kw):
+        if outcome["kind"] == "slow":
+            raise httpx.ReadTimeout("slow")
+        if outcome["kind"] == "error":
+            return {"isError": True, "content": [{"type": "text", "text": "bad arguments"}]}, 1, 1
+        raise httpx.ConnectError("refused")
+    monkeypatch.setattr(gw, "call_tool", call)
+
+    out = run(srv._gateway_call(None, "app.glif/glif", "run_glif", {"prompt": "x"}, "PUBLIC_SOURCE"))
+    assert "no answer within" in str(out) and not gw.failing("app.glif/glif") and pool.calls[-1] == "failed:timeout"
+    outcome["kind"] = "error"
+    run(srv._gateway_call(None, "app.glif/glif", "run_glif", {"prompt": "x"}, "PUBLIC_SOURCE"))
+    assert not gw.failing("app.glif/glif") and pool.calls[-1] == "failed:tool_error"
+    outcome["kind"] = "broken"
+    run(srv._gateway_call(None, "app.glif/glif", "run_glif", {"prompt": "x"}, "PUBLIC_SOURCE"))
+    assert gw.failing("app.glif/glif") and pool.calls[-1] == "failed:ConnectError"
+    gw.FAILING.clear()

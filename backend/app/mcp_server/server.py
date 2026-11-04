@@ -1902,14 +1902,16 @@ async def _gateway_call(ctx: Context, server_name: str, tool: str, arguments: di
             _gateway.note_failure(server_name)                # it did not work: leave it out of search for a while
         return await done("failed:signin" if "sign-in" in str(exc) else "failed:refused", f"FAILED: {server_name}: {exc}")
     except Exception as exc:  # noqa: BLE001
-        _gateway.note_failure(server_name)                    # timeout, reset, a broken answer: same, temporarily
+        if type(exc).__name__ == "ReadTimeout":
+            # slow is not broken: the server is not left out of search for it (a deep-research run can take minutes)
+            return await done("failed:timeout", f"FAILED: {server_name}: no answer within {int(_gateway.CALL_TIMEOUT_S)} s. It may be a slow "
+                                                "tool: try a smaller request, or a tool that starts a job and lets you read the result later")
+        _gateway.note_failure(server_name)                    # reset, refused connection, a broken answer: left out for a while
         return await done(f"failed:{type(exc).__name__}", f"FAILED: {server_name}: {type(exc).__name__}")
     text, images = _gateway.content_parts(result)
     status = "failed:tool_error" if result.get("isError") else "ok"
-    if result.get("isError"):
-        _gateway.note_failure(server_name)
-    else:
-        _gateway.note_ok(server_name)
+    # A tool error is often the arguments the agent sent, not a broken server: it does not hide the server. The server answered, so it works.
+    _gateway.note_ok(server_name)
     await done(status, "", bytes_in=received, bytes_out=sent)
     try:                                              # it was used: the outcome record (db/162), outcome judged later
         from app.tool_routing import store as _store
