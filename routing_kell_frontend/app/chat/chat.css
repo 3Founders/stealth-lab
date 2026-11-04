@@ -111,7 +111,7 @@
   .dg-run { grid-template-columns: 30px 1fr; gap: 10px; }
   .dg-avatar { width: 30px; height: 30px; font-size: 12px; }
   .dg-typing { padding: 2px 12px 0; }
-  .dg-stop { min-height: 36px; padding: 0 16px; }
+  .dg-stop { min-height: 32px; padding: 0 14px; }
   .dg-composer { padding: 6px 12px calc(10px + env(safe-area-inset-bottom)); gap: 8px; }
   .dg-composer textarea { font-size: 16px; }
   .dg-composer button { min-width: 64px; }
@@ -1372,10 +1372,10 @@ body:has(.dg-shell) { overscroll-behavior: none; }
 
 /* ===== Stop: big, lower left, just above the prompt box, for whatever is running ===== */
 .dg-typing { justify-content: flex-start; }
-.dg-page .dg-stop { order: -1; margin-left: 0; margin-right: 6px; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 20px; font-size: 14px; font-weight: 650; letter-spacing: .01em; border: 0; border-radius: 999px; background: #d92d20; color: #fff; box-shadow: 0 4px 14px rgba(217, 45, 32, .35); }
+.dg-page .dg-stop { order: -1; margin-left: 0; margin-right: 6px; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 12px; font-size: 12.5px; font-weight: 600; letter-spacing: 0; border: 0; border-radius: 999px; background: #d92d20; color: #fff; box-shadow: 0 2px 8px rgba(217, 45, 32, .3); }
 .dg-page .dg-stop:hover { background: #b42318; color: #fff; }
 .dg-page .dg-stop:active { transform: scale(.97); }
-.dg-stop-sq { width: 11px; height: 11px; border-radius: 2px; background: currentColor; flex: none; }
+.dg-stop-sq { width: 8px; height: 8px; border-radius: 2px; background: currentColor; flex: none; }
 /* the name takes what is left and is cut with an ellipsis, so the minus and the badge never wrap to a second line */
 .dg-members li.dg-agentrow .dg-handle { flex: 1 1 0; min-width: 48px; }
 .dg-members li.dg-agentrow { column-gap: 6px; }
