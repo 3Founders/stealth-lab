@@ -91,10 +91,12 @@ describe("docs panel", () => {
     const btn = (label: string) => [...host!.querySelectorAll(".dg-doc-actions button")].find((b) => b.textContent === label) as HTMLElement;
     await act(async () => { btn("History").click(); });
     await wait(10);
-    expect(host!.querySelector(".dg-doc-history")?.textContent).toContain("Version 2");
+    // entries are labelled by when and who (the server groups saves like Overleaf); the newest is the current text, with no Restore
+    expect(host!.querySelector(".dg-doc-history")?.textContent).toContain("Current · Bo");
+    expect(host!.querySelectorAll(".dg-doc-history li .dg-linkbtn").length).toBe(1);
     await act(async () => { (host!.querySelector(".dg-doc-history li .dg-linkbtn") as HTMLElement).click(); });
     await wait(10);
-    expect((api.restore as ReturnType<typeof vi.fn>)).toHaveBeenCalled();
+    expect((api.restore as ReturnType<typeof vi.fn>).mock.calls[0][2]).toBe(1);
 
     await act(async () => { btn("Ask kell to edit").click(); });
     // a short line that names the canvas: the document and its fence are not pasted into the message box (the open canvas travels with the request)

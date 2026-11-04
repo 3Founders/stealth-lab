@@ -9,7 +9,9 @@ export interface DocInfo { id: string; title: string; /** the name to show: the 
 export interface DocFull { id: string; version: number; present: string[]; editing: string[]; title: string; label?: string; kind: DocKind; body: string; updated_by: string; updated_at: string | null }
 export interface DocUnchanged { id: string; version: number; present: string[]; editing: string[]; unchanged: true }
 export interface SaveResult { version: number; unchanged?: boolean; merged?: boolean; clash?: boolean; body?: string }
-export interface DocVersion { version: number; by: string; note: string; size: number; at: string | null }
+// One history entry: a burst of one person's saves, grouped by the server like Overleaf (room_docs.group_versions). `version` is the
+// entry's last save (what Restore brings back), `edits` how many saves it holds. Older servers send neither `from` nor `edits`.
+export interface DocVersion { version: number; from?: number; edits?: number; by: string; note: string; size: number; at: string | null }
 
 export class DocsApiError extends Error {
   constructor(message: string, readonly status?: number) { super(message); this.name = "DocsApiError"; }

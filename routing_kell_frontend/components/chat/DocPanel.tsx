@@ -538,10 +538,11 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
               <div className="dg-doc-history" role="dialog" aria-label="History">
                 <div className="dg-doc-history-head"><b>History</b><button type="button" className="dg-cv-icon" aria-label="Close history" onClick={() => setHistory(null)}>×</button></div>
                 <ul>
-                  {history.map((v) => (
+                  {history.map((v, i) => (
                     <li key={v.version}>
-                      <span><b>Version {v.version}</b> · {v.by}{v.note ? ` · ${v.note}` : ""}<br /><small>{v.at ? new Date(v.at).toLocaleString() : ""}</small></span>
-                      <button type="button" className="dg-linkbtn" onClick={() => void restore(v.version)}>Restore</button>
+                      <span><b>{i === 0 ? "Current" : v.at ? new Date(v.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "Earlier"}</b> · {v.by}{v.note ? ` · ${v.note}` : ""}<br />
+                        <small>{i === 0 && v.at ? `${new Date(v.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · ` : ""}{v.edits && v.edits > 1 ? `${v.edits} edits` : "1 edit"}</small></span>
+                      {i > 0 && <button type="button" className="dg-linkbtn" onClick={() => void restore(v.version)}>Restore</button>}
                     </li>
                   ))}
                 </ul>
@@ -558,7 +559,7 @@ export default function DocPanel({ open, onClose, api, roomId, wantedTitle, onAs
             </div>
           )}
           <div className="dg-doc-foot">
-            <span className="small dim">{words} {words === 1 ? "word" : "words"} · version {base.current.version}</span>
+            <span className="small dim">{words} {words === 1 ? "word" : "words"}</span>
             <span className="dg-doc-actions">
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
               <button type="button" className="dg-cv-chip dg-cv-copy" onClick={download}>Download</button>
