@@ -578,6 +578,28 @@ async def recent_events(pool: Any, sub: str, room_id: str, limit: int = 30) -> l
     return [_event_json(r, names, sub) for r in rows]
 
 
+async def earlier_events(pool: Any, sub: str, room_id: str, before_seq: int, limit: int = 30, query: str = "") -> list[dict[str, Any]]:
+    """Messages older than `before_seq`, oldest first, for an agent that decides it needs to see further back than its short memory.
+    With `query`, only messages whose text contains it (case-insensitive; LIKE characters are escaped, so a "%" is just a percent sign).
+    Membership is checked the same way as everywhere else, so another room's history is never reachable from here."""
+    room = await _member_room(pool, sub, room_id)
+    limit = max(1, min(int(limit or 30), 50))
+    before = max(1, int(before_seq or 1))
+    q = (query or "").strip()[:200]
+    if q:
+        like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        rows = await pool.fetch(
+            "SELECT * FROM room_events WHERE room_id = $1 AND seq < $2 AND kind = 'msg' AND body ILIKE $3 ESCAPE '\\' "
+            "ORDER BY seq DESC LIMIT $4", room["id"], before, like, limit)
+    else:
+        rows = await pool.fetch(
+            "SELECT * FROM room_events WHERE room_id = $1 AND seq < $2 AND kind = 'msg' ORDER BY seq DESC LIMIT $3",
+            room["id"], before, limit)
+    rows = list(reversed(rows))
+    names = await _names(pool, [r["sender_sub"] for r in rows])
+    return [_event_json(r, names, sub) for r in rows]
+
+
 class _Limiter:
     """A sliding window per person, in memory (one worker). Swappable in tests."""
 
