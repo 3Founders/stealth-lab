@@ -50,13 +50,17 @@ goes down by about the cost the app shows.
 
 ## Part 3: downloads
 
-**Where the file lives:** recommended is **GitHub Releases** on `3Founders/stealth-lab` (free, no size limit, fast). The website can't hold
-the file itself: GitHub refuses files over 100 MB in the repo, and Vercel charges for big downloads. The other option is Cloudflare R2
-(someone has to create the account). **Anuj decides.**
+**Decided (Anuj, 2026-11-04): anyone can download, and the code repo stays private.**
+
+**Where the file lives:** a release on a private repo can't be downloaded by the public, so the installer goes to a **separate public
+repo that holds only releases, no code** (for example `3Founders/kell-desktop`: a README and the release files). It is free, has no size
+limit, and electron-updater reads it directly. The website can't hold the file itself: GitHub refuses files over 100 MB in a repo, and
+Vercel charges for big downloads. (Cloudflare R2 would also work, but someone has to create the account; not needed.)
 
 **What to build:**
 
-1. **A release:** tag `desktop-v<version>`, the installer attached as the release file.
+1. **A release:** in the public releases-only repo, tag `v<version>`, the installer attached as the release file. Creating that repo
+   is Anuj's call (it is a new public place under the organization).
 2. **`kell.org.in/download`:** a page (or redirect) that sends the browser straight to the newest installer file. A new version only
    changes this link.
 3. **Download buttons** on the website pointing to `/download` (home page "Use it" section, and wherever Anuj wants).
@@ -74,7 +78,8 @@ the file itself: GitHub refuses files over 100 MB in the repo, and Vercel charge
 
 ## Part 4: automatic updates
 
-Add `electron-updater` with GitHub Releases as the source (`build.publish` in `desktop/package.json`). `npm run dist` then also makes
+Add `electron-updater` with GitHub Releases as the source (`build.publish` in `desktop/package.json`, pointing at the public
+releases-only repo, never the code repo). `npm run dist` then also makes
 `latest.yml`; upload it to the same release. The app checks for a new version on start and installs it when it closes. Without this,
 every fix means people download the app again.
 
@@ -86,10 +91,10 @@ every fix means people download the app again.
   avoids most of it). A certificate costs about $100-400 a year.
 - **macOS.** Needs a Mac to build on and an Apple developer account ($99 a year).
 
-## Two questions for Anuj before Part 3
+## Decided
 
-1. Who can download: invited teams first, or anyone (public)?
-2. Host: GitHub Releases (recommended) or Cloudflare R2?
+1. Who can download: **anyone**.
+2. Host: a **public releases-only GitHub repo**; the code repo stays private.
 
 ## Rules
 
