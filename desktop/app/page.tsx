@@ -12,8 +12,15 @@ import { useSpringScroll } from "@/components/chat/useSpringScroll"
 import { KellMark } from "@/components/chat/brand"
 import { springVars } from "@/lib/chat/spring"
 
-// The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab.
-type KellDesktop = { openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void }
+// The Electron preload's bridge (electron/preload.ts). Absent in a plain browser (`next dev`): sign-in links then open a tab
+// and the rooms are a link to the website's chat.
+type Rect = { x: number; y: number; width: number; height: number }
+type RoomsWho = { id: string; email: string | null } | null
+type KellDesktop = {
+  openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
+  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>
+  rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined> }
+}
 const desktop = () => (typeof window !== "undefined" ? (window as unknown as { kellDesktop?: KellDesktop }).kellDesktop : undefined)
 
 // A tool that needs a sign-in comes back from kell's gateway as JSON inside the tool's result:
@@ -35,7 +42,7 @@ type LedgerRow = { id: string; model?: string; providerID?: string; tokens?: str
 type FileDiff = { file: string; patch: string; additions: number; deletions: number; status: "added" | "deleted" | "modified" }
 type ToolCard = { name: string; source: "installed" | "registry"; url: string | null; needsSignIn: boolean }
 type Settings = {
-  signedIn: boolean; account: string | null; server: string | null
+  signedIn: boolean; account: string | null; subject?: string | null; server: string | null
   lane?: "organization" | "own-key" | "none"; gateway?: string | null
   models: { cheap: string | null; strong: string | null; fallback: string | null; mode: string | null }
   engine: { exe: string | null; directory: string | null }
@@ -76,6 +83,10 @@ export default function Home() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [consoleNote, setConsoleNote] = useState("")
   const [signinNote, setSigninNote] = useState("")
+  // The coding lane, or the team rooms (the website's chat in a view over the placeholder below; electron/rooms.ts).
+  const [pane, setPane] = useState<"code" | "rooms">("code")
+  const [roomsWho, setRoomsWho] = useState<RoomsWho | undefined>(undefined)   // undefined: not read yet
+  const roomsRef = useRef<HTMLDivElement>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const logContentRef = useRef<HTMLDivElement>(null)
   // The same spring scroll as the website chat: follows new text only while you are at the bottom, rubber-bands at the edges.
@@ -214,21 +225,43 @@ export default function Home() {
     setConsoleNote(j.output || j.error || "no answer")
   }
 
-  // kell login writes ~/.stealthlab/config.json; the app only polls settings until the token is there.
-  const signIn = async () => {
-    setSigninNote("A browser window will open. Approve there, then come back here.")
-    const started = await fetch("/api/signin", { method: "POST" }).then((r) => r.json()).catch(() => ({ error: "could not start kell login" }))
+  // One sign-in for the whole app: `kell login` (which writes ~/.stealthlab/config.json for the coding lane) prints its
+  // link, and the app opens it in the rooms' own cookie store, so signing in on kell's consent page signs the rooms in too.
+  // The page then polls settings until the token is there.
+  const signIn = async (again = false) => {
+    setSigninNote("Sign in in the window that opens.")
+    const started = await fetch("/api/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ again }) })
+      .then((r) => r.json()).catch(() => ({ error: "could not start kell login" }))
     if (started?.error) { setSigninNote(String(started.error)); return }
     if (started?.already) { setSigninNote("Already signed in."); return }
+    const d = desktop()
+    if (d) {
+      const ok = await d.openAccount(String(started.url))
+      if (!ok) { setSigninNote("The sign-in window was closed before it finished."); return }
+    } else {
+      window.open(String(started.url), "_blank", "noopener")
+    }
     const until = Date.now() + 120_000
     const tick = async () => {
       const s = await fetch("/api/settings").then((r) => r.json()).catch(() => null)
       if (s) setSettings(s)
-      if (s?.signedIn) { setSigninNote("Signed in."); return }
-      if (Date.now() > until) { setSigninNote("Still not signed in. Try again, or run `kell login` in a terminal."); return }
-      setTimeout(tick, 2000)
+      if (s?.signedIn && (!again || s.subject)) { setSigninNote(""); d?.rooms.reload(); return }
+      if (Date.now() > until) { setSigninNote("Still not signed in. Try again."); return }
+      setTimeout(tick, 1500)
     }
-    setTimeout(tick, 2000)
+    setTimeout(tick, 500)
+  }
+
+  // Sign out of everything: the coding lane's token and the rooms' session (and its cached copies) together, so the app
+  // is never half one account and half another.
+  const signOut = async () => {
+    setSigninNote("Signing out…")
+    const r = await fetch("/api/signin", { method: "DELETE" }).then((x) => x.json()).catch(() => ({ error: "could not run kell logout" }))
+    await desktop()?.signOutRooms()
+    setRoomsWho(null)
+    const s = await fetch("/api/settings").then((x) => x.json()).catch(() => null)
+    if (s) setSettings(s)
+    setSigninNote(r?.error ? String(r.error) : "Signed out.")
   }
 
   // One click: the sign-in opens in the app's own window (electron/signin.ts) and closes itself when the tool provider
@@ -259,6 +292,38 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resume, busy])
 
+  // The rooms view follows the placeholder's rectangle while the Rooms pane shows, and hides on the coding pane.
+  const roomsOn = pane === "rooms" && !!settings?.signedIn
+  useEffect(() => {
+    const d = desktop()
+    const el = roomsRef.current
+    if (!d) return
+    if (!roomsOn || !el) { d.rooms.show(null); return }
+    const place = () => { const r = el.getBoundingClientRect(); d.rooms.show({ x: r.left, y: r.top, width: r.width, height: r.height }) }
+    place()
+    const ro = new ResizeObserver(place)
+    ro.observe(el)
+    window.addEventListener("resize", place)
+    return () => { ro.disconnect(); window.removeEventListener("resize", place); d.rooms.show(null) }
+  }, [roomsOn])
+
+  // Same account in both lanes: read who the rooms are signed in as while they show (someone can sign in as another person
+  // inside them), and keep them in the app's light/dark choice.
+  useEffect(() => {
+    const d = desktop()
+    if (!d || !roomsOn) return
+    let live = true
+    const read = () => d.rooms.account().then((w) => { if (live) setRoomsWho(w) }).catch(() => undefined)
+    void read()
+    const t = setInterval(read, 4000)
+    const theme = () => d.rooms.theme(document.documentElement.dataset.theme === "dark" ? "dark" : "light")
+    theme()
+    const mo = new MutationObserver(theme)
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+    return () => { live = false; clearInterval(t); mo.disconnect() }
+  }, [roomsOn])
+  const otherAccount = !!(settings?.signedIn && settings.subject && roomsWho && roomsWho.id !== settings.subject)
+
   const isCheap = (r: LedgerRow) => !!settings?.models.cheap && `${r.providerID}/${r.model}` === settings.models.cheap
   const readEngine = engine?.up && !!directory
   const words = text.trim() ? text.trim().split(/\s+/).length : 0
@@ -269,7 +334,40 @@ export default function Home() {
   return (
     <section className="dg-page dk-page" style={springVars() as React.CSSProperties}>
       <ThemeWatcher />
-      <div className="dg-shell">
+      <nav className="dk-switch" aria-label="Code or rooms">
+        <div role="tablist">
+          <button type="button" role="tab" aria-selected={pane === "code"} onClick={() => setPane("code")}>Code</button>
+          <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
+        </div>
+        <span className="dk-who">{settings?.signedIn ? <>Signed in as <b>{settings.account || "your kell account"}</b></> : "Not signed in"}</span>
+      </nav>
+      {otherAccount && (
+        <div className="dk-err dk-mismatch" role="alert">
+          <p style={{ margin: 0 }}>The rooms are signed in as <b>{roomsWho?.email || "another account"}</b>, the rest of the app as <b>{settings?.account || "your kell account"}</b>. Sign out of both, then sign in once with the account you want.</p>
+          <div className="dk-row" style={{ margin: 0 }}><button type="button" className="btn-ink" onClick={() => void signOut()}>Sign out of both</button></div>
+        </div>
+      )}
+      {roomsOn && roomsWho === null && (
+        <div className="dk-err dk-mismatch" role="status">
+          <p style={{ margin: 0 }}>Your rooms are not signed in yet. Sign in once more with <b>{settings?.account || "your kell account"}</b> and the coding agent and the rooms share it.</p>
+          <div className="dk-row" style={{ margin: 0 }}><button type="button" className="btn-ink" onClick={() => void signIn(true)}>Sign in to the rooms</button></div>
+          {signinNote && <p className="dk-note" style={{ margin: 0 }}>{signinNote}</p>}
+        </div>
+      )}
+      {pane === "rooms" && (
+        <div className="dk-rooms" ref={roomsRef} aria-label="Team rooms">
+          {(!settings?.signedIn || !desktop()) && (
+            <div className="dk-rooms-in">
+              <b>Your team&rsquo;s rooms</b>
+              <p>People, the agent of your choice and your pal&rsquo;s agents, in one room. Sign in once: the same account runs your coding agent here and your rooms.</p>
+              {!settings?.signedIn && <div className="dk-row" style={{ justifyContent: "center" }}><button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button></div>}
+              {signinNote && <p className="dk-note">{signinNote}</p>}
+              {!desktop() && <p className="dk-note"><a href="https://www.kell.org.in/chat" target="_blank" rel="noopener">Open the rooms on the website</a></p>}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="dg-shell" hidden={pane !== "code"}>
         <aside className="dg-side" aria-label="Project, models and account">
           <div className="dg-brand">
             <img className="wm-light" src="/kel-wordmark.png" alt="keळ" style={{ height: 38, width: "auto" }} />
@@ -320,6 +418,7 @@ export default function Home() {
           )}
           <div className="dk-row">
             {settings && !settings.signedIn && <button type="button" className="btn-ink" onClick={() => void signIn()}>Sign in</button>}
+            {settings?.signedIn && <button type="button" className="btn-line" onClick={() => void signOut()}>Sign out</button>}
             <button type="button" className="btn-line" onClick={openConsole}>Open console</button>
           </div>
           {signinNote && <p className="dk-note" role="status">{signinNote}</p>}

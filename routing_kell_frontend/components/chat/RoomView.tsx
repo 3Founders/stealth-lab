@@ -62,7 +62,8 @@ const STATUS: Record<RelayTask["status"], string> = {
   needs_approval: "Waiting for your approval", queued: "Waiting for the agent", claimed: "Working", done: "Done", failed: "Failed", cancelled: "Cancelled",
 };
 
-type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number };
+// A notice with `signIn` is a tool's sign-in, shown to you only: a button that opens it in a small window, not a raw link.
+type Line = { kind: "msg"; m: GroupMessage } | { kind: "notice"; id: string; text: string; t: number; signIn?: string };
 
 /** A notice's text with any http(s) link made clickable: the sign-in and consent links are meant to be opened. */
 function withLinks(text: string) {
@@ -271,7 +272,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
       if (out.sign_in?.length) {
         signInRetry.current = { room: r, text, who };   // return from the sign-in and the same request runs again
-        for (const link of out.sign_in) note(`Sign in to that tool here (10 minutes): ${link}`, r);
+        for (const link of out.sign_in) push(r, { kind: "notice", id: broker.newId(), text: "That tool needs you to sign in once. Your request runs again by itself after.", t: Date.now(), signIn: link });
       }
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text
@@ -300,24 +301,47 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         window.setTimeout(() => void askKellRef.current?.(r, followUp, who), 0);
       }
     }
-  }, [roomsAgent, note, push]);
+  }, [roomsAgent, note, push, broker]);
   askKellRef.current = askKell;
-  // "Use it just after kell says": the sign-in link opens in another tab; when the person comes back to this one, run the
-  // request that hit the sign-in wall again, once. A short wait lets the callback finish sealing the token first.
-  useEffect(() => {
-    const retry = () => {
-      if (document.visibilityState === "hidden") return;
-      const p = signInRetry.current;
-      if (!p) return;
-      signInRetry.current = null;
-      window.setTimeout(() => {
-        if (roomRef.current === p.room) void askKellRef.current?.(p.room, p.text, p.who);
-      }, 900);
-    };
-    document.addEventListener("visibilitychange", retry);
-    window.addEventListener("focus", retry);
-    return () => { document.removeEventListener("visibilitychange", retry); window.removeEventListener("focus", retry); };
+  // One click, like the app: the tool's sign-in opens in a small window, and when it is done (the window closes, or the kell
+  // app says its own sign-in window finished) the request that hit the sign-in wall runs again, once. A short wait lets the
+  // callback finish sealing the token first. Coming back to this tab from a link opened some other way does the same.
+  const signInWindow = useRef<Window | null>(null);
+  const retrySignIn = useCallback(() => {
+    const p = signInRetry.current;
+    if (!p) return;
+    signInRetry.current = null;
+    window.setTimeout(() => {
+      if (roomRef.current === p.room) void askKellRef.current?.(p.room, p.text, p.who);
+    }, 900);
   }, []);
+  const openToolSignIn = useCallback((link: string) => {
+    const w = window.open(link, "kell-tool-signin", "popup,width=520,height=720");
+    // Inside the kell app the app opens its own sign-in window instead (w is null) and sends kell:tool-signin-done.
+    if (!w) {
+      if (!(window as unknown as { __kellDesktop?: boolean }).__kellDesktop) note(`Your browser blocked the sign-in window. Allow pop-ups for keळ, or open this link: ${link}`);
+      return;
+    }
+    signInWindow.current = w;
+    const t = window.setInterval(() => {
+      if (!w.closed) return;
+      window.clearInterval(t);
+      signInWindow.current = null;
+      retrySignIn();
+    }, 600);
+  }, [note, retrySignIn]);
+  useEffect(() => {
+    const back = () => {
+      if (document.visibilityState === "hidden") return;
+      if (signInWindow.current && !signInWindow.current.closed) return;   // still signing in: the window's close will retry
+      retrySignIn();
+    };
+    const fromApp = () => retrySignIn();
+    document.addEventListener("visibilitychange", back);
+    window.addEventListener("focus", back);
+    window.addEventListener("kell:tool-signin-done", fromApp);
+    return () => { document.removeEventListener("visibilitychange", back); window.removeEventListener("focus", back); window.removeEventListener("kell:tool-signin-done", fromApp); };
+  }, [retrySignIn]);
   /** The streamed bubble has been fully revealed: the posted message takes its place. Safe to call twice. */
   const flushFinal = useCallback((who: string) => {
     const e = streamingRef.current[who];
@@ -594,7 +618,14 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     for (const s of seq) {
       if (s.kind !== "run") {
         const l = s.l;
-        out.push({ t: l.t, key: l.id, node: <MessageScroller.Item key={l.id} className="dg-notice" role="status">{withLinks(l.text)}</MessageScroller.Item> });
+        out.push({ t: l.t, key: l.id, node: l.signIn
+          ? (
+            <MessageScroller.Item key={l.id} className="dg-notice dg-signin-notice" role="status">
+              <span>{l.text}</span>
+              <button type="button" onClick={() => openToolSignIn(l.signIn!)}>Sign in</button>
+            </MessageScroller.Item>
+          )
+          : <MessageScroller.Item key={l.id} className="dg-notice" role="status">{withLinks(l.text)}</MessageScroller.Item> });
         continue;
       }
       const run = s.run;

@@ -78,3 +78,22 @@
 :root[data-theme="dark"] .dk-diff .add { color: #8fd3a8; } :root[data-theme="dark"] .dk-diff .del { color: #e6a0a0; }
 :root[data-theme="dark"] .dk-file .stat .add { color: #6ee7a0; } :root[data-theme="dark"] .dk-file .stat .del { color: #ff8a80; }
 :root[data-theme="dark"] .dk-diff .hunk { background: rgba(255, 255, 255, .04); }
+
+/* Code / Rooms: a slim bar above both panes. The rooms are the website's chat in a view the app lays over .dk-rooms
+   (electron/rooms.ts); the bar, the account and the mismatch notice stay the app's own. */
+.dk-page { display: flex; flex-direction: column; height: 100dvh; }
+.dk-page .dg-shell { height: auto; flex: 1; min-height: 0; }
+.dk-page .dg-shell[hidden] { display: none; }
+.dk-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; flex: none; padding: 0 12px;
+  border-bottom: 1px solid var(--rule); background: var(--paper); }
+.dk-switch [role="tablist"] { display: flex; gap: 4px; }
+.dk-switch button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: var(--grey); cursor: pointer; }
+.dk-switch button[aria-selected="true"] { background: var(--yellow); color: #171717; border-color: var(--ink); }
+.dk-who { font-size: 12.5px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dk-who b { color: var(--ink); font-weight: 500; }
+.dk-mismatch { margin: 8px 12px 0; display: grid; gap: 8px; flex: none; }
+.dk-rooms { flex: 1; min-height: 0; display: grid; place-items: center; background: var(--surface); }
+.dk-rooms-in { max-width: 420px; text-align: center; padding: 24px; display: grid; gap: 8px; }
+.dk-rooms-in b { font-size: 18px; }
+.dk-rooms-in p { margin: 0; color: var(--grey); font-size: 14px; line-height: 1.5; }

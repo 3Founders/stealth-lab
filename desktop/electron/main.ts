@@ -7,6 +7,7 @@
 // engine it starts through lib/engine.ts's /api routes — dies with the app.
 import { app, BrowserWindow, ipcMain, shell } from "electron"
 import { isSignInLink, openSignIn } from "./signin"
+import { openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import net from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
 import path from "node:path"
@@ -69,6 +70,13 @@ if (!app.requestSingleInstanceLock()) {
       else if (/^https?:/.test(url)) void shell.openExternal(url)
     })
     ipcMain.on("kell:open-signin", (_e, url: string) => openSignIn(win, String(url), signInDone))
+    // The team rooms (electron/rooms.ts) and the one account sign-in shared by the coding lane and the rooms.
+    ipcMain.on("kell:rooms-bounds", (_e, rect) => { if (win) setRoomsBounds(win, rect && typeof rect === "object" ? rect : null) })
+    ipcMain.on("kell:rooms-reload", () => reloadRooms())
+    ipcMain.on("kell:rooms-theme", (_e, t) => setRoomsTheme(t === "dark" ? "dark" : "light"))
+    ipcMain.handle("kell:rooms-account", () => roomsAccount())
+    ipcMain.handle("kell:rooms-signout", () => signOutRooms())
+    ipcMain.handle("kell:account-open", (_e, url: string) => openAccountSignIn(win, String(url)))
     // Register the show handler BEFORE the load: "ready-to-show" can fire while loadURL is still resolving, and a handler
     // added after the await then never runs, leaving the window hidden forever (the installed app looked like it did
     // nothing, 2026-11-03). show() is idempotent, so it is also called once the load has finished.

@@ -48,9 +48,15 @@ export async function GET() {
     lane = "own-key"
   }
 
+  // Who the saved token belongs to, read from its payload for display and for the app's same-account check with the
+  // rooms only (the token is not verified here and never leaves this route; the server verifies it on every call).
+  let who: { sub?: string; email?: string } = {}
+  try { who = JSON.parse(Buffer.from(String(cfg.token).split(".")[1], "base64url").toString("utf8")) || {} } catch { /* not a JWT */ }
+
   return NextResponse.json({
-    signedIn: !!cfg.token && !!cfg.url,
-    account: cfg.email || cfg.account || null,          // kell login's email, when the server's config carries one
+    signedIn: !!cfg.token,                               // no saved url is fine: the CLI falls back to its default server
+    account: who.email || cfg.email || cfg.account || null,
+    subject: who.sub || null,
     server,
     lane,
     gateway,

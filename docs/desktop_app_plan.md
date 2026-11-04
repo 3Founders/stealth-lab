@@ -147,9 +147,27 @@ live against the `esc` fixture (19 events, 13.2 s, clean `done`). Verified facts
   needs `opencode service set port <other>` (the profile uses 28941; row in new_user_setup.md). SSE through
   PowerShell's `Invoke-WebRequest` looks like zero events â€” test with `curl.exe -N`.
 
+## Rooms and the one account (2026-11-04)
+
+- **Rooms:** a Code / Rooms switch above the app. Rooms is the website's own chat (`<site>/chat`) in a WebContentsView laid
+  over the page's placeholder (`electron/rooms.ts`), cookie store `persist:kell-web`. People, agents, the canvas and the
+  encrypted sync are the website's, nothing re-implemented. Site links and the sign-in providers stay in the view; other
+  links go to the system browser.
+- **One account:** "Sign in" runs `kell login --no-browser` and opens its authorize link in the rooms' cookie store, so the
+  one sign-in on kell's consent page (www.kell.org.in) leaves the website session for the rooms and hands the CLI its code.
+  "Sign out" runs `kell logout` and clears the site's storage in that store (cached chat keys included). If the coding
+  lane is signed in but the rooms are not (signed in earlier through a browser), a bar offers the same sign-in once more.
+  If the two name different accounts (the token's `sub` against the site session's user id), the app says so and offers
+  "Sign out of both".
+- **Tool sign-in in the rooms:** a tool's sign-in link from the rooms opens the app's tool sign-in window
+  (`electron/signin.ts`); when it finishes, the rooms page gets `kell:tool-signin-done` and runs the request again. On the
+  website the same notice is a "Sign in" button that opens a small window; closing it runs the request again.
+- **Seen:** the switch, the account line, the rooms view loading www.kell.org.in/chat, the "not signed in yet" bar, and
+  the sign-in window opening on www.kell.org.in/sign-in -> /oauth/consent (dev Electron, CDP screenshots). **Not seen:** a
+  completed sign-in (needs the owner's account), a tool sign-in from a room.
+
 ## Later
 
-- Team rooms from the website (`routing_kell_frontend`, rooms API) as a side panel.
 - Session history search; notifications when a long run finishes.
 
 ## Opens (for the owners)
