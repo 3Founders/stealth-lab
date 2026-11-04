@@ -60,7 +60,7 @@ export default function FilmPlayer() {
     <section className="film-wrap frame" aria-label="The keळ film">
       <div className="film-box" ref={box}>
         <video
-          ref={video} src="/films/kel-film.mp4" poster="/films/kel-film.jpg" muted playsInline preload="metadata"
+          ref={video} src="/films/kel-film-2.mp4" poster="/films/kel-film-2.jpg" muted playsInline preload="metadata"
           onClick={toggle} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
           onTimeUpdate={(e) => setProgress(e.currentTarget.currentTime / (e.currentTarget.duration || 1))}
         />
