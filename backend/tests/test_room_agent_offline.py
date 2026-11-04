@@ -148,6 +148,22 @@ async def test_tool_rounds_stop_at_the_limit():
     out = await room_agent.converse("loop please", [], model_call=model, find_tools=_some_tools, use_tool=use_tool)
     assert len(model.seen) == room_agent.MAX_ROUNDS + 1
     assert out.tools_used.count("io.github.upstash/context7/get_docs") == room_agent.MAX_ROUNDS
+    # The last round offers no tools and says it is the last; a model that still asks for one gets "I ran ... carry on", not a blank answer.
+    last_messages, last_tools = model.seen[-1]
+    assert last_tools == [] and last_messages[-1]["content"] == room_agent.LAST_ROUND_NOTE
+    assert out.text.startswith("I ran get_docs") and "carry on" in out.text
+
+
+@pytest.mark.asyncio
+async def test_the_last_round_gets_a_written_answer_from_what_the_tools_found():
+    replies = [_reply(tool_calls=[_call(cid=f"call_{i}")]) for i in range(room_agent.MAX_ROUNDS)] + [_reply("Here is what I found: v15 notes.")]
+    model = Model(*replies)
+
+    async def use_tool(server, name, args):
+        return "v15 notes"
+
+    out = await room_agent.converse("research this", [], model_call=model, find_tools=_some_tools, use_tool=use_tool)
+    assert out.text == "Here is what I found: v15 notes."
 
 
 def test_transcript_keeps_the_room_in_order_and_marks_this_agent_as_the_assistant():

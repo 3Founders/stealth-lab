@@ -342,6 +342,31 @@ _CONSENT_FOR_MODEL = json.dumps({"consent_required": True, "note": "kell has sho
                                  "Do not write a link. Say in one short sentence that it needs their approval first."})
 
 
+# The last round offers no tools and says so: offered tools there, a model in the middle of a search asked for one more and wrote nothing,
+# and the room got "I do not have an answer for that." after six searches (a deep-research request, 2026-11-04).
+LAST_ROUND_NOTE = ("(kell: that was the last tool step for this message. Answer now from what the tools returned: give what you found, "
+                   "with its sources, and say in one line what is still missing and that the person can ask you to carry on.)")
+
+
+def _offer(round_no: int, max_rounds: int, search_first: bool, creates: bool, worked: bool, tools: list[dict[str, Any]],
+           messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The tools offered this round. The last round offers none, after a note that it is the last (added to `messages`)."""
+    if round_no >= max_rounds and round_no > 0:
+        messages.append({"role": "user", "content": LAST_ROUND_NOTE})
+        return []
+    if round_no == 0 and search_first:
+        return [DISCOVER_TOOLS]
+    return must_work_tools() if (creates and not worked) else tools
+
+
+def _ran_out(content: str, used: list[str]) -> str:
+    """An answer that came back empty after tools ran: say what ran instead of "I do not have an answer"."""
+    if content.strip() or not used:
+        return content
+    ran = ", ".join(dict.fromkeys(u.rsplit("/", 1)[-1] for u in used if u != "discover_tools")) or "a tool search"
+    return f"I ran {ran} but stopped before I could write the answer. Say \"carry on\" and I will pick it up from there."
+
+
 def _for_model(result: Any) -> str:
     """A tool result as the model gets it: a consent or sign-in answer without its link."""
     link, sign_in = _consent(result)
@@ -464,11 +489,12 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
 
     for round_no in range(max_rounds + 1):
         # The first round of a task offers only discover_tools, which the model endpoint turns into a forced call: the search always happens.
-        reply = await model_call(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else (must_work_tools() if (creates and not worked) else tools))
+        reply = await model_call(messages, _offer(round_no, max_rounds, search_first, creates, worked, tools, messages))
         message = ((reply.get("choices") or [{}])[0] or {}).get("message") or {}
         calls = message.get("tool_calls") or []
         content = strip_tool_markup(str(message.get("content") or ""))
         if not calls or round_no >= max_rounds:
+            content = _ran_out(content, used)
             return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins)
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
@@ -517,7 +543,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
         calls: dict[int, dict[str, Any]] = {}
         markup = MarkupFilter()
         try:
-            async for chunk in model_stream(messages, [DISCOVER_TOOLS] if (round_no == 0 and search_first) else (must_work_tools() if (creates and not worked) else tools)):
+            async for chunk in model_stream(messages, _offer(round_no, max_rounds, search_first, creates, worked, tools, messages)):
                 choice = (chunk.get("choices") or [{}])[0] or {}
                 delta = choice.get("delta") or {}
                 piece = delta.get("content")
@@ -554,6 +580,9 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
         content = "".join(parts).strip()
         tool_calls = [calls[i] for i in sorted(calls)]
         if not tool_calls or round_no >= max_rounds:
+            if not content and not made and used:
+                content = _ran_out(content, used)
+                yield ("delta", content)
             yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins))
             return
         messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
