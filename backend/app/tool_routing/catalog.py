@@ -89,7 +89,7 @@ def card_from_registry(s: dict, expansion: str = "", probe: Optional[dict] = Non
                         "probe": (probe or {}).get("status") or ("none" if not s.get("remote_urls") else "unprobed"),
                         "tool_count": (probe or {}).get("tool_count"), "owner_count": owner_count,
                         "stars": int((repo or {}).get("stars") or 0), "archived": bool((repo or {}).get("archived")),
-                        "verified": verified_publisher(name, str(s.get("repository") or ""), str(s.get("website") or "")),
+                        "verified": _verified(name, s, int((repo or {}).get("stars") or 0)),
                         "install": install_command(s), "connector_url": connector_url(s)})
     return _with_goals(c)
 
@@ -158,10 +158,48 @@ def publisher(c: ToolCard) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
-def verified_publisher(name: str, repository: str, website: str) -> bool:
+_PRODUCT_TAIL = re.compile(r"[-_.]?(mcp|server|mcp[-_]server|remote|official|api)$")
+
+
+def product(c: ToolCard) -> str:
+    """The product a registry server is named for: io.github.pollinations/exa -> exa, ai.exa/exa -> exa, io.github.x/exa-mcp-server -> exa."""
+    tail = c.name.rsplit("/", 1)[-1].lower() if c.source == "registry" else ""
+    for _ in range(2):
+        tail = _PRODUCT_TAIL.sub("", tail)
+    return tail
+
+
+def official_for(copy: ToolCard, cards: list[ToolCard]) -> Optional[ToolCard]:
+    """The product's own server when `copy` is someone else's server for it: a verified card whose publisher is the product
+    (ai.exa/exa for io.github.pollinations/exa). None when `copy` is itself the official one or no official one is known."""
+    p = product(copy)
+    if len(p) < 3 or publisher(copy) == p:
+        return None
+    for c in cards:
+        if c is not copy and c.source == "registry" and publisher(c) == p and product(c) == p and c.extra.get("verified"):
+            return c
+    return None
+
+
+# A server proven only by running on its namespace's domain (no repository or website there) also needs this many stars: the rule
+# alone made ~1,500 more servers runnable through kell, most of them small and unknown; with it, 25 (Exa, Microsoft Learn, Monday...).
+REMOTE_VERIFY_MIN_STARS = 20
+
+
+def _verified(name: str, s: dict, stars: int) -> bool:
+    repository, website = str(s.get("repository") or ""), str(s.get("website") or "")
+    if verified_publisher(name, repository, website):
+        return True
+    remotes = " ".join(str(r.get("url") or "") for r in s.get("remote_urls") or [] if isinstance(r, dict))
+    return stars >= REMOTE_VERIFY_MIN_STARS and verified_publisher(name, repository, website, remotes)
+
+
+def verified_publisher(name: str, repository: str, website: str, remotes: str = "") -> bool:
     """The registry name's namespace is the publisher's own: io.github.<org>/... with the repository under that org, or
-    a reverse domain (com.cloudflare/...) whose domain is the repository's or website's host. The registry checks the
-    namespace by DNS or GitHub at publish time; this checks the card points where the namespace says."""
+    a reverse domain (com.cloudflare/...) whose domain is the repository's, website's or remote server's host. The registry
+    checks the namespace by DNS or GitHub at publish time; this checks the card points where the namespace says. The remote
+    counts because Exa's own server (ai.exa/exa at mcp.exa.ai, repository under exa-labs) was read as unverified, and a
+    reseller's copy of it was offered instead (2026-11-04)."""
     ns = name.split("/")[0].lower()
     repo, site = repository.lower(), website.lower()
     if ns.startswith("io.github."):
@@ -173,7 +211,7 @@ def verified_publisher(name: str, repository: str, website: str) -> bool:
     domain = ".".join(reversed(labels[:2])) if len(labels) >= 2 else ""
     if not domain:
         return False
-    hosts = re.findall(r"//([a-z0-9.-]+)", site + " " + repo)
+    hosts = re.findall(r"//([a-z0-9.-]+)", site + " " + repo + " " + remotes.lower())
     return any(h == domain or h.endswith("." + domain) for h in hosts) or f"github.com/{labels[1]}/" in repo + "/"
 
 
