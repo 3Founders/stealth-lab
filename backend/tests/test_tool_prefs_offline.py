@@ -54,6 +54,12 @@ def test_a_clear_short_message_sets_the_preference():
     assert prefs.preference_from_text("find me a tool that needs a sign-in for slides") is None
     assert prefs.preference_from_text("make a deck about oauth sign-in") is None
     assert prefs.preference_from_text("x" * 300) is None
+    # a task that mentions a tool and a sign-in is not a setting (it used to be, and the request was dropped or the setting flipped)
+    assert prefs.preference_from_text("ok I did the sign in, use the tool now") is None
+    assert prefs.preference_from_text("the tool is not signing in, try again") is None
+    assert prefs.preference_from_text("don't use the tool yet, I'll log in first") is None
+    assert prefs.preference_from_text("can you use tools that need a sign-in?") is None
+    assert prefs.preference_from_text("stop using sign-in tools") is False
 
 
 def test_the_default_is_on_and_the_setting_round_trips():

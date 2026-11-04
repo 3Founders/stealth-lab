@@ -301,7 +301,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         };
         held = true;
         setStreaming((p) => ({ ...p, [who]: { room: r, text: out.text, final: m } }));
-      } else if (!out.posted) note(`${nameOf(who)} answered but could not post it in the room.`, r);
+      // Not posted: an answer meant for you only (a setting it changed, like "tools that need a sign-in are off"), or one the room would
+      // not take. Either way you see what it said, instead of losing it behind "could not post".
+      } else if (!out.posted) note(out.text.trim() ? out.text.trim() : `${nameOf(who)} answered but could not post it in the room.`, r);
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") { queues.current = drain(queues.current, key).rest; setQueueView(queues.current); note("Stopped.", r); }
       else if (err instanceof RoomsApiError && err.status === 401) note(`Sign in to ask ${nameOf(who)}.`, r);

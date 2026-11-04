@@ -18,19 +18,28 @@ MAX_SETTING_TEXT = 200
 
 _OFF = re.compile(r"\b(no|not|don'?t|do not|stop|disable|turn off|without|never)\b", re.I)
 _ON = re.compile(r"\b(allow|enable|turn on|use|ok|okay|yes)\b", re.I)
-_SIGNIN = re.compile(r"\b(sign[ -]?in|signin|log[ -]?in|login|oauth)\b", re.I)
-_TOOL = re.compile(r"\b(tools?|servers?|connectors?)\b", re.I)
+_SIGNIN = r"(?:sign[ -]?in|signin|log[ -]?in|login|oauth)"
+_KIND = r"(?:tools?|servers?|connectors?)"
+# The setting itself must be named: "tools that need a sign-in", "connectors which require oauth", "sign-in tools". A message that only
+# mentions a tool and a sign-in ("ok I did the sign in, use the tool now", "the tool is not signing in") is a task, and must reach the
+# agent: treating it as a setting dropped the request and could even turn sign-in tools off (2026-11-04).
+_SETTING = re.compile(rf"\b(?:{_KIND}\s+(?:that|which)\s+(?:needs?|requires?|asks? for)\s+(?:an?\s+)?{_SIGNIN}|{_SIGNIN}\s+{_KIND})\b", re.I)
 
 
 def preference_from_text(text: str) -> Optional[bool]:
-    """True to allow sign-in tools, False to refuse them, None when the message is not a settings instruction."""
+    """True to allow sign-in tools, False to refuse them, None when the message is not a settings instruction: it must name the setting
+    ("tools that need a sign-in"), with the allow or stop word before it, and not be a question."""
     t = " ".join(str(text or "").split())
-    if not t or len(t) > MAX_SETTING_TEXT or not _TOOL.search(t) or not _SIGNIN.search(t):
+    if not t or len(t) > MAX_SETTING_TEXT or t.endswith("?"):
         return None
+    m = _SETTING.search(t)
+    if m is None:
+        return None
+    before = t[:m.start()]
     # "don't use tools that need a sign-in" has both an off word and "use"; the off word wins.
-    if _OFF.search(t):
+    if _OFF.search(before):
         return False
-    if _ON.search(t):
+    if _ON.search(before):
         return True
     return None
 
