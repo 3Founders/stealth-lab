@@ -262,7 +262,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const out = await roomsAgent.agentStream(id, text, (delta) => {
         if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: ((p[who]?.text) ?? "") + delta } }));
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
-      }, ctl.signal, who, presetsRef.current[who],
+      }, ctl.signal, who, [presetsRef.current[who], takeStandIn()].filter(Boolean).join(" ") || undefined,
       temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined,
       canvasOpenRef.current && r === roomRef.current && canvasContextRef.current ? { ...canvasContextRef.current, ...(selectionRef.current ? { selection: selectionRef.current } : {}) } : null);   // the canvas you have open (and the part you highlighted), so "make it shorter" edits it
       selectionRef.current = "";
@@ -746,6 +746,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const canvasContextRef = useRef<{ title: string; kind: string; text: string } | null>(null);
+  const standInRef = useRef("");                        // for the next ask only: kell is answering in the place of an agent that is not connected
+  const takeStandIn = () => { const t = standInRef.current; standInRef.current = ""; return t; };
   const selectionRef = useRef("");                      // the part of the canvas highlighted when "Ask kell to edit" was pressed, for the next ask only
   const canvasOpenRef = useRef(false);
   canvasOpenRef.current = canvasOpen;
@@ -1091,26 +1093,34 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     const relayNames = relayAgents.flatMap((a) => (a.owner ? [relayKey(a), `${a.owner}/${a.name}`.toLowerCase()] : [relayKey(a)]));
     const route = routeMessage(line, { local: agents, relay: relayNames, people: peopleHandles, follow });
     const toAgent = route.toRelay.length && !/@[a-z0-9]/i.test(line) ? `@${route.toRelay[0]} ${line}` : line;
+    // A connected agent (Claude on the web, Claude Code) gets the question as a task. One that is not connected right now does not hold it up:
+    // kell answers at once instead, so nobody needs Claude to be running to get a reply.
+    let standIn = false;
     if (route.toRelay.length) {
       if (pictures?.length) note("Pictures can't go to connector agents yet, so only the text was sent to them.");
+      let offlineNames: string[] = [];
       try {
-        const r = await api.send(toAgent, room, false, infoRef.current[room]?.id);
+        const r = await api.send(toAgent, room, false, infoRef.current[room]?.id, true);
         setTasksByRoom((p) => ({ ...p, [room]: mergeTasks(p[room] ?? [], r.tasks) }));
+        offlineNames = r.offline ?? [];
       } catch (err) { note(err instanceof Error ? err.message : "That didn't send."); }
-      const offline = route.toRelay.filter((n) => !relayAgents.find((a) => relayKey(a) === n || `${a.owner}/${a.name}`.toLowerCase() === n)?.online);
-      if (offline.length) note(`${offline.join(", ")} ${offline.length === 1 ? "is" : "are"} offline; the message waits in the inbox for when it starts.`);
-      if (!route.localMentions.length && !route.asksKell) return;
+      if (offlineNames.length) {
+        note(`${offlineNames.join(", ")} ${offlineNames.length === 1 ? "is" : "are"} not connected right now, so kell is answering this one. A connected agent gets the question directly.`);
+        standInRef.current = `${offlineNames.join(", ")} ${offlineNames.length === 1 ? "is" : "are"} not connected right now, so you are answering in ${offlineNames.length === 1 ? "its" : "their"} place. Say that in a few words, then answer the question as well as you can yourself; do not say you cannot reach ${offlineNames.length === 1 ? "it" : "them"}.`;
+        standIn = true;
+      }
+      if (!route.localMentions.length && !route.asksKell && !standIn) return;
     } else if (route.unknown.length && !route.localMentions.length) {
       note(`No agent named ${route.unknown.join(", ")}. Add one with + Add agent.`);
       return;                                        // an unknown @name is never handed to @kell
     }
     const m: GroupMessage = {
       id: broker.newId(), roomId: room, sender: HUMAN,
-      recipients: route.toRelay.length ? route.localMentions : route.defaultToKell ? ["@kell"] : recipientsFor(line),
+      recipients: standIn ? ["@kell"] : route.toRelay.length ? route.localMentions : route.defaultToKell ? ["@kell"] : recipientsFor(line),
       payload: { ...toMcpPayload(line), ...(pictures?.length ? { attachments: pictures } : {}) }, timestamp: Date.now(), depthCounter: 0,
     };
     await broker.send(m);
-    if (route.asksKell) void askKell(room, line);
+    if (route.asksKell || standIn) void askKell(room, line);
     for (const h of route.localMentions) if (h !== "@kell") void askKell(room, line, h);
   };
 

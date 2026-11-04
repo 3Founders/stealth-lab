@@ -152,7 +152,8 @@ def register(server: Any, gate: Gate, pool_getter: Callable[[], Any]) -> None:
         data = await body_of(request)
         out = await dg.post_message(pool, subject, str(data.get("text", "")), data.get("room"),
                                     needs_approval=bool(data.get("needs_approval", False)),
-                                    room_id=str(data["room_id"]) if data.get("room_id") else None)
+                                    room_id=str(data["room_id"]) if data.get("room_id") else None,
+                                    only_online=bool(data.get("only_online", False)))
         return _json(request, out, 201 if out["tasks"] else 200)
 
     @server.custom_route("/v1/delegate/tasks", methods=["GET", "OPTIONS"], include_in_schema=False)

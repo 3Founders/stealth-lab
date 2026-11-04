@@ -209,7 +209,8 @@ async def _room_for(pool: Any, sub: str, room_id: Optional[str], label: str) -> 
 
 
 async def post_message(pool: Any, owner_sub: str, text: str, room: Optional[str] = None,
-                       needs_approval: bool = False, from_handle: str = "@me", room_id: Optional[str] = None) -> dict[str, Any]:
+                       needs_approval: bool = False, from_handle: str = "@me", room_id: Optional[str] = None,
+                       only_online: bool = False) -> dict[str, Any]:
     """A line from a person in a room: one task per live agent it mentions. ``@claude`` is the sender's own claude; ``@alice/claude`` is Alice's,
     if Alice is in the same room (anyone in a room can call anyone's agent there; the agent's owner still sees and answers every task).
     A line that mentions nobody (or only unknown names) creates no task and says so."""
@@ -255,9 +256,17 @@ async def post_message(pool: Any, owner_sub: str, text: str, room: Optional[str]
             targets.append((shown, agent))
 
     tasks = []
+    offline: list[str] = []
     asked_by = from_handle if from_handle and from_handle != "@me" else f"@{my_label}"
-    for _shown, agent in targets:
+    now = datetime.now(timezone.utc)
+    for shown, agent in targets:
         owner = agent["owner_sub"]
+        # An agent that is not connected right now does not hold the question: with only_online the task is not queued, and the caller is told
+        # which agents were offline so someone else (kell) can answer at once. Claude does not have to be running for a message to get an answer.
+        seen = agent["last_seen"]
+        if only_online and not (seen and now - seen <= ONLINE_WINDOW):
+            offline.append(shown)
+            continue
         # Someone else's text runs in your agent with your tools, so a task from another person waits for its owner's OK (the approve button); a
         # person's own tasks go straight through unless they asked for approval.
         status = "needs_approval" if (needs_approval or owner != sender) else "queued"
@@ -270,7 +279,7 @@ async def post_message(pool: Any, owner_sub: str, text: str, room: Optional[str]
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
             uuid7(), owner, agent["id"], room, asked_by[:80], body, status, sender, rid)
         tasks.append(_task_json(row))
-    return {"room": room, "tasks": tasks, "unknown": unknown}
+    return {"room": room, "tasks": tasks, "unknown": unknown, "offline": offline}
 
 
 async def list_tasks(pool: Any, owner_sub: str, room: Optional[str] = None, after: Optional[datetime] = None,

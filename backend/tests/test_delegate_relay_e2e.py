@@ -280,3 +280,14 @@ def test_the_person_who_asked_can_cancel_but_only_the_owner_can_approve(pool):
     with pytest.raises(dg.DelegateError):
         run(pool, dg.decide_task(pool, dg_requester, str(task["id"]), True))          # Bob cannot approve a task for Alice's agent
     assert run(pool, dg.decide_task(pool, dg_requester, str(task["id"]), False))["status"] == "cancelled"   # but he can withdraw his own request
+
+
+def test_an_agent_that_is_not_connected_does_not_hold_the_question(pool):
+    run(pool, dg.create_agent(pool, ALICE, "claude"))
+    out = run(pool, dg.post_message(pool, ALICE, "@claude can you use the kell MCP?", only_online=True))
+    assert out["tasks"] == [] and out["offline"] == ["claude"]                      # nothing queued: the caller has kell answer at once
+    kept = run(pool, dg.post_message(pool, ALICE, "@claude still there?"))            # without only_online it is queued, as before
+    assert len(kept["tasks"]) == 1 and kept["offline"] == []
+    run(pool, dg.claim_next(pool, ALICE, "claude"))                                   # Claude polls: connected
+    live = run(pool, dg.post_message(pool, ALICE, "@claude hello", only_online=True))
+    assert len(live["tasks"]) == 1 and live["offline"] == []
