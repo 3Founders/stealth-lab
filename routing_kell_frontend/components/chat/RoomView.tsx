@@ -395,13 +395,20 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [chatPrefs, setChatPrefsState] = useState<ChatPrefs>(DEFAULT_CHAT_PREFS);
   useEffect(() => { setChatPrefsState(loadChatPrefs(subject)); }, [subject]);
   // Tools that need a sign-in: on unless the person turned them off; the server stores it per account, so the room agent agrees.
+  // Read again each time Settings opens: a read made before the session was ready used to be skipped, and the switch then showed its
+  // default (on) while the account had it off, so "turning it on" changed nothing (2026-11-04). A save that cannot reach the server
+  // puts the switch back and says so, instead of looking saved.
   const [allowSignInTools, setAllowSignInTools] = useState(true);
-  useEffect(() => {
+  const readToolPrefs = useCallback(() => {
     void getAccessToken().then((t) => (t ? getToolPrefs(t).then(setAllowSignInTools).catch(() => undefined) : undefined));
-  }, [subject]);
+  }, []);
+  useEffect(() => { readToolPrefs(); }, [subject, readToolPrefs]);
+  useEffect(() => { if (settings.open) readToolPrefs(); }, [settings.open, readToolPrefs]);
   const setAllowSignInToolsSaved = (v: boolean) => {
     setAllowSignInTools(v);
-    void getAccessToken().then((t) => (t ? setToolPrefs(t, v).catch(() => setAllowSignInTools(!v)) : undefined));
+    const failed = (why: string) => { setAllowSignInTools(!v); note(`That setting was not saved: ${why}`); };
+    void getAccessToken().then((t) => (t ? setToolPrefs(t, v).then((saved) => setAllowSignInTools(saved)).catch((e: unknown) => failed(e instanceof Error ? e.message : "try again."))
+      : failed("sign in again, then try."))).catch(() => failed("try again."));
   };
   const setChatPrefs = useCallback((p: ChatPrefs) => { setChatPrefsState(p); saveChatPrefs(subject, p); }, [subject]);
   const [accountName, setAccountName] = useState("");
