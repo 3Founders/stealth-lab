@@ -20,17 +20,16 @@ const Marker = ({ n, label }: { n: string; label: string }) => (
   <div className="marker caption"><b>{n}</b><span>/ {label}</span></div>
 );
 
-// What a developer gets: the four words of the headline, then the rule behind them and the controls. Outcomes, not how
-// keळ decides.
+// What a team gets: the right model, the best tool, one room -- then the control. Outcomes, not how keळ decides.
 const gets = [
-  ["Recall", "Your agent starts every task already knowing your repo."],
-  ["Reuse", "Solved once, solved for good. Similar problems come back faster and cheaper."],
-  ["Route", "Each task is done by the cheapest model that can do it well. Your usual model takes the rest."],
-  ["Reduce", "About half the bill over time, for the same work."],
+  ["Route", "Each task goes to the cheapest model that can do it well. Your usual model takes the rest."],
+  ["Big tasks, in parts", "When keळ has fixed something like it in your repo before, it splits the new task the same way, a cheap model per part."],
   ["Your tests decide", "Nothing reaches your code unless your own tests pass."],
-  ["You stay in control", "Skip keळ for any prompt, undo any change, turn it off any time."],
-  ["Big tasks, in parts", "Large changes get cheaper too, not just small fixes."],
-  ["Your cache stays warm", "The prompt cache you already pay for keeps working."],
+  ["The best tool, found for you", "keळ searches thousands of tool servers for the one that fits this request, ranked by what has worked before."],
+  ["Nothing to install", "keळ runs the tool for you. If it needs an account, you sign in once, in one click."],
+  ["Your team and its agents", "People, the agent of your choice and your pal's agents in one room. Call any agent, with its owner's approval."],
+  ["One canvas for everyone", "Docs, slides, pages and papers everyone edits at once, with every version kept."],
+  ["You stay in control", "Skip keळ for any prompt, undo any change, turn it off any time. Chats stay encrypted on your devices."],
 ];
 
 // What happens to the prompt cache, and to the bill, with a router that switches models and with keळ.
@@ -67,7 +66,7 @@ export default function Home() {
       <section id="about" className="section frame grid" aria-labelledby="h-about">
         <Marker n="01" label="WHAT YOU GET" />
         <Reveal className="statement">
-          <h2 id="h-about" className="h1">Pay less for the work. <span className="dim">Keep the bar where it is.</span></h2>
+          <h2 id="h-about" className="h1">The right model, the best tool, one room. <span className="dim">Pay less, keep the bar where it is.</span></h2>
         </Reveal>
         <div className="cells">
           {gets.map(([t, d], i) => (

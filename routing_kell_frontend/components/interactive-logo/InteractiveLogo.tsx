@@ -75,8 +75,10 @@ export default function InteractiveLogo() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const inkRGB = cssVarRgb("--ink", "23,23,23");
-    const yellowRGB = cssVarRgb("--yellow", "255,210,31");
+    // Read again whenever the theme changes (the toggle sets data-theme; with no choice the device's setting decides),
+    // so the dots never keep the other theme's ink.
+    let inkRGB = cssVarRgb("--ink", "23,23,23");
+    let yellowRGB = cssVarRgb("--yellow", "255,210,31");
 
     let system: LogoParticleSystem | null = null;
     let geometry: LogoGeometry | null = null;
@@ -142,6 +144,7 @@ export default function InteractiveLogo() {
         if (destroyed) return;
         resize();
         system = new LogoParticleSystem(geometry, cfg);
+        onTheme();
         if (reduced) {
           system.settle();
           drawFrame();
@@ -184,6 +187,23 @@ export default function InteractiveLogo() {
     const ro = new ResizeObserver(() => resize());
     ro.observe(wrap);
 
+    const onTheme = () => {
+      const ink = cssVarRgb("--ink", "23,23,23");
+      const yellow = cssVarRgb("--yellow", "255,210,31");
+      if (ink === inkRGB && yellow === yellowRGB) return;
+      inkRGB = ink;
+      yellowRGB = yellow;
+      cfg = { ...cfg, inkRGB, yellowRGB };
+      if (system) {
+        system.setColors(inkRGB, yellowRGB);
+        drawFrame();
+      }
+    };
+    const themeWatch = new MutationObserver(onTheme);
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    scheme.addEventListener("change", onTheme);
+
     if (!reduced) {
       canvas.addEventListener("pointermove", onPointerMove, { passive: true });
       canvas.addEventListener("pointerleave", onPointerLeave, { passive: true });
@@ -196,6 +216,8 @@ export default function InteractiveLogo() {
       cancelAnimationFrame(raf);
       io.disconnect();
       ro.disconnect();
+      themeWatch.disconnect();
+      scheme.removeEventListener("change", onTheme);
       document.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerleave", onPointerLeave);

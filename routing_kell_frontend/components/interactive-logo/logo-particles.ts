@@ -147,6 +147,11 @@ export class LogoParticleSystem {
     this.edges = buildLocalEdges(this.tx, this.ty, this.count, cfg.maxLinkRadius, cfg.maxLinksPerPoint);
   }
 
+  /** New ink/yellow after a theme change; positions and links stay as they are. The glow sprites are keyed by colour. */
+  setColors(inkRGB: string, yellowRGB: string) {
+    this.cfg = { ...this.cfg, inkRGB, yellowRGB };
+  }
+
   /** Snaps every particle straight onto its target -- the reduced-motion static frame. */
   settle() {
     for (let i = 0; i < this.count; i++) {
