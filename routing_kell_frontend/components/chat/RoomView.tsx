@@ -306,7 +306,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       for (const link of out.consent) note(`Allow ${nameOf(who)} to use that tool here (15 minutes): ${link}`, r); // shown to you only, never posted into the room
       if (out.sign_in?.length) {
         signInRetry.current = { room: r, text, who };   // return from the sign-in and the same request runs again
-        for (const link of out.sign_in) push(r, { kind: "notice", id: broker.newId(), text: "That tool needs you to sign in once. Your request runs again by itself after.", t: Date.now(), signIn: link });
+        // One Sign in button per room, the newest: an older one's link is stale, and several tries in one answer used to show one each.
+        lineStore.current = { ...lineStore.current, [r]: (lineStore.current[r] ?? []).filter((l) => !(l.kind === "notice" && l.signIn)) };
+        push(r, { kind: "notice", id: broker.newId(), text: "That tool needs you to sign in once. Your request runs again by itself after.", t: Date.now(), signIn: out.sign_in[out.sign_in.length - 1] });
       }
       if (out.event?.id || temp) {
         // Already on the server: the sync pull will find the same id and not add it twice. The streaming bubble stays until its text

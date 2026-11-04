@@ -15,7 +15,8 @@ export interface ChatPrefs {
 
 export const DEFAULT_CHAT_PREFS: ChatPrefs = { textSize: "default", compact: false, enterToSend: true, showTimes: true };
 
-export const TEXT_PX: Record<TextSize, number> = { small: 14, default: 15, large: 17 };
+// One size for the chat, the room list and Settings (2026-11-04: they were 18, 15 and 15). Default is the chat's 18px.
+export const TEXT_PX: Record<TextSize, number> = { small: 16, default: 18, large: 20 };
 
 const key = (subject: string) => `kel.chat.prefs.${subject}`;
 

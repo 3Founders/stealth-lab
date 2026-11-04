@@ -184,6 +184,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             # Consent and sign-in links go back to the person who asked, never into the room, where every member and connector would read them.
             links = list(dict.fromkeys(outcome.consent_links))
             sign_ins = list(dict.fromkeys(outcome.sign_in_links))
+            for link in links + sign_ins:                    # never in the room, even if the model wrote one
+                reply = reply.replace(link, "(the button kell showed you)")
             try:
                 # A canvas too big for one message goes straight into the room's canvases; the message keeps a card for it.
                 reply = await rm.externalize_canvases(pool, subject, room_id, handle, reply)

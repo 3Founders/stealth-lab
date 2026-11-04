@@ -112,6 +112,21 @@ async def test_a_first_call_that_needs_consent_puts_the_link_in_the_answer():
 
     out = await room_agent.converse("read the docs", [], model_call=model, find_tools=_some_tools, use_tool=use_tool)
     assert out.consent_links == [link] and out.text == "I need your permission first."
+    assert link not in model.seen[1][0][-1]["content"]                        # the model never sees the link, so it cannot post it
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_link_goes_to_the_person_only_never_to_the_model():
+    model = Model(_reply(tool_calls=[_call()]), _reply("That tool needs your sign-in once."))
+    link = "https://gmail.example/authorize?state=abc"
+
+    async def use_tool(server, name, args):
+        return json.dumps({"sign_in_required": True, "server": server, "link": link})
+
+    out = await room_agent.converse("read my mail", [], model_call=model, find_tools=_some_tools, use_tool=use_tool)
+    assert out.sign_in_links == [link]
+    seen = model.seen[1][0][-1]["content"]
+    assert link not in seen and "sign_in_required" in seen
 
 
 @pytest.mark.asyncio
