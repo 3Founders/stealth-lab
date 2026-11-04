@@ -1185,6 +1185,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         {brand && <div className="dg-brand">{brand}</div>}
         {back && <div className="dg-backrow">{back}</div>}
 
+        {/* Only this part scrolls: the logo and "Back to home" above it, and your profile below it, stay where they are. */}
+        <div className="dg-side-scroll">
         <h2>Rooms</h2>
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
@@ -1248,6 +1250,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         )}
 
         <button type="button" className="btn-line dg-add" onClick={() => { setAdding(true); setFormError(""); }}>+ Add agent</button>
+        </div>
         <AddAgentDialog
           open={adding} onClose={() => { setAdding(false); setFormError(""); }} full={full}
           name={addName} onName={setAddName} about={addAbout} onAbout={setAddAbout} error={formError} onSubmit={(e) => void submitAgent(e)}
