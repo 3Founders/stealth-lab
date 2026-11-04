@@ -186,6 +186,22 @@ is skipped in the current work and recorded here.
 - **Asking General Compute about deepseek** — the random 403/400 blocks, the "Streaming request failed" 400s, and the
   8k+ output-token refusal (kell caps it at 4k today).
 
+## 2026-11-04, the desktop app for strangers (owner: "we will do them one by one")
+
+Today nobody outside can download or use the app. In this order:
+
+1. **A personal-plan lane.** The engine runs only on an organisation's keys (`kell join`) or a key on the machine
+   (`desktop/lib/pooled.ts`, `app/api/settings`). A person who signs up and buys Starter/Pro has no way to use it.
+   Add: signed in, no organisation, so calls go through kell's keys against that person's wallet, like the website
+   chat. Needs a server deploy.
+2. **Build the installer** (`npm run dist` in `desktop/`, never run yet; downloads Electron's packaging files) and
+   test it on a clean Windows machine: install, sign in, open a project, one task, one tool sign-in.
+3. **Publish it.** Installer on GitHub Releases (public repo or a separate one) or storage, a Download button on the
+   website, electron-updater for updates. Website change and release: ask first.
+4. **Code signing** (see Needs the owners), once real users arrive. macOS later.
+5. **Fair access** (owner deciding): options A wallet only, B pacing windows, C device cap/list, D everything on
+   kell's keys. Suggested B + D.
+
 ## 2026-11-03, tool sign-in and chat alerts
 
 - **kell-mcp is still deployed on phase 1.** The OAuth flow, the per-account sign-in-tools switch and the failure
