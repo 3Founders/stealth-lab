@@ -7,9 +7,11 @@ nothing is lost. Live presence (who has the document open) is kept in memory per
 
 A canvas block an agent writes in a message becomes a version of the document with that title (``capture``), once per message.
 
-History is shown the way Overleaf shows it (``group_versions``): every save is still stored (a concurrent save needs the exact version it
-was made from), but the list groups one person's saves that follow each other closely into one entry, and an entry that ends where it
-started (type a space, delete it) is not shown at all. Merges, restores and agent versions are always entries of their own.
+History is shown the way Overleaf shows it (``group_versions``; overleaf/overleaf services/project-history SummarizedUpdatesManager.js):
+every save is still stored (a concurrent save needs the exact version it was made from), but saves less than five minutes apart are one
+entry, whoever made them (the entry names everyone), with no cap on its length. Merges, restores, agent versions and the first version are
+entries of their own, like Overleaf's restores and labels. An entry that ends where it started (type a space, delete it) is not shown:
+Overleaf cancels an insert and its delete within a minute (UpdateCompressor.js); this also covers one taken back later.
 
 Honest limits: this is paragraph-level merging, not character-level co-editing with live cursors; people see each other's changes within
 a second or two and typing in different lines or paragraphs merges cleanly. A document is at most 200,000 characters and 50 per room.
@@ -286,9 +288,8 @@ async def delete_doc(pool: Any, sub: str, room_id: str, doc_id: str) -> bool:
     return True
 
 
-# One history entry per burst of one person's editing: saves less than GROUP_GAP_S apart, for at most GROUP_SPAN_S in all.
+# One history entry per burst of editing: saves less than GROUP_GAP_S apart (Overleaf's TIME_BETWEEN_DISTINCT_UPDATES).
 GROUP_GAP_S = 300.0
-GROUP_SPAN_S = 3600.0
 HISTORY_SCAN = 2000                                          # saves read to build the list (each autosave is one)
 
 
@@ -302,27 +303,28 @@ def _secs(at: Any) -> float:
 def group_versions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Stored saves (oldest first: version, by, note, src, at, size, h = a hash of the body) -> history entries, newest first.
 
-    An entry is one person's saves that follow each other within GROUP_GAP_S (and span at most GROUP_SPAN_S); a merge, a restore, an
-    agent's version and the first version are entries of their own. An entry whose text ends the same as the text before it (typed and
+    An entry is the saves that follow each other within GROUP_GAP_S, by anyone (`by` names them all, first editor first); a merge, a
+    restore, an agent's version and the first version are entries of their own. An entry whose text ends the same as the text before it (typed and
     taken back) is left out. `version` is the entry's last save, which is what Restore brings back; `edits` is how many saves it holds."""
     groups: list[dict[str, Any]] = []
     prev_hash: Optional[str] = None                          # the text before the group being built
     for r in rows:
         special = bool(r.get("note") or r.get("src")) or not groups
         g = groups[-1] if groups else None
-        joins = (g is not None and not special and not g["special"] and g["by"] == r["by"]
-                 and _secs(r["at"]) - g["last_at"] <= GROUP_GAP_S and _secs(r["at"]) - g["first_at"] <= GROUP_SPAN_S)
+        joins = g is not None and not special and not g["special"] and _secs(r["at"]) - g["last_at"] < GROUP_GAP_S
         if joins:
             g.update(version=r["version"], last_at=_secs(r["at"]), at=r["at"], size=r["size"], h=r["h"])
             g["edits"] += 1
+            if r["by"] not in g["people"]:
+                g["people"].append(r["by"])
         else:
             if g is not None:
                 prev_hash = g["h"]
-            groups.append({"version": r["version"], "from": r["version"], "by": r["by"], "note": r.get("note") or "", "special": special,
+            groups.append({"version": r["version"], "from": r["version"], "people": [r["by"]], "note": r.get("note") or "", "special": special,
                            "first_at": _secs(r["at"]), "last_at": _secs(r["at"]), "at": r["at"], "size": r["size"], "h": r["h"],
                            "before": prev_hash, "edits": 1})
     shown = [g for g in groups if g["special"] or g["before"] != g["h"]]
-    return [{"version": g["version"], "from": g["from"], "edits": g["edits"], "by": g["by"], "note": g["note"], "size": g["size"],
+    return [{"version": g["version"], "from": g["from"], "edits": g["edits"], "by": ", ".join(g["people"]), "note": g["note"], "size": g["size"],
              "at": _iso(g["at"])} for g in reversed(shown)]
 
 

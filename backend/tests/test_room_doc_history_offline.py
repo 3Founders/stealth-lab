@@ -1,8 +1,9 @@
-"""The canvas history groups saves the way Overleaf does: one person's saves close together are one entry, and an entry that ends where it
-started (type a space, delete it) is not shown. Every save is still stored; only the list changes."""
+"""The canvas history groups saves the way Overleaf does (services/project-history SummarizedUpdatesManager.js): saves less than five
+minutes apart are one entry whoever made them, with no cap on its length; an entry that ends where it started (type a space, delete it) is
+not shown. Every save is still stored; only the list changes."""
 from datetime import datetime, timezone
 
-from app.services.room_docs import GROUP_GAP_S, GROUP_SPAN_S, group_versions
+from app.services.room_docs import GROUP_GAP_S, group_versions
 
 
 def save(v, at, h, by="Me", note="", src=None, size=10):
@@ -21,12 +22,13 @@ def test_one_burst_of_typing_is_one_entry_and_restore_brings_back_its_end():
     assert [(e["version"], e["from"], e["edits"]) for e in out] == [(4, 2, 3), (1, 1, 1)]
 
 
-def test_a_pause_another_person_or_a_long_session_starts_a_new_entry():
-    rows = [save(1, 0, "A"), save(2, 1000, "B"), save(3, 1000 + GROUP_GAP_S + 1, "C"),       # a pause
-            save(4, 1000 + GROUP_GAP_S + 2, "D", by="pal")]                                   # someone else
-    assert [e["version"] for e in group_versions(rows)] == [4, 3, 2, 1]
-    long = [save(1, 0, "A")] + [save(i, 1000 + (i - 2) * (GROUP_GAP_S - 1), f"x{i}") for i in range(2, 2 + int(GROUP_SPAN_S // (GROUP_GAP_S - 1)) + 3)]
-    assert len(group_versions(long)) >= 3                                                    # capped at an hour per entry
+def test_a_pause_starts_a_new_entry_but_another_person_or_a_long_session_does_not():
+    rows = [save(1, 0, "A"), save(2, 1000, "B"), save(3, 1000 + GROUP_GAP_S + 1, "C"),       # a pause: a new entry
+            save(4, 1000 + GROUP_GAP_S + 2, "D", by="pal")]                                   # someone else, right after: the same entry
+    out = group_versions(rows)
+    assert [(e["version"], e["by"]) for e in out] == [(4, "Me, pal"), (2, "Me"), (1, "Me")]
+    long = [save(1, 0, "A")] + [save(i, 1000 + (i - 2) * (GROUP_GAP_S - 1), f"x{i}") for i in range(2, 40)]   # three hours, never a 5-minute pause
+    assert len(group_versions(long)) == 2
 
 
 def test_merges_restores_and_agent_versions_are_entries_of_their_own_even_when_nothing_changed():
