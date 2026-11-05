@@ -120,3 +120,50 @@ async def test_with_a_canvas_open_a_change_is_answered_directly_with_no_forced_s
     names = [t["function"]["name"] for t in model.seen[0][1]]
     assert names == ["discover_tools", "use_tool", "call_model"] and not any(t.get("_required") for t in model.seen[0][1])
     assert out.tools_used == [] and 'canvas title="Plan"' in out.text
+
+
+@pytest.mark.asyncio
+async def test_a_short_piece_the_cheap_model_writes_stays_in_the_chat_unless_a_document_was_asked_for():
+    """2026-11-05 basics check: a ten-line Python function landed in a canvas. A short piece now goes back to the model for its chat answer."""
+    fn = "def reverse(s):\n    return s[::-1]\n"
+
+    async def cheap(prompt):
+        return fn
+
+    for ask, in_canvas in (("please could you make a python function that reverses a string", False),
+                           ("make a short document with a python function that reverses a string", True)):
+        model = Model(_reply(tool_calls=[_tc("call_model", prompt="the function", canvas_title="Reverse", kind="code")]), _reply("Here it is."))
+        out = await room_agent.converse(ask, [], model_call=model, find_tools=_some_tools, use_tool=_never, call_cheap=cheap, skip_search=True)
+        assert ("```canvas" in out.text) is in_canvas, ask
+        if not in_canvas:
+            assert "def reverse" in model.seen[1][0][-1]["content"]                 # the model got the code back to put in its answer
+
+
+@pytest.mark.asyncio
+async def test_a_plain_question_skips_the_router_the_judge_and_the_forced_search():
+    """2026-11-05: 9 to 18 s before the first word on short replies, most of it the router, the judge and a forced search round."""
+    called: list[str] = []
+
+    async def find_tools(text):
+        called.append("router")
+        return []
+
+    async def classify(text, context):
+        called.append("judge")
+        return {"kind": "tool", "tool": None}
+
+    model = Model(_reply("It is 5 November 2026."))
+    out = await room_agent.converse("What is today's date?", [], model_call=model, find_tools=find_tools, use_tool=_never, classify=classify)
+    assert called == [] and out.text == "It is 5 November 2026."
+    assert not any(t.get("_required") for t in model.seen[0][1])
+
+
+def test_what_needs_the_outside_world_keeps_the_full_path():
+    plain = ["What is today's date?", "explain recursion simply", "write a python function that reverses a string",
+             "How do I center a div?", "When was the Eiffel Tower built?", "Convert 5 km to miles", "what is 2+2?"]
+    full = ["what is one top news headline in India today?", "What is the btc price now?", "what does this PDF say?",
+            "what did we decide in #design?", "who won the match last night", "what is the latest iPhone", "what is the price of gold",
+            "what is the weather in Pune", "convert 100 usd to inr", "make me slides about cats", "write an essay on climate",
+            "what tools can turn a pdf into text?", "what is in this picture?", "draw a fox logo"]
+    assert all(room_agent.plainly_answerable(t) for t in plain), [t for t in plain if not room_agent.plainly_answerable(t)]
+    assert not any(room_agent.plainly_answerable(t) for t in full), [t for t in full if room_agent.plainly_answerable(t)]

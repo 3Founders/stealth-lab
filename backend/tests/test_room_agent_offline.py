@@ -79,7 +79,9 @@ async def test_a_plain_answer_uses_no_tool_but_the_tools_are_still_offered():
     out = await room_agent.converse("how do I do x?", [], model_call=model, find_tools=_no_tools, use_tool=_never)
     assert out.text.startswith("three ways") and out.tools_used == [] and out.consent_links == []
     messages, tools = model.seen[0]
-    assert [t["function"]["name"] for t in tools] == ["discover_tools"] and messages[0]["role"] == "system" and messages[-1] == {"role": "user", "content": "how do I do x?"}
+    # a plain question is not forced to search first (plainly_answerable), so every tool is on offer and none is required
+    assert [t["function"]["name"] for t in tools] == ["discover_tools", "use_tool", "call_model"] and not any(t.get("_required") for t in tools)
+    assert messages[0]["role"] == "system" and messages[-1] == {"role": "user", "content": "how do I do x?"}
 
 
 @pytest.mark.asyncio

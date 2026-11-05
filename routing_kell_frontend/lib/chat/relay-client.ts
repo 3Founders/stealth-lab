@@ -80,8 +80,8 @@ export function relay(deps: RelayDeps) {
     agents: async (roomId?: string) => (await call<{ agents: RelayAgent[] }>("GET", `/agents${q({ room_id: roomId })}`)).agents,
     addAgent: (name: string) => call<RelayAgent>("POST", "/agents", { name }),
     removeAgent: (id: string) => call<{ revoked: boolean; cancelled: number }>("DELETE", `/agents/${encodeURIComponent(id)}`),
-    send: (text: string, room: string, needsApproval = false, roomId?: string, onlyOnline = false) =>
-      call<{ room: string; tasks: RelayTask[]; unknown: string[]; offline?: string[] }>("POST", "/messages", { text, room, ...(roomId ? { room_id: roomId } : {}), ...(needsApproval ? { needs_approval: true } : {}), ...(onlyOnline ? { only_online: true } : {}) }),
+    send: (text: string, room: string, needsApproval = false, roomId?: string) =>
+      call<{ room: string; tasks: RelayTask[]; unknown: string[] }>("POST", "/messages", { text, room, ...(roomId ? { room_id: roomId } : {}), ...(needsApproval ? { needs_approval: true } : {}) }),
     tasks: async (room: string, after?: string) => (await call<{ tasks: RelayTask[] }>("GET", `/tasks${q({ room, after })}`)).tasks,
     approve: (id: string) => call<RelayTask>("POST", `/tasks/${encodeURIComponent(id)}/approve`),
     cancel: (id: string) => call<RelayTask>("POST", `/tasks/${encodeURIComponent(id)}/cancel`),

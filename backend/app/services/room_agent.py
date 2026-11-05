@@ -150,6 +150,28 @@ def makes_something(text: str) -> bool:
     return wants_work(t) and bool(_MAKE.search(t)) and not _ASKS_FOR_TOOL.search(t)
 
 
+_PLAIN_START = re.compile(
+    r"^\s*(what|when|why|where|how (?:do|does|to|can|is|are|many|much)|explain|define|translate|convert|calculate|summari[sz]e|rewrite|"
+    r"rephrase|show (?:me )?an? |give (?:me )?an? (?:example|definition)|write an? (?:python |js |javascript |typescript |sql |bash |go |rust |java |c\+\+ |c )?"
+    r"(?:function|snippet|regex|query|one-liner|haiku|poem|sentence|joke|limerick))\b", re.I)
+_NEEDS_OUTSIDE = re.compile(
+    r"\b(news|headlines?|latest|current(?:ly)?|today'?s (?:news|price|weather)|this week|weather|forecast|prices?|stock|crypto|bitcoin|btc|"
+    r"search|look up|google|links?|urls?|sources?|cite|papers?|files?|pdf|attached|attachment|calendar|e-?mails?|inbox|apps?|tools?|"
+    r"pictures?|images?|photos?|logo|draw|right now|live|score|canvas|slides?|deck|documents?|spreadsheet|website|repo|github|"
+    r"earlier|we decided|other room|yesterday|tonight|last (?:night|week|month|year)|recent(?:ly)?|now|won|winners?|results?|"
+    r"election|match|game|released?|launch(?:ed)?|update[sd]?|ceo|president|prime minister|"
+    r"usd|inr|eur|gbp|currenc(?:y|ies)|exchange rate|rupees?|dollars?|euros?)\b|#\w", re.I)
+
+
+def plainly_answerable(text: str) -> bool:
+    """A short question or small writing job the model answers well on its own ("What is today's date?", "explain recursion", "write a
+    python function that reverses a string"). For these the agent skips the tool router, the triage judge and the forced first search, so
+    the first words come at once (2026-11-05 basics check: 9 to 18 s before the first word on short replies). Conservative on purpose:
+    anything that mentions news, prices, files, links, tools, pictures, other rooms and the like keeps the full path."""
+    t = (text or "").strip()
+    return 0 < len(t.split()) <= 25 and len(t) <= 220 and bool(_PLAIN_START.match(t)) and not _NEEDS_OUTSIDE.search(t)
+
+
 def must_work_tools() -> list[dict[str, Any]]:
     """All three tools, with discover_tools marked so the model endpoint sends tool_choice "required": some tool has to be called (the marker is
     removed before the request leaves; see mcp_server/server.py _wire_tools)."""
@@ -457,7 +479,7 @@ def _consent(result: Any) -> tuple[str | None, bool]:
 
 async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "DiscoverTools | None", tools_of: "ToolsOf | None",
                     used: list[str], call_cheap: "CallCheap | None" = None, made: "list[str] | None" = None,
-                    read_earlier: "ReadEarlier | None" = None) -> Any:
+                    read_earlier: "ReadEarlier | None" = None, wants_canvas: bool = False) -> Any:
     """One tool call the model made: discover_tools (search, or list one server's tools) or use_tool (run one through the gateway).
     A failure is text the model can act on, never an exception that loses the answer."""
     fn = (call or {}).get("function") or {}
@@ -515,7 +537,9 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
         kind = str(args.get("kind") or "").strip()
         # What a model makes goes in the canvas whether or not the agent said so: a long answer, a page or a piece of code is a thing to keep and
         # edit, not something to read in the chat. The title and kind come from the text itself when the agent gave none.
-        if made is not None and (title or len(body) > 700 or looks_like_html(body)):
+        # A short piece (a function, a paragraph) goes back to the model for the chat answer, where it has a Copy button, unless the person
+        # asked for a canvas, a document or a page (2026-11-05: a ten-line Python function landed in a canvas).
+        if made is not None and (looks_like_html(body) or len(body) > SHORT_PIECE or (wants_canvas and (title or len(body) > 700))):
             kind = kind if kind in ("document", "code", "html") else guess_kind(body)
             title = title or guess_title(body, kind)
             made.append(fence_canvas(title, kind, body))
@@ -531,6 +555,15 @@ async def _run_call(call: dict[str, Any], *, use_tool: UseTool, discover: "Disco
         return await use_tool(server, tool, args.get("arguments") if isinstance(args.get("arguments"), dict) else {})
     except Exception as exc:  # noqa: BLE001 -- a tool failure is text the model can act on
         return f"FAILED: {server}/{tool}: {str(exc).strip()[:200] or type(exc).__name__}"
+
+
+SHORT_PIECE = 1200
+_CANVAS_ASK = re.compile(r"\b(canvas|document|doc|page|slides?|deck|report|essay|article|memo|letter|proposal|plan|file|website|landing)\b", re.I)
+
+
+def wants_canvas(text: str) -> bool:
+    """Whether the person asked for a thing to keep (a document, a page, slides) rather than a short answer."""
+    return bool(_CANVAS_ASK.search(text or ""))
 
 
 def _with_made(content: str, made: list[str]) -> str:
@@ -572,8 +605,12 @@ def _context(history: list[dict[str, Any]], limit: int = 2000) -> str:
 
 async def _prepare(text: str, history: list[dict[str, Any]], find_tools: FindTools, classify: "Classify | None",
                    skip_search: bool) -> tuple[list[dict[str, Any]], bool, bool, "str | None"]:
-    """The router's short list and the judge's verdict, asked at the same time -> (candidates, search first, creates, goal)."""
+    """The router's short list and the judge's verdict, asked at the same time -> (candidates, search first, creates, goal). A message
+    plainly_answerable() asks neither: the model answers it straight away (it can still search on its own)."""
     import asyncio
+
+    if plainly_answerable(text):
+        return [], False, False, None
 
     async def tools() -> list[dict[str, Any]]:
         try:
@@ -695,7 +732,8 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
             return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal)
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
-            result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier)
+            result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier,
+                                     wants_canvas=wants_canvas(text))
             if str(((call or {}).get("function") or {}).get("name") or "") in ("use_tool", "call_model") and _ok(result):
                 worked = True
             link, sign_in = _consent(result)
@@ -792,7 +830,8 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
             # This line is only the live bubble; the posted answer is the final text.
             yield ("delta", "Writing it now. A long piece takes about a minute.")
         for call in tool_calls:
-            result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier)
+            result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier,
+                                     wants_canvas=wants_canvas(text))
             if str(((call or {}).get("function") or {}).get("name") or "") in ("use_tool", "call_model") and _ok(result):
                 worked = True
             link, sign_in = _consent(result)
