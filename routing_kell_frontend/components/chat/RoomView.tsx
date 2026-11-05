@@ -264,6 +264,23 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   /** The sign-in card of the newest request (room and line id), and the sign-in the person opened last. */
   const signInCard = useRef<{ room: string; id: string } | null>(null);
   const signInOpened = useRef<string | null>(null);
+  /** Your thumbs on the agent's answers, by message id: sent to the server (it moves the tools those answers used) and kept on this
+   *  device so the buttons show what you chose. */
+  const [votes, setVotes] = useState<Record<string, -1 | 1>>({});
+  useEffect(() => {          // read after the first render, so the server's render and the browser's match
+    try { setVotes(JSON.parse(window.localStorage.getItem("kell:votes") || "{}") as Record<string, -1 | 1>); } catch { /* none kept */ }
+  }, []);
+  const voteOn = useCallback(async (r: string, messageId: string, vote: -1 | 0 | 1) => {
+    const id = engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    if (!id) return;
+    setVotes((p) => {
+      const n = { ...p };
+      if (vote === 0) delete n[messageId]; else n[messageId] = vote;
+      try { window.localStorage.setItem("kell:votes", JSON.stringify(n)); } catch { /* the vote still goes to the server */ }
+      return n;
+    });
+    try { await roomsAgent.vote(id, messageId, vote); } catch { note("That vote didn't reach keळ. Try again in a moment.", r); }
+  }, [roomsAgent, note]);
   /** Tools that asked for a sign-in: added to this request's card (made on the first), in the order they were tried. An older
    *  request's card goes: its links are stale. Earlier this kept only the newest link, so two tools showed one button (2026-11-05). */
   const addSignIns = useCallback((r: string, text: string, who: string, tools: ToolSignIn[]) => {
@@ -774,6 +791,8 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                       onCopy={(t) => copyRoomText(t)}
                       onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
                       onReply={tempRef.current.has(room) ? undefined : () => startReply(m)}
+                      vote={votes[m.id] ?? 0}
+                      onVote={agentRun && !tempRef.current.has(room) ? (v) => void voteOn(room, m.id, v) : undefined}
                       retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
                     />
                   ) : null}

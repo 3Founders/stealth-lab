@@ -84,3 +84,17 @@ describe("message actions (copy / retry)", () => {
     expect(stateOf()).toBe("failed");
   });
 });
+
+describe("message actions (votes)", () => {
+  it("draws the thumbs only with onVote, and pressing the chosen one again takes it back", async () => {
+    const seen: number[] = [];
+    await mount(<MessageActions copyText="x" onCopy={() => true} />);
+    expect(byLabel("Good answer")).toBeNull();
+    act(() => root?.unmount()); host?.remove();
+    await mount(<MessageActions copyText="x" onCopy={() => true} vote={1} onVote={(v) => { seen.push(v); }} />);
+    expect(byLabel("Good answer")!.getAttribute("aria-pressed")).toBe("true");
+    await click(byLabel("Good answer")!);
+    await click(byLabel("Bad answer")!);
+    expect(seen).toEqual([0, -1]);
+  });
+});

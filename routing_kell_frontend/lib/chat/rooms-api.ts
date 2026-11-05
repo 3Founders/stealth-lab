@@ -92,6 +92,8 @@ export function roomsApi(deps: RoomsDeps) {
     markRead: (id: string, seq: number) => call<{ last_read_seq: number }>("PUT", `/${e(id)}/read`, { seq }),
     /** Ask the built-in room agent (@kell) to answer in this room. The server posts the answer as a room event, so it
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */
+    /** A thumbs up (1), down (-1) or neither (0) on one of the agent's answers: it moves the tools that answer used in the ranking. */
+    vote: (id: string, event: string, vote: -1 | 0 | 1) => call<{ recorded: boolean; vote?: number }>("POST", `/${e(id)}/agent/vote`, { event, vote }),
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[]; sign_in?: string[] }>("POST", `/${e(id)}/agent`, { text }),
     /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
     agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }, canvas?: { title: string; kind: string; text: string; selection?: string } | null, onSignIn?: (tool: ToolSignIn) => void) => {

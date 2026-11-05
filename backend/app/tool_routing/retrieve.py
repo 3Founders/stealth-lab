@@ -16,7 +16,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Awaitable, Callable, Optional, Sequence
 
 import numpy as np
 
@@ -156,11 +156,13 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
                known_sims: Optional[dict[str, float]] = None,
                query_vector: Optional[np.ndarray] = None,
                outcomes: Optional[dict[str, tuple[int, int]]] = None,
-               refs: Optional[Callable[[ToolCard], set[str]]] = None) -> tuple[list[Hit], dict[str, Any]]:
+               refs: Optional[Callable[[ToolCard], set[str]]] = None,
+               outcomes_for: Optional[Callable[[str], Awaitable[dict[str, tuple[int, int]]]]] = None) -> tuple[list[Hit], dict[str, Any]]:
     """-> (the top k hits, how they were found). `goal`: the triage's tool goal; None picks the best-matching one.
     `known_sims`: card id -> cosine to the query, already computed (the database's candidates, app/tool_routing/store.py);
     `query_vector`: need_text()'s vector, already embedded. `outcomes`: ref -> (passes, judged) of the tools used on
-    tasks of this goal (app/tool_routing/store.py tool_outcomes), with `refs` naming a card's refs."""
+    tasks of this goal (app/tool_routing/store.py tool_outcomes), with `refs` naming a card's refs; `outcomes_for` reads them
+    for the goal found here when none was given (a search that names no goal still learns from what worked)."""
     info: dict[str, Any] = {"cards": len(cards), "lexical": True, "semantic": False}
     given_goal = goal if goal in TOOL_GOALS else None
     if not cards or not query.strip():
@@ -189,6 +191,11 @@ async def rank(query: str, cards: Sequence[ToolCard], *, goal: Optional[str] = N
     if goal not in TOOL_GOALS:
         goal = (await _goal_by_meaning(qvec, embedder) if qvec is not None else None) or best_goal(qw)
     info["goal"] = goal
+    if outcomes is None and outcomes_for is not None and goal:
+        try:
+            outcomes = await outcomes_for(goal)
+        except Exception:  # noqa: BLE001 -- no record is no lift
+            outcomes = None
     hits: list[Hit] = []
     for i, c in enumerate(cards):
         b, v = bm_rank.get(i), vec_rank.get(i)

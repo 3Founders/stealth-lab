@@ -323,24 +323,79 @@ async def record_outcome(pool: Any, rows: Sequence[dict[str, Any]]) -> int:
                bool(r.get("suggested")), r.get("outcome") or "unknown", r.get("check_kind") or "self_report",
                str(r.get("client") or "")[:40], r.get("goal_id"), r.get("owner_id")) for r in rows])
     for goal in {r.get("tool_goal") for r in rows}:
-        _outcomes.pop(str(goal), None)
+        forget_outcomes(goal)
     return len(rows)
 
 
+def forget_outcomes(goal: Optional[str]) -> None:
+    """The next search for this goal reads the outcomes again (a new judgment or vote)."""
+    _outcomes.pop(str(goal), None)
+
+
+# The goal of each person's newest tool search, so a call that follows it is judged under that goal (any client: a room, the app,
+# Claude Code). A search names the goal; a call does not.
+GOAL_TTL_S = 900.0
+_recent_goal: dict[str, tuple[float, str]] = {}
+
+
+def note_goal(owner: Optional[str], goal: Optional[str]) -> None:
+    if owner and goal:
+        if len(_recent_goal) > 20000:
+            _recent_goal.clear()
+        _recent_goal[owner] = (time.monotonic(), goal)
+
+
+def recent_goal(owner: Optional[str]) -> Optional[str]:
+    hit = _recent_goal.get(owner or "")
+    return hit[1] if hit and time.monotonic() - hit[0] < GOAL_TTL_S else None
+
+
+def judge_call(status: str, text: str) -> Optional[str]:
+    """An automatic judgment of one gateway call: pass when the tool answered with something, fail when it answered nothing, timed
+    out or broke; None (not judged) for kell's own refusals, sign-ins and a tool error, which is often the agent's own arguments."""
+    if status == "ok":
+        return "pass" if len((text or "").strip()) >= 20 else "fail"
+    if status.startswith("failed:") and status not in ("failed:signin", "failed:tool_error"):
+        return "fail"
+    return None
+
+
+# A person's thumbs on an answer counts this many automatic judgments of one call (the gateway's "it answered with something").
+VOTE_WEIGHT = 3
+
+_OBS_SQL = """
+SELECT ref, count(*) FILTER (WHERE outcome = 'pass') AS wins,
+       count(*) FILTER (WHERE outcome IN ('pass', 'fail')) AS judged
+FROM tool_observations WHERE used AND tool_goal IS NOT DISTINCT FROM $1 GROUP BY ref
+"""
+# the votes on room answers (db/181_agent_votes.sql): every tool the answer used gets the vote
+_VOTES_SQL = """
+SELECT ref, count(*) FILTER (WHERE v.vote = 1) AS wins, count(*) AS judged
+FROM agent_votes v JOIN agent_turns t USING (event_id), unnest(t.refs) AS ref
+WHERE t.tool_goal IS NOT DISTINCT FROM $1 GROUP BY ref
+"""
+
+
 async def tool_outcomes(pool: Any, goal: Optional[str]) -> dict[str, tuple[int, int]]:
-    """ref -> (passes, judged) for the tools USED on tasks of this goal (unknown outcomes left out). Cached briefly."""
+    """ref -> (passes, judged) for the tools USED on tasks of this goal (unknown outcomes left out), with the people's votes on
+    the answers that used them counted VOTE_WEIGHT times. Cached briefly."""
     key = str(goal)
     hit = _outcomes.get(key)
     if hit and time.monotonic() - hit[0] < OUTCOME_TTL_S:
         return hit[1]
+    out: dict[str, tuple[int, int]] = {}
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT ref, count(*) FILTER (WHERE outcome = 'pass') AS wins,
-                       count(*) FILTER (WHERE outcome IN ('pass', 'fail')) AS judged
-                FROM tool_observations WHERE used AND tool_goal IS NOT DISTINCT FROM $1 GROUP BY ref
-            """, goal)
-        out = {r["ref"]: (int(r["wins"]), int(r["judged"])) for r in rows if r["judged"]}
+            for r in await conn.fetch(_OBS_SQL, goal):
+                if r["judged"]:
+                    out[r["ref"]] = (int(r["wins"]), int(r["judged"]))
+            try:
+                votes = await conn.fetch(_VOTES_SQL, goal)
+            except Exception:  # noqa: BLE001 -- no vote tables yet
+                votes = []
+        for r in votes:
+            w, n = out.get(r["ref"], (0, 0))
+            out[r["ref"]] = (w + VOTE_WEIGHT * int(r["wins"]), n + VOTE_WEIGHT * int(r["judged"]))
     except Exception:  # noqa: BLE001 -- no table yet: no outcomes
         out = {}
     _outcomes[key] = (time.monotonic(), out)

@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { AlertIcon, CheckIcon, CopyIcon, ReplyIcon, RetryIcon } from "@/components/chat/icons";
+import { AlertIcon, CheckIcon, CopyIcon, ReplyIcon, RetryIcon, ThumbDownIcon, ThumbUpIcon } from "@/components/chat/icons";
 
 /** How long the tick (or the alert) stays before the copy icon comes back. */
 export const COPY_HOLD_MS = 1600;
 
 /**
- * Copy, Reply and Retry as hover-revealed icon buttons for a chat message (the icons are Lucide's, ISC, drawn on the house stroke -
+ * Copy, Reply, Retry and (on an agent's answer) a thumbs up and down as hover-revealed icon buttons for a chat message (the icons are Lucide's, ISC, drawn on the house stroke -
  * components/chat/icons.tsx). Copy is always offered. Retry is offered only when a re-run makes sense: your own prompt re-sends the message;
  * an agent's answer re-runs what produced it (its prompt).
  *
@@ -15,7 +15,7 @@ export const COPY_HOLD_MS = 1600;
  * icons cross-fade in place (instantly with reduced motion), and a visually hidden status announces the result to screen readers. Nothing
  * is posted into the room on success; the owner's onCopy reports failure by returning false.
  */
-export default function MessageActions({ copyText, retryText, onCopy, onRetry, onReply, retryLabel = "Ask again", holdMs = COPY_HOLD_MS }: {
+export default function MessageActions({ copyText, retryText, onCopy, onRetry, onReply, vote, onVote, retryLabel = "Ask again", holdMs = COPY_HOLD_MS }: {
   /** How long the tick or alert stays (a test shortens it). */
   holdMs?: number;
   /** The text Copy takes. */
@@ -27,6 +27,9 @@ export default function MessageActions({ copyText, retryText, onCopy, onRetry, o
   onRetry?: (text: string) => void;
   /** Starts a reply to this message; without it no reply button is drawn. */
   onReply?: () => void;
+  /** Your vote on this answer (1 up, -1 down, 0 none); with onVote the thumbs are drawn. Pressing the chosen one again takes it back. */
+  vote?: -1 | 0 | 1;
+  onVote?: (vote: -1 | 0 | 1) => void;
   retryLabel?: string;
 }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
@@ -52,6 +55,14 @@ export default function MessageActions({ copyText, retryText, onCopy, onRetry, o
       {onReply && <button type="button" className="dg-act" aria-label="Reply" title="Reply" onClick={onReply}><ReplyIcon /></button>}
       {retryText !== undefined && retryText !== "" && onRetry && (
         <button type="button" className="dg-act" aria-label={retryLabel} onClick={() => onRetry(retryText)}><RetryIcon /></button>
+      )}
+      {onVote && (
+        <>
+          <button type="button" className="dg-act dg-act-vote" aria-label="Good answer" title="Good answer" aria-pressed={vote === 1}
+            onClick={() => onVote(vote === 1 ? 0 : 1)}><ThumbUpIcon /></button>
+          <button type="button" className="dg-act dg-act-vote" aria-label="Bad answer" title="Bad answer" aria-pressed={vote === -1}
+            onClick={() => onVote(vote === -1 ? 0 : -1)}><ThumbDownIcon /></button>
+        </>
       )}
     </span>
   );

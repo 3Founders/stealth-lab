@@ -81,6 +81,46 @@ def trace_turn(room_id: Any, handle: str, outcome: "agent.AgentOutcome | None", 
              ",".join(tools) or "-", made, bool(outcome and outcome.text.strip()), _time.monotonic() - started)
 
 
+def mine(discover: Any, subject: str) -> Any:
+    """discover_tools for this person: the search notes its goal under them, so the calls that follow are judged under it."""
+    if discover is None:
+        return None
+    return lambda need, goal=None: discover(need, goal, subject)
+
+
+async def turn_refs(pool: Any, used: list[str]) -> list[str]:
+    """The tools an answer ran, as tool_observations names them (their URL host or package), for the votes on it."""
+    from app.tool_routing import store as _store
+
+    refs: list[str] = []
+    for u in dict.fromkeys(used):
+        if u in ("discover_tools", "read_earlier", "call_model") or "/" not in u:
+            continue
+        server = u.rsplit("/", 1)[0]
+        if server == "kell/images":
+            refs.append("kell-images")
+            continue
+        try:
+            card = await _store.card_by_name(pool, server)
+        except Exception:  # noqa: BLE001
+            card = None
+        refs.extend(sorted(_store.card_refs(card)) if card is not None else [])
+    return list(dict.fromkeys(refs))
+
+
+async def record_turn(pool: Any, event_id: str, room_id: str, owner: str, outcome: "agent.AgentOutcome") -> None:
+    """What a posted answer used (db/181_agent_votes.sql), so a thumbs up or down on it moves those tools. Never the text."""
+    if not event_id:
+        return
+    try:
+        refs = await turn_refs(pool, list(outcome.tools_used))
+        async with pool.acquire() as conn:
+            await conn.execute("""INSERT INTO agent_turns (event_id, room_id, owner_id, refs, tool_goal) VALUES ($1, $2, $3, $4, $5)
+                                  ON CONFLICT (event_id) DO NOTHING""", event_id, room_id, owner, refs, outcome.tool_goal)
+    except Exception:  # noqa: BLE001 -- no table yet, or a database hiccup: the answer is already posted
+        log.warning("room agent: could not record the turn's tools", exc_info=True)
+
+
 def _one_per_link(tools: list[dict[str, str]]) -> list[dict[str, str]]:
     """The tools that asked for a sign-in, one entry per link, in the order they were tried (the best fit first)."""
     seen: set[str] = set()
@@ -93,7 +133,7 @@ def _sse(obj: Any) -> str:
 
 def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_call: ModelCall,
              find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12,
-             discover: Any = None, tools_of: Any = None, call_cheap: Any = None) -> None:
+             discover: Any = None, tools_of: Any = None, call_cheap: Any = None, classify: Any = None) -> None:
     @server.custom_route("/v1/rooms/{room_id}/agent", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_route(request: Request) -> Response:
         if request.method == "OPTIONS":
@@ -206,6 +246,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                 appended = await rm.append_events(pool, subject, room_id, events)
             except rm.RoomError as exc:
                 return reply, None, str(exc), links, sign_ins, remembered
+            if appended["accepted"]:
+                await record_turn(pool, str(appended["accepted"][0].get("id") or ""), str(room_id), subject, outcome)
             # A reply longer than one message is posted as several; the first is returned here, the rest arrive through sync.
             return events[0]["body"], (appended["accepted"][0] if appended["accepted"] else None), None, links, sign_ins, remembered
 
@@ -223,8 +265,9 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         find_tools=find_tools,
                         use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
                         handle=handle, instructions=instructions, tz=tz,
-                        discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
+                        discover=mine(discover, subject), tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                         call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv), read_earlier=read_earlier,
+                        classify=classify,
                     ):
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
@@ -277,7 +320,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=lambda m, t: model_call(bearer, m, t),
                                            find_tools=find_tools,
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
-                                           handle=handle, instructions=instructions, tz=tz, discover=discover,
+                                           handle=handle, instructions=instructions, tz=tz, discover=mine(discover, subject), classify=classify,
                                            tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                                            call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv), read_earlier=read_earlier)
         except rm.RoomError:
@@ -297,6 +340,53 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted,
                                "consent": links, "sign_in": sign_ins, "sign_in_tools": _one_per_link(outcome.sign_in_tools),
                                "memory": {"used": mem_used, "remembered": remembered}})
+
+    @server.custom_route("/v1/rooms/{room_id}/agent/vote", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def room_agent_vote_route(request: Request) -> Response:
+        """A thumbs up (1), down (-1) or neither (0) on one of the agent's answers, from a member of the room. It moves the tools that
+        answer used for that kind of task (app/tool_routing/store.py tool_outcomes). One vote per person per answer."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        pool = pool_getter()
+        if pool is None:
+            return _error(request, "the server is starting; retry shortly", 503)
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            return _error(request, "the request body must be JSON", 400)
+        event = data.get("event") if isinstance(data, dict) else None
+        vote = data.get("vote") if isinstance(data, dict) else None
+        if not isinstance(event, str) or not event or len(event) > 100 or vote not in (-1, 0, 1):
+            return _error(request, "send `event` (the answer's id) and `vote`: 1, -1 or 0", 400)
+        if not LIMITER.allow(f"vote:{subject}"):
+            return _error(request, "too many votes; wait a minute", 429)
+        room_id = request.path_params["room_id"]
+        try:
+            await rm.recent_events(pool, subject, room_id, 1)          # a member of the room, or RoomError
+        except rm.RoomError as exc:
+            return _error(request, str(exc), exc.status)
+        from app.tool_routing import store as _store
+        try:
+            async with pool.acquire() as conn:
+                goal = await conn.fetchval("SELECT tool_goal FROM agent_turns WHERE event_id = $1 AND room_id = $2", event, str(room_id))
+                found = goal is not None or await conn.fetchval(
+                    "SELECT true FROM agent_turns WHERE event_id = $1 AND room_id = $2", event, str(room_id))
+                if not found:
+                    return _json(request, {"recorded": False, "note": "that answer is not one kell recorded"})
+                if vote == 0:
+                    await conn.execute("DELETE FROM agent_votes WHERE event_id = $1 AND voter = $2", event, subject)
+                else:
+                    await conn.execute("""INSERT INTO agent_votes (event_id, voter, vote) VALUES ($1, $2, $3)
+                                          ON CONFLICT (event_id, voter) DO UPDATE SET vote = EXCLUDED.vote, at = now()""",
+                                       event, subject, vote)
+        except Exception:  # noqa: BLE001
+            log.exception("room agent: the vote failed")
+            return _error(request, "the vote could not be saved just now", 502)
+        _store.forget_outcomes(goal)
+        return _json(request, {"recorded": True, "vote": vote})
 
     @server.custom_route("/v1/agent/ephemeral", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def ephemeral_agent_route(request: Request) -> Response:
@@ -343,6 +433,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     handle=handle, instructions=instructions, tz=tz,
                     discover=discover, tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                         call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=False,
+                    classify=classify,
                 ):
                     if kind == "delta":
                         yield _sse({"delta": value})

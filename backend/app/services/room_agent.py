@@ -290,6 +290,8 @@ ToolsOf = Callable[[str], Awaitable[Any]]                # server -> that server
 
 ReadEarlier = Callable[[str, "int | None", int], Awaitable[list[dict[str, Any]]]]   # (query, before seq, limit) -> older room events
 CallCheap = Callable[[str], Awaitable[str]]               # prompt -> the cheapest capable model's answer
+# (message, earlier turns) -> the triage judge's verdict (JEV first: {"kind", "tool", "confidence"}), or None when no judge answered
+Classify = Callable[[str, str], Awaitable["dict[str, Any] | None"]]
 
 
 @dataclass
@@ -299,6 +301,7 @@ class AgentOutcome:
     consent_links: list[str] = field(default_factory=list)
     sign_in_links: list[str] = field(default_factory=list)
     sign_in_tools: list[dict[str, str]] = field(default_factory=list)   # {"server", "link"} per tool that asked, in the order they were tried
+    tool_goal: str | None = None              # the kind of outside tool the request needed (app/tool_routing/goals.py), when the judge said
 
 
 def transcript(events: list[dict[str, Any]], self_handle: str = SELF_HANDLE) -> list[dict[str, Any]]:
@@ -527,16 +530,80 @@ def _with_made(content: str, made: list[str]) -> str:
     return (content.strip() + "\n\n" if content.strip() else "") + "\n\n".join(made)
 
 
+CONVERSATION_CONFIDENCE = 0.7
+
+
+def decide(text: str, verdict: "dict[str, Any] | None", skip_search: bool = False) -> tuple[bool, bool, "str | None"]:
+    """(search first, must make something, the tool goal) for a message. The triage judge (JEV first, the same judgment Claude Code's
+    hook gets) decides when it answered: a request it says needs an outside tool always starts with a search under that goal, even a
+    short one the word rules miss ("btc price now?"); one it is sure is conversation ("thanks", "yes do that") is not forced to search,
+    though the model may still. Anything else, or no verdict (no judge, a timeout), falls back to the word rules."""
+    if skip_search:
+        return False, False, None
+    search, creates = wants_work(text), makes_something(text)
+    if not verdict:
+        return search, creates, None
+    from app.tool_routing.goals import TOOL_GOALS
+
+    goal = verdict.get("tool") if verdict.get("tool") in TOOL_GOALS else None
+    if goal:
+        return True, creates, goal
+    conf = verdict.get("confidence")
+    if verdict.get("kind") == "conversation" and isinstance(conf, (int, float)) and conf >= CONVERSATION_CONFIDENCE:
+        return False, False, None
+    return search, creates, None
+
+
+def _context(history: list[dict[str, Any]], limit: int = 2000) -> str:
+    """The last few turns as plain text, for the judge (context only)."""
+    lines = [f"{t.get('role')}: {' '.join(str(t.get('content') or '').split())[:600]}" for t in history[-4:]]
+    return "\n".join(lines)[-limit:]
+
+
+async def _prepare(text: str, history: list[dict[str, Any]], find_tools: FindTools, classify: "Classify | None",
+                   skip_search: bool) -> tuple[list[dict[str, Any]], bool, bool, "str | None"]:
+    """The router's short list and the judge's verdict, asked at the same time -> (candidates, search first, creates, goal)."""
+    import asyncio
+
+    async def tools() -> list[dict[str, Any]]:
+        try:
+            return await find_tools(text) or []
+        except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
+            return []
+
+    async def verdict() -> "dict[str, Any] | None":
+        if classify is None or skip_search:
+            return None
+        try:
+            return await classify(text, _context(history))
+        except Exception:  # noqa: BLE001 -- no verdict: the word rules decide
+            return None
+
+    candidates, v = await asyncio.gather(tools(), verdict())
+    return (candidates, *decide(text, v, skip_search))
+
+
+def _under(discover: "DiscoverTools | None", goal: "str | None") -> "DiscoverTools | None":
+    """discover_tools that searches under the judge's goal (its ranking then uses what worked for that kind of task)."""
+    if discover is None or not goal:
+        return discover
+
+    async def run(need: str) -> Any:
+        try:
+            return await discover(need, goal)          # type: ignore[call-arg]
+        except TypeError:                              # a discover without a goal parameter
+            return await discover(need)
+    return run
+
+
 async def converse(text: str, history: list[dict[str, Any]], *, model_call: ModelCall, find_tools: FindTools,
                    use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "", tz: str = "",
                    discover: "DiscoverTools | None" = None, tools_of: "ToolsOf | None" = None,
                    call_cheap: "CallCheap | None" = None, skip_search: bool = False,
-                   read_earlier: "ReadEarlier | None" = None) -> AgentOutcome:
+                   read_earlier: "ReadEarlier | None" = None, classify: "Classify | None" = None) -> AgentOutcome:
     """One answer for `text`, with up to `max_rounds` rounds of tools. `history` comes from transcript()."""
-    try:
-        candidates = await find_tools(text) or []
-    except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
-        candidates = []
+    candidates, search_first, creates, goal = await _prepare(text, history, find_tools, classify, skip_search)
+    discover = _under(discover, goal)
 
     system = _system(candidates, handle, instructions, tz, earlier=read_earlier is not None)
     turns = list(history)
@@ -550,9 +617,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
     tried: list[dict[str, str]] = []
     made: list[str] = []
     # With a canvas open, the message is a change to it ("make it shorter"): the agent answers with the changed canvas, so no tool search is forced
-    # first and no tool has to run (skip_search).
-    search_first = wants_work(text) and not skip_search
-    creates = makes_something(text) and not skip_search
+    # first and no tool has to run (skip_search; decide()).
     worked = False
 
     for round_no in range(max_rounds + 1):
@@ -563,7 +628,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
         content = strip_tool_markup(str(message.get("content") or ""))
         if not calls or round_no >= max_rounds:
             content = _ran_out(content, used)
-            return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried)
+            return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal)
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
             result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier)
@@ -576,21 +641,19 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
                     tried.append(_sign_in_tool(result, link))
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": _for_model(result)})
 
-    return AgentOutcome(text="", tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried)      # unreachable; the loop returns on its last pass
+    return AgentOutcome(text="", tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal)      # unreachable; the loop returns on its last pass
 
 
 async def stream_answer(text: str, history: list[dict[str, Any]], *, model_stream: ModelStream, find_tools: FindTools,
                         use_tool: UseTool, max_rounds: int = MAX_ROUNDS, handle: str = SELF_HANDLE, instructions: str = "", tz: str = "",
                    discover: "DiscoverTools | None" = None, tools_of: "ToolsOf | None" = None,
                    call_cheap: "CallCheap | None" = None, skip_search: bool = False,
-                   read_earlier: "ReadEarlier | None" = None) -> AsyncIterator[tuple[str, Any]]:
+                   read_earlier: "ReadEarlier | None" = None, classify: "Classify | None" = None) -> AsyncIterator[tuple[str, Any]]:
     """The same answer as converse(), streamed: yields ("delta", piece) as the model produces it, then exactly one
     ("final", AgentOutcome). A tool round is buffered (the model's content before a tool call is normally empty), then the
     next round streams again."""
-    try:
-        candidates = await find_tools(text) or []
-    except Exception:  # noqa: BLE001 -- no router answer just means no tools this turn
-        candidates = []
+    candidates, search_first, creates, goal = await _prepare(text, history, find_tools, classify, skip_search)
+    discover = _under(discover, goal)
 
     system = _system(candidates, handle, instructions, tz, earlier=read_earlier is not None)
     turns = list(history)
@@ -604,9 +667,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     tried: list[dict[str, str]] = []
     made: list[str] = []
     # With a canvas open, the message is a change to it ("make it shorter"): the agent answers with the changed canvas, so no tool search is forced
-    # first and no tool has to run (skip_search).
-    search_first = wants_work(text) and not skip_search
-    creates = makes_something(text) and not skip_search
+    # first and no tool has to run (skip_search; decide()).
     worked = False
     said: list[str] = []                              # everything shown so far, over all rounds
 
@@ -642,7 +703,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
                 raise
             note = f"(I was cut off before I could finish: {str(exc).strip()[:160] or 'the model service had a problem'}. Ask me again and I will pick it up.)"
             partial = "".join(said).strip()
-            yield ("final", AgentOutcome(text=_with_made((partial + "\n\n" if partial else "") + note, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried))
+            yield ("final", AgentOutcome(text=_with_made((partial + "\n\n" if partial else "") + note, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal))
             return
         tail = markup.flush()
         if tail:
@@ -655,7 +716,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
             if not content and not made and used:
                 content = _ran_out(content, used)
                 yield ("delta", content)
-            yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried))
+            yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal))
             return
         messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
         for call in tool_calls:
