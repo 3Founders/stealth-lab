@@ -1426,3 +1426,19 @@ span.dg-replyq { cursor: default; }
 .dg-signin-done { font-size: .85em; color: var(--grey); }
 .dg-signin-done::before { content: "✓ "; color: var(--ink); }
 .dg-signin-run { justify-self: start; font: inherit; font-size: .85em; background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; cursor: pointer; }
+
+/* The sidebar's own Search (Ctrl K was the only way in), "+ New room" beside Manage rooms, and its inline name box. */
+.dg-side-search { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 6px 10px; padding: 7px 10px; font: inherit; font-size: .9em;
+  color: var(--grey); background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; cursor: pointer; text-align: left; }
+.dg-side-search:hover { color: var(--ink); border-color: var(--rule-strong); }
+.dg-side-search kbd { font: inherit; font-size: .8em; border: 1px solid var(--rule); border-radius: 4px; padding: 0 5px; }
+.dg-roomacts { display: flex; flex-wrap: wrap; gap: 6px; }
+.dg-roomacts .dg-add { margin-right: 0; }
+.dg-newroom-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 6px 0; }
+.dg-newroom-inline input { flex: 1; min-width: 0; font: inherit; padding: 5px 8px; border: 1px solid var(--rule-strong); border-radius: 6px; background: var(--paper); color: var(--ink); }
+.dg-newroom-inline small { flex-basis: 100%; color: #b3261e; }
+.dg-loading { color: var(--grey); }
+.dg-set-instr { display: grid; gap: 4px; margin: 10px 0 14px; }
+.dg-set-instr textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--rule-strong); border-radius: 8px; background: var(--paper); color: var(--ink); resize: vertical; }
+/* phones: the sidebar button is its icon alone, so the header stays on one line */
+@media (max-width: 480px) { .dg-menu > span:last-child { display: none; } }

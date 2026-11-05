@@ -30,7 +30,7 @@ import { mentionsIn, parseCommand, recipientsFor, toMcpPayload } from "@/lib/cha
 import { describeBacking, type Backing } from "@/lib/chat/adapters/resolve";
 import { Broker } from "@/lib/chat/relay/broker";
 import { cursorOf, isFinished, mentionedNames, mergeTasks, relay, RelayError, type RelayAgent, type RelayTask, relayKey, ownerBadge } from "@/lib/chat/relay-client";
-import { DEFAULT_ROOM, newRoomName, readAgents, readPresets, readRooms, withoutRoom, writeAgents, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
+import { DEFAULT_ROOM, freeRoomName, newRoomName, readAgents, readInstructions, readPresets, readRooms, withoutRoom, writeAgents, writeInstructions, writePresets, writeRooms, type RoomList } from "@/lib/chat/rooms";
 import { RoomsApiError, roomsApi, toolLabel, type RoomMember, type ToolSignIn } from "@/lib/chat/rooms-api";
 import { SyncEngine, type RoomsChange, type SyncState } from "@/lib/chat/sync";
 import { HISTORY_DB, HistoryStore } from "@/lib/chat/store";
@@ -160,6 +160,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   pausedRef.current = paused;
   const [backing, setBacking] = useState<Backing | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false); // phones: the sidebar is a drawer
+  /** "+ New room": the name being typed (a free one is filled in, so Enter makes it at once), or null when closed. */
+  const [newRoom, setNewRoom] = useState<string | null>(null);
+  const [newRoomError, setNewRoomError] = useState("");
   const [manageOpen, setManageOpen] = useState(false);
   const [panelHidden, setPanelHidden] = useState(false); // wide screens: the room list can be closed to give the chat the whole window
   const controllers = useRef(new Map<string, AbortController>());
@@ -207,6 +210,12 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const presetsRef = useRef(presets);
   presetsRef.current = presets;
   useEffect(() => { setPresets(readPresets(kv, subject)); }, [kv, subject]);
+  /** What kell should always know or do, in every room (Settings, Agents and models). Kept on this device with the agents' own instructions. */
+  const [everyChat, setEveryChat] = useState("");
+  const everyChatRef = useRef(everyChat);
+  everyChatRef.current = everyChat;
+  useEffect(() => { setEveryChat(readInstructions(kv, subject)); }, [kv, subject]);
+  const saveEveryChat = useCallback((v: string) => { setEveryChat(v); writeInstructions(kv, subject, v); }, [kv, subject]);
   const [formError, setFormError] = useState("");
 
   const warnHistory = () => {
@@ -343,7 +352,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       const out = await roomsAgent.agentStream(id, text, (delta) => {
         if (who !== "@kell") setStreaming((p) => ({ ...p, [who]: { room: r, text: ((p[who]?.text) ?? "") + delta } }));
         else setStreaming((p) => ({ ...p, "@kell": { room: r, text: ((p["@kell"]?.text) ?? "") + delta } }));
-      }, ctl.signal, who, [presetsRef.current[who], takeStandIn()].filter(Boolean).join(" ") || undefined,
+      }, ctl.signal, who, [everyChatRef.current.trim() && `What the person wants in every chat: ${everyChatRef.current.trim()}`, presetsRef.current[who], takeStandIn()].filter(Boolean).join(" ") || undefined,
       temp ? { history: toTurns((lineStore.current[r] ?? []).flatMap((l) => (l.kind === "msg" ? [l.m] : [])), who) } : undefined,
       canvasOpenRef.current && r === roomRef.current && canvasContextRef.current ? { ...canvasContextRef.current, ...(selectionRef.current ? { selection: selectionRef.current } : {}) } : null,
       (tool) => addSignIns(r, text, who, [tool]));   // a tool asked for your sign-in: its button shows now, while the answer is written   // the canvas you have open (and the part you highlighted), so "make it shorter" edits it
@@ -369,6 +378,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if ((err as { name?: string })?.name === "AbortError") { queues.current = drain(queues.current, key).rest; setQueueView(queues.current); note("Stopped.", r); }
       else if (err instanceof RoomsApiError && err.status === 401) note(`Sign in to ask ${nameOf(who)}.`, r);
       else if (err instanceof RoomsApiError && err.status === 404) note("This room is still syncing. Try again in a moment.", r);
+      else if (err instanceof Error && /prepaid balance|buy credits|no plan|top up/i.test(err.message)) note(`${err.message.replace(/;?\s*buy credits to continue\.?$/i, "")}. Buy credits or pick a plan: https://www.kell.org.in/account/billing`, r);
       else note(err instanceof Error ? err.message : `${nameOf(who)} could not answer just now.`, r);
     } finally {
       controllers.current.delete(who);
@@ -628,6 +638,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   useEffect(() => { engineRef.current?.watch(room); }, [room]);
 
   // Bring this room's saved history back from this device (what is already on screen wins on a clash).
+  const [hydrated, setHydrated] = useState<Record<string, boolean>>({});
   const hydrate = useCallback(async (r: string) => {
     try {
       const saved = await history.load(r);
@@ -638,6 +649,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       for (const l of add) if (l.kind === "msg" && l.m.sender.type !== "human") captureRef.current(l.m, false); // rebuild canvases from saved history (a version already made from a message is not added twice)
       if (saved.tasks.length) setTasksByRoom((p) => ({ ...p, [r]: mergeTasks(saved.tasks, p[r] ?? []) }));
     } catch { /* nothing saved, or storage blocked: the room simply starts empty */ }
+    setHydrated((p) => (p[r] ? p : { ...p, [r]: true }));
   }, [history]);
   useEffect(() => { void hydrate(room); }, [hydrate, room]);
 
@@ -865,6 +877,15 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   // Who is in this room (once it exists on your account). Changing them happens in Manage rooms.
   const synced = info[room] !== undefined;
+  // A room shows "no messages yet" only once its history could have arrived: saved on this device, or from the account (a few seconds at
+  // most). Before, every room said "No messages in General yet" for about 3 s and then filled in (2026-11-05).
+  const [waited, setWaited] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    if (waited[room]) return;
+    const t = window.setTimeout(() => setWaited((p) => ({ ...p, [room]: true })), 6000);
+    return () => window.clearTimeout(t);
+  }, [room, waited]);
+  const roomReady = tempRef.current.has(room) || waited[room] === true || (hydrated[room] === true && sync.lastSyncAt !== null);
   useEffect(() => {
     const sid = engineRef.current?.roomId(room);
     if (!sid) { setMembers([]); return; }
@@ -1325,6 +1346,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
         {/* Only this part scrolls: the logo and "Back to home" above it, and your profile below it, stay where they are. */}
         <div className="dg-side-scroll" ref={sideScrollRef}>
+        <button type="button" className="dg-side-search" onClick={() => { setSearchOpen(true); setMenuOpen(false); }}>
+          <span>Search</span><kbd>Ctrl K</kbd>
+        </button>
         <h2>Rooms</h2>
         <ul className="dg-rooms">
           {roomList.rooms.map((r) => (
@@ -1333,7 +1357,25 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             </li>
           ))}
         </ul>
-        <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage rooms</button>
+        {newRoom !== null && (
+          <form className="dg-newroom-inline" onSubmit={(e) => {
+            e.preventDefault();
+            const made = createRoomNamed(newRoom);
+            if ("error" in made) { setNewRoomError(made.error); return; }
+            setNewRoom(null); setNewRoomError(""); setMenuOpen(false);
+          }}>
+            <span aria-hidden="true">#</span>
+            <input autoFocus aria-label="New room name" maxLength={30} value={newRoom} onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => { setNewRoom(e.target.value); setNewRoomError(""); }}
+              onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setNewRoom(null); setNewRoomError(""); } }} />
+            <button type="submit" className="btn-line dg-mini">Create</button>
+            {newRoomError && <small role="alert">{newRoomError}</small>}
+          </form>
+        )}
+        <div className="dg-roomacts">
+          <button type="button" className="btn-line dg-add" onClick={() => setNewRoom(freeRoomName(roomList.rooms))}>+ New room</button>
+          <button type="button" className="btn-line dg-add" onClick={() => setManageOpen(true)}>Manage rooms</button>
+        </div>
 
         <h2>Agents</h2>
         <OnboardButton onOnboard={onboardAgent} className="dg-onboard-side" />
@@ -1430,7 +1472,10 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
           <MessageScroller.Root className="dg-scroll">
             <MessageScroller.Viewport ref={viewportRef} data-lenis-prevent className="dg-viewport" aria-label={`Messages in ${room}`}>
               <MessageScroller.Content ref={contentRef} className="dg-content">
-                {items.length === 0 && streamingHere.length === 0 && !kellHere && (
+                {items.length === 0 && streamingHere.length === 0 && !kellHere && !roomReady && (
+                  <p className="dg-empty dg-loading" role="status">Loading messages…</p>
+                )}
+                {items.length === 0 && streamingHere.length === 0 && !kellHere && roomReady && (
                   <p className="dg-empty">No messages in {roomName(room)} yet. {agents.length > 0 ? <>Say hello: <code>{agents[0]} hello</code>. </> : <>Invite people with the invite link, or add a model assistant to chat with. </>}In a room with just you, a message with no mention goes to <b>kell</b>; add your own agents with <b>+ Add agent</b>.</p>
                 )}
                 {items.map((i) => i.node)}
@@ -1495,7 +1540,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
         memory={{ api: mapi }}
         data={{ encrypted: { onDownload: () => void downloadEncrypted(), onImport: () => encFile.current?.click() }, onDownload: () => void download(), onImport: () => importFile.current?.click(), onDelete: () => void wipe(),
           folder: { supported: folderBackupSupported(), name: folder, onChoose: () => void chooseBackupFolder(), onRestore: () => void restoreFromFolder(), onStop: () => { void forgetFolder(folderStore, subject); setFolder(null); } } }}
-        agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, allowSignInTools, onAllowSignInTools: setAllowSignInToolsSaved }}
+        agents={{ modelText: backing?.text ?? "", modelReady: backing?.ready ?? false, count, paused, onPause: (v) => broker.setPaused(v), maxHops: MAX_DEPTH, allowSignInTools, onAllowSignInTools: setAllowSignInToolsSaved, instructions: everyChat, onInstructions: saveEveryChat }}
         account={{ name: accountName, onSignOut: () => void signOut().then(() => { window.location.assign("/"); }) }}
       />
     </div>

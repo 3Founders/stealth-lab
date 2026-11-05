@@ -37,6 +37,11 @@ export function newRoomName(existing: string[], raw: string): { name: string } |
   return { name };
 }
 
+/** A name for "+ New room" that is free: chat-1, chat-2, ... (filled in, so Enter makes the room at once; type over it to pick another). */
+export function freeRoomName(existing: string[]): string {
+  for (let n = 1; ; n++) if (!existing.includes(`#chat-${n}`)) return `chat-${n}`;
+}
+
 /** The list after removing `room`, and the room to show. The last room can't be removed. */
 export function withoutRoom(list: RoomList, room: string): RoomList {
   if (list.rooms.length <= 1 || !list.rooms.includes(room)) return list;
@@ -73,6 +78,18 @@ export function readPresets(kv: KeyValue, subject: string): Record<string, strin
 
 export function writePresets(kv: KeyValue, subject: string, presets: Record<string, string>): void {
   try { kv.setItem(presetsKey(subject), JSON.stringify(presets)); } catch { /* storage blocked */ }
+}
+
+const instructionsKey = (subject: string) => `kell:instructions:${subject}`;
+export const MAX_INSTRUCTIONS = 1500;
+
+/** What the person wants kell to know or do in every chat (Settings, Agents and models). Kept on this device. */
+export function readInstructions(kv: KeyValue, subject: string): string {
+  try { return String(kv.getItem(instructionsKey(subject)) ?? "").slice(0, MAX_INSTRUCTIONS); } catch { return ""; }
+}
+
+export function writeInstructions(kv: KeyValue, subject: string, text: string): void {
+  try { kv.setItem(instructionsKey(subject), text.slice(0, MAX_INSTRUCTIONS)); } catch { /* storage blocked */ }
 }
 
 export function writeAgents(kv: KeyValue, subject: string, agents: string[]): void {
