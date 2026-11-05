@@ -130,6 +130,31 @@ async def test_a_sign_in_link_goes_to_the_person_only_never_to_the_model():
 
 
 @pytest.mark.asyncio
+async def test_every_tool_that_asks_for_a_sign_in_gets_its_own_button_shown_at_once():
+    """Two tools asked (Scite and a papers server, 2026-11-05): the person saw one button, and only after the answer was written."""
+    calls = [_call(server="io.github.scite/scite", cid="a"), _call(server="io.github.peer/papers", cid="b")]
+    rounds = {"n": 0}
+
+    async def model_stream(messages, tools):
+        rounds["n"] += 1
+        if rounds["n"] == 1:
+            yield {"choices": [{"delta": {"tool_calls": [{"index": i, "id": c["id"], "function": c["function"]} for i, c in enumerate(calls)]}}]}
+        else:
+            yield {"choices": [{"delta": {"content": "Both need your sign-in once."}}]}
+
+    async def use_tool(server, name, args):
+        return json.dumps({"sign_in_required": True, "server": server, "link": f"https://auth.example/{server}"})
+
+    events = [e async for e in room_agent.stream_answer("find papers on htn planning", [], model_stream=model_stream,
+                                                        find_tools=_some_tools, use_tool=use_tool, skip_search=True)]
+    kinds = [k for k, _ in events]
+    assert kinds.index("sign_in") < kinds.index("delta")                     # the buttons come before the answer is written
+    shown = [v["server"] for k, v in events if k == "sign_in"]
+    assert shown == ["io.github.scite/scite", "io.github.peer/papers"]
+    assert [t["server"] for t in events[-1][1].sign_in_tools] == shown
+
+
+@pytest.mark.asyncio
 async def test_a_bad_tool_call_is_refused_as_text_and_the_model_continues():
     model = Model(_reply(tool_calls=[_call(server="", name="")]), _reply("I will answer without a tool."))
     out = await room_agent.converse("hi", [], model_call=model, find_tools=_some_tools, use_tool=_never)

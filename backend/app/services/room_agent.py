@@ -298,6 +298,7 @@ class AgentOutcome:
     tools_used: list[str] = field(default_factory=list)
     consent_links: list[str] = field(default_factory=list)
     sign_in_links: list[str] = field(default_factory=list)
+    sign_in_tools: list[dict[str, str]] = field(default_factory=list)   # {"server", "link"} per tool that asked, in the order they were tried
 
 
 def transcript(events: list[dict[str, Any]], self_handle: str = SELF_HANDLE) -> list[dict[str, Any]]:
@@ -420,6 +421,15 @@ def _for_model(result: Any) -> str:
     return str(result)[:8000]
 
 
+def _sign_in_tool(result: Any, link: str) -> dict[str, str]:
+    """The tool a sign-in answer is for, with its link: the person gets one Sign in button per tool, named."""
+    try:
+        server = str(json.loads(result).get("server") or "")
+    except (ValueError, TypeError, AttributeError):
+        server = ""
+    return {"server": server, "link": link}
+
+
 def _consent(result: Any) -> tuple[str | None, bool]:
     """(link, is_sign_in) for a first-call consent answer or a server sign-in answer; (None, False) otherwise."""
     if not isinstance(result, str):
@@ -537,6 +547,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
     used: list[str] = []
     links: list[str] = []
     sign_ins: list[str] = []
+    tried: list[dict[str, str]] = []
     made: list[str] = []
     # With a canvas open, the message is a change to it ("make it shorter"): the agent answers with the changed canvas, so no tool search is forced
     # first and no tool has to run (skip_search).
@@ -552,7 +563,7 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
         content = strip_tool_markup(str(message.get("content") or ""))
         if not calls or round_no >= max_rounds:
             content = _ran_out(content, used)
-            return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins)
+            return AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried)
         messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for call in calls:
             result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier)
@@ -561,9 +572,11 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
             link, sign_in = _consent(result)
             if link:
                 (sign_ins if sign_in else links).append(link)
+                if sign_in:
+                    tried.append(_sign_in_tool(result, link))
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": _for_model(result)})
 
-    return AgentOutcome(text="", tools_used=used, consent_links=links, sign_in_links=sign_ins)      # unreachable; the loop returns on its last pass
+    return AgentOutcome(text="", tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried)      # unreachable; the loop returns on its last pass
 
 
 async def stream_answer(text: str, history: list[dict[str, Any]], *, model_stream: ModelStream, find_tools: FindTools,
@@ -588,6 +601,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     used: list[str] = []
     links: list[str] = []
     sign_ins: list[str] = []
+    tried: list[dict[str, str]] = []
     made: list[str] = []
     # With a canvas open, the message is a change to it ("make it shorter"): the agent answers with the changed canvas, so no tool search is forced
     # first and no tool has to run (skip_search).
@@ -628,7 +642,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
                 raise
             note = f"(I was cut off before I could finish: {str(exc).strip()[:160] or 'the model service had a problem'}. Ask me again and I will pick it up.)"
             partial = "".join(said).strip()
-            yield ("final", AgentOutcome(text=_with_made((partial + "\n\n" if partial else "") + note, made), tools_used=used, consent_links=links, sign_in_links=sign_ins))
+            yield ("final", AgentOutcome(text=_with_made((partial + "\n\n" if partial else "") + note, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried))
             return
         tail = markup.flush()
         if tail:
@@ -641,7 +655,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
             if not content and not made and used:
                 content = _ran_out(content, used)
                 yield ("delta", content)
-            yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins))
+            yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried))
             return
         messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
         for call in tool_calls:
@@ -651,4 +665,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
             link, sign_in = _consent(result)
             if link:
                 (sign_ins if sign_in else links).append(link)
+                if sign_in:
+                    tried.append(_sign_in_tool(result, link))
+                    yield ("sign_in", tried[-1])      # the button shows now, while the answer is still being written
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": _for_model(result)})

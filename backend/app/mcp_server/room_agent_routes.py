@@ -81,6 +81,12 @@ def trace_turn(room_id: Any, handle: str, outcome: "agent.AgentOutcome | None", 
              ",".join(tools) or "-", made, bool(outcome and outcome.text.strip()), _time.monotonic() - started)
 
 
+def _one_per_link(tools: list[dict[str, str]]) -> list[dict[str, str]]:
+    """The tools that asked for a sign-in, one entry per link, in the order they were tried (the best fit first)."""
+    seen: set[str] = set()
+    return [t for t in tools if t.get("link") and not (t["link"] in seen or seen.add(t["link"]))]
+
+
 def _sse(obj: Any) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
@@ -222,6 +228,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                     ):
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
+                        elif kind == "sign_in":          # the person's private Sign in button, as soon as the tool asks
+                            queue.put_nowait(_sse({"sign_in_tool": value}))
                         else:
                             final = value
                     reply, accepted, why, links, sign_ins, remembered = await finish(final or agent.AgentOutcome(text=""))
@@ -230,6 +238,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         queue.put_nowait(_sse({"error": why}))
                     else:
                         queue.put_nowait(_sse({"done": True, "text": reply, "event": accepted, "consent": links, "sign_in": sign_ins,
+                                               "sign_in_tools": _one_per_link(final.sign_in_tools if final else []),
                                                "memory": {"used": mem_used, "remembered": remembered},
                                                "tools": (final.tools_used if final else [])}))
                 except RuntimeError as exc:          # the model endpoint's own refusal
@@ -286,7 +295,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
         if why is not None:
             return _error(request, why, 400)
         return _json(request, {"posted": accepted is not None, "text": reply, "tools": outcome.tools_used, "event": accepted,
-                               "consent": links, "sign_in": sign_ins,
+                               "consent": links, "sign_in": sign_ins, "sign_in_tools": _one_per_link(outcome.sign_in_tools),
                                "memory": {"used": mem_used, "remembered": remembered}})
 
     @server.custom_route("/v1/agent/ephemeral", methods=["POST", "OPTIONS"], include_in_schema=False)
@@ -337,7 +346,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                 ):
                     if kind == "delta":
                         yield _sse({"delta": value})
-                    else:
+                    elif kind == "final":
                         final = value
             except RuntimeError as exc:
                 yield _sse({"error": f"{handle} could not answer: {str(exc).strip()[:300]}"})

@@ -1403,7 +1403,24 @@ span.dg-replyq { cursor: default; }
 .dg-members li.dg-agentrow { column-gap: 6px; }
 
 /* A tool's sign-in: the notice carries a one-click button (RoomView's openToolSignIn), not a raw link. */
-.dg-signin-notice { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
-.dg-signin-notice button { font: inherit; font-size: 12.5px; font-weight: 600; padding: 3px 12px; border-radius: 999px; border: 1px solid #171717;
-  background: var(--yellow); color: #171717; cursor: pointer; }
-.dg-signin-notice button:hover { filter: brightness(.97); }
+/* A tool's sign-in: a card of its own, not the yellow pill notices and errors use. Its buttons are the home page's "Get started"
+   (ink, a yellow arrow square that nudges on hover), without a glow. */
+.dg-signin-card { align-self: center; width: min(460px, 100%); background: var(--paper); color: var(--ink); border: 1px solid var(--rule-strong);
+  border-radius: 12px; padding: 14px 16px 12px; display: grid; gap: 10px; animation: dg-signin-in 420ms var(--dg-bouncy) both; }
+@keyframes dg-signin-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+.dg-signin-head { display: grid; gap: 2px; }
+.dg-signin-head b { font-weight: 600; font-size: 1em; }
+.dg-signin-head span { font-size: .85em; color: var(--grey); }
+.dg-signin-card ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.dg-signin-card li { display: flex; align-items: center; gap: 8px; padding: 6px 0 0; border-top: 1px solid var(--rule); }
+.dg-signin-card li:first-child { border-top: 0; padding-top: 0; }
+.dg-signin-name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-signin-best { font-size: .72em; letter-spacing: .06em; text-transform: uppercase; background: var(--yellow); color: #171717; border-radius: 3px; padding: 2px 6px 1px; }
+.dg-signin-btn { display: inline-flex; align-items: center; gap: 10px; background: var(--ink); color: var(--paper); font: inherit; font-size: .9em;
+  padding: 5px 5px 5px 12px; border-radius: 8px; border: 0; cursor: pointer; }
+.dg-signin-btn .sq { display: grid; place-items: center; width: 22px; height: 22px; background: var(--yellow); color: #171717; border-radius: 5px;
+  transition: transform .3s var(--dg-smooth); }
+.dg-signin-btn:hover .sq, .dg-signin-btn:focus-visible .sq { transform: translate(2px, -2px); }
+.dg-signin-done { font-size: .85em; color: var(--grey); }
+.dg-signin-done::before { content: "✓ "; color: var(--ink); }
+.dg-signin-run { justify-self: start; font: inherit; font-size: .85em; background: none; border: 0; padding: 0; color: var(--ink); text-decoration: underline; cursor: pointer; }

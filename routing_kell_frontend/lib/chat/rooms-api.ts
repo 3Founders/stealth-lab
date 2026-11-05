@@ -94,7 +94,7 @@ export function roomsApi(deps: RoomsDeps) {
      *  arrives through sync like any other message; nothing is posted when it cannot answer. */
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[]; sign_in?: string[] }>("POST", `/${e(id)}/agent`, { text }),
     /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
-    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }, canvas?: { title: string; kind: string; text: string; selection?: string } | null) => {
+    agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }, canvas?: { title: string; kind: string; text: string; selection?: string } | null, onSignIn?: (tool: ToolSignIn) => void) => {
       const token = await deps.token();
       if (!token) throw new RoomsApiError("Sign in again to sync your rooms.", 401);
       let res: Response;
@@ -114,28 +114,46 @@ export function roomsApi(deps: RoomsDeps) {
         const msg = (json as { error?: unknown } | null)?.error;
         throw new RoomsApiError(typeof msg === "string" && msg ? msg : `The server answered ${res.status}.`, res.status);
       }
-      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[]; sign_in: string[]; memory: { used: string[]; remembered: string[] } } | null = null;
+      let final: { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[]; sign_in: string[]; sign_in_tools: ToolSignIn[]; memory: { used: string[]; remembered: string[] } } | null = null;
       let failure: RoomsApiError | null = null;
       await readSse(res.body, (event) => {
-        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown; consent?: unknown; sign_in?: unknown; memory?: unknown };
+        const o = event as { delta?: unknown; done?: unknown; error?: unknown; text?: unknown; tools?: unknown; event?: unknown; consent?: unknown; sign_in?: unknown; sign_in_tool?: unknown; sign_in_tools?: unknown; memory?: unknown };
         if (typeof o.error === "string" && o.error) failure = new RoomsApiError(o.error);
         if (typeof o.delta === "string" && o.delta) onDelta(o.delta);
+        const asked = toSignIn(o.sign_in_tool);       // a tool asked for the person's sign-in: its button shows now, mid-answer
+        if (asked) onSignIn?.(asked);
         if (o.done === true) {
           final = { posted: Boolean(o.event), text: String(o.text ?? ""), tools: Array.isArray(o.tools) ? o.tools.map(String) : [],
                     event: (o.event as { id: string; seq: number } | null) ?? null,
                     consent: Array.isArray(o.consent) ? o.consent.map(String) : [],
                     sign_in: Array.isArray(o.sign_in) ? o.sign_in.map(String) : [],
+                    sign_in_tools: Array.isArray(o.sign_in_tools) ? o.sign_in_tools.flatMap((t) => { const v = toSignIn(t); return v ? [v] : []; }) : [],
                     memory: { used: Array.isArray((o.memory as { used?: unknown } | undefined)?.used) ? ((o.memory as { used: unknown[] }).used).map(String) : [], remembered: Array.isArray((o.memory as { remembered?: unknown } | undefined)?.remembered) ? ((o.memory as { remembered: unknown[] }).remembered).map(String) : [] } };
         }
       });
       if (failure) throw failure;
-      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[]; sign_in: string[]; memory: { used: string[]; remembered: string[] } } | null;
+      const done = final as { posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent: string[]; sign_in: string[]; sign_in_tools: ToolSignIn[]; memory: { used: string[]; remembered: string[] } } | null;
       if (done === null) throw new RoomsApiError("The answer ended before it was posted.");
       return done;
     },
   };
 }
 export type RoomsApi = ReturnType<typeof roomsApi>;
+
+/** A tool that needs the person's own sign-in before it runs: its registry name and the sign-in link (shown to them only). */
+export type ToolSignIn = { server: string; link: string };
+
+function toSignIn(v: unknown): ToolSignIn | null {
+  const o = v as { server?: unknown; link?: unknown } | null;
+  return o && typeof o.link === "string" && /^https?:\/\//.test(o.link) ? { server: typeof o.server === "string" ? o.server : "", link: o.link } : null;
+}
+
+/** A registry name as people say it: "io.github.scite/scite-mcp" -> "Scite". */
+export function toolLabel(server: string): string {
+  const last = (server.split("/").pop() ?? "").replace(/^mcp[-_.]|[-_.](mcp|server|mcp[-_.]server)$/gi, "");
+  const words = last.split(/[-_.]+/).filter(Boolean);
+  return words.length ? words.map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") : "This tool";
+}
 
 /** This device's time zone name (Asia/Kolkata), so the agent can be told today's date where the person is. */
 function localZone(): string {
