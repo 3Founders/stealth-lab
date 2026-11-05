@@ -345,8 +345,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             task = asyncio.ensure_future(work())
             _RUNNING.add(task)                       # keep a reference so the answer is not collected while nobody is listening
             task.add_done_callback(_RUNNING.discard)
-            mine = _BY_ROOM.setdefault((subject, str(room_id)), {})
-            mine[task] = handle
+            _BY_ROOM.setdefault((subject, str(room_id)), {})[task] = handle
             task.add_done_callback(lambda t, k=(subject, str(room_id)): (_BY_ROOM.get(k, {}).pop(t, None), (not _BY_ROOM.get(k)) and _BY_ROOM.pop(k, None)))
 
             async def frames() -> AsyncIterator[str]:
