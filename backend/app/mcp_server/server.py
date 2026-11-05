@@ -2186,6 +2186,14 @@ app = _room_doc_ws.DocsSocketGate(
     app, _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
     lambda: _LIFESPAN_STATE.get("pool"))
 
+# The organization admin API (/v1/orgs, /v1/join) for the website's team pages: the full API app's routers behind this server's own sign-in.
+# Off unless ORG_ADMIN_ROUTES=on (mcp_server/org_admin_gate.py).
+from app.mcp_server import org_admin_gate as _org_admin_gate  # noqa: E402
+
+app = _org_admin_gate.OrgAdminGate(
+    app, _delegate_routes.Gate(_TOKEN_VERIFIER, lambda: _LIFESPAN_STATE.get("pool"), _is_local_request),
+    lambda: _LIFESPAN_STATE.get("pool"))
+
 
 def _resolve_caller_identity(fallback: str) -> str:
     """Real caller-identity resolution for write-path attribution
