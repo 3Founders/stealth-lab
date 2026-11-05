@@ -409,3 +409,23 @@ def test_stream_sends_what_is_new_then_ends_with_a_cursor(pool, monkeypatch):
         again = events_of("".join(s.iter_text()))
     assert [n for n, _ in again] == ["end"]                                                                 # nothing replayed after the cursor
     assert c.get(f"/v1/rooms/{rid}/stream", headers={"x-test-sub": BOB}).status_code == 404               # not a member: no stream
+
+
+def test_the_agent_reads_another_room_only_when_everyone_here_is_there_too(pool):
+    design = room(pool, title="#design")
+    send(pool, ALICE, design["id"], ev("we picked the blue logo"), ev("ship on friday"))
+    solo = room(pool, title="#notes")
+    title, got = run(pool, rm.other_room_events(pool, ALICE, solo["id"], "Design"))          # by name, any case, no #
+    assert title == "#design" and [e["body"] for e in got] == ["we picked the blue logo", "ship on friday"]
+    _, found = run(pool, rm.other_room_events(pool, ALICE, solo["id"], "design", query="logo"))
+    assert [e["body"] for e in found] == ["we picked the blue logo"]
+    with pytest.raises(rm.RoomError) as none:
+        run(pool, rm.other_room_events(pool, ALICE, solo["id"], "marketing"))
+    assert none.value.status == 404 and "#design" in str(none.value)                       # it names the rooms there are
+    shared = room(pool, title="#team")
+    join(pool, shared, BOB)                                                                 # Bob is in #team but not in #design
+    with pytest.raises(rm.RoomError) as kept:
+        run(pool, rm.other_room_events(pool, ALICE, shared["id"], "design"))
+    assert kept.value.status == 403                                                         # #design's messages are not shown to Bob
+    with pytest.raises(rm.RoomError):
+        run(pool, rm.other_room_events(pool, BOB, shared["id"], "design"))                  # and Bob can never reach Alice's room

@@ -600,6 +600,34 @@ async def earlier_events(pool: Any, sub: str, room_id: str, before_seq: int, lim
     return [_event_json(r, names, sub) for r in rows]
 
 
+def _room_key(title: str) -> str:
+    return " ".join(str(title or "").lower().lstrip("#").replace("-", " ").replace("_", " ").split())
+
+
+async def other_room_events(pool: Any, sub: str, here_id: str, name: str, limit: int = 30, query: str = "") -> tuple[str, list[dict[str, Any]]]:
+    """(its title, its newest messages, oldest first) for another of the caller's rooms, named by its title ("design", "#design-review"),
+    for the agent asked "what did we decide in #design?". Only when everyone in this room is also in that one: its messages are then posted
+    where nobody new reads them. Otherwise, or with no such room, a RoomError that says why (and names the rooms there are)."""
+    here = await _member_room(pool, sub, here_id)
+    mine = await pool.fetch(
+        "SELECT r.id, r.title FROM rooms r JOIN room_members m ON m.room_id = r.id AND m.member_sub = $1 AND m.removed_at IS NULL "
+        "WHERE r.deleted_at IS NULL AND r.id <> $2 ORDER BY r.created_at", sub, here["id"])
+    want = _room_key(name)
+    hit = next((r for r in mine if _room_key(r["title"]) == want), None) or next(
+        (r for r in mine if want and want in _room_key(r["title"])), None)
+    if hit is None:
+        names = ", ".join(f"#{r['title']}" for r in mine[:30]) or "none"
+        raise RoomError(f"no other room of yours is called {name!r}; your other rooms: {names}", 404)
+    members = await pool.fetch(
+        "SELECT room_id, member_sub FROM room_members WHERE room_id = ANY($1::uuid[]) AND removed_at IS NULL", [here["id"], hit["id"]])
+    here_people = {m["member_sub"] for m in members if m["room_id"] == here["id"]}
+    there_people = {m["member_sub"] for m in members if m["room_id"] == hit["id"]}
+    if not here_people <= there_people:
+        raise RoomError(f"#{hit['title']} does not have everyone who is in this room, so its messages are not brought here; "
+                        "ask in that room instead", 403)
+    return str(hit["title"]), await earlier_events(pool, sub, str(hit["id"]), 2 ** 62, limit, query)
+
+
 class _Limiter:
     """A sliding window per person, in memory (one worker). Swappable in tests."""
 

@@ -132,3 +132,12 @@ export function ThumbDownIcon({ size = 14 }: { size?: number }) {
     </svg>
   );
 }
+
+export function EditIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...base}>
+      <path d="M12 20h9" />
+      <path d="M16.38 3.62a1 1 0 0 1 3 3L7.37 18.64a2 2 0 0 1-.86.5l-2.87.84a.5.5 0 0 1-.62-.62l.84-2.87a2 2 0 0 1 .5-.86z" />
+    </svg>
+  );
+}

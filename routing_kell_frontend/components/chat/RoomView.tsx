@@ -15,7 +15,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { CanvasContext } from "@/components/chat/CanvasCard";
 import { captureFrom, extractCanvasBlocks, hideCanvasWhileStreaming, newCanvas, type Canvas } from "@/lib/chat/canvas";
 import { FilesContext } from "@/components/chat/FileCard";
-import { FileError, filesApi, fileToken } from "@/lib/chat/files";
+import { FileError, filesApi, fileToken, splitFiles } from "@/lib/chat/files";
 import { CONNECTOR_PAGES, connectorInstructions, onboardName, onboardPrompt } from "@/lib/chat/onboard";
 import { KellMark } from "@/components/chat/brand";
 import type { OnboardResult, OnboardTarget } from "@/components/chat/OnboardButton";
@@ -254,7 +254,9 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   const [queueView, setQueueView] = useState<Queues>({});
   /** The message you are replying to (Reply on a message): shown above the box, sent as the reply's reply_to. */
   const [replyingTo, setReplyingTo] = useState<GroupMessage | null>(null);
-  useEffect(() => { setReplyingTo(null); }, [room]);
+  useEffect(() => { setReplyingTo(null); setEditing(null); }, [room]);
+  /** Your own message put back in the box to change: sending posts it again as a new message (a room never changes a sent one in place). */
+  const [editing, setEditing] = useState<GroupMessage | null>(null);
   const startReply = useCallback((m: GroupMessage) => {
     setReplyingTo(m);
     window.setTimeout(() => document.querySelector<HTMLTextAreaElement>(".dg-composer textarea")?.focus(), 0);
@@ -803,6 +805,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
                       onCopy={(t) => copyRoomText(t)}
                       onRetry={(t) => { if (mine || !isKell) void submit(t); else void askKell(roomRef.current, t); }}
                       onReply={tempRef.current.has(room) ? undefined : () => startReply(m)}
+                      onEdit={mine ? () => { setEditing(m); setDraft((d) => ({ text: splitFiles(m.payload.text).text, n: d.n + 1 })); } : undefined}
                       vote={votes[m.id] ?? 0}
                       onVote={agentRun && !tempRef.current.has(room) ? (v) => void voteOn(room, m.id, v) : undefined}
                       retryLabel={mine ? "Send this again" : isKell ? "Ask @kell again" : "Ask again"}
@@ -1266,6 +1269,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     // A reply: the message carries reply_to, and the agents asked get the quoted message with it.
     const reply = replyingTo && lines.some((l) => l.kind === "msg" && l.m.id === replyingTo.id) ? replyingTo : null;
     setReplyingTo(null);
+    setEditing(null);
     const ask = reply ? withReplyContext(line, reply.sender.handle === HUMAN.handle ? null : nameOf(reply.sender.handle), reply.payload.text) : line;
     // The agent that spoke last, if the last message in the room was an agent's: an answer with no @name continues with it.
     const lastLine = [...lines].reverse().find((l) => l.kind === "msg");
@@ -1524,12 +1528,17 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
             ].join(" · ")}
           </>}
         </div>
+        {editing && (
+          <div className="dg-queued dg-replying small" role="status">
+            <span className="dim">Editing your message. It is sent again as a new message, and the agent answers it again.</span>
+            <button type="button" aria-label="Cancel the edit" title="Cancel the edit" onClick={() => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); }}>×</button>
+          </div>)}
         {replyingTo && (
           <div className="dg-queued dg-replying small" role="status">
             <span className="dim">Replying to {replyingTo.sender.handle === HUMAN.handle ? "yourself" : nameOf(replyingTo.sender.handle)}:</span> <span className="dg-queued-text">{quoteText(replyingTo.payload.text)}</span>
             <button type="button" aria-label="Cancel the reply" title="Cancel the reply" onClick={() => setReplyingTo(null)}>×</button>
           </div>)}
-        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
+        <Composer onEscape={replyingTo ? () => setReplyingTo(null) : editing ? () => { setEditing(null); setDraft((d) => ({ text: "", n: d.n + 1 })); } : undefined} draft={draft} handles={mentionable} agentHandles={[...agents, "@kell"]} onSend={(t, a, f) => void submit(t, a, f)} enterToSend={chatPrefs.enterToSend} />
       </section>
       <input ref={importFile} type="file" accept="application/json,.json" className="visually-hidden" aria-label="Choose a history file to import" onChange={(e) => void importHistory(e)} />
       <input ref={encFile} type="file" accept=".kellbackup,application/json" hidden onChange={(e) => void restoreEncrypted(e)} />

@@ -214,10 +214,27 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             oldest_seen = int(recent_rows[0]["seq"]) if recent_rows else 1
         except rm.RoomError as exc:
             return _error(request, str(exc), exc.status)
+        # The files attached to this message or the few before it: their text as information, their pictures for the model to look at.
+        images: list[dict[str, str]] = []
+        try:
+            from app.services import room_attachments as _att
+
+            earlier = [str(e.get("body") or "") for e in reversed(recent_rows[-6:]) if e.get("kind") == "msg"]
+            files_block, images = await _att.read(pool, subject, room_id, [text, *earlier])
+            if files_block:
+                instructions = (instructions + "\n\n" if instructions else "") + files_block
+        except Exception:  # noqa: BLE001 -- a file problem never stops the answer
+            log.warning("room agent: could not read the attached files", exc_info=True)
 
 
-        async def read_earlier(query: str, before: int | None, limit: int) -> list[dict[str, Any]]:
-            """What the agent asks for when the recent messages are not enough: older messages of this room only, never another room's."""
+        async def read_earlier(query: str, before: int | None, limit: int, room: str = "") -> Any:
+            """What the agent asks for when the recent messages are not enough: older messages of this room, or (with `room`) the newest of
+            another of the person's rooms, only when everyone here is in it too (rooms.other_room_events)."""
+            if room:
+                title, events = await rm.other_room_events(pool, subject, room_id, room, limit, query)
+                if before:
+                    events = [e for e in events if int(e.get("seq") or 0) < before]
+                return title, events
             return await rm.earlier_events(pool, subject, room_id, before or oldest_seen, limit, query)
 
         bearer = request.headers.get("authorization", "")
@@ -267,7 +284,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
                         handle=handle, instructions=instructions, tz=tz,
                         discover=mine(discover, subject), tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                         call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv), read_earlier=read_earlier,
-                        classify=classify,
+                        classify=classify, images=images,
                     ):
                         if kind == "delta":
                             queue.put_nowait(_sse({"delta": value}))
@@ -320,7 +337,7 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             outcome = await agent.converse(text.strip()[: rm.MAX_BODY], history, model_call=lambda m, t: model_call(bearer, m, t),
                                            find_tools=find_tools,
                                            use_tool=lambda server_name, tool, args: use_tool(subject, server_name, tool, args),
-                                           handle=handle, instructions=instructions, tz=tz, discover=mine(discover, subject), classify=classify,
+                                           handle=handle, instructions=instructions, tz=tz, discover=mine(discover, subject), classify=classify, images=images,
                                            tools_of=(lambda server_name: tools_of(subject, server_name)) if tools_of else None,
                                            call_cheap=(lambda prompt: call_cheap(bearer, subject, prompt)) if call_cheap else None, skip_search=bool(cv), read_earlier=read_earlier)
         except rm.RoomError:

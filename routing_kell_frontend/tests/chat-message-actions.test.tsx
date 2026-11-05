@@ -98,3 +98,15 @@ describe("message actions (votes)", () => {
     expect(seen).toEqual([0, -1]);
   });
 });
+
+describe("message actions (edit)", () => {
+  it("offers Edit only with onEdit", async () => {
+    let edited = 0;
+    await mount(<MessageActions copyText="x" onCopy={() => true} />);
+    expect(byLabel("Edit and send again")).toBeNull();
+    act(() => root?.unmount()); host?.remove();
+    await mount(<MessageActions copyText="x" onCopy={() => true} onEdit={() => { edited += 1; }} />);
+    await click(byLabel("Edit and send again")!);
+    expect(edited).toBe(1);
+  });
+});

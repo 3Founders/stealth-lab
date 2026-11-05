@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { AlertIcon, CheckIcon, CopyIcon, ReplyIcon, RetryIcon, ThumbDownIcon, ThumbUpIcon } from "@/components/chat/icons";
+import { AlertIcon, CheckIcon, CopyIcon, EditIcon, ReplyIcon, RetryIcon, ThumbDownIcon, ThumbUpIcon } from "@/components/chat/icons";
 
 /** How long the tick (or the alert) stays before the copy icon comes back. */
 export const COPY_HOLD_MS = 1600;
@@ -15,7 +15,7 @@ export const COPY_HOLD_MS = 1600;
  * icons cross-fade in place (instantly with reduced motion), and a visually hidden status announces the result to screen readers. Nothing
  * is posted into the room on success; the owner's onCopy reports failure by returning false.
  */
-export default function MessageActions({ copyText, retryText, onCopy, onRetry, onReply, vote, onVote, retryLabel = "Ask again", holdMs = COPY_HOLD_MS }: {
+export default function MessageActions({ copyText, retryText, onCopy, onRetry, onReply, onEdit, vote, onVote, retryLabel = "Ask again", holdMs = COPY_HOLD_MS }: {
   /** How long the tick or alert stays (a test shortens it). */
   holdMs?: number;
   /** The text Copy takes. */
@@ -27,6 +27,8 @@ export default function MessageActions({ copyText, retryText, onCopy, onRetry, o
   onRetry?: (text: string) => void;
   /** Starts a reply to this message; without it no reply button is drawn. */
   onReply?: () => void;
+  /** Puts your own message back in the box to change and send again; without it no edit button is drawn. */
+  onEdit?: () => void;
   /** Your vote on this answer (1 up, -1 down, 0 none); with onVote the thumbs are drawn. Pressing the chosen one again takes it back. */
   vote?: -1 | 0 | 1;
   onVote?: (vote: -1 | 0 | 1) => void;
@@ -53,6 +55,7 @@ export default function MessageActions({ copyText, retryText, onCopy, onRetry, o
       </button>
       <span className="visually-hidden" role="status" aria-live="polite">{state === "copied" ? "Copied" : state === "failed" ? "Copying failed" : ""}</span>
       {onReply && <button type="button" className="dg-act" aria-label="Reply" title="Reply" onClick={onReply}><ReplyIcon /></button>}
+      {onEdit && <button type="button" className="dg-act" aria-label="Edit and send again" title="Edit and send again" onClick={onEdit}><EditIcon /></button>}
       {retryText !== undefined && retryText !== "" && onRetry && (
         <button type="button" className="dg-act" aria-label={retryLabel} onClick={() => onRetry(retryText)}><RetryIcon /></button>
       )}
