@@ -342,9 +342,17 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
     askingKell.current.add(key);
     if (who === "@kell") setKellBusy((p) => ({ ...p, [r]: true }));
     const temp = tempRef.current.has(r);
-    const id = temp ? "temporary" : engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
+    const known = () => engineRef.current?.roomId(r) ?? infoRef.current[r]?.id;
     const done = () => { askingKell.current.delete(key); if (who === "@kell") setKellBusy((p) => { const n = { ...p }; delete n[r]; return n; }); };
-    if (!id) { note("This room is still syncing. Give it a second, then send again.", r); done(); return; }
+    // A room made a moment ago may not have reached the server yet: wait for it (up to 20 s) instead of dropping the first message, which is the one
+    // everybody sends. The sync engine is asked to hurry; the question goes out as soon as the room has its id.
+    let id = temp ? "temporary" : known();
+    for (let waited = 0; !id && waited < 20000; waited += 400) {
+      engineRef.current?.kick();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      id = known();
+    }
+    if (!id) { note("This room could not be set up on the server yet, so the question was not sent. Check your connection and send it again.", r); done(); return; }
     const ctl = new AbortController();
     let held = false;
     signInCard.current = null;                           // this request's sign-ins get a card of their own
@@ -535,6 +543,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
 
   const removeAgent = (handle: string) => {
     controllers.current.get(handle)?.abort();
+    { const id = tempRef.current.has(roomRef.current) ? null : engineRef.current?.roomId(roomRef.current) ?? infoRef.current[roomRef.current]?.id; if (id) void roomsAgent.stopAgent(id, handle); }
     agentsRef.current = agentsRef.current.filter((h) => h !== handle);
     { const { [handle]: _gone, ...rest } = presetsRef.current; presetsRef.current = rest; setPresets(rest); writePresets(kv, subject, rest); }
     setAgents(agentsRef.current);
@@ -1321,6 +1330,7 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
   /** Stops everything running in this room: kell's and the added agents' answers, and any connected agent's task still waiting or being worked. */
   const stopAll = () => {
     controllers.current.forEach((c) => c.abort());
+    { const id = tempRef.current.has(roomRef.current) ? null : engineRef.current?.roomId(roomRef.current) ?? infoRef.current[roomRef.current]?.id; if (id) void roomsAgent.stopAgent(id); }   // the server keeps answering after the connection closes, so it is told
     for (const t of tasksRef.current[roomRef.current] ?? []) if (!isFinished(t)) void act(t.id, "cancel");
   };
   const working = agents.filter((h) => (activity[h] ?? "idle") !== "idle" || streaming[h] !== undefined);

@@ -62,6 +62,19 @@ def clean_history(raw: Any) -> list[dict[str, Any]]:
 
 
 _RUNNING: set[Any] = set()
+# The answers running now, by (person, room): what the Stop button cancels. An answer keeps running after the browser disconnects (a closed tab must not
+# throw away a reply that is already paid for), so a closed connection cannot mean "stop"; the page says so explicitly through /agent/stop.
+_BY_ROOM: dict[tuple[str, str], dict[Any, str]] = {}
+
+
+def stop_running(subject: str, room_id: str, handle: str = "") -> int:
+    """Cancels this person's running answers in a room (only the named agent's when `handle` is given). Returns how many were cancelled."""
+    n = 0
+    for task, who in list(_BY_ROOM.get((subject, str(room_id)), {}).items()):
+        if (not handle or who == handle) and not task.done():
+            task.cancel()
+            n += 1
+    return n
 HEARTBEAT_S = 8.0
 
 # Added to the memory block: how kell may save something worth keeping. The person sees what was saved and can undo it.
@@ -134,6 +147,23 @@ def _sse(obj: Any) -> str:
 def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_call: ModelCall,
              find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12,
              discover: Any = None, tools_of: Any = None, call_cheap: Any = None, classify: Any = None) -> None:
+    @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def room_agent_stop(request: Request) -> Response:
+        """The Stop button: cancels the caller's own running answers in this room (one agent when {"agent": "name"} is sent). Nothing of theirs is posted
+        after this; an answer already posted stays."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            data = {}
+        who = data.get("agent") if isinstance(data, dict) else None
+        stopped = stop_running(subject, request.path_params["room_id"], ("@" + who.lstrip("@").lower()) if isinstance(who, str) and who.strip() else "")
+        return _json(request, {"stopped": stopped})
+
     @server.custom_route("/v1/rooms/{room_id}/agent", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_route(request: Request) -> Response:
         if request.method == "OPTIONS":
@@ -315,6 +345,9 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             task = asyncio.ensure_future(work())
             _RUNNING.add(task)                       # keep a reference so the answer is not collected while nobody is listening
             task.add_done_callback(_RUNNING.discard)
+            mine = _BY_ROOM.setdefault((subject, str(room_id)), {})
+            mine[task] = handle
+            task.add_done_callback(lambda t, k=(subject, str(room_id)): (_BY_ROOM.get(k, {}).pop(t, None), (not _BY_ROOM.get(k)) and _BY_ROOM.pop(k, None)))
 
             async def frames() -> AsyncIterator[str]:
                 while True:

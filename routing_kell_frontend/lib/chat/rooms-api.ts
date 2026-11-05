@@ -95,6 +95,19 @@ export function roomsApi(deps: RoomsDeps) {
     /** A thumbs up (1), down (-1) or neither (0) on one of the agent's answers: it moves the tools that answer used in the ranking. */
     vote: (id: string, event: string, vote: -1 | 0 | 1) => call<{ recorded: boolean; vote?: number }>("POST", `/${e(id)}/agent/vote`, { event, vote }),
     agent: (id: string, text: string) => call<{ posted: boolean; text: string; tools: string[]; event: { id: string; seq: number } | null; consent?: string[]; sign_in?: string[] }>("POST", `/${e(id)}/agent`, { text }),
+    /** The Stop button, said to the server: cancels this person's running answers in the room (one agent when named). Closing the connection alone does
+     *  not stop an answer, because a closed tab must not lose a reply that is already paid for. Never throws: the page has already stopped listening. */
+    stopAgent: async (id: string, agentName?: string): Promise<void> => {
+      try {
+        const token = await deps.token();
+        if (!token) return;
+        await doFetch(`${base}/v1/rooms/${e(id)}/agent/stop`, {
+          method: "POST", cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer", keepalive: true,
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(agentName && agentName !== "@kell" ? { agent: agentName.replace(/^@/, "") } : {}),
+        });
+      } catch { /* the stop is best effort */ }
+    },
     /** The same, streamed: onDelta gets the answer as it is written; resolves once it has been posted into the room. */
     agentStream: async (id: string, text: string, onDelta: (delta: string) => void, signal?: AbortSignal, agentName?: string, instructions?: string, ephemeral?: { history: Array<{ role: "user" | "assistant"; content: string }> }, canvas?: { title: string; kind: string; text: string; selection?: string } | null, onSignIn?: (tool: ToolSignIn) => void) => {
       const token = await deps.token();
