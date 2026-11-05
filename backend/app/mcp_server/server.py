@@ -1467,8 +1467,18 @@ async def _room_agent_use(subject: str, server_name: str, tool: str, arguments: 
         reset_current_actor(token)
     if isinstance(out, list):                        # kell/images and other tools that return images
         head = str(out[0]) if out else ""
+        mine = _room_agent_routes.IMAGES.get()            # this ask's list: the answer is posted with these attached as room files
+        kept = 0
+        for item in out[1:]:
+            data = getattr(item, "data", None)
+            if mine is not None and isinstance(data, (bytes, bytearray)):
+                mine.append((bytes(data), str(getattr(item, "_format", None) or getattr(item, "format", None) or "png").lstrip(".")))
+                kept += 1
+        if kept:
+            return (f"{head}\nDone: {kept} picture{'s' if kept != 1 else ''} made. kell attaches {'them' if kept != 1 else 'it'} to your answer by itself; "
+                    "do not write a link or say how to open it. Say in one short sentence what you drew.")
         extra = len(out) - 1
-        return head if not extra else f"{head}\n({extra} image{'s' if extra != 1 else ''} returned; images stay out of a room message for now)"
+        return head if not extra else f"{head}\n({extra} image{'s' if extra != 1 else ''} returned but could not be attached here)"
     return str(out)
 
 

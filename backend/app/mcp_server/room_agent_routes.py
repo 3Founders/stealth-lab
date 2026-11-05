@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextvars import ContextVar
 import logging
 import re
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -62,6 +63,19 @@ def clean_history(raw: Any) -> list[dict[str, Any]]:
 
 
 _RUNNING: set[Any] = set()
+# Pictures a tool made while this answer ran (kell/images): (bytes, format). The answer is posted with them attached as room files, because a
+# picture cannot ride in the text the model sees. One list per ask, set in the request so the task that answers inherits it.
+IMAGES: "ContextVar[list[tuple[bytes, str]] | None]" = ContextVar("room_agent_images", default=None)
+
+
+def file_token(f: dict[str, Any]) -> str:
+    """The message text for a room file: the same [[file:id|name|size|mime]] the page draws as a card (a picture shows as a picture)."""
+    def clean(v: Any) -> str:
+        return re.sub(r"[|\]\n]", "_", str(v))
+
+    return f"[[file:{f['id']}|{clean(f['name'])}|{f['size']}|{clean(f['mime'])}]]"
+
+
 # The answers running now, by (person, room): what the Stop button cancels. An answer keeps running after the browser disconnects (a closed tab must not
 # throw away a reply that is already paid for), so a closed connection cannot mean "stop"; the page says so explicitly through /agent/stop.
 _BY_ROOM: dict[tuple[str, str], dict[Any, str]] = {}
@@ -268,6 +282,8 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             return await rm.earlier_events(pool, subject, room_id, before or oldest_seen, limit, query)
 
         bearer = request.headers.get("authorization", "")
+        images_made: list[tuple[bytes, str]] = []
+        IMAGES.set(images_made)
         started = __import__("time").monotonic()
 
         async def finish(outcome: agent.AgentOutcome) -> tuple[str, Any, str | None, list[str], list[str]]:
@@ -286,6 +302,15 @@ def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_ca
             sign_ins = list(dict.fromkeys(outcome.sign_in_links))
             for link in links + sign_ins:                    # never in the room, even if the model wrote one
                 reply = reply.replace(link, "(the button kell showed you)")
+            from app.services import room_files as _rf
+
+            for n, (data, fmt) in enumerate(images_made[:4], 1):      # a picture a tool made goes into the room as a file, with a card in this answer
+                try:
+                    stored = await _rf.upload(pool, subject, room_id, f"kell-image-{n}.{fmt}", data)
+                    reply = reply.rstrip() + "\n\n" + file_token(stored)
+                except Exception:  # noqa: BLE001 -- a picture that cannot be stored must not lose the answer
+                    log.exception("room agent: could not attach a picture for room %s", str(room_id)[:8])
+                    reply = reply.rstrip() + "\n\n(The picture was made but could not be attached to this message.)"
             try:
                 # A canvas too big for one message goes straight into the room's canvases; the message keeps a card for it.
                 reply = await rm.externalize_canvases(pool, subject, room_id, handle, reply)

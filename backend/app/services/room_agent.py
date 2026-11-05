@@ -736,6 +736,7 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
     # first and no tool has to run (skip_search; decide()).
     worked = False
     said: list[str] = []                              # everything shown so far, over all rounds
+    hinted = False
 
     for round_no in range(max_rounds + 1):
         parts: list[str] = []
@@ -785,6 +786,11 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
             yield ("final", AgentOutcome(text=_with_made(canvasify(content, creates) if not made else content, made), tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal))
             return
         messages.append({"role": "assistant", "content": "".join(parts), "tool_calls": tool_calls})
+        if not said and not hinted and any(str(((c or {}).get("function") or {}).get("name") or "") == "call_model" for c in tool_calls):
+            hinted = True
+            # A long piece is written in one call that streams nothing for a minute: say so at once, so the person is not left staring at "Thinking".
+            # This line is only the live bubble; the posted answer is the final text.
+            yield ("delta", "Writing it now. A long piece takes about a minute.")
         for call in tool_calls:
             result = await _run_call(call, use_tool=use_tool, discover=discover, tools_of=tools_of, used=used, call_cheap=call_cheap, made=made, read_earlier=read_earlier)
             if str(((call or {}).get("function") or {}).get("name") or "") in ("use_tool", "call_model") and _ok(result):

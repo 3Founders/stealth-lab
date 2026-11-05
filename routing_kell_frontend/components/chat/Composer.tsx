@@ -135,7 +135,7 @@ export default function Composer({ handles, agentHandles = [], onSend, disabled,
               <button type="button" onClick={() => setPics((x) => x.filter((_, j) => j !== i))} aria-label={`Remove ${p.name}`} title="Remove"><CrossIcon /></button>
             </span>
           ))}
-          {docs.length > 0 && <span className="small dim dg-doc-note">Files are kept on keळ's server for 30 days and are not end-to-end encrypted. Don't send secrets.</span>}
+          {docs.length > 0 && <span className="small dim dg-doc-note">Files are kept on keळ's server for 30 days and are not end-to-end encrypted.</span>}
           {picError && <span className="dg-pic-err" role="status">{picError}</span>}
         </div>
       )}
