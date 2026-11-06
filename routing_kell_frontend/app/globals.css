@@ -218,6 +218,18 @@ main, footer { position: relative; z-index: 1; }
 .copy:hover, .copy[data-done="true"] { background: var(--yellow); }
 .install-foot { padding: 11px 18px; border-top: 1px solid var(--rule); font-size: 13.5px; color: var(--grey); }
 
+/* The desktop one-liner is the site's primary install offer: give it the width of a statement, not a sidebar widget. */
+.desktop-install { grid-column: 1 / span 8; margin-top: 40px; }
+.desktop-install .install pre { font-size: clamp(15px, 1.6vw, 18px); }
+.desktop-notes { grid-column: 9 / span 4; margin-top: 40px; display: flex; flex-direction: column; gap: 10px; }
+.desktop-notes .h3 { margin: 0; }
+@media (max-width: 900px) { .desktop-install, .desktop-notes { grid-column: 1 / -1; } }
+@media (max-width: 640px) {
+  .install-head { flex-wrap: wrap; gap: 4px 14px; }
+  .install-body { flex-direction: column; align-items: stretch; }
+  .install-body .copy { align-self: flex-start; }
+}
+
 /* hero threshold -- quiet editorial chapter boundary between the hero and the first
    explanatory section. No chapter index/label (see HeroThreshold.tsx) -- the rule and
    signal field carry the whole thing, so both are sized to read as clearly intentional on
@@ -367,8 +379,9 @@ main, footer { position: relative; z-index: 1; }
 .close-links a { padding: 20px 16px 20px 0; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; align-items: baseline; font-size: 22px; font-weight: 400; transition: padding .3s var(--ease), background .3s; }
 .close-links a:hover { background: var(--soft); padding-inline: 12px; }
 .close-links a span { color: var(--grey); font-size: 13px; }
-@media (max-width: 900px) { .close-links { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 520px) { .close-links { grid-template-columns: 1fr; } }
+.close-links.close-links-2 { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 900px) { .close-links { grid-template-columns: 1fr 1fr; } .close-links.close-links-2 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 520px) { .close-links { grid-template-columns: 1fr; } .close-links.close-links-2 { grid-template-columns: 1fr; } }
 
 /* inner pages */
 .page-hero { padding-top: clamp(130px, 14vw, 200px); padding-bottom: clamp(36px, 5vw, 64px); }
@@ -489,7 +502,10 @@ main, footer { position: relative; z-index: 1; }
    any `.ln` so AnimatedHeading (components/AnimatedHeading.tsx) can reuse
    the same per-line rise entrance on every other page's heading,
    regardless of whether it's styled `.display` or the smaller `.h1`. */
-.motion .ln { display: block; overflow: hidden; padding-bottom: .08em; margin-bottom: -.08em; }
+/* Lines stack even with motion off (reduced-motion users): `.motion` only adds the rise and the clipping. Without this,
+   two `.ln` spans are inline and their words run together ("One line.Then just work."). */
+.ln { display: block; }
+.motion .ln { overflow: hidden; padding-bottom: .08em; margin-bottom: -.08em; }
 .motion .ln > span { display: block; transform: translateY(105%); animation: rise 1.1s var(--ease) forwards; animation-delay: var(--d, 0ms); }
 @keyframes rise { to { transform: none; } }
 /* Header account-menu / sign-in link: an invisible placeholder holds this

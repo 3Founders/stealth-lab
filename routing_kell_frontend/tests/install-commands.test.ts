@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { SETUP_COMMAND, defaultInstallPlatform, installPrompt } from "@/lib/install-commands";
+import { DESKTOP_INSTALL_COMMAND, SETUP_COMMAND, defaultInstallPlatform, installPrompt } from "@/lib/install-commands";
 
 describe("install commands", () => {
   it("is the first-time setup command", () => {
     expect(SETUP_COMMAND).toBe("npx -y kell-mcp setup");
+  });
+
+  it("is the Windows desktop one-liner, on the canonical www host", () => {
+    expect(DESKTOP_INSTALL_COMMAND).toBe("irm https://www.kell.org.in/desktop.ps1 | iex");
   });
 
   it("shows a PowerShell prompt to Windows visitors", () => {

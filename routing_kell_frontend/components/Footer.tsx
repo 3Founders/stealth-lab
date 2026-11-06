@@ -8,7 +8,7 @@ import { companyLinks } from "@/lib/social-links";
 
 // Only routes and anchors that exist in this build.
 const cols: Array<{ h: string; items: string[][] }> = [
-  { h: "Product", items: [["See it work", "/#action"], ["Docs", "/docs"], ["Pricing", "/pricing"]] },
+  { h: "Product", items: [["kell for Windows", "/desktop"], ["See it work", "/#action"], ["Docs", "/docs"], ["Pricing", "/pricing"]] },
   {
     h: "How to use",
     items: [

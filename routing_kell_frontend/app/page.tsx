@@ -7,6 +7,7 @@ import MonthInRepo from "@/components/MonthInRepo";
 import InteractiveLogo from "@/components/interactive-logo/InteractiveLogo";
 import HeroThreshold from "@/components/HeroThreshold";
 import FilmPlayer from "@/components/FilmPlayer";
+import DesktopInstall from "@/components/DesktopInstall";
 
 const rail = [
   { id: "top", label: "Introduction" },
@@ -177,10 +178,17 @@ export default function Home() {
       <section id="use" className="section close frame grid" aria-labelledby="h-use">
         <Marker n="06" label="USE IT" />
         <Reveal className="statement">
-          <h2 id="h-use" className="h1">Set it up once. <span className="dim">Then just work.</span></h2>
+          <h2 id="h-use" className="h1">kell for Windows. <span className="dim">One line, then just work.</span></h2>
         </Reveal>
-        <div className="close-links">
-          <a href="/download">Download for Windows <span>↓</span></a>
+        <Reveal className="desktop-install" delay={120}>
+          <DesktopInstall />
+        </Reveal>
+        <Reveal className="desktop-notes" delay={180}>
+          <p className="small dim"><b style={{ color: "var(--ink)" }}>Windows 10 or 11.</b> Installs for your account; no administrator prompt.</p>
+          <p className="small dim"><b style={{ color: "var(--ink)" }}>One sign-in.</b> The same account runs your coding agent and your rooms.</p>
+          <p className="small dim"><b style={{ color: "var(--ink)" }}>Nothing else changes.</b> Uninstall it from Settings &rarr; Apps any time.</p>
+        </Reveal>
+        <div className="close-links close-links-2">
           <Link href="/docs#teams">For teams <span>→</span></Link>
           <Link href="/docs">Read the docs <span>→</span></Link>
         </div>
