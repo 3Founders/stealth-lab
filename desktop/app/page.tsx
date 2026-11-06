@@ -181,6 +181,8 @@ export default function Home() {
     }
     let sid = sessionID
     let buffer = ""
+    let ended = false
+    const before = lines.length
     const reader = r.body.getReader()
     const dec = new TextDecoder()
     for (;;) {
@@ -215,8 +217,13 @@ export default function Home() {
         }
         else if (t === "need_plan") { setLines((l) => [...l, { who: "plan", text: "", at: Date.now() }]); setBusy(false) }
         else if (t === "error") { appendAssistant(`\n(error: ${ev.error})`); setBusy(false) }
+        else if (t === "done") ended = true
       }
     }
+    // A turn that ends with nothing said is never silent: say so (2026-11-06: a failed model call showed an empty turn).
+    setLines((l) => l.slice(before + 1).some((x) => x.who !== "user") ? l
+      : [...l, { who: "assistant", text: ended ? "kell got no answer from the model for this. Try again, or check Settings > Models."
+                                               : "The connection to the engine ended before an answer came. Try again.", at: Date.now() }])
     setBusy(false)
     busyRef.current = false
     // The session's snapshot record lands shortly after the last stream event, and how long is not fixed: check now, then

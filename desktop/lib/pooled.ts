@@ -138,7 +138,14 @@ export async function personalEngineConfig(env: NodeJS.ProcessEnv = process.env,
   } catch {
     return { ok: false, reason: "unreachable", message: "Cannot reach kell right now. Check your connection and try again." }
   }
-  if (res.status === 401 || res.status === 403) return { ok: false, reason: "rejected", message: "kell did not accept this sign-in. Sign out and sign in again." }
+  if (res.status === 401 || res.status === 403) {
+    // The server's own reason: "sign in again" does not help when the gateway refuses this kind of token (the coding sign-in is
+    // an MCP-app token, and the model API takes only website sessions, 2026-11-06).
+    const why = String((await res.json().catch(() => null))?.error?.message || "")
+    return { ok: false, reason: "rejected", message: /connected MCP app/i.test(why)
+      ? "Running models on your own plan in the app isn't connected yet (the server refuses the app's sign-in for models). Use the Rooms tab, or kell.org.in, for now."
+      : why ? `kell refused this sign-in: ${why}` : "kell did not accept this sign-in. Sign out and sign in again." }
+  }
   if (!res.ok) return { ok: false, reason: "unreachable", message: `kell answered ${res.status}; try again in a moment.` }
   const body: any = await res.json().catch(() => null)
   const models: Model[] = (Array.isArray(body?.data) ? body.data : [])

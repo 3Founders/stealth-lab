@@ -9,6 +9,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
 import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
+import fs from "node:fs"
 import net from "node:net"
 import { spawn, type ChildProcess } from "node:child_process"
 import path from "node:path"
@@ -40,8 +41,14 @@ if (!app.requestSingleInstanceLock()) {
     say("electron ready; starting next")
     const port = await freePort()
     if (port === 28894) throw new Error("28894 belongs to the OpenCode desktop app") // unreachable; the rule's guard
-    next = spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)],
-                 { cwd: ROOT, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", KELL_PARENT_PID: String(process.pid) }, stdio: ["ignore", "pipe", "pipe"] })
+    // The installed app ships Next's standalone server (only the files it uses); a dev tree without that build runs `next start`.
+    // KELL_ROOT tells the routes where the app is: the standalone server changes its working directory to its own folder.
+    const standalone = path.join(ROOT, ".next", "standalone", "server.js")
+    const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1", KELL_PARENT_PID: String(process.pid), KELL_ROOT: ROOT, PORT: String(port), HOSTNAME: "127.0.0.1" }
+    next = fs.existsSync(standalone)
+      ? spawn(process.execPath, [standalone], { cwd: ROOT, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(process.execPath, [path.join(ROOT, "node_modules", "next", "dist", "bin", "next"), "start", "-p", String(port)],
+              { cwd: ROOT, windowsHide: true, env, stdio: ["ignore", "pipe", "pipe"] })
     next.on("exit", (code) => { say(`next exited (${code})`); next = undefined; win?.close() })
     next.stdout?.on("data", (c) => process.stdout.write(c))
     next.stderr?.on("data", (c) => process.stderr.write(c))

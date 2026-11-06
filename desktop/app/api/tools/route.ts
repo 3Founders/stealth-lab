@@ -9,6 +9,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { NextResponse } from "next/server"
+import { freshSignIn } from "@/lib/signin"
 
 export const dynamic = "force-dynamic"
 
@@ -27,6 +28,7 @@ const sibling = (mcpUrl: string, name: string) => {
 }
 
 export async function POST(req: Request) {
+  await freshSignIn()
   const { url, token } = config()
   const target = url && sibling(url, "/tools")
   if (!target) return NextResponse.json({ error: "kell is not signed in on this machine (no server in ~/.stealthlab/config.json)" }, { status: 401 })

@@ -8,6 +8,7 @@ import fs from "node:fs"
 import path from "node:path"
 import type { OC, Client } from "./oc-types"
 import { pooledEngineConfig, personalEngineConfig, ownKeyLane } from "./pooled"
+import { freshSignIn } from "./signin"
 
 export type { Client }
 
@@ -21,8 +22,11 @@ const platformPkg = () =>
       : (process.arch === "arm64" ? "cli-linux-arm64" : "cli-linux-x64")
 // Next runs with cwd = the app root; in the packaged app that is .../resources/app.asar, whose unpacked sibling holds the
 // binaries (a file inside an asar cannot be spawned).
+// KELL_ROOT: the app's own folder. The packaged app runs Next's standalone server, which changes its working directory to
+// .next/standalone, so the working directory no longer says where the app is.
+const appRoot = () => process.env.KELL_ROOT || process.cwd()
 const unpackedRoot = () => {
-  const cwd = process.cwd()
+  const cwd = appRoot()
   return cwd.endsWith("app.asar") ? `${cwd}.unpacked` : path.join(cwd, "..", "app.asar.unpacked")
 }
 
@@ -35,8 +39,8 @@ const exes = () => [
   // dev tree
   path.join(unpackedRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
   path.join(unpackedRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
-  path.join(process.cwd(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
-  path.join(process.cwd(), "node_modules", "@opencode", "cli", "bin", platformBin()),
+  path.join(appRoot(), "node_modules", "@opencode", platformPkg(), "bin", platformBin()),
+  path.join(appRoot(), "node_modules", "@opencode", "cli", "bin", platformBin()),
 ].filter(Boolean)
 
 export const findEngineExe = () => exes().find((e) => { try { return fs.statSync(e).isFile() } catch { return false } }) || ""
@@ -60,6 +64,7 @@ export async function engineStart(directory: string): Promise<Engine> {
   engineStop()
   // Which lane pays: a joined organization first; else a developer's own key when `kell setup --client opencode` set one up;
   // else the signed-in person's own plan through kell's gateway (the models come from the gateway, so this waits on it).
+  await freshSignIn()                                  // an expired sign-in made every gateway call answer 401
   let pooled = pooledEngineConfig()
   if (!pooled && !ownKeyLane()) {
     const personal = await personalEngineConfig()

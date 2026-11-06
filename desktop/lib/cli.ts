@@ -11,7 +11,7 @@ export type KellCommand = { cmd: string; args: string[]; shell: boolean }
 
 export function kellCommand(args: string[]): KellCommand {
   const resources = (process as unknown as { resourcesPath?: string }).resourcesPath || ""
-  const cwd = process.cwd()
+  const cwd = process.env.KELL_ROOT || process.cwd()   // the app's folder (Next's standalone server moves the working directory)
   // Prefer the unpacked copy: a file inside app.asar is not executable by a child process.
   const unpacked = cwd.replace(/app\.asar$/, "app.asar.unpacked")
   const candidates = [
