@@ -161,6 +161,32 @@ def _sse(obj: Any) -> str:
 def register(server: Any, gate: Any, pool_getter: Callable[[], Any], *, model_call: ModelCall,
              find_tools: FindTools, use_tool: UseTool, model_stream: ModelStream | None = None, recent: int = 12,
              discover: Any = None, tools_of: Any = None, call_cheap: Any = None, classify: Any = None) -> None:
+    @server.custom_route("/v1/tools/signin", methods=["POST", "OPTIONS"], include_in_schema=False)
+    async def tool_signin_route(request: Request) -> Response:
+        """A fresh sign-in link for one tool: the buttons call this when pressed, so a link that has expired (they last 10 minutes) is never what opens.
+        Body {"server": "<registry name>"} -> {"server", "link"}, or {"signed_in": true} when the person is already signed in to it."""
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=cors_headers(request))
+        subject, refusal = await gate.subject(request)
+        if refusal is not None:
+            return _error(request, refusal[0], refusal[1])
+        if tools_of is None:
+            return _error(request, "tool sign-in is not available on this deployment", 503)
+        try:
+            data = await request.json()
+        except Exception:  # noqa: BLE001
+            data = {}
+        name = str(data.get("server") or "").strip()[:200] if isinstance(data, dict) else ""
+        if not name:
+            return _error(request, "say which tool: {\"server\": \"<name>\"}", 400)
+        answer = await tools_of(subject, name)
+        link, is_sign_in = agent._consent(answer)
+        if link and is_sign_in:
+            return _json(request, {"server": name, "link": link})
+        if isinstance(answer, str) and answer.lstrip().startswith("{") and "sign_in_required" not in answer[:200] and not answer.startswith(("REFUSED", "FAILED")):
+            return _json(request, {"server": name, "signed_in": True})          # the listing worked: no sign-in is needed (any more)
+        return _error(request, str(answer)[:300] or "could not make a sign-in link", 409)
+
     @server.custom_route("/v1/rooms/{room_id}/agent/stop", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def room_agent_stop(request: Request) -> Response:
         """The Stop button: cancels the caller's own running answers in this room (one agent when {"agent": "name"} is sent). Nothing of theirs is posted

@@ -150,12 +150,18 @@ def own_domain(card: ToolCard) -> bool:
     return bool(host) and (host == domain or host.endswith("." + domain))
 
 
+def allowlist() -> set[str]:
+    """Servers the operator vouches for by name (TOOL_GATEWAY_ALLOW, comma separated): exempt from the stars / own-domain test only. They must still be
+    remote, verified by the registry, not archived and not denied, so this cannot admit a local program or a dead entry."""
+    return {x.strip() for x in os.environ.get("TOOL_GATEWAY_ALLOW", "").split(",") if x.strip()}
+
+
 def _base_allowed(card: ToolCard) -> bool:
-    """Everything about the server itself: remote, verified publisher, not bulk, not archived, not denied, useful enough."""
+    """Everything about the server itself: remote, verified publisher, not bulk, not archived, not denied, useful enough (or named in the allowlist)."""
     ex = card.extra or {}
     return (card.source == "registry" and bool(ex.get("connector_url"))
             and bool(ex.get("verified")) and int(ex.get("owner_count") or 1) <= BULK_PUBLISHER
-            and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card)) and not ex.get("archived")
+            and (int(ex.get("stars") or 0) >= MIN_STARS or own_domain(card) or card.name in allowlist()) and not ex.get("archived")
             and card.name not in denylist() and os.environ.get("TOOL_GATEWAY", "on").lower() != "off")
 
 

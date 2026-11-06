@@ -462,6 +462,52 @@ def _sign_in_tool(result: Any, link: str) -> dict[str, str]:
     return {"server": server, "link": link}
 
 
+MAX_SIGNIN_BATCH = 4
+
+
+def signin_servers(result: Any, limit: int = MAX_SIGNIN_BATCH) -> list[str]:
+    """The servers a tool search found that kell can run once the person signs in (the entry says "needs a sign-in first"), best fit first."""
+    try:
+        data = json.loads(result) if isinstance(result, str) else result
+    except (ValueError, TypeError):
+        return []
+    tools = []
+    if isinstance(data, dict):
+        tools = (data.get("external") or {}).get("tools") if isinstance(data.get("external"), dict) else None
+        tools = tools or data.get("tools") or []
+    out: list[str] = []
+    for t in tools if isinstance(tools, list) else []:
+        if (isinstance(t, dict) and t.get("via_kell") and "needs a sign-in first" in str(t.get("available") or "")):
+            server = str(t.get("server") or t.get("name") or "")
+            if server and server not in out:
+                out.append(server)
+    return out[:limit]
+
+
+async def all_signins(result: Any, call: dict[str, Any], tools_of: "ToolsOf | None", tried: list[dict[str, str]]) -> list[dict[str, str]]:
+    """After a tool SEARCH (not a listing of one server), the sign-in link of every tool it found that needs one, asked at the same time, so the
+    person sees one button per tool at once instead of one per attempt. Servers already on the card are skipped. Never raises."""
+    import asyncio
+
+    fn = (call or {}).get("function") or {}
+    if tools_of is None or str(fn.get("name") or "") != "discover_tools" or str(_args(fn.get("arguments")).get("server") or "").strip():
+        return []
+    have = {t.get("server") for t in tried}
+    servers = [s for s in signin_servers(result) if s not in have]
+    if not servers:
+        return []
+
+    async def one(server: str) -> "dict[str, str] | None":
+        try:
+            answer = await tools_of(server)
+        except Exception:  # noqa: BLE001 -- one tool's sign-in failing does not hide the others
+            return None
+        link, is_sign_in = _consent(answer)
+        return _sign_in_tool(answer, link) if link and is_sign_in else None
+
+    return [t for t in await asyncio.gather(*(one(s) for s in servers)) if t]
+
+
 def _consent(result: Any) -> tuple[str | None, bool]:
     """(link, is_sign_in) for a first-call consent answer or a server sign-in answer; (None, False) otherwise."""
     if not isinstance(result, str):
@@ -742,6 +788,9 @@ async def converse(text: str, history: list[dict[str, Any]], *, model_call: Mode
                 (sign_ins if sign_in else links).append(link)
                 if sign_in:
                     tried.append(_sign_in_tool(result, link))
+            for extra in await all_signins(result, call, tools_of, tried):
+                tried.append(extra)
+                sign_ins.append(extra["link"])
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": _for_model(result)})
 
     return AgentOutcome(text="", tools_used=used, consent_links=links, sign_in_links=sign_ins, sign_in_tools=tried, tool_goal=goal)      # unreachable; the loop returns on its last pass
@@ -841,4 +890,8 @@ async def stream_answer(text: str, history: list[dict[str, Any]], *, model_strea
                 if sign_in:
                     tried.append(_sign_in_tool(result, link))
                     yield ("sign_in", tried[-1])      # the button shows now, while the answer is still being written
+            for extra in await all_signins(result, call, tools_of, tried):
+                tried.append(extra)
+                sign_ins.append(extra["link"])
+                yield ("sign_in", extra)              # every tool the search found that needs a sign-in gets its button at once
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": _for_model(result)})

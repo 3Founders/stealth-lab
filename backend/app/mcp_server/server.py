@@ -863,7 +863,11 @@ async def tool_connect_callback(request: Request) -> Response:
     try:
         _owner, server = await _oauth.complete(pool, request.query_params.get("state") or "", request.query_params.get("code") or "")
     except Exception as exc:  # noqa: BLE001 -- the person sees why, never a token
-        return HTMLResponse(f"<h2>Could not finish the sign-in</h2><p>{str(exc)[:300]}</p>", status_code=400)
+        expired = "no longer valid" in str(exc)
+        why = ("This sign-in link has expired (they last 10 minutes). Go back to kell and press Sign in again: it makes a new link."
+               if expired else str(exc)[:300])
+        script = ('<script>try{window.opener&&window.opener.postMessage({type:"kell:tool-signin-expired"},"*")}catch(e){}</script>' if expired else "")
+        return HTMLResponse(f"<h2>Could not finish the sign-in</h2><p>{why}</p>{script}", status_code=400)
     return HTMLResponse(f"<h2>Connected to {server}</h2><p>Return to the chat: it runs the request you made by itself.</p>")
 
 

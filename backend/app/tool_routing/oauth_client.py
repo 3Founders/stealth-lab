@@ -19,6 +19,7 @@ never logged. This is phase 2 of the design and needs a security review before i
 """
 from __future__ import annotations
 
+import re
 import base64
 import hashlib
 import ipaddress
@@ -201,6 +202,12 @@ async def discover(resource_url: str, challenge: Optional[dict[str, str]] = None
         }
 
 
+def client_name_for(server: str) -> str:
+    """The app name the tool's own sign-in page shows ("kell - figma-context wants access"), so the window says which tool it is for."""
+    label = re.sub(r"[^A-Za-z0-9 ._-]+", "", str(server).rsplit("/", 1)[-1])[:40].strip()
+    return f"{CLIENT_NAME} - {label}" if label else CLIENT_NAME
+
+
 async def _client_for(pool: Any, server: str, meta: dict, redirect: str, *, client: Optional[httpx.AsyncClient] = None) -> str:
     """The client_id for this server: cached, else dynamic registration (RFC 7591)."""
     async with pool.acquire() as conn:
@@ -211,7 +218,7 @@ async def _client_for(pool: Any, server: str, meta: dict, redirect: str, *, clie
     if not reg:
         raise OAuthRefused("this server's sign-in does not allow kell to register; ask its publisher to allow dynamic clients")
     body = {
-        "client_name": CLIENT_NAME,
+        "client_name": client_name_for(server),
         "redirect_uris": [redirect],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],

@@ -450,6 +450,31 @@ export default function RoomView({ brand, back, subject }: { brand?: React.React
       if (signInOpened.current === link) signedIn(link);
     }, 600);
   }, [note, signedIn]);
+  // A link that expired (they last 10 minutes): the sign-in window says so and tells this page, which makes a new link and loads it in the SAME
+  // window, so the person never has to ask again. If they were already signed in to that tool, the window closes and it is ticked.
+  useEffect(() => {
+    const onMessage = async (e: MessageEvent) => {
+      if ((e.data as { type?: string } | null)?.type !== "kell:tool-signin-expired" || !signInOpened.current) return;
+      const old = signInOpened.current;
+      const card = signInCard.current;
+      const line = card ? (lineStore.current[card.room] ?? []).find((l) => l.kind === "notice" && l.id === card.id) : undefined;
+      const item = line && line.kind === "notice" ? line.signIns?.find((x) => x.link === old) : undefined;
+      if (!card || !item?.server) return;
+      try {
+        const fresh = await roomsAgent.toolSignIn(item.server);
+        if (fresh.signedIn) { signInWindow.current?.close(); signedIn(old); return; }
+        if (!fresh.link) return;
+        const cur = lineStore.current[card.room] ?? [];
+        lineStore.current = { ...lineStore.current, [card.room]: cur.map((l) => (l.kind === "notice" && l.id === card.id && l.signIns
+          ? { ...l, signIns: l.signIns.map((x) => (x.link === old ? { ...x, link: fresh.link! } : x)) } : l)) };
+        signInOpened.current = fresh.link;
+        if (signInWindow.current && !signInWindow.current.closed) signInWindow.current.location.href = fresh.link;
+        bump((n) => n + 1);
+      } catch { note("That sign-in link expired and a new one could not be made. Press Sign in again.", card.room); }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [roomsAgent, signedIn, note]);
   useEffect(() => {
     const back = () => {
       if (document.visibilityState === "hidden" || !signInOpened.current) return;
