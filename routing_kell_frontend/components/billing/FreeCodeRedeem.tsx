@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import type { billingApi } from "@/lib/billing";
+import { kellCredits, type billingApi } from "@/lib/billing";
 import { getSupabase } from "@/lib/supabase";
 
 type Api = Pick<ReturnType<typeof billingApi>, "redeemCode">;
@@ -28,7 +28,7 @@ export default function FreeCodeRedeem({ api, onRedeemed, initialCode = "", bare
     if (r.kind === "ok") {
       setOk(true); setValue("");
       setNote(r.data.team ? "You have joined the trial team. Your use is paid from the team's balance, with a small daily limit for each person."
-        : `$${r.data.creditedUsd} of free credit was added. Your balance is now $${r.data.remainingUsd}.`);
+        : `${kellCredits(r.data.creditedUsd)} kell credits were added. Your balance is now ${kellCredits(r.data.remainingUsd)} kell credits.`);
       onRedeemed?.();
     } else if (r.kind === "error" && /verify your phone/i.test(r.message)) {
       setStep("phone"); setNote("This offer needs a confirmed phone number, one account per number. We text you a code to confirm it.");
@@ -65,7 +65,7 @@ export default function FreeCodeRedeem({ api, onRedeemed, initialCode = "", bare
   return (
     <div className={bare ? undefined : "profile-card"} aria-labelledby={bare ? undefined : "free-code-title"}>
       {bare ? null : <><h2 className="h3" id="free-code-title">Have a trial code?</h2>
-      <p className="small dim">A trial code adds a small amount of free usage credit to your account. No payment is taken.</p></>}
+      <p className="small dim">A trial code adds a small amount of free kell credits to your account. No payment is taken.</p></>}
       {step === "phone" ? (
         <form onSubmit={sendCode} style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 98765 43210" aria-label="Phone number" inputMode="tel" autoComplete="tel"

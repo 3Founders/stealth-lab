@@ -81,6 +81,9 @@ export type PlanOrderRequest = { plan: PlanName; seats?: number; referralCode?: 
 /** The answer to a code check: a refusal's sentence comes from the server, the same words the order route would use. */
 export type CodeCheck = { kind: "valid" } | { kind: "free"; creditUsd: string; team: boolean; placesLeft: number | null } | { kind: "off" } | { kind: "error"; message: string };
 
+/** An amount of credit as people read it: "0.25", not "0.250000". The credits are the wallet's dollars one for one; the page calls them kell credits. */
+export const kellCredits = (v: string | number): string => String(Number(v));
+
 export const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86_400_000);
 export const plainDate = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
