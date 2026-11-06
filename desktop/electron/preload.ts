@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld("kellDesktop", {
   openAccount: (url: string): Promise<boolean> => ipcRenderer.invoke("kell:account-open", String(url)),
   signOutRooms: (): Promise<void> => ipcRenderer.invoke("kell:rooms-signout"),
   pickFolder: (): Promise<string | null> => ipcRenderer.invoke("kell:pick-folder"),
+  onMenu: (cb: (what: string) => void) => {
+    const h = (_e: unknown, what: string) => cb(String(what))
+    ipcRenderer.on("kell:menu", h)
+    return () => { ipcRenderer.removeListener("kell:menu", h) }
+  },
   rooms: {
     show: (rect: Rect | null) => ipcRenderer.send("kell:rooms-bounds", rect),
     reload: () => ipcRenderer.send("kell:rooms-reload"),

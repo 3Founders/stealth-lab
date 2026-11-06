@@ -8,6 +8,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron"
 import { autoUpdater } from "electron-updater"
 import { isSignInLink, openSignIn } from "./signin"
+import { setAppMenu } from "./menu"
 import { openRoomsEmailSignIn, signInRooms, openAccountSignIn, reloadRooms, roomsAccessToken, roomsAccount, setRoomsBounds, setRoomsTheme, signOutRooms } from "./rooms"
 import { createServer } from "node:http"
 import { randomBytes } from "node:crypto"
@@ -41,6 +42,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     const say = (...a: unknown[]) => console.log("KELL_SMOKE", ...a)
     say("electron ready; starting next")
+    setAppMenu(() => win)
     const port = await freePort()
     if (port === 28894) throw new Error("28894 belongs to the OpenCode desktop app") // unreachable; the rule's guard
     // The installed app ships Next's standalone server (only the files it uses); a dev tree without that build runs `next start`.

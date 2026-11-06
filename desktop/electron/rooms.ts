@@ -36,7 +36,10 @@ export function staysInView(raw: string): boolean {
 }
 // The site's own links back to the website (the logo, "Back to home"): hidden in the app. Navigation is blocked too (below), so this is
 // only so nothing points somewhere it cannot go.
-const HIDE_SITE_LINKS = `.back-btn, a[aria-label^="keळ, back to the site"], a[href="/"] { display: none !important; }`
+// With the logo row and the "Back to home" row gone, the sidebar's collapse button (absolutely placed at its top) sat on the Search
+// box; the sidebar keeps that top row empty for it instead.
+const HIDE_SITE_LINKS = `.back-btn, a[aria-label^="keळ, back to the site"], a[href="/"], .dg-side > .dg-brand, .dg-side > .dg-backrow { display: none !important; }
+.dg-side { padding-top: 48px !important; }`
 
 type Rect = { x: number; y: number; width: number; height: number }
 let view: WebContentsView | undefined

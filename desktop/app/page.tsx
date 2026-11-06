@@ -18,7 +18,7 @@ type Rect = { x: number; y: number; width: number; height: number }
 type RoomsWho = { id: string; email: string | null } | null
 type KellDesktop = {
   openSignIn: (url: string) => void; onSignInDone: (cb: (r: { url: string; ok: boolean }) => void) => () => void
-  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>
+  openAccount: (url: string) => Promise<boolean>; signOutRooms: () => Promise<void>; pickFolder?: () => Promise<string | null>; onMenu?: (cb: (what: string) => void) => () => void
   rooms: { show: (rect: Rect | null) => void; reload: () => void; theme: (t: "light" | "dark") => void; account: () => Promise<RoomsWho | undefined>; signIn: (provider: "google" | "github") => Promise<boolean>; emailSignIn: () => void }
 }
 /** The Help menu: the site's pages that answer what people ask in the app. */
@@ -134,6 +134,23 @@ export default function Home() {
   }
   const [accountOpen, setAccountOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  // File > Open folder and File > New session from the app's menu bar (electron/menu.ts).
+  const menuRef = useRef<(what: string) => void>(() => {})
+  menuRef.current = (what) => {
+    if (what === "open-folder" && !busy && !opening) void (async () => { const d = await desktop()?.pickFolder?.(); if (d) { setSessionID(null); setDirectory(d); void openProject(d) } })()
+    if (what === "new-session" && !busy) { setSessionID(null); setLines([]); setSteps([]); setLedger([]); loadChanges(null) }
+  }
+  useEffect(() => desktop()?.onMenu?.((w) => menuRef.current(w)), [])
+  // The Help menu closes on a click anywhere else or on Escape, not only on its own button.
+  const helpRef = useRef<HTMLSpanElement | null>(null)
+  useEffect(() => {
+    if (!helpOpen) return
+    const away = (e: PointerEvent) => { if (!helpRef.current?.contains(e.target as Node)) setHelpOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setHelpOpen(false) }
+    document.addEventListener("pointerdown", away)
+    document.addEventListener("keydown", esc)
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc) }
+  }, [helpOpen])
   const [lines, setLines] = useState<Line[]>([])
   const [steps, setSteps] = useState<Step[]>([])
   const [ledger, setLedger] = useState<LedgerRow[]>([])
@@ -465,7 +482,7 @@ export default function Home() {
           <button type="button" role="tab" aria-selected={pane === "rooms"} onClick={() => setPane("rooms")}>Rooms</button>
         </div>
         <span className="dk-who">{settings?.signedIn ? <>Signed in as <b>{settings.account || "your kell account"}</b></> : "Not signed in"}</span>
-        <span className="dk-help">
+        <span className="dk-help" ref={helpRef}>
           <button type="button" className="dk-icon dk-icon-sm" aria-label="Help" title="Help" aria-expanded={helpOpen} onClick={() => setHelpOpen((o) => !o)}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" /><path d="M12 17h.01" /></svg>
           </button>
@@ -723,7 +740,10 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{big ? <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
               </button>
             </div>
-            <button type="submit" disabled={!text.trim() || !directory || (engine != null && !engine.up)} title={busy ? "kell is working: this waits and goes out when it finishes" : undefined}>{busy ? "Queue" : "Send"}</button>
+            <button type="submit" className="dk-send" disabled={!text.trim() || !directory || (engine != null && !engine.up)}
+              aria-label={busy ? "Queue this message" : "Send"} title={busy ? "kell is working: this waits and goes out when it finishes" : "Send"}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            </button>
           </form>
         </section>
 

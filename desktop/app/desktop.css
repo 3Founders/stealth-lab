@@ -87,9 +87,9 @@
 .dk-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; flex: none; padding: 0 12px;
   border-bottom: 1px solid var(--rule); background: var(--paper); }
 .dk-switch [role="tablist"] { display: flex; gap: 4px; }
-.dk-switch button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
+.dk-switch [role="tablist"] button { font: inherit; font-size: 13px; padding: 6px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent;
   color: var(--grey); cursor: pointer; }
-.dk-switch button[aria-selected="true"] { background: var(--yellow); color: #171717; border-color: var(--ink); }
+.dk-switch [role="tablist"] button[aria-selected="true"] { background: var(--yellow); color: #171717; border-color: var(--ink); }
 .dk-who { font-size: 12.5px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dk-who b { color: var(--ink); font-weight: 500; }
 .dk-mismatch { margin: 8px 12px 0; display: grid; gap: 8px; flex: none; }
@@ -138,3 +138,9 @@
   border: 1px solid var(--rule); border-radius: 12px; background: var(--surface, var(--paper)); box-shadow: 0 10px 30px rgba(0,0,0,.12); }
 .dk-help-menu a { padding: 8px 10px; border-radius: 8px; color: var(--ink); text-decoration: none; font-size: 14px; }
 .dk-help-menu a:hover, .dk-help-menu a:focus-visible { background: var(--soft, rgba(0,0,0,.05)); }
+
+/* Send as an up arrow (2026-11-07): a square button with the arrow centred. */
+.dg-composer button.dk-send { width: 44px; padding: 0; display: grid; place-items: center; border-radius: 12px; }
+/* The Help button keeps the plain icon look: no tab padding, and no lasting highlight once its menu is closed. */
+.dk-help .dk-icon { padding: 0; }
+.dk-help .dk-icon:focus:not(:focus-visible) { outline: none; }
